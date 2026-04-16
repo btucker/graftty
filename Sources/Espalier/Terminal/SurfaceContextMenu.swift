@@ -19,6 +19,14 @@ import GhosttyKit
 ///   build time; the menu is rebuilt on each invocation so state is
 ///   always current.
 extension SurfaceNSView {
+    override func rightMouseDown(with event: NSEvent) {
+        // Make sure the surface has focus before the menu appears so the
+        // menu's action target (this view) is reachable via the responder
+        // chain. Without this, the items can pop up but do nothing.
+        window?.makeFirstResponder(self)
+        super.rightMouseDown(with: event)
+    }
+
     override func menu(for event: NSEvent) -> NSMenu? {
         guard let surface else { return nil }
 
@@ -46,70 +54,35 @@ extension SurfaceNSView {
         }
 
         let menu = NSMenu()
-        var item: NSMenuItem
-
-        if hasNonEmptySelection {
-            item = menu.addItem(
-                withTitle: "Copy",
-                action: #selector(copyFromTerminal(_:)),
-                keyEquivalent: ""
-            )
-            item.setImageIfDesired(systemSymbolName: "document.on.document")
+        // Local helper: add an item and route it directly to `self`.
+        // Default NSMenu dispatch walks the responder chain, which is
+        // unreliable when the surface view isn't first responder at
+        // menu-open time. Setting target = self makes every item's
+        // selector dispatch deterministic.
+        @discardableResult
+        func add(_ title: String, _ action: Selector, _ symbol: String? = nil) -> NSMenuItem {
+            let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
+            item.target = self
+            if let symbol { item.setImageIfDesired(systemSymbolName: symbol) }
+            return item
         }
 
-        item = menu.addItem(
-            withTitle: "Paste",
-            action: #selector(pasteToTerminal(_:)),
-            keyEquivalent: ""
-        )
-        item.setImageIfDesired(systemSymbolName: "document.on.clipboard")
+        if hasNonEmptySelection {
+            add("Copy", #selector(copyFromTerminal(_:)), "document.on.document")
+        }
+        add("Paste", #selector(pasteToTerminal(_:)), "document.on.clipboard")
 
         menu.addItem(.separator())
-        item = menu.addItem(
-            withTitle: "Split Right",
-            action: #selector(splitRight(_:)),
-            keyEquivalent: ""
-        )
-        item.setImageIfDesired(systemSymbolName: "rectangle.righthalf.inset.filled")
-        item = menu.addItem(
-            withTitle: "Split Left",
-            action: #selector(splitLeft(_:)),
-            keyEquivalent: ""
-        )
-        item.setImageIfDesired(systemSymbolName: "rectangle.leadinghalf.inset.filled")
-        item = menu.addItem(
-            withTitle: "Split Down",
-            action: #selector(splitDown(_:)),
-            keyEquivalent: ""
-        )
-        item.setImageIfDesired(systemSymbolName: "rectangle.bottomhalf.inset.filled")
-        item = menu.addItem(
-            withTitle: "Split Up",
-            action: #selector(splitUp(_:)),
-            keyEquivalent: ""
-        )
-        item.setImageIfDesired(systemSymbolName: "rectangle.tophalf.inset.filled")
+        add("Split Right", #selector(splitRight(_:)), "rectangle.righthalf.inset.filled")
+        add("Split Left", #selector(splitLeft(_:)), "rectangle.leadinghalf.inset.filled")
+        add("Split Down", #selector(splitDown(_:)), "rectangle.bottomhalf.inset.filled")
+        add("Split Up", #selector(splitUp(_:)), "rectangle.tophalf.inset.filled")
 
         menu.addItem(.separator())
-        item = menu.addItem(
-            withTitle: "Reset Terminal",
-            action: #selector(resetTerminal(_:)),
-            keyEquivalent: ""
-        )
-        item.setImageIfDesired(systemSymbolName: "arrow.trianglehead.2.clockwise")
-        item = menu.addItem(
-            withTitle: "Toggle Terminal Inspector",
-            action: #selector(toggleTerminalInspector(_:)),
-            keyEquivalent: ""
-        )
-        item.setImageIfDesired(systemSymbolName: "scope")
-        item = menu.addItem(
-            withTitle: "Terminal Read-only",
-            action: #selector(toggleReadonly(_:)),
-            keyEquivalent: ""
-        )
-        item.setImageIfDesired(systemSymbolName: "eye.fill")
-        item.state = isReadonly ? .on : .off
+        add("Reset Terminal", #selector(resetTerminal(_:)), "arrow.trianglehead.2.clockwise")
+        add("Toggle Terminal Inspector", #selector(toggleTerminalInspector(_:)), "scope")
+        let readonlyItem = add("Terminal Read-only", #selector(toggleReadonly(_:)), "eye.fill")
+        readonlyItem.state = isReadonly ? .on : .off
 
         return menu
     }
@@ -186,10 +159,10 @@ extension SurfaceNSView {
     /// `ghostty_surface_binding_action`. The action string is not
     /// NUL-required but must be sized in UTF-8 bytes, matching upstream.
     fileprivate func bindingAction(_ action: String) {
-        guard let surface else { return }
+        guard let s = self.surface else { return }
         _ = action.withCString { cstr in
             ghostty_surface_binding_action(
-                surface,
+                s,
                 cstr,
                 UInt(action.lengthOfBytes(using: .utf8))
             )
