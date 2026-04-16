@@ -66,6 +66,35 @@ struct EspalierApp: App {
                     splitFocusedPane(direction: .vertical)
                 }
                 .keyboardShortcut("d", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Focus Pane Left") {
+                    navigatePane(.left)
+                }
+                .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+
+                Button("Focus Pane Right") {
+                    navigatePane(.right)
+                }
+                .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+
+                Button("Focus Pane Up") {
+                    navigatePane(.up)
+                }
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+
+                Button("Focus Pane Down") {
+                    navigatePane(.down)
+                }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+
+                Divider()
+
+                Button("Close Pane") {
+                    closeFocusedPane()
+                }
+                .keyboardShortcut("w", modifiers: [.command])
             }
 
             CommandMenu("Espalier") {
@@ -223,6 +252,61 @@ struct EspalierApp: App {
                 }
             }
         }
+    }
+
+    private func navigatePane(_ direction: NavigationDirection) {
+        guard let path = appState.selectedWorktreePath else { return }
+        for repoIdx in appState.repos.indices {
+            for wtIdx in appState.repos[repoIdx].worktrees.indices {
+                let wt = appState.repos[repoIdx].worktrees[wtIdx]
+                if wt.path == path, wt.state == .running {
+                    let leaves = wt.splitTree.allLeaves
+                    guard leaves.count > 1,
+                          let currentIdx = leaves.firstIndex(where: { $0 == wt.focusedTerminalID }) else { return }
+
+                    let nextIdx: Int
+                    switch direction {
+                    case .left, .up:
+                        nextIdx = (currentIdx - 1 + leaves.count) % leaves.count
+                    case .right, .down:
+                        nextIdx = (currentIdx + 1) % leaves.count
+                    }
+
+                    let nextID = leaves[nextIdx]
+                    appState.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nextID
+                    terminalManager.setFocus(nextID)
+                    return
+                }
+            }
+        }
+    }
+
+    private func closeFocusedPane() {
+        guard let path = appState.selectedWorktreePath else { return }
+        for repoIdx in appState.repos.indices {
+            for wtIdx in appState.repos[repoIdx].worktrees.indices {
+                let wt = appState.repos[repoIdx].worktrees[wtIdx]
+                if wt.path == path, wt.state == .running,
+                   let focused = wt.focusedTerminalID {
+                    terminalManager.destroySurface(terminalID: focused)
+                    let newTree = wt.splitTree.removing(focused)
+                    appState.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
+
+                    if newTree.root == nil {
+                        appState.repos[repoIdx].worktrees[wtIdx].state = .closed
+                    } else {
+                        let newFocus = newTree.allLeaves.first
+                        appState.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = newFocus
+                        if let newFocus { terminalManager.setFocus(newFocus) }
+                    }
+                    return
+                }
+            }
+        }
+    }
+
+    enum NavigationDirection {
+        case left, right, up, down
     }
 
     private func installCLI() {

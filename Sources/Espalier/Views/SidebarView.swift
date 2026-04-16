@@ -7,6 +7,7 @@ struct SidebarView: View {
     let onSelect: (String) -> Void
     let onAddRepo: () -> Void
     let onAddPath: (String) -> Void
+    let onStopWorktree: (String) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -76,9 +77,7 @@ struct SidebarView: View {
     }
 
     private func stopWorktree(_ worktree: WorktreeEntry, in repo: RepoEntry) {
-        guard let repoIdx = appState.repos.firstIndex(where: { $0.id == repo.id }),
-              let wtIdx = appState.repos[repoIdx].worktrees.firstIndex(where: { $0.id == worktree.id }) else { return }
-        appState.repos[repoIdx].worktrees[wtIdx].state = .closed
+        onStopWorktree(worktree.path)
     }
 
     private func dismissWorktree(_ worktree: WorktreeEntry, in repo: RepoEntry) {

@@ -14,7 +14,8 @@ struct MainWindow: View {
                 appState: $appState,
                 onSelect: selectWorktree,
                 onAddRepo: addRepository,
-                onAddPath: addPath
+                onAddPath: addPath,
+                onStopWorktree: stopWorktreeWithConfirmation
             )
             .navigationSplitViewColumnWidth(
                 min: 180,
@@ -128,6 +129,28 @@ struct MainWindow: View {
             alert.informativeText = "\(path) is not a git repository or worktree."
             alert.alertStyle = .warning
             alert.runModal()
+        }
+    }
+
+    private func stopWorktreeWithConfirmation(_ worktreePath: String) {
+        for repoIdx in appState.repos.indices {
+            for wtIdx in appState.repos[repoIdx].worktrees.indices {
+                let wt = appState.repos[repoIdx].worktrees[wtIdx]
+                if wt.path == worktreePath && wt.state == .running {
+                    let terminalIDs = wt.splitTree.allLeaves
+                    if terminalManager.needsConfirmQuit(terminalIDs: terminalIDs) {
+                        let alert = NSAlert()
+                        alert.messageText = "Stop Worktree?"
+                        alert.informativeText = "There are running processes in \(wt.branch). Stop all terminals?"
+                        alert.addButton(withTitle: "Stop")
+                        alert.addButton(withTitle: "Cancel")
+                        guard alert.runModal() == .alertFirstButtonReturn else { return }
+                    }
+                    terminalManager.destroySurfaces(terminalIDs: terminalIDs)
+                    appState.repos[repoIdx].worktrees[wtIdx].state = .closed
+                    return
+                }
+            }
         }
     }
 
