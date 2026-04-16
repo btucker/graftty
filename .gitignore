@@ -1,1 +1,8 @@
 .superpowers/
+.build/
+.worktrees/
+.blindspots/dogfood-journals/
+.blindspots/screenshots/
+.blindspots/experiments/
+.blindspots/user-trials/
+.blindspots/interviews/
