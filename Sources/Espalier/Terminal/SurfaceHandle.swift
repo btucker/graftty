@@ -12,11 +12,35 @@ import EspalierKit
 /// - All C strings passed through the config (working directory, env var key/value)
 ///   are freed immediately after `ghostty_surface_new` returns, since libghostty
 ///   copies the config contents.
+/// Small reference object we pass to libghostty as the surface's `userdata`.
+/// Lets `close_surface_cb` (and other surface-scoped libghostty callbacks)
+/// recover the Espalier-side `TerminalID` without having to scan the
+/// `TerminalManager.surfaces` map.
+///
+/// Memory management: `SurfaceHandle` retains an `Unmanaged` reference to
+/// the box via `passRetained`, hands the opaque pointer to libghostty, and
+/// releases the box in `deinit` — so the box outlives the surface. The
+/// `terminalManager` reference is weak to avoid a retain cycle (the manager
+/// owns the handle, which owns the box).
+final class SurfaceUserdataBox {
+    let terminalID: TerminalID
+    weak var terminalManager: TerminalManager?
+    init(terminalID: TerminalID, terminalManager: TerminalManager?) {
+        self.terminalID = terminalID
+        self.terminalManager = terminalManager
+    }
+}
+
 final class SurfaceHandle {
     let terminalID: TerminalID
     let surface: ghostty_surface_t
     let view: NSView
     let worktreePath: String
+
+    /// Retained pointer to the userdata box; released in `deinit`. libghostty
+    /// keeps a copy of the pointer in its surface struct and passes it back
+    /// through callbacks that want per-surface identity.
+    private let userdataPointer: UnsafeMutableRawPointer
 
     init(
         terminalID: TerminalID,
@@ -27,6 +51,13 @@ final class SurfaceHandle {
     ) {
         self.terminalID = terminalID
         self.worktreePath = worktreePath
+
+        let userdataBox = SurfaceUserdataBox(
+            terminalID: terminalID,
+            terminalManager: terminalManager
+        )
+        let userdataPtr = Unmanaged.passRetained(userdataBox).toOpaque()
+        self.userdataPointer = userdataPtr
 
         let surfaceView = SurfaceNSView()
         self.view = surfaceView
@@ -52,6 +83,7 @@ final class SurfaceHandle {
         var config = ghostty_surface_config_new()
         config.platform_tag = GHOSTTY_PLATFORM_MACOS
         config.platform.macos.nsview = Unmanaged.passUnretained(surfaceView).toOpaque()
+        config.userdata = userdataPtr
         config.scale_factor = Double(NSScreen.main?.backingScaleFactor ?? 2.0)
         config.working_directory = UnsafePointer(cwdCStr)
         config.env_vars = envVarsPtr
@@ -65,6 +97,7 @@ final class SurfaceHandle {
             free(cwdCStr)
             free(sockKey)
             free(sockVal)
+            Unmanaged<SurfaceUserdataBox>.fromOpaque(userdataPtr).release()
             fatalError("ghostty_surface_new returned null")
         }
         self.surface = newSurface
@@ -92,11 +125,37 @@ final class SurfaceHandle {
     }
 
     deinit {
+        // Nil the view's surface pointer BEFORE freeing: the `NSView` can
+        // still be in the window hierarchy at this moment (SwiftUI hasn't
+        // yet processed the model change that removed this pane), and any
+        // AppKit-driven callback that fires in the window between here and
+        // the view's removal — `resignFirstResponder`, `setFrameSize`,
+        // `mouseUp` for an in-progress drag — would otherwise dereference
+        // freed memory and crash libghostty's os_unfair_lock. Every
+        // NSView override on `SurfaceNSView` already guards on the
+        // optional surface, so nil-ing it turns those callbacks into
+        // safe no-ops.
+        if let surfaceView = view as? SurfaceNSView {
+            surfaceView.surface = nil
+        }
         ghostty_surface_free(surface)
+        // Surface is gone, so libghostty won't fire further callbacks against
+        // our userdata pointer — safe to release the box.
+        Unmanaged<SurfaceUserdataBox>.fromOpaque(userdataPointer).release()
     }
 
     func setFocus(_ focused: Bool) {
         ghostty_surface_set_focus(surface, focused)
+        // Keep AppKit's first-responder in sync with libghostty's focus
+        // state: if the view is already in a window, promote it so keyDown
+        // events route here. `makeFirstResponder` on a detached view is a
+        // silent no-op, so callers that focus a pane before SwiftUI has
+        // mounted the view are covered by `SurfaceNSView.viewDidMoveToWindow`.
+        if focused,
+           let surfaceView = view as? SurfaceNSView,
+           let window = surfaceView.window {
+            window.makeFirstResponder(surfaceView)
+        }
     }
 
     func setSize(width: UInt32, height: UInt32) {
@@ -145,6 +204,39 @@ final class SurfaceNSView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+    }
+
+    /// When this surface view joins a window (app launch, worktree switch,
+    /// split created), grab keyboard focus so the user can start typing
+    /// immediately — unless another terminal view already has focus, in
+    /// which case we respect that. Without this, the window's first
+    /// responder stays the content view / sidebar button and keystrokes
+    /// never reach libghostty until the user clicks into the terminal.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard let window, surface != nil else { return }
+        if !(window.firstResponder is SurfaceNSView) {
+            window.makeFirstResponder(self)
+        }
+    }
+
+    /// Forward frame changes to libghostty so the terminal's cell grid and
+    /// render target track the view's on-screen size. Fires for both
+    /// user-driven resizes (divider drag) and programmatic ones (SwiftUI
+    /// rerendering after a split is added/removed).
+    ///
+    /// `convertToBacking(_:)` turns points → backing-store pixels, which is
+    /// what `ghostty_surface_set_size` expects; libghostty uses the
+    /// `scale_factor` we passed at surface-create time for HiDPI metrics.
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        guard let surface else { return }
+        let pixels = convertToBacking(newSize)
+        ghostty_surface_set_size(
+            surface,
+            UInt32(max(1, Int(pixels.width))),
+            UInt32(max(1, Int(pixels.height)))
+        )
     }
 
     @available(*, unavailable)

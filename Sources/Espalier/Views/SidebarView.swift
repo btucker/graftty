@@ -4,8 +4,13 @@ import EspalierKit
 
 struct SidebarView: View {
     @Binding var appState: AppState
+    /// Observed so pane-title changes (libghostty `SET_TITLE`) repaint the
+    /// sidebar immediately. The manager's `titles` map is the source of
+    /// truth for per-pane labels.
+    @ObservedObject var terminalManager: TerminalManager
     let theme: GhosttyTheme
     let onSelect: (String) -> Void
+    let onSelectPane: (String, TerminalID) -> Void
     let onAddRepo: () -> Void
     let onAddPath: (String) -> Void
     let onStopWorktree: (String) -> Void
@@ -54,26 +59,7 @@ struct SidebarView: View {
             )
         ) {
             ForEach(repo.worktrees) { worktree in
-                // Wrap the row in a Button so clicks reliably trigger the
-                // handler. A bare `.onTapGesture` inside List with sidebar
-                // style is swallowed by List's own selection gestures;
-                // Button's built-in hit testing bypasses that. `.plain`
-                // keeps the row's visual styling.
-                Button {
-                    onSelect(worktree.path)
-                } label: {
-                    WorktreeRow(
-                        entry: worktree,
-                        isSelected: appState.selectedWorktreePath == worktree.path,
-                        displayName: label(for: worktree, in: repo),
-                        isMainCheckout: worktree.path == repo.path,
-                        theme: theme
-                    )
-                }
-                .buttonStyle(.plain)
-                .contextMenu {
-                    worktreeContextMenu(worktree, repo: repo)
-                }
+                worktreeBlock(worktree, repo: repo)
             }
         } label: {
             Label {
@@ -85,6 +71,56 @@ struct SidebarView: View {
                     .foregroundStyle(theme.foreground.opacity(0.85))
             }
         }
+    }
+
+    /// Renders a worktree and its pane children as one visually-unified
+    /// block. When the worktree is active, the whole block (worktree row +
+    /// every pane row underneath) gets a single rounded highlight — the
+    /// user can see at a glance which worktree they're "in" even when
+    /// multiple panes are listed. Inside the highlighted block, the
+    /// focused pane is distinguished by text emphasis rather than a
+    /// second background.
+    @ViewBuilder
+    private func worktreeBlock(_ worktree: WorktreeEntry, repo: RepoEntry) -> some View {
+        let isActive = appState.selectedWorktreePath == worktree.path
+        VStack(spacing: 0) {
+            Button {
+                onSelect(worktree.path)
+            } label: {
+                WorktreeRow(
+                    entry: worktree,
+                    isActive: isActive,
+                    displayName: label(for: worktree, in: repo),
+                    isMainCheckout: worktree.path == repo.path,
+                    theme: theme
+                )
+            }
+            .buttonStyle(.plain)
+            .contextMenu {
+                worktreeContextMenu(worktree, repo: repo)
+            }
+
+            if worktree.state == .running {
+                ForEach(worktree.splitTree.allLeaves, id: \.self) { terminalID in
+                    Button {
+                        onSelectPane(worktree.path, terminalID)
+                    } label: {
+                        PaneTitleRow(
+                            title: terminalManager.titles[terminalID] ?? "",
+                            isActiveWorktree: isActive,
+                            isFocusedPane: isActive
+                                && worktree.focusedTerminalID == terminalID,
+                            theme: theme
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(isActive ? theme.foreground.opacity(0.16) : .clear)
+        )
     }
 
     /// The sidebar label for a worktree, special-cased so the main checkout

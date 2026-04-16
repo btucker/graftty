@@ -20,8 +20,10 @@ struct MainWindow: View {
         ) {
             SidebarView(
                 appState: $appState,
+                terminalManager: terminalManager,
                 theme: terminalManager.theme,
                 onSelect: selectWorktree,
+                onSelectPane: selectPane,
                 onAddRepo: addRepository,
                 onAddPath: addPath,
                 onStopWorktree: stopWorktreeWithConfirmation
@@ -162,6 +164,22 @@ struct MainWindow: View {
         return nil
     }
 
+    /// Selects a worktree *and* focuses a specific pane within it. Used by
+    /// the sidebar's per-pane title rows so clicking "claude" under a
+    /// worktree both activates that worktree and focuses Claude's pane.
+    private func selectPane(_ worktreePath: String, _ terminalID: TerminalID) {
+        selectWorktree(worktreePath)
+        for repoIdx in appState.repos.indices {
+            for wtIdx in appState.repos[repoIdx].worktrees.indices {
+                if appState.repos[repoIdx].worktrees[wtIdx].path == worktreePath {
+                    appState.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = terminalID
+                }
+            }
+        }
+        terminalManager.setFocus(terminalID)
+        makePaneFirstResponder(terminalID)
+    }
+
     private func selectWorktree(_ path: String) {
         appState.selectedWorktreePath = path
 
@@ -189,6 +207,29 @@ struct MainWindow: View {
                     appState.repos[repoIdx].worktrees[wtIdx].attention = nil
                 }
             }
+        }
+
+        // Route keyboard to the worktree's currently-focused pane (or the
+        // first leaf if nothing was focused yet) so the user can start
+        // typing immediately after a sidebar click without having to also
+        // click into the terminal.
+        if let wt = appState.worktree(forPath: path),
+           let target = wt.focusedTerminalID ?? wt.splitTree.allLeaves.first {
+            makePaneFirstResponder(target)
+        }
+    }
+
+    /// Promote the terminal's backing `NSView` to the window's first
+    /// responder so keyDown events route to libghostty. Dispatched async
+    /// because the view may have just been created by `createSurfaces` and
+    /// SwiftUI hasn't attached it to the window hierarchy yet — you can't
+    /// `makeFirstResponder` a view that isn't in a window.
+    private func makePaneFirstResponder(_ terminalID: TerminalID) {
+        let tm = terminalManager
+        DispatchQueue.main.async {
+            guard let view = tm.view(for: terminalID),
+                  let window = view.window else { return }
+            window.makeFirstResponder(view)
         }
     }
 

@@ -108,6 +108,85 @@ struct SplitTreeTests {
         #expect(leaves.contains(c))
     }
 
+    @Test func positionOfSoleLeafIsNil() {
+        let id = TerminalID()
+        let tree = SplitTree(root: .leaf(id))
+        #expect(tree.position(of: id) == nil)
+    }
+
+    @Test func positionOfLeftChild() {
+        let left = TerminalID()
+        let right = TerminalID()
+        let tree = SplitTree(root: .split(.init(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: .leaf(left),
+            right: .leaf(right)
+        )))
+        let pos = tree.position(of: left)
+        #expect(pos?.anchorID == right)
+        #expect(pos?.direction == .horizontal)
+        #expect(pos?.placement == .before)
+    }
+
+    @Test func positionOfRightChildInNestedSplit() {
+        let a = TerminalID()
+        let b = TerminalID()
+        let c = TerminalID()
+        // H-split: a | V-split(b over c)
+        let tree = SplitTree(root: .split(.init(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: .leaf(a),
+            right: .split(.init(
+                direction: .vertical,
+                ratio: 0.5,
+                left: .leaf(b),
+                right: .leaf(c)
+            ))
+        )))
+        let pos = tree.position(of: c)
+        #expect(pos?.anchorID == b)
+        #expect(pos?.direction == .vertical)
+        #expect(pos?.placement == .after)
+    }
+
+    @Test func positionSurvivesRemoveAndReinsert() {
+        let a = TerminalID()
+        let b = TerminalID()
+        let c = TerminalID()
+        let tree = SplitTree(root: .split(.init(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: .leaf(a),
+            right: .split(.init(
+                direction: .vertical,
+                ratio: 0.5,
+                left: .leaf(b),
+                right: .leaf(c)
+            ))
+        )))
+        guard let pos = tree.position(of: b) else {
+            Issue.record("expected a position for b")
+            return
+        }
+        let pruned = tree.removing(b)
+        #expect(pruned.allLeaves.contains(pos.anchorID))
+
+        let restored: SplitTree
+        switch pos.placement {
+        case .before:
+            restored = pruned.insertingBefore(b, at: pos.anchorID, direction: pos.direction)
+        case .after:
+            restored = pruned.inserting(b, at: pos.anchorID, direction: pos.direction)
+        }
+        #expect(restored.allLeaves.count == 3)
+        let restoredPos = restored.position(of: b)
+        #expect(restoredPos?.anchorID == pos.anchorID)
+        #expect(restoredPos?.direction == pos.direction)
+        #expect(restoredPos?.placement == pos.placement)
+    }
+
     @Test func codableRoundTrip() throws {
         let a = TerminalID()
         let b = TerminalID()

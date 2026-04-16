@@ -19,8 +19,32 @@ final class GhosttyConfig {
 
     init() {
         config = ghostty_config_new()
+
+        // `load_default_files` only walks the XDG paths
+        // (`$XDG_CONFIG_HOME/ghostty/config`, `~/.config/ghostty/config`).
+        // Most macOS Ghostty users keep their config in the Ghostty.app
+        // sandbox location (`~/Library/Application Support/com.mitchellh.ghostty/config`),
+        // and we want Espalier to honor that without asking the user to
+        // duplicate or symlink the file. So we load the default files first,
+        // then layer Ghostty-macOS's config on top — later loads override
+        // earlier ones.
         ghostty_config_load_default_files(config)
+        Self.loadGhosttyMacOSConfigIfPresent(into: config)
+        // Resolve any `config-file = …` include directives that appeared in
+        // the files we just loaded. No-op if there aren't any.
+        ghostty_config_load_recursive_files(config)
+
         ghostty_config_finalize(config)
+    }
+
+    private static func loadGhosttyMacOSConfigIfPresent(into config: ghostty_config_t) {
+        let url = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first?
+            .appendingPathComponent("com.mitchellh.ghostty")
+            .appendingPathComponent("config")
+        guard let path = url?.path, FileManager.default.fileExists(atPath: path) else { return }
+        path.withCString { ghostty_config_load_file(config, $0) }
     }
 
     deinit {
@@ -224,8 +248,25 @@ final class GhosttyApp {
         rtConfig.write_clipboard_cb = { _, _, _, _, _ in
             // No-op: clipboard writes unsupported at this layer.
         }
-        rtConfig.close_surface_cb = { _, _ in
-            // No-op: surface close handled by a higher layer.
+        rtConfig.close_surface_cb = { userdata, _ in
+            // libghostty passes the *surface's* userdata here (set via
+            // `ghostty_surface_config_s.userdata`). That's our
+            // `SurfaceUserdataBox` — recover it, read the terminalID, and
+            // ask the TerminalManager to tear down the pane.
+            //
+            // The callback may fire from any thread and is invoked while
+            // libghostty is unwinding the surface — we must NOT call
+            // `ghostty_surface_free` synchronously. Hop to main and defer
+            // the actual destruction through `onCloseRequest`.
+            guard let userdata else { return }
+            let box = Unmanaged<SurfaceUserdataBox>.fromOpaque(userdata).takeUnretainedValue()
+            let terminalID = box.terminalID
+            let manager = box.terminalManager
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    manager?.onCloseRequest?(terminalID)
+                }
+            }
         }
 
         self.runtimeConfig = rtConfig

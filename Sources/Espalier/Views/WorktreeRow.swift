@@ -1,9 +1,68 @@
 import SwiftUI
 import EspalierKit
 
+/// Child row under a running worktree showing a single pane's title
+/// (from libghostty's `SET_TITLE` action). Indented to communicate the
+/// hierarchy; the `↳` glyph is there for at-a-glance parsing when the
+/// worktree has multiple panes. The row has no background — the enclosing
+/// worktree block draws one unified highlight across both row types.
+/// Focus within that block is indicated by text emphasis instead.
+struct PaneTitleRow: View {
+    let title: String
+    /// True when this row's worktree is the currently-selected one. Drives
+    /// the baseline brightness of text so non-focused panes in the active
+    /// worktree still look "lit up" vs panes in inactive worktrees.
+    let isActiveWorktree: Bool
+    /// True only for the single pane that currently has keyboard focus
+    /// within the active worktree. Gets the brightest text treatment and a
+    /// bolder `↳` glyph so the user can see "typing goes here".
+    let isFocusedPane: Bool
+    let theme: GhosttyTheme
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Text("↳")
+                .font(.caption)
+                .fontWeight(isFocusedPane ? .bold : .regular)
+                .foregroundColor(theme.foreground.opacity(arrowOpacity))
+            Text(title.isEmpty ? "shell" : title)
+                .font(.caption)
+                .fontWeight(isFocusedPane ? .semibold : .regular)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .foregroundColor(theme.foreground.opacity(titleOpacity))
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 2)
+        .padding(.leading, 28)
+        .padding(.trailing, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+    }
+
+    /// Four-way brightness ladder so the eye can parse the hierarchy at a
+    /// glance: focused-in-active > other-pane-in-active > empty-title-in-active
+    /// > inactive-worktree. The numbers are tuned to the 0.16 alpha block
+    /// highlight so contrast stays clean on both light and dark themes.
+    private var titleOpacity: Double {
+        if isFocusedPane { return 1.0 }
+        if isActiveWorktree { return title.isEmpty ? 0.55 : 0.75 }
+        return title.isEmpty ? 0.35 : 0.55
+    }
+
+    private var arrowOpacity: Double {
+        if isFocusedPane { return 0.75 }
+        return isActiveWorktree ? 0.5 : 0.35
+    }
+}
+
 struct WorktreeRow: View {
     let entry: WorktreeEntry
-    let isSelected: Bool
+    /// True when this is the currently-selected worktree. Used only for
+    /// *text* emphasis; the row's highlight background is drawn by the
+    /// enclosing worktree block in SidebarView, which spans both this row
+    /// and any pane rows beneath it.
+    let isActive: Bool
     /// Primary display label, computed by the sidebar with knowledge of
     /// the worktree's siblings so we can disambiguate same-basename
     /// worktrees.
@@ -26,14 +85,6 @@ struct WorktreeRow: View {
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            // Subtle theme-aware highlight for the active worktree.
-            // Foreground at low opacity reads well on both dark and
-            // light themes; the 16% value gives enough contrast to be
-            // clearly "selected" without shouting.
-            RoundedRectangle(cornerRadius: 5, style: .continuous)
-                .fill(isSelected ? theme.foreground.opacity(0.16) : .clear)
-        )
         .contentShape(Rectangle())
     }
 
@@ -79,7 +130,7 @@ struct WorktreeRow: View {
             } else {
                 Text(displayName)
                     .foregroundColor(
-                        isSelected
+                        isActive
                             ? theme.foreground
                             : theme.foreground.opacity(0.8)
                     )

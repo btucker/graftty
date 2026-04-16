@@ -71,6 +71,38 @@ public struct SplitTree: Codable, Sendable, Equatable {
         guard let root else { return self }
         return SplitTree(root: root.updatingRatio(for: target, ratio: ratio))
     }
+
+    /// The "breadcrumb" position of `terminalID` inside this tree — enough
+    /// information to reinsert the leaf next to its former neighbor after
+    /// it's been removed (e.g. when a pane moves back to a worktree it
+    /// previously lived in). Nil if `terminalID` isn't in the tree or is
+    /// the sole leaf (no sibling to anchor against).
+    ///
+    /// `anchorID` is picked as `allLeaves.first` of the original sibling
+    /// subtree so it remains a useful anchor even if that subtree has
+    /// itself been restructured since the leaf left.
+    public func position(of terminalID: TerminalID) -> LeafPosition? {
+        root?.position(of: terminalID)
+    }
+
+    public struct LeafPosition: Equatable, Sendable {
+        public let anchorID: TerminalID
+        public let direction: SplitDirection
+        public let placement: Placement
+
+        public enum Placement: Sendable {
+            /// Target leaf was the left/top child of its enclosing split.
+            case before
+            /// Target leaf was the right/bottom child of its enclosing split.
+            case after
+        }
+
+        public init(anchorID: TerminalID, direction: SplitDirection, placement: Placement) {
+            self.anchorID = anchorID
+            self.direction = direction
+            self.placement = placement
+        }
+    }
 }
 
 extension SplitTree.Node {
@@ -152,6 +184,28 @@ extension SplitTree.Node {
                 right: newRight!
             ))
         }
+    }
+
+    func position(of terminalID: TerminalID) -> SplitTree.LeafPosition? {
+        guard case .split(let s) = self else { return nil }
+
+        // Direct hit: `terminalID` is a leaf one level below. The *other*
+        // branch of this split is the sibling — pick its first leaf as an
+        // anchor. We prefer a direct match over recursing because the
+        // split's direction + left/right tell us exactly where the leaf
+        // was placed.
+        if case .leaf(let id) = s.left, id == terminalID {
+            guard let anchor = s.right.allLeaves.first else { return nil }
+            return .init(anchorID: anchor, direction: s.direction, placement: .before)
+        }
+        if case .leaf(let id) = s.right, id == terminalID {
+            guard let anchor = s.left.allLeaves.first else { return nil }
+            return .init(anchorID: anchor, direction: s.direction, placement: .after)
+        }
+
+        // Not a direct child of this split — recurse into whichever side
+        // contains the leaf.
+        return s.left.position(of: terminalID) ?? s.right.position(of: terminalID)
     }
 
     func updatingRatio(for target: TerminalID, ratio: Double) -> SplitTree.Node {

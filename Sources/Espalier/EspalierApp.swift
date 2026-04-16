@@ -128,6 +128,34 @@ struct EspalierApp: App {
             }
         }
 
+        // Shell-exit (or libghostty-initiated close) → remove the pane from
+        // the tree and free the surface. Same logic Cmd+W uses, but keyed
+        // on an arbitrary terminalID rather than the currently-focused one.
+        terminalManager.onCloseRequest = { [appState = $appState, tm = terminalManager] terminalID in
+            MainActor.assumeIsolated {
+                Self.closePane(
+                    appState: appState,
+                    terminalManager: tm,
+                    targetID: terminalID
+                )
+            }
+        }
+
+        // Shell reported a new PWD (OSC 7) → if it now sits inside a
+        // different known worktree, re-home the pane under that worktree
+        // in the sidebar. Common trigger: Claude Code or `cd` into a
+        // worktree directory, and the pane should "follow" visually.
+        terminalManager.onPWDChange = { [appState = $appState, tm = terminalManager] terminalID, pwd in
+            MainActor.assumeIsolated {
+                Self.reassignPaneByPWD(
+                    appState: appState,
+                    terminalManager: tm,
+                    terminalID: terminalID,
+                    newPWD: pwd
+                )
+            }
+        }
+
         try? services.socketServer.start()
         // SocketServer already dispatches onMessage to the main queue.
         let binding = $appState
@@ -196,6 +224,17 @@ struct EspalierApp: App {
                     )
                 }
             }
+        }
+
+        // Tell libghostty which pane is active for the currently-selected
+        // worktree, so the cursor blinks in the right place on launch.
+        // AppKit first-responder follows via `SurfaceNSView.viewDidMoveToWindow`
+        // once SwiftUI attaches the view.
+        if let path = appState.selectedWorktreePath,
+           let wt = appState.worktree(forPath: path),
+           wt.state == .running,
+           let target = wt.focusedTerminalID ?? wt.splitTree.allLeaves.first {
+            terminalManager.setFocus(target)
         }
     }
 
@@ -333,19 +372,172 @@ struct EspalierApp: App {
                 let wt = appState.repos[repoIdx].worktrees[wtIdx]
                 if wt.path == path, wt.state == .running,
                    let focused = wt.focusedTerminalID {
-                    terminalManager.destroySurface(terminalID: focused)
-                    let newTree = wt.splitTree.removing(focused)
-                    appState.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
-
-                    if newTree.root == nil {
-                        appState.repos[repoIdx].worktrees[wtIdx].state = .closed
-                    } else {
-                        let newFocus = newTree.allLeaves.first
-                        appState.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = newFocus
-                        if let newFocus { terminalManager.setFocus(newFocus) }
-                    }
+                    Self.closePane(
+                        appState: $appState,
+                        terminalManager: terminalManager,
+                        targetID: focused
+                    )
                     return
                 }
+            }
+        }
+    }
+
+    /// When a pane reports a new working directory via OSC 7, check whether
+    /// it now lives inside a different worktree than where it's currently
+    /// parented in the sidebar — and if so, move it. Matching is
+    /// longest-prefix so nested worktrees (e.g., main checkout at `/r` and
+    /// a linked worktree at `/r/wt/feature`) resolve to the more specific
+    /// path. A PWD outside every known worktree leaves the pane where it
+    /// was — we don't invent a new sidebar entry just because a shell
+    /// wandered off.
+    @MainActor
+    fileprivate static func reassignPaneByPWD(
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager,
+        terminalID: TerminalID,
+        newPWD: String
+    ) {
+        // Find the currently-hosting worktree (by scanning splitTrees) so
+        // we can compare against the target worktree and short-circuit if
+        // nothing has changed.
+        var currentRepoIdx: Int?
+        var currentWorktreeIdx: Int?
+        for (ri, repo) in appState.wrappedValue.repos.enumerated() {
+            for (wi, wt) in repo.worktrees.enumerated() where wt.splitTree.allLeaves.contains(terminalID) {
+                currentRepoIdx = ri
+                currentWorktreeIdx = wi
+            }
+        }
+        guard let currentRepoIdx, let currentWorktreeIdx else { return }
+
+        // Longest-prefix match across all worktrees of all repos. `bestLen`
+        // ensures a nested worktree beats a containing repo's main checkout.
+        var bestRepoIdx: Int?
+        var bestWorktreeIdx: Int?
+        var bestLen = 0
+        let normalizedPWD = Self.withTrailingSlash(newPWD)
+        for (ri, repo) in appState.wrappedValue.repos.enumerated() {
+            for (wi, wt) in repo.worktrees.enumerated() {
+                let candidate = Self.withTrailingSlash(wt.path)
+                if normalizedPWD.hasPrefix(candidate), candidate.count > bestLen {
+                    bestLen = candidate.count
+                    bestRepoIdx = ri
+                    bestWorktreeIdx = wi
+                }
+            }
+        }
+
+        guard let targetRepoIdx = bestRepoIdx,
+              let targetWorktreeIdx = bestWorktreeIdx,
+              (targetRepoIdx, targetWorktreeIdx) != (currentRepoIdx, currentWorktreeIdx)
+        else { return }
+
+        // Remember where this pane was sitting in the source tree *before*
+        // we remove it, so a later return trip can land it in (roughly)
+        // the same spot.
+        let sourceWt = appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx]
+        terminalManager.rememberPosition(
+            terminalID: terminalID,
+            worktreePath: sourceWt.path,
+            in: sourceWt.splitTree
+        )
+
+        // Remove from source tree; if the source becomes empty, transition
+        // its worktree back to .closed so the sidebar reflects that no
+        // panes live there anymore.
+        let sourceTree = sourceWt.splitTree.removing(terminalID)
+        appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].splitTree = sourceTree
+        if sourceTree.root == nil {
+            appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].state = .closed
+            appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].focusedTerminalID = nil
+        } else if sourceWt.focusedTerminalID == terminalID {
+            appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].focusedTerminalID =
+                sourceTree.allLeaves.first
+        }
+
+        // Graft onto the target tree. Prefer a previously-remembered
+        // position (pane is returning to a worktree it once occupied); if
+        // the anchor from that memory is still present, reinsert there so
+        // the layout feels like the pane "came back to its seat." Fall
+        // back to inserting at an arbitrary leaf when no usable
+        // breadcrumb exists.
+        let targetWt = appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx]
+        let targetTree: SplitTree
+        let remembered = terminalManager.rememberedPosition(
+            terminalID: terminalID,
+            worktreePath: targetWt.path
+        )
+        if let remembered, targetWt.splitTree.allLeaves.contains(remembered.anchorID) {
+            switch remembered.placement {
+            case .before:
+                targetTree = targetWt.splitTree.insertingBefore(
+                    terminalID,
+                    at: remembered.anchorID,
+                    direction: remembered.direction
+                )
+            case .after:
+                targetTree = targetWt.splitTree.inserting(
+                    terminalID,
+                    at: remembered.anchorID,
+                    direction: remembered.direction
+                )
+            }
+            terminalManager.forgetPosition(terminalID: terminalID, worktreePath: targetWt.path)
+        } else if let anchor = targetWt.splitTree.allLeaves.first {
+            targetTree = targetWt.splitTree.inserting(terminalID, at: anchor, direction: .horizontal)
+        } else {
+            targetTree = SplitTree(root: .leaf(terminalID))
+        }
+        appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].splitTree = targetTree
+        appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].state = .running
+        appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].focusedTerminalID = terminalID
+
+        // Follow the pane with the UI: switch the selected worktree to the
+        // one the terminal just moved into, and re-establish libghostty +
+        // AppKit focus so typing continues to route to this pane without
+        // the user having to click. The previous sidebar highlight (on the
+        // source worktree) naturally moves with `selectedWorktreePath`.
+        let targetPath = appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].path
+        appState.wrappedValue.selectedWorktreePath = targetPath
+        terminalManager.setFocus(terminalID)
+    }
+
+    /// Ensure a path ends with `/` so prefix matching can't falsely match
+    /// `/r/feat` against `/r/feature`. We normalize both sides.
+    private static func withTrailingSlash(_ path: String) -> String {
+        path.hasSuffix("/") ? path : path + "/"
+    }
+
+    /// Shared close-pane implementation used by Cmd+W and libghostty's
+    /// `close_surface_cb` (shell exit). Removes the pane from its worktree's
+    /// split tree, destroys the surface, promotes focus to a sibling, and
+    /// transitions the worktree to `.closed` when the last pane goes away.
+    /// Idempotent: no-op if the terminal isn't in any tree.
+    @MainActor
+    fileprivate static func closePane(
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager,
+        targetID: TerminalID
+    ) {
+        for repoIdx in appState.wrappedValue.repos.indices {
+            for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
+                let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                guard wt.splitTree.allLeaves.contains(targetID) else { continue }
+
+                terminalManager.destroySurface(terminalID: targetID)
+                let newTree = wt.splitTree.removing(targetID)
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
+
+                if newTree.root == nil {
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nil
+                } else {
+                    let newFocus = newTree.allLeaves.first
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = newFocus
+                    if let newFocus { terminalManager.setFocus(newFocus) }
+                }
+                return
             }
         }
     }
