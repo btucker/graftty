@@ -401,3 +401,34 @@ User reported: "it doesn't work to switch between worktrees anymore. also it doe
 - If ghostty_surface_key handles copy bindings internally, we can drop the "Cmd = pass through to AppKit" shortcut.
 - scrollWheel → ghostty_surface_mouse_scroll for scrollback.
 - NSTextInputClient for proper IME/dead-key support.
+
+## Cycle 18 — 2026-04-16 (follow-up: port Ghostty's text-field rules for keyDown)
+
+### User direction
+"All of this key handling stuff should be based on how ghostty handles this."
+
+### What I did
+Ran a research agent against https://github.com/ghostty-org/ghostty — specifically `macos/Sources/Ghostty/Surface View/SurfaceView_AppKit.swift`, `NSEvent+Extension.swift`, and `Ghostty.Input.swift`. Got a full report on how the upstream macOS frontend builds `ghostty_input_key_s` and which fields to populate from where.
+
+### Ported pieces (MVP, matches upstream semantics)
+- `sendKeyEvent(_ event: NSEvent, action:)` — the single choke point, now used from both `keyDown` and `keyUp`. Mirrors Ghostty's `keyAction`.
+- `ghosttyTextField(for: NSEvent) -> String?` — mirrors upstream `NSEvent.ghosttyCharacters`:
+  - Single control char (< 0x20) → nil. Lets libghostty encode from keycode+mods (fixes Backspace, Tab, Return, Ctrl+letter).
+  - Single macOS function-key PUA char (0xF700..=0xF8FF) → nil. Lets libghostty emit the proper CSI sequence (fixes arrow keys, F-keys, Home/End/PgUp/PgDn).
+  - Otherwise → the string as-is.
+- `consumed_mods`: upstream's documented heuristic — subtract `[.control, .command]` from the modifier set and translate. Explains: "control and command never contribute to the translation of text, assume everything else did."
+- `unshifted_codepoint`: first scalar of `event.characters(byApplyingModifiers: [])`, per upstream's note that `charactersIgnoringModifiers` behaves wrong under ctrl.
+- Keep `keycode = UInt32(event.keyCode)` — raw macOS virtual keycode. Libghostty maps those internally; Ghostty's own Swift side does not translate.
+- `action` now distinguishes PRESS vs REPEAT based on `event.isARepeat`, and we added `keyUp` → `GHOSTTY_ACTION_RELEASE`.
+
+### Still not ported (follow-ups)
+- `interpretKeyEvents([event])` + `NSTextInputClient` dance (insertText accumulator, setMarkedText/unmarkText/syncPreedit). Needed for real IME, composed characters, and dead keys.
+- `performKeyEquivalent` redispatch trick for Cmd-key encoding (lets libghostty see Cmd events even when AppKit eats them first). We still short-circuit Cmd to super.keyDown.
+- `flagsChanged` (modifier-only press/release reports).
+- Mouse handlers (`mouseDown/Up`, `otherMouseDown/Up`, `rightMouseDown/Up`, `mouseEntered/Exited`, `mouseMoved`, `mouseDragged`, `scrollWheel`, `pressureChange`). Especially scroll for scrollback.
+- Tracking area setup (`updateTrackingAreas` with `.mouseEnteredAndExited, .mouseMoved, .inVisibleRect, .activeAlways`).
+- `ghostty_surface_set_content_scale` on `viewDidChangeBackingProperties`.
+
+### Verified
+- Clean build, 59/59 tests pass.
+- Deployed. Needs user verification that Backspace/arrows/Return now behave. The key fix: control-byte and PUA text is now NULLed out, letting libghostty's own key encoder do its job.

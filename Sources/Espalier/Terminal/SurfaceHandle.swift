@@ -159,30 +159,93 @@ final class SurfaceNSView: NSView {
             return
         }
 
-        // Use `ghostty_surface_key` rather than `ghostty_surface_text` so
-        // libghostty handles special-key translation (Backspace, arrows,
-        // Home/End, Tab, Enter, function keys). `ghostty_surface_text` is
-        // for already-translated text (e.g., from NSTextInputClient's
-        // insertText); raw keyDown should go through the key path so the
-        // right terminal escape sequences get emitted.
-        //
-        // The `text` field is the user-visible characters the keystroke
-        // would produce with modifiers applied (same as `event.characters`).
-        // `keycode` is macOS's NSEvent.keyCode — libghostty's own key
-        // translation table has mappings, and when it doesn't, the `text`
-        // field carries the intended input.
-        let chars = event.characters ?? ""
-        chars.withCString { cstr in
-            var keyEvent = ghostty_input_key_s()
-            keyEvent.action = GHOSTTY_ACTION_PRESS
-            keyEvent.mods = Self.ghosttyMods(from: mods)
-            keyEvent.consumed_mods = ghostty_input_mods_e(GHOSTTY_MODS_NONE.rawValue)
-            keyEvent.keycode = UInt32(event.keyCode)
-            keyEvent.text = cstr
-            keyEvent.unshifted_codepoint = chars.unicodeScalars.first.map { $0.value } ?? 0
-            keyEvent.composing = false
+        sendKeyEvent(event, action: event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS)
+    }
+
+    override func keyUp(with event: NSEvent) {
+        guard surface != nil else {
+            super.keyUp(with: event)
+            return
+        }
+        sendKeyEvent(event, action: GHOSTTY_ACTION_RELEASE)
+    }
+
+    /// Build a `ghostty_input_key_s` from an NSEvent and dispatch it.
+    ///
+    /// Text-field rules (ported from Ghostty's upstream macOS frontend —
+    /// `NSEvent.ghosttyCharacters` + `SurfaceView_AppKit.keyAction`):
+    ///
+    /// - If `event.characters` is a single control byte (< 0x20), pass
+    ///   `text = NULL`. libghostty's key encoder handles control-char
+    ///   emission based on keycode+mods (e.g. Ctrl+Enter vs Enter).
+    /// - If `event.characters` starts with a macOS function-key PUA char
+    ///   (0xF700..=0xF8FF — arrow keys, F-keys, Home/End, etc.), pass
+    ///   `text = NULL`. Those chars mean nothing to a PTY; libghostty
+    ///   emits the right CSI sequence from the keycode.
+    /// - Otherwise (regular typed characters), pass the UTF-8 bytes.
+    ///
+    /// `keycode` is the raw macOS virtual keycode. libghostty's Zig code
+    /// maps it to its internal key representation; don't translate here.
+    ///
+    /// `consumed_mods` heuristic: control and command never contribute
+    /// to text translation; everything else (shift, option, capsLock) did.
+    private func sendKeyEvent(_ event: NSEvent, action: ghostty_input_action_e) {
+        guard let surface else { return }
+
+        let flags = event.modifierFlags
+        let mods = Self.ghosttyMods(from: flags)
+        let consumedMods = Self.ghosttyMods(
+            from: flags.subtracting([.control, .command])
+        )
+
+        // Compute unshifted_codepoint — first scalar of the characters
+        // with NO modifiers applied. Ghostty uses byApplyingModifiers: []
+        // rather than charactersIgnoringModifiers because the latter
+        // changes behavior under ctrl and we don't want that.
+        var unshiftedCodepoint: UInt32 = 0
+        if event.type == .keyDown || event.type == .keyUp {
+            if let chars = event.characters(byApplyingModifiers: []),
+               let first = chars.unicodeScalars.first {
+                unshiftedCodepoint = first.value
+            }
+        }
+
+        var keyEvent = ghostty_input_key_s()
+        keyEvent.action = action
+        keyEvent.mods = mods
+        keyEvent.consumed_mods = consumedMods
+        keyEvent.keycode = UInt32(event.keyCode)
+        keyEvent.unshifted_codepoint = unshiftedCodepoint
+        keyEvent.composing = false
+
+        let textForPTY = Self.ghosttyTextField(for: event)
+        if let text = textForPTY, !text.isEmpty {
+            _ = text.withCString { cstr in
+                keyEvent.text = cstr
+                return ghostty_surface_key(surface, keyEvent)
+            }
+        } else {
+            keyEvent.text = nil
             _ = ghostty_surface_key(surface, keyEvent)
         }
+    }
+
+    /// Compute the `text` field for `ghostty_input_key_s` following
+    /// Ghostty's upstream `ghosttyCharacters` rules — returns nil for
+    /// events that should be encoded from keycode alone (control chars,
+    /// arrow/function PUA range).
+    private static func ghosttyTextField(for event: NSEvent) -> String? {
+        guard let chars = event.characters, !chars.isEmpty else { return nil }
+        if chars.count == 1, let scalar = chars.unicodeScalars.first {
+            let v = scalar.value
+            // Control characters: let libghostty encode.
+            if v < 0x20 { return nil }
+            // macOS private-use range for function keys (arrows, F1-F12,
+            // Home/End/PageUp/PageDown, etc.). These chars mean nothing
+            // to a shell; libghostty emits the right CSI sequence.
+            if v >= 0xF700 && v <= 0xF8FF { return nil }
+        }
+        return chars
     }
 
     /// Translate an NSEvent modifier mask into libghostty's mod bitfield.
