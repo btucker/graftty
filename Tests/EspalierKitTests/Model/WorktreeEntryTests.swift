@@ -11,6 +11,31 @@ struct WorktreeEntryTests {
         #expect(entry.attention == nil)
     }
 
+    @Test func displayNameUsesLastComponentWhenUnique() {
+        let main = WorktreeEntry(path: "/Users/ben/projects/myapp", branch: "main")
+        let feature = WorktreeEntry(path: "/Users/ben/worktrees/myapp/feature-auth", branch: "feature/auth")
+        let siblings = [main.path, feature.path]
+
+        #expect(main.displayName(amongSiblingPaths: siblings) == "myapp")
+        #expect(feature.displayName(amongSiblingPaths: siblings) == "feature-auth")
+    }
+
+    @Test func displayNameDisambiguatesCollisionsWithParent() {
+        // Andy's actual dogfood state: two worktrees, both ending in the
+        // repo name, but under different parent directories.
+        let main = WorktreeEntry(path: "/Users/ben/projects/blindspots", branch: "main")
+        let codex = WorktreeEntry(path: "/Users/ben/.codex/worktrees/6750/blindspots", branch: "(detached)")
+        let siblings = [main.path, codex.path]
+
+        #expect(main.displayName(amongSiblingPaths: siblings) == "projects/blindspots")
+        #expect(codex.displayName(amongSiblingPaths: siblings) == "6750/blindspots")
+    }
+
+    @Test func displayNameFallsBackToBranchWhenPathIsEmpty() {
+        let wt = WorktreeEntry(path: "", branch: "fallback-branch")
+        #expect(wt.displayName(amongSiblingPaths: [""]) == "fallback-branch")
+    }
+
     @Test func attentionCanBeSet() {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
         entry.attention = Attention(text: "Build failed", timestamp: Date())

@@ -262,9 +262,35 @@ Added 2 unit tests: `cliTrackingCheckRoundTripsThroughStateJSON` (the exact AppS
 - Fresh launch with cleaned state.json + cleaned `Saved Application State` + cleaned defaults: single window, title "Espalier", no modal dialog.
 - 56/56 tests still pass; build clean.
 
+## Cycle 13 — 2026-04-16
+
+### Explored
+- User launched the app and asked: "what does '(detached)' mean in the sidebar?" Opaque git-speak was leaking into the UI because `GitWorktreeDiscovery` passes the literal `detached` / `bare` sentinels through as branch labels.
+- Followed up: "perhaps it should be the name of the worktree, not the name of the branch?"
+- Follow-up #2: "I don't think it's going to work to only use the final directory part of the worktree path as the name. because then there are collisions" — which was the state we hit when both worktrees (main at `/Users/btucker/projects/blindspots` and a Codex-created one at `/Users/btucker/.codex/worktrees/6750/blindspots`) ended in the same last component.
+
+### Fixed
+- Added `WorktreeEntry.displayName(amongSiblingPaths:)` — returns the last path component by default; when a sibling in the same repo has the same last component, falls back to `parent/last` to disambiguate. Empty-path fallback returns the branch name.
+- `SidebarView.repoSection` computes `repo.worktrees.map(\.path)` once and passes the resolved label to `WorktreeRow`.
+- `WorktreeRow` now takes `displayName: String` as a property and renders `<displayName> <dim branch>` in an `HStack`, skipping the branch piece when it equals `displayName`. Stale-worktree strikethrough styling preserved.
+
+### Verified
+- 59/59 tests pass. Added 3 tests (`displayNameUsesLastComponentWhenUnique`, `displayNameDisambiguatesCollisionsWithParent`, `displayNameFallsBackToBranchWhenPathIsEmpty`). The collision test mirrors Andy's exact dogfood state.
+- Deployed `~/Applications/Espalier.app`, screenshot shows two visually-distinct rows: "projects/blindsp… main" and "6750/blinds… (detached)" with the branch piece dimmed. Both uniquely identifiable even when truncated.
+
+### Follow-up (same cycle, per user feedback)
+- User: "let's special case the main checkout of the repo" + "maybe a different symbol for the main checkout & the worktrees?"
+- For the main checkout (`path == repo.path`), sidebar label is now just the branch name (no disambiguated "projects/blindspots" noise). Linked worktrees keep the collision-aware label.
+- Added a leading SF Symbol to `WorktreeRow`: `house` for the main checkout, `arrow.triangle.branch` for linked worktrees. Subtle but instantly distinguishes the canonical source from ephemeral branch workspaces.
+- `SidebarView.label(for:in:)` helper special-cases main; computed once per worktree and handed to `WorktreeRow` along with an `isMainCheckout: Bool`.
+- Deployed. Screenshot confirms clean layout: main checkout shows as "🏠 main", linked worktrees show as "🌿 6750/bli… (detached)".
+
+### Separately observed (noted for next cycle)
+- AppleScript `keystroke` sends to the frontmost process, but keystrokes don't appear to reach the libghostty `NSTextInputClient` surface — the terminal prompt stayed unchanged despite sending `echo hello`. Real user keyboard input works (the prompt is visible and running). This is a test/automation limitation, not a product bug.
+- The sidebar labels truncate at narrow widths. Full paths would be useful in a tooltip / popover. Polish item.
+
 ### Try next cycle
-- Actually dogfood opening a worktree and using the terminal (the pivot the user wants). Add the espalier repo itself, click a worktree, type in the ghostty surface.
-- NSSplitView autosave vs state.json sovereignty (from cycle 6).
-- The socket server's `handleClient` does a blocking `read` loop. A slow client could starve others. `SO_RCVTIMEO` on the client fd would bound it.
-- No `applicationWillTerminate` save. `onChange(of: appState)` covers most paths but the last few ms before quit might not flush to disk.
-- Cycle 11's `NSScreen.main` read in a computed property might return nil if AppKit hasn't enumerated screens yet. Harmless fallback; low priority.
+- NSSplitView autosave vs state.json sovereignty.
+- Tooltip or popover with full worktree path.
+- The socket server's `handleClient` does a blocking `read` loop — slow clients could starve others.
+- No `applicationWillTerminate` save belt-and-suspenders.

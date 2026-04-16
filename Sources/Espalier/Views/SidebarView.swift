@@ -48,7 +48,9 @@ struct SidebarView: View {
             ForEach(repo.worktrees) { worktree in
                 WorktreeRow(
                     entry: worktree,
-                    isSelected: appState.selectedWorktreePath == worktree.path
+                    isSelected: appState.selectedWorktreePath == worktree.path,
+                    displayName: label(for: worktree, in: repo),
+                    isMainCheckout: worktree.path == repo.path
                 )
                 .onTapGesture {
                     onSelect(worktree.path)
@@ -61,6 +63,17 @@ struct SidebarView: View {
             Label(repo.displayName, systemImage: "folder.fill")
                 .fontWeight(.semibold)
         }
+    }
+
+    /// The sidebar label for a worktree, special-cased so the main checkout
+    /// shows just its branch name (no disambiguation noise — the sidebar
+    /// icon differentiates it from linked worktrees), while linked
+    /// worktrees show their collision-aware directory name.
+    private func label(for worktree: WorktreeEntry, in repo: RepoEntry) -> String {
+        if worktree.path == repo.path {
+            return worktree.branch
+        }
+        return worktree.displayName(amongSiblingPaths: repo.worktrees.map(\.path))
     }
 
     @ViewBuilder
