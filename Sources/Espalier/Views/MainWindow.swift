@@ -6,6 +6,10 @@ struct MainWindow: View {
     @Binding var appState: AppState
     @ObservedObject var terminalManager: TerminalManager
 
+    /// Debounces writes of `sidebarWidth` to AppState so a drag doesn't
+    /// generate hundreds of save-to-disk events.
+    @State private var pendingSidebarWidthTask: Task<Void, Never>?
+
     var body: some View {
         NavigationSplitView(
             columnVisibility: .constant(.all)
@@ -50,6 +54,64 @@ struct MainWindow: View {
                 }
             }
         }
+        .trackWindowFrame(
+            initialFrame: initialWindowRect
+        ) { [$appState] frame in
+            let newFrame = WindowFrame(
+                x: frame.origin.x,
+                y: frame.origin.y,
+                width: frame.size.width,
+                height: frame.size.height
+            )
+            if $appState.wrappedValue.windowFrame != newFrame {
+                $appState.wrappedValue.windowFrame = newFrame
+            }
+        }
+        .onPreferenceChange(SidebarWidthKey.self) { [$appState, $pendingSidebarWidthTask] width in
+            // Debounce by 250ms so a drag doesn't write on every layout
+            // pass. Only writes if the value actually changed (value-equality
+            // check prevents feedback loops with the onChange save handler).
+            $pendingSidebarWidthTask.wrappedValue?.cancel()
+            $pendingSidebarWidthTask.wrappedValue = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(250))
+                if Task.isCancelled { return }
+                if $appState.wrappedValue.sidebarWidth != width {
+                    $appState.wrappedValue.sidebarWidth = width
+                }
+            }
+        }
+    }
+
+    /// The initial window rect to apply on first attach.
+    ///
+    /// Always returns a non-nil value: SwiftUI's `.defaultSize(width:height:)`
+    /// on the scene is ignored when NavigationSplitView's detail content has
+    /// an intrinsic size (e.g. `ContentUnavailableView`), so the window comes
+    /// up at the content's minimum — roughly 472×312 on macOS 14 — which is
+    /// way too small to be usable. Forcing the frame via `NSWindow.setFrame`
+    /// in `WindowFrameTracker` is the only reliable way.
+    ///
+    /// Priority:
+    /// 1. Saved non-default frame, if it overlaps a connected screen → apply as-is.
+    /// 2. Otherwise → center the default size (from `WindowFrame()`) on the
+    ///    primary screen's visible frame. This covers both first launch and
+    ///    the "user unplugged the external monitor the window was parked on"
+    ///    case.
+    private var initialWindowRect: CGRect? {
+        let savedFrame = appState.windowFrame
+        let defaultFrame = WindowFrame()
+        if savedFrame != defaultFrame {
+            let rect = CGRect(x: savedFrame.x, y: savedFrame.y,
+                              width: savedFrame.width, height: savedFrame.height)
+            if WindowFrameTracker.Coordinator.frameIsVisibleOnAnyScreen(rect) {
+                return rect
+            }
+        }
+        let screen = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        let originX = screen.minX + (screen.width - defaultFrame.width) / 2
+        let originY = screen.minY + (screen.height - defaultFrame.height) / 2
+        return CGRect(x: originX, y: originY,
+                      width: defaultFrame.width, height: defaultFrame.height)
     }
 
     private var selectedRepo: RepoEntry? {

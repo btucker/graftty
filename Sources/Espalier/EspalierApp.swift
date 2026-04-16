@@ -39,14 +39,13 @@ struct EspalierApp: App {
                     try? newState.save(to: AppState.defaultDirectory)
                 }
         }
-        .defaultSize(
-            width: appState.windowFrame.width,
-            height: appState.windowFrame.height
-        )
-        .defaultPosition(.init(
-            x: appState.windowFrame.x,
-            y: appState.windowFrame.y
-        ))
+        // Default size only. Restoration of the exact saved frame is handled
+        // by WindowFrameTracker (see MainWindow), which applies the saved
+        // NSWindow.frame directly after the window is created. We cannot use
+        // SwiftUI's `.defaultPosition(_:)` for this because on macOS 14 it
+        // takes a UnitPoint (normalized 0..1), not pixel coordinates — passing
+        // pixel values is silently a no-op.
+        .defaultSize(width: 1400, height: 900)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Add Repository...") {
@@ -131,7 +130,6 @@ struct EspalierApp: App {
 
         reconcileOnLaunch()
         restoreRunningWorktrees()
-        offerCLIInstallIfNeeded()
     }
 
     private func reconcileOnLaunch() {
@@ -159,19 +157,6 @@ struct EspalierApp: App {
                     appState.repos[repoIdx].worktrees[wtIdx].branch = match.branch
                 }
             }
-        }
-    }
-
-    private func offerCLIInstallIfNeeded() {
-        let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: "cliInstallOffered") else { return }
-        defaults.set(true, forKey: "cliInstallOffered")
-
-        let symlinkPath = "/usr/local/bin/espalier"
-        guard !FileManager.default.fileExists(atPath: symlinkPath) else { return }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            installCLI()
         }
     }
 
@@ -311,28 +296,65 @@ struct EspalierApp: App {
 
     private func installCLI() {
         let bundleCLI = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/MacOS/espalier")
+            .appendingPathComponent("Contents/Helpers/espalier")
         let symlink = "/usr/local/bin/espalier"
 
+        switch CLIInstaller.plan(source: bundleCLI.path, destination: symlink) {
+        case .directSymlink(let source, let destination):
+            runDirectSymlink(source: source, destination: destination)
+        case .showSudoCommand(let command, let destination):
+            showSudoInstallAlert(command: command, destination: destination)
+        }
+    }
+
+    private func runDirectSymlink(source: String, destination: String) {
         let alert = NSAlert()
         alert.messageText = "Install CLI Tool"
-        alert.informativeText = "Create a symlink at \(symlink) pointing to the Espalier CLI?"
+        alert.informativeText = "Create a symlink at \(destination) pointing to the Espalier CLI?"
         alert.addButton(withTitle: "Install")
         alert.addButton(withTitle: "Cancel")
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         do {
-            try? FileManager.default.removeItem(atPath: symlink)
+            try? FileManager.default.removeItem(atPath: destination)
             try FileManager.default.createSymbolicLink(
-                atPath: symlink,
-                withDestinationPath: bundleCLI.path
+                atPath: destination,
+                withDestinationPath: source
             )
         } catch {
             let errorAlert = NSAlert()
             errorAlert.messageText = "Installation Failed"
             errorAlert.informativeText = error.localizedDescription
             errorAlert.runModal()
+        }
+    }
+
+    /// Parent directory isn't writable (e.g. /usr/local/bin owned by root).
+    /// Surface a sudo command the user can copy and run in Terminal.
+    private func showSudoInstallAlert(command: String, destination: String) {
+        let alert = NSAlert()
+        alert.messageText = "Administrator Access Required"
+        alert.informativeText = "Installing to \(destination) requires sudo. Copy this command and run it in Terminal:"
+        alert.addButton(withTitle: "Copy Command")
+        alert.addButton(withTitle: "Cancel")
+
+        // Attach a selectable, read-only text field so the user can also
+        // eyeball / manually select the exact command.
+        let textField = NSTextField(string: command)
+        textField.isEditable = false
+        textField.isSelectable = true
+        textField.drawsBackground = true
+        textField.backgroundColor = .textBackgroundColor
+        textField.frame = NSRect(x: 0, y: 0, width: 440, height: 44)
+        textField.isBordered = true
+        textField.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        alert.accessoryView = textField
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(command, forType: .string)
         }
     }
 }

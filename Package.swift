@@ -7,7 +7,11 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [
         .executable(name: "Espalier", targets: ["Espalier"]),
-        .executable(name: "espalier", targets: ["EspalierCLI"]),
+        // Product name "espalier-cli" (not "espalier") to avoid case-insensitive
+        // filesystem collision with the "Espalier" app binary. When the app is
+        // bundled for distribution, this binary is installed as "espalier"
+        // at Espalier.app/Contents/MacOS/espalier per ATTN-1.1.
+        .executable(name: "espalier-cli", targets: ["EspalierCLI"]),
         .library(name: "EspalierKit", targets: ["EspalierKit"]),
     ],
     dependencies: [

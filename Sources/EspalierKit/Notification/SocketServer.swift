@@ -7,10 +7,23 @@ public final class SocketServer: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.espalier.socket-server")
     public var onMessage: ((NotificationMessage) -> Void)?
 
+    /// Maximum path length for a Unix domain socket on macOS. `sockaddr_un.sun_path`
+    /// is 104 bytes — accounting for the null terminator, the path must be ≤103
+    /// bytes when encoded as UTF-8.
+    public static let maxPathBytes = 103
+
     public init(socketPath: String) { self.socketPath = socketPath }
     deinit { stop() }
 
     public func start() throws {
+        // Validate path length BEFORE touching anything. bind() would silently
+        // accept a truncated path and create the socket at the wrong location,
+        // which is worse than erroring out here.
+        let pathBytes = socketPath.utf8.count
+        guard pathBytes <= Self.maxPathBytes else {
+            throw SocketServerError.socketPathTooLong(bytes: pathBytes, maxBytes: Self.maxPathBytes)
+        }
+
         unlink(socketPath)
         listenFD = socket(AF_UNIX, SOCK_STREAM, 0)
         guard listenFD >= 0 else { throw SocketServerError.socketCreationFailed }
@@ -71,4 +84,5 @@ public enum SocketServerError: Error {
     case socketCreationFailed
     case bindFailed(errno: Int32)
     case listenFailed(errno: Int32)
+    case socketPathTooLong(bytes: Int, maxBytes: Int)
 }
