@@ -169,9 +169,29 @@ Added 2 unit tests: `cliTrackingCheckRoundTripsThroughStateJSON` (the exact AppS
   - buttons: `Copy Command` | `Cancel`
 - Clicking Copy Command pastes the correct, escape-clean command to the clipboard. Verified via `pbpaste`.
 
+## Cycle 8 — 2026-04-16
+
+### Explored
+- Stale socket cleanup. Wanted to confirm the claimed `unlink(socketPath)`-before-bind behavior handles the kill -9 case. Ran: launch bundled app → `kill -9 <pid>` → relaunch → `espalier notify`. Worked: socket inode changed across restarts (416017475 → 416017533), post-crash notify landed in state.json with the attention field populated. Recovery works.
+
+### Broke (bonus find while writing the regression test)
+- **`sockaddr_un.sun_path` truncation bug.** `SocketServer.start()` used `strlcpy(dest, ptr, 104)` to copy the path into `sun_path`. Any path whose UTF-8 length exceeds 103 bytes silently truncates and `bind()` creates the socket at the wrong location. The pre-existing `serverReceivesMessage` test was only passing by accident — both server and client went through the same truncation so they connected at the same corrupted path. My new test wrote a stale seed file at the full path, then found after `server.start()` that the dir contained a file named `te` (test.sock truncated).
+- Production path (`~/Library/Application Support/Espalier/espalier.sock`) is 65 bytes for this user, safely under the limit. But a user with a long username (>50 chars) would silently get a broken socket.
+
+### Fixed
+- `SocketServer.maxPathBytes` public constant = 103 (accounts for null terminator in 104-byte buffer).
+- `SocketServer.start()` now validates `socketPath.utf8.count <= maxPathBytes` before doing anything else, throwing `SocketServerError.socketPathTooLong(bytes:maxBytes:)` on failure.
+- Updated the two existing integration tests to use `/tmp/espalier-sock-<8-char-UUID>/s` (short path, ~30 bytes) instead of `FileManager.default.temporaryDirectory` (`/var/folders/sl/...` which is already ~60 bytes before any filename).
+
+### Verified
+- Added 2 tests:
+  - `startReplacesStaleSocketFile`: seeds a stale regular file at socketPath, calls `start()`, asserts the replaced file is now a socket with a different inode, then sends a message end-to-end to prove the server is actually listening (not just occupying a filename).
+  - `startRejectsPathLongerThanSunPath`: calls `start()` with a 104-byte path, asserts it throws `SocketServerError`.
+- 55/55 tests pass.
+
 ### Try next cycle
 - NSSplitView autosave vs state.json sovereignty (from cycle 6).
 - Fallback window sized 260×234 on first launch — probably NSWindowRestoration fighting `.defaultSize`.
-- Stale socket file scenario — `SocketServer.start` calls `unlink(socketPath)` first, so kill -9 recovery should work, but untested.
 - Race in `offerCLIInstallIfNeeded`: `DispatchQueue.main.asyncAfter(deadline: .now() + 1)`. If the app quits within that second, the prompt fires against a dying window.
-- The `installCLI` happy-path confirmation dialog still asks "Create a symlink at..." — Andy clicked "Install CLI Tool..." already. That second prompt is friction. Consider skipping.
+- The `installCLI` happy-path confirmation dialog still asks "Create a symlink at..." — Andy clicked "Install CLI Tool..." already. That second prompt is friction.
+- `SocketClient` (in the CLI) has the same `strlcpy(..., 104)` pattern. It should also validate path length upfront. Otherwise a user with a long-path bundle location gets an obscure connect() error.
