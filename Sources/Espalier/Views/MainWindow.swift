@@ -56,6 +56,9 @@ struct MainWindow: View {
                             terminalManager.setFocus(terminalID)
                         }
                     )
+                    // A hair of breathing room so terminal text doesn't
+                    // slam into the sidebar divider.
+                    .padding(.leading, 6)
                 } else {
                     ContentUnavailableView(
                         "No Worktree Selected",

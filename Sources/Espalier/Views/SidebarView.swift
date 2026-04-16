@@ -76,9 +76,14 @@ struct SidebarView: View {
                 }
             }
         } label: {
-            Label(repo.displayName, systemImage: "folder.fill")
-                .fontWeight(.semibold)
-                .foregroundColor(theme.foreground)
+            Label {
+                Text(repo.displayName)
+                    .foregroundColor(theme.foreground)
+                    .fontWeight(.semibold)
+            } icon: {
+                Image(systemName: "folder.fill")
+                    .foregroundStyle(theme.foreground.opacity(0.85))
+            }
         }
     }
 

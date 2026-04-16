@@ -23,8 +23,17 @@ struct WorktreeRow: View {
             Spacer()
             attentionBadge
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
         .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            // Subtle theme-aware highlight for the active worktree.
+            // Foreground at low opacity reads well on both dark and
+            // light themes; the 16% value gives enough contrast to be
+            // clearly "selected" without shouting.
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(isSelected ? theme.foreground.opacity(0.16) : .clear)
+        )
         .contentShape(Rectangle())
     }
 
