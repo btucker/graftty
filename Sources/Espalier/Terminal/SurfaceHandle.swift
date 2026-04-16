@@ -149,42 +149,51 @@ final class SurfaceNSView: NSView {
             return
         }
 
-        // Don't forward Cmd-modified keys to the PTY as text. Without this,
-        // Cmd+C in the terminal would type "c" into the shell instead of
-        // invoking a copy binding; Cmd+V would type "v"; etc. Pass those
-        // events up the responder chain so NSApplication can dispatch them
-        // to matching menu items (Cmd+D split, Cmd+W close pane, etc.) or
-        // leave them unhandled.
-        //
-        // Option (Alt) is NOT filtered here — on macOS, Option+letter
-        // produces real composed characters (Option+o → ø, Option+u → diaeresis)
-        // that the user intends to see in the terminal.
-        //
-        // Future polish: use `ghostty_surface_key` with a fully-populated
-        // `ghostty_input_key_s` to run the event through libghostty's
-        // binding table and get proper copy/paste/scroll actions.
+        // Cmd-modified keys go up the responder chain so AppKit can dispatch
+        // them to menu items (Cmd+D split, Cmd+W close pane, etc.) or leave
+        // them unhandled. Option is NOT filtered — `Option+o → ø` etc.
+        // produce composed characters the user wants in the terminal.
         let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         if mods.contains(.command) {
             super.keyDown(with: event)
             return
         }
 
-        // event.characters includes the translated form for regular keys,
-        // Enter (\r), Backspace (\u{7F}), Tab (\t), arrows (CSI sequences),
-        // etc. Forward the bytes to libghostty's text input path, which
-        // writes them to the PTY.
-        guard let text = event.characters, !text.isEmpty else {
-            super.keyDown(with: event)
-            return
+        // Use `ghostty_surface_key` rather than `ghostty_surface_text` so
+        // libghostty handles special-key translation (Backspace, arrows,
+        // Home/End, Tab, Enter, function keys). `ghostty_surface_text` is
+        // for already-translated text (e.g., from NSTextInputClient's
+        // insertText); raw keyDown should go through the key path so the
+        // right terminal escape sequences get emitted.
+        //
+        // The `text` field is the user-visible characters the keystroke
+        // would produce with modifiers applied (same as `event.characters`).
+        // `keycode` is macOS's NSEvent.keyCode — libghostty's own key
+        // translation table has mappings, and when it doesn't, the `text`
+        // field carries the intended input.
+        let chars = event.characters ?? ""
+        chars.withCString { cstr in
+            var keyEvent = ghostty_input_key_s()
+            keyEvent.action = GHOSTTY_ACTION_PRESS
+            keyEvent.mods = Self.ghosttyMods(from: mods)
+            keyEvent.consumed_mods = ghostty_input_mods_e(GHOSTTY_MODS_NONE.rawValue)
+            keyEvent.keycode = UInt32(event.keyCode)
+            keyEvent.text = cstr
+            keyEvent.unshifted_codepoint = chars.unicodeScalars.first.map { $0.value } ?? 0
+            keyEvent.composing = false
+            _ = ghostty_surface_key(surface, keyEvent)
         }
-        let bytes = Array(text.utf8)
-        bytes.withUnsafeBufferPointer { buf in
-            if let base = buf.baseAddress {
-                base.withMemoryRebound(to: CChar.self, capacity: buf.count) { ptr in
-                    ghostty_surface_text(surface, ptr, UInt(buf.count))
-                }
-            }
-        }
+    }
+
+    /// Translate an NSEvent modifier mask into libghostty's mod bitfield.
+    private static func ghosttyMods(from flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
+        var raw: UInt32 = 0
+        if flags.contains(.shift)   { raw |= GHOSTTY_MODS_SHIFT.rawValue }
+        if flags.contains(.control) { raw |= GHOSTTY_MODS_CTRL.rawValue }
+        if flags.contains(.option)  { raw |= GHOSTTY_MODS_ALT.rawValue }
+        if flags.contains(.command) { raw |= GHOSTTY_MODS_SUPER.rawValue }
+        if flags.contains(.capsLock) { raw |= GHOSTTY_MODS_CAPS.rawValue }
+        return ghostty_input_mods_e(raw)
     }
 
     override func becomeFirstResponder() -> Bool {

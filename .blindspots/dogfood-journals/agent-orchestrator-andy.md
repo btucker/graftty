@@ -371,3 +371,33 @@ User reported: "it doesn't work to switch between worktrees anymore. also it doe
 - `ghostty_surface_key` wired up properly so libghostty's own binding table handles copy/paste/scroll within the terminal. Then drop this "any Cmd = skip text" shortcut in favor of the real path.
 - `scrollWheel(with:)` override + `ghostty_surface_mouse_scroll` for scrollback.
 - NSTextInputClient for IME / dead-key composition (Japanese, emoji picker, etc.).
+
+## Cycle 17 — 2026-04-16 (user-reported: 2 more terminal blockers)
+
+### User report
+1. "Switching worktrees is actually not switching terminal views" — click a different worktree in the sidebar, terminal stays on the old one.
+2. "The terminal view I can type in, backspace isn't working" — typing works, but Backspace doesn't erase.
+
+### Broke (1): Terminal view doesn't swap
+- `SurfaceViewWrapper` is an `NSViewRepresentable` that returns `nsView` from `makeNSView`. When SwiftUI re-uses the existing representable at the same structural position (e.g. selection changes from worktree A's leaf to worktree B's leaf), it calls `updateNSView` with the ORIGINAL NSView, not the new one. The wrapper never swaps the on-screen view — the layer from terminal A stays put even when the binding now points at terminal B's NSView.
+
+### Broke (2): Backspace dropped
+- `keyDown` forwarded `event.characters` through `ghostty_surface_text`. That C API is for already-translated text (post-IME, post-composition). Special keys like Backspace (`\u{7F}`), arrows (macOS private-use chars like `\u{F700}`), F-keys etc. don't produce the terminal escape sequences the shell expects; they produce either control bytes that the text path may filter or private-use chars that mean nothing to the shell. The correct path for raw keystrokes is `ghostty_surface_key`, which handles key → escape-sequence translation.
+
+### Fixed (1): `.id(terminalID)` on SurfaceViewWrapper
+- In `TerminalContentView.leafView`, attach `.id(terminalID)` to the wrapper. That ties SwiftUI view identity to the terminal ID; switching worktrees swaps terminal IDs, SwiftUI tears down the old wrapper and builds a fresh one, `makeNSView` runs again with the new NSView.
+- Same `.id(terminalID)` on the placeholder black/progress view so identity is consistent.
+
+### Fixed (2): Replace `ghostty_surface_text` with `ghostty_surface_key`
+- `keyDown` now constructs a `ghostty_input_key_s` with `GHOSTTY_ACTION_PRESS`, the translated mods, `event.keyCode` for the keycode, `event.characters` for the text field, and the first codepoint as `unshifted_codepoint`.
+- Added `ghosttyMods(from: NSEvent.ModifierFlags)` helper that bitwise-ORs Shift/Ctrl/Alt/Super/Caps into a `ghostty_input_mods_e` bitfield.
+- Cmd filter stays — Cmd combos still go up the responder chain to AppKit for menu dispatch.
+
+### Verified
+- Clean build, 59/59 tests still pass.
+- Deployed. Needs user verification that (a) worktree switching now swaps terminals, (b) Backspace now erases, (c) Enter/Tab/arrows still work.
+
+### Try next cycle
+- If ghostty_surface_key handles copy bindings internally, we can drop the "Cmd = pass through to AppKit" shortcut.
+- scrollWheel → ghostty_surface_mouse_scroll for scrollback.
+- NSTextInputClient for proper IME/dead-key support.

@@ -33,6 +33,17 @@ struct TerminalContentView: View {
         if let nsView = terminalManager.view(for: terminalID) {
             return AnyView(
                 SurfaceViewWrapper(nsView: nsView)
+                    // Force a distinct SwiftUI identity per terminal. Without
+                    // this, when the split tree swaps one terminalID for
+                    // another at the same structural position (e.g., the user
+                    // switches worktrees), SwiftUI would reuse the existing
+                    // NSViewRepresentable instance and call updateNSView with
+                    // the ORIGINAL NSView — never swapping the on-screen
+                    // terminal view. The .id() modifier ties view identity to
+                    // the terminalID, so SwiftUI tears down the old wrapper
+                    // and constructs a fresh one (makeNSView called again
+                    // with the correct NSView).
+                    .id(terminalID)
                     .onTapGesture {
                         onFocusTerminal(terminalID)
                     }
@@ -44,6 +55,7 @@ struct TerminalContentView: View {
                         ProgressView()
                             .controlSize(.small)
                     )
+                    .id(terminalID)
             )
         }
     }
