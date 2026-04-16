@@ -39,14 +39,13 @@ struct EspalierApp: App {
                     try? newState.save(to: AppState.defaultDirectory)
                 }
         }
-        .defaultSize(
-            width: appState.windowFrame.width,
-            height: appState.windowFrame.height
-        )
-        .defaultPosition(.init(
-            x: appState.windowFrame.x,
-            y: appState.windowFrame.y
-        ))
+        // Default size only. Restoration of the exact saved frame is handled
+        // by WindowFrameTracker (see MainWindow), which applies the saved
+        // NSWindow.frame directly after the window is created. We cannot use
+        // SwiftUI's `.defaultPosition(_:)` for this because on macOS 14 it
+        // takes a UnitPoint (normalized 0..1), not pixel coordinates — passing
+        // pixel values is silently a no-op.
+        .defaultSize(width: 1400, height: 900)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("Add Repository...") {

@@ -70,9 +70,29 @@
 - Manual test: launched bundled app, used AppleScript to resize to 1000×700 at (100, 100). Killed app. state.json contained `windowFrame: {height: 700, width: 1000, x: 100, y: 2208}` — real non-default values. (y is 2208 because NSWindow uses bottom-left origin; 2208 + 700 = 2908 = below screen top, which matches the (100,100) AppleScript top-left position on a large vertical-stitched display.)
 - Added two new tests: `windowFrameCustomValuesSurviveSaveAndLoad` (round-trip) and `windowFrameEquatableDistinguishesByValue` (proves the `!=` comparison in the tracker's deduplication works). 38/38 tests pass.
 
+## Cycle 4 — 2026-04-16
+
+### Explored
+- Followed up on cycle 3's coordinate concern. Wrote a state.json with a known-good saved frame (x=50, y=50, 800×600) and launched the bundled app. The window appeared at (100, 100) 1000×700 — the old position from cycle 3, NOT the saved values.
+
+### Broke
+- **`.defaultPosition(CGPoint)` doesn't exist on macOS 14.** Only `.defaultPosition(UnitPoint)` is available, where UnitPoint expects normalized 0-1 coords. `EspalierApp`'s code passed pixel values (`x=100, y=2208`) which created a silently-invalid UnitPoint — effectively a no-op. So PERSIST-3.4 was still broken even though cycle 3 made windowFrame saving work: it saved fine but the saved values were never applied on restore. The only reason windows came up in approximately-right positions was that macOS's NSWindowRestoration was quietly remembering the last position.
+- Bonus latent bug: a saved frame on a disconnected external monitor would normally place the window off-screen with no way to grab it.
+
+### Fixed
+- Extended `WindowFrameTracker` to take an `initialFrame: CGRect?` parameter. On first attach to an `NSWindow`, it applies that frame via `window.setFrame(_:display:)` — only if the frame overlaps at least one connected screen by ≥40pt in each dimension (so the title bar is grabbable).
+- Added `frameIsVisibleOnAnyScreen(_:)` helper that iterates `NSScreen.screens` and checks `visibleFrame.intersection` against the candidate frame.
+- `MainWindow` computes `initialWindowRect`: nil if the saved frame equals `WindowFrame()` defaults (so a first-launch user gets OS-picked placement), otherwise the saved NSRect.
+- Removed the broken `.defaultSize(width:height:)` and `.defaultPosition(.init(...))` from `EspalierApp`'s scene. Replaced with a simple `.defaultSize(width: 1400, height: 900)` for first-launch only. Left a comment explaining why pixel position can't be set via `.defaultPosition` on macOS 14.
+
+### Verified
+- Clean build.
+- Added 7 unit tests (`WindowFrameVisibilityTests`) covering: fully on-screen; entirely off-screen; exact-threshold overlap (40pt); below-threshold overlap (39pt); secondary display; disconnected display; partial overlap too narrow. All 45/45 tests pass.
+- Manual test 1: wrote state.json with x=400, y=300, 900×650. Window restored to exactly that size, at AppleScript position (400, 2058) which equals NSWindow bottom-origin (400, 300) + height 650 on the multi-display screen stack. ✓
+- Manual test 2: wrote state.json with x=9999, y=9999 (phantom monitor), nuked `~/Library/Saved Application State/com.espalier.app.savedState`, launched. Window did NOT appear at 9999,9999 — it came up at OS-picked (690, 716). ✓ The visibility check correctly rejected the off-screen frame.
+
 ### Try next cycle
-- **Coordinate system mismatch concern**: state.json now saves NSWindow's bottom-left-origin y-coordinate, but SwiftUI's `.defaultPosition` likely expects top-left-origin (or UnitPoint on macOS 14). When restoring a saved frame, the window may end up in the wrong vertical position. Verify by relaunching with a saved state and seeing where the window appears.
-- End-to-end socket test: launch bundled app, `espalier notify` from a worktree, see badge.
-- `Install CLI Tool...` menu — writing to `/usr/local/bin/` needs admin; what's the error UX?
-- Stale socket scenario — does `SocketServer.start` handle a pre-existing socket file correctly? (It calls `unlink(socketPath)` first, so probably yes, but untested.)
-- Is `sidebarWidth` actually updated on drag? Same pattern as windowFrame — probably has the same bug.
+- The cleanly-rejected fallback window came up at 260×234 — way smaller than the `.defaultSize(width: 1400, height: 900)` I set. Something is sizing the window down. Probably SwiftUI using the intrinsic size of `ContentUnavailableView`. Worth investigating.
+- `sidebarWidth` has the same "never written" bug as the original windowFrame: `.navigationSplitViewColumnWidth(ideal: appState.sidebarWidth, ...)` reads it, but dragging the sidebar divider doesn't update it. PERSIST-1.2 mentions sidebar width in state.json but it won't persist across launches.
+- End-to-end socket test still pending. The CLI + app stack hasn't been exercised end-to-end (app running, CLI sends notify, badge appears).
+- `Install CLI Tool...` menu — what happens when `/usr/local/bin/` write fails (common without admin)?

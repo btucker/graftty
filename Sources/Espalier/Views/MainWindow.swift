@@ -50,7 +50,9 @@ struct MainWindow: View {
                 }
             }
         }
-        .trackWindowFrame { [$appState] frame in
+        .trackWindowFrame(
+            initialFrame: initialWindowRect
+        ) { [$appState] frame in
             let newFrame = WindowFrame(
                 x: frame.origin.x,
                 y: frame.origin.y,
@@ -61,6 +63,16 @@ struct MainWindow: View {
                 $appState.wrappedValue.windowFrame = newFrame
             }
         }
+    }
+
+    /// The initial window rect to apply, or nil if the saved frame has not
+    /// been set (still at defaults), in which case we let the OS pick the
+    /// placement.
+    private var initialWindowRect: CGRect? {
+        let frame = appState.windowFrame
+        let defaultFrame = WindowFrame()
+        guard frame != defaultFrame else { return nil }
+        return CGRect(x: frame.x, y: frame.y, width: frame.width, height: frame.height)
     }
 
     private var selectedRepo: RepoEntry? {
