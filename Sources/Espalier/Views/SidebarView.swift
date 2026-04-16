@@ -6,6 +6,7 @@ struct SidebarView: View {
     @Binding var appState: AppState
     let onSelect: (String) -> Void
     let onAddRepo: () -> Void
+    let onAddPath: (String) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -92,7 +93,7 @@ struct SidebarView: View {
                       let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
                 let path = url.path
                 DispatchQueue.main.async {
-                    onSelect(path)
+                    onAddPath(path)
                 }
             }
         }

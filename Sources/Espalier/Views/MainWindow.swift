@@ -13,7 +13,8 @@ struct MainWindow: View {
             SidebarView(
                 appState: $appState,
                 onSelect: selectWorktree,
-                onAddRepo: addRepository
+                onAddRepo: addRepository,
+                onAddPath: addPath
             )
             .navigationSplitViewColumnWidth(
                 min: 180,
@@ -113,7 +114,7 @@ struct MainWindow: View {
         addPath(url.path)
     }
 
-    private func addPath(_ path: String) {
+    func addPath(_ path: String) {
         guard let detection = try? GitRepoDetector.detect(path: path) else { return }
 
         switch detection {
