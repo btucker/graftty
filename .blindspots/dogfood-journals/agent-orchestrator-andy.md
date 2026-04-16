@@ -143,9 +143,35 @@ Added 2 unit tests: `cliTrackingCheckRoundTripsThroughStateJSON` (the exact AppS
 - macOS's AppKit has its own `NSSplitView` autosave (via UserDefaults) that restores the last divider position independently of state.json. On a fresh launch, AppKit's restore runs before GeometryReader can measure, so if state.json and the autosave disagree, AppKit's value wins. For normal drag → save → restart → drag workflows both stores stay in sync, but if someone hand-edits state.json the sidebarWidth change won't take effect until they drag the divider.
 - Resolving this needs either (a) disabling AppKit's autosave or (b) programmatically setting the NSSplitView divider position from the saved value after launch. Both are non-trivial and out of scope for this cycle.
 
+## Cycle 7 — 2026-04-16
+
+### Explored
+- `/usr/local/bin/` is `root:wheel 755` by default — the current user can't write there without sudo. `installCLI()` tries `createSymbolicLink(atPath: "/usr/local/bin/espalier", ...)`, which throws "Permission denied". The existing error handler shows `error.localizedDescription` in a generic "Installation Failed" alert, giving Andy zero actionable next step.
+
+### Broke
+- Confirmed: `touch /usr/local/bin/.espalier-write-test` returns "Permission denied" for the current user. Installation from the app alone is impossible without sudo.
+
+### Fixed
+- Split the install logic into a pure, testable `CLIInstaller.plan(source:destination:)` in EspalierKit. It returns either:
+  - `.directSymlink` — parent dir is writable, proceed as before
+  - `.showSudoCommand` — surface a shell-escaped `sudo ln -sf` command
+- Added `CLIInstaller.sudoSymlinkCommand(source:destination:)` with shell-safe single-quote escaping (handles the edge case of an app bundle path containing a literal single quote).
+- `EspalierApp` now dispatches on the plan:
+  - `directSymlink` → existing confirmation flow
+  - `showSudoCommand` → new "Administrator Access Required" dialog with: title, body explaining why sudo is needed, a selectable read-only `NSTextField` containing the exact command in monospaced font, and a "Copy Command" button that writes to `NSPasteboard.general`.
+
+### Verified
+- Clean build, 53/53 tests pass (+5: `writableParentPlansDirectSymlink`, `unwritableParentPlansSudoCommand`, `sudoCommandWrapsPathsInSingleQuotes`, `sudoCommandEscapesEmbeddedSingleQuotes`, `sudoCommandIsValidShellWhenExecuted` — the last one executes the generated command through `/bin/sh` with `printf` substituted for `sudo ln -sf` and asserts the two shell arguments match the original paths).
+- Manual, via AppleScript against the running bundled app: `offerCLIInstallIfNeeded`'s first-launch auto-trigger fires the menu item (had wiped `defaults delete com.espalier.app cliInstallOffered`). The dialog that appears reports exactly:
+  - title: "Administrator Access Required"
+  - body: "Installing to /usr/local/bin/espalier requires sudo. Copy this command and run it in Terminal:"
+  - command: `sudo ln -sf '<bundle>/Contents/Helpers/espalier' '/usr/local/bin/espalier'`
+  - buttons: `Copy Command` | `Cancel`
+- Clicking Copy Command pastes the correct, escape-clean command to the clipboard. Verified via `pbpaste`.
+
 ### Try next cycle
-- The above limitation. Requires digging into NSSplitView discovery (find it via NSApp.keyWindow.contentView traversal, or via the `NSWindowDelegate`).
-- The fallback window from cycle 4 came up at 260×234. Something is undersizing the window when the saved frame is rejected. Same category: NSWindowRestoration state fighting `.defaultSize`.
-- `Install CLI Tool...` menu — what happens when `/usr/local/bin/` write fails without admin?
+- NSSplitView autosave vs state.json sovereignty (from cycle 6).
+- Fallback window sized 260×234 on first launch — probably NSWindowRestoration fighting `.defaultSize`.
 - Stale socket file scenario — `SocketServer.start` calls `unlink(socketPath)` first, so kill -9 recovery should work, but untested.
-- Race in `offerCLIInstallIfNeeded`: uses `DispatchQueue.main.asyncAfter(deadline: .now() + 1)`. If the app quits within that second, the prompt fires against a dying window.
+- Race in `offerCLIInstallIfNeeded`: `DispatchQueue.main.asyncAfter(deadline: .now() + 1)`. If the app quits within that second, the prompt fires against a dying window.
+- The `installCLI` happy-path confirmation dialog still asks "Create a symlink at..." — Andy clicked "Install CLI Tool..." already. That second prompt is friction. Consider skipping.

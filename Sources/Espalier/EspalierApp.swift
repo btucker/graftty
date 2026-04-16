@@ -313,25 +313,62 @@ struct EspalierApp: App {
             .appendingPathComponent("Contents/Helpers/espalier")
         let symlink = "/usr/local/bin/espalier"
 
+        switch CLIInstaller.plan(source: bundleCLI.path, destination: symlink) {
+        case .directSymlink(let source, let destination):
+            runDirectSymlink(source: source, destination: destination)
+        case .showSudoCommand(let command, let destination):
+            showSudoInstallAlert(command: command, destination: destination)
+        }
+    }
+
+    private func runDirectSymlink(source: String, destination: String) {
         let alert = NSAlert()
         alert.messageText = "Install CLI Tool"
-        alert.informativeText = "Create a symlink at \(symlink) pointing to the Espalier CLI?"
+        alert.informativeText = "Create a symlink at \(destination) pointing to the Espalier CLI?"
         alert.addButton(withTitle: "Install")
         alert.addButton(withTitle: "Cancel")
 
         guard alert.runModal() == .alertFirstButtonReturn else { return }
 
         do {
-            try? FileManager.default.removeItem(atPath: symlink)
+            try? FileManager.default.removeItem(atPath: destination)
             try FileManager.default.createSymbolicLink(
-                atPath: symlink,
-                withDestinationPath: bundleCLI.path
+                atPath: destination,
+                withDestinationPath: source
             )
         } catch {
             let errorAlert = NSAlert()
             errorAlert.messageText = "Installation Failed"
             errorAlert.informativeText = error.localizedDescription
             errorAlert.runModal()
+        }
+    }
+
+    /// Parent directory isn't writable (e.g. /usr/local/bin owned by root).
+    /// Surface a sudo command the user can copy and run in Terminal.
+    private func showSudoInstallAlert(command: String, destination: String) {
+        let alert = NSAlert()
+        alert.messageText = "Administrator Access Required"
+        alert.informativeText = "Installing to \(destination) requires sudo. Copy this command and run it in Terminal:"
+        alert.addButton(withTitle: "Copy Command")
+        alert.addButton(withTitle: "Cancel")
+
+        // Attach a selectable, read-only text field so the user can also
+        // eyeball / manually select the exact command.
+        let textField = NSTextField(string: command)
+        textField.isEditable = false
+        textField.isSelectable = true
+        textField.drawsBackground = true
+        textField.backgroundColor = .textBackgroundColor
+        textField.frame = NSRect(x: 0, y: 0, width: 440, height: 44)
+        textField.isBordered = true
+        textField.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        alert.accessoryView = textField
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(command, forType: .string)
         }
     }
 }
