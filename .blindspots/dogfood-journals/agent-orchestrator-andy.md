@@ -91,8 +91,38 @@
 - Manual test 1: wrote state.json with x=400, y=300, 900×650. Window restored to exactly that size, at AppleScript position (400, 2058) which equals NSWindow bottom-origin (400, 300) + height 650 on the multi-display screen stack. ✓
 - Manual test 2: wrote state.json with x=9999, y=9999 (phantom monitor), nuked `~/Library/Saved Application State/com.espalier.app.savedState`, launched. Window did NOT appear at 9999,9999 — it came up at OS-picked (690, 716). ✓ The visibility check correctly rejected the off-screen frame.
 
+## Cycle 5 — 2026-04-16
+
+### Explored
+- End-to-end socket test, finally. Launched the bundled app (so socket is live), ran `espalier notify "Build failed"` from this (untracked-by-Espalier) worktree.
+- CLI returned exit 0. state.json showed no attention set anywhere. The notification went into the void.
+
+### Broke
+- **Spec violation, ATTN-3.2:** the error message says "Not inside a tracked worktree" but the check only verified "inside a git worktree" — it never asked Espalier whether the worktree was actually *tracked*. Any random `.git`-containing directory sailed through. `handleNotification` on the server silently iterated zero worktrees that matched and wrote nothing back. Andy gets no feedback that his notify was a no-op.
+
+### Fixed
+- `WorktreeResolver.resolve()` now loads `~/Library/Application Support/Espalier/state.json` via `AppState.load(from: AppState.defaultDirectory)` and calls `state.worktree(forPath: candidate)`. If the resolved worktree isn't present, throw `.notInsideWorktree` (same message, same exit code 1 — matches the spec).
+- Extracted `WorktreeResolver.isTracked(path:stateDirectory:)` as a testable helper.
+
+### Verified
+
+| scenario | before fix | after fix |
+|---|---|---|
+| A: PWD not a git repo | exit 1 "Not inside a tracked worktree" | same |
+| B: PWD is a git worktree Espalier doesn't track | **exit 0 silently** | exit 1 "Not inside a tracked worktree" |
+| C: PWD tracked, app not running | exit 1 "Espalier is not running" | same |
+| D: PWD tracked, app running, notify | exit 0 + attention appears | same |
+| E: notify --clear | clears attention | same |
+
+Case D was verified by manually writing a state.json with a single worktree entry, launching the app, running `notify "Build failed"`, then reading state.json back — the attention field was populated with `{text: "Build failed", timestamp: <CF-seconds>}`. Case E: `notify --clear` reset attention to nil. Both round-trip through the socket server → main-thread closure → `appState` mutation → `onChange` save.
+
+Observed as a sanity check: the reconcile pass at startup discovers sibling worktrees via `git worktree list --porcelain` even if state.json only mentions one. The main working tree at `/Users/btucker/projects/espalier` was auto-added alongside my manually-entered dogfood worktree — GIT-3.1 working correctly.
+
+Added 2 unit tests: `cliTrackingCheckRoundTripsThroughStateJSON` (the exact AppState.load → worktree(forPath:) flow the CLI uses) and `cliTrackingCheckReturnsNilForMissingStateJSON` (fresh-install safety: fails closed). 47/47 tests pass.
+
 ### Try next cycle
-- The cleanly-rejected fallback window came up at 260×234 — way smaller than the `.defaultSize(width: 1400, height: 900)` I set. Something is sizing the window down. Probably SwiftUI using the intrinsic size of `ContentUnavailableView`. Worth investigating.
-- `sidebarWidth` has the same "never written" bug as the original windowFrame: `.navigationSplitViewColumnWidth(ideal: appState.sidebarWidth, ...)` reads it, but dragging the sidebar divider doesn't update it. PERSIST-1.2 mentions sidebar width in state.json but it won't persist across launches.
-- End-to-end socket test still pending. The CLI + app stack hasn't been exercised end-to-end (app running, CLI sends notify, badge appears).
-- `Install CLI Tool...` menu — what happens when `/usr/local/bin/` write fails (common without admin)?
+- `sidebarWidth` has the same "never written" bug as the original windowFrame: `.navigationSplitViewColumnWidth(ideal: appState.sidebarWidth, ...)` reads it, but dragging the sidebar divider doesn't update it.
+- The fallback window from cycle 4 came up at 260×234. Something is undersizing the window when the saved frame is rejected. Investigate whether `.defaultSize` is being honored at all.
+- `Install CLI Tool...` menu — what happens when `/usr/local/bin/` write fails without admin? Expect the fix to need `NSWorkspace.open` for authorization or a sudo-prompting helper.
+- Stale socket file: kill -9 the app, check that the next launch cleanly removes the old socket. `SocketServer.start` calls `unlink(socketPath)` first, so this should work — but unverified.
+- Race in `offerCLIInstallIfNeeded`: uses `DispatchQueue.main.asyncAfter(deadline: .now() + 1)` to delay the prompt. If the app quits within that second, the prompt fires against a dying window. Trivial but worth fixing.

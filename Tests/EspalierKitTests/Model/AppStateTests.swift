@@ -111,4 +111,46 @@ struct AppStateTests {
         #expect(a == b)
         #expect(a != c)
     }
+
+    /// Mirrors the CLI's `WorktreeResolver.isTracked` flow: the CLI loads
+    /// the on-disk state.json and checks whether a PWD-derived path
+    /// corresponds to a tracked worktree. This test exercises the same
+    /// load → `worktree(forPath:)` pipeline to catch regressions that
+    /// would make `espalier notify` silently accept or reject paths.
+    @Test func cliTrackingCheckRoundTripsThroughStateJSON() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        var state = AppState()
+        state.addRepo(RepoEntry(path: "/tmp/repo", displayName: "repo", worktrees: [
+            WorktreeEntry(path: "/tmp/repo", branch: "main"),
+            WorktreeEntry(path: "/tmp/worktrees/feature", branch: "feature"),
+        ]))
+        try state.save(to: dir)
+
+        let loaded = try AppState.load(from: dir)
+
+        // Tracked paths are recognized.
+        #expect(loaded.worktree(forPath: "/tmp/repo") != nil)
+        #expect(loaded.worktree(forPath: "/tmp/worktrees/feature") != nil)
+
+        // Untracked paths — including the worktrees' parent and a random
+        // directory — are rejected.
+        #expect(loaded.worktree(forPath: "/tmp/worktrees") == nil)
+        #expect(loaded.worktree(forPath: "/Users/elsewhere") == nil)
+    }
+
+    /// When state.json is missing entirely (fresh install), the CLI's
+    /// tracking check must fail closed — nothing is tracked, so every
+    /// `notify` correctly errors out rather than silently no-op'ing against
+    /// an empty in-memory state.
+    @Test func cliTrackingCheckReturnsNilForMissingStateJSON() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // No save. `load` returns a default AppState with no repos.
+
+        let loaded = try AppState.load(from: dir)
+        #expect(loaded.repos.isEmpty)
+        #expect(loaded.worktree(forPath: "/tmp/repo") == nil)
+    }
 }
