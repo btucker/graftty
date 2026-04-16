@@ -4,6 +4,16 @@ import EspalierKit
 enum SocketClient {
     static func send(_ message: NotificationMessage) throws {
         let socketPath = resolveSocketPath()
+
+        // Validate path length BEFORE any socket work. sockaddr_un.sun_path
+        // is 104 bytes on macOS; strlcpy(..., 104) silently truncates longer
+        // paths and connect() would then target the wrong file. SocketServer
+        // has the same check — keep them aligned via the shared constant.
+        let pathBytes = socketPath.utf8.count
+        guard pathBytes <= SocketServer.maxPathBytes else {
+            throw CLIError.socketPathTooLong(bytes: pathBytes, maxBytes: SocketServer.maxPathBytes)
+        }
+
         guard FileManager.default.fileExists(atPath: socketPath) else { throw CLIError.appNotRunning }
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)

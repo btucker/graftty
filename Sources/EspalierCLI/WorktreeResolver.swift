@@ -46,6 +46,7 @@ enum CLIError: Error, CustomStringConvertible {
     case appNotRunning
     case socketTimeout
     case socketError(String)
+    case socketPathTooLong(bytes: Int, maxBytes: Int)
 
     var description: String {
         switch self {
@@ -53,6 +54,8 @@ enum CLIError: Error, CustomStringConvertible {
         case .appNotRunning: return "Espalier is not running"
         case .socketTimeout: return "Connection timed out after 2 seconds"
         case .socketError(let msg): return "Socket error: \(msg)"
+        case .socketPathTooLong(let bytes, let maxBytes):
+            return "Socket path is \(bytes) bytes, exceeds macOS sockaddr_un limit of \(maxBytes). Set ESPALIER_SOCK to a shorter path."
         }
     }
 }

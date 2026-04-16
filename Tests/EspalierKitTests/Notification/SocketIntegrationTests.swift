@@ -139,6 +139,15 @@ struct SocketIntegrationTests {
     /// `serverReceivesMessage` test only worked because both server and
     /// client used the same truncation, so they coincidentally connected
     /// through the truncated path.
+    /// The CLI (in `SocketClient.send`) uses this same constant to reject
+    /// too-long paths before attempting connect(). If the value ever drifts,
+    /// server and client would disagree about which paths are valid. Pin it
+    /// to macOS's documented `sockaddr_un.sun_path` size minus 1 for the
+    /// null terminator.
+    @Test func maxPathBytesMatchesSunPathSizeMinusNull() {
+        #expect(SocketServer.maxPathBytes == 103)
+    }
+
     @Test func startRejectsPathLongerThanSunPath() {
         // 104 'a's — exceeds the 103-byte limit (null terminator steals one
         // byte from the 104-byte sun_path buffer).

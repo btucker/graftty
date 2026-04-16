@@ -189,9 +189,24 @@ Added 2 unit tests: `cliTrackingCheckRoundTripsThroughStateJSON` (the exact AppS
   - `startRejectsPathLongerThanSunPath`: calls `start()` with a 104-byte path, asserts it throws `SocketServerError`.
 - 55/55 tests pass.
 
+## Cycle 9 — 2026-04-16
+
+### Explored
+- Closed the loop on yesterday's cycle-8 finding: `SocketClient.send` in the CLI has the same `strlcpy(..., 104)` pattern that cycle 8 fixed in `SocketServer`. A user who sets `ESPALIER_SOCK=<long-path>` would silently truncate and connect() against the wrong filename — errno `ECONNREFUSED` or `ENOENT` would map to `CLIError.appNotRunning`, giving Andy "Espalier is not running" when actually the configuration is wrong.
+
+### Fixed
+- Added `CLIError.socketPathTooLong(bytes:maxBytes:)` with an actionable message that prints the exact byte count and suggests setting `ESPALIER_SOCK` to a shorter path.
+- `SocketClient.send` now validates `socketPath.utf8.count <= SocketServer.maxPathBytes` (the public constant introduced in cycle 8) before any socket work. Importing the shared constant from EspalierKit means server and client can't drift.
+
+### Verified
+- End-to-end: `ESPALIER_SOCK="/tmp/$(printf 'a%.0s' {1..110})" espalier-cli notify "hello"` → exits 1 with message `espalier: Socket path is 115 bytes, exceeds macOS sockaddr_un limit of 103. Set ESPALIER_SOCK to a shorter path.`
+- Happy path: launched bundled app, normal-path `espalier notify "still works"` → exit 0, attention appears in state.json. No regression.
+- Added `maxPathBytesMatchesSunPathSizeMinusNull` — a tripwire test that pins the shared constant to 103. If a well-meaning refactor changes the value, server and client would need to agree; the test makes the coupling explicit.
+- 56/56 tests pass.
+
 ### Try next cycle
 - NSSplitView autosave vs state.json sovereignty (from cycle 6).
 - Fallback window sized 260×234 on first launch — probably NSWindowRestoration fighting `.defaultSize`.
 - Race in `offerCLIInstallIfNeeded`: `DispatchQueue.main.asyncAfter(deadline: .now() + 1)`. If the app quits within that second, the prompt fires against a dying window.
 - The `installCLI` happy-path confirmation dialog still asks "Create a symlink at..." — Andy clicked "Install CLI Tool..." already. That second prompt is friction.
-- `SocketClient` (in the CLI) has the same `strlcpy(..., 104)` pattern. It should also validate path length upfront. Otherwise a user with a long-path bundle location gets an obscure connect() error.
+- The socket server's `handleClient` does a blocking `read` loop on the socket-server queue. If a malicious/buggy client sends data slowly, it could starve other connections. Minor, but worth a timeout on reads.
