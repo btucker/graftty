@@ -72,8 +72,14 @@ struct MainWindow: View {
         // Tint the NSWindow to match the terminal theme: background color,
         // transparent titlebar + full-size content view, and NSAppearance
         // matching the theme's dark/light-ness so system chrome (traffic
-        // lights, sidebar toggle icon, menus) renders with correct contrast.
+        // lights, context menus, alerts) renders with correct contrast.
         .windowBackgroundTint(theme: terminalManager.theme)
+        // Force the SwiftUI color scheme from the theme so SwiftUI-rendered
+        // chrome — the NavigationSplitView sidebar toggle in particular —
+        // picks the right icon shade. NSWindow.appearance covers AppKit
+        // controls (traffic lights, alerts, context menus), but SwiftUI
+        // toolbar items resolve through ColorScheme, not NSAppearance.
+        .preferredColorScheme(terminalManager.theme.isDark ? .dark : .light)
         .trackWindowFrame(
             initialFrame: initialWindowRect
         ) { [$appState] frame in
