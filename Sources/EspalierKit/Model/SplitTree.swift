@@ -21,10 +21,7 @@ public struct SplitTree: Codable, Sendable, Equatable {
     ///   Splitting from a zoomed state unzooms.
     /// - `removing(target:)` returns with `zoomed = (zoomed == target) ? nil : zoomed`.
     ///   Closing the zoomed pane auto-unzooms; closing a sibling preserves zoom.
-    /// - `resizing(...)` (a future task) always returns with `zoomed: nil`.
-    ///
-    /// These invariants are enforced by Tasks 2 and 3 (mutation implementations).
-    /// This task adds the field and documents the invariants only.
+    /// - `resizing(...)` always returns with `zoomed: nil`.
     public let zoomed: TerminalID?
 
     public init(root: Node?, zoomed: TerminalID? = nil) {
@@ -52,6 +49,14 @@ public struct SplitTree: Codable, Sendable, Equatable {
             public func withRatio(_ newRatio: Double) -> Split {
                 Split(direction: direction, ratio: newRatio, left: left, right: right)
             }
+
+            public func withLeft(_ newLeft: Node) -> Split {
+                Split(direction: direction, ratio: ratio, left: newLeft, right: right)
+            }
+
+            public func withRight(_ newRight: Node) -> Split {
+                Split(direction: direction, ratio: ratio, left: left, right: newRight)
+            }
         }
     }
 
@@ -65,6 +70,13 @@ public struct SplitTree: Codable, Sendable, Equatable {
     public var allLeaves: [TerminalID] {
         guard let root else { return [] }
         return root.allLeaves
+    }
+
+    /// O(depth) membership check that short-circuits on the first match.
+    /// Prefer over `allLeaves.contains(_:)` in hot paths — `allLeaves`
+    /// allocates the full array.
+    public func containsLeaf(_ id: TerminalID) -> Bool {
+        root?.containsLeaf(id) ?? false
     }
 
     /// Resolve a user-facing 1-based pane ID (as printed by `espalier
@@ -129,7 +141,7 @@ public struct SplitTree: Codable, Sendable, Equatable {
     /// - Else if the tree has more than one leaf AND contains `leaf`, zoom that leaf.
     /// - Else (lone-leaf tree or unknown leaf), return self unchanged.
     public func togglingZoom(at leaf: TerminalID) -> SplitTree {
-        guard allLeaves.contains(leaf), leafCount > 1 else {
+        guard containsLeaf(leaf), leafCount > 1 else {
             return self
         }
         return SplitTree(root: root, zoomed: (zoomed == leaf) ? nil : leaf)
@@ -240,6 +252,15 @@ extension SplitTree.Node {
             return [id]
         case .split(let s):
             return s.left.allLeaves + s.right.allLeaves
+        }
+    }
+
+    func containsLeaf(_ id: TerminalID) -> Bool {
+        switch self {
+        case .leaf(let leafID):
+            return leafID == id
+        case .split(let s):
+            return s.left.containsLeaf(id) || s.right.containsLeaf(id)
         }
     }
 
@@ -379,27 +400,23 @@ extension SplitTree.Node {
         case .leaf:
             throw SplitTree.SplitTreeError.noMatchingAncestor
         case .split(let split):
-            let leftContains = split.left.allLeaves.contains(leaf)
-            let rightContains = split.right.allLeaves.contains(leaf)
+            let leftContains = split.left.containsLeaf(leaf)
+            let rightContains = !leftContains && split.right.containsLeaf(leaf)
             guard leftContains || rightContains else {
                 throw SplitTree.SplitTreeError.noMatchingAncestor
             }
 
             if split.direction == orientation {
-                // This is the nearest matching-orientation ancestor. Resize here.
                 let newRatio = min(0.9, max(0.1, split.ratio + delta))
                 return .split(split.withRatio(newRatio))
             }
 
-            // Orientation doesn't match — recurse into the child that contains
-            // the leaf. If recursion throws (no matching ancestor found beneath),
-            // bubble the error up; caller sees noMatchingAncestor overall.
             if leftContains {
                 let newLeft = try split.left.resizingAncestor(of: leaf, orientation: orientation, delta: delta)
-                return .split(SplitTree.Node.Split(direction: split.direction, ratio: split.ratio, left: newLeft, right: split.right))
+                return .split(split.withLeft(newLeft))
             } else {
                 let newRight = try split.right.resizingAncestor(of: leaf, orientation: orientation, delta: delta)
-                return .split(SplitTree.Node.Split(direction: split.direction, ratio: split.ratio, left: split.left, right: newRight))
+                return .split(split.withRight(newRight))
             }
         }
     }
@@ -411,8 +428,10 @@ extension SplitTree.Node {
         case .split(let split):
             if case .leaf(let id) = split.left, id == leaf { return split.ratio }
             if case .leaf(let id) = split.right, id == leaf { return split.ratio }
-            // Recurse; only one branch contains the leaf, the other returns 0.
-            return split.left.ratioOfSplit(containing: leaf) + split.right.ratioOfSplit(containing: leaf)
+            if split.left.containsLeaf(leaf) {
+                return split.left.ratioOfSplit(containing: leaf)
+            }
+            return split.right.ratioOfSplit(containing: leaf)
         }
     }
 

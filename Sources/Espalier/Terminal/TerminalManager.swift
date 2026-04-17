@@ -78,8 +78,10 @@ final class TerminalManager: ObservableObject {
     /// True when the user's Ghostty config has `split-preserve-zoom =
     /// navigation` (explicit opt-in from Ghostty 1.3). When true, a
     /// goto_split from a zoomed pane transfers zoom to the newly focused
-    /// leaf instead of unzooming.
-    @Published private(set) var splitPreserveZoomOnNavigation: Bool = false
+    /// leaf instead of unzooming. Not `@Published` — only `navigatePane`
+    /// reads it (synchronously), so a SwiftUI invalidation cascade here
+    /// would just cause no-op re-renders.
+    private(set) var splitPreserveZoomOnNavigation: Bool = false
 
     /// Remembered split-tree positions for terminals that have moved *out*
     /// of a worktree via PWD change. If the same pane later hops back

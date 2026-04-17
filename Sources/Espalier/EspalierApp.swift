@@ -124,7 +124,6 @@ struct EspalierApp: App {
 
                 Divider()
 
-                // Split actions — shortcuts derived from the Ghostty config.
                 bridgedButton("Split Right", action: .newSplitRight) { handleSplit(.right) }
                 bridgedButton("Split Left",  action: .newSplitLeft)  { handleSplit(.left) }
                 bridgedButton("Split Down",  action: .newSplitDown)  { handleSplit(.down) }
@@ -132,23 +131,20 @@ struct EspalierApp: App {
 
                 Divider()
 
-                // Navigate actions.
                 bridgedButton("Focus Pane Left",  action: .gotoSplitLeft)   { handleNavigate(.left) }
                 bridgedButton("Focus Pane Right", action: .gotoSplitRight)  { handleNavigate(.right) }
-                bridgedButton("Focus Pane Up",    action: .gotoSplitTop)    { handleNavigate(.up) }
-                bridgedButton("Focus Pane Down",  action: .gotoSplitBottom) { handleNavigate(.down) }
+                bridgedButton("Focus Pane Up",    action: .gotoSplitUp)     { handleNavigate(.up) }
+                bridgedButton("Focus Pane Down",  action: .gotoSplitDown)   { handleNavigate(.down) }
                 bridgedButton("Previous Pane",    action: .gotoSplitPrevious) { handleNavigateTreeOrder(forward: false) }
                 bridgedButton("Next Pane",        action: .gotoSplitNext)     { handleNavigateTreeOrder(forward: true) }
 
                 Divider()
 
-                // Zoom / equalize.
                 bridgedButton("Zoom Split",      action: .toggleSplitZoom) { handleToggleZoom() }
                 bridgedButton("Equalize Splits", action: .equalizeSplits)  { handleEqualizeSplits() }
 
                 Divider()
 
-                // Close.
                 bridgedButton("Close Pane", action: .closeSurface) { handleClosePane() }
             }
 
@@ -224,7 +220,6 @@ struct EspalierApp: App {
             }
         }
 
-        // Keybind-driven spatial navigation (goto_split left/right/up/down).
         terminalManager.onGotoSplit = { [appState = $appState, tm = terminalManager] terminalID, direction in
             MainActor.assumeIsolated {
                 Self.navigatePane(
@@ -236,7 +231,6 @@ struct EspalierApp: App {
             }
         }
 
-        // Keybind-driven sequential navigation (goto_split previous/next).
         terminalManager.onGotoSplitOrder = { [appState = $appState, tm = terminalManager] terminalID, forward in
             MainActor.assumeIsolated {
                 Self.navigatePaneInTreeOrder(
@@ -248,14 +242,12 @@ struct EspalierApp: App {
             }
         }
 
-        // toggle_split_zoom — flip zoom state on the pane's worktree.
         terminalManager.onToggleZoom = { [appState = $appState] terminalID in
             MainActor.assumeIsolated {
                 Self.toggleZoom(appState: appState, on: terminalID)
             }
         }
 
-        // resize_split — apply pixel delta to nearest matching ancestor.
         terminalManager.onResizeSplit = { [appState = $appState] terminalID, direction, amount in
             MainActor.assumeIsolated {
                 Self.resizeSplit(
@@ -267,16 +259,14 @@ struct EspalierApp: App {
             }
         }
 
-        // equalize_splits — reset all split ratios to 0.5.
         terminalManager.onEqualizeSplits = { [appState = $appState] terminalID in
             MainActor.assumeIsolated {
                 Self.equalizeSplits(appState: appState, around: terminalID)
             }
         }
 
-        // reload_config — libghostty doesn't expose a reload C API yet;
-        // rebuild the bridge from the still-live config object so menu
-        // shortcuts stay consistent.
+        // libghostty-spm doesn't expose a reload C API — rebuild the bridge
+        // from the live config object so menu shortcuts stay consistent.
         terminalManager.onReloadConfig = { [tm = terminalManager] in
             MainActor.assumeIsolated {
                 tm.rebuildKeybindBridge()
@@ -649,7 +639,7 @@ struct EspalierApp: App {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                guard wt.state == .running, wt.splitTree.allLeaves.contains(targetID) else { continue }
+                guard wt.state == .running, wt.splitTree.containsLeaf(targetID) else { continue }
 
                 let direction: SplitDirection = (split == .right || split == .left) ? .horizontal : .vertical
                 let newID = TerminalID()
@@ -670,51 +660,6 @@ struct EspalierApp: App {
         return nil
     }
 
-    private func navigatePane(_ direction: NavigationDirection) {
-        guard let path = appState.selectedWorktreePath else { return }
-        for repoIdx in appState.repos.indices {
-            for wtIdx in appState.repos[repoIdx].worktrees.indices {
-                let wt = appState.repos[repoIdx].worktrees[wtIdx]
-                if wt.path == path, wt.state == .running {
-                    let leaves = wt.splitTree.allLeaves
-                    guard leaves.count > 1,
-                          let currentIdx = leaves.firstIndex(where: { $0 == wt.focusedTerminalID }) else { return }
-
-                    let nextIdx: Int
-                    switch direction {
-                    case .left, .up:
-                        nextIdx = (currentIdx - 1 + leaves.count) % leaves.count
-                    case .right, .down:
-                        nextIdx = (currentIdx + 1) % leaves.count
-                    }
-
-                    let nextID = leaves[nextIdx]
-                    appState.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nextID
-                    terminalManager.setFocus(nextID)
-                    return
-                }
-            }
-        }
-    }
-
-    private func closeFocusedPane() {
-        guard let path = appState.selectedWorktreePath else { return }
-        for repoIdx in appState.repos.indices {
-            for wtIdx in appState.repos[repoIdx].worktrees.indices {
-                let wt = appState.repos[repoIdx].worktrees[wtIdx]
-                if wt.path == path, wt.state == .running,
-                   let focused = wt.focusedTerminalID {
-                    Self.closePane(
-                        appState: $appState,
-                        terminalManager: terminalManager,
-                        targetID: focused
-                    )
-                    return
-                }
-            }
-        }
-    }
-
     /// Find the worktree that owns `terminalID` and set the attention
     /// badge on *that specific pane*. The shell-integration event that
     /// drives this callback (`COMMAND_FINISHED`) is emitted by one
@@ -733,7 +678,7 @@ struct EspalierApp: App {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                    .splitTree.allLeaves.contains(terminalID) {
+                    .splitTree.containsLeaf(terminalID) {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                         .paneAttention[terminalID] = Attention(
                             text: text,
@@ -778,7 +723,7 @@ struct EspalierApp: App {
         var currentRepoIdx: Int?
         var currentWorktreeIdx: Int?
         for (ri, repo) in appState.wrappedValue.repos.enumerated() {
-            for (wi, wt) in repo.worktrees.enumerated() where wt.splitTree.allLeaves.contains(terminalID) {
+            for (wi, wt) in repo.worktrees.enumerated() where wt.splitTree.containsLeaf(terminalID) {
                 currentRepoIdx = ri
                 currentWorktreeIdx = wi
             }
@@ -847,7 +792,7 @@ struct EspalierApp: App {
             terminalID: terminalID,
             worktreePath: targetWt.path
         )
-        if let remembered, targetWt.splitTree.allLeaves.contains(remembered.anchorID) {
+        if let remembered, targetWt.splitTree.containsLeaf(remembered.anchorID) {
             switch remembered.placement {
             case .before:
                 targetTree = targetWt.splitTree.insertingBefore(
@@ -926,8 +871,6 @@ struct EspalierApp: App {
         }
     }
 
-    /// Cycle focus in split-tree leaf order (previous/next). Used by
-    /// `onGotoSplitOrder` and by the menu "Previous Pane" / "Next Pane" items.
     @MainActor
     fileprivate static func navigatePaneInTreeOrder(
         appState: Binding<AppState>,
@@ -935,28 +878,12 @@ struct EspalierApp: App {
         from terminalID: TerminalID,
         forward: Bool
     ) {
-        for repoIdx in appState.wrappedValue.repos.indices {
-            for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
-                let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                let leaves = wt.splitTree.allLeaves
-                guard let currentIdx = leaves.firstIndex(of: terminalID) else { continue }
-                guard leaves.count > 1 else { return }
-                let nextIdx = forward
-                    ? (currentIdx + 1) % leaves.count
-                    : (currentIdx - 1 + leaves.count) % leaves.count
-                let nextID = leaves[nextIdx]
-                // Zoom preservation: Ghostty 1.3 `split-preserve-zoom = navigation` opt-in.
-                if wt.splitTree.zoomed != nil {
-                    let newTree = terminalManager.splitPreserveZoomOnNavigation
-                        ? wt.splitTree.withZoom(nextID)
-                        : wt.splitTree.withZoom(nil)
-                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
-                }
-                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nextID
-                terminalManager.setFocus(nextID)
-                return
-            }
-        }
+        navigatePane(
+            appState: appState,
+            terminalManager: terminalManager,
+            from: terminalID,
+            direction: forward ? .right : .left
+        )
     }
 
     @MainActor
@@ -1017,7 +944,7 @@ struct EspalierApp: App {
     ) {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
-                if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree.allLeaves.contains(leaf) {
+                if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree.containsLeaf(leaf) {
                     let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx] = transform(wt)
                     return
@@ -1040,7 +967,7 @@ struct EspalierApp: App {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                guard wt.splitTree.allLeaves.contains(targetID) else { continue }
+                guard wt.splitTree.containsLeaf(targetID) else { continue }
 
                 terminalManager.destroySurface(terminalID: targetID)
                 let newTree = wt.splitTree.removing(targetID)
