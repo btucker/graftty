@@ -807,10 +807,9 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         // making this the more common hang trigger in practice.
         Task.detached {
             let repoPaths = await MainActor.run { binding.wrappedValue.repos.map(\.path) }
-            var discoveredByRepo: [String: [DiscoveredWorktree]] = [:]
-            for repoPath in repoPaths {
+            let discoveredByRepo: [String: [DiscoveredWorktree]] = repoPaths.reduce(into: [:]) { acc, repoPath in
                 if let discovered = try? GitWorktreeDiscovery.discover(repoPath: repoPath) {
-                    discoveredByRepo[repoPath] = discovered
+                    acc[repoPath] = discovered
                 }
             }
             await MainActor.run {
