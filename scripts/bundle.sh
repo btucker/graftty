@@ -34,6 +34,13 @@ echo "→ copy binaries"
 cp "$BIN_DIR/Espalier" "$APP/Contents/MacOS/Espalier"
 cp "$BIN_DIR/espalier-cli" "$APP/Contents/Helpers/espalier"
 
+echo "→ install bundled zmx"
+# zmx is the per-pane PTY child for every Espalier terminal, providing
+# session persistence so shells survive app quits. The binary is vendored
+# at Resources/zmx-binary/zmx; bundle.sh just copies it into Helpers/.
+cp "$REPO/Resources/zmx-binary/zmx" "$APP/Contents/Helpers/zmx"
+chmod +x "$APP/Contents/Helpers/zmx"
+
 echo "→ build + copy app icon"
 "$SCRIPT_DIR/build-icon.sh" "$APP/Contents/Resources/AppIcon.icns"
 
