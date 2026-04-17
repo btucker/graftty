@@ -15,12 +15,12 @@ public enum GitOriginDefaultBranch {
     /// `git symbolic-ref --short refs/remotes/origin/HEAD` and strips the
     /// `origin/` prefix; on failure, probes `main`, `master`, `develop` in
     /// order via `git show-ref --verify`.
-    public static func resolve(repoPath: String) throws -> String? {
-        if let (out, code) = try? GitRunner.capture(
+    public static func resolve(repoPath: String) async throws -> String? {
+        if let captured = try? await GitRunner.capture(
             args: ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
             at: repoPath
-        ), code == 0 {
-            let trimmed = out.trimmingCharacters(in: .whitespacesAndNewlines)
+        ), captured.exitCode == 0 {
+            let trimmed = captured.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.hasPrefix("origin/") {
                 let name = String(trimmed.dropFirst("origin/".count))
                 if !name.isEmpty { return name }
@@ -35,11 +35,11 @@ public enum GitOriginDefaultBranch {
         // otherwise. We check `refs/remotes/origin/<name>` directly so a
         // local branch of the same name doesn't false-positive.
         for candidate in ["main", "master", "develop"] {
-            guard let (_, code) = try? GitRunner.capture(
+            guard let captured = try? await GitRunner.capture(
                 args: ["show-ref", "--verify", "--quiet", "refs/remotes/origin/\(candidate)"],
                 at: repoPath
             ) else { continue }
-            if code == 0 { return candidate }
+            if captured.exitCode == 0 { return candidate }
         }
 
         return nil
