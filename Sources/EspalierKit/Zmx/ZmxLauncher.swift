@@ -7,7 +7,7 @@ import Foundation
 /// Created once at app startup with the resolved executable URL. The
 /// public surface is small and synchronous; use `kill` from a background
 /// queue if calling from the UI thread (see TerminalManager).
-public final class ZmxLauncher {
+public final class ZmxLauncher: Sendable {
 
     /// URL to the `zmx` binary. May point to a path that does not exist;
     /// callers should consult `isAvailable` before assuming usability.
@@ -76,6 +76,21 @@ public final class ZmxLauncher {
         ["ZMX_DIR": zmxDir.path]
     }
 
+    /// Produce a zmx-ready environment from `base`: applies `envAdditions`
+    /// and strips `ZMX_SESSION`.
+    ///
+    /// Stripping ZMX_SESSION matters because zmx's `attach` prefers the
+    /// env var over the positional session argument, so an inherited
+    /// ZMX_SESSION (from a parent Espalier shell, or the developer's
+    /// own terminal when running tests) silently overrides the session
+    /// name we're trying to create. Symptom: `zmx attach X` emits
+    /// `error: session "<parent's-session>" does not exist` and exits.
+    public func subprocessEnv(from base: [String: String]) -> [String: String] {
+        var env = base.merging(envAdditions()) { _, new in new }
+        env.removeValue(forKey: "ZMX_SESSION")
+        return env
+    }
+
     /// `zmx kill --force <session>`. Synchronous; ignores nonzero exit
     /// (the most common nonzero is "session already gone" which is the
     /// successful outcome from our perspective). Logs are caller's
@@ -87,7 +102,7 @@ public final class ZmxLauncher {
         _ = try? ZmxRunner.capture(
             executable: executable,
             args: ["kill", "--force", sessionName],
-            env: ProcessInfo.processInfo.environment.merging(envAdditions()) { _, new in new }
+            env: subprocessEnv(from: ProcessInfo.processInfo.environment)
         )
     }
 
@@ -99,7 +114,7 @@ public final class ZmxLauncher {
         let output = try ZmxRunner.run(
             executable: executable,
             args: ["list", "--short"],
-            env: ProcessInfo.processInfo.environment.merging(envAdditions()) { _, new in new }
+            env: subprocessEnv(from: ProcessInfo.processInfo.environment)
         )
         return Set(parseListOutput(output))
     }

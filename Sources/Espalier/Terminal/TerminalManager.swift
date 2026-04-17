@@ -1,7 +1,7 @@
 import AppKit
 import GhosttyKit
 import EspalierKit
-import UserNotifications
+@preconcurrency import UserNotifications
 
 /// Four-way pane split request — carries enough information for the host to
 /// pick both the `SplitDirection` (horizontal/vertical) and the placement

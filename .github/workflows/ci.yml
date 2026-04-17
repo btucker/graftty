@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    # macos-26 ships Xcode 26 which bundles a current swift-testing.
+    # The older swift-testing (124.4) on macos-latest (→ macos-15) has
+    # an exit-path hang: all tests pass, then the process blocks ~10 min
+    # without emitting the final summary. macos-26 sidesteps it.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show tool versions
+        run: |
+          swift --version
+          xcodebuild -version
+
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Build app + tests (warnings as errors)
+        run: swift build --build-tests -Xswiftc -warnings-as-errors
+
+      - name: Test
+        timeout-minutes: 5
+        # `script` gives swift test a PTY-like stdout so output streams
+        # in real time instead of being block-buffered by the CI log pipe.
+        run: /usr/bin/script -q /dev/null swift test --skip-build
