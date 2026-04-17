@@ -153,6 +153,14 @@ struct WorktreeRow: View {
                 Text(displayName)
                     .strikethrough()
                     .foregroundColor(theme.foreground.opacity(0.5))
+            } else if isMainCheckout {
+                Text("root")
+                    .italic()
+                    .foregroundColor(
+                        isActive
+                            ? theme.foreground
+                            : theme.foreground.opacity(0.8)
+                    )
             } else {
                 Text(displayName)
                     .foregroundColor(
