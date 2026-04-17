@@ -114,6 +114,8 @@ struct EspalierApp: App {
         .defaultSize(width: 1400, height: 900)
         .commands {
             CommandGroup(after: .newItem) {
+                // "Add Repository..." keeps its hardcoded Cmd+Shift+O —
+                // it's an Espalier-specific action with no Ghostty equivalent.
                 Button("Add Repository...") {
                     // MainWindow handles the file picker via its own button.
                     // This menu item is a placeholder for the standard shortcut.
@@ -122,50 +124,39 @@ struct EspalierApp: App {
 
                 Divider()
 
-                Button("Split Horizontally") {
-                    splitFocusedPane(direction: .horizontal)
-                }
-                .keyboardShortcut("d", modifiers: [.command])
-
-                Button("Split Vertically") {
-                    splitFocusedPane(direction: .vertical)
-                }
-                .keyboardShortcut("d", modifiers: [.command, .shift])
+                // Split actions — shortcuts derived from the Ghostty config.
+                bridgedButton("Split Right", action: .newSplitRight) { handleSplit(.right) }
+                bridgedButton("Split Left",  action: .newSplitLeft)  { handleSplit(.left) }
+                bridgedButton("Split Down",  action: .newSplitDown)  { handleSplit(.down) }
+                bridgedButton("Split Up",    action: .newSplitUp)    { handleSplit(.up) }
 
                 Divider()
 
-                Button("Focus Pane Left") {
-                    navigatePane(.left)
-                }
-                .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
-
-                Button("Focus Pane Right") {
-                    navigatePane(.right)
-                }
-                .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
-
-                Button("Focus Pane Up") {
-                    navigatePane(.up)
-                }
-                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
-
-                Button("Focus Pane Down") {
-                    navigatePane(.down)
-                }
-                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+                // Navigate actions.
+                bridgedButton("Focus Pane Left",  action: .gotoSplitLeft)   { handleNavigate(.left) }
+                bridgedButton("Focus Pane Right", action: .gotoSplitRight)  { handleNavigate(.right) }
+                bridgedButton("Focus Pane Up",    action: .gotoSplitTop)    { handleNavigate(.up) }
+                bridgedButton("Focus Pane Down",  action: .gotoSplitBottom) { handleNavigate(.down) }
+                bridgedButton("Previous Pane",    action: .gotoSplitPrevious) { handleNavigateTreeOrder(forward: false) }
+                bridgedButton("Next Pane",        action: .gotoSplitNext)     { handleNavigateTreeOrder(forward: true) }
 
                 Divider()
 
-                Button("Close Pane") {
-                    closeFocusedPane()
-                }
-                .keyboardShortcut("w", modifiers: [.command])
+                // Zoom / equalize.
+                bridgedButton("Zoom Split",      action: .toggleSplitZoom) { handleToggleZoom() }
+                bridgedButton("Equalize Splits", action: .equalizeSplits)  { handleEqualizeSplits() }
+
+                Divider()
+
+                // Close.
+                bridgedButton("Close Pane", action: .closeSurface) { handleClosePane() }
             }
 
             CommandGroup(after: .appInfo) {
                 Button("Install CLI Tool...") {
                     installCLI()
                 }
+                bridgedButton("Reload Ghostty Config", action: .reloadConfig) { handleReloadConfig() }
             }
         }
 
@@ -230,6 +221,65 @@ struct EspalierApp: App {
                     terminalManager: tm,
                     targetID: terminalID
                 )
+            }
+        }
+
+        // Keybind-driven spatial navigation (goto_split left/right/up/down).
+        terminalManager.onGotoSplit = { [appState = $appState, tm = terminalManager] terminalID, direction in
+            MainActor.assumeIsolated {
+                Self.navigatePane(
+                    appState: appState,
+                    terminalManager: tm,
+                    from: terminalID,
+                    direction: direction
+                )
+            }
+        }
+
+        // Keybind-driven sequential navigation (goto_split previous/next).
+        terminalManager.onGotoSplitOrder = { [appState = $appState, tm = terminalManager] terminalID, forward in
+            MainActor.assumeIsolated {
+                Self.navigatePaneInTreeOrder(
+                    appState: appState,
+                    terminalManager: tm,
+                    from: terminalID,
+                    forward: forward
+                )
+            }
+        }
+
+        // toggle_split_zoom — flip zoom state on the pane's worktree.
+        terminalManager.onToggleZoom = { [appState = $appState] terminalID in
+            MainActor.assumeIsolated {
+                Self.toggleZoom(appState: appState, on: terminalID)
+            }
+        }
+
+        // resize_split — apply pixel delta to nearest matching ancestor.
+        terminalManager.onResizeSplit = { [appState = $appState] terminalID, direction, amount in
+            MainActor.assumeIsolated {
+                Self.resizeSplit(
+                    appState: appState,
+                    target: terminalID,
+                    direction: direction,
+                    pixels: amount
+                )
+            }
+        }
+
+        // equalize_splits — reset all split ratios to 0.5.
+        terminalManager.onEqualizeSplits = { [appState = $appState] terminalID in
+            MainActor.assumeIsolated {
+                Self.equalizeSplits(appState: appState, around: terminalID)
+            }
+        }
+
+        // reload_config — libghostty doesn't expose a reload C API yet;
+        // rebuild the bridge from the still-live config object so menu
+        // shortcuts stay consistent.
+        terminalManager.onReloadConfig = { [tm = terminalManager] in
+            MainActor.assumeIsolated {
+                tm.rebuildKeybindBridge()
             }
         }
 
@@ -838,6 +888,130 @@ struct EspalierApp: App {
         path.hasSuffix("/") ? path : path + "/"
     }
 
+    /// Static navigate used by the `onGotoSplit` callback (triggered from
+    /// libghostty keybinds). Spatial direction is mapped to previous/next
+    /// in leaf order — we don't yet have geometry to do true spatial nav.
+    @MainActor
+    fileprivate static func navigatePane(
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager,
+        from terminalID: TerminalID,
+        direction: NavigationDirection
+    ) {
+        for repoIdx in appState.wrappedValue.repos.indices {
+            for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
+                let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                let leaves = wt.splitTree.allLeaves
+                guard let currentIdx = leaves.firstIndex(of: terminalID) else { continue }
+                guard leaves.count > 1 else { return }
+                let nextIdx: Int
+                switch direction {
+                case .left, .up:
+                    nextIdx = (currentIdx - 1 + leaves.count) % leaves.count
+                case .right, .down:
+                    nextIdx = (currentIdx + 1) % leaves.count
+                }
+                let nextID = leaves[nextIdx]
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nextID
+                terminalManager.setFocus(nextID)
+                return
+            }
+        }
+    }
+
+    /// Cycle focus in split-tree leaf order (previous/next). Used by
+    /// `onGotoSplitOrder` and by the menu "Previous Pane" / "Next Pane" items.
+    @MainActor
+    fileprivate static func navigatePaneInTreeOrder(
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager,
+        from terminalID: TerminalID,
+        forward: Bool
+    ) {
+        for repoIdx in appState.wrappedValue.repos.indices {
+            for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
+                let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                let leaves = wt.splitTree.allLeaves
+                guard let currentIdx = leaves.firstIndex(of: terminalID) else { continue }
+                guard leaves.count > 1 else { return }
+                let nextIdx = forward
+                    ? (currentIdx + 1) % leaves.count
+                    : (currentIdx - 1 + leaves.count) % leaves.count
+                let nextID = leaves[nextIdx]
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nextID
+                terminalManager.setFocus(nextID)
+                return
+            }
+        }
+    }
+
+    @MainActor
+    fileprivate static func toggleZoom(appState: Binding<AppState>, on terminalID: TerminalID) {
+        mutateWorktreeContaining(appState: appState, leaf: terminalID) { wt in
+            var copy = wt
+            copy.splitTree = wt.splitTree.togglingZoom(at: terminalID)
+            return copy
+        }
+    }
+
+    @MainActor
+    fileprivate static func equalizeSplits(appState: Binding<AppState>, around terminalID: TerminalID) {
+        mutateWorktreeContaining(appState: appState, leaf: terminalID) { wt in
+            var copy = wt
+            copy.splitTree = wt.splitTree.equalizing()
+            return copy
+        }
+    }
+
+    @MainActor
+    fileprivate static func resizeSplit(
+        appState: Binding<AppState>,
+        target: TerminalID,
+        direction: ResizeDirection,
+        pixels: UInt16
+    ) {
+        // MVP: use the key window's content-area bounds as a proxy for the
+        // ancestor split bounds. Accurate for single-split layouts; for nested
+        // splits the delta will be slightly off. A follow-up can capture
+        // per-split bounds via SwiftUI preference keys.
+        // TODO: plumb per-split GeometryReader bounds for multi-level accuracy.
+        let bounds = NSApp.keyWindow?.contentView?.bounds
+            ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
+        mutateWorktreeContaining(appState: appState, leaf: target) { wt in
+            var copy = wt
+            do {
+                copy.splitTree = try wt.splitTree.resizing(
+                    target: target,
+                    direction: direction,
+                    pixels: pixels,
+                    ancestorBounds: bounds
+                )
+            } catch {
+                // No matching orientation ancestor — silent no-op, matches Ghostty.
+            }
+            return copy
+        }
+    }
+
+    /// Find the worktree that owns `leaf` and apply `transform` to it.
+    /// Idempotent and safe for callers that don't know which worktree owns a pane.
+    @MainActor
+    private static func mutateWorktreeContaining(
+        appState: Binding<AppState>,
+        leaf: TerminalID,
+        transform: (WorktreeEntry) -> WorktreeEntry
+    ) {
+        for repoIdx in appState.wrappedValue.repos.indices {
+            for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
+                if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree.allLeaves.contains(leaf) {
+                    let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx] = transform(wt)
+                    return
+                }
+            }
+        }
+    }
+
     /// Shared close-pane implementation used by Cmd+W and libghostty's
     /// `close_surface_cb` (shell exit). Removes the pane from its worktree's
     /// split tree, destroys the surface, promotes focus to a sibling, and
@@ -904,6 +1078,74 @@ struct EspalierApp: App {
             return
         case .type(let trimmedCommand):
             terminalManager.handle(for: terminalID)?.typeText(trimmedCommand + "\r")
+        }
+    }
+
+    // MARK: - Focused-pane helpers for menu actions
+
+    /// The terminal currently holding focus in the selected worktree.
+    private var focusedTerminalID: TerminalID? {
+        guard let path = appState.selectedWorktreePath else { return nil }
+        for repo in appState.repos {
+            for wt in repo.worktrees where wt.path == path && wt.state == .running {
+                return wt.focusedTerminalID ?? wt.splitTree.allLeaves.first
+            }
+        }
+        return nil
+    }
+
+    private func handleSplit(_ split: PaneSplit) {
+        guard let id = focusedTerminalID else { return }
+        _ = Self.splitPane(appState: $appState, terminalManager: terminalManager, targetID: id, split: split)
+    }
+
+    private func handleNavigate(_ dir: NavigationDirection) {
+        guard let id = focusedTerminalID else { return }
+        Self.navigatePane(appState: $appState, terminalManager: terminalManager, from: id, direction: dir)
+    }
+
+    private func handleNavigateTreeOrder(forward: Bool) {
+        guard let id = focusedTerminalID else { return }
+        Self.navigatePaneInTreeOrder(appState: $appState, terminalManager: terminalManager, from: id, forward: forward)
+    }
+
+    private func handleToggleZoom() {
+        guard let id = focusedTerminalID else { return }
+        Self.toggleZoom(appState: $appState, on: id)
+    }
+
+    private func handleEqualizeSplits() {
+        guard let id = focusedTerminalID else { return }
+        Self.equalizeSplits(appState: $appState, around: id)
+    }
+
+    private func handleClosePane() {
+        guard let id = focusedTerminalID else { return }
+        Self.closePane(appState: $appState, terminalManager: terminalManager, targetID: id)
+    }
+
+    private func handleReloadConfig() {
+        terminalManager.rebuildKeybindBridge()
+    }
+
+    // MARK: - View builder for bridge-shortcutted menu buttons
+
+    /// Wraps a menu button so its keyboard shortcut is derived from the
+    /// keybind bridge at runtime, not hardcoded. If the action has no
+    /// configured binding (or the key can't be translated to a
+    /// `KeyboardShortcut`), the button renders without a shortcut hint.
+    @MainActor
+    @ViewBuilder
+    private func bridgedButton(
+        _ label: LocalizedStringKey,
+        action: GhosttyAction,
+        onTap: @escaping () -> Void
+    ) -> some View {
+        if let chord = terminalManager.keybindBridge[action],
+           let shortcut = KeyboardShortcutFromChord.shortcut(from: chord) {
+            Button(label, action: onTap).keyboardShortcut(shortcut)
+        } else {
+            Button(label, action: onTap)
         }
     }
 
