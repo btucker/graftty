@@ -27,12 +27,13 @@ public final class WorktreeStatsStore {
     public func refresh(worktreePath: String, repoPath: String) {
         guard !inFlight.contains(worktreePath) else { return }
         inFlight.insert(worktreePath)
+        let cached = defaultBranchByRepo[repoPath] ?? nil
 
         Task.detached { [weak self] in
             let computed = await Self.computeOffMain(
                 worktreePath: worktreePath,
                 repoPath: repoPath,
-                cachedDefault: self?.defaultBranchByRepo[repoPath] ?? nil
+                cachedDefault: cached
             )
             await self?.apply(
                 worktreePath: worktreePath,
@@ -44,10 +45,6 @@ public final class WorktreeStatsStore {
 
     public func clear(worktreePath: String) {
         stats.removeValue(forKey: worktreePath)
-    }
-
-    public func invalidateDefaultBranch(repoPath: String) {
-        defaultBranchByRepo.removeValue(forKey: repoPath)
     }
 
     // MARK: - Private
