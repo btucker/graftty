@@ -17,11 +17,19 @@ let package = Package(
     dependencies: [
         .package(url: "https://github.com/Lakr233/libghostty-spm.git", from: "1.0.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
+        .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
     ],
     targets: [
         .target(
             name: "EspalierKit",
-            dependencies: []
+            dependencies: [
+                .product(name: "NIO", package: "swift-nio"),
+                .product(name: "NIOHTTP1", package: "swift-nio"),
+                .product(name: "NIOWebSocket", package: "swift-nio"),
+            ],
+            resources: [
+                .copy("Web/Resources"),
+            ]
         ),
         .executableTarget(
             name: "Espalier",

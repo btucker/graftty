@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Espalier</title>
+    <link rel="stylesheet" href="./xterm.min.css">
+    <style>
+        html, body { margin: 0; height: 100%; background: #0d0d0d; }
+        #term { height: 100vh; padding: 8px; box-sizing: border-box; }
+        #status { position: fixed; top: 4px; right: 8px; color: #888; font: 12px monospace; }
+    </style>
+</head>
+<body>
+    <div id="status">connecting…</div>
+    <div id="term"></div>
+    <script src="./xterm.min.js"></script>
+    <script src="./xterm-addon-fit.min.js"></script>
+    <script>
+        (function() {
+            const params = new URLSearchParams(location.search);
+            const session = params.get("session");
+            const statusEl = document.getElementById("status");
+            if (!session) {
+                statusEl.textContent = "missing ?session=";
+                return;
+            }
+
+            const term = new Terminal({ convertEol: false, fontFamily: "Menlo, monospace", fontSize: 13 });
+            const fit = new FitAddon.FitAddon();
+            term.loadAddon(fit);
+            term.open(document.getElementById("term"));
+            fit.fit();
+
+            const wsURL = (location.protocol === "https:" ? "wss:" : "ws:") +
+                "//" + location.host + "/ws?session=" + encodeURIComponent(session);
+            const ws = new WebSocket(wsURL);
+            ws.binaryType = "arraybuffer";
+
+            function sendResize() {
+                if (ws.readyState !== 1) return;
+                ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+            }
+
+            ws.onopen = () => {
+                statusEl.textContent = session;
+                sendResize();
+            };
+            ws.onmessage = (ev) => {
+                if (ev.data instanceof ArrayBuffer) {
+                    term.write(new Uint8Array(ev.data));
+                } else {
+                    // Text frame — control event from server.
+                    try {
+                        const msg = JSON.parse(ev.data);
+                        if (msg.type === "error" || msg.type === "sessionEnded") {
+                            statusEl.textContent = msg.message || msg.type;
+                        }
+                    } catch (_) { /* ignore */ }
+                }
+            };
+            ws.onclose = () => { statusEl.textContent = "disconnected"; };
+            ws.onerror = () => { statusEl.textContent = "error"; };
+
+            term.onData((data) => {
+                if (ws.readyState !== 1) return;
+                ws.send(new TextEncoder().encode(data));
+            });
+            window.addEventListener("resize", () => { fit.fit(); sendResize(); });
+        })();
+    </script>
+</body>
+</html>
