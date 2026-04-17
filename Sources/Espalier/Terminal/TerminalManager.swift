@@ -34,6 +34,21 @@ final class TerminalManager: ObservableObject {
     private var ghosttyApp: GhosttyApp?
     private var ghosttyConfig: GhosttyConfig?
     private var surfaces: [TerminalID: SurfaceHandle] = [:]
+
+    /// Terminal IDs for which `onShellReady` has already fired. Used to
+    /// gate the callback to exactly one invocation per pane.
+    private var shellReadyFired: Set<TerminalID> = []
+
+    /// Terminal IDs that are the "first pane" of a worktree — the pane
+    /// whose creation caused `.closed → .running`. Populated by
+    /// `markFirstPane(_:)` from the sidebar/open-worktree path.
+    private var firstPaneMarkers: Set<TerminalID> = []
+
+    /// Terminal IDs that were recreated by restore-on-launch rather than
+    /// user-initiated open. Populated by `markRehydrated(_:)` from
+    /// `EspalierApp.restoreRunningWorktrees`.
+    private var rehydratedSurfaces: Set<TerminalID> = []
+
     private var wakeupObserver: NSObjectProtocol?
 
     /// Set by `EspalierApp` at startup. When non-nil and `isAvailable`,
@@ -89,6 +104,16 @@ final class TerminalManager: ObservableObject {
     /// red badges, long successful commands become subtle pings so the
     /// user knows the pane is idle again.
     var onCommandFinished: ((TerminalID, _ exitCode: Int16, _ duration: UInt64) -> Void)?
+
+    /// Fired exactly once per `TerminalID` — on the first
+    /// `GHOSTTY_ACTION_PWD` event received for that pane. This is our
+    /// "shell is ready to accept typed input" signal: Ghostty's shell
+    /// integration emits OSC 7 from `precmd`, which runs before every
+    /// prompt including the first one. If shell integration is absent
+    /// (or the user is using an unsupported shell), this callback
+    /// never fires — consumers should treat that as a silent no-op
+    /// rather than fall back to time-based heuristics.
+    var onShellReady: ((TerminalID) -> Void)?
 
     /// Called on OSC 9;4 progress reports from programs like `git clone`
     /// or `apt` that advertise progress. The host updates the attention
@@ -253,6 +278,7 @@ final class TerminalManager: ObservableObject {
             surfaces.removeValue(forKey: id)
             titles.removeValue(forKey: id)
             killZmxSession(for: id)
+            forgetTrackingState(for: id)
         }
     }
 
@@ -261,6 +287,43 @@ final class TerminalManager: ObservableObject {
         surfaces.removeValue(forKey: terminalID)
         titles.removeValue(forKey: terminalID)
         killZmxSession(for: terminalID)
+        forgetTrackingState(for: terminalID)
+    }
+
+    /// Mark a terminal as the first pane of its worktree — the pane whose
+    /// creation caused the worktree to transition from `.closed` to
+    /// `.running`. Called by the sidebar "Open" action (and any other
+    /// caller that triggers a `.closed → .running` transition).
+    func markFirstPane(_ terminalID: TerminalID) {
+        firstPaneMarkers.insert(terminalID)
+    }
+
+    /// Mark a terminal as rehydrated from on-disk state at launch, rather
+    /// than freshly opened by the user. Rehydrated panes never auto-run
+    /// a default command — the command is presumed already running under
+    /// zmx from the previous session. Called by
+    /// `EspalierApp.restoreRunningWorktrees` before creating surfaces.
+    func markRehydrated(_ terminalID: TerminalID) {
+        rehydratedSurfaces.insert(terminalID)
+    }
+
+    /// Whether a terminal was marked as the first pane of its worktree.
+    func isFirstPane(_ terminalID: TerminalID) -> Bool {
+        firstPaneMarkers.contains(terminalID)
+    }
+
+    /// Whether a terminal was marked as rehydrated rather than user-opened.
+    func wasRehydrated(_ terminalID: TerminalID) -> Bool {
+        rehydratedSurfaces.contains(terminalID)
+    }
+
+    /// Clear per-terminal tracking state on destroy. Keeps the three
+    /// tracking sets in sync with live surfaces so destroyed IDs don't
+    /// leak memory or cause stale answers from the marker queries.
+    private func forgetTrackingState(for terminalID: TerminalID) {
+        shellReadyFired.remove(terminalID)
+        firstPaneMarkers.remove(terminalID)
+        rehydratedSurfaces.remove(terminalID)
     }
 
     /// Resolve the per-surface zmx spawn parameters for a terminal pane.
@@ -362,6 +425,9 @@ final class TerminalManager: ObservableObject {
             guard let pwdPtr = action.action.pwd.pwd else { return }
             let pwd = String(cString: pwdPtr)
             onPWDChange?(id, pwd)
+            if shellReadyFired.insert(id).inserted {
+                onShellReady?(id)
+            }
 
         case GHOSTTY_ACTION_RING_BELL:
             // Default system alert sound. Visual bell (a brief flash) is a
