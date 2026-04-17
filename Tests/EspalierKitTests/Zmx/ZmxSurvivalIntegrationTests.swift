@@ -97,8 +97,18 @@ struct ZmxSurvivalIntegrationTests {
         }
 
         func terminate() {
+            // SIGTERM first; if the child doesn't exit within 2s, escalate to SIGKILL.
+            // Without this bound, a wedged `zmx attach` would hang the test forever
+            // (no per-test timeout in Swift Testing by default).
             process.terminate()
-            process.waitUntilExit()
+            let deadline = Date().addingTimeInterval(2.0)
+            while process.isRunning && Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+                process.waitUntilExit()
+            }
             Darwin.close(masterFd)
         }
     }
@@ -140,7 +150,9 @@ struct ZmxSurvivalIntegrationTests {
                           userInfo: [NSLocalizedDescriptionKey: "open slave PTY failed: \(slaveName)"])
         }
 
-        let slaveHandle = FileHandle(fileDescriptor: slave, closeOnDealloc: true)
+        // closeOnDealloc: false — we'll close the raw fd ourselves below
+        // after process.run() so the parent doesn't keep the slave alive.
+        let slaveHandle = FileHandle(fileDescriptor: slave, closeOnDealloc: false)
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -155,6 +167,13 @@ struct ZmxSurvivalIntegrationTests {
         process.standardOutput = slaveHandle
         process.standardError = slaveHandle
         try process.run()
+
+        // Standard POSIX pattern: now that the child has inherited the slave fd
+        // via the Process's stdin/stdout/stderr, the parent must close its copy
+        // so EOF on the master correctly signals "child gone." Without this, the
+        // master-side reader would never see EOF if the child crashes, since
+        // the parent's still-open slave keeps the kernel's pipe alive.
+        Darwin.close(slave)
 
         return PtyAttach(process: process, masterFd: master)
     }
