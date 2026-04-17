@@ -154,4 +154,41 @@ struct ZmxLauncherUnitTests {
         let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/bin/sh"))
         #expect(launcher.isAvailable == true)
     }
+
+    // MARK: subprocessEnv(from:)
+    //
+    // zmx's `attach <name>` silently prefers $ZMX_SESSION over the
+    // positional name arg. An inherited ZMX_SESSION (from the shell that
+    // launched Espalier or `swift test`) therefore hijacks every attach.
+    // subprocessEnv must strip it — these tests lock that invariant.
+
+    @Test func subprocessEnvStripsInheritedZmxSession() throws {
+        let launcher = ZmxLauncher(
+            executable: URL(fileURLWithPath: "/dev/null"),
+            zmxDir: URL(fileURLWithPath: "/tmp/some-dir")
+        )
+        let base = ["ZMX_SESSION": "espalier-leaked", "PATH": "/usr/bin"]
+        let env = launcher.subprocessEnv(from: base)
+        #expect(env["ZMX_SESSION"] == nil)
+        #expect(env["PATH"] == "/usr/bin")  // unrelated keys preserved
+    }
+
+    @Test func subprocessEnvAppliesZmxDir() throws {
+        let launcher = ZmxLauncher(
+            executable: URL(fileURLWithPath: "/dev/null"),
+            zmxDir: URL(fileURLWithPath: "/tmp/zmx-xyz")
+        )
+        let env = launcher.subprocessEnv(from: [:])
+        #expect(env["ZMX_DIR"] == "/tmp/zmx-xyz")
+    }
+
+    @Test func subprocessEnvOverridesInheritedZmxDir() throws {
+        // If the parent already had a ZMX_DIR, our launcher's dir wins.
+        let launcher = ZmxLauncher(
+            executable: URL(fileURLWithPath: "/dev/null"),
+            zmxDir: URL(fileURLWithPath: "/tmp/ours")
+        )
+        let env = launcher.subprocessEnv(from: ["ZMX_DIR": "/somewhere/else"])
+        #expect(env["ZMX_DIR"] == "/tmp/ours")
+    }
 }

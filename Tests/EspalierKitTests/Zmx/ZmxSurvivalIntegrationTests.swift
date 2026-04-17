@@ -157,8 +157,7 @@ struct ZmxSurvivalIntegrationTests {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = ["-c", launcher.attachCommand(sessionName: sessionName)]
-        var env = ProcessInfo.processInfo.environment
-        for (k, v) in launcher.envAdditions() { env[k] = v }
+        var env = launcher.subprocessEnv(from: ProcessInfo.processInfo.environment)
         // Force a deterministic shell so prompt-detection and SHELL
         // expansion behave the same on every dev machine.
         env["SHELL"] = "/bin/sh"
