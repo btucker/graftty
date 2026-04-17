@@ -3,6 +3,13 @@ import Foundation
 import Darwin
 @testable import EspalierKit
 
+// Skipped in CI via `swift test --skip ZmxSurvivalIntegrationTests`
+// (see .github/workflows/ci.yml) because the vendored zmx daemon
+// fails to reap on GitHub's macOS 14 virtualized runner — tests
+// pass in seconds, then swift test hangs ~10 min before the runner
+// force-kills orphan processes. Reproduces only there; fine locally.
+// TODO: figure out whether it's a zmx/macOS 14 PTY reparenting
+// issue or a test-harness fd leak, then re-enable.
 @Suite("ZmxLauncher — survival contract (integration)")
 struct ZmxSurvivalIntegrationTests {
 
