@@ -33,6 +33,42 @@ struct ZmxLauncherUnitTests {
         #expect(a != b)
     }
 
+    @Test func sessionNameAlwaysHasEspalierPrefix() throws {
+        // Locks in the "espalier-" prefix as part of the contract — a
+        // future maintainer who renames the prefix would have to update
+        // this test, making the breakage visible.
+        let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/dev/null"))
+        for _ in 0..<10 {
+            let name = launcher.sessionName(for: UUID())
+            #expect(name.hasPrefix("espalier-"))
+        }
+    }
+
+    @Test func sessionNameIsExactlySeventeenCharacters() throws {
+        // "espalier-" (9) + 8 hex chars = 17. Locks in the length so a
+        // change to "first 4 hex" or "full uuid" gets caught.
+        let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/dev/null"))
+        for _ in 0..<10 {
+            let name = launcher.sessionName(for: UUID())
+            #expect(name.count == 17)
+        }
+    }
+
+    @Test func sessionNameIsAlwaysLowercase() throws {
+        // The .lowercased() call is one of the easier mutations to drop
+        // accidentally; a UUID that has uppercase hex letters in its
+        // first 8 chars (which most do) would surface as uppercase
+        // without it. Tests both an explicit upper-case UUID and a
+        // sample of fresh ones.
+        let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/dev/null"))
+        let upperUUID = UUID(uuidString: "AABBCCDD-EEFF-0011-2233-445566778899")!
+        #expect(launcher.sessionName(for: upperUUID) == "espalier-aabbccdd")
+        for _ in 0..<5 {
+            let name = launcher.sessionName(for: UUID())
+            #expect(name == name.lowercased())
+        }
+    }
+
     // MARK: attachCommand(sessionName:)
     //
     // libghostty's `command` field is a single string (shell parses it).
@@ -44,7 +80,7 @@ struct ZmxLauncherUnitTests {
             executable: URL(fileURLWithPath: "/Applications/Espalier.app/Contents/Helpers/zmx")
         )
         let cmd = launcher.attachCommand(sessionName: "espalier-deadbeef")
-        #expect(cmd == "'/Applications/Espalier.app/Contents/Helpers/zmx' attach espalier-deadbeef $SHELL")
+        #expect(cmd == "'/Applications/Espalier.app/Contents/Helpers/zmx' attach 'espalier-deadbeef' $SHELL")
     }
 
     @Test func attachCommandEscapesSingleQuotesInExecutablePath() throws {
@@ -54,7 +90,16 @@ struct ZmxLauncherUnitTests {
             executable: URL(fileURLWithPath: "/tmp/it's/zmx")
         )
         let cmd = launcher.attachCommand(sessionName: "espalier-cafe1234")
-        #expect(cmd == "'/tmp/it'\\''s/zmx' attach espalier-cafe1234 $SHELL")
+        #expect(cmd == "'/tmp/it'\\''s/zmx' attach 'espalier-cafe1234' $SHELL")
+    }
+
+    @Test func attachCommandQuotesSessionNameDefensively() throws {
+        // sessionName(for:) emits safe strings, but attachCommand accepts
+        // arbitrary input — verify shell metacharacters in the session
+        // name are quoted, not interpreted.
+        let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/zmx"))
+        let cmd = launcher.attachCommand(sessionName: "my session; rm -rf /")
+        #expect(cmd == "'/usr/bin/zmx' attach 'my session; rm -rf /' $SHELL")
     }
 
     // MARK: parseListOutput

@@ -62,7 +62,11 @@ public final class ZmxLauncher {
     /// Single-quotes the executable path so spaces or shell metacharacters
     /// in the install path don't break the spawn.
     public func attachCommand(sessionName: String) -> String {
-        "\(shellQuote(executable.path)) attach \(sessionName) $SHELL"
+        // Defensively shell-quote the session name even though sessionName(for:)
+        // emits only [a-z0-9-] today — future callers may pass user-supplied
+        // names, and an unquoted shell-metachar in the command string would
+        // be a code-injection footgun for libghostty's spawn path.
+        "\(shellQuote(executable.path)) attach \(shellQuote(sessionName)) $SHELL"
     }
 
     /// Env additions that should accompany every zmx invocation Espalier
