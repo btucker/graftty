@@ -9,12 +9,14 @@ final class AppServices {
     let socketServer: SocketServer
     let worktreeMonitor: WorktreeMonitor
     let statsStore: WorktreeStatsStore
+    let prStatusStore: PRStatusStore
     var worktreeMonitorBridge: WorktreeMonitorBridge?
 
     init(socketPath: String) {
         self.socketServer = SocketServer(socketPath: socketPath)
         self.worktreeMonitor = WorktreeMonitor()
         self.statsStore = WorktreeStatsStore()
+        self.prStatusStore = PRStatusStore()
     }
 }
 
@@ -67,6 +69,7 @@ struct EspalierApp: App {
                 appState: $appState,
                 terminalManager: terminalManager,
                 statsStore: services.statsStore,
+                prStatusStore: services.prStatusStore,
                 worktreeMonitor: services.worktreeMonitor
             )
                 .onAppear { startup() }
@@ -286,6 +289,19 @@ struct EspalierApp: App {
         // additionally surfaces origin-side drift that WorktreeMonitor's
         // per-worktree HEAD watcher can't see.
         services.statsStore.startPolling(appState: appState)
+
+        let prTicker = PollingTicker(
+            interval: .seconds(5),
+            pauseWhenInactive: { [prStatusStore = services.prStatusStore] in
+                // Keep polling when at least one tracked PR has pending CI, so the
+                // "green light" arrives even while the user is in another app.
+                !prStatusStore.infos.values.contains(where: { $0.checks == .pending })
+            }
+        )
+        services.prStatusStore.start(
+            ticker: prTicker,
+            getRepos: { binding.wrappedValue.repos }
+        )
 
         restoreRunningWorktrees()
     }

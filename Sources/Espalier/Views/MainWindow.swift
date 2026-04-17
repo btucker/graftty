@@ -6,6 +6,7 @@ struct MainWindow: View {
     @Binding var appState: AppState
     @ObservedObject var terminalManager: TerminalManager
     let statsStore: WorktreeStatsStore
+    let prStatusStore: PRStatusStore
     let worktreeMonitor: WorktreeMonitor
 
     /// Debounces writes of `sidebarWidth` to AppState so a drag doesn't
@@ -47,9 +48,13 @@ struct MainWindow: View {
             VStack(spacing: 0) {
                 BreadcrumbBar(
                     repoName: selectedRepo?.displayName,
+                    worktreeDisplayName: worktreeDisplayName,
+                    worktreePath: selectedWorktree?.path,
                     branchName: selectedWorktree?.branch,
-                    path: selectedWorktree?.path,
-                    theme: terminalManager.theme
+                    isHomeCheckout: isHomeCheckout,
+                    prInfo: prInfo,
+                    theme: terminalManager.theme,
+                    onRefreshPR: refreshPR
                 )
 
                 if let worktree = selectedWorktreeBinding {
@@ -167,6 +172,26 @@ struct MainWindow: View {
             }
         }
         return nil
+    }
+
+    private var isHomeCheckout: Bool {
+        guard let repo = selectedRepo, let wt = selectedWorktree else { return false }
+        return wt.path == repo.path
+    }
+
+    private var worktreeDisplayName: String? {
+        guard let repo = selectedRepo, let wt = selectedWorktree else { return nil }
+        return wt.displayName(amongSiblingPaths: repo.worktrees.map(\.path))
+    }
+
+    private var prInfo: PRInfo? {
+        guard let path = selectedWorktree?.path else { return nil }
+        return prStatusStore.infos[path]
+    }
+
+    private func refreshPR() {
+        guard let wt = selectedWorktree, let repo = selectedRepo else { return }
+        prStatusStore.refresh(worktreePath: wt.path, repoPath: repo.path, branch: wt.branch)
     }
 
     /// Selects a worktree *and* focuses a specific pane within it. Used by
