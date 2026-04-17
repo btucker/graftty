@@ -7,6 +7,13 @@ on:
 permissions:
   contents: write
 
+# Serialize releases so two tag pushes don't race the tap update step.
+# cancel-in-progress: false (unlike CI) — never abort an in-flight
+# release; just queue the next one.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
   release:
     # macos-26 mirrors the CI workflow — same Xcode, same Swift, same
@@ -62,9 +69,19 @@ jobs:
           ZIP: ${{ steps.zip.outputs.zip }}
         run: |
           set -euo pipefail
-          gh release create "v$VERSION" "$ZIP" \
-            --title "v$VERSION" \
-            --generate-notes
+          # Create the release if it doesn't already exist. Re-runs of a
+          # partially-failed workflow (e.g., the tap update step crashed) need
+          # to be safe — `gh release create` errors with "release already
+          # exists" otherwise. Splitting create from upload lets us use
+          # `--clobber` on upload so the zip is always the latest.
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "Release v$VERSION already exists — re-uploading zip"
+          else
+            gh release create "v$VERSION" \
+              --title "v$VERSION" \
+              --generate-notes
+          fi
+          gh release upload "v$VERSION" "$ZIP" --clobber
 
       - name: Update Homebrew tap
         env:
