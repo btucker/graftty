@@ -51,6 +51,29 @@ struct GitOriginHostParseTests {
     @Test func gitProtocolReturnsNil() {
         #expect(GitOriginHost.parse(remoteURL: "git://example.com/foo/bar.git") == nil)
     }
+
+    @Test func parsesSSHURLWithExplicitPort() {
+        let origin = GitOriginHost.parse(remoteURL: "ssh://git@github.com:22/btucker/espalier.git")
+        #expect(origin == HostingOrigin(provider: .github, host: "github.com", owner: "btucker", repo: "espalier"))
+    }
+
+    @Test func lowercasesHostForProviderMatching() {
+        let origin = GitOriginHost.parse(remoteURL: "https://GitHub.Com/btucker/espalier.git")
+        #expect(origin?.provider == .github)
+    }
+
+    @Test func rejectsFalsePositiveGithubSubstring() {
+        // "github-mirror.example.com" is NOT GitHub — rejects substring match.
+        let origin = GitOriginHost.parse(remoteURL: "git@github-mirror.example.com:x/y.git")
+        #expect(origin?.provider == .unsupported)
+    }
+
+    @Test func parsesGitLabSubgroupURL() {
+        // GitLab allows nested subgroups — repo path contains slashes.
+        let origin = GitOriginHost.parse(remoteURL: "git@gitlab.com:group/subgroup/proj.git")
+        #expect(origin?.slug == "group/subgroup/proj")
+        #expect(origin?.provider == .gitlab)
+    }
 }
 
 @Suite("GitOriginHost.detect")

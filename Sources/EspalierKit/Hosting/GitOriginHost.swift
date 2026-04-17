@@ -15,29 +15,13 @@ public enum GitOriginHost {
 
         let (host, path): (String, String)
 
-        if trimmed.hasPrefix("git@") || trimmed.hasPrefix("ssh://") {
-            let stripped: String
-            if trimmed.hasPrefix("ssh://") {
-                stripped = String(trimmed.dropFirst("ssh://".count))
-            } else {
-                stripped = String(trimmed.dropFirst("git@".count))
-            }
-            let separatorIdx: String.Index?
-            if let colon = stripped.firstIndex(of: ":") {
-                separatorIdx = colon
-            } else if let slash = stripped.firstIndex(of: "/") {
-                separatorIdx = slash
-            } else {
-                return nil
-            }
-            guard let sep = separatorIdx else { return nil }
-            var rawHost = String(stripped[..<sep])
-            if let at = rawHost.lastIndex(of: "@") {
-                rawHost = String(rawHost[rawHost.index(after: at)...])
-            }
-            host = rawHost
-            path = String(stripped[stripped.index(after: sep)...])
-        } else if trimmed.hasPrefix("https://") || trimmed.hasPrefix("http://") {
+        if trimmed.hasPrefix("git@") {
+            // scp-style: `git@host:path` (no port, single colon separates host from path).
+            let stripped = String(trimmed.dropFirst("git@".count))
+            guard let colon = stripped.firstIndex(of: ":") else { return nil }
+            host = String(stripped[..<colon])
+            path = String(stripped[stripped.index(after: colon)...])
+        } else if trimmed.hasPrefix("https://") || trimmed.hasPrefix("http://") || trimmed.hasPrefix("ssh://") {
             guard let url = URL(string: trimmed), let urlHost = url.host else { return nil }
             host = urlHost
             path = String(url.path.drop(while: { $0 == "/" }))
@@ -53,10 +37,11 @@ public enum GitOriginHost {
 
         guard !owner.isEmpty, !repo.isEmpty, !host.isEmpty else { return nil }
 
+        let hostLower = host.lowercased()
         let provider: HostingProvider
-        if host.contains("github") {
+        if hostLower == "github.com" || hostLower.hasSuffix(".github.com") || hostLower.hasPrefix("github.") {
             provider = .github
-        } else if host.contains("gitlab") {
+        } else if hostLower == "gitlab.com" || hostLower.hasSuffix(".gitlab.com") || hostLower.hasPrefix("gitlab.") {
             provider = .gitlab
         } else {
             provider = .unsupported
