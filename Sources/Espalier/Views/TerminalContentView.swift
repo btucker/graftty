@@ -8,13 +8,20 @@ struct TerminalContentView: View {
     let onFocusTerminal: (TerminalID) -> Void
 
     var body: some View {
-        Group {
-            if let root = splitTree.wrappedValue.root {
-                nodeView(root)
-            } else {
-                Text("No terminal")
-                    .foregroundColor(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // Zoom fast-path: if one pane is zoomed, render only its leaf full-bleed.
+        // All sibling surfaces remain alive in TerminalManager.surfaces — we're
+        // only changing which views are mounted, not tearing down PTYs.
+        if let zoomedID = splitTree.wrappedValue.zoomed {
+            leafView(zoomedID)
+        } else {
+            Group {
+                if let root = splitTree.wrappedValue.root {
+                    nodeView(root)
+                } else {
+                    Text("No terminal")
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
         }
     }
