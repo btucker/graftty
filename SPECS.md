@@ -429,3 +429,47 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 **TECH-3** The application shall target macOS 14 Sonoma as its minimum supported version.
 
 **TECH-4** The application shall reuse the following components from the Ghostty project (MIT-licensed): `SplitTree`, `SplitView`, `Ghostty.Surface`, `Ghostty.App`, `Ghostty.Config`, and `SurfaceView_AppKit`.
+
+## 13. zmx Session Backing
+
+### 13.1 Bundling
+
+**ZMX-1.1** The application shall include a `zmx` binary in the app bundle at `Espalier.app/Contents/Helpers/zmx`, mirroring the placement of the `espalier` CLI.
+
+**ZMX-1.2** The bundled `zmx` binary shall be a universal Mach-O containing both `arm64` and `x86_64` slices, produced by `scripts/bump-zmx.sh`.
+
+**ZMX-1.3** The application shall pin the vendored `zmx` version in `Resources/zmx-binary/VERSION` and record its SHA256 in `Resources/zmx-binary/CHECKSUMS`.
+
+### 13.2 Session Naming
+
+**ZMX-2.1** The application shall derive the zmx session name for each pane as the literal string `"espalier-"` followed by the lowercase hex of the first 8 bytes — i.e., the first 8 hex characters — of the pane's UUID.
+
+**ZMX-2.2** The session-naming function shall be deterministic and shall not change across releases without an explicit migration step, since changing it orphans every existing user's daemons.
+
+### 13.3 Sandboxing
+
+**ZMX-3.1** The application shall pass `ZMX_DIR=~/Library/Application Support/Espalier/zmx/` in the environment of every spawned `zmx` invocation, so Espalier-owned daemons live in a private socket directory distinct from any user-personal `zmx` usage.
+
+**ZMX-3.2** The application shall create the `ZMX_DIR` path if it does not exist at launch.
+
+### 13.4 Lifecycle Mapping
+
+**ZMX-4.1** When the application creates a new terminal pane, it shall set the libghostty surface configuration's `command` field to `'<bundled-zmx-path>' attach espalier-<short-id> $SHELL`, with the bundled-zmx-path single-quoted to defend against spaces in the install path.
+
+**ZMX-4.2** When the application restores a worktree's split tree on launch (per `PERSIST-3.x`), each restored pane's surface shall be created with the same session name derived from the persisted pane UUID, so reattach to a surviving daemon is automatic.
+
+**ZMX-4.3** When the application destroys a terminal surface (user-initiated close, automatic close on shell exit, or worktree stop), it shall asynchronously invoke `zmx kill --force <session>` for the matching session.
+
+**ZMX-4.4** When the application quits, it shall not invoke `zmx kill` — pending PTY teardown by the OS is the desired detach signal that lets daemons survive.
+
+### 13.5 Fallback
+
+**ZMX-5.1** If the bundled `zmx` binary is missing or not executable, the application shall fall back to libghostty's default `$SHELL` spawn behavior on a per-pane basis.
+
+**ZMX-5.2** If the bundled `zmx` binary is unavailable at launch, the application shall present a single non-blocking informational alert explaining that terminals will not survive app quit. The alert shall not be re-presented within the same process lifetime.
+
+### 13.6 Pass-through Guarantees
+
+**ZMX-6.1** Shell-integration OSC sequences (OSC 7 working directory, OSC 9 desktop notification, OSC 133 prompt marks, OSC 9;4 progress reports) shall continue to flow from the inner shell through `zmx` to libghostty unchanged. The `PWD-x.x`, `NOTIF-x.x`, and `KEY-x.x` requirements remain in force regardless of whether `zmx` is mediating the PTY.
+
+**ZMX-6.2** The `ESPALIER_SOCK` environment variable shall continue to be set in the spawned shell's environment per `ATTN-2.4`. Because `zmx` inherits its child shell's env from the spawning process, this is satisfied by setting it on the libghostty surface as today.
