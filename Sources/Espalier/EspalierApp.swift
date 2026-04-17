@@ -39,7 +39,8 @@ struct EspalierApp: App {
             MainWindow(
                 appState: $appState,
                 terminalManager: terminalManager,
-                statsStore: services.statsStore
+                statsStore: services.statsStore,
+                worktreeMonitor: services.worktreeMonitor
             )
                 .onAppear { startup() }
                 .onChange(of: appState) { _, newState in
@@ -179,25 +180,12 @@ struct EspalierApp: App {
                 )
             }
         }
-        terminalManager.onProgressReport = { [appState = $appState] terminalID, report in
-            MainActor.assumeIsolated {
-                let text: String
-                switch report {
-                case .error:         text = "err"
-                case .indeterminate: text = "…"
-                case .paused:        text = "||"
-                case .percent(let p): text = "\(p)%"
-                }
-                // Progress reports refresh live — clearAfter is longer so
-                // they don't flicker away between updates.
-                Self.setAttentionForTerminal(
-                    appState: appState,
-                    terminalID: terminalID,
-                    text: text,
-                    clearAfter: 10
-                )
-            }
-        }
+        // PROGRESS_REPORT intentionally unhandled — shell-integration
+        // progress pings (OSC 9;4 from tools emitting indeterminate or
+        // percent status) were too loud relative to the urgency they
+        // convey. The underlying plumbing in TerminalManager stays
+        // wired; we can revisit with a dedicated, less-aggressive
+        // visual if the need comes back.
 
         try? services.socketServer.start()
         // SocketServer already dispatches onMessage to the main queue.
@@ -752,6 +740,16 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
                 if !discoveredPaths.contains(wt.path) && wt.state != .stale {
                     binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .stale
                 }
+            }
+
+            // Register FS watches for every known worktree in this repo.
+            // watchWorktreePath / watchHeadRef are idempotent, but this
+            // catches newly-discovered worktrees (from external CLI
+            // `git worktree add`) that otherwise wouldn't get HEAD
+            // tracking until the app restarted.
+            for wt in binding.wrappedValue.repos[repoIdx].worktrees where wt.state != .stale {
+                monitor.watchWorktreePath(wt.path)
+                monitor.watchHeadRef(worktreePath: wt.path, repoPath: repoPath)
             }
 
             // Refresh stats for all non-stale worktrees in this repo.

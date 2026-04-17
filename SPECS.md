@@ -64,7 +64,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **STATE-2.1** A worktree entry in any state may additionally have an attention overlay.
 
-**STATE-2.2** While a worktree entry has an attention overlay, the sidebar shall display a red badge showing the attention text.
+**STATE-2.2** While a worktree entry has an attention overlay and one or more pane rows are visible beneath it, the sidebar shall replace each pane row's title text with the attention text rendered in a red capsule. Non-running worktrees (no pane rows) display no attention indicator.
 
 **STATE-2.3** When the user clicks a worktree entry that has an attention overlay, the application shall clear the attention overlay.
 
@@ -344,9 +344,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **NOTIF-2.2** When libghostty fires `COMMAND_FINISHED` with a non-zero exit code, the application shall set the owning worktree's attention overlay to an error indicator that auto-clears after 8 seconds.
 
-**NOTIF-2.3** When libghostty fires `PROGRESS_REPORT` with a percentage, the application shall set the owning worktree's attention overlay to that percentage. Indeterminate, paused, and error states shall be displayed with distinct short labels.
-
-**NOTIF-2.4** Auto-populated attention badges from shell-integration events shall share the existing clearing semantics defined in STATE-2.x; a subsequent event on the same worktree replaces the previous badge.
+**NOTIF-2.3** Auto-populated attention badges from shell-integration events shall share the existing clearing semantics defined in STATE-2.x; a subsequent event on the same worktree replaces the previous badge.
 
 ## 10. Shell Integration Configuration
 

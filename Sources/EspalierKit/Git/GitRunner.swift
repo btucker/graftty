@@ -39,4 +39,28 @@ public enum GitRunner {
         let out = String(data: data, encoding: .utf8) ?? ""
         return (stdout: out, exitCode: process.terminationStatus)
     }
+
+    /// Runs git and returns `(stdout, stderr, exitCode)`. Use for mutation
+    /// operations where stderr carries the user-visible error on failure
+    /// (e.g. `worktree add` reporting "branch already exists"). Both
+    /// streams are bounded-output commands in practice; the pipe-deadlock
+    /// risk flagged elsewhere applies to chatty read commands, not
+    /// mutations.
+    public static func captureAll(args: [String], at directory: String) throws -> (stdout: String, stderr: String, exitCode: Int32) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = args
+        process.currentDirectoryURL = URL(fileURLWithPath: directory)
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
+        try process.run()
+        process.waitUntilExit()
+        let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        let out = String(data: outData, encoding: .utf8) ?? ""
+        let err = String(data: errData, encoding: .utf8) ?? ""
+        return (stdout: out, stderr: err, exitCode: process.terminationStatus)
+    }
 }

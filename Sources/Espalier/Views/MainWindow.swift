@@ -6,6 +6,7 @@ struct MainWindow: View {
     @Binding var appState: AppState
     @ObservedObject var terminalManager: TerminalManager
     let statsStore: WorktreeStatsStore
+    let worktreeMonitor: WorktreeMonitor
 
     /// Debounces writes of `sidebarWidth` to AppState so a drag doesn't
     /// generate hundreds of save-to-disk events.
@@ -28,7 +29,8 @@ struct MainWindow: View {
                 onSelectPane: selectPane,
                 onAddRepo: addRepository,
                 onAddPath: addPath,
-                onStopWorktree: stopWorktreeWithConfirmation
+                onStopWorktree: stopWorktreeWithConfirmation,
+                onAddWorktree: addWorktree
             )
             .navigationSplitViewColumnWidth(
                 min: 180,
@@ -233,6 +235,66 @@ struct MainWindow: View {
                   let window = view.window else { return }
             window.makeFirstResponder(view)
         }
+    }
+
+    /// Creates a new worktree at `<repo>/.worktrees/<name>` with a fresh
+    /// branch checked out. Starts from the repo's resolved default branch
+    /// so new feature worktrees branch off main (vs. whatever the main
+    /// checkout happens to have checked out right now). Returns nil on
+    /// success or the stderr message on failure, for the sheet to display.
+    ///
+    /// On success, discovers the new worktree synchronously, registers
+    /// its FSEvents watches, kicks its divergence stats, and selects
+    /// it. The existing `.git/worktrees/` watcher will also fire
+    /// `worktreeMonitorDidDetectChange` asynchronously — that path is
+    /// idempotent, so duplicate discovery is a no-op.
+    private func addWorktree(
+        repo: RepoEntry,
+        worktreeName: String,
+        branchName: String
+    ) async -> String? {
+        let repoPath = repo.path
+        let worktreePath = repoPath + "/.worktrees/" + worktreeName
+
+        let gitError = await Task.detached {
+            let startPoint = (try? GitOriginDefaultBranch.resolve(repoPath: repoPath)) ?? nil
+            do {
+                try GitWorktreeAdd.add(
+                    repoPath: repoPath,
+                    worktreePath: worktreePath,
+                    branchName: branchName,
+                    startPoint: startPoint
+                )
+                return nil as String?
+            } catch GitWorktreeAdd.Error.gitFailed(_, let stderr) {
+                return stderr.isEmpty ? "git worktree add failed" : stderr
+            } catch {
+                return "\(error)"
+            }
+        }.value
+        if let gitError { return gitError }
+
+        // Run discovery now rather than waiting for FSEvents so the new
+        // entry is in appState by the time we call selectWorktree below
+        // — otherwise selectWorktree's terminal-launch logic sees no
+        // matching entry and no-ops.
+        if let discovered = try? GitWorktreeDiscovery.discover(repoPath: repoPath),
+           let repoIdx = appState.repos.firstIndex(where: { $0.path == repoPath }) {
+            let existingPaths = Set(appState.repos[repoIdx].worktrees.map(\.path))
+            for d in discovered where !existingPaths.contains(d.path) {
+                let entry = WorktreeEntry(path: d.path, branch: d.branch)
+                appState.repos[repoIdx].worktrees.append(entry)
+                worktreeMonitor.watchWorktreePath(entry.path)
+                worktreeMonitor.watchHeadRef(worktreePath: entry.path, repoPath: repoPath)
+                statsStore.refresh(worktreePath: entry.path, repoPath: repoPath)
+            }
+        }
+
+        // Switching to the new worktree also starts its terminal
+        // surface since selectWorktree transitions a closed entry into
+        // running.
+        selectWorktree(worktreePath)
+        return nil
     }
 
     private func addRepository() {

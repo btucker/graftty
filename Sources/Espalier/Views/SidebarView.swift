@@ -15,6 +15,12 @@ struct SidebarView: View {
     let onAddRepo: () -> Void
     let onAddPath: (String) -> Void
     let onStopWorktree: (String) -> Void
+    /// Called when the user submits the add-worktree sheet. Returns nil
+    /// on success, or a user-visible error string (typically git's
+    /// stderr) on failure so the sheet can display it inline.
+    let onAddWorktree: (RepoEntry, String, String) async -> String?
+
+    @State private var addingWorktreeTo: RepoEntry?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -45,6 +51,17 @@ struct SidebarView: View {
             handleDrop(providers)
         }
         .publishSidebarWidth()
+        .sheet(item: $addingWorktreeTo) { repo in
+            AddWorktreeSheet(
+                repoDisplayName: repo.displayName,
+                onSubmit: { worktreeName, branchName in
+                    let err = await onAddWorktree(repo, worktreeName, branchName)
+                    if err == nil { addingWorktreeTo = nil }
+                    return err
+                },
+                onCancel: { addingWorktreeTo = nil }
+            )
+        }
     }
 
     @ViewBuilder
@@ -73,10 +90,26 @@ struct SidebarView: View {
             // No leading glyph — the top level is always projects, so
             // a folder icon would be tautological noise. The disclosure
             // arrow and semibold weight carry the "expandable heading"
-            // cues on their own.
-            Text(repo.displayName)
-                .foregroundColor(theme.foreground)
-                .fontWeight(.semibold)
+            // cues on their own. Trailing "+" opens the add-worktree
+            // sheet; .buttonStyle(.plain) keeps its tap from toggling
+            // the enclosing disclosure.
+            HStack(spacing: 6) {
+                Text(repo.displayName)
+                    .foregroundColor(theme.foreground)
+                    .fontWeight(.semibold)
+                Spacer()
+                Button {
+                    addingWorktreeTo = repo
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(theme.foreground.opacity(0.6))
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Add worktree to \(repo.displayName)")
+            }
         }
     }
 
@@ -122,7 +155,8 @@ struct SidebarView: View {
                             isActiveWorktree: isActive,
                             isFocusedPane: isActive
                                 && worktree.focusedTerminalID == terminalID,
-                            theme: theme
+                            theme: theme,
+                            attentionText: worktree.attention?.text
                         )
                     }
                     .buttonStyle(.plain)

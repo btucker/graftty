@@ -18,6 +18,12 @@ struct PaneTitleRow: View {
     /// bolder `↳` glyph so the user can see "typing goes here".
     let isFocusedPane: Bool
     let theme: GhosttyTheme
+    /// When non-nil, the pane title text is replaced by this string
+    /// rendered inside a red capsule — an attention ping from the CLI
+    /// `espalier notify` path. Cleared automatically when the worktree
+    /// (or any pane in it) gains focus, returning the row to showing
+    /// the shell-provided title.
+    let attentionText: String?
 
     var body: some View {
         HStack(spacing: 4) {
@@ -25,16 +31,35 @@ struct PaneTitleRow: View {
                 .font(.caption)
                 .fontWeight(isFocusedPane ? .bold : .regular)
                 .foregroundColor(theme.foreground.opacity(arrowOpacity))
-            Text(title.isEmpty ? "shell" : title)
-                .font(.caption)
-                .fontWeight(isFocusedPane ? .semibold : .regular)
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundColor(theme.foreground.opacity(titleOpacity))
+            if let attentionText {
+                Text(attentionText)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Color.red)
+                    .foregroundColor(.white)
+                    .clipShape(Capsule())
+            } else {
+                Text(title.isEmpty ? "shell" : title)
+                    .font(.caption)
+                    .fontWeight(isFocusedPane ? .semibold : .regular)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundColor(theme.foreground.opacity(titleOpacity))
+            }
             Spacer(minLength: 0)
         }
         .padding(.vertical, 2)
-        .padding(.leading, 28)
+        // Place the `↳` glyph's vertical stroke directly under the center
+        // of the worktree row's house/branch icon above. The worktree
+        // row's leading padding is 8pt + 12pt icon = icon center at 14pt.
+        // The `↳` character's vertical stroke sits at its own left edge,
+        // so a 14pt leading padding drops that stroke onto the icon's
+        // vertical centerline.
+        .padding(.leading, 14)
         .padding(.trailing, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -92,7 +117,6 @@ struct WorktreeRow: View {
                 baseRef: baseRef,
                 theme: theme
             )
-            attentionBadge
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
@@ -149,17 +173,4 @@ struct WorktreeRow: View {
         }
     }
 
-    @ViewBuilder
-    private var attentionBadge: some View {
-        if let attention = entry.attention {
-            Text(attention.text)
-                .font(.caption2)
-                .fontWeight(.semibold)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 1)
-                .background(Color.red)
-                .foregroundColor(.white)
-                .clipShape(Capsule())
-        }
-    }
 }
