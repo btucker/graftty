@@ -161,7 +161,10 @@ public final class WebServer {
 
     // MARK: - HTTP handler
 
-    private final class HTTPHandler: ChannelInboundHandler, RemovableChannelHandler {
+    // @unchecked Sendable: NIO serializes handler callbacks onto a single
+    // event loop, so `currentRequestHead` is thread-confined in practice.
+    // The upgrade completionHandler closure requires Sendable capture.
+    private final class HTTPHandler: ChannelInboundHandler, RemovableChannelHandler, @unchecked Sendable {
         typealias InboundIn = HTTPServerRequestPart
         typealias OutboundOut = HTTPServerResponsePart
 
@@ -262,7 +265,7 @@ public final class WebServer {
                     var buffer = channel.allocator.buffer(capacity: data.count)
                     buffer.writeBytes(data)
                     let frame = WebSocketFrame(fin: true, opcode: .binary, data: buffer)
-                    channel.writeAndFlush(NIOAny(frame), promise: nil)
+                    channel.writeAndFlush(frame, promise: nil)
                 }
             }
             sess.onExit = { [weak self] in
@@ -273,7 +276,7 @@ public final class WebServer {
                         opcode: .connectionClose,
                         data: channel.allocator.buffer(capacity: 0)
                     )
-                    channel.writeAndFlush(NIOAny(close), promise: nil)
+                    channel.writeAndFlush(close, promise: nil)
                     channel.close(promise: nil)
                 }
             }
