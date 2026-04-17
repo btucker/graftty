@@ -21,8 +21,8 @@ public enum GitWorktreeRemove {
     ///     administrative entry correctly.
     ///   - worktreePath: the linked worktree to remove. Must not be the
     ///     main checkout — git refuses that.
-    public static func remove(repoPath: String, worktreePath: String) throws {
-        let result = try GitRunner.captureAll(
+    public static func remove(repoPath: String, worktreePath: String) async throws {
+        let result = try await GitRunner.captureAll(
             args: ["worktree", "remove", worktreePath],
             at: repoPath
         )

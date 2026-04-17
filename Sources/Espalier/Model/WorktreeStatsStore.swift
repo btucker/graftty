@@ -31,17 +31,19 @@ public final class WorktreeStatsStore {
         inFlight.insert(worktreePath)
         let cached = defaultBranchByRepo[repoPath] ?? nil
 
-        Task.detached { [weak self] in
+        Task {
             let computed = await Self.computeOffMain(
                 worktreePath: worktreePath,
                 repoPath: repoPath,
                 cachedDefault: cached
             )
-            await self?.apply(
-                worktreePath: worktreePath,
-                repoPath: repoPath,
-                result: computed
-            )
+            await MainActor.run {
+                self.apply(
+                    worktreePath: worktreePath,
+                    repoPath: repoPath,
+                    result: computed
+                )
+            }
         }
     }
 
@@ -80,7 +82,7 @@ public final class WorktreeStatsStore {
         if let cached = cachedDefault {
             name = cached
         } else {
-            name = (try? GitOriginDefaultBranch.resolve(repoPath: repoPath)) ?? nil
+            name = (try? await GitOriginDefaultBranch.resolve(repoPath: repoPath)) ?? nil
         }
         guard let name else {
             return ComputeResult(defaultBranch: nil, stats: nil)
@@ -92,7 +94,7 @@ public final class WorktreeStatsStore {
         // counting commits that are already on local main.
         let isHomeWorktree = (worktreePath == repoPath)
         let baseRef = isHomeWorktree ? "origin/\(name)" : name
-        let stats = try? GitWorktreeStats.compute(
+        let stats = try? await GitWorktreeStats.compute(
             worktreePath: worktreePath,
             defaultBranchRef: baseRef
         )
