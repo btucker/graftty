@@ -63,4 +63,51 @@ public enum GitWorktreeStats {
         }
         return Int(digits)
     }
+
+    /// Computes divergence stats for a worktree vs. an origin default branch ref.
+    /// Runs two local git commands synchronously — callers should invoke this
+    /// off the main thread. Throws if git fails to launch or exits non-zero.
+    public static func compute(
+        worktreePath: String,
+        defaultBranchRef: String
+    ) throws -> WorktreeStats {
+        let range = "\(defaultBranchRef)...HEAD"
+
+        let revListOutput: String
+        do {
+            revListOutput = try GitRunner.run(
+                args: ["rev-list", "--left-right", "--count", range],
+                at: worktreePath
+            )
+        } catch GitRunner.Error.gitFailed(let status) {
+            throw GitWorktreeStatsError.gitFailed(terminationStatus: status)
+        }
+
+        guard let counts = parseRevListCounts(revListOutput) else {
+            throw GitWorktreeStatsError.unparseableRevList(revListOutput)
+        }
+
+        let diffOutput: String
+        do {
+            diffOutput = try GitRunner.run(
+                args: ["diff", "--shortstat", range],
+                at: worktreePath
+            )
+        } catch GitRunner.Error.gitFailed(let status) {
+            throw GitWorktreeStatsError.gitFailed(terminationStatus: status)
+        }
+        let diff = parseShortStat(diffOutput)
+
+        return WorktreeStats(
+            ahead: counts.ahead,
+            behind: counts.behind,
+            insertions: diff.insertions,
+            deletions: diff.deletions
+        )
+    }
+}
+
+public enum GitWorktreeStatsError: Swift.Error, Equatable {
+    case gitFailed(terminationStatus: Int32)
+    case unparseableRevList(String)
 }

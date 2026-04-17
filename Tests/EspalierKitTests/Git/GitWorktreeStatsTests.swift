@@ -88,3 +88,121 @@ struct GitWorktreeStatsParserTests {
         #expect(!WorktreeStats(ahead: 0, behind: 0, insertions: 0, deletions: 1).isEmpty)
     }
 }
+
+@Suite("GitWorktreeStats — compute (integration)")
+struct GitWorktreeStatsComputeTests {
+
+    func makeTempDir() throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("espalier-stats-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    @discardableResult
+    func shell(_ command: String, at dir: URL) throws -> Int32 {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-c", command]
+        process.currentDirectoryURL = dir
+        process.environment = [
+            "PATH": "/usr/bin:/bin:/usr/local/bin",
+            "HOME": NSHomeDirectory(),
+            "GIT_AUTHOR_NAME": "Test",
+            "GIT_AUTHOR_EMAIL": "test@test.com",
+            "GIT_COMMITTER_NAME": "Test",
+            "GIT_COMMITTER_EMAIL": "test@test.com",
+        ]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+        return process.terminationStatus
+    }
+
+    /// Sets up a clone with origin/main as the default branch and returns
+    /// the clone path.
+    func makeClonedRepo() throws -> (root: URL, clone: URL) {
+        let root = try makeTempDir()
+        let upstream = root.appendingPathComponent("upstream.git")
+        let clone = root.appendingPathComponent("clone")
+        try FileManager.default.createDirectory(at: upstream, withIntermediateDirectories: true)
+        try shell("git init --bare -b main", at: upstream)
+        let seed = root.appendingPathComponent("seed")
+        try FileManager.default.createDirectory(at: seed, withIntermediateDirectories: true)
+        try shell("""
+            git init -b main && \
+            printf 'alpha\\nbeta\\ngamma\\n' > file.txt && \
+            git add file.txt && \
+            git commit -m init && \
+            git remote add origin \(upstream.path) && \
+            git push -u origin main
+            """, at: seed)
+        try shell("git clone \(upstream.path) \(clone.path)", at: root)
+        return (root, clone)
+    }
+
+    @Test func returnsZerosAtParity() throws {
+        let (root, clone) = try makeClonedRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let stats = try GitWorktreeStats.compute(
+            worktreePath: clone.path,
+            defaultBranchRef: "origin/main"
+        )
+        #expect(stats == WorktreeStats(ahead: 0, behind: 0, insertions: 0, deletions: 0))
+    }
+
+    @Test func countsAheadAndLineChanges() throws {
+        let (root, clone) = try makeClonedRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // Add two commits on HEAD with alpha tweaked + new lines added.
+        try shell("""
+            printf 'alpha\\nbeta\\ngamma\\ndelta\\n' > file.txt && \
+            git add file.txt && git commit -m 'add delta' && \
+            printf 'ALPHA\\nbeta\\ngamma\\ndelta\\nepsilon\\nzeta\\n' > file.txt && \
+            git add file.txt && git commit -m 'add epsilon/zeta, tweak alpha'
+            """, at: clone)
+
+        let stats = try GitWorktreeStats.compute(
+            worktreePath: clone.path,
+            defaultBranchRef: "origin/main"
+        )
+        #expect(stats.ahead == 2)
+        #expect(stats.behind == 0)
+        // alpha: changed (1+/1-); delta: new (1+); epsilon + zeta: new (2+).
+        // Totals vs. the merge-base (= origin/main): +4 / -1.
+        #expect(stats.insertions == 4)
+        #expect(stats.deletions == 1)
+    }
+
+    @Test func countsBehindWhenOriginAdvances() throws {
+        let (root, clone) = try makeClonedRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // Push one new commit to origin from a second clone, then fetch.
+        let other = root.appendingPathComponent("other-clone")
+        try shell("git clone \(root.appendingPathComponent("upstream.git").path) \(other.path)", at: root)
+        try shell("""
+            printf 'alpha\\nbeta\\ngamma\\nomega\\n' > file.txt && \
+            git add file.txt && git commit -m 'omega' && \
+            git push origin main
+            """, at: other)
+        try shell("git fetch origin", at: clone)
+
+        let stats = try GitWorktreeStats.compute(
+            worktreePath: clone.path,
+            defaultBranchRef: "origin/main"
+        )
+        #expect(stats.ahead == 0)
+        #expect(stats.behind == 1)
+    }
+
+    @Test func throwsWhenWorktreeMissing() throws {
+        let bogus = "/nonexistent-espalier-path-\(UUID().uuidString)"
+        #expect(throws: Error.self) {
+            try GitWorktreeStats.compute(worktreePath: bogus, defaultBranchRef: "origin/main")
+        }
+    }
+}

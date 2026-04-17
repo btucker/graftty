@@ -35,25 +35,12 @@ public enum GitWorktreeDiscovery {
     }
 
     public static func discover(repoPath: String) throws -> [DiscoveredWorktree] {
-        let output = try runGit(args: ["worktree", "list", "--porcelain"], at: repoPath)
-        return parsePorcelain(output)
-    }
-
-    private static func runGit(args: [String], at directory: String) throws -> String {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = args
-        process.currentDirectoryURL = URL(fileURLWithPath: directory)
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw GitDiscoveryError.gitFailed(terminationStatus: process.terminationStatus)
+        do {
+            let output = try GitRunner.run(args: ["worktree", "list", "--porcelain"], at: repoPath)
+            return parsePorcelain(output)
+        } catch GitRunner.Error.gitFailed(let status) {
+            throw GitDiscoveryError.gitFailed(terminationStatus: status)
         }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8) ?? ""
     }
 }
 
