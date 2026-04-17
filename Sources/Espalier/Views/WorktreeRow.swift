@@ -84,7 +84,6 @@ struct WorktreeRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            stateIndicator
             typeIcon
             branchLabel
             Spacer()
@@ -102,32 +101,22 @@ struct WorktreeRow: View {
     }
 
     /// `house` for the repo's main checkout, `arrow.triangle.branch` for
-    /// linked worktrees. Gives Andy an at-a-glance way to distinguish
-    /// "the canonical source" from "an ephemeral branch workspace"
-    /// without reading labels.
+    /// linked worktrees. The icon's color encodes the worktree's running
+    /// state: dim foreground when closed, green when running, yellow when
+    /// stale. Two signals in one glyph.
     @ViewBuilder
     private var typeIcon: some View {
         Image(systemName: isMainCheckout ? "house" : "arrow.triangle.branch")
             .font(.system(size: 10))
-            .foregroundColor(theme.foreground.opacity(0.6))
+            .foregroundColor(typeIconColor)
             .frame(width: 12)
     }
 
-    @ViewBuilder
-    private var stateIndicator: some View {
+    private var typeIconColor: Color {
         switch entry.state {
-        case .closed:
-            Circle()
-                .strokeBorder(theme.foreground.opacity(0.5), lineWidth: 1)
-                .frame(width: 8, height: 8)
-        case .running:
-            Circle()
-                .fill(Color.green)
-                .frame(width: 8, height: 8)
-        case .stale:
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 10))
-                .foregroundColor(.yellow)
+        case .closed: return theme.foreground.opacity(0.6)
+        case .running: return .green
+        case .stale: return .yellow
         }
     }
 

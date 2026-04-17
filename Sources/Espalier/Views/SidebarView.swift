@@ -70,14 +70,13 @@ struct SidebarView: View {
                     .listRowInsets(EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0))
             }
         } label: {
-            Label {
-                Text(repo.displayName)
-                    .foregroundColor(theme.foreground)
-                    .fontWeight(.semibold)
-            } icon: {
-                Image(systemName: "folder.fill")
-                    .foregroundStyle(theme.foreground.opacity(0.85))
-            }
+            // No leading glyph — the top level is always projects, so
+            // a folder icon would be tautological noise. The disclosure
+            // arrow and semibold weight carry the "expandable heading"
+            // cues on their own.
+            Text(repo.displayName)
+                .foregroundColor(theme.foreground)
+                .fontWeight(.semibold)
         }
     }
 

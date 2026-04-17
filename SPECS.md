@@ -54,11 +54,11 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **STATE-1.1** Each worktree entry shall have one of three states: closed, running, or stale.
 
-**STATE-1.2** While a worktree entry is in the closed state, the sidebar shall display a hollow dot indicator (○) next to it.
+**STATE-1.2** While a worktree entry is in the closed state, the sidebar shall display its type icon (house for the main checkout, branch for linked worktrees) in a dimmed foreground color.
 
-**STATE-1.3** While a worktree entry is in the running state, the sidebar shall display a green dot indicator (●) next to it.
+**STATE-1.3** While a worktree entry is in the running state, the sidebar shall display its type icon tinted green.
 
-**STATE-1.4** While a worktree entry is in the stale state, the sidebar shall display a warning icon (⚠), strikethrough text, and grayed-out appearance.
+**STATE-1.4** While a worktree entry is in the stale state, the sidebar shall display its type icon tinted yellow, with strikethrough text and grayed-out appearance on the label.
 
 ### 2.2 Attention Overlay
 
