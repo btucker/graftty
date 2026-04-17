@@ -141,7 +141,7 @@ The principle throughout: **Espalier must remain usable even if zmx is broken.**
 
 ### At app launch / first pane creation
 
-- **Bundled `zmx` binary missing or not executable** — `ZmxLauncher.isAvailable == false`. All future `attachArgv` calls return the legacy `$SHELL` argv. A one-time non-blocking banner: "zmx unavailable — terminals won't survive quit." Cause logged (file missing? wrong arch? gatekeeper rejection?). Espalier behaves like main-branch.
+- **Bundled `zmx` binary missing or not executable** — `ZmxLauncher.isAvailable == false`. All future `attachArgv` calls return the legacy `$SHELL` argv. Show a one-time, dismissible alert: "zmx unavailable — terminals won't survive quit." Log the cause (file missing? wrong arch? gatekeeper rejection?). Espalier behaves exactly like today's main branch.
 - **`ZMX_DIR` not writable** — try to create `~/Library/Application Support/Espalier/zmx/` at first launch. On failure, log and fall back to letting zmx use `TMPDIR`. Espalier's sessions then live alongside any user-private zmx sessions; not ideal but not broken.
 - **Codesigning / notarization failure** — bundled zmx must be re-signed with Espalier's developer ID and included in the notarization manifest. The release build script verifies with `codesign -dv` before producing the .app. A CI test asserts the bundled binary is loadable. Without this, macOS Gatekeeper silently kills the spawn and Flow 1 step 6 fails with no obvious cause.
 
@@ -236,10 +236,10 @@ Once every pane is zmx-backed, Phase 2's WebSocket server can offer terminal str
 
 Phase 1 ships when all of the following hold:
 
-1. The `TerminalManagerSurvivalTests` end-to-end test passes — quit, relaunch, scrollback marker is restored.
+1. The `ZmxSurvivalIntegrationTests.sessionSurvivesClientDetachAndReattachRestoresMarker` integration test passes (replaces the spec's original `TerminalManagerSurvivalTests` name; landed in `Tests/EspalierKitTests/Zmx/` because the Espalier app target has no test target). The end-to-end claim — quit Espalier, relaunch, scrollback marker is restored — is verified by manual smoke test #1 instead.
 2. The four manual smoke tests above pass.
 3. `Resources/zmx-binary/zmx` is committed; `bump-zmx.sh` runs cleanly.
 4. The bundled `zmx` is re-signed and notarized as part of the release build.
-5. `SPECS.md` section 13 is added; sections 3, 6, and 9 carry their clarifying notes.
+5. `SPECS.md` section 13 is added. The pass-through guarantees in §13.6 explicitly reference `PWD-x.x`, `NOTIF-x.x`, and `KEY-x.x` and assert those requirements remain in force; no inline notes were added to §3, §6, or §9.
 6. `swift test` passes including the new unit tests.
 7. With the bundled `zmx` removed (debug build), Espalier launches, creates panes via direct `$SHELL`, surfaces the warning banner, and remains fully usable.
