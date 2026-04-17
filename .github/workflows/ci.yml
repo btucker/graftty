@@ -33,7 +33,10 @@ jobs:
 
       - name: Test
         timeout-minutes: 5
-        # ZmxSurvivalIntegrationTests skipped: zmx daemon reaping
-        # hangs on GH's macOS 14 runner; passes locally. See the
-        # comment on that @Suite for the debugging TODO.
-        run: swift test --skip-build --skip ZmxSurvivalIntegrationTests
+        # `script` gives swift test a PTY-like stdout so its output
+        # streams in real time instead of being block-buffered by the
+        # CI log pipe. Previous runs hid the failure point until the
+        # process exited (or was killed).
+        # ZmxSurvivalIntegrationTests skipped: zmx daemon reaping hangs
+        # on GH's macOS runner; passes locally.
+        run: /usr/bin/script -q /dev/null swift test --skip-build --skip ZmxSurvivalIntegrationTests
