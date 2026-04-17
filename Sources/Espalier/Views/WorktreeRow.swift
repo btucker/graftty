@@ -92,7 +92,10 @@ struct WorktreeRow: View {
             attentionBadge
         }
         .padding(.vertical, 4)
-        .padding(.horizontal, 8)
+        // Asymmetric: no leading padding so the divergence gutter sits flush
+        // against the sidebar's leading edge (DIVERGE-1.1); trailing padding
+        // keeps the attention badge and branch text off the scrollbar.
+        .padding(.trailing, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
     }

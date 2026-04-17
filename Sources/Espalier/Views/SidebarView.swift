@@ -61,6 +61,11 @@ struct SidebarView: View {
         ) {
             ForEach(repo.worktrees) { worktree in
                 worktreeBlock(worktree, repo: repo)
+                    // Zero out List's default row insets so the divergence
+                    // gutter can sit flush against the sidebar's leading
+                    // edge (DIVERGE-1.1). The row's own trailing padding
+                    // still keeps content off the right edge.
+                    .listRowInsets(EdgeInsets())
             }
         } label: {
             Label {
