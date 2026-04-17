@@ -907,10 +907,6 @@ struct EspalierApp: App {
         }
     }
 
-    enum NavigationDirection {
-        case left, right, up, down
-    }
-
     private func installCLI() {
         let bundleCLI = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Helpers/espalier")

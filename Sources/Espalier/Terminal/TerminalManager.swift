@@ -3,6 +3,14 @@ import GhosttyKit
 import EspalierKit
 @preconcurrency import UserNotifications
 
+/// Spatial direction for pane navigation (goto_split left/right/up/down).
+/// Promoted to top-level so both `TerminalManager` (callback signature) and
+/// `EspalierApp` (dispatch and menu) can reference it without qualification.
+enum NavigationDirection {
+    case left, right, up, down
+}
+
+
 /// Compound key identifying "this terminal's most recent position inside
 /// this worktree." Used by `TerminalManager` to remember where a pane was
 /// so it can be restored if the pane returns.
@@ -60,6 +68,13 @@ final class TerminalManager: ObservableObject {
     /// shell. The sidebar observes this to render pane labels.
     @Published var titles: [TerminalID: String] = [:]
 
+    /// Ghostty-config-derived keybind map, built in `initialize()` from the
+    /// live `ghostty_config_t` via `GhosttyTriggerAdapter.resolver`.
+    /// `EspalierApp.commands` reads this to set menu `.keyboardShortcut(...)`
+    /// modifiers dynamically.
+    @Published private(set) var keybindBridge: GhosttyKeybindBridge =
+        GhosttyKeybindBridge(resolver: { _ in nil })
+
     /// Remembered split-tree positions for terminals that have moved *out*
     /// of a worktree via PWD change. If the same pane later hops back
     /// (e.g., user `cd`s in/out/in), we use the breadcrumb to reinsert it
@@ -111,6 +126,32 @@ final class TerminalManager: ObservableObject {
     /// badge so the user can keep tabs on long-running jobs without
     /// staying on the pane.
     var onProgressReport: ((TerminalID, ProgressReport) -> Void)?
+
+    /// Called when libghostty dispatches `goto_split` with a spatial
+    /// direction (left/right/up/down). Host navigates focus to the
+    /// nearest neighbor in that direction.
+    var onGotoSplit: ((TerminalID, NavigationDirection) -> Void)?
+
+    /// Called when libghostty dispatches `goto_split:previous` or
+    /// `goto_split:next`. Host cycles focus in split-tree leaf order.
+    /// `forward` is `true` for next, `false` for previous.
+    var onGotoSplitOrder: ((TerminalID, _ forward: Bool) -> Void)?
+
+    /// Called when libghostty dispatches `toggle_split_zoom`. Host flips the
+    /// `zoomed` state on the worktree containing `terminalID`.
+    var onToggleZoom: ((TerminalID) -> Void)?
+
+    /// Called on `resize_split`. Host walks up the split tree for the focused
+    /// worktree and applies `SplitTree.resizing(...)`.
+    var onResizeSplit: ((TerminalID, ResizeDirection, UInt16) -> Void)?
+
+    /// Called on `equalize_splits`. Host runs `SplitTree.equalizing()` on the
+    /// worktree containing `terminalID`.
+    var onEqualizeSplits: ((TerminalID) -> Void)?
+
+    /// Called on `reload_config`. Host rebuilds the keybind bridge so menu
+    /// shortcuts update to match the new config.
+    var onReloadConfig: (() -> Void)?
 
     /// Swift-native mirror of `ghostty_action_progress_report_s` so
     /// callers outside the Terminal module don't need to import
@@ -186,6 +227,22 @@ final class TerminalManager: ObservableObject {
                 self?.ghosttyApp?.tick()
             }
         }
+
+        if let config = ghosttyConfig?.config {
+            self.keybindBridge = GhosttyKeybindBridge(
+                resolver: GhosttyTriggerAdapter.resolver(config: config)
+            )
+        }
+    }
+
+    /// Rebuild the keybind bridge from the current config. Call after
+    /// `ghostty_config_*` reload operations so menu shortcuts update to
+    /// reflect any changes the user made to their Ghostty config.
+    func rebuildKeybindBridge() {
+        guard let config = ghosttyConfig?.config else { return }
+        self.keybindBridge = GhosttyKeybindBridge(
+            resolver: GhosttyTriggerAdapter.resolver(config: config)
+        )
     }
 
     /// Create surfaces for every leaf in the given split tree that does not yet
