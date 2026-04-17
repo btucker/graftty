@@ -17,6 +17,13 @@ struct WorktreeRowGutter: View {
             if let stats, !stats.isEmpty {
                 Text(commitsLine(stats))
                 Text(linesLine(stats))
+            } else {
+                // Preserve two-line height when empty so rows with and
+                // without stats line up vertically (DIVERGE-1.1). The
+                // space characters render invisibly but still contribute
+                // baseline height.
+                Text(" ")
+                Text(" ")
             }
         }
         .font(.system(size: 10, design: .monospaced))
