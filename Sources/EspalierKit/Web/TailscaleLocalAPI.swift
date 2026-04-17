@@ -46,8 +46,9 @@ public struct TailscaleLocalAPI {
         self.socketPath = socketPath
     }
 
-    /// Construct using the first reachable default path. Throws
-    /// `.socketUnreachable` if none are reachable.
+    /// Construct using the first reachable default path (DMG install vs
+    /// sandboxed App Store install land the socket in different places).
+    /// Throws `.socketUnreachable` if none of the candidates exist.
     public static func autoDetected() throws -> TailscaleLocalAPI {
         for path in defaultSocketPaths where FileManager.default.fileExists(atPath: path) {
             return TailscaleLocalAPI(socketPath: path)
@@ -139,6 +140,12 @@ public struct TailscaleLocalAPI {
         }
         if rc != 0 { throw Error.socketUnreachable }
 
+        // 2s send/recv timeout so a hung tailscaled doesn't wedge the WebServer
+        // auth path indefinitely.
+        var timeout = timeval(tv_sec: 2, tv_usec: 0)
+        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+
         // Tailscale LocalAPI expects Basic auth with no password — the
         // user is implicit because the socket is local. An empty auth
         // header works for the documented endpoints.
@@ -183,11 +190,13 @@ public struct TailscaleLocalAPI {
     }
 
     private static func findDoubleCRLF(in data: Data) -> Int? {
-        let marker: [UInt8] = [0x0D, 0x0A, 0x0D, 0x0A]
-        let bytes = Array(data)
-        guard bytes.count >= 4 else { return nil }
-        for i in 0...(bytes.count - 4) where Array(bytes[i..<(i+4)]) == marker {
-            return i
+        guard data.count >= 4 else { return nil }
+        let base = data.startIndex
+        for i in 0...(data.count - 4) {
+            if data[base + i] == 0x0D, data[base + i + 1] == 0x0A,
+               data[base + i + 2] == 0x0D, data[base + i + 3] == 0x0A {
+                return i
+            }
         }
         return nil
     }

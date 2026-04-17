@@ -42,11 +42,9 @@ public enum PtyProcess {
     public static func spawn(argv: [String], env: [String: String]) throws -> Spawned {
         precondition(!argv.isEmpty, "argv must not be empty")
 
-        // 1. Open the master.
         let master = posix_openpt(O_RDWR | O_NOCTTY)
         if master < 0 { throw Error.openptFailed(errno: errno) }
 
-        // 2. Grant + unlock the slave.
         if grantpt(master) != 0 {
             let err = errno
             close(master)
@@ -58,30 +56,26 @@ public enum PtyProcess {
             throw Error.unlockptFailed(errno: err)
         }
 
-        // 3. Resolve the slave path.
         guard let slaveNameCStr = ptsname(master) else {
             close(master)
             throw Error.ptsnameFailed
         }
         let slavePath = String(cString: slaveNameCStr)
 
-        // 3a. Open the slave in the parent before forking, so there's always
-        // one slave fd open on the PTY. We close it in the parent AFTER the
-        // child has execve'd (the child re-opens its own slave for the dup2
-        // dance). The reason we don't simply open-and-close: on macOS, when
-        // the slave ref count goes to 0 the PTY enters an EOF state on the
+        // Keep the parent's slave fd open across fork. On macOS, when the
+        // slave ref count crosses zero the PTY enters an EOF state on the
         // master, and subsequent reads return -1/EIO even after the child
-        // opens a fresh slave fd. Keeping the parent's slave fd alive across
-        // fork avoids that zero-crossing.
+        // opens a fresh slave fd. Holding one fd here until after fork
+        // avoids that zero-crossing.
         let parentSlaveFD = Darwin.open(slavePath, O_RDWR | O_NOCTTY)
         if parentSlaveFD < 0 {
             close(master)
             throw Error.ptsnameFailed
         }
 
-        // 4. Prepare argv + envp for execve. We copy into C arrays the
-        //    child will inherit; after fork, the child execs, which
-        //    replaces its address space, so leaks don't matter.
+        // After fork the child inherits and execs; the C strings' lifetime
+        // is owned by the parent until the child's execve replaces its
+        // address space (or execve fails, in which case the child _exits).
         let argvCStrings = argv.map { strdup($0) }
         var argvPointers: [UnsafeMutablePointer<CChar>?] = argvCStrings + [nil]
 
@@ -90,20 +84,21 @@ public enum PtyProcess {
         let envCStrings = envStrings.map { strdup($0) }
         var envPointers: [UnsafeMutablePointer<CChar>?] = envCStrings + [nil]
 
-        // 5. Fork.
         let pid = _fork()
         if pid < 0 {
+            let err = errno
+            close(parentSlaveFD)
             close(master)
-            throw Error.forkFailed(errno: errno)
+            for ptr in argvCStrings { free(ptr) }
+            for ptr in envCStrings { free(ptr) }
+            throw Error.forkFailed(errno: err)
         }
         if pid == 0 {
-            // Child process.
             _ = setsid()
             let slave = Darwin.open(slavePath, O_RDWR)
             if slave < 0 { _exit(127) }
-            if ioctl(slave, UInt(TIOCSCTTY), 0) != 0 {
-                // Non-fatal on some kernels; continue.
-            }
+            // Non-fatal on some kernels; continue regardless of rc.
+            _ = ioctl(slave, UInt(TIOCSCTTY), 0)
             _ = dup2(slave, 0)
             _ = dup2(slave, 1)
             _ = dup2(slave, 2)
@@ -117,15 +112,7 @@ public enum PtyProcess {
             _exit(127)
         }
 
-        // Parent.
-        // Close the parent's slave fd now that the child has forked and
-        // will open its own. Slave ref count stays ≥ 1 throughout because
-        // the child's copy (inherited from fork) is still open until the
-        // child's execve runs — and by that point the child has dup2'd a
-        // fresh slave open onto 0/1/2, so the PTY never goes idle.
         close(parentSlaveFD)
-        // Free the C strings we allocated for argv/env; execve in the
-        // child has its own copy.
         for ptr in argvCStrings { free(ptr) }
         for ptr in envCStrings { free(ptr) }
         return Spawned(masterFD: master, pid: pid)
