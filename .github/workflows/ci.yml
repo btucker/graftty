@@ -28,8 +28,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-spm-
 
-      - name: Build (warnings as errors)
-        run: swift build -Xswiftc -warnings-as-errors
+      - name: Build app + tests (warnings as errors)
+        run: swift build --build-tests -Xswiftc -warnings-as-errors
 
       - name: Test
-        run: swift test -Xswiftc -warnings-as-errors
+        run: swift test --skip-build
