@@ -1,0 +1,10 @@
+{
+    "Node": {
+        "ID": 7001,
+        "Addresses": ["100.64.0.5/32"]
+    },
+    "UserProfile": {
+        "LoginName": "ben@example.com",
+        "DisplayName": "Ben"
+    }
+}
