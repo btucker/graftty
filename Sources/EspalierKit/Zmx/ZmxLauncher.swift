@@ -7,7 +7,7 @@ import Foundation
 /// Created once at app startup with the resolved executable URL. The
 /// public surface is small and synchronous; use `kill` from a background
 /// queue if calling from the UI thread (see TerminalManager).
-public final class ZmxLauncher {
+public final class ZmxLauncher: Sendable {
 
     /// URL to the `zmx` binary. May point to a path that does not exist;
     /// callers should consult `isAvailable` before assuming usability.
