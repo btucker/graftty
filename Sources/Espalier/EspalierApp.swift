@@ -26,12 +26,40 @@ struct EspalierApp: App {
     private let services: AppServices
 
     init() {
+        // Espalier is single-instance: the state.json, the espalier.sock
+        // listener, and (most visibly) the per-pane zmx session names are
+        // shared-global resources keyed off paths that don't vary between
+        // app instances. Two Espaliers both attached to the same zmx
+        // session will both echo the shell's output and both forward
+        // keystrokes into the same PTY. Rather than isolate those three
+        // resources per-instance (large refactor), we enforce one-at-a-time
+        // here. Launch Services already dedupes normal Dock/Spotlight
+        // opens; this guard catches `open -n` and same-bundle-id dev
+        // relaunches.
+        Self.terminateIfAnotherInstanceIsRunning()
+
         let loaded = (try? AppState.load(from: AppState.defaultDirectory)) ?? AppState()
         _appState = State(initialValue: loaded)
 
         let socketPath = AppState.defaultDirectory.appendingPathComponent("espalier.sock").path
         _terminalManager = StateObject(wrappedValue: TerminalManager(socketPath: socketPath))
         services = AppServices(socketPath: socketPath)
+    }
+
+    /// If another Espalier process with our `CFBundleIdentifier` is
+    /// already running, bring it to the front and exit our own process
+    /// before any state, sockets, or zmx clients are created. Uses
+    /// `exit(0)` instead of `NSApp.terminate` because we run before
+    /// NSApplication has an app delegate, and because we have no
+    /// allocated resources that need graceful teardown yet.
+    private static func terminateIfAnotherInstanceIsRunning() {
+        let myBundleID = Bundle.main.bundleIdentifier ?? "com.espalier.app"
+        let myPID = ProcessInfo.processInfo.processIdentifier
+        let others = NSRunningApplication.runningApplications(withBundleIdentifier: myBundleID)
+            .filter { $0.processIdentifier != myPID }
+        guard let existing = others.first else { return }
+        existing.activate()
+        exit(0)
     }
 
     var body: some Scene {
