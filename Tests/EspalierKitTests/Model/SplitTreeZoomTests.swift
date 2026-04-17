@@ -33,4 +33,36 @@ struct SplitTreeZoomTests {
         )
         #expect(decoded.zoomed == nil)
     }
+
+    @Test func insertingUnzooms() {
+        let a = TerminalID(); let b = TerminalID()
+        let tree = SplitTree(root: .leaf(a), zoomed: a)
+        let next = tree.inserting(b, at: a, direction: .horizontal)
+        #expect(next.zoomed == nil, "insert must clear zoom")
+    }
+
+    @Test func insertingBeforeUnzooms() {
+        let a = TerminalID(); let b = TerminalID()
+        let tree = SplitTree(root: .leaf(a), zoomed: a)
+        let next = tree.insertingBefore(b, at: a, direction: .horizontal)
+        #expect(next.zoomed == nil)
+    }
+
+    @Test func removingZoomedLeafAutoUnzooms() {
+        let a = TerminalID(); let b = TerminalID()
+        let tree = SplitTree(root: .leaf(a))
+            .inserting(b, at: a, direction: .horizontal)
+            .withZoom(a)    // re-zoom after insert cleared it
+        let next = tree.removing(a)
+        #expect(next.zoomed == nil)
+    }
+
+    @Test func removingSiblingPreservesZoomOnSurvivor() {
+        let a = TerminalID(); let b = TerminalID()
+        let tree = SplitTree(root: .leaf(a))
+            .inserting(b, at: a, direction: .horizontal)
+            .withZoom(a)
+        let next = tree.removing(b)
+        #expect(next.zoomed == a)
+    }
 }

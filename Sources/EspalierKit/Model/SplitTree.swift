@@ -117,6 +117,12 @@ public struct SplitTree: Codable, Sendable, Equatable {
         return SplitTree(root: root.updatingRatio(leftAnchor: leftAnchor, direction: direction, ratio: ratio), zoomed: zoomed)
     }
 
+    /// Returns a copy with `zoomed` set to `id` (pass nil to unzoom). Leaves
+    /// `root` untouched.
+    public func withZoom(_ id: TerminalID?) -> SplitTree {
+        SplitTree(root: root, zoomed: id)
+    }
+
     /// The "breadcrumb" position of `terminalID` inside this tree — enough
     /// information to reinsert the leaf next to its former neighbor after
     /// it's been removed (e.g. when a pane moves back to a worktree it
