@@ -61,12 +61,43 @@ public final class ZmxLauncher: Sendable {
     /// The single-string command to hand to `ghostty_surface_config_s.command`.
     /// Single-quotes the executable path so spaces or shell metacharacters
     /// in the install path don't break the spawn.
+    ///
+    /// Espalier itself does *not* use this for its panes — see
+    /// `attachInitialInput` for the reason. This helper stays around so
+    /// tests (and anyone invoking zmx via `sh -c`) have a straight-through
+    /// command string.
     public func attachCommand(sessionName: String) -> String {
         // Defensively shell-quote the session name even though sessionName(for:)
         // emits only [a-z0-9-] today — future callers may pass user-supplied
         // names, and an unquoted shell-metachar in the command string would
         // be a code-injection footgun for libghostty's spawn path.
         "\(shellQuote(executable.path)) attach \(shellQuote(sessionName)) $SHELL"
+    }
+
+    /// Bytes Espalier writes into each pane's PTY via libghostty's
+    /// `initial_input` as soon as the user's default shell starts up.
+    ///
+    /// Shape: `exec '<zmx>' attach '<session>' '<userShell>'\n`
+    ///
+    /// The `exec` is load-bearing: it *replaces* the outer shell with
+    /// `zmx attach`, so when the inner shell ends its session the whole
+    /// PTY child dies. libghostty detects the child exit, fires
+    /// `close_surface_cb`, and Espalier closes the pane.
+    ///
+    /// Why not just set `config.command = attachCommand(...)` instead?
+    /// libghostty auto-enables `wait-after-command = true` whenever
+    /// `config.command` is non-empty (see upstream `embedded.zig`: "If
+    /// this is set then the 'wait-after-command' option is also
+    /// automatically set to true, since this is used for scripting.").
+    /// With wait-after-command on, shell exit triggers a "Press any key
+    /// to close" overlay instead of firing `close_surface_cb` — which
+    /// means panes stop auto-closing on `exit`. Feeding the same command
+    /// via `initial_input` into the default-shell spawn keeps
+    /// wait-after-command at its default of false.
+    public func attachInitialInput(sessionName: String, userShell: String) -> String {
+        "exec \(shellQuote(executable.path))"
+            + " attach \(shellQuote(sessionName))"
+            + " \(shellQuote(userShell))\n"
     }
 
     /// Env additions that should accompany every zmx invocation Espalier

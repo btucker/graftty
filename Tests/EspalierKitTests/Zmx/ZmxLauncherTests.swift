@@ -102,6 +102,73 @@ struct ZmxLauncherUnitTests {
         #expect(cmd == "'/usr/bin/zmx' attach 'my session; rm -rf /' $SHELL")
     }
 
+    // MARK: attachInitialInput(sessionName:userShell:)
+    //
+    // This is the string Espalier writes into the PTY as soon as the user's
+    // default shell starts (via libghostty's `initial_input` config). It
+    // uses `exec` so the shell is *replaced* by `zmx attach`, which means
+    // when the inner shell exits the PTY child dies with it — libghostty
+    // sees a normal child exit and fires `close_surface_cb`. This is the
+    // path that keeps Espalier out of libghostty's "wait-after-command"
+    // mode, which Ghostty auto-enables whenever `config.command` is set.
+
+    @Test func attachInitialInputUsesExecWithTrailingNewline() throws {
+        let launcher = ZmxLauncher(
+            executable: URL(fileURLWithPath: "/Applications/Espalier.app/Contents/Helpers/zmx")
+        )
+        let input = launcher.attachInitialInput(
+            sessionName: "espalier-deadbeef",
+            userShell: "/bin/zsh"
+        )
+        #expect(
+            input ==
+            "exec '/Applications/Espalier.app/Contents/Helpers/zmx'"
+            + " attach 'espalier-deadbeef' '/bin/zsh'\n"
+        )
+    }
+
+    @Test func attachInitialInputEscapesSingleQuotes() throws {
+        // Same ' → '\''  escape as attachCommand, applied to every field
+        // that gets substituted in: executable path, session name, shell.
+        let launcher = ZmxLauncher(
+            executable: URL(fileURLWithPath: "/tmp/it's/zmx")
+        )
+        let input = launcher.attachInitialInput(
+            sessionName: "espalier-cafe1234",
+            userShell: "/opt/al'berto/sh"
+        )
+        #expect(
+            input ==
+            "exec '/tmp/it'\\''s/zmx' attach 'espalier-cafe1234'"
+            + " '/opt/al'\\''berto/sh'\n"
+        )
+    }
+
+    @Test func attachInitialInputAlwaysEndsWithLineTerminator() throws {
+        // Without the trailing \n the shell won't execute the line; the
+        // bytes just sit in the kernel's PTY buffer until the user hits
+        // Enter. Guard against someone "simplifying" the trailing \n away.
+        let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/zmx"))
+        let input = launcher.attachInitialInput(
+            sessionName: "espalier-x",
+            userShell: "/bin/sh"
+        )
+        #expect(input.hasSuffix("\n"))
+    }
+
+    @Test func attachInitialInputStartsWithExec() throws {
+        // `exec` is the load-bearing keyword: without it the shell forks
+        // zmx as a child, and when zmx exits the user drops back to their
+        // shell prompt rather than closing the pane. `exec` replaces the
+        // shell process, so when zmx exits the PTY child is gone.
+        let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/zmx"))
+        let input = launcher.attachInitialInput(
+            sessionName: "espalier-x",
+            userShell: "/bin/sh"
+        )
+        #expect(input.hasPrefix("exec "))
+    }
+
     // MARK: parseListOutput
     //
     // `zmx list --short` emits one session name per line. (The non-short

@@ -470,7 +470,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 ### 13.4 Lifecycle Mapping
 
-**ZMX-4.1** When the application creates a new terminal pane, it shall set the libghostty surface configuration's `command` field to `'<bundled-zmx-path>' attach espalier-<short-id> $SHELL`, with the bundled-zmx-path single-quoted to defend against spaces in the install path.
+**ZMX-4.1** When the application creates a new terminal pane, it shall leave the libghostty surface configuration's `command` field unset and instead write `exec '<bundled-zmx-path>' attach espalier-<short-id> '<user-shell>'\n` into the surface's `initial_input` field, with each substituted path single-quoted to defend against spaces. The leading `exec` replaces the default shell with `zmx attach` so that when the inner shell ends, the PTY child dies and libghostty's `close_surface_cb` fires. Setting `command` instead would trigger libghostty's automatic `wait-after-command` enablement (see upstream `src/apprt/embedded.zig`), which would keep panes open after `exit` and show a "Press any key to close" overlay.
 
 **ZMX-4.2** When the application restores a worktree's split tree on launch (per `PERSIST-3.x`), each restored pane's surface shall be created with the same session name derived from the persisted pane UUID, so reattach to a surviving daemon is automatic.
 

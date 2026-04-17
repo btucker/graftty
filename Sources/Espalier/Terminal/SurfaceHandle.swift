@@ -47,7 +47,7 @@ final class SurfaceHandle {
         app: ghostty_app_t,
         worktreePath: String,
         socketPath: String,
-        zmxCommand: String? = nil,
+        zmxInitialInput: String? = nil,
         zmxDir: String? = nil,
         terminalManager: TerminalManager? = nil
     ) {
@@ -77,11 +77,19 @@ final class SurfaceHandle {
         let sockKey = strdup("ESPALIER_SOCK")
         let sockVal = strdup(socketPath)
 
-        // Optional: when ZmxLauncher is available, this is the full
-        // `zmx attach <session> $SHELL` invocation that libghostty will
-        // spawn instead of the default $SHELL. Nil means "fall back to
-        // libghostty's default shell spawn" (the pre-zmx behavior).
-        let cmdCStr: UnsafeMutablePointer<CChar>? = zmxCommand.flatMap { strdup($0) }
+        // Optional: when ZmxLauncher is available, these are the bytes
+        // libghostty will write into the PTY as soon as the user's
+        // default $SHELL starts — an `exec <zmx> attach <session>
+        // <shell>\n` line that replaces the shell with `zmx attach`.
+        //
+        // We deliberately avoid `config.command` here: upstream Ghostty
+        // auto-enables `wait-after-command = true` whenever `command` is
+        // set (see `src/apprt/embedded.zig`), which would keep panes
+        // open after the shell exits and show a "Press any key to close"
+        // overlay. For Espalier we want the opposite — exit should
+        // close the pane — so we leave `command` nil and use
+        // `initial_input` instead. See `ZmxLauncher.attachInitialInput`.
+        let initialInputCStr: UnsafeMutablePointer<CChar>? = zmxInitialInput.flatMap { strdup($0) }
 
         let zmxDirKey: UnsafeMutablePointer<CChar>? = zmxDir.flatMap { _ in strdup("ZMX_DIR") }
         let zmxDirVal: UnsafeMutablePointer<CChar>? = zmxDir.flatMap { strdup($0) }
@@ -103,8 +111,8 @@ final class SurfaceHandle {
         config.userdata = userdataPtr
         config.scale_factor = Double(NSScreen.main?.backingScaleFactor ?? 2.0)
         config.working_directory = UnsafePointer(cwdCStr)
-        if let cmdCStr {
-            config.command = UnsafePointer(cmdCStr)
+        if let initialInputCStr {
+            config.initial_input = UnsafePointer(initialInputCStr)
         }
         config.env_vars = envVarsPtr
         config.env_var_count = envCount
@@ -117,7 +125,7 @@ final class SurfaceHandle {
             free(cwdCStr)
             free(sockKey)
             free(sockVal)
-            if let cmdCStr { free(cmdCStr) }
+            if let initialInputCStr { free(initialInputCStr) }
             if let zmxDirKey { free(zmxDirKey) }
             if let zmxDirVal { free(zmxDirVal) }
             Unmanaged<SurfaceUserdataBox>.fromOpaque(userdataPtr).release()
@@ -145,7 +153,7 @@ final class SurfaceHandle {
         free(cwdCStr)
         free(sockKey)
         free(sockVal)
-        if let cmdCStr { free(cmdCStr) }
+        if let initialInputCStr { free(initialInputCStr) }
         if let zmxDirKey { free(zmxDirKey) }
         if let zmxDirVal { free(zmxDirVal) }
     }

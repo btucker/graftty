@@ -183,13 +183,13 @@ final class TerminalManager: ObservableObject {
 
         var created: [TerminalID: SurfaceHandle] = [:]
         for terminalID in splitTree.allLeaves where surfaces[terminalID] == nil {
-            let (zmxCommand, zmxDir) = resolveZmxSpawn(for: terminalID)
+            let (zmxInitialInput, zmxDir) = resolveZmxSpawn(for: terminalID)
             let handle = SurfaceHandle(
                 terminalID: terminalID,
                 app: app,
                 worktreePath: worktreePath,
                 socketPath: socketPath,
-                zmxCommand: zmxCommand,
+                zmxInitialInput: zmxInitialInput,
                 zmxDir: zmxDir,
                 terminalManager: self
             )
@@ -209,13 +209,13 @@ final class TerminalManager: ObservableObject {
             return existing
         }
 
-        let (zmxCommand, zmxDir) = resolveZmxSpawn(for: terminalID)
+        let (zmxInitialInput, zmxDir) = resolveZmxSpawn(for: terminalID)
         let handle = SurfaceHandle(
             terminalID: terminalID,
             app: app,
             worktreePath: worktreePath,
             socketPath: socketPath,
-            zmxCommand: zmxCommand,
+            zmxInitialInput: zmxInitialInput,
             zmxDir: zmxDir,
             terminalManager: self
         )
@@ -267,12 +267,26 @@ final class TerminalManager: ObservableObject {
     /// Returns (nil, nil) when no launcher is configured or the binary is
     /// missing — in which case `SurfaceHandle` falls back to libghostty's
     /// default `$SHELL` spawn (existing pre-zmx behavior).
-    private func resolveZmxSpawn(for terminalID: TerminalID) -> (command: String?, dir: String?) {
+    ///
+    /// When available, we return the `initial_input` bytes for libghostty
+    /// to write into the PTY right after it spawns the user's default
+    /// shell. Those bytes are an `exec zmx attach …` line that replaces
+    /// the shell with the zmx client — see `ZmxLauncher.attachInitialInput`
+    /// for why we use initial_input rather than `config.command`.
+    private func resolveZmxSpawn(for terminalID: TerminalID) -> (initialInput: String?, dir: String?) {
         guard let launcher = zmxLauncher, launcher.isAvailable else {
             return (nil, nil)
         }
         let session = launcher.sessionName(for: terminalID.id)
-        return (launcher.attachCommand(sessionName: session), launcher.zmxDir.path)
+        // Resolve the user's shell once from the app-launch environment.
+        // This is the same SHELL libghostty will spawn when config.command
+        // is nil; we hand it back to zmx as the inner process so the
+        // attached session runs the user's real shell.
+        let userShell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/sh"
+        return (
+            launcher.attachInitialInput(sessionName: session, userShell: userShell),
+            launcher.zmxDir.path
+        )
     }
 
     /// Fire-off the `zmx kill` for a terminal's session. Dispatched off
