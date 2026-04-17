@@ -238,15 +238,59 @@ final class GhosttyApp {
             return box.handler(target, action)
         }
 
-        rtConfig.read_clipboard_cb = { _, _, _ in
-            // Return false: we did not read the clipboard.
-            return false
+        rtConfig.read_clipboard_cb = { userdata, clipboardEnum, state -> Bool in
+            // Surface requested a clipboard read (e.g., Cmd+V). The first
+            // `userdata` here is the *surface's* userdata box — the same
+            // one we set on `ghostty_surface_config_s.userdata` in
+            // `SurfaceHandle.init`. That lets us locate the originating
+            // surface so we can call `ghostty_surface_complete_clipboard_request`
+            // to deliver the clipboard text back to it.
+            guard let userdata else { return false }
+            let box = Unmanaged<SurfaceUserdataBox>.fromOpaque(userdata).takeUnretainedValue()
+            let terminalID = box.terminalID
+            let manager = box.terminalManager
+            // NSPasteboard must be touched on the main thread; we dispatch
+            // there even if we're already on main (cheap, keeps the logic
+            // uniform). Returning `true` tells libghostty we'll complete
+            // the request asynchronously via `complete_clipboard_request`.
+            DispatchQueue.main.async {
+                guard let handle = manager?.handle(for: terminalID) else { return }
+                let pasteboard = pasteboardForClipboard(clipboardEnum)
+                let text = pasteboard.string(forType: .string) ?? ""
+                text.withCString { cstr in
+                    ghostty_surface_complete_clipboard_request(handle.surface, cstr, state, false)
+                }
+            }
+            return true
         }
         rtConfig.confirm_read_clipboard_cb = { _, _, _, _ in
-            // No-op: OSC 52 confirmation unsupported at this layer.
+            // OSC 52 clipboard-read confirmation. Security-sensitive — no-op
+            // until we build a proper confirmation prompt. Terminals that
+            // request OSC 52 reads will silently fail, which is the safe
+            // default.
         }
-        rtConfig.write_clipboard_cb = { _, _, _, _, _ in
-            // No-op: clipboard writes unsupported at this layer.
+        rtConfig.write_clipboard_cb = { _, clipboardEnum, content, count, _ in
+            // libghostty hands us an array of `{mime, data}` pairs; we
+            // currently honor the plain-text entry (UTF-8 in `data`) and
+            // ignore other mime types. `count` is the array length.
+            guard count > 0, let content else { return }
+            let pasteboard = pasteboardForClipboard(clipboardEnum)
+            var plainText: String?
+            for i in 0..<Int(count) {
+                let entry = content[i]
+                // `entry.data` is a NUL-terminated C string even for binary
+                // clipboard formats libghostty exposes today; decoding as
+                // UTF-8 covers every real-world copy path.
+                if let dataPtr = entry.data {
+                    plainText = String(cString: dataPtr)
+                    break
+                }
+            }
+            guard let text = plainText else { return }
+            DispatchQueue.main.async {
+                pasteboard.clearContents()
+                pasteboard.setString(text, forType: .string)
+            }
         }
         rtConfig.close_surface_cb = { userdata, _ in
             // libghostty passes the *surface's* userdata here (set via
@@ -291,6 +335,20 @@ final class GhosttyApp {
     func tick() {
         ghostty_app_tick(app)
     }
+
+}
+
+/// Pick the NSPasteboard that matches the libghostty clipboard enum.
+/// Declared at file scope so it can be called from the C-ABI runtime
+/// callbacks (closures used as C function pointers can't reference
+/// `Self` or capture instance state).
+///
+/// macOS doesn't ship a distinct selection clipboard (that's an X11
+/// concept), so we fall back to the general pasteboard for both — and
+/// our runtime config already advertises `supports_selection_clipboard
+/// = false`, so libghostty avoids routing SELECTION requests here.
+private func pasteboardForClipboard(_ clipboardEnum: ghostty_clipboard_e) -> NSPasteboard {
+    NSPasteboard.general
 }
 
 // MARK: - Action trampoline

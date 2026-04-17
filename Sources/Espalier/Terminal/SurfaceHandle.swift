@@ -136,6 +136,9 @@ final class SurfaceHandle {
         // optional surface, so nil-ing it turns those callbacks into
         // safe no-ops.
         if let surfaceView = view as? SurfaceNSView {
+            // Undo any lingering `NSCursor.hide()` so the destroyed pane
+            // doesn't leave the mouse invisible for the rest of the app.
+            surfaceView.setCursorHidden(false)
             surfaceView.surface = nil
         }
         ghostty_surface_free(surface)
@@ -199,6 +202,18 @@ final class SurfaceNSView: NSView {
     /// libghostty owns authoritative state; this is our UI shadow.
     var isReadonly: Bool = false
 
+    /// Cursor to display when the mouse is over this surface. libghostty
+    /// drives this via `GHOSTTY_ACTION_MOUSE_SHAPE` (e.g., pointer when
+    /// over a link, text beam over normal cells). Defaults to the text
+    /// I-beam — standard for terminal-cell hit areas.
+    var desiredCursor: NSCursor = .iBeam
+
+    /// Counter matching our outstanding `NSCursor.hide()` calls; needed
+    /// because `hide()`/`unhide()` are *counted*, and libghostty may fire
+    /// repeated HIDDEN actions (e.g., while the user types). We only
+    /// forward the first → hide, and on VISIBLE we unhide once.
+    private var cursorHidden: Bool = false
+
     override var acceptsFirstResponder: Bool { true }
 
     override init(frame: NSRect) {
@@ -217,6 +232,58 @@ final class SurfaceNSView: NSView {
         guard let window, surface != nil else { return }
         if !(window.firstResponder is SurfaceNSView) {
             window.makeFirstResponder(self)
+        }
+    }
+
+    /// Maintain a single full-bounds tracking area so AppKit routes
+    /// `cursorUpdate(_:)` and mouse-move events to us. Rebuilt on each
+    /// layout change so it tracks the current frame.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        for area in trackingAreas {
+            removeTrackingArea(area)
+        }
+        let options: NSTrackingArea.Options = [
+            .activeInKeyWindow,
+            .mouseMoved,
+            .inVisibleRect,
+            .cursorUpdate,
+        ]
+        addTrackingArea(NSTrackingArea(rect: .zero, options: options, owner: self, userInfo: nil))
+    }
+
+    /// AppKit calls this whenever the cursor crosses the tracking area or
+    /// needs refreshing. Using `set()` on the desired cursor is the
+    /// idiomatic way to apply a per-view cursor without coordinating with
+    /// `resetCursorRects`.
+    override func cursorUpdate(with event: NSEvent) {
+        desiredCursor.set()
+    }
+
+    /// Called by `TerminalManager` when libghostty requests a new cursor
+    /// shape. Updates our stored cursor and — if the mouse is currently
+    /// over this view — applies it immediately so the user doesn't have
+    /// to jiggle to see the change.
+    func applyCursor(_ cursor: NSCursor) {
+        desiredCursor = cursor
+        if let window, window.firstResponder is SurfaceNSView,
+           let mouseLoc = window.mouseLocationOutsideOfEventStream as NSPoint?,
+           self.frame.contains(convert(mouseLoc, from: nil)) {
+            cursor.set()
+        }
+    }
+
+    /// Called by `TerminalManager` for `GHOSTTY_ACTION_MOUSE_VISIBILITY`.
+    /// `NSCursor.hide()` / `unhide()` are counted, so we guard against
+    /// mismatched pairs that would either leave the cursor permanently
+    /// hidden or trigger an unhide-past-zero.
+    func setCursorHidden(_ hidden: Bool) {
+        if hidden, !cursorHidden {
+            NSCursor.hide()
+            cursorHidden = true
+        } else if !hidden, cursorHidden {
+            NSCursor.unhide()
+            cursorHidden = false
         }
     }
 
@@ -361,22 +428,25 @@ final class SurfaceNSView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
-        guard let surface else {
+        guard surface != nil else {
             super.keyDown(with: event)
             return
         }
-
-        // Cmd-modified keys go up the responder chain so AppKit can dispatch
-        // them to menu items (Cmd+D split, Cmd+W close pane, etc.) or leave
-        // them unhandled. Option is NOT filtered — `Option+o → ø` etc.
-        // produce composed characters the user wants in the terminal.
-        let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if mods.contains(.command) {
+        // Forward ALL keys to libghostty — including Cmd-modified ones —
+        // so its default keybinds (Cmd+C → copy, Cmd+V → paste, Cmd+A →
+        // select all, etc.) fire. App-level menu shortcuts (Cmd+D split,
+        // Cmd+W close pane, Cmd+O add repo, …) don't reach this method:
+        // AppKit's menu-keyEquivalent interception runs before keyDown
+        // dispatch, so the menu fires first and libghostty never sees
+        // them. If libghostty returns "not handled", bubble up the
+        // responder chain so unhandled shortcuts still have a chance.
+        let handled = sendKeyEvent(
+            event,
+            action: event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
+        )
+        if !handled {
             super.keyDown(with: event)
-            return
         }
-
-        sendKeyEvent(event, action: event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS)
     }
 
     override func keyUp(with event: NSEvent) {
@@ -384,7 +454,7 @@ final class SurfaceNSView: NSView {
             super.keyUp(with: event)
             return
         }
-        sendKeyEvent(event, action: GHOSTTY_ACTION_RELEASE)
+        _ = sendKeyEvent(event, action: GHOSTTY_ACTION_RELEASE)
     }
 
     /// Build a `ghostty_input_key_s` from an NSEvent and dispatch it.
@@ -406,8 +476,9 @@ final class SurfaceNSView: NSView {
     ///
     /// `consumed_mods` heuristic: control and command never contribute
     /// to text translation; everything else (shift, option, capsLock) did.
-    private func sendKeyEvent(_ event: NSEvent, action: ghostty_input_action_e) {
-        guard let surface else { return }
+    @discardableResult
+    private func sendKeyEvent(_ event: NSEvent, action: ghostty_input_action_e) -> Bool {
+        guard let surface else { return false }
 
         let flags = event.modifierFlags
         let mods = Self.ghosttyMods(from: flags)
@@ -437,13 +508,13 @@ final class SurfaceNSView: NSView {
 
         let textForPTY = Self.ghosttyTextField(for: event)
         if let text = textForPTY, !text.isEmpty {
-            _ = text.withCString { cstr in
+            return text.withCString { cstr in
                 keyEvent.text = cstr
                 return ghostty_surface_key(surface, keyEvent)
             }
         } else {
             keyEvent.text = nil
-            _ = ghostty_surface_key(surface, keyEvent)
+            return ghostty_surface_key(surface, keyEvent)
         }
     }
 

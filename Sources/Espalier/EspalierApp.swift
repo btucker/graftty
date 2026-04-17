@@ -156,6 +156,42 @@ struct EspalierApp: App {
             }
         }
 
+        // Shell integration semantic pings → sidebar attention badge on
+        // the owning worktree. The badge is auto-clearing (3s) so it
+        // behaves like a "ping", not a permanent state the user has to
+        // dismiss. Non-zero exit codes get a longer (8s) dwell so the
+        // user has a chance to notice errors across a worktree they're
+        // not currently viewing.
+        terminalManager.onCommandFinished = { [appState = $appState] terminalID, exitCode, _ in
+            MainActor.assumeIsolated {
+                Self.setAttentionForTerminal(
+                    appState: appState,
+                    terminalID: terminalID,
+                    text: exitCode == 0 ? "✓" : "!",
+                    clearAfter: exitCode == 0 ? 3 : 8
+                )
+            }
+        }
+        terminalManager.onProgressReport = { [appState = $appState] terminalID, report in
+            MainActor.assumeIsolated {
+                let text: String
+                switch report {
+                case .error:         text = "err"
+                case .indeterminate: text = "…"
+                case .paused:        text = "||"
+                case .percent(let p): text = "\(p)%"
+                }
+                // Progress reports refresh live — clearAfter is longer so
+                // they don't flicker away between updates.
+                Self.setAttentionForTerminal(
+                    appState: appState,
+                    terminalID: terminalID,
+                    text: text,
+                    clearAfter: 10
+                )
+            }
+        }
+
         try? services.socketServer.start()
         // SocketServer already dispatches onMessage to the main queue.
         let binding = $appState
@@ -377,6 +413,41 @@ struct EspalierApp: App {
                         terminalManager: terminalManager,
                         targetID: focused
                     )
+                    return
+                }
+            }
+        }
+    }
+
+    /// Find the worktree that owns `terminalID` and set its attention
+    /// badge. No-op if the terminal isn't in any worktree (e.g., because
+    /// it was just destroyed). Auto-clears after `clearAfter` seconds.
+    @MainActor
+    fileprivate static func setAttentionForTerminal(
+        appState: Binding<AppState>,
+        terminalID: TerminalID,
+        text: String,
+        clearAfter: TimeInterval
+    ) {
+        for repoIdx in appState.wrappedValue.repos.indices {
+            for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
+                if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                    .splitTree.allLeaves.contains(terminalID) {
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].attention = Attention(
+                        text: text,
+                        timestamp: Date(),
+                        clearAfter: clearAfter
+                    )
+                    let path = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path
+                    DispatchQueue.main.asyncAfter(deadline: .now() + clearAfter) {
+                        for ri in appState.wrappedValue.repos.indices {
+                            for wi in appState.wrappedValue.repos[ri].worktrees.indices {
+                                if appState.wrappedValue.repos[ri].worktrees[wi].path == path {
+                                    appState.wrappedValue.repos[ri].worktrees[wi].attention = nil
+                                }
+                            }
+                        }
+                    }
                     return
                 }
             }

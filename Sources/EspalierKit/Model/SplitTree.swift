@@ -72,6 +72,20 @@ public struct SplitTree: Codable, Sendable, Equatable {
         return SplitTree(root: root.updatingRatio(for: target, ratio: ratio))
     }
 
+    /// Update the ratio of the split whose *left subtree* has `leftAnchor`
+    /// as its first leaf and whose direction matches. Used to persist
+    /// user-dragged divider positions — a view can identify the split it
+    /// owns by `(left.allLeaves.first, direction)`, which stays stable
+    /// across the brief window of a drag even for nested splits.
+    public func updatingRatio(
+        leftAnchor: TerminalID,
+        direction: SplitDirection,
+        ratio: Double
+    ) -> SplitTree {
+        guard let root else { return self }
+        return SplitTree(root: root.updatingRatio(leftAnchor: leftAnchor, direction: direction, ratio: ratio))
+    }
+
     /// The "breadcrumb" position of `terminalID` inside this tree — enough
     /// information to reinsert the leaf next to its former neighbor after
     /// it's been removed (e.g. when a pane moves back to a worktree it
@@ -106,7 +120,7 @@ public struct SplitTree: Codable, Sendable, Equatable {
 }
 
 extension SplitTree.Node {
-    var leafCount: Int {
+    public var leafCount: Int {
         switch self {
         case .leaf:
             return 1
@@ -115,7 +129,7 @@ extension SplitTree.Node {
         }
     }
 
-    var allLeaves: [TerminalID] {
+    public var allLeaves: [TerminalID] {
         switch self {
         case .leaf(let id):
             return [id]
@@ -206,6 +220,32 @@ extension SplitTree.Node {
         // Not a direct child of this split — recurse into whichever side
         // contains the leaf.
         return s.left.position(of: terminalID) ?? s.right.position(of: terminalID)
+    }
+
+    func updatingRatio(
+        leftAnchor: TerminalID,
+        direction targetDirection: SplitDirection,
+        ratio: Double
+    ) -> SplitTree.Node {
+        switch self {
+        case .leaf:
+            return self
+        case .split(let s):
+            // Match: direction matches AND left subtree's first leaf is the
+            // anchor. Every split rendered with the same anchor+direction
+            // collapses to the same node in practice — ambiguity would
+            // only arise from contrived nested left-chains, which the
+            // SplitTree construction in our app can't produce.
+            if s.direction == targetDirection, s.left.allLeaves.first == leftAnchor {
+                return .split(s.withRatio(ratio))
+            }
+            return .split(.init(
+                direction: s.direction,
+                ratio: s.ratio,
+                left: s.left.updatingRatio(leftAnchor: leftAnchor, direction: targetDirection, ratio: ratio),
+                right: s.right.updatingRatio(leftAnchor: leftAnchor, direction: targetDirection, ratio: ratio)
+            ))
+        }
     }
 
     func updatingRatio(for target: TerminalID, ratio: Double) -> SplitTree.Node {

@@ -1,6 +1,7 @@
 import AppKit
 import GhosttyKit
 import EspalierKit
+import UserNotifications
 
 /// Four-way pane split request — carries enough information for the host to
 /// pick both the `SplitDirection` (horizontal/vertical) and the placement
@@ -74,6 +75,31 @@ final class TerminalManager: ObservableObject {
     /// pane under a different worktree in the sidebar based on which
     /// worktree path is the longest prefix of the new PWD.
     var onPWDChange: ((TerminalID, String) -> Void)?
+
+    /// Called on shell-integration "command finished" events (requires
+    /// ghostty shell integration to be sourced, which our env injection
+    /// takes care of when Ghostty.app's resources are available). The
+    /// host maps this to the worktree's attention badge — errors become
+    /// red badges, long successful commands become subtle pings so the
+    /// user knows the pane is idle again.
+    var onCommandFinished: ((TerminalID, _ exitCode: Int16, _ duration: UInt64) -> Void)?
+
+    /// Called on OSC 9;4 progress reports from programs like `git clone`
+    /// or `apt` that advertise progress. The host updates the attention
+    /// badge so the user can keep tabs on long-running jobs without
+    /// staying on the pane.
+    var onProgressReport: ((TerminalID, ProgressReport) -> Void)?
+
+    /// Swift-native mirror of `ghostty_action_progress_report_s` so
+    /// callers outside the Terminal module don't need to import
+    /// GhosttyKit just to pattern-match on progress state.
+    enum ProgressReport {
+        case indeterminate
+        case paused
+        case error
+        /// 0–100 when the terminal program reported an exact percentage.
+        case percent(Int8)
+    }
 
     /// Path to the Espalier control socket, exposed to spawned shells via `ESPALIER_SOCK`.
     let socketPath: String
@@ -292,13 +318,136 @@ final class TerminalManager: ObservableObject {
             guard let id = terminalID(from: target) else { return }
             let title = action.action.set_title.title.flatMap { String(cString: $0) } ?? ""
             titles[id] = title
+
         case GHOSTTY_ACTION_PWD:
             guard let id = terminalID(from: target) else { return }
             guard let pwdPtr = action.action.pwd.pwd else { return }
             let pwd = String(cString: pwdPtr)
             onPWDChange?(id, pwd)
+
+        case GHOSTTY_ACTION_RING_BELL:
+            // Default system alert sound. Visual bell (a brief flash) is a
+            // nice follow-up but not essential for parity with Ghostty's
+            // default behavior.
+            NSSound.beep()
+
+        case GHOSTTY_ACTION_OPEN_URL:
+            let url = action.action.open_url
+            guard let urlPtr = url.url else { return }
+            let bytes = UnsafeBufferPointer(start: urlPtr, count: Int(url.len))
+            guard let urlString = String(bytes: bytes.map { UInt8(bitPattern: $0) }, encoding: .utf8),
+                  let parsed = URL(string: urlString)
+            else { return }
+            NSWorkspace.shared.open(parsed)
+
+        case GHOSTTY_ACTION_MOUSE_SHAPE:
+            guard let view = surfaceView(from: target) else { return }
+            view.applyCursor(Self.nsCursor(for: action.action.mouse_shape))
+
+        case GHOSTTY_ACTION_MOUSE_VISIBILITY:
+            guard let view = surfaceView(from: target) else { return }
+            view.setCursorHidden(action.action.mouse_visibility == GHOSTTY_MOUSE_HIDDEN)
+
+        case GHOSTTY_ACTION_MOUSE_OVER_LINK:
+            // Informational: libghostty tells us the mouse is now over a
+            // detected URL. We rely on MOUSE_SHAPE=POINTER for the visual
+            // indication, so there's nothing extra to do here. Left
+            // explicit (rather than falling into `default`) so future UI
+            // (status bar link preview, etc.) has an obvious hook.
+            break
+
+        case GHOSTTY_ACTION_DESKTOP_NOTIFICATION:
+            let note = action.action.desktop_notification
+            let title = note.title.flatMap { String(cString: $0) } ?? "Terminal"
+            let body = note.body.flatMap { String(cString: $0) } ?? ""
+            Self.postDesktopNotification(title: title, body: body)
+
+        case GHOSTTY_ACTION_COMMAND_FINISHED:
+            guard let id = terminalID(from: target) else { return }
+            let finished = action.action.command_finished
+            onCommandFinished?(id, finished.exit_code, finished.duration)
+
+        case GHOSTTY_ACTION_PROGRESS_REPORT:
+            guard let id = terminalID(from: target) else { return }
+            let progress = action.action.progress_report
+            let translated: ProgressReport
+            switch progress.state {
+            case GHOSTTY_PROGRESS_STATE_ERROR:         translated = .error
+            case GHOSTTY_PROGRESS_STATE_INDETERMINATE: translated = .indeterminate
+            case GHOSTTY_PROGRESS_STATE_PAUSE:         translated = .paused
+            default:
+                translated = progress.progress >= 0 ? .percent(progress.progress) : .indeterminate
+            }
+            onProgressReport?(id, translated)
+
         default:
             break
+        }
+    }
+
+    /// Map libghostty's mouse shape enum to the closest `NSCursor`. Shapes
+    /// without a macOS counterpart fall back to the text I-beam — the
+    /// default over terminal cells — which matches Ghostty upstream's
+    /// behavior of "show something reasonable if nothing fits exactly."
+    private static func nsCursor(for shape: ghostty_action_mouse_shape_e) -> NSCursor {
+        switch shape {
+        case GHOSTTY_MOUSE_SHAPE_DEFAULT:         return .arrow
+        case GHOSTTY_MOUSE_SHAPE_POINTER:         return .pointingHand
+        case GHOSTTY_MOUSE_SHAPE_TEXT:            return .iBeam
+        case GHOSTTY_MOUSE_SHAPE_VERTICAL_TEXT:   return .iBeamCursorForVerticalLayout
+        case GHOSTTY_MOUSE_SHAPE_CROSSHAIR:       return .crosshair
+        case GHOSTTY_MOUSE_SHAPE_NOT_ALLOWED,
+             GHOSTTY_MOUSE_SHAPE_NO_DROP:         return .operationNotAllowed
+        case GHOSTTY_MOUSE_SHAPE_GRAB:            return .openHand
+        case GHOSTTY_MOUSE_SHAPE_GRABBING:        return .closedHand
+        case GHOSTTY_MOUSE_SHAPE_COL_RESIZE,
+             GHOSTTY_MOUSE_SHAPE_E_RESIZE,
+             GHOSTTY_MOUSE_SHAPE_W_RESIZE,
+             GHOSTTY_MOUSE_SHAPE_EW_RESIZE:       return .resizeLeftRight
+        case GHOSTTY_MOUSE_SHAPE_ROW_RESIZE,
+             GHOSTTY_MOUSE_SHAPE_N_RESIZE,
+             GHOSTTY_MOUSE_SHAPE_S_RESIZE,
+             GHOSTTY_MOUSE_SHAPE_NS_RESIZE:       return .resizeUpDown
+        case GHOSTTY_MOUSE_SHAPE_CELL:            return .iBeam
+        default:                                  return .iBeam
+        }
+    }
+
+    private func surfaceView(from target: ghostty_target_s) -> SurfaceNSView? {
+        guard let id = terminalID(from: target) else { return nil }
+        return surfaces[id]?.view as? SurfaceNSView
+    }
+
+    /// Post a libghostty-initiated desktop notification through
+    /// `UNUserNotificationCenter`. Silently skips if the user has
+    /// declined authorization — macOS will log but not crash, and the
+    /// terminal behavior is "notification didn't show" rather than
+    /// "Espalier broken."
+    private static func postDesktopNotification(title: String, body: String) {
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            let post = {
+                let content = UNMutableNotificationContent()
+                content.title = title
+                content.body = body
+                content.sound = .default
+                let request = UNNotificationRequest(
+                    identifier: UUID().uuidString,
+                    content: content,
+                    trigger: nil
+                )
+                center.add(request)
+            }
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                post()
+            case .notDetermined:
+                center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                    if granted { post() }
+                }
+            default:
+                break
+            }
         }
     }
 }

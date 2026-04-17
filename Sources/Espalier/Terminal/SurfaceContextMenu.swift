@@ -138,18 +138,9 @@ extension SurfaceNSView {
 
     /// True if libghostty reports a non-empty text selection on this
     /// surface. Drives whether "Copy" appears in the menu.
-    ///
-    /// libghostty doesn't currently expose a pure "is there a selection"
-    /// query through the headers we have, so we use `read_selection` +
-    /// immediate free as the check: returns true means there's a
-    /// non-empty selected string. If the API isn't present at compile
-    /// time, we always show the Copy item and let the binding-action
-    /// no-op if selection is empty.
     fileprivate var hasNonEmptySelection: Bool {
-        // Conservative default until we wire up a read-selection check.
-        // Always showing Copy is harmless — `copy_to_clipboard` no-ops
-        // when there's nothing selected.
-        return true
+        guard let surface else { return false }
+        return ghostty_surface_has_selection(surface)
     }
 
     /// Dispatches a named binding action via

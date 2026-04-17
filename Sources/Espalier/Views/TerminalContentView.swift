@@ -61,14 +61,26 @@ struct TerminalContentView: View {
     }
 
     private func splitView(_ split: SplitTree.Node.Split) -> AnyView {
-        AnyView(
+        // Persist ratio drags back into the owning `SplitTree` binding so
+        // layouts survive across restarts. Identify the target split by
+        // `(left.allLeaves.first, direction)` — stable during a drag and
+        // unique enough in practice for all trees our UI can construct.
+        let leftAnchor = split.left.allLeaves.first
+        let direction = split.direction
+        let treeBinding = splitTree
+        return AnyView(
             SplitRatioContainer(
-                direction: split.direction,
+                direction: direction,
                 initialRatio: split.ratio,
                 left: { nodeView(split.left) },
                 right: { nodeView(split.right) },
-                onRatioChange: { _ in
-                    // Will be wired to AppState.updateRatio in integration
+                onRatioChange: { newRatio in
+                    guard let anchor = leftAnchor else { return }
+                    treeBinding.wrappedValue = treeBinding.wrappedValue.updatingRatio(
+                        leftAnchor: anchor,
+                        direction: direction,
+                        ratio: newRatio
+                    )
                 }
             )
         )
