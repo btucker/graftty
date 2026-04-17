@@ -5,6 +5,7 @@ import EspalierKit
 struct MainWindow: View {
     @Binding var appState: AppState
     @ObservedObject var terminalManager: TerminalManager
+    let statsStore: WorktreeStatsStore
 
     /// Debounces writes of `sidebarWidth` to AppState so a drag doesn't
     /// generate hundreds of save-to-disk events.
@@ -22,6 +23,7 @@ struct MainWindow: View {
                 appState: $appState,
                 terminalManager: terminalManager,
                 theme: terminalManager.theme,
+                statsStore: statsStore,
                 onSelect: selectWorktree,
                 onSelectPane: selectPane,
                 onAddRepo: addRepository,

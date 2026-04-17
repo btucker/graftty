@@ -73,9 +73,18 @@ struct WorktreeRow: View {
     /// Theme snapshot for foreground/dim text colors, so the sidebar
     /// matches ghostty's palette rather than fighting it.
     let theme: GhosttyTheme
+    /// Divergence stats for this worktree, or nil when unresolved (no
+    /// origin remote, stale, not yet computed).
+    let stats: WorktreeStats?
 
     var body: some View {
         HStack(spacing: 6) {
+            // Stale worktrees get no gutter content per DIVERGE-1.6, but
+            // the width stays reserved for vertical alignment.
+            WorktreeRowGutter(
+                stats: entry.state == .stale ? nil : stats,
+                theme: theme
+            )
             stateIndicator
             typeIcon
             branchLabel

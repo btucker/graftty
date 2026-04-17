@@ -9,6 +9,7 @@ struct SidebarView: View {
     /// truth for per-pane labels.
     @ObservedObject var terminalManager: TerminalManager
     let theme: GhosttyTheme
+    let statsStore: WorktreeStatsStore
     let onSelect: (String) -> Void
     let onSelectPane: (String, TerminalID) -> Void
     let onAddRepo: () -> Void
@@ -92,7 +93,8 @@ struct SidebarView: View {
                     isActive: isActive,
                     displayName: label(for: worktree, in: repo),
                     isMainCheckout: worktree.path == repo.path,
-                    theme: theme
+                    theme: theme,
+                    stats: statsStore.stats[worktree.path]
                 )
             }
             .buttonStyle(.plain)

@@ -35,7 +35,11 @@ struct EspalierApp: App {
 
     var body: some Scene {
         WindowGroup {
-            MainWindow(appState: $appState, terminalManager: terminalManager)
+            MainWindow(
+                appState: $appState,
+                terminalManager: terminalManager,
+                statsStore: services.statsStore
+            )
                 .onAppear { startup() }
                 .onChange(of: appState) { _, newState in
                     try? newState.save(to: AppState.defaultDirectory)
