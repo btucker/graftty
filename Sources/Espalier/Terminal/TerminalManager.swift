@@ -75,6 +75,12 @@ final class TerminalManager: ObservableObject {
     @Published private(set) var keybindBridge: GhosttyKeybindBridge =
         GhosttyKeybindBridge(resolver: { _ in nil })
 
+    /// True when the user's Ghostty config has `split-preserve-zoom =
+    /// navigation` (explicit opt-in from Ghostty 1.3). When true, a
+    /// goto_split from a zoomed pane transfers zoom to the newly focused
+    /// leaf instead of unzooming.
+    @Published private(set) var splitPreserveZoomOnNavigation: Bool = false
+
     /// Remembered split-tree positions for terminals that have moved *out*
     /// of a worktree via PWD change. If the same pane later hops back
     /// (e.g., user `cd`s in/out/in), we use the breadcrumb to reinsert it
@@ -233,6 +239,7 @@ final class TerminalManager: ObservableObject {
                 resolver: GhosttyTriggerAdapter.resolver(config: config)
             )
         }
+        readSplitPreserveZoomConfig()
     }
 
     /// Rebuild the keybind bridge from the current config. Call after
@@ -243,6 +250,29 @@ final class TerminalManager: ObservableObject {
         self.keybindBridge = GhosttyKeybindBridge(
             resolver: GhosttyTriggerAdapter.resolver(config: config)
         )
+        readSplitPreserveZoomConfig()
+    }
+
+    /// Read `split-preserve-zoom` from the live config and update
+    /// `splitPreserveZoomOnNavigation`. Called after `initialize()` and
+    /// after every `rebuildKeybindBridge()` so the flag tracks reloads.
+    ///
+    /// `ghostty_config_get` writes a `ghostty_string_s` (ptr + len) into
+    /// the void* output when the key maps to a string-typed config value.
+    /// Returns false when the key is unknown or not set, leaving the flag
+    /// at its default (false / unzoom-on-navigate).
+    private func readSplitPreserveZoomConfig() {
+        guard let config = ghosttyConfig?.config else { return }
+        var present = false
+        "split-preserve-zoom".withCString { cstr in
+            var result = ghostty_string_s()
+            let ok = ghostty_config_get(config, &result, cstr, UInt(strlen(cstr)))
+            if ok, let ptr = result.ptr {
+                let value = String(cString: ptr)
+                present = value.contains("navigation")
+            }
+        }
+        self.splitPreserveZoomOnNavigation = present
     }
 
     /// Create surfaces for every leaf in the given split tree that does not yet

@@ -912,6 +912,13 @@ struct EspalierApp: App {
                     nextIdx = (currentIdx + 1) % leaves.count
                 }
                 let nextID = leaves[nextIdx]
+                // Zoom preservation: Ghostty 1.3 `split-preserve-zoom = navigation` opt-in.
+                if wt.splitTree.zoomed != nil {
+                    let newTree = terminalManager.splitPreserveZoomOnNavigation
+                        ? wt.splitTree.withZoom(nextID)
+                        : wt.splitTree.withZoom(nil)
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
+                }
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nextID
                 terminalManager.setFocus(nextID)
                 return
@@ -938,6 +945,13 @@ struct EspalierApp: App {
                     ? (currentIdx + 1) % leaves.count
                     : (currentIdx - 1 + leaves.count) % leaves.count
                 let nextID = leaves[nextIdx]
+                // Zoom preservation: Ghostty 1.3 `split-preserve-zoom = navigation` opt-in.
+                if wt.splitTree.zoomed != nil {
+                    let newTree = terminalManager.splitPreserveZoomOnNavigation
+                        ? wt.splitTree.withZoom(nextID)
+                        : wt.splitTree.withZoom(nil)
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
+                }
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nextID
                 terminalManager.setFocus(nextID)
                 return
