@@ -116,6 +116,10 @@ struct EspalierApp: App {
                 }
             }
         }
+
+        Settings {
+            SettingsView()
+        }
     }
 
     private func startup() {
