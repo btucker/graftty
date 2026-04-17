@@ -70,14 +70,42 @@ public struct CLIRunner: CLIExecutor {
             process.standardOutput = stdoutPipe
             process.standardError = stderrPipe
 
-            process.terminationHandler = { proc in
-                let outData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let errData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                let stdoutStr = String(data: outData, encoding: .utf8) ?? ""
-                let stderrStr = String(data: errData, encoding: .utf8) ?? ""
+            // Drain pipes into in-memory buffers while the process runs.
+            // If we waited until termination to read, a process that writes
+            // more than the pipe buffer (~16–64 KB) would block on write and
+            // never exit — leaking the continuation. `readabilityHandler`
+            // fires on background queues, so guard shared state with a lock.
+            let buffers = PipeBuffers()
 
-                // `/usr/bin/env` exits with 127 when the command is not found.
-                if proc.terminationStatus == 127 && stderrStr.contains("No such file") {
+            stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                if chunk.isEmpty { return }
+                buffers.appendStdout(chunk)
+            }
+            stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+                let chunk = handle.availableData
+                if chunk.isEmpty { return }
+                buffers.appendStderr(chunk)
+            }
+
+            process.terminationHandler = { proc in
+                // Stop the handlers and drain any remaining bytes synchronously.
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
+                let finalOut = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                let finalErr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                buffers.appendStdout(finalOut)
+                buffers.appendStderr(finalErr)
+
+                let stdoutStr = String(data: buffers.stdoutData, encoding: .utf8) ?? ""
+                let stderrStr = String(data: buffers.stderrData, encoding: .utf8) ?? ""
+
+                // `/usr/bin/env` exits with 127 and emits a line prefixed with
+                // "env:" when the command is not found. The prefix discriminates
+                // env's own error from a child command that happens to say
+                // "No such file" while coincidentally exiting 127.
+                if proc.terminationStatus == 127,
+                   stderrStr.hasPrefix("env:") && stderrStr.contains("No such file") {
                     cont.resume(throwing: CLIError.notFound(command: command))
                     return
                 }
@@ -87,6 +115,8 @@ public struct CLIRunner: CLIExecutor {
             do {
                 try process.run()
             } catch {
+                stdoutPipe.fileHandleForReading.readabilityHandler = nil
+                stderrPipe.fileHandleForReading.readabilityHandler = nil
                 cont.resume(throwing: CLIError.launchFailed(
                     command: command,
                     message: error.localizedDescription
@@ -94,5 +124,34 @@ public struct CLIRunner: CLIExecutor {
             }
         }
         return CLIOutput(stdout: captured.0, stderr: captured.1, exitCode: captured.2)
+    }
+}
+
+/// Thread-safe byte accumulator for pipe drain handlers. `readabilityHandler`
+/// fires on background queues, and `terminationHandler` fires on yet another
+/// queue, so appends and final reads need a lock.
+private final class PipeBuffers: @unchecked Sendable {
+    private var _stdout = Data()
+    private var _stderr = Data()
+    private let lock = NSLock()
+
+    var stdoutData: Data {
+        lock.lock(); defer { lock.unlock() }
+        return _stdout
+    }
+
+    var stderrData: Data {
+        lock.lock(); defer { lock.unlock() }
+        return _stderr
+    }
+
+    func appendStdout(_ chunk: Data) {
+        lock.lock(); defer { lock.unlock() }
+        _stdout.append(chunk)
+    }
+
+    func appendStderr(_ chunk: Data) {
+        lock.lock(); defer { lock.unlock() }
+        _stderr.append(chunk)
     }
 }

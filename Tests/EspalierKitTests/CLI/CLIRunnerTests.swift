@@ -71,4 +71,27 @@ struct CLIRunnerTests {
         #expect(parts.filter { $0 == "/opt/homebrew/bin" }.count == 1)
         #expect(parts.filter { $0 == "/usr/local/bin" }.count == 1)
     }
+
+    /// Regression guard for the pipe buffer deadlock: if we read stdout only
+    /// after the process exits, a child that writes more than the pipe
+    /// capacity (~16–64 KB on macOS) blocks on write and never terminates.
+    /// Emits exactly 262144 bytes ("1\n" × 131072) and asserts the full
+    /// payload comes through. Without `readabilityHandler` draining, this
+    /// test hangs forever.
+    @Test func largeStdoutDoesNotDeadlock() async throws {
+        let lineCount = 131072 // 131072 × 2 bytes = 262144 bytes (256 KiB)
+        let output = try await runner.run(
+            command: "sh",
+            args: ["-c", "yes 1 | head -n \(lineCount)"],
+            at: NSTemporaryDirectory()
+        )
+        #expect(output.exitCode == 0)
+        #expect(output.stdout.utf8.count == lineCount * 2)
+        // Spot-check content integrity: all lines should be "1".
+        let lines = output.stdout.split(separator: "\n", omittingEmptySubsequences: false)
+        // split produces lineCount + 1 elements because of the trailing newline.
+        #expect(lines.count == lineCount + 1)
+        #expect(lines.first == "1")
+        #expect(lines[lineCount - 1] == "1")
+    }
 }
