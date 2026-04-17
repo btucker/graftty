@@ -15,7 +15,9 @@ REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO"
 
 CONFIGURATION="${CONFIGURATION:-debug}"
+ESPALIER_VERSION="${ESPALIER_VERSION:-0.0.0-dev}"
 
+echo "→ ESPALIER_VERSION=$ESPALIER_VERSION"
 echo "→ swift build --configuration $CONFIGURATION"
 swift build --configuration "$CONFIGURATION"
 
@@ -45,7 +47,7 @@ echo "→ build + copy app icon"
 "$SCRIPT_DIR/build-icon.sh" "$APP/Contents/Resources/AppIcon.icns"
 
 echo "→ write Info.plist"
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -67,9 +69,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>$ESPALIER_VERSION</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$ESPALIER_VERSION</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSApplicationCategoryType</key>
