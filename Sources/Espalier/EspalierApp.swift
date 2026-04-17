@@ -24,6 +24,7 @@ final class AppServices {
 struct EspalierApp: App {
     @State private var appState: AppState
     @StateObject private var terminalManager: TerminalManager
+    @StateObject private var webController: WebServerController
     private let services: AppServices
 
     init() {
@@ -45,6 +46,26 @@ struct EspalierApp: App {
         let socketPath = AppState.defaultDirectory.appendingPathComponent("espalier.sock").path
         _terminalManager = StateObject(wrappedValue: TerminalManager(socketPath: socketPath))
         services = AppServices(socketPath: socketPath)
+
+        // Web access server — reconstruct the same zmx paths that `startup()`
+        // computes so the WebServerController's child `zmx attach` invocations
+        // hit the same ZMX_DIR as panes spawned from the app UI. Keeping the
+        // path derivation here (rather than routing it through AppServices)
+        // keeps the controller's lifetime tied to the SwiftUI App via
+        // @StateObject, which is what Settings scene re-entry expects.
+        let appSupport = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first ?? URL(fileURLWithPath: NSTemporaryDirectory())
+        let zmxDir = appSupport
+            .appendingPathComponent("Espalier", isDirectory: true)
+            .appendingPathComponent("zmx", isDirectory: true)
+        let zmxExe = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/zmx")
+        _webController = StateObject(wrappedValue: WebServerController(
+            settings: WebAccessSettings.shared,
+            zmxExecutable: zmxExe,
+            zmxDir: zmxDir
+        ))
     }
 
     /// If another Espalier process with our `CFBundleIdentifier` is
@@ -72,6 +93,7 @@ struct EspalierApp: App {
                 prStatusStore: services.prStatusStore,
                 worktreeMonitor: services.worktreeMonitor
             )
+                .environmentObject(webController)
                 .onAppear { startup() }
                 .onChange(of: appState) { _, newState in
                     try? newState.save(to: AppState.defaultDirectory)
@@ -147,8 +169,18 @@ struct EspalierApp: App {
             }
         }
 
+        // Settings scene — existing General pane plus the Phase 2 Web Access
+        // pane. WebServerController is injected so WebSettingsPane can read
+        // `.status` / `.currentURL`, and so toggling `WebAccessSettings.isEnabled`
+        // triggers the controller's `reconcile()` via its Combine subscription.
         Settings {
-            SettingsView()
+            TabView {
+                SettingsView()
+                    .tabItem { Label("General", systemImage: "gear") }
+                WebSettingsPane()
+                    .environmentObject(webController)
+                    .tabItem { Label("Web Access", systemImage: "network") }
+            }
         }
     }
 
