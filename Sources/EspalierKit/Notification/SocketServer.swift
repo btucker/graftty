@@ -6,6 +6,13 @@ public final class SocketServer: @unchecked Sendable {
     private var source: DispatchSourceRead?
     private let queue = DispatchQueue(label: "com.espalier.socket-server")
     public var onMessage: ((NotificationMessage) -> Void)?
+    /// Request/response variant of `onMessage`. When set, the server calls
+    /// this after `onMessage` and, if the handler returns a non-nil
+    /// `ResponseMessage`, writes it to the client (as JSON + newline)
+    /// before closing the connection. Handlers are invoked on the same
+    /// dispatch queue as `onMessage`; dispatch to the main actor inside
+    /// the handler if your state requires it.
+    public var onRequest: ((NotificationMessage) -> ResponseMessage?)?
 
     /// Maximum path length for a Unix domain socket on macOS. `sockaddr_un.sun_path`
     /// is 104 bytes — accounting for the null terminator, the path must be ≤103
@@ -76,6 +83,26 @@ public final class SocketServer: @unchecked Sendable {
             guard let data = line.data(using: .utf8),
                   let message = try? JSONDecoder().decode(NotificationMessage.self, from: data) else { continue }
             DispatchQueue.main.async { [weak self] in self?.onMessage?(message) }
+
+            // Request/response path: if a handler is registered, run it on
+            // the main actor and block the socket-queue worker on the
+            // result so the reply is written before we close the fd.
+            if let onRequest {
+                let semaphore = DispatchSemaphore(value: 0)
+                var response: ResponseMessage?
+                DispatchQueue.main.async {
+                    response = onRequest(message)
+                    semaphore.signal()
+                }
+                semaphore.wait()
+                if let response, let encoded = try? JSONEncoder().encode(response) {
+                    var payload = encoded
+                    payload.append(0x0A) // '\n'
+                    payload.withUnsafeBytes { buf in
+                        _ = Darwin.write(fd, buf.baseAddress, buf.count)
+                    }
+                }
+            }
         }
     }
 }

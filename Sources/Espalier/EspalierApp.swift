@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import EspalierKit
+import GhosttyKit
 
 /// Holds long-lived non-SwiftUI services for the app. Retained for the lifetime of
 /// `EspalierApp` so weak delegates (e.g. `WorktreeMonitor.delegate`) stay alive.
@@ -145,7 +146,7 @@ struct EspalierApp: App {
         // right-clicks an unfocused pane.
         terminalManager.onSplitRequest = { [appState = $appState, tm = terminalManager] terminalID, direction in
             MainActor.assumeIsolated {
-                Self.splitPane(
+                _ = Self.splitPane(
                     appState: appState,
                     terminalManager: tm,
                     targetID: terminalID,
@@ -212,6 +213,11 @@ struct EspalierApp: App {
         services.socketServer.onMessage = { message in
             MainActor.assumeIsolated {
                 Self.handleNotification(message, appState: binding, terminalManager: tm)
+            }
+        }
+        services.socketServer.onRequest = { message in
+            MainActor.assumeIsolated {
+                Self.handlePaneRequest(message, appState: binding, terminalManager: tm)
             }
         }
 
@@ -353,6 +359,136 @@ struct EspalierApp: App {
                     }
                 }
             }
+        case .listPanes, .addPane, .closePane:
+            // Request-style messages are handled by handlePaneRequest via
+            // the SocketServer.onRequest callback; they are no-ops on the
+            // fire-and-forget onMessage path.
+            break
+        }
+    }
+
+    /// Dispatcher for request-style messages from the CLI. Returns a
+    /// `ResponseMessage` the server writes back to the client. Must run
+    /// on the main actor because it touches `appState` and `terminalManager`.
+    @MainActor
+    fileprivate static func handlePaneRequest(
+        _ message: NotificationMessage,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager
+    ) -> ResponseMessage? {
+        switch message {
+        case .listPanes(let path):
+            return listPanes(path: path, appState: appState, terminalManager: terminalManager)
+        case .addPane(let path, let direction, let command):
+            return addPane(path: path, direction: direction, command: command,
+                           appState: appState, terminalManager: terminalManager)
+        case .closePane(let path, let index):
+            return closePaneByIndex(path: path, index: index,
+                                    appState: appState, terminalManager: terminalManager)
+        case .notify, .clear:
+            // Fire-and-forget cases — no response. `onMessage` already handled them.
+            return nil
+        }
+    }
+
+    @MainActor
+    private static func listPanes(
+        path: String,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager
+    ) -> ResponseMessage {
+        guard let wt = appState.wrappedValue.worktree(forPath: path) else {
+            return .error("not tracked")
+        }
+        let leaves = wt.splitTree.allLeaves
+        let panes = leaves.enumerated().map { (i, terminalID) -> PaneInfo in
+            PaneInfo(
+                id: i + 1,
+                title: terminalManager.titles[terminalID],
+                focused: terminalID == wt.focusedTerminalID
+            )
+        }
+        return .paneList(panes)
+    }
+
+    @MainActor
+    private static func addPane(
+        path: String,
+        direction: PaneSplitWire,
+        command: String?,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager
+    ) -> ResponseMessage {
+        guard let wt = appState.wrappedValue.worktree(forPath: path) else {
+            return .error("not tracked")
+        }
+        guard wt.state == .running else {
+            return .error("worktree not running")
+        }
+        guard let targetID = wt.focusedTerminalID ?? wt.splitTree.allLeaves.first else {
+            return .error("no panes to split")
+        }
+        let split: PaneSplit
+        switch direction {
+        case .right: split = .right
+        case .left:  split = .left
+        case .up:    split = .up
+        case .down:  split = .down
+        }
+        guard let newID = splitPane(
+            appState: appState,
+            terminalManager: terminalManager,
+            targetID: targetID,
+            split: split
+        ) else {
+            return .error("split failed")
+        }
+        if let command, !command.isEmpty {
+            typeCommand(command, into: newID, terminalManager: terminalManager)
+        }
+        return .ok
+    }
+
+    @MainActor
+    private static func closePaneByIndex(
+        path: String,
+        index: Int,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager
+    ) -> ResponseMessage {
+        guard let wt = appState.wrappedValue.worktree(forPath: path) else {
+            return .error("not tracked")
+        }
+        guard let targetID = wt.splitTree.leaf(atPaneID: index) else {
+            return .error("no pane with id \(index) in this worktree")
+        }
+        closePane(appState: appState, terminalManager: terminalManager, targetID: targetID)
+        return .ok
+    }
+
+    /// Type `text` followed by a newline into the surface owned by
+    /// `terminalID`. Used by `pane add --command`.
+    ///
+    /// Forwarded via `ghostty_surface_text`, the same API libghostty uses
+    /// for its paste action. Timing: if the shell hasn't drawn its prompt
+    /// yet, the first characters can get eaten — in practice on macOS
+    /// with zsh this is reliable, but if flake appears later, the
+    /// alternative is wiring libghostty's `command` config field at
+    /// surface creation.
+    @MainActor
+    private static func typeCommand(
+        _ text: String,
+        into terminalID: TerminalID,
+        terminalManager: TerminalManager
+    ) {
+        guard let handle = terminalManager.handle(for: terminalID) else { return }
+        let toSend = text + "\n"
+        toSend.withCString { cstr in
+            ghostty_surface_text(
+                handle.surface,
+                cstr,
+                UInt(toSend.lengthOfBytes(using: .utf8))
+            )
         }
     }
 
@@ -385,12 +521,13 @@ struct EspalierApp: App {
     /// target terminal, inserts a new leaf adjacent to it, spawns a surface,
     /// and moves focus to the new pane.
     @MainActor
+    @discardableResult
     fileprivate static func splitPane(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         targetID: TerminalID,
         split: PaneSplit
-    ) {
+    ) -> TerminalID? {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
@@ -409,9 +546,10 @@ struct EspalierApp: App {
                 _ = terminalManager.createSurface(terminalID: newID, worktreePath: wt.path)
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = newID
                 terminalManager.setFocus(newID)
-                return
+                return newID
             }
         }
+        return nil
     }
 
     private func navigatePane(_ direction: NavigationDirection) {

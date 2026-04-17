@@ -47,6 +47,17 @@ public struct SplitTree: Codable, Sendable, Equatable {
         return root.allLeaves
     }
 
+    /// Resolve a user-facing 1-based pane ID (as printed by `espalier
+    /// pane list`) to its underlying `TerminalID`, or nil if the ID is
+    /// out of range. Uses `allLeaves` order — the same order `list`
+    /// displays.
+    public func leaf(atPaneID paneID: Int) -> TerminalID? {
+        let leaves = allLeaves
+        let idx = paneID - 1
+        guard leaves.indices.contains(idx) else { return nil }
+        return leaves[idx]
+    }
+
     // MARK: - Mutations (return new trees)
 
     public func inserting(_ newLeaf: TerminalID, at target: TerminalID, direction: SplitDirection) -> SplitTree {

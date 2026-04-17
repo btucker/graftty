@@ -159,6 +159,105 @@ struct SocketIntegrationTests {
             try server.start()
         }
     }
+
+    @Test func serverWritesResponseWhenOnRequestSet() async throws {
+        let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("espalier-resp-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let socketPath = dir.appendingPathComponent("s").path
+        let server = SocketServer(socketPath: socketPath)
+        server.onRequest = { msg in
+            guard case .listPanes = msg else { return .error("unexpected") }
+            return .paneList([
+                PaneInfo(id: 1, title: "zsh", focused: true),
+                PaneInfo(id: 2, title: nil, focused: false),
+            ])
+        }
+        try server.start()
+        defer { server.stop() }
+        try await Task.sleep(for: .milliseconds(100))
+
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        #expect(fd >= 0)
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        socketPath.withCString { ptr in
+            withUnsafeMutablePointer(to: &addr.sun_path) { pathPtr in
+                pathPtr.withMemoryRebound(to: CChar.self, capacity: 104) { dest in _ = strlcpy(dest, ptr, 104) }
+            }
+        }
+        let connectResult = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in Darwin.connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        #expect(connectResult == 0)
+
+        let req = #"{"type":"list_panes","path":"/tmp/wt"}"# + "\n"
+        req.withCString { ptr in _ = Darwin.write(fd, ptr, strlen(ptr)) }
+
+        // Half-close the write side so the server's read-until-EOF terminates
+        // and proceeds to send the response. Without SHUT_WR, the server would
+        // block waiting for more bytes.
+        _ = Darwin.shutdown(fd, Int32(SHUT_WR))
+
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        let bytesRead = Darwin.read(fd, &buffer, 4096)
+        close(fd)
+        #expect(bytesRead > 0)
+
+        let data = Data(buffer[0..<bytesRead])
+        let line = String(data: data, encoding: .utf8)!
+            .components(separatedBy: "\n")
+            .first(where: { !$0.isEmpty })!
+        let response = try JSONDecoder().decode(ResponseMessage.self, from: line.data(using: .utf8)!)
+        guard case .paneList(let panes) = response else {
+            Issue.record("Expected .paneList")
+            return
+        }
+        #expect(panes.count == 2)
+        #expect(panes[0].title == "zsh")
+        #expect(panes[0].focused == true)
+    }
+
+    @Test func serverOmitsResponseWhenOnRequestUnset() async throws {
+        // Fire-and-forget path must still work — notify/clear don't expect replies.
+        let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("espalier-fnf-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let socketPath = dir.appendingPathComponent("s").path
+        let received = MutableBox<NotificationMessage?>(nil)
+        let server = SocketServer(socketPath: socketPath)
+        server.onMessage = { msg in received.value = msg }
+        // Intentionally no onRequest.
+        try server.start()
+        defer { server.stop() }
+        try await Task.sleep(for: .milliseconds(100))
+
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        socketPath.withCString { ptr in
+            withUnsafeMutablePointer(to: &addr.sun_path) { pathPtr in
+                pathPtr.withMemoryRebound(to: CChar.self, capacity: 104) { dest in _ = strlcpy(dest, ptr, 104) }
+            }
+        }
+        _ = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in Darwin.connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size)) }
+        }
+        let msg = #"{"type":"notify","path":"/tmp/wt","text":"hi"}"# + "\n"
+        msg.withCString { ptr in _ = Darwin.write(fd, ptr, strlen(ptr)) }
+        _ = Darwin.shutdown(fd, Int32(SHUT_WR))
+
+        var buffer = [UInt8](repeating: 0, count: 1024)
+        let bytesRead = Darwin.read(fd, &buffer, 1024)
+        close(fd)
+        // Server closes without writing anything; read returns 0 (EOF).
+        #expect(bytesRead == 0)
+
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(received.value != nil)
+    }
 }
 
 final class MutableBox<T>: @unchecked Sendable {
