@@ -1,12 +1,13 @@
 import Foundation
 import AppKit
+import EspalierKit
 
 /// Drives a single long-lived Task that fires `onTick` on a cadence.
 /// Reacts to app active/inactive notifications (optionally pausing when
 /// inactive), and exposes `pulse()` to wake early for user-triggered
 /// refreshes.
 @MainActor
-final class PollingTicker {
+final class PollingTicker: PollingTickerLike {
     private let interval: Duration
     private let pauseWhenInactive: @MainActor () -> Bool
     private var task: Task<Void, Never>?
