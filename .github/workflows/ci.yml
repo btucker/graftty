@@ -11,29 +11,16 @@ concurrency:
 
 jobs:
   build-and-test:
-    runs-on: macos-latest
+    # macos-26 ships Xcode 26 which bundles a current swift-testing.
+    # The older swift-testing (124.4) on macos-latest (→ macos-15) has
+    # an exit-path hang: all tests pass, then the process blocks ~10 min
+    # without emitting the final summary. macos-26 sidesteps it.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
-      # Pick the newest Xcode on the runner. The image ships multiple; the
-      # default is an older one whose bundled swift-testing (version 124.4)
-      # hangs on exit after all tests pass — the summary line never prints
-      # and the process blocks for ~10 minutes before a SIGKILL. Newer
-      # swift-testing (1700+) doesn't repro. Fall back gracefully if the
-      # glob finds nothing.
-      - name: Select latest Xcode
-        run: |
-          latest=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1 || true)
-          if [ -n "$latest" ]; then
-            echo "Selecting $latest"
-            sudo xcode-select -s "$latest/Contents/Developer"
-          else
-            echo "No Xcode_*.app found; using default xcode-select"
-          fi
-
       - name: Show tool versions
         run: |
-          xcode-select -p
           swift --version
           xcodebuild -version
 
