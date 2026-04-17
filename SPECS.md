@@ -489,3 +489,33 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 **ZMX-6.1** Shell-integration OSC sequences (OSC 7 working directory, OSC 9 desktop notification, OSC 133 prompt marks, OSC 9;4 progress reports) shall continue to flow from the inner shell through `zmx` to libghostty unchanged. The `PWD-x.x`, `NOTIF-x.x`, and `KEY-x.x` requirements remain in force regardless of whether `zmx` is mediating the PTY.
 
 **ZMX-6.2** The `ESPALIER_SOCK` environment variable shall continue to be set in the spawned shell's environment per `ATTN-2.4`. Because `zmx` inherits its child shell's env from the spawning process, this is satisfied by setting it on the libghostty surface as today.
+
+## 14. Distribution
+
+### 14.1 Build Bundle
+
+**DIST-1.1** The build script (`scripts/bundle.sh`) shall produce a self-contained `Espalier.app` bundle in `.build/` containing the SwiftUI application binary at `Contents/MacOS/Espalier`, the CLI helper at `Contents/Helpers/espalier`, and the bundled `zmx` binary at `Contents/Helpers/zmx`.
+
+**DIST-1.2** While the `ESPALIER_VERSION` environment variable is set, the build script shall write that value into both `CFBundleShortVersionString` and `CFBundleVersion` in `Info.plist`.
+
+**DIST-1.3** If the `ESPALIER_VERSION` environment variable is not set, then the build script shall use `0.0.0-dev` as the default version.
+
+**DIST-1.4** The build script shall ad-hoc codesign every Mach-O in the bundle in inner-to-outer order: `Contents/Helpers/zmx`, `Contents/Helpers/espalier`, `Contents/MacOS/Espalier`, then the bundle itself, and shall verify the resulting signature with `codesign --verify --strict`.
+
+### 14.2 Release Automation
+
+**DIST-2.1** When a git tag matching `v*` is pushed to origin, the GitHub Actions workflow `.github/workflows/release.yml` shall build the app bundle in release configuration, verify codesigning, zip the bundle as `Espalier-<version>.zip`, ensure a GitHub release tagged `v<version>` has the zip attached, and ensure the `btucker/homebrew-espalier` cask reflects the new version and sha256.
+
+**DIST-2.2** If the pushed tag does not start with `v`, then the release workflow shall fail before building.
+
+**DIST-2.3** If a release for the pushed tag already exists, then the workflow shall re-upload the zip with `--clobber` and continue to the cask update step rather than failing.
+
+**DIST-2.4** The release zip shall be produced with `ditto -c -k --keepParent` (not `zip`) so that codesign-relevant extended attributes survive — `zip` strips them and installs fail with opaque "damaged" errors after reboot.
+
+### 14.3 Homebrew Cask
+
+**DIST-3.1** The Homebrew tap `btucker/homebrew-espalier` shall expose a cask `espalier` that downloads the release zip, installs `Espalier.app` to `/Applications`, and symlinks `Espalier.app/Contents/Helpers/espalier` onto the user's PATH as `espalier`.
+
+**DIST-3.2** While the application is ad-hoc signed (not Developer ID notarized), the cask shall display a `caveats` notice explaining that macOS will refuse to open the app on first launch and providing the steps to bypass Gatekeeper.
+
+**DIST-3.3** When the user runs `brew uninstall --cask --zap espalier`, the cask shall remove `~/Library/Application Support/Espalier`, `~/Library/Preferences/com.espalier.app.plist`, and `~/Library/Caches/com.espalier.app`.

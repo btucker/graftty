@@ -1,0 +1,113 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+# Serialize releases so two tag pushes don't race the tap update step.
+# cancel-in-progress: false (unlike CI) — never abort an in-flight
+# release; just queue the next one.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # macos-26 mirrors the CI workflow — same Xcode, same Swift, same
+    # toolchain quirks already known to work for this repo.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show tool versions
+        run: |
+          swift --version
+          xcodebuild -version
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            echo "Tag must start with 'v' — got '$GITHUB_REF_NAME'" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build app bundle
+        env:
+          CONFIGURATION: release
+          ESPALIER_VERSION: ${{ steps.version.outputs.version }}
+        run: scripts/bundle.sh
+
+      - name: Verify codesign
+        run: codesign --verify --strict --verbose=2 .build/Espalier.app
+
+      - name: Zip artifact
+        id: zip
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          ZIP="Espalier-$VERSION.zip"
+          # ditto preserves resource forks and extended attributes that
+          # codesign cares about; plain `zip` strips them.
+          ditto -c -k --keepParent .build/Espalier.app "$ZIP"
+          SHA256="$(shasum -a 256 "$ZIP" | awk '{print $1}')"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "Zip: $ZIP ($SHA256)"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ZIP: ${{ steps.zip.outputs.zip }}
+        run: |
+          set -euo pipefail
+          # Create the release if it doesn't already exist. Re-runs of a
+          # partially-failed workflow (e.g., the tap update step crashed) need
+          # to be safe — `gh release create` errors with "release already
+          # exists" otherwise. Splitting create from upload lets us use
+          # `--clobber` on upload so the zip is always the latest.
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "Release v$VERSION already exists — re-uploading zip"
+          else
+            gh release create "v$VERSION" \
+              --title "v$VERSION" \
+              --generate-notes
+          fi
+          gh release upload "v$VERSION" "$ZIP" --clobber
+
+      - name: Update Homebrew tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.zip.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/btucker/homebrew-espalier.git" tap
+          cd tap
+          # Pull-rebase before editing in case a manual cask edit landed
+          # between our clone and our push (e.g., a maintainer syncing
+          # caveats from docs/release/Casks/espalier.rb in the source repo).
+          # No-op when there's nothing new.
+          git pull --rebase origin main
+          # Rewrite version + sha256 in place. Two seds (not one) so the
+          # failure mode is obvious if either field's literal text drifts
+          # in the cask.
+          sed -i '' -E "s/^  version \".*\"/  version \"$VERSION\"/" Casks/espalier.rb
+          sed -i '' -E "s/^  sha256 \".*\"/  sha256 \"$SHA256\"/" Casks/espalier.rb
+          git config user.name  "espalier-release-bot"
+          git config user.email "espalier-release-bot@users.noreply.github.com"
+          git add Casks/espalier.rb
+          if git diff --cached --quiet; then
+            echo "No cask changes — re-releasing the same version?"
+            exit 0
+          fi
+          git commit -m "espalier $VERSION"
+          git push

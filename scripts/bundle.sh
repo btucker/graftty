@@ -15,7 +15,13 @@ REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO"
 
 CONFIGURATION="${CONFIGURATION:-debug}"
+ESPALIER_VERSION="${ESPALIER_VERSION:-0.0.0-dev}"
+if [[ ! "$ESPALIER_VERSION" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+  echo "ESPALIER_VERSION must match [A-Za-z0-9._+-]+ (got '$ESPALIER_VERSION')" >&2
+  exit 1
+fi
 
+echo "→ ESPALIER_VERSION=$ESPALIER_VERSION"
 echo "→ swift build --configuration $CONFIGURATION"
 swift build --configuration "$CONFIGURATION"
 
@@ -45,7 +51,10 @@ echo "→ build + copy app icon"
 "$SCRIPT_DIR/build-icon.sh" "$APP/Contents/Resources/AppIcon.icns"
 
 echo "→ write Info.plist"
-cat > "$APP/Contents/Info.plist" <<'PLIST'
+# NOTE: heredoc is unquoted so $ESPALIER_VERSION expands.
+# Any other $ or backticks added below will also expand — keep
+# this body to literal XML plus that single substitution.
+cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -67,9 +76,9 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.1.0</string>
+    <string>$ESPALIER_VERSION</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>$ESPALIER_VERSION</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSApplicationCategoryType</key>
@@ -81,6 +90,20 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+
+echo "→ ad-hoc codesign (inner → outer)"
+# Sign helpers first, then the main binary, then the bundle itself.
+# Apple's nesting rules require nested code to already be signed when
+# the outer container is signed; otherwise the outer signature does
+# not cover them and the runtime rejects the bundle. When we move to
+# Developer ID + notarization, this block grows: real identity,
+# --options runtime, --timestamp, --entitlements, and a separate
+# notarytool/stapler pass after.
+codesign --force --sign - "$APP/Contents/Helpers/zmx"
+codesign --force --sign - "$APP/Contents/Helpers/espalier"
+codesign --force --sign - "$APP/Contents/MacOS/Espalier"
+codesign --force --sign - "$APP"
+codesign --verify --strict "$APP"
 
 echo "✓ Bundle at $APP"
 echo "  Run:  open '$APP'"
