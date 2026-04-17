@@ -4,7 +4,7 @@ public struct GitLabPRFetcher: PRFetcher {
     private let executor: CLIExecutor
     private let now: @Sendable () -> Date
 
-    public init(executor: CLIExecutor = CLIRunner(), now: @Sendable @escaping () -> Date = Date.init) {
+    public init(executor: CLIExecutor = CLIRunner(), now: @Sendable @escaping () -> Date = { Date() }) {
         self.executor = executor
         self.now = now
     }
