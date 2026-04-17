@@ -1,0 +1,319 @@
+import Foundation
+import NIO
+import NIOHTTP1
+import NIOWebSocket
+
+/// HTTP + WebSocket server for Phase 2 web access. Binds to each
+/// Tailscale IP (plus 127.0.0.1), serves static assets at `/`,
+/// upgrades `/ws?session=<name>` to WebSocket, and gates both
+/// paths via `AuthPolicy.isAllowed(peerIP:)`.
+public final class WebServer {
+
+    public enum Status: Equatable {
+        case stopped
+        case listening(addresses: [String], port: Int)
+        case disabledNoTailscale
+        case portUnavailable
+        case error(String)
+    }
+
+    public struct Config {
+        public let port: Int
+        public let allowedPaths: [String: WebStaticResources.Asset]
+        public let zmxExecutable: URL
+        public let zmxDir: URL
+        public init(port: Int, allowedPaths: [String: WebStaticResources.Asset], zmxExecutable: URL, zmxDir: URL) {
+            self.port = port
+            self.allowedPaths = allowedPaths
+            self.zmxExecutable = zmxExecutable
+            self.zmxDir = zmxDir
+        }
+    }
+
+    /// Decides whether a given peer IP is allowed. Pluggable so tests
+    /// can inject a permissive stub without real Tailscale.
+    public struct AuthPolicy {
+        public let isAllowed: @Sendable (String) async -> Bool
+        public init(isAllowed: @escaping @Sendable (String) async -> Bool) { self.isAllowed = isAllowed }
+    }
+
+    public private(set) var status: Status = .stopped
+    public let config: Config
+    public let auth: AuthPolicy
+    public let bindAddresses: [String]
+
+    private var group: EventLoopGroup?
+    private var channels: [Channel] = []
+
+    public init(config: Config, auth: AuthPolicy, bindAddresses: [String]) {
+        self.config = config
+        self.auth = auth
+        self.bindAddresses = bindAddresses
+    }
+
+    public func start() throws {
+        precondition(group == nil, "WebServer already started")
+        guard !bindAddresses.isEmpty else {
+            status = .disabledNoTailscale
+            throw Status.disabledNoTailscale.asError
+        }
+
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
+        self.group = group
+
+        let capturedConfig = config
+        let capturedAuth = auth
+
+        let bootstrap = ServerBootstrap(group: group)
+            .serverChannelOption(ChannelOptions.backlog, value: 16)
+            .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+            .childChannelInitializer { channel in
+                let handler = HTTPHandler(config: capturedConfig, auth: capturedAuth)
+                let upgrader = Self.makeWSUpgrader(config: capturedConfig, auth: capturedAuth)
+                let upgradeConfig: NIOHTTPServerUpgradeConfiguration = (
+                    upgraders: [upgrader],
+                    completionHandler: { _ in }
+                )
+                return channel.pipeline.configureHTTPServerPipeline(
+                    withServerUpgrade: upgradeConfig
+                ).flatMap {
+                    channel.pipeline.addHandler(handler)
+                }
+            }
+
+        do {
+            channels = try bindAddresses.map { try bootstrap.bind(host: $0, port: config.port).wait() }
+        } catch {
+            try? group.syncShutdownGracefully()
+            self.group = nil
+            let ns = (error as NSError)
+            if ns.domain.contains("posix") || "\(error)".contains("EADDRINUSE") {
+                status = .portUnavailable
+            } else {
+                status = .error("\(error)")
+            }
+            throw error
+        }
+        status = .listening(addresses: bindAddresses, port: config.port)
+    }
+
+    public func stop() {
+        for c in channels { try? c.close().wait() }
+        channels.removeAll()
+        try? group?.syncShutdownGracefully()
+        group = nil
+        status = .stopped
+    }
+
+    // MARK: - WS upgrader factory
+
+    private static func makeWSUpgrader(config: Config, auth: AuthPolicy) -> NIOWebSocketServerUpgrader {
+        return NIOWebSocketServerUpgrader(
+            shouldUpgrade: { channel, head in
+                guard head.uri.hasPrefix("/ws") else {
+                    return channel.eventLoop.makeSucceededFuture(nil)
+                }
+                let peer = channel.remoteAddress?.ipAddress ?? "unknown"
+                let promise = channel.eventLoop.makePromise(of: HTTPHeaders?.self)
+                channel.eventLoop.execute {
+                    Task {
+                        let allowed = await auth.isAllowed(peer)
+                        promise.succeed(allowed ? HTTPHeaders() : nil)
+                    }
+                }
+                return promise.futureResult
+            },
+            upgradePipelineHandler: { channel, head in
+                let session = Self.parseSession(from: head.uri)
+                let wsHandler = WebSocketBridgeHandler(
+                    sessionName: session,
+                    zmxExecutable: config.zmxExecutable,
+                    zmxDir: config.zmxDir
+                )
+                return channel.pipeline.addHandler(wsHandler)
+            }
+        )
+    }
+
+    private static func parseSession(from uri: String) -> String {
+        guard let q = uri.split(separator: "?").dropFirst().first else { return "" }
+        for pair in q.split(separator: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            if kv.count == 2, kv[0] == "session" {
+                return String(kv[1]).removingPercentEncoding ?? String(kv[1])
+            }
+        }
+        return ""
+    }
+
+    // MARK: - HTTP handler
+
+    private final class HTTPHandler: ChannelInboundHandler {
+        typealias InboundIn = HTTPServerRequestPart
+        typealias OutboundOut = HTTPServerResponsePart
+
+        let config: Config
+        let auth: AuthPolicy
+        var currentRequestHead: HTTPRequestHead?
+
+        init(config: Config, auth: AuthPolicy) {
+            self.config = config
+            self.auth = auth
+        }
+
+        func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+            let part = unwrapInboundIn(data)
+            switch part {
+            case .head(let head):
+                currentRequestHead = head
+            case .body:
+                break
+            case .end:
+                guard let head = currentRequestHead else { return }
+                currentRequestHead = nil
+                let peer = context.channel.remoteAddress?.ipAddress ?? "unknown"
+                let loop = context.eventLoop
+                let promise = loop.makePromise(of: Bool.self)
+                let auth = self.auth
+                loop.execute {
+                    Task {
+                        let allowed = await auth.isAllowed(peer)
+                        promise.succeed(allowed)
+                    }
+                }
+                promise.futureResult.whenComplete { [weak self] result in
+                    guard let self else { return }
+                    let allowed = (try? result.get()) ?? false
+                    if !allowed {
+                        Self.respond(context: context, status: .forbidden, body: Data("forbidden\n".utf8), contentType: "text/plain; charset=utf-8")
+                        return
+                    }
+                    self.serveStatic(context: context, head: head)
+                }
+            }
+        }
+
+        func serveStatic(context: ChannelHandlerContext, head: HTTPRequestHead) {
+            let path = head.uri.split(separator: "?").first.map(String.init) ?? "/"
+            do {
+                let asset = try WebStaticResources.asset(for: path)
+                Self.respond(context: context, status: .ok, body: asset.data, contentType: asset.contentType)
+            } catch {
+                Self.respond(context: context, status: .notFound, body: Data("not found\n".utf8), contentType: "text/plain; charset=utf-8")
+            }
+        }
+
+        static func respond(context: ChannelHandlerContext, status: HTTPResponseStatus, body: Data, contentType: String) {
+            var headers = HTTPHeaders()
+            headers.add(name: "Content-Type", value: contentType)
+            headers.add(name: "Content-Length", value: "\(body.count)")
+            headers.add(name: "Connection", value: "close")
+            let head = HTTPResponseHead(version: .init(major: 1, minor: 1), status: status, headers: headers)
+            context.write(NIOAny(HTTPServerResponsePart.head(head)), promise: nil)
+            var buf = context.channel.allocator.buffer(capacity: body.count)
+            buf.writeBytes(body)
+            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buf))), promise: nil)
+            context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil)), promise: nil)
+            context.close(promise: nil)
+        }
+    }
+
+    // MARK: - WebSocket bridge handler
+
+    private final class WebSocketBridgeHandler: ChannelInboundHandler {
+        typealias InboundIn = WebSocketFrame
+        typealias OutboundOut = WebSocketFrame
+
+        let sessionName: String
+        let zmxExecutable: URL
+        let zmxDir: URL
+        private var session: WebSession?
+        private weak var channel: Channel?
+
+        init(sessionName: String, zmxExecutable: URL, zmxDir: URL) {
+            self.sessionName = sessionName
+            self.zmxExecutable = zmxExecutable
+            self.zmxDir = zmxDir
+        }
+
+        func handlerAdded(context: ChannelHandlerContext) {
+            channel = context.channel
+            let sess = WebSession(config: WebSession.Config(
+                zmxExecutable: zmxExecutable,
+                zmxDir: zmxDir,
+                sessionName: sessionName
+            ))
+            sess.onPTYData = { [weak self] data in
+                guard let self, let channel = self.channel else { return }
+                channel.eventLoop.execute {
+                    var buffer = channel.allocator.buffer(capacity: data.count)
+                    buffer.writeBytes(data)
+                    let frame = WebSocketFrame(fin: true, opcode: .binary, data: buffer)
+                    channel.writeAndFlush(NIOAny(frame), promise: nil)
+                }
+            }
+            sess.onExit = { [weak self] in
+                guard let self, let channel = self.channel else { return }
+                channel.eventLoop.execute {
+                    let close = WebSocketFrame(
+                        fin: true,
+                        opcode: .connectionClose,
+                        data: channel.allocator.buffer(capacity: 0)
+                    )
+                    channel.writeAndFlush(NIOAny(close), promise: nil)
+                    channel.close(promise: nil)
+                }
+            }
+            do {
+                try sess.start()
+                session = sess
+            } catch {
+                let errMsg = #"{"type":"error","message":"session unavailable"}"#
+                var buf = context.channel.allocator.buffer(capacity: errMsg.utf8.count)
+                buf.writeString(errMsg)
+                let frame = WebSocketFrame(fin: true, opcode: .text, data: buf)
+                context.writeAndFlush(NIOAny(frame), promise: nil)
+                context.close(promise: nil)
+            }
+        }
+
+        func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+            let frame = unwrapInboundIn(data)
+            switch frame.opcode {
+            case .binary:
+                var buf = frame.unmaskedData
+                if let bytes = buf.readBytes(length: buf.readableBytes) {
+                    session?.write(Data(bytes))
+                }
+            case .text:
+                var buf = frame.unmaskedData
+                if let bytes = buf.readBytes(length: buf.readableBytes) {
+                    let payload = Data(bytes)
+                    if let env = try? WebControlEnvelope.parse(payload) {
+                        if case let .resize(cols, rows) = env {
+                            session?.resize(cols: cols, rows: rows)
+                        }
+                    }
+                }
+            case .connectionClose:
+                session?.close()
+                context.close(promise: nil)
+            case .ping:
+                let pong = WebSocketFrame(fin: true, opcode: .pong, data: frame.unmaskedData)
+                context.writeAndFlush(NIOAny(pong), promise: nil)
+            default:
+                break
+            }
+        }
+
+        func channelInactive(context: ChannelHandlerContext) {
+            session?.close()
+        }
+    }
+}
+
+private extension WebServer.Status {
+    var asError: Swift.Error {
+        NSError(domain: "WebServer", code: 0, userInfo: [NSLocalizedDescriptionKey: "\(self)"])
+    }
+}
