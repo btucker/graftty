@@ -42,10 +42,26 @@ struct WebServerIntegrationTests {
         try await wsTask.send(.string(#"{"type":"resize","cols":80,"rows":24}"#))
         try await wsTask.send(.data(Data("echo HELLO_INTEG\n".utf8)))
 
+        // URLSessionWebSocketTask.receive() blocks until a frame arrives —
+        // there's no built-in timeout. If `zmx attach` hangs or the PTY
+        // produces no output (seen on CI), receive() blocks forever and
+        // the per-loop `Date() < deadline` check never runs. Schedule an
+        // out-of-band cancel at the deadline so receive() throws and we
+        // exit cleanly.
+        let cancelTask = Task {
+            try? await Task.sleep(nanoseconds: 8 * 1_000_000_000)
+            wsTask.cancel(with: .goingAway, reason: nil)
+        }
+        defer { cancelTask.cancel() }
+
         var collected = Data()
-        let deadline = Date().addingTimeInterval(8)
-        while Date() < deadline {
-            let msg = try await wsTask.receive()
+        while true {
+            let msg: URLSessionWebSocketTask.Message
+            do {
+                msg = try await wsTask.receive()
+            } catch {
+                break
+            }
             switch msg {
             case .data(let d): collected.append(d)
             case .string(let s): collected.append(Data(s.utf8))
