@@ -519,3 +519,67 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 **DIST-3.2** While the application is ad-hoc signed (not Developer ID notarized), the cask shall display a `caveats` notice explaining that macOS will refuse to open the app on first launch and providing the steps to bypass Gatekeeper.
 
 **DIST-3.3** When the user runs `brew uninstall --cask --zap espalier`, the cask shall remove `~/Library/Application Support/Espalier`, `~/Library/Preferences/com.espalier.app.plist`, and `~/Library/Caches/com.espalier.app`.
+
+## 15. Web Access
+
+### 15.1 Binding
+
+**WEB-1.1** When web access is enabled, the application shall bind a local HTTP server to each Tailscale IPv4 and IPv6 address reported by the Tailscale LocalAPI, and to `127.0.0.1`, on the user-configured port (default 8799).
+
+**WEB-1.2** The application shall not bind to `0.0.0.0`.
+
+**WEB-1.3** If no Tailscale addresses are available, the application shall not bind the server and shall surface a "Tailscale unavailable" status in the Settings pane.
+
+**WEB-1.4** The feature shall be off by default.
+
+### 15.2 Authorization
+
+**WEB-2.1** The application shall resolve each incoming peer IP via Tailscale LocalAPI `whois` before serving any content at any path.
+
+**WEB-2.2** The application shall accept a connection only when the resolved `UserProfile.LoginName` equals the current Mac's Tailscale `LoginName`.
+
+**WEB-2.3** When `whois` fails or the resolved LoginName differs, the application shall respond with HTTP `403 Forbidden`.
+
+**WEB-2.4** When Tailscale is not running, the application shall refuse all incoming connections (the server is not bound; connections are refused at TCP).
+
+### 15.3 Protocol
+
+**WEB-3.1** The application shall serve a single static page at `/` (and `/index.html`) bundled with vendored xterm.js.
+
+**WEB-3.2** The application shall upgrade `/ws?session=<name>` to WebSocket after the authorization check passes.
+
+**WEB-3.3** WebSocket binary frames shall carry raw PTY bytes in both directions.
+
+**WEB-3.4** WebSocket text frames shall carry JSON control envelopes. The only Phase 2 envelope shape shall be `{"type":"resize","cols":<uint16>,"rows":<uint16>}`.
+
+### 15.4 Lifecycle
+
+**WEB-4.1** When the user enables web access in Settings, the application shall probe Tailscale, bind, and transition status to `.listening(...)` or an error status.
+
+**WEB-4.2** When the user disables web access, the application shall close all listening sockets and terminate all in-flight `zmx attach` children spawned for the web.
+
+**WEB-4.3** When the application quits, the application shall stop the server (same tear-down as 15.4.2) as part of normal shutdown.
+
+**WEB-4.4** For each incoming WebSocket, the application shall spawn one child `zmx attach <session>` whose PTY it owns (per §13 naming and ZMX_DIR rules from Phase 1).
+
+**WEB-4.5** When a WebSocket closes, the application shall send SIGTERM to the associated `zmx attach` child, leaving the zmx daemon alive.
+
+### 15.5 Client
+
+**WEB-5.1** The bundled client shall render a single terminal (xterm.js) that attaches to the session indicated by the `?session=` query parameter.
+
+**WEB-5.2** The client shall send xterm.js data events as binary WebSocket frames.
+
+**WEB-5.3** The client shall send resize events as JSON control envelopes in text frames.
+
+### 15.6 Non-goals
+
+**WEB-6.1** Phase 2 shall not implement TLS at the application level; the application shall rely on Tailscale transport encryption.
+
+**WEB-6.2** Phase 2 shall not implement a session picker UI, multi-pane layout, mouse events, OSC 52 clipboard sync, or reboot survival.
+
+**WEB-6.3** Phase 2 shall not implement rate limiting, URL tokens, or cookies; authorization shall be via Tailscale WhoIs only.
+
+### 15.7 Cross-references to §13
+
+The web access path uses Phase 1's session-naming and sandbox requirements unchanged. See §13.2 (session naming), §13.3 (`ZMX_DIR` sandbox), §13.4 (lifecycle mapping), and §13.6 (pass-through guarantees).

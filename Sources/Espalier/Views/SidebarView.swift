@@ -22,6 +22,11 @@ struct SidebarView: View {
     /// stderr) on failure so the sheet can display it inline.
     let onAddWorktree: (RepoEntry, String, String) async -> String?
 
+    /// Injected by EspalierApp so the pane-row context menu can gate the
+    /// "Copy web URL" item on `controller.status == .listening` and read
+    /// the listening addresses to compose the URL.
+    @EnvironmentObject private var webController: WebServerController
+
     @State private var addingWorktreeTo: RepoEntry?
 
     var body: some View {
@@ -162,6 +167,9 @@ struct SidebarView: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        paneContextMenu(terminalID: terminalID)
+                    }
                 }
             }
         }
@@ -205,6 +213,26 @@ struct SidebarView: View {
         if worktree.path != repo.path && worktree.state != .stale {
             Button("Delete Worktree") {
                 onDeleteWorktree(worktree.path)
+            }
+        }
+    }
+
+    /// Per-pane right-click menu (LAYOUT-2.7 surface). Today its only entry
+    /// is "Copy web URL", gated on the WebServer actually listening.
+    @ViewBuilder
+    private func paneContextMenu(terminalID: TerminalID) -> some View {
+        if case let .listening(addresses, port) = webController.status,
+           let host = WebURLComposer.chooseHost(
+               from: addresses.filter { $0 != "127.0.0.1" }
+           ) {
+            Button("Copy web URL") {
+                let url = WebURLComposer.url(
+                    session: ZmxLauncher.sessionName(for: terminalID.id),
+                    host: host,
+                    port: port
+                )
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(url, forType: .string)
             }
         }
     }

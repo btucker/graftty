@@ -1,0 +1,11 @@
+{
+    "Self": {
+        "UserID": 123456,
+        "TailscaleIPs": ["100.64.0.5", "fd7a:115c:a1e0::5"]
+    },
+    "User": {
+        "123456": {
+            "LoginName": "ben@example.com"
+        }
+    }
+}
