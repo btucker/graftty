@@ -146,7 +146,7 @@ struct SidebarView: View {
                         worktreePath: worktree.path,
                         repoPath: repo.path
                     ),
-                    prInfo: prStatusStore.infos[worktree.path]
+                    hasPR: prStatusStore.infos[worktree.path] != nil
                 )
             }
             .buttonStyle(.plain)

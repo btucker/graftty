@@ -63,8 +63,15 @@ public final class PRStatusStore {
     }
 
     public func clear(worktreePath: String) {
-        infos.removeValue(forKey: worktreePath)
-        absent.remove(worktreePath)
+        // Guard the observable mutations so a no-op clear (worktree never
+        // had a cached PR) doesn't fire `@Observable` notifications and
+        // re-render every SidebarView row.
+        if infos[worktreePath] != nil {
+            infos.removeValue(forKey: worktreePath)
+        }
+        if absent.contains(worktreePath) {
+            absent.remove(worktreePath)
+        }
         lastFetch.removeValue(forKey: worktreePath)
         failureStreak.removeValue(forKey: worktreePath)
     }

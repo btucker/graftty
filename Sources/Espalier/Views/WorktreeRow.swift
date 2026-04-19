@@ -106,9 +106,11 @@ struct WorktreeRow: View {
     /// `"origin/main"` for the main checkout, `"main"` for a linked
     /// worktree). Nil when the default branch isn't resolvable.
     let baseRef: String?
-    /// Resolved PR/MR for this worktree's branch (open or merged), if any.
-    /// Drives the leading icon swap to the pull-request glyph per PR-3.1.
-    let prInfo: PRInfo?
+    /// True when a PR/MR is associated with this worktree's branch.
+    /// Drives the leading-icon swap to the pull-request glyph (PR-3.1).
+    /// A `Bool` rather than `PRInfo?` so the row doesn't re-render when
+    /// PR fields it doesn't display (checks, title) change on each poll.
+    let hasPR: Bool
 
     var body: some View {
         HStack(spacing: 6) {
@@ -136,7 +138,7 @@ struct WorktreeRow: View {
     private var typeIcon: some View {
         Image(systemName: WorktreeRowIcon.symbolName(
             isMainCheckout: isMainCheckout,
-            hasPR: prInfo != nil
+            hasPR: hasPR
         ))
             .font(.system(size: 10))
             .foregroundColor(typeIconColor)
