@@ -45,11 +45,15 @@ public final class WorktreeMonitor: @unchecked Sendable {
         sources[key] = source
     }
 
+    /// Watches the HEAD reflog (`logs/HEAD`) rather than the HEAD file itself:
+    /// `git commit` updates the branch ref via atomic rename and leaves HEAD's
+    /// inode/mtime alone, so a `.write` watcher on HEAD silently misses local
+    /// commits. The reflog is appended in place for every HEAD movement.
     public func watchHeadRef(worktreePath: String, repoPath: String) {
-        let headPath = resolveHeadPath(worktreePath: worktreePath, repoPath: repoPath)
+        let reflogPath = resolveHeadLogPath(worktreePath: worktreePath, repoPath: repoPath)
         let key = "head:\(worktreePath)"
         guard sources[key] == nil else { return }
-        guard let source = createFileWatcher(path: headPath, events: [.write]) else { return }
+        guard let source = createFileWatcher(path: reflogPath, events: [.write, .extend]) else { return }
         source.setEventHandler { [weak self] in
             guard let self else { return }
             self.delegate?.worktreeMonitorDidDetectBranchChange(self, worktreePath: worktreePath)
@@ -80,15 +84,15 @@ public final class WorktreeMonitor: @unchecked Sendable {
         return source
     }
 
-    private func resolveHeadPath(worktreePath: String, repoPath: String) -> String {
-        if worktreePath == repoPath { return "\(repoPath)/.git/HEAD" }
+    private func resolveHeadLogPath(worktreePath: String, repoPath: String) -> String {
+        if worktreePath == repoPath { return "\(repoPath)/.git/logs/HEAD" }
         let gitFilePath = "\(worktreePath)/.git"
         if let contents = try? String(contentsOfFile: gitFilePath, encoding: .utf8),
            contents.hasPrefix("gitdir: ") {
             let gitDir = contents.trimmingCharacters(in: .whitespacesAndNewlines).dropFirst("gitdir: ".count)
-            return "\(gitDir)/HEAD"
+            return "\(gitDir)/logs/HEAD"
         }
         let name = URL(fileURLWithPath: worktreePath).lastPathComponent
-        return "\(repoPath)/.git/worktrees/\(name)/HEAD"
+        return "\(repoPath)/.git/worktrees/\(name)/logs/HEAD"
     }
 }

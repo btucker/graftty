@@ -185,7 +185,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **GIT-2.3** While a repository is in the sidebar, the application shall watch each worktree's directory path for deletion using FSEvents.
 
-**GIT-2.4** While a repository is in the sidebar, the application shall watch each worktree's HEAD reference for changes using FSEvents to detect branch switches.
+**GIT-2.4** While a repository is in the sidebar, the application shall detect every operation that moves a worktree's HEAD — including commits on the current branch, `checkout`, `switch`, `reset`, `merge`, and `rebase` — and surface each as a HEAD-reference change.
 
 ### 4.3 Change Handling
 
