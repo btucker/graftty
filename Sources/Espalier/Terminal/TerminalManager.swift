@@ -360,6 +360,16 @@ final class TerminalManager: ObservableObject {
 
         var created: [TerminalID: SurfaceHandle] = [:]
         for terminalID in splitTree.allLeaves where surfaces[terminalID] == nil {
+            // Cold-start session-loss check: if this pane was marked
+            // rehydrated but the underlying zmx daemon is gone, the
+            // imminent zmx attach will create a fresh daemon. Treat the
+            // pane as fresh-not-rehydrated so the default command runs.
+            // See ZMX-7.1.
+            if rehydratedSurfaces.contains(terminalID),
+               let launcher = zmxLauncher,
+               launcher.isSessionMissing(launcher.sessionName(for: terminalID.id)) {
+                clearRehydrated(terminalID)
+            }
             let (zmxInitialInput, zmxDir) = resolveZmxSpawn(for: terminalID)
             let handle = SurfaceHandle(
                 terminalID: terminalID,
@@ -385,6 +395,13 @@ final class TerminalManager: ObservableObject {
         guard let app = ghosttyApp?.app else { return nil }
         if let existing = surfaces[terminalID] {
             return existing
+        }
+
+        // Cold-start session-loss check (ZMX-7.1) — see createSurfaces.
+        if rehydratedSurfaces.contains(terminalID),
+           let launcher = zmxLauncher,
+           launcher.isSessionMissing(launcher.sessionName(for: terminalID.id)) {
+            clearRehydrated(terminalID)
         }
 
         let (zmxInitialInput, zmxDir) = resolveZmxSpawn(for: terminalID)
