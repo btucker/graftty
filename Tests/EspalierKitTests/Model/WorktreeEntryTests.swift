@@ -318,4 +318,50 @@ struct WorktreeEntryTests {
         #expect(toDestroy.isEmpty)
         #expect(entry.state == .closed)
     }
+
+    // MARK: Dismiss-from-stale teardown (GIT-3.10)
+    //
+    // `GIT-3.4` keeps terminal surfaces alive when a worktree goes stale-
+    // while-running. If the user then right-clicks → Dismiss, the old
+    // pre-fix `dismissWorktree` path removed the entry from the model
+    // but NEVER called `TerminalManager.destroySurfaces` — leaving
+    // render/io/kqueue threads running for panes no longer visible
+    // anywhere. Same orphan-surfaces class as the GIT-3.9 resurrect
+    // path; same crash signature (`os_unfair_lock` corruption under
+    // window resize).
+    //
+    // `prepareForDismissal()` returns the leaves the caller MUST tear
+    // down and atomically clears the entry's split tree / focus /
+    // paneAttention so silently-leak shape is no longer spellable.
+
+    @Test func prepareForDismissalReturnsOldLeavesToDestroy() {
+        var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
+        let leafA = TerminalID()
+        let leafB = TerminalID()
+        entry.splitTree = SplitTree(root: .split(.init(
+            direction: .vertical,
+            ratio: 0.5,
+            left: .leaf(leafA),
+            right: .leaf(leafB)
+        )))
+        entry.state = .stale
+        entry.focusedTerminalID = leafA
+        entry.paneAttention[leafA] = Attention(text: "!", timestamp: Date())
+
+        let toDestroy = entry.prepareForDismissal()
+
+        #expect(Set(toDestroy) == Set([leafA, leafB]))
+        #expect(entry.splitTree.root == nil)
+        #expect(entry.focusedTerminalID == nil)
+        #expect(entry.paneAttention.isEmpty)
+    }
+
+    @Test func prepareForDismissalOnEmptyTreeReturnsEmpty() {
+        var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
+        entry.state = .stale
+
+        let toDestroy = entry.prepareForDismissal()
+
+        #expect(toDestroy.isEmpty)
+    }
 }

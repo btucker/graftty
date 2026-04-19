@@ -136,6 +136,33 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         return oldLeaves
     }
 
+    /// Returns the leaf `TerminalID`s whose surfaces the caller MUST
+    /// destroy via `TerminalManager.destroySurfaces(terminalIDs:)` before
+    /// removing this entry from the model (`GIT-3.10`). Same orphan-
+    /// surfaces concern as `prepareForResurrection` (`GIT-3.9`), but via
+    /// the Dismiss path instead of the resurrect path.
+    ///
+    /// `GIT-3.4` keeps terminal surfaces alive when a worktree goes
+    /// stale-while-running. Dismiss (`GIT-3.6`) then removes the entry
+    /// from the sidebar — but if the caller forgets to tear the
+    /// surfaces down, their render/IO/kqueue threads keep running
+    /// forever. Same corruption path that SIGKILL'd the app under
+    /// window resize pre-`GIT-3.9`.
+    ///
+    /// Clearing `splitTree` / `focusedTerminalID` / `paneAttention`
+    /// here is largely symbolic since the caller is about to drop the
+    /// whole entry, but it ensures a caller that ignores the return
+    /// value leaves a visibly-empty entry rather than a sidebar row
+    /// that still looks populated.
+    @discardableResult
+    public mutating func prepareForDismissal() -> [TerminalID] {
+        let leaves = splitTree.allLeaves
+        splitTree = SplitTree(root: nil)
+        focusedTerminalID = nil
+        paneAttention.removeAll()
+        return leaves
+    }
+
     /// User-facing label for the worktree *in the context of its siblings*.
     ///
     /// Common case: the directory name the user picked when running
