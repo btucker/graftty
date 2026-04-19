@@ -36,8 +36,13 @@ struct AddWorktreeSheet: View {
                         .textFieldStyle(.roundedBorder)
                         .focused($worktreeFieldFocused)
                         .onChange(of: worktreeName) { _, new in
+                            let sanitized = WorktreeNameSanitizer.sanitize(new)
+                            if sanitized != new {
+                                worktreeName = sanitized
+                                return
+                            }
                             if branchMirrorsWorktree {
-                                branchName = new
+                                branchName = sanitized
                             }
                         }
                 }
@@ -47,10 +52,15 @@ struct AddWorktreeSheet: View {
                     TextField("feature-xyz", text: $branchName)
                         .textFieldStyle(.roundedBorder)
                         .onChange(of: branchName) { _, new in
+                            let sanitized = WorktreeNameSanitizer.sanitize(new)
+                            if sanitized != new {
+                                branchName = sanitized
+                                return
+                            }
                             // Once the user types a branch name that differs
                             // from the worktree name, stop auto-syncing so
                             // their edit persists.
-                            if new != worktreeName {
+                            if sanitized != worktreeName {
                                 branchMirrorsWorktree = false
                             }
                         }
@@ -87,9 +97,19 @@ struct AddWorktreeSheet: View {
         .onAppear { worktreeFieldFocused = true }
     }
 
+    /// Characters stripped from either end when finalizing submission. We
+    /// don't trim these as-you-type (it would swallow the separator between
+    /// words) but a leading or trailing '-' or '.' in the final name is
+    /// never what the user wants — and git rejects a leading '.' anyway.
+    private static let submitTrimSet: CharacterSet = {
+        var set = CharacterSet.whitespaces
+        set.insert(charactersIn: "-.")
+        return set
+    }()
+
     private var canSubmit: Bool {
-        let wt = worktreeName.trimmingCharacters(in: .whitespaces)
-        let br = branchName.trimmingCharacters(in: .whitespaces)
+        let wt = worktreeName.trimmingCharacters(in: Self.submitTrimSet)
+        let br = branchName.trimmingCharacters(in: Self.submitTrimSet)
         return !wt.isEmpty && !br.isEmpty
     }
 
@@ -98,8 +118,8 @@ struct AddWorktreeSheet: View {
         isSubmitting = true
         defer { isSubmitting = false }
 
-        let wt = worktreeName.trimmingCharacters(in: .whitespaces)
-        let br = branchName.trimmingCharacters(in: .whitespaces)
+        let wt = worktreeName.trimmingCharacters(in: Self.submitTrimSet)
+        let br = branchName.trimmingCharacters(in: Self.submitTrimSet)
         if let err = await onSubmit(wt, br) {
             errorMessage = err
         }

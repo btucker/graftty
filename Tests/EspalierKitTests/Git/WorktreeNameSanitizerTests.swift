@@ -1,0 +1,68 @@
+import Testing
+@testable import EspalierKit
+
+@Suite("WorktreeNameSanitizer")
+struct WorktreeNameSanitizerTests {
+
+    @Test func passesThroughSafeCharacters() {
+        #expect(WorktreeNameSanitizer.sanitize("feature-xyz") == "feature-xyz")
+        #expect(WorktreeNameSanitizer.sanitize("Fix_123.2") == "Fix_123.2")
+        #expect(WorktreeNameSanitizer.sanitize("") == "")
+    }
+
+    @Test func replacesSpacesWithDash() {
+        #expect(WorktreeNameSanitizer.sanitize("my feature") == "my-feature")
+        #expect(WorktreeNameSanitizer.sanitize("a b c") == "a-b-c")
+    }
+
+    @Test func replacesGitRefReservedCharsWithDash() {
+        // git check-ref-format disallows: space, ~, ^, :, ?, *, [, \
+        // plus ASCII control chars. All should collapse to '-'.
+        #expect(WorktreeNameSanitizer.sanitize("foo~bar") == "foo-bar")
+        #expect(WorktreeNameSanitizer.sanitize("foo^bar") == "foo-bar")
+        #expect(WorktreeNameSanitizer.sanitize("foo:bar") == "foo-bar")
+        #expect(WorktreeNameSanitizer.sanitize("foo?bar") == "foo-bar")
+        #expect(WorktreeNameSanitizer.sanitize("foo*bar") == "foo-bar")
+        #expect(WorktreeNameSanitizer.sanitize("foo[bar") == "foo-bar")
+        #expect(WorktreeNameSanitizer.sanitize("foo\\bar") == "foo-bar")
+    }
+
+    @Test func replacesPathSeparatorWithDash() {
+        // A single-segment worktree directory name; '/' would create nested dirs.
+        #expect(WorktreeNameSanitizer.sanitize("feature/foo") == "feature-foo")
+    }
+
+    @Test func replacesControlCharactersWithDash() {
+        #expect(WorktreeNameSanitizer.sanitize("a\tb") == "a-b")
+        #expect(WorktreeNameSanitizer.sanitize("a\nb") == "a-b")
+    }
+
+    @Test func collapsesConsecutiveReplacements() {
+        #expect(WorktreeNameSanitizer.sanitize("foo   bar") == "foo-bar")
+        #expect(WorktreeNameSanitizer.sanitize("a!!!b") == "a-b")
+        #expect(WorktreeNameSanitizer.sanitize("a  /  b") == "a-b")
+    }
+
+    @Test func preservesExistingRunsOfDashes() {
+        // User-typed '-' characters are allowed; we shouldn't collapse them.
+        // Only the synthetic '-' we inserted for an illegal char should collapse
+        // with adjacent synthetic '-'. A simple and predictable rule: collapse
+        // any run of '-' (typed or inserted) into a single '-'.
+        #expect(WorktreeNameSanitizer.sanitize("foo--bar") == "foo-bar")
+        #expect(WorktreeNameSanitizer.sanitize("foo- -bar") == "foo-bar")
+    }
+
+    @Test func doesNotTrimLeadingOrTrailing() {
+        // Trimming mid-type would swallow the user's next keystroke context;
+        // e.g. typing "foo " then "b" must yield "foo-b", not "foob".
+        #expect(WorktreeNameSanitizer.sanitize("foo ") == "foo-")
+        #expect(WorktreeNameSanitizer.sanitize(" foo") == "-foo")
+    }
+
+    @Test func unicodeLettersAreReplaced() {
+        // Keep the safe set ASCII-only: git branches technically accept some
+        // Unicode, but worktree paths differ by locale and are a source of
+        // surprises. Be conservative.
+        #expect(WorktreeNameSanitizer.sanitize("café") == "caf-")
+    }
+}
