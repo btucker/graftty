@@ -15,9 +15,8 @@ struct SurfacePWDPollerTests {
     @Test func firesOnFirstObservedCwd() throws {
         let id = TerminalID(id: UUID())
         var events: [(TerminalID, String)] = []
-        var cwd: String? = "/tmp/a"
         let poller = SurfacePWDPoller(
-            resolve: { _ in cwd },
+            resolve: { _ in "/tmp/a" },
             onChange: { terminalID, pwd in events.append((terminalID, pwd)) }
         )
         poller.track(id)
@@ -27,7 +26,6 @@ struct SurfacePWDPollerTests {
         #expect(events.count == 1)
         #expect(events[0].0 == id)
         #expect(events[0].1 == "/tmp/a")
-        _ = cwd // silence "unused mutation" on the single-value path
     }
 
     @Test func doesNotFireWhenCwdUnchanged() throws {
@@ -70,17 +68,21 @@ struct SurfacePWDPollerTests {
 
     @Test func skipsUntrackedTerminals() throws {
         let trackedID = TerminalID(id: UUID())
-        let untrackedID = TerminalID(id: UUID())
+        var resolverCalls: [TerminalID] = []
         var events: [TerminalID] = []
         let poller = SurfacePWDPoller(
-            resolve: { _ in "/tmp/a" },
+            resolve: { id in resolverCalls.append(id); return "/tmp/a" },
             onChange: { terminalID, _ in events.append(terminalID) }
         )
         poller.track(trackedID)
-        // untrackedID never added
 
         poller.pollOnce()
 
+        // Resolver should only be asked about ids that were tracked —
+        // a stricter check than "events == [trackedID]" because it
+        // catches a bug where the poller asks the resolver about every
+        // id it has ever seen.
+        #expect(resolverCalls == [trackedID])
         #expect(events == [trackedID])
     }
 

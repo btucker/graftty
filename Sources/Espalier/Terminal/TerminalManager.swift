@@ -56,27 +56,18 @@ final class TerminalManager: ObservableObject {
     /// fall back to libghostty's default $SHELL spawn.
     var zmxLauncher: ZmxLauncher?
 
-    /// `PWD-1.3` fallback: polls each pane's inner-shell cwd via PID
-    /// when OSC 7 is silent (typical for zmx sessions that predate the
-    /// ZMX-6.3 ZDOTDIR re-injection, or bash/fish users whose shell
-    /// integration we don't install). Created in `initialize()` once
-    /// the zmx launcher is known; `nil` before then.
+    /// `PWD-1.3` fallback for panes whose inner shell doesn't emit OSC 7.
+    /// Created in `initialize()` once the zmx launcher is known.
     private var pwdPoller: SurfacePWDPoller?
 
-    /// Cached `(terminalID → inner-shell PID)` to avoid re-parsing the
-    /// zmx log every poll tick. A single `pty spawned` line per session
-    /// is the common case; rebuilding only on `proc_pidinfo` miss keeps
-    /// the poll cheap. Invalidated alongside surface destroy.
+    /// `(terminalID → inner-shell PID)` cache so the 3s poll only
+    /// re-parses the zmx log on a PID miss (shell died / respawn).
     private var cachedShellPIDs: [TerminalID: Int32] = [:]
 
-    /// Timer driving `pwdPoller.pollOnce()`. Retained so we can
-    /// invalidate on deinit; AppKit timers hold their target weakly
-    /// via `[weak self]` inside the block.
     private var pwdPollTimer: Timer?
 
-    /// Seconds between PWD polls. 3s is a compromise between UI
-    /// responsiveness (cd → sidebar update feels live) and cost
-    /// (per-tick: one log read + one `proc_pidinfo` per pane).
+    /// 3s balances cd→sidebar latency against disk + syscall cost
+    /// (log read on PID miss + `proc_pidinfo` per pane per tick).
     private static let pwdPollInterval: TimeInterval = 3
 
     /// Theme colors pulled from the ghostty config (background, foreground).
@@ -269,17 +260,9 @@ final class TerminalManager: ObservableObject {
         startPWDPolling()
     }
 
-    /// Build `pwdPoller` and schedule its tick timer. Called from
-    /// `initialize()` after `zmxLauncher` has been set by the host.
-    /// The resolver closure walks the full lookup chain on each tick:
-    ///
-    ///     cached PID → proc_pidinfo.cwd
-    ///           ↓ (on miss)
-    ///     ZmxPIDLookup on session log → cache → proc_pidinfo.cwd
-    ///
-    /// Returns nil at any step if the launcher is unavailable, the
-    /// log is missing, or the resolved PID isn't responding. Nils
-    /// are absorbed by `SurfacePWDPoller.pollOnce`.
+    /// Build `pwdPoller` and schedule its tick timer.
+    /// Resolver chain per tick: cached PID → `proc_pidinfo`; on miss,
+    /// re-parse the zmx session log for the newest spawn and re-cache.
     private func startPWDPolling() {
         let poller = SurfacePWDPoller(
             resolve: { [weak self] id in
@@ -292,10 +275,7 @@ final class TerminalManager: ObservableObject {
         )
         self.pwdPoller = poller
 
-        // Scheduled on the main run loop → block fires on the main
-        // thread, matching the MainActor isolation of the poller.
-        // `Timer.scheduledTimer(withTimeInterval:...)` autoreleases
-        // the block's captures when the timer invalidates.
+        // Fires on the main run loop, matching the poller's MainActor isolation.
         pwdPollTimer = Timer.scheduledTimer(
             withTimeInterval: Self.pwdPollInterval,
             repeats: true
@@ -306,9 +286,8 @@ final class TerminalManager: ObservableObject {
         }
     }
 
-    /// Resolver body pulled out of the closure so the recursive cache
-    /// invalidation is readable. Returns the inner shell's cwd for
-    /// `id`, or nil if any step of the PID/log lookup fails.
+    /// Returns the inner shell's cwd for `id`, or nil if any step of
+    /// the cache → log → PID → cwd lookup fails.
     private func resolveCwd(for id: TerminalID) -> String? {
         if let cached = cachedShellPIDs[id],
            let cwd = PIDCwdReader.cwd(ofPID: cached) {
@@ -319,10 +298,10 @@ final class TerminalManager: ObservableObject {
         cachedShellPIDs.removeValue(forKey: id)
         guard let launcher = zmxLauncher, launcher.isAvailable else { return nil }
         let sessionName = launcher.sessionName(for: id.id)
-        let logFile = launcher.zmxDir
-            .appendingPathComponent("logs", isDirectory: true)
-            .appendingPathComponent("\(sessionName).log")
-        guard let pid = ZmxPIDLookup.shellPID(logFile: logFile, sessionName: sessionName) else {
+        guard let pid = ZmxPIDLookup.shellPID(
+            logFile: launcher.logFile(forSession: sessionName),
+            sessionName: sessionName
+        ) else {
             return nil
         }
         cachedShellPIDs[id] = pid
@@ -415,10 +394,8 @@ final class TerminalManager: ObservableObject {
         return handle
     }
 
-    /// Begin PWD polling for `terminalID` and seed its last-known cwd
-    /// with `initialPWD` so the first tick doesn't falsely fire an
-    /// `onPWDChange` for the already-correct worktree path. Idempotent
-    /// — safe to call on already-tracked IDs.
+    /// Seed with `initialPWD` so the first tick doesn't falsely fire
+    /// `onPWDChange` for the already-correct worktree path.
     private func trackForPWDPoll(terminalID: TerminalID, initialPWD: String) {
         guard let poller = pwdPoller else { return }
         poller.track(terminalID)
@@ -626,9 +603,8 @@ final class TerminalManager: ObservableObject {
             guard let id = terminalID(from: target) else { return }
             guard let pwdPtr = action.action.pwd.pwd else { return }
             let pwd = String(cString: pwdPtr)
-            // Seed the PWD poller so its next tick doesn't re-fire
-            // the same value (`PWD-1.3` dedup is cross-source: OSC 7
-            // and poll share one `lastKnown` memory per pane).
+            // Keep the PWD-1.3 poll in sync: without this seed the
+            // next tick would re-emit the value we just saw.
             pwdPoller?.seed(id, pwd: pwd)
             onPWDChange?(id, pwd)
             if shellReadyFired.insert(id).inserted {

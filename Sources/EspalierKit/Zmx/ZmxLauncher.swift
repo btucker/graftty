@@ -42,6 +42,15 @@ public final class ZmxLauncher: Sendable {
         FileManager.default.isExecutableFile(atPath: executable.path)
     }
 
+    /// Path to the per-session log file the zmx daemon writes to.
+    /// `PWD-1.3` parses these for the `pty spawned session=… pid=<N>`
+    /// line to recover the inner-shell PID.
+    public func logFile(forSession sessionName: String) -> URL {
+        zmxDir
+            .appendingPathComponent("logs", isDirectory: true)
+            .appendingPathComponent("\(sessionName).log")
+    }
+
     /// Deterministic mapping from a pane UUID to a zmx session name.
     /// **Do not change this mapping** without a migration strategy —
     /// changing it orphans every existing user's daemons.
