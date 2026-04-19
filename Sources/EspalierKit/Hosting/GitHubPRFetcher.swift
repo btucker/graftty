@@ -37,11 +37,13 @@ public struct GitHubPRFetcher: PRFetcher {
     // MARK: - Internals
 
     private struct RawPR: Decodable {
+        struct HeadOwner: Decodable { let login: String }
         let number: Int
         let title: String
         let url: URL
         let state: String
         let headRefName: String
+        let headRepositoryOwner: HeadOwner?
     }
 
     private struct RawCheck: Decodable {
@@ -54,25 +56,30 @@ public struct GitHubPRFetcher: PRFetcher {
     }
 
     private func fetchOne(origin: HostingOrigin, branch: String, state: String) async throws -> RawPR? {
+        // `gh pr list --head` does NOT support the `<owner>:<branch>`
+        // syntax — its help text literally says so and it silently returns
+        // `[]` for any value containing a colon. So send the bare branch,
+        // ask gh for `headRepositoryOwner`, and enforce the "same repo as
+        // base" invariant (PR-1.1) by filtering on the owner login here.
+        // `--limit 5` rather than 1 so a fork PR returned first (possible
+        // when both a fork and the origin have an open PR on the same
+        // branch name) doesn't crowd our own PR out of the window.
         let fields = state == "merged"
-            ? "number,title,url,state,headRefName,mergedAt"
-            : "number,title,url,state,headRefName"
-        // Qualify the head ref with the origin owner so `gh` filters by
-        // `head.label` (e.g. `btucker:feature/x`) rather than the bare
-        // `head.ref` — the latter matches PRs from forks that happen to
-        // share the branch name.
+            ? "number,title,url,state,headRefName,headRepositoryOwner,mergedAt"
+            : "number,title,url,state,headRefName,headRepositoryOwner"
         let args = [
             "pr", "list",
             "--repo", origin.slug,
-            "--head", "\(origin.owner):\(branch)",
+            "--head", branch,
             "--state", state,
-            "--limit", "1",
+            "--limit", "5",
             "--json", fields,
         ]
         let output = try await executor.run(command: "gh", args: args, at: NSTemporaryDirectory())
         let data = Data(output.stdout.utf8)
         let prs = try JSONDecoder().decode([RawPR].self, from: data)
-        return prs.first
+        let ownerLower = origin.owner.lowercased()
+        return prs.first { ($0.headRepositoryOwner?.login ?? "").lowercased() == ownerLower }
     }
 
     private func fetchChecks(origin: HostingOrigin, number: Int) async throws -> PRInfo.Checks {

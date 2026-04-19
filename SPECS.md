@@ -664,7 +664,7 @@ its Ghostty-config-derived menu shortcuts without requiring a restart.
 
 ### 17.1 Branch-to-PR Association
 
-**PR-1.1** When the application resolves the PR for a worktree's branch on a GitHub origin, it shall scope the lookup to PRs whose head ref lives in the same repository as the base — i.e. the `gh` head filter shall be qualified as `<owner>:<branch>` rather than the bare branch name — so that PRs from forks of the repository which happen to share the branch name are not associated with the worktree.
+**PR-1.1** When the application resolves the PR for a worktree's branch on a GitHub origin, it shall scope the lookup to PRs whose head ref lives in the same repository as the base so that PRs from forks which happen to share the branch name are not associated with the worktree. Because `gh pr list --head` does not support the `<owner>:<branch>` syntax (it silently returns an empty result), the filter shall be implemented by passing the bare branch name to `gh`, requesting `headRepositoryOwner` in the JSON output, and discarding results whose `headRepositoryOwner.login` does not match the origin owner (compared case-insensitively).
 
 **PR-1.2** If more than one PR in the same repository matches the worktree's branch and state, the application shall associate the worktree with the most recently created one.
 
@@ -692,7 +692,7 @@ its Ghostty-config-derived menu shortcuts without requiring a restart.
 
 ### 17.5 PR Fetching
 
-**PR-5.1** For GitHub origins, the application shall fetch open PRs via `gh pr list --repo <owner>/<repo> --head <owner>:<branch> --state open --limit 1 --json number,title,url,state,headRefName`. Merged PRs shall use the same shape with `--state merged` and the additional `mergedAt` JSON field.
+**PR-5.1** For GitHub origins, the application shall fetch open PRs via `gh pr list --repo <owner>/<repo> --head <branch> --state open --limit 5 --json number,title,url,state,headRefName,headRepositoryOwner` and take the first result whose `headRepositoryOwner.login` matches the origin owner. Merged PRs shall use the same shape with `--state merged` and the additional `mergedAt` JSON field. The limit is 5 (rather than 1) so a fork PR returned first by `gh`'s default sort cannot crowd out a same-repo PR that the owner filter would otherwise accept.
 
 **PR-5.2** For GitHub origins, the application shall fetch per-check status via `gh pr checks <number> --repo <owner>/<repo> --json name,state,bucket`. The `bucket` field (values `pass`/`fail`/`pending`/`skipping`/`cancel`) is the canonical verdict; `conclusion` is not a field `gh` emits from this command.
 

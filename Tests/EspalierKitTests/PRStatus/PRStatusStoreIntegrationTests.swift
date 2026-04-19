@@ -11,11 +11,11 @@ struct PRStatusStoreIntegrationTests {
             command: "gh",
             args: [
                 "pr", "list", "--repo", "foo/bar",
-                "--head", "foo:feature/x", "--state", "open", "--limit", "1",
-                "--json", "number,title,url,state,headRefName"
+                "--head", "feature/x", "--state", "open", "--limit", "5",
+                "--json", "number,title,url,state,headRefName,headRepositoryOwner"
             ],
             output: CLIOutput(
-                stdout: #"[{"number":10,"title":"hello","url":"https://github.com/foo/bar/pull/10","state":"OPEN","headRefName":"feature/x"}]"#,
+                stdout: #"[{"number":10,"title":"hello","url":"https://github.com/foo/bar/pull/10","state":"OPEN","headRefName":"feature/x","headRepositoryOwner":{"login":"foo"}}]"#,
                 stderr: "",
                 exitCode: 0
             )
@@ -53,8 +53,8 @@ struct PRStatusStoreIntegrationTests {
             command: "gh",
             args: [
                 "pr", "list", "--repo", "foo/bar",
-                "--head", "foo:feature/x", "--state", "open", "--limit", "1",
-                "--json", "number,title,url,state,headRefName"
+                "--head", "feature/x", "--state", "open", "--limit", "5",
+                "--json", "number,title,url,state,headRefName,headRepositoryOwner"
             ],
             output: CLIOutput(stdout: "[]", stderr: "", exitCode: 0)
         )
@@ -62,8 +62,8 @@ struct PRStatusStoreIntegrationTests {
             command: "gh",
             args: [
                 "pr", "list", "--repo", "foo/bar",
-                "--head", "foo:feature/x", "--state", "merged", "--limit", "1",
-                "--json", "number,title,url,state,headRefName,mergedAt"
+                "--head", "feature/x", "--state", "merged", "--limit", "5",
+                "--json", "number,title,url,state,headRefName,headRepositoryOwner,mergedAt"
             ],
             output: CLIOutput(stdout: "[]", stderr: "", exitCode: 0)
         )
@@ -97,11 +97,11 @@ struct PRStatusStoreIntegrationTests {
             command: "gh",
             args: [
                 "pr", "list", "--repo", "foo/bar",
-                "--head", "foo:branchA", "--state", "open", "--limit", "1",
-                "--json", "number,title,url,state,headRefName"
+                "--head", "branchA", "--state", "open", "--limit", "5",
+                "--json", "number,title,url,state,headRefName,headRepositoryOwner"
             ],
             output: CLIOutput(
-                stdout: #"[{"number":100,"title":"A","url":"https://github.com/foo/bar/pull/100","state":"OPEN","headRefName":"branchA"}]"#,
+                stdout: #"[{"number":100,"title":"A","url":"https://github.com/foo/bar/pull/100","state":"OPEN","headRefName":"branchA","headRepositoryOwner":{"login":"foo"}}]"#,
                 stderr: "", exitCode: 0
             )
         )
@@ -116,11 +116,11 @@ struct PRStatusStoreIntegrationTests {
             command: "gh",
             args: [
                 "pr", "list", "--repo", "foo/bar",
-                "--head", "foo:branchB", "--state", "open", "--limit", "1",
-                "--json", "number,title,url,state,headRefName"
+                "--head", "branchB", "--state", "open", "--limit", "5",
+                "--json", "number,title,url,state,headRefName,headRepositoryOwner"
             ],
             output: CLIOutput(
-                stdout: #"[{"number":200,"title":"B","url":"https://github.com/foo/bar/pull/200","state":"OPEN","headRefName":"branchB"}]"#,
+                stdout: #"[{"number":200,"title":"B","url":"https://github.com/foo/bar/pull/200","state":"OPEN","headRefName":"branchB","headRepositoryOwner":{"login":"foo"}}]"#,
                 stderr: "", exitCode: 0
             )
         )
