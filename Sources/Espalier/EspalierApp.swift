@@ -1027,6 +1027,19 @@ struct EspalierApp: App {
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                 guard wt.splitTree.containsLeaf(targetID) else { continue }
 
+                // TERM-5.7: Stop-cascade guard. `worktree Stop` calls
+                // `terminalManager.destroySurfaces(allLeaves)` followed by
+                // `prepareForStop()` which deliberately PRESERVES
+                // splitTree per TERM-1.2. libghostty then asynchronously
+                // fires close_surface_cb for each just-closed surface,
+                // routing back here via `onCloseRequest → closePane`. By
+                // that point, the surface has already been torn down
+                // (`surfaces[id]` is nil) — so `handle(for: targetID)` is
+                // nil. Without this guard, the late-firing close-event
+                // would re-modify splitTree, emptying it and violating
+                // TERM-1.2's re-open-restores-layout contract.
+                guard terminalManager.handle(for: targetID) != nil else { continue }
+
                 terminalManager.destroySurface(terminalID: targetID)
                 let newTree = wt.splitTree.removing(targetID)
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree

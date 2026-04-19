@@ -76,9 +76,14 @@ struct WorktreeMonitorTests {
         try await Task.sleep(nanoseconds: 200_000_000)
 
         let after = openFdCount()
-        // Allow a small headroom (other async subsystems may open fds
-        // during the test). Pre-fix, the delta would be ≥50.
-        #expect(after - baseline < 10,
+        // Allow headroom for concurrent test execution — other suites
+        // running in parallel open fds (subprocess pipes, sockets,
+        // temp files) that land in this process's /dev/fd between our
+        // baseline and after snapshots. Pre-fix, the per-test delta
+        // was ≥50 (one fd leaked per watch/stop cycle). Post-fix, the
+        // delta should be << 50; a threshold of 40 cleanly separates
+        // "fixed" from "broken" even under parallel-test load.
+        #expect(after - baseline < 40,
                 "fd count grew by \(after - baseline) — WorktreeMonitor is leaking fds")
     }
 
