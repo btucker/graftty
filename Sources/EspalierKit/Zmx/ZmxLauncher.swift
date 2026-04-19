@@ -222,6 +222,22 @@ public final class ZmxLauncher: Sendable {
         return Set(parseListOutput(output))
     }
 
+    /// Whether the zmx daemon for the given session name is *known to be
+    /// absent* from our `ZMX_DIR`. Returns `false` (i.e., "not missing")
+    /// on any query failure — when zmx itself can't answer, we bias
+    /// toward not fabricating a session-loss event, since spurious
+    /// restarts are visible to the user and missed restarts are not.
+    ///
+    /// Use at the two moments Espalier touches zmx for a specific pane:
+    /// before creating a surface for a rehydrated pane (cold-start
+    /// daemon-loss detection), and inside the close-surface handler
+    /// (mid-flight daemon-loss detection).
+    public func isSessionMissing(_ sessionName: String) -> Bool {
+        guard isAvailable else { return false }
+        guard let sessions = try? listSessions() else { return false }
+        return !sessions.contains(sessionName)
+    }
+
     /// Parser exposed for unit testing. Splits on newlines, trims, drops
     /// empties. Each remaining line is treated as a session name.
     func parseListOutput(_ output: String) -> [String] {
