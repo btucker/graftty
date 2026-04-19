@@ -410,6 +410,57 @@ final class TerminalManager: ObservableObject {
         poller.seed(terminalID, pwd: initialPWD)
     }
 
+    /// Rebuild the libghostty surface for an existing pane in place,
+    /// keeping the same `TerminalID` (and therefore its split-tree slot,
+    /// remembered position, title, etc.) but starting a fresh zmx
+    /// session under the same name. Called by EspalierApp's close
+    /// handler when `shouldRestartInsteadOfClose` returns true.
+    ///
+    /// Prepends a `sessionRestartBanner(at:)` line to the new surface's
+    /// `initial_input` so the user sees a visible marker that the
+    /// underlying session was replaced.
+    ///
+    /// No-op if the pane is unknown to the manager or if no GhosttyApp
+    /// is initialised.
+    func restartSurface(for terminalID: TerminalID) {
+        guard let app = ghosttyApp?.app,
+              let existing = surfaces[terminalID] else {
+            return
+        }
+
+        let worktreePath = existing.worktreePath
+        // Drop the dead handle. ARC frees the underlying surface in
+        // SurfaceHandle.deinit; the userdata box is released there too,
+        // so no further callbacks fire against the old surface.
+        surfaces.removeValue(forKey: terminalID)
+        // Title and shell-ready state belong to the dead session; clear
+        // them so the rebuilt pane behaves like a fresh shell.
+        titles.removeValue(forKey: terminalID)
+        shellReadyFired.remove(terminalID)
+        // The rebuilt shell is a brand-new process; drop the cached PID
+        // so the PWD poller re-resolves on its next tick.
+        cachedShellPIDs.removeValue(forKey: terminalID)
+
+        // Compose the new initial_input: banner first, then the same
+        // attach line resolveZmxSpawn would have emitted.
+        let (zmxInitialInput, zmxDir) = resolveZmxSpawn(for: terminalID)
+        let banneredInput: String? = zmxInitialInput.map { attach in
+            sessionRestartBanner(at: Date()) + attach
+        }
+
+        let handle = SurfaceHandle(
+            terminalID: terminalID,
+            app: app,
+            worktreePath: worktreePath,
+            socketPath: socketPath,
+            zmxInitialInput: banneredInput,
+            zmxDir: zmxDir,
+            terminalManager: self
+        )
+        surfaces[terminalID] = handle
+        trackForPWDPoll(terminalID: terminalID, initialPWD: worktreePath)
+    }
+
     /// Look up the `NSView` hosting a given terminal's surface.
     func view(for terminalID: TerminalID) -> NSView? {
         surfaces[terminalID]?.view
