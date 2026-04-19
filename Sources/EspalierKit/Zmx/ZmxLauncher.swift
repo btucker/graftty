@@ -179,21 +179,33 @@ public final class ZmxLauncher: Sendable {
         ["ZMX_DIR": zmxDir.path]
     }
 
-    /// Env vars whose inherited value, if allowed to leak into a shell
-    /// that later execs `zmx attach <positional-name>`, would hijack
-    /// the attach to the wrong session. zmx's attach implementation
-    /// silently prefers `$ZMX_SESSION` over its positional arg, so an
-    /// Espalier.app launched from a terminal that was already inside a
-    /// zmx session ends up spawning every new pane's shell with a
-    /// ZMX_SESSION that points to the *parent shell's* session —
-    /// producing the user-reported "new worktree's Claude swapped to
-    /// an old session" bug.
+    /// Env vars whose inherited value, if allowed to leak into any
+    /// downstream spawn (libghostty shell, CLIRunner subprocess, zmx
+    /// attach), would hijack that spawn to operate on the *parent
+    /// shell's* scope instead of the one Espalier asked for. Stripped
+    /// once at `EspalierApp.init()` so every spawn mechanism — direct
+    /// or libghostty-mediated — sees a clean env.
     ///
-    /// `subprocessEnv` strips these for inline subprocess calls; for
-    /// libghostty-spawned panes we clean them off the Espalier.app
-    /// process env at launch via `sanitizeProcessEnvironment()`, so
-    /// every downstream spawn mechanism sees a clean env.
-    public static let leakyEnvKeysToStripAtAppLaunch: Set<String> = ["ZMX_SESSION"]
+    /// - `ZMX_SESSION`: zmx's `attach <positional>` silently prefers
+    ///   `$ZMX_SESSION` over its positional arg. Leaked from a parent
+    ///   shell that lived inside a zmx session, every new pane's
+    ///   `exec zmx attach 'espalier-<new-hex>' <shell>` hijacks to the
+    ///   parent session. User-reported as "new worktree's Claude
+    ///   swapped to an older worktree's Claude" (`ZMX-7.4`).
+    /// - `GIT_DIR` / `GIT_WORK_TREE`: git's env-var-wins rule trumps
+    ///   `currentDirectoryURL`. Every `GitRunner.run(at: repoPath)`
+    ///   would redirect to the parent shell's `.git` dir, breaking
+    ///   worktree discovery, stats, and PR resolution.
+    ///
+    /// `subprocessEnv` additionally strips `ZMX_SESSION` for inline
+    /// subprocess calls; this sweep covers libghostty-spawned panes
+    /// (which can't route through `subprocessEnv`) and all other
+    /// consumers of `ProcessInfo.processInfo.environment`.
+    public static let leakyEnvKeysToStripAtAppLaunch: Set<String> = [
+        "ZMX_SESSION",
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+    ]
 
     /// Unset the env vars named in `leakyEnvKeysToStripAtAppLaunch`
     /// from the current process. Intended to be called exactly once,

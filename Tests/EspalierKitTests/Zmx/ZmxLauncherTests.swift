@@ -399,11 +399,34 @@ struct ZmxLauncherUnitTests {
         #expect(ZmxLauncher.leakyEnvKeysToStripAtAppLaunch.contains("ZMX_SESSION"))
     }
 
+    @Test func leakyEnvKeysIncludesGitDir() {
+        // `GIT_DIR` inherited from the launch shell would redirect every
+        // Espalier git invocation (`GitRunner.run(at: repoPath)`) to the
+        // shell's .git dir instead of the target repo's. CLIRunner sets
+        // `process.currentDirectoryURL` correctly but git's env-var-wins
+        // rule trumps CWD. Same leak class as ZMX_SESSION.
+        #expect(ZmxLauncher.leakyEnvKeysToStripAtAppLaunch.contains("GIT_DIR"))
+    }
+
+    @Test func leakyEnvKeysIncludesGitWorkTree() {
+        // Companion hijack to GIT_DIR. Less commonly set, but together
+        // they let a tainted launch shell redirect every worktree
+        // discovery / stats fetch.
+        #expect(ZmxLauncher.leakyEnvKeysToStripAtAppLaunch.contains("GIT_WORK_TREE"))
+    }
+
     @Test func sanitizeProcessEnvironmentUnsetsZmxSession() {
         setenv("ZMX_SESSION", "espalier-leaked-from-parent", 1)
         defer { unsetenv("ZMX_SESSION") }
         ZmxLauncher.sanitizeProcessEnvironment()
         #expect(getenv("ZMX_SESSION") == nil)
+    }
+
+    @Test func sanitizeProcessEnvironmentUnsetsGitDir() {
+        setenv("GIT_DIR", "/some/other/repo/.git", 1)
+        defer { unsetenv("GIT_DIR") }
+        ZmxLauncher.sanitizeProcessEnvironment()
+        #expect(getenv("GIT_DIR") == nil)
     }
 
     // MARK: isSessionMissing
