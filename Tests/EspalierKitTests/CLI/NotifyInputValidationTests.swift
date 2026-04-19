@@ -66,4 +66,41 @@ struct NotifyInputValidationTests {
             #expect(r == .valid, "expected .valid for \(c.debugDescription)")
         }
     }
+
+    // --clear-after upper bound. A raw `Int?` accepts `9999999` (≈116d)
+    // or `999999999` (~31y); the server schedules a Dispatch timer for
+    // each, leaking main-queue entries for the lifetime of the session.
+    // Cap at 24h — plenty for any CI / build / shell-integration flow.
+
+    @Test func clearAfterBelowCapIsValid() {
+        #expect(NotifyInputValidation.validate(text: "x", clear: false, clearAfter: 60) == .valid)
+        #expect(NotifyInputValidation.validate(text: "x", clear: false, clearAfter: 86400) == .valid)
+    }
+
+    @Test func clearAfterAtZeroOrNegativeIsValid() {
+        // Per STATE-2.8 the server treats ≤0 as "no auto-clear"; the CLI
+        // defers to that contract rather than hard-erroring here.
+        #expect(NotifyInputValidation.validate(text: "x", clear: false, clearAfter: 0) == .valid)
+        #expect(NotifyInputValidation.validate(text: "x", clear: false, clearAfter: -1) == .valid)
+    }
+
+    @Test func clearAfterAboveCapIsRejected() {
+        let r = NotifyInputValidation.validate(text: "x", clear: false, clearAfter: 86401)
+        #expect(r == .clearAfterTooLarge(max: 86400))
+        #expect(r.message?.contains("86400") == true)
+    }
+
+    @Test func clearAfterIsIgnoredWhenClearingExplicitly() {
+        // `--clear --clear-after N` passes through only because a higher
+        // priority error (bothTextAndClear / missingTextAndClear) is
+        // about to fire anyway when combined with text. In the
+        // text=nil + clear=true path, clearAfter is meaningless and
+        // not inspected here; that ambiguity is a separate (future)
+        // validation concern.
+        #expect(NotifyInputValidation.validate(text: nil, clear: true, clearAfter: 9999999) == .valid)
+    }
+
+    @Test func nilClearAfterIsValid() {
+        #expect(NotifyInputValidation.validate(text: "x", clear: false, clearAfter: nil) == .valid)
+    }
 }

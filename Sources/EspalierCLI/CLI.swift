@@ -24,7 +24,7 @@ struct Notify: ParsableCommand {
     var clearAfter: Int?
 
     func validate() throws {
-        let result = NotifyInputValidation.validate(text: text, clear: clear)
+        let result = NotifyInputValidation.validate(text: text, clear: clear, clearAfter: clearAfter)
         if let message = result.message {
             throw ValidationError(message)
         }
