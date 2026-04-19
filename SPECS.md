@@ -560,6 +560,8 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **ZMX-7.3** When `close_surface_cb` fires for a pane, the application shall always route to the close-pane path (remove from the split tree, free the surface) regardless of the zmx session's liveness. The mid-flight "rebuild surface in place" recovery explored in an earlier design was withdrawn because the available signals (session-missing + no Espalier-initiated close) cannot distinguish a clean user `exit` from an external daemon kill, and the rebuild path regressed `TERM-5.3`. Recovery from daemon loss while Espalier is running is deferred until a zmx-side signal disambiguates the two cases.
 
+**ZMX-7.4** At application launch, before any terminal surface is spawned, the application shall `unsetenv("ZMX_SESSION")` on its own process so that libghostty's per-surface shell spawns (which inherit the application's env) do not see a leaked `ZMX_SESSION` value. zmx's `attach <positional-name>` silently prefers `$ZMX_SESSION` over the positional argument, so without this sweep every new pane spawned from an Espalier.app that was itself launched from a shell inside a zmx session would hijack-attach to the parent shell's session — visible to the user as "I created a new worktree and its Claude swapped out for an older worktree's Claude". Covers both fresh spawns and libghostty's env overlay, which cannot be routed through `ZmxLauncher.subprocessEnv`'s stripping.
+
 ## 14. Distribution
 
 ### 14.1 Build Bundle

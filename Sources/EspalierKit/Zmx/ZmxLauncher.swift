@@ -179,6 +179,35 @@ public final class ZmxLauncher: Sendable {
         ["ZMX_DIR": zmxDir.path]
     }
 
+    /// Env vars whose inherited value, if allowed to leak into a shell
+    /// that later execs `zmx attach <positional-name>`, would hijack
+    /// the attach to the wrong session. zmx's attach implementation
+    /// silently prefers `$ZMX_SESSION` over its positional arg, so an
+    /// Espalier.app launched from a terminal that was already inside a
+    /// zmx session ends up spawning every new pane's shell with a
+    /// ZMX_SESSION that points to the *parent shell's* session —
+    /// producing the user-reported "new worktree's Claude swapped to
+    /// an old session" bug.
+    ///
+    /// `subprocessEnv` strips these for inline subprocess calls; for
+    /// libghostty-spawned panes we clean them off the Espalier.app
+    /// process env at launch via `sanitizeProcessEnvironment()`, so
+    /// every downstream spawn mechanism sees a clean env.
+    public static let leakyEnvKeysToStripAtAppLaunch: Set<String> = ["ZMX_SESSION"]
+
+    /// Unset the env vars named in `leakyEnvKeysToStripAtAppLaunch`
+    /// from the current process. Intended to be called exactly once,
+    /// at `EspalierApp.init()`, before any surface spawns. Modifies
+    /// global process state (`unsetenv`), so callers beyond app
+    /// startup should think twice — the point is that downstream
+    /// `ProcessInfo.processInfo.environment` reads and libghostty's
+    /// env inheritance both see the cleaned value (`ZMX-7.4`).
+    public static func sanitizeProcessEnvironment() {
+        for key in leakyEnvKeysToStripAtAppLaunch {
+            _ = unsetenv(key)
+        }
+    }
+
     /// Produce a zmx-ready environment from `base`: applies `envAdditions`
     /// and strips `ZMX_SESSION`.
     ///

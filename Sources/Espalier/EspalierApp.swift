@@ -40,6 +40,18 @@ struct EspalierApp: App {
         // relaunches.
         Self.terminateIfAnotherInstanceIsRunning()
 
+        // ZMX-7.4: If Espalier.app was launched from a terminal that
+        // was itself inside a zmx session, `ZMX_SESSION=<parent-name>`
+        // is in the app's env — and libghostty inherits it when
+        // spawning every new pane's shell. That shell's
+        // `exec zmx attach 'espalier-<new-hex>' <shell>` then hits zmx
+        // with $ZMX_SESSION set, which zmx prefers over the positional
+        // arg, so the new pane attaches to the PARENT's session
+        // instead. User-reported as "created a new worktree, its
+        // Claude swapped out for an older worktree's Claude". Strip
+        // before any surface spawns.
+        ZmxLauncher.sanitizeProcessEnvironment()
+
         let loaded = AppState.loadOrFreshBackingUpCorruption(from: AppState.defaultDirectory)
         _appState = State(initialValue: loaded)
 
