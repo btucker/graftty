@@ -1348,3 +1348,31 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 - TERM-5.3 zmx shell exit (PR #31) — close panes on shell exit.
 - PR-status polling cadence + failure streak behavior.
 - Truly-stale click UX placeholder (inline Dismiss).
+
+## Cycle 51 — 2026-04-19 (Stop drops paneAttention, STATE-2.11)
+
+### Explored
+- Audited `stopWorktreeWithConfirmation` against STATE-2.7. Found: destroys surfaces + sets `.closed`, but doesn't clear `paneAttention`. My cycle 43 fix (same concern) didn't survive the rebase — origin/main's STATE-2.7 impl fixed the single-pane removal paths but not the all-panes Stop case.
+- Traced the re-open consequence: Stop preserves splitTree (TERM-1.2 "recreate same layout"). selectWorktree's closed→running block uses the preserved tree, calls `createSurfaces` → fresh surfaces at SAME TerminalIDs. So paneAttention entries from before Stop reappear on the fresh panes' sidebar rows. Andy-visible: ghost "✓" after re-open.
+
+### Broke
+- **STATE-2.7 spirit-violation on Stop:** spec wording only enumerated single-pane removal paths (Cmd+W, shell exit, PWD migration). Stop is an all-panes-at-once removal and wasn't covered. Code followed the spec letter; behavior was wrong.
+
+### Fixed
+- `WorktreeEntry.prepareForStop()`: transitions state → .closed, clears paneAttention, preserves splitTree + focusedTerminalID + worktree-level `attention`. Fifth use of the pure-mutation-in-EspalierKit pattern.
+- `stopWorktreeWithConfirmation` now calls `prepareForStop()` instead of inline `state = .closed`.
+- Worktree-level `attention` is DELIBERATELY preserved. Rationale tested + spec'd.
+
+### Spec
+- **STATE-2.11 added** — Stop extends STATE-2.7's per-pane rule to all-panes-at-once. Explicitly preserves the worktree-level attention slot (a CLI-notify ping is worktree-wide, not pane-scoped).
+
+### Verified
+- 435/435 tests (+3 new: state+paneAttention, splitTree preserved, worktree attention preserved).
+- TDD; failed on missing symbol, passed after impl.
+
+### Try next cycle
+- Migrate `dismissWorktree` to use `AppState.removeWorktree` for consistency (queued).
+- PR-status offer dialog flows (GIT-4.7/4.8/4.9) — race-condition audit: what if `offeredDeleteForMergedPR` write races with app quit? Does the persistence cycle see it?
+- TERM-4.2/4.3 divider drag — pane resize edge cases.
+- TERM-5.3 zmx shell exit — already landed; look for regressions.
+- Truly-stale click UX (placeholder + inline Dismiss) — many cycles queued.
