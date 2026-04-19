@@ -53,6 +53,19 @@ public struct AppState: Codable, Sendable, Equatable {
         }
     }
 
+    /// `(repo, worktree)` index pair for the worktree at `path`, for
+    /// callers that need to write back into `repos[...]`. The
+    /// value-returning `worktree(forPath:)` helper above is sufficient
+    /// for reads; mutations need the indices.
+    public func indices(forWorktreePath path: String) -> (repo: Int, worktree: Int)? {
+        for (ri, repo) in repos.enumerated() {
+            if let wi = repo.worktrees.firstIndex(where: { $0.path == path }) {
+                return (ri, wi)
+            }
+        }
+        return nil
+    }
+
     private static let fileName = "state.json"
 
     public func save(to directory: URL) throws {

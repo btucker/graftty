@@ -25,6 +25,14 @@ public final class PRStatusStore {
     @ObservationIgnored private var getRepos: @MainActor () -> [RepoEntry] = { [] }
     @ObservationIgnored private let logger = Logger(subsystem: "com.btucker.espalier", category: "PRStatusStore")
 
+    /// Fires when a worktree's PR cache transitions into `.merged` for a
+    /// PR number that was not previously cached as merged. Set by the app
+    /// to drive the "PR merged — delete worktree?" offer dialog. The
+    /// callback is intentionally fire-once-per-transition: an idempotent
+    /// poll result ("still merged, same PR number") does not re-fire, so
+    /// the listener does not need per-PR debouncing.
+    @ObservationIgnored public var onPRMerged: (@MainActor (_ worktreePath: String, _ prNumber: Int) -> Void)?
+
     public init(
         executor: CLIExecutor = CLIRunner(),
         fetcherFor: ((HostingProvider) -> PRFetcher?)? = nil,
@@ -148,11 +156,23 @@ public final class PRStatusStore {
             lastFetch[worktreePath] = Date()
             failureStreak[worktreePath] = 0
             if let pr {
-                if infos[worktreePath] != pr {
+                // Fire-once transition detection: callback is invoked
+                // when this fetch lands on a merged PR whose number
+                // wasn't already cached as merged. Covers nil→merged,
+                // open→merged, and merged-N→merged-M. Same-PR
+                // merged→merged re-fetches (the steady-state poll
+                // result) do nothing.
+                let prev = infos[worktreePath]
+                let justMerged = pr.state == .merged
+                    && (prev?.state != .merged || prev?.number != pr.number)
+                if prev != pr {
                     infos[worktreePath] = pr
                 }
                 if absent.contains(worktreePath) {
                     absent.remove(worktreePath)
+                }
+                if justMerged, let onPRMerged {
+                    onPRMerged(worktreePath, pr.number)
                 }
             } else {
                 if infos[worktreePath] != nil {

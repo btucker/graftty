@@ -106,6 +106,14 @@ struct MainWindow: View {
                 $appState.wrappedValue.windowFrame = newFrame
             }
         }
+        .onAppear {
+            // Wired here rather than in EspalierApp.startup() so the
+            // closure captures MainWindow's `$appState` binding — both
+            // NSAlert presentation and the "offered" write-back need it.
+            prStatusStore.onPRMerged = { worktreePath, prNumber in
+                offerDeleteForMergedPR(worktreePath: worktreePath, prNumber: prNumber)
+            }
+        }
         .onPreferenceChange(SidebarWidthKey.self) { [$appState, $pendingSidebarWidthTask] width in
             // Debounce by 250ms so a drag doesn't write on every layout
             // pass. Only writes if the value actually changed (value-equality
@@ -400,16 +408,6 @@ struct MainWindow: View {
     /// `worktreeMonitorDidDetectDeletion` shortly after, but its update
     /// is idempotent so the eventual callback is harmless.
     private func deleteWorktreeWithConfirmation(_ worktreePath: String) {
-        guard let repoIdx = appState.repos.firstIndex(where: { repo in
-            repo.worktrees.contains { $0.path == worktreePath }
-        }) else { return }
-        guard let wtIdx = appState.repos[repoIdx].worktrees.firstIndex(where: {
-            $0.path == worktreePath
-        }) else { return }
-
-        let wt = appState.repos[repoIdx].worktrees[wtIdx]
-        let repoPath = appState.repos[repoIdx].path
-
         let alert = NSAlert()
         alert.messageText = "Delete Worktree?"
         alert.informativeText = "This will delete the worktree but not the branch."
@@ -417,6 +415,18 @@ struct MainWindow: View {
         alert.addButton(withTitle: "Delete Worktree")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
+        performDeleteWorktree(worktreePath)
+    }
+
+    /// Shared `git worktree remove` + teardown path used by both the
+    /// user-initiated "Delete Worktree" menu action and the PR-merged
+    /// offer dialog. Callers own the confirmation UX — this helper runs
+    /// git unconditionally and surfaces failures via the same error
+    /// alert as the menu path.
+    private func performDeleteWorktree(_ worktreePath: String) {
+        guard let (repoIdx, wtIdx) = appState.indices(forWorktreePath: worktreePath) else { return }
+        let wt = appState.repos[repoIdx].worktrees[wtIdx]
+        let repoPath = appState.repos[repoIdx].path
 
         // Run git first so a refusal (e.g. dirty worktree) leaves the
         // running terminals intact — tearing them down before we know
@@ -444,6 +454,36 @@ struct MainWindow: View {
             }
             appState.repos[repoIdx].worktrees.removeAll { $0.path == worktreePath }
         }
+    }
+
+    /// Called by `PRStatusStore.onPRMerged` on the first observed
+    /// transition of a worktree's PR cache into `.merged`. Presents the
+    /// offer dialog iff this is a linked (non-main, non-stale) worktree
+    /// and we haven't already offered for this PR number. The "offered"
+    /// marker is persisted via `AppState.onChange` so Keep is sticky
+    /// across restarts, not just across polls.
+    private func offerDeleteForMergedPR(worktreePath: String, prNumber: Int) {
+        guard let (repoIdx, wtIdx) = appState.indices(forWorktreePath: worktreePath) else { return }
+        let repo = appState.repos[repoIdx]
+        let wt = repo.worktrees[wtIdx]
+
+        // Mirrors GIT-4.1: git refuses to remove the main checkout, and
+        // a stale entry has no live worktree to remove.
+        guard wt.path != repo.path, wt.state != .stale else { return }
+        guard wt.offeredDeleteForMergedPR != prNumber else { return }
+
+        // Mark as offered *before* presenting the modal so a user who
+        // clicks Keep doesn't get re-prompted on the next poll.
+        appState.repos[repoIdx].worktrees[wtIdx].offeredDeleteForMergedPR = prNumber
+
+        let alert = NSAlert()
+        alert.messageText = "Pull request #\(prNumber) merged"
+        alert.informativeText = "Delete the worktree now? This will delete the worktree but not the branch."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Delete Worktree")
+        alert.addButton(withTitle: "Keep")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        performDeleteWorktree(worktreePath)
     }
 
     private func stopWorktreeWithConfirmation(_ worktreePath: String) {

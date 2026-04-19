@@ -26,6 +26,12 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var paneAttention: [TerminalID: Attention]
     public var splitTree: SplitTree
     public var focusedTerminalID: TerminalID?
+    /// PR number for which the "PR merged — delete worktree?" offer
+    /// dialog has already been presented. Persisted so that a force-push
+    /// that closes PR N and reopens as PR M is correctly treated as a
+    /// fresh transition (the numbers differ), while a steady poll of
+    /// the same merged PR stays quiet.
+    public var offeredDeleteForMergedPR: Int?
 
     public init(
         path: String,
@@ -42,15 +48,17 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.paneAttention = [:]
         self.splitTree = splitTree
         self.focusedTerminalID = nil
+        self.offeredDeleteForMergedPR = nil
     }
 
-    // Custom Decodable so `paneAttention` (added after the initial
-    // release) is optional on disk. Pre-fix persisted state blobs don't
-    // carry the key; defaulting to empty lets existing users keep their
-    // saved split trees across this upgrade rather than failing to
-    // decode and silently losing everything.
+    // Custom Decodable so `paneAttention` and `offeredDeleteForMergedPR`
+    // (both added after the initial release) are optional on disk.
+    // Pre-fix persisted state blobs don't carry those keys; defaulting
+    // lets existing users keep their saved split trees across upgrades
+    // rather than failing to decode and silently losing everything.
     private enum CodingKeys: String, CodingKey {
-        case id, path, branch, state, attention, paneAttention, splitTree, focusedTerminalID
+        case id, path, branch, state, attention, paneAttention,
+             splitTree, focusedTerminalID, offeredDeleteForMergedPR
     }
 
     public init(from decoder: Decoder) throws {
@@ -68,6 +76,10 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.focusedTerminalID = try container.decodeIfPresent(
             TerminalID.self,
             forKey: .focusedTerminalID
+        )
+        self.offeredDeleteForMergedPR = try container.decodeIfPresent(
+            Int.self,
+            forKey: .offeredDeleteForMergedPR
         )
     }
 

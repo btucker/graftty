@@ -200,6 +200,37 @@ struct WorktreeEntryTests {
         #expect(decoded.path == "/tmp/worktree")
     }
 
+    @Test func offeredDeleteForMergedPRDefaultsToNil() {
+        let entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
+        #expect(entry.offeredDeleteForMergedPR == nil)
+    }
+
+    @Test func offeredDeleteForMergedPRSurvivesCodableRoundTrip() throws {
+        var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
+        entry.offeredDeleteForMergedPR = 123
+        let data = try JSONEncoder().encode(entry)
+        let decoded = try JSONDecoder().decode(WorktreeEntry.self, from: data)
+        #expect(decoded.offeredDeleteForMergedPR == 123)
+    }
+
+    @Test func decodesLegacyStateWithoutOfferedDeleteField() throws {
+        // Same backwards-compat rule as `paneAttention` above: pre-fix
+        // state.json blobs don't carry the new key. Decode must default
+        // it to nil rather than throw and wipe the user's saved state.
+        let legacyJSON = """
+        {
+          "id": "\(UUID().uuidString)",
+          "path": "/tmp/worktree",
+          "branch": "main",
+          "state": "closed",
+          "splitTree": {"root": null}
+        }
+        """
+        let data = Data(legacyJSON.utf8)
+        let decoded = try JSONDecoder().decode(WorktreeEntry.self, from: data)
+        #expect(decoded.offeredDeleteForMergedPR == nil)
+    }
+
     @Test func splitTreeDefaultsToNil() {
         let entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
         #expect(entry.splitTree.root == nil)
