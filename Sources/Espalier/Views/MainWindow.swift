@@ -518,7 +518,13 @@ struct MainWindow: View {
                         guard alert.runModal() == .alertFirstButtonReturn else { return }
                     }
                     terminalManager.destroySurfaces(terminalIDs: terminalIDs)
-                    appState.repos[repoIdx].worktrees[wtIdx].state = .closed
+                    // STATE-2.11: Stop clears pane-scoped attention. Stop
+                    // preserves splitTree so re-open recreates the same
+                    // layout at the same leaf IDs (TERM-1.2) — which
+                    // means stale `paneAttention[ID]` from before the
+                    // Stop would reappear on the fresh pane's row
+                    // without this clear.
+                    appState.repos[repoIdx].worktrees[wtIdx].prepareForStop()
                     return
                 }
             }

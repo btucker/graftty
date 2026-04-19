@@ -163,6 +163,19 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         return leaves
     }
 
+    /// Transitions the entry from `.running` to `.closed` as part of the
+    /// Stop menu action, dropping `paneAttention` for every pane (all
+    /// panes are being destroyed; their pane-scoped badges must go per
+    /// `STATE-2.11`). Leaves `splitTree` and `focusedTerminalID` alone
+    /// so re-open recreates the exact same layout at the same leaf IDs
+    /// (`TERM-1.2`), and leaves the worktree-level `attention` slot
+    /// alone since a CLI-notify ping is a worktree-level concern
+    /// independent of which panes are alive.
+    public mutating func prepareForStop() {
+        state = .closed
+        paneAttention.removeAll()
+    }
+
     /// User-facing label for the worktree *in the context of its siblings*.
     ///
     /// Common case: the directory name the user picked when running

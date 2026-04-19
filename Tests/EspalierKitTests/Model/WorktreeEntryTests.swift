@@ -364,4 +364,70 @@ struct WorktreeEntryTests {
 
         #expect(toDestroy.isEmpty)
     }
+
+    // MARK: Stop-worktree teardown (STATE-2.11)
+    //
+    // The Stop menu action destroys every pane's surface at once. The
+    // pre-fix `stopWorktreeWithConfirmation` set `state = .closed` but
+    // LEFT `paneAttention` untouched. Because Stop preserves `splitTree`
+    // (so re-open recreates the same layout per TERM-1.2), the old leaf
+    // TerminalIDs stay — which means a stale pane attention badge from
+    // *before* the Stop reappears on the fresh pane's sidebar row after
+    // re-open. STATE-2.7's spirit (pane removal drops pane-scoped
+    // attention) extended here: Stop removes all panes; all entries
+    // must go.
+    //
+    // `prepareForStop()` transitions state → .closed, clears
+    // paneAttention, leaves splitTree + focusedTerminalID + the
+    // worktree-level `attention` slot alone so the closed→running
+    // re-open block can recreate the exact layout and the user still
+    // sees any CLI-notify badge (which is a worktree-level concern).
+
+    @Test func prepareForStopClearsPaneAttentionAndClosesState() {
+        var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
+        let paneA = TerminalID()
+        let paneB = TerminalID()
+        entry.state = .running
+        entry.splitTree = SplitTree(root: .split(.init(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: .leaf(paneA),
+            right: .leaf(paneB)
+        )))
+        entry.focusedTerminalID = paneA
+        entry.paneAttention[paneA] = Attention(text: "✓", timestamp: Date())
+        entry.paneAttention[paneB] = Attention(text: "!", timestamp: Date())
+
+        entry.prepareForStop()
+
+        #expect(entry.state == .closed)
+        #expect(entry.paneAttention.isEmpty)
+    }
+
+    @Test func prepareForStopPreservesSplitTreeAndFocusedTerminalID() {
+        var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
+        let paneA = TerminalID()
+        entry.state = .running
+        entry.splitTree = SplitTree(root: .leaf(paneA))
+        entry.focusedTerminalID = paneA
+
+        entry.prepareForStop()
+
+        // TERM-1.2: re-open after Stop recreates the same layout.
+        #expect(entry.splitTree.allLeaves == [paneA])
+        #expect(entry.focusedTerminalID == paneA)
+    }
+
+    @Test func prepareForStopPreservesWorktreeLevelAttention() {
+        // STATE-2.5 / ATTN-1.x: Stop leaves the CLI-notify (worktree-level)
+        // slot alone. A user who `espalier notify`'d then Stop'd should see
+        // the badge again when they re-open.
+        var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
+        entry.state = .running
+        entry.attention = Attention(text: "Build failed", timestamp: Date())
+
+        entry.prepareForStop()
+
+        #expect(entry.attention?.text == "Build failed")
+    }
 }
