@@ -28,6 +28,32 @@ struct AttentionTextValidationTests {
         // a rendering choice rather than an input-hygiene policy.
         #expect(Attention.isValidText("  build done  "))
     }
+
+    // Server-side text length mirror of ATTN-1.10 (CLI cap). A raw
+    // socket client can still send 50KB through `nc -U`, web surface,
+    // or custom script; `isValidText` is the server's single gate.
+
+    @Test func textAtExactlyMaxLengthIsValid() {
+        let s = String(repeating: "a", count: Attention.textMaxLength)
+        #expect(Attention.isValidText(s))
+    }
+
+    @Test func textOneOverMaxIsInvalid() {
+        let s = String(repeating: "a", count: Attention.textMaxLength + 1)
+        #expect(!Attention.isValidText(s))
+    }
+
+    @Test func hugeTextIsInvalid() {
+        let s = String(repeating: "x", count: 50_000)
+        #expect(!Attention.isValidText(s))
+    }
+
+    @Test func textMaxLengthShareOneSourceOfTruth() {
+        // Tripwire: the CLI's NotifyInputValidation.textMaxLength must
+        // read through to Attention.textMaxLength so server-side and
+        // CLI-side can never drift.
+        #expect(NotifyInputValidation.textMaxLength == Attention.textMaxLength)
+    }
 }
 
 // Mirrors `NotifyInputValidationTests` clear-after cap behaviors —

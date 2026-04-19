@@ -19,13 +19,11 @@ public enum NotifyInputValidation: Equatable {
     case clearAfterWithClearFlag
     case textTooLong(max: Int)
 
-    /// Upper bound for notify text, in Character (grapheme cluster)
-    /// count. The sidebar capsule is laid out for short status pings;
-    /// piping `git log` or `ls -la` into `espalier notify` produces a
-    /// blob that blows up layout, stresses persistence, and drowns
-    /// real signals. 200 graphemes accommodates flag emoji, CJK, and
-    /// short sentences without being byte-permissive.
-    public static let textMaxLength = 200
+    /// Upper bound for notify text. Proxies to `Attention.textMaxLength`
+    /// so the CLI's ATTN-1.10 check and the server's STATE-2.10 backstop
+    /// share one source of truth — changing the cap is one edit in
+    /// `Attention.swift`.
+    public static var textMaxLength: Int { Attention.textMaxLength }
 
     /// Upper bound for `--clear-after`, in seconds. 24h covers any
     /// plausible "ping me after this long build finishes" case without
