@@ -40,7 +40,7 @@ struct EspalierApp: App {
         // relaunches.
         Self.terminateIfAnotherInstanceIsRunning()
 
-        let loaded = (try? AppState.load(from: AppState.defaultDirectory)) ?? AppState()
+        let loaded = AppState.loadOrFreshBackingUpCorruption(from: AppState.defaultDirectory)
         _appState = State(initialValue: loaded)
 
         let socketPath = AppState.defaultDirectory.appendingPathComponent("espalier.sock").path
@@ -399,6 +399,11 @@ struct EspalierApp: App {
                     let wt = binding.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                     if !discoveredPaths.contains(wt.path) && wt.state != .stale {
                         binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .stale
+                    } else if discoveredPaths.contains(wt.path) && wt.state == .stale {
+                        // Stale entry is back in git's view — resurrect
+                        // to .closed per GIT-3.7. Same rule as the
+                        // `.git/worktrees/`-tick reconcile path.
+                        binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
                     }
                 }
 
@@ -474,6 +479,13 @@ struct EspalierApp: App {
             // client (`nc -U`, custom script, web surface) can't write
             // an invisible red capsule Andy can't read or dismiss.
             guard Attention.isValidText(text) else { return }
+            // Normalize the requested auto-clear duration against the
+            // server's contract: ≤0 → nil (STATE-2.8), >24h → clamped
+            // to 24h (STATE-2.9). A non-CLI socket client can still
+            // send ridiculous values; `effectiveClearAfter` makes the
+            // server a single source of truth for what actually
+            // schedules.
+            let effectiveClearAfter = Attention.effectiveClearAfter(clearAfter)
             // Pin the timestamp the attention carries AND the auto-clear
             // timer closes over, so the timer can verify it's still OUR
             // notification when it fires (cf. WorktreeEntry.clearAttentionIfTimestamp).
@@ -484,15 +496,11 @@ struct EspalierApp: App {
                         appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].attention = Attention(
                             text: text,
                             timestamp: stamp,
-                            clearAfter: clearAfter
+                            clearAfter: effectiveClearAfter
                         )
 
-                        // Only schedule a clear for strictly-positive durations.
-                        // Zero or negative values would fire immediately, making
-                        // the notification invisible — treat them as "no auto-clear"
-                        // so ill-formed CLI input degrades gracefully.
-                        if let clearAfter, clearAfter > 0 {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + clearAfter) {
+                        if let effectiveClearAfter {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + effectiveClearAfter) {
                                 for ri in appState.wrappedValue.repos.indices {
                                     for wi in appState.wrappedValue.repos[ri].worktrees.indices {
                                         if appState.wrappedValue.repos[ri].worktrees[wi].path == path {
@@ -688,6 +696,13 @@ struct EspalierApp: App {
         text: String,
         clearAfter: TimeInterval
     ) {
+        // Pin a single Date so the stored attention AND the closure
+        // share the same generation token (same shape as the
+        // worktree-scoped fix in handleNotification). The closure
+        // checks current timestamp == captured before clearing, so a
+        // newer ping or an explicit clear that lands between the
+        // schedule and the fire can't be wiped.
+        let stamp = Date()
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
@@ -695,7 +710,7 @@ struct EspalierApp: App {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                         .paneAttention[terminalID] = Attention(
                             text: text,
-                            timestamp: Date(),
+                            timestamp: stamp,
                             clearAfter: clearAfter
                         )
                     let path = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path
@@ -704,7 +719,7 @@ struct EspalierApp: App {
                             for wi in appState.wrappedValue.repos[ri].worktrees.indices {
                                 if appState.wrappedValue.repos[ri].worktrees[wi].path == path {
                                     appState.wrappedValue.repos[ri].worktrees[wi]
-                                        .paneAttention[terminalID] = nil
+                                        .clearPaneAttentionIfTimestamp(stamp, for: terminalID)
                                 }
                             }
                         }
@@ -1215,13 +1230,20 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
                 let wt = binding.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                 if !discoveredPaths.contains(wt.path) && wt.state != .stale {
                     binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .stale
+                } else if discoveredPaths.contains(wt.path) && wt.state == .stale {
+                    // Worktree was marked stale but is now back in git's
+                    // view (e.g., a momentary FSEvents delete glitch, a
+                    // `git worktree repair`, or a force-remove+re-add).
+                    // Resurrect to `.closed`; user can click to start
+                    // terminals again per TERM-1.1 / TERM-1.2.
+                    binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
                 }
             }
 
             // watchWorktreePath / watchHeadRef are idempotent, so registering
             // for the whole repo is cheap; this is how newly-discovered
             // worktrees (external `git worktree add`) start getting HEAD
-            // tracking without an app restart.
+            // tracking without an app restart. Includes resurrected entries.
             for wt in binding.wrappedValue.repos[repoIdx].worktrees where wt.state != .stale {
                 monitor.watchWorktreePath(wt.path)
                 monitor.watchHeadRef(worktreePath: wt.path, repoPath: repoPath)

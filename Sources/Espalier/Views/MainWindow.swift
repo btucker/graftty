@@ -214,6 +214,25 @@ struct MainWindow: View {
     private func selectWorktree(_ path: String) {
         appState.selectedWorktreePath = path
 
+        // Resurrect stale entries whose directory is actually still on
+        // disk. Same rule as the background reconciler's `GIT-3.7`, but
+        // applied eagerly on user click so the content area doesn't
+        // sit on the `Color.black + ProgressView` fallback when the
+        // user expected terminals. Cleared split tree too — a stale
+        // entry's old leaf IDs reference surfaces that were destroyed,
+        // so starting fresh is safer than trying to restore them.
+        for repoIdx in appState.repos.indices {
+            for wtIdx in appState.repos[repoIdx].worktrees.indices {
+                let wt = appState.repos[repoIdx].worktrees[wtIdx]
+                if wt.path == path && wt.state == .stale &&
+                   FileManager.default.fileExists(atPath: path) {
+                    appState.repos[repoIdx].worktrees[wtIdx].state = .closed
+                    appState.repos[repoIdx].worktrees[wtIdx].splitTree = SplitTree(root: nil)
+                    appState.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nil
+                }
+            }
+        }
+
         for repoIdx in appState.repos.indices {
             for wtIdx in appState.repos[repoIdx].worktrees.indices {
                 if appState.repos[repoIdx].worktrees[wtIdx].path == path

@@ -248,6 +248,16 @@ struct SidebarView: View {
 
     private func dismissWorktree(_ worktree: WorktreeEntry, in repo: RepoEntry) {
         guard let repoIdx = appState.repos.firstIndex(where: { $0.id == repo.id }) else { return }
+        let path = worktree.path
+        // Drop cached per-path state in the observable stores before
+        // removing the entry from the model. If we reverse the order the
+        // stores' caches become orphan entries keyed by a path nobody
+        // iterates anymore — a slow memory leak over a long session
+        // where a user Dismisses many stale worktrees. Calling `clear`
+        // on both is idempotent for the never-cached case, so this is
+        // safe to run unconditionally.
+        prStatusStore.clear(worktreePath: path)
+        statsStore.clear(worktreePath: path)
         appState.repos[repoIdx].worktrees.removeAll { $0.id == worktree.id }
     }
 

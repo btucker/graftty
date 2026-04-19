@@ -86,6 +86,58 @@ struct WorktreeEntryTests {
         #expect(entry.attention == nil)
     }
 
+    // MARK: pane-scoped auto-clear timestamp guard
+    //
+    // Same STATE-2.6 story for pane-scoped attention (shell-integration
+    // pings): a pending auto-clear timer must only fire if the currently
+    // stored attention for that specific pane still has the timestamp
+    // captured when the timer was scheduled.
+
+    @Test func clearPaneAttentionIfTimestampClearsMatching() {
+        var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
+        let pane = TerminalID()
+        let now = Date()
+        entry.paneAttention[pane] = Attention(text: "A", timestamp: now, clearAfter: 3)
+        entry.clearPaneAttentionIfTimestamp(now, for: pane)
+        #expect(entry.paneAttention[pane] == nil)
+    }
+
+    @Test func clearPaneAttentionIfTimestampIsNoopForReplaced() {
+        var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
+        let pane = TerminalID()
+        let t1 = Date()
+        entry.paneAttention[pane] = Attention(text: "A", timestamp: t1, clearAfter: 10)
+        let t2 = t1.addingTimeInterval(1)
+        entry.paneAttention[pane] = Attention(text: "B", timestamp: t2)
+
+        // The timer scheduled by "A" fires at t=10; "B" is current
+        // at that time. Guard keeps "B" alive.
+        entry.clearPaneAttentionIfTimestamp(t1, for: pane)
+        #expect(entry.paneAttention[pane]?.text == "B")
+    }
+
+    @Test func clearPaneAttentionIfTimestampDoesNotAffectSiblings() {
+        var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
+        let pane1 = TerminalID()
+        let pane2 = TerminalID()
+        let t = Date()
+        entry.paneAttention[pane1] = Attention(text: "A", timestamp: t, clearAfter: 3)
+        entry.paneAttention[pane2] = Attention(text: "B", timestamp: t, clearAfter: 3)
+        entry.clearPaneAttentionIfTimestamp(t, for: pane1)
+        #expect(entry.paneAttention[pane1] == nil)
+        #expect(entry.paneAttention[pane2]?.text == "B")
+    }
+
+    @Test func clearPaneAttentionIfTimestampIsNoopWhenAlreadyCleared() {
+        var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
+        let pane = TerminalID()
+        let now = Date()
+        entry.paneAttention[pane] = Attention(text: "A", timestamp: now, clearAfter: 5)
+        entry.paneAttention[pane] = nil
+        entry.clearPaneAttentionIfTimestamp(now, for: pane)
+        #expect(entry.paneAttention[pane] == nil)
+    }
+
     // MARK: paneAttention
     //
     // Per-pane attention badges are distinct from the worktree-level

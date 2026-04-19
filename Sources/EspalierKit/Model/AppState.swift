@@ -73,6 +73,36 @@ public struct AppState: Codable, Sendable, Equatable {
         return try JSONDecoder().decode(AppState.self, from: data)
     }
 
+    /// Tries to load `state.json` from `directory`. On decode failure
+    /// (corrupt file from a crashed mid-write, a hand-edit typo, or a
+    /// schema mismatch), moves the corrupted file aside to
+    /// `state.json.corrupt.<ms-since-epoch>` and returns a fresh empty
+    /// `AppState` so the app can still boot. The user's prior data
+    /// stays on disk, recoverable by hand — vastly better than the
+    /// prior behavior of `try? load ?? AppState()`, which silently let
+    /// the next save overwrite the broken file with fresh-empty state.
+    ///
+    /// A missing file is not corruption — returns empty without a
+    /// backup, matching `load`'s fresh-install behavior.
+    public static func loadOrFreshBackingUpCorruption(
+        from directory: URL,
+        now: () -> Date = { Date() }
+    ) -> AppState {
+        do {
+            return try load(from: directory)
+        } catch {
+            let fileURL = directory.appendingPathComponent(fileName)
+            let ms = Int(now().timeIntervalSince1970 * 1000)
+            let backupURL = directory.appendingPathComponent("\(fileName).corrupt.\(ms)")
+            // Best effort: if the rename fails (permissions, etc.) we
+            // still return empty so the app boots. The next save will
+            // overwrite the corrupt file — slightly worse UX but not
+            // worse than the prior silent path.
+            try? FileManager.default.moveItem(at: fileURL, to: backupURL)
+            return AppState()
+        }
+    }
+
     public static var defaultDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Espalier")

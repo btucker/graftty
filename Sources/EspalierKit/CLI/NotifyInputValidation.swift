@@ -10,13 +10,33 @@ import Foundation
 ///   combination silently, dropping the text and acting as a bare
 ///   `--clear`, which masks typos like `espalier notify "done" --clear`
 ///   where Andy meant just `notify "done"` but had stale shell history).
-public enum NotifyInputValidation {
+public enum NotifyInputValidation: Equatable {
     case valid
     case missingTextAndClear
     case bothTextAndClear
     case emptyText
+    case clearAfterTooLarge(max: Int)
+    case clearAfterWithClearFlag
+    case textTooLong(max: Int)
 
-    public static func validate(text: String?, clear: Bool) -> NotifyInputValidation {
+    /// Upper bound for notify text. Proxies to `Attention.textMaxLength`
+    /// so the CLI's ATTN-1.10 check and the server's STATE-2.10 backstop
+    /// share one source of truth — changing the cap is one edit in
+    /// `Attention.swift`.
+    public static var textMaxLength: Int { Attention.textMaxLength }
+
+    /// Upper bound for `--clear-after`, in seconds. 24h covers any
+    /// plausible "ping me after this long build finishes" case without
+    /// allowing ridiculous values (`--clear-after 999999999`) that
+    /// would park a Dispatch timer on the main queue for decades and
+    /// leak per-session scheduler state.
+    public static let clearAfterMaxSeconds = 86_400
+
+    public static func validate(
+        text: String?,
+        clear: Bool,
+        clearAfter: Int? = nil
+    ) -> NotifyInputValidation {
         let hasText = text != nil
         // The clear-conflict check runs first: when the user passes both
         // a text and `--clear`, the ambiguity is what matters to surface
@@ -30,8 +50,28 @@ public enum NotifyInputValidation {
             if text!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return .emptyText
             }
+            if text!.count > textMaxLength {
+                return .textTooLong(max: textMaxLength)
+            }
+            // Negative / zero clearAfter is handled server-side per
+            // STATE-2.8 (treated as no auto-clear). Only the upper
+            // bound is a CLI-side rejection — the user probably typed
+            // a wrong unit (milliseconds → seconds etc.) and deserves
+            // feedback, not a silent multi-year timer.
+            if let clearAfter, clearAfter > clearAfterMaxSeconds {
+                return .clearAfterTooLarge(max: clearAfterMaxSeconds)
+            }
             return .valid
-        case (false, true): return .valid
+        case (false, true):
+            // `--clear-after` only applies to notify messages. A user
+            // writing both is ambiguous (schedule-a-clear? clear now?);
+            // the server-side `.clear` path ignores clearAfter, so
+            // before this check the CLI silently dropped it. Reject
+            // rather than guess.
+            if clearAfter != nil {
+                return .clearAfterWithClearFlag
+            }
+            return .valid
         }
     }
 
@@ -42,6 +82,12 @@ public enum NotifyInputValidation {
         case .missingTextAndClear: return "Provide notification text or use --clear"
         case .bothTextAndClear: return "Cannot combine notification text with --clear; use one or the other"
         case .emptyText: return "Notification text cannot be empty or whitespace-only"
+        case .clearAfterTooLarge(let max):
+            return "--clear-after exceeds the \(max)-second (\(max / 3600)-hour) limit"
+        case .clearAfterWithClearFlag:
+            return "Cannot use --clear-after with --clear; --clear-after applies only to notify messages"
+        case .textTooLong(let max):
+            return "Notification text exceeds the \(max)-character limit"
         }
     }
 }

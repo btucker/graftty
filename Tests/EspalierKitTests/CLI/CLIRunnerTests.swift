@@ -72,6 +72,29 @@ struct CLIRunnerTests {
         #expect(parts.filter { $0 == "/usr/local/bin" }.count == 1)
     }
 
+    // All external tool output that we parse (git diff --shortstat,
+    // gh pr checks, zmx list, etc.) has English word markers baked in
+    // at call sites ("insertion", "deletion", "pass"). On a user with
+    // `LANG=de_DE.UTF-8` (or any non-English locale) those tools may
+    // emit localized messages that our parsers won't match. Force
+    // LC_ALL=C on every invocation so output stays English regardless
+    // of the user's shell settings.
+
+    @Test func enrichedEnvironmentForcesCLocaleEvenWhenBaseIsLocalized() {
+        let env = CLIRunner.enrichedEnvironment(base: [
+            "PATH": "/usr/bin",
+            "LANG": "de_DE.UTF-8",
+            "LC_MESSAGES": "fr_FR.UTF-8",
+            "LC_ALL": "ja_JP.UTF-8",
+        ])
+        #expect(env["LC_ALL"] == "C")
+    }
+
+    @Test func enrichedEnvironmentAddsCLocaleWhenUnset() {
+        let env = CLIRunner.enrichedEnvironment(base: ["PATH": "/usr/bin"])
+        #expect(env["LC_ALL"] == "C")
+    }
+
     /// Regression guard for the pipe buffer deadlock: if we read stdout only
     /// after the process exits, a child that writes more than the pipe
     /// capacity (~16–64 KB on macOS) blocks on write and never terminates.

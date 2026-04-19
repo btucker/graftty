@@ -79,7 +79,6 @@ enum SocketClient {
     }
 
     private static func resolveSocketPath() -> String {
-        if let envPath = ProcessInfo.processInfo.environment["ESPALIER_SOCK"] { return envPath }
-        return AppState.defaultDirectory.appendingPathComponent("espalier.sock").path
+        SocketPathResolver.resolve()
     }
 }

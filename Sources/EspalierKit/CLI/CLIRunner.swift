@@ -50,6 +50,12 @@ public struct CLIRunner: CLIExecutor {
             if !p.isEmpty && !acc.contains(p) { acc.append(p) }
         }
         env["PATH"] = combined.joined(separator: ":")
+        // Force English output from every external tool so our parsers
+        // (git diff --shortstat "insertion"/"deletion", gh pr checks
+        // bucket names, zmx status text) keep working for Andy on
+        // `LANG=de_DE.UTF-8` or any other non-English locale. LC_ALL
+        // trumps LANG/LC_MESSAGES/LC_*, so one assignment suffices.
+        env["LC_ALL"] = "C"
         return env
     }
 

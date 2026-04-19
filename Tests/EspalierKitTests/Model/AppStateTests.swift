@@ -166,4 +166,63 @@ struct AppStateTests {
         #expect(loaded.repos.isEmpty)
         #expect(loaded.worktree(forPath: "/tmp/repo") == nil)
     }
+
+    // A crashed mid-write, a hand-edited typo, or a schema mismatch
+    // across Espalier versions can leave state.json in a state that
+    // `JSONDecoder` rejects. The pre-fix call site (`try? load` + `??
+    // AppState()`) silently fell back to an empty AppState and
+    // overwrote the corrupt file on next save — total state loss from
+    // Andy's perspective. `loadOrFreshBackingUpCorruption` preserves
+    // the corrupt file under a timestamped name so the user can
+    // recover manually while still getting a working app.
+
+    @Test func loadOrFreshBacksUpCorruption() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let garbage = "{\"repos\":[not valid json"
+        try garbage.write(to: dir.appendingPathComponent("state.json"),
+                          atomically: true, encoding: .utf8)
+
+        let state = AppState.loadOrFreshBackingUpCorruption(
+            from: dir,
+            now: { Date(timeIntervalSince1970: 100) }
+        )
+
+        // Returns an empty state so the app boots.
+        #expect(state.repos.isEmpty)
+        #expect(state.selectedWorktreePath == nil)
+
+        // Backup exists with the original garbage content.
+        let backupPath = dir.appendingPathComponent("state.json.corrupt.100000")
+        #expect(FileManager.default.fileExists(atPath: backupPath.path))
+        let backup = try String(contentsOf: backupPath, encoding: .utf8)
+        #expect(backup == garbage)
+    }
+
+    @Test func loadOrFreshDoesNotBackUpValidFile() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let repo = RepoEntry(path: "/tmp/r", displayName: "r", worktrees: [
+            WorktreeEntry(path: "/tmp/r", branch: "main")
+        ])
+        var source = AppState()
+        source.addRepo(repo)
+        try source.save(to: dir)
+
+        let state = AppState.loadOrFreshBackingUpCorruption(from: dir)
+        #expect(state.repos.count == 1)
+
+        let contents = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        #expect(!contents.contains { $0.hasPrefix("state.json.corrupt") })
+    }
+
+    @Test func loadOrFreshReturnsEmptyWhenNoFileExists() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let state = AppState.loadOrFreshBackingUpCorruption(from: dir)
+        #expect(state.repos.isEmpty)
+        // Missing file is not corruption — no backup created.
+        let contents = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        #expect(!contents.contains { $0.hasPrefix("state.json.corrupt") })
+    }
 }

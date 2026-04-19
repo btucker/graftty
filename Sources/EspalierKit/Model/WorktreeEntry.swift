@@ -82,6 +82,20 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         }
     }
 
+    /// Clears the pane-scoped attention overlay for `terminalID` iff it
+    /// still has the given `timestamp`. Same STATE-2.6 invariant as
+    /// `clearAttentionIfTimestamp`, applied to shell-integration pings
+    /// (`COMMAND_FINISHED` events) that target a specific pane rather
+    /// than the worktree slot.
+    public mutating func clearPaneAttentionIfTimestamp(
+        _ timestamp: Date,
+        for terminalID: TerminalID
+    ) {
+        if paneAttention[terminalID]?.timestamp == timestamp {
+            paneAttention[terminalID] = nil
+        }
+    }
+
     /// User-facing label for the worktree *in the context of its siblings*.
     ///
     /// Common case: the directory name the user picked when running
