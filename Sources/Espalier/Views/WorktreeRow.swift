@@ -175,7 +175,11 @@ struct WorktreeRow: View {
     }
 
     private func badgeAccessibilityLabel(_ badge: PRBadge) -> String {
-        let stateWord = badge.state == .open ? "open" : "merged"
+        let stateWord: String
+        switch badge.state {
+        case .open:   stateWord = "open"
+        case .merged: stateWord = "merged"
+        }
         return "Pull request \(badge.number), \(stateWord). Click to open in browser."
     }
 
