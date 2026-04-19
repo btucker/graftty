@@ -111,6 +111,35 @@ public struct SplitTree: Codable, Sendable, Equatable {
         return SplitTree(root: root.removing(target), zoomed: newZoomed)
     }
 
+    /// Compute the new `focusedTerminalID` for a worktree after a pane
+    /// has been removed from its split tree (`TERM-5.6`).
+    ///
+    /// Contract:
+    /// - Tree is now empty → nil.
+    /// - `currentFocus` was the removed pane → promote to the survivor
+    ///   (`remainingTree.allLeaves.first`).
+    /// - `currentFocus` was some other pane → keep it. That pane is
+    ///   still in `remainingTree` (removing targetID leaves others
+    ///   intact), so focus stays where the user's keystrokes were going.
+    ///
+    /// Pre-fix, `closePane` used `remainingTree.allLeaves.first`
+    /// unconditionally, so closing pane A while pane C was focused
+    /// silently moved focus to pane B — a "focus jumped for no reason"
+    /// UX bug. This helper is the pure policy seam callers use so the
+    /// rule is testable without a live TerminalManager.
+    public static func focusAfterRemoving(
+        currentFocus: TerminalID?,
+        removed: TerminalID,
+        remainingTree: SplitTree
+    ) -> TerminalID? {
+        guard remainingTree.root != nil else { return nil }
+        guard let currentFocus else { return nil }
+        if currentFocus == removed {
+            return remainingTree.allLeaves.first
+        }
+        return currentFocus
+    }
+
     public func updatingRatio(for target: TerminalID, ratio: Double) -> SplitTree {
         guard let root else { return self }
         return SplitTree(root: root.updatingRatio(for: target, ratio: ratio), zoomed: zoomed)

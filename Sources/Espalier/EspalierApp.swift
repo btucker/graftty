@@ -1039,9 +1039,24 @@ struct EspalierApp: App {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nil
                 } else {
-                    let newFocus = newTree.allLeaves.first
+                    // TERM-5.6: only promote focus when the CLOSED pane
+                    // was the focused one. Pre-fix, this branch always
+                    // reassigned focus to `newTree.allLeaves.first`,
+                    // silently jumping focus away from whatever pane the
+                    // user was typing in if they closed a different pane.
+                    let previousFocus = wt.focusedTerminalID
+                    let newFocus = SplitTree.focusAfterRemoving(
+                        currentFocus: previousFocus,
+                        removed: targetID,
+                        remainingTree: newTree
+                    )
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = newFocus
-                    if let newFocus { terminalManager.setFocus(newFocus) }
+                    // Only push focus to libghostty if it actually
+                    // changed — otherwise we're re-raising the same
+                    // surface for no reason.
+                    if let newFocus, newFocus != previousFocus {
+                        terminalManager.setFocus(newFocus)
+                    }
                 }
                 return
             }

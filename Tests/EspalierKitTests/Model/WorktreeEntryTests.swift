@@ -430,4 +430,94 @@ struct WorktreeEntryTests {
 
         #expect(entry.attention?.text == "Build failed")
     }
+
+    // MARK: focus-after-pane-close (TERM-5.6)
+    //
+    // Pre-fix, `closePane` unconditionally reset `focusedTerminalID`
+    // to `newTree.allLeaves.first` whenever the tree wasn't empty —
+    // even when the CLOSED pane wasn't the focused one. So a user
+    // typing in pane C who closed pane A via Cmd+W (or `espalier pane
+    // close 1`) would silently lose focus to pane B (= newTree's first
+    // leaf), with no user action that should cause focus to move.
+    // Matches Andy's explicit pain: "Furious when any tool kills a
+    // long-running shell unexpectedly" — the logical equivalent for
+    // focus is "silently redirecting my typing to a different pane."
+    //
+    // The rule codified by `focusAfterRemoving`: the closed pane is
+    // the only one that needs a new home. If someone else was focused,
+    // leave that focus alone.
+
+    @Test func focusAfterRemovingKeepsSurvivorFocusWhenDifferentPaneClosed() {
+        let a = TerminalID()
+        let b = TerminalID()
+        let c = TerminalID()
+        let tree = SplitTree(root: .split(.init(
+            direction: .horizontal, ratio: 0.5,
+            left: .leaf(a),
+            right: .split(.init(
+                direction: .horizontal, ratio: 0.5,
+                left: .leaf(b),
+                right: .leaf(c)
+            ))
+        )))
+        let newTree = tree.removing(a)
+
+        // User was focused on C; they closed A. Focus stays on C.
+        let newFocus = SplitTree.focusAfterRemoving(
+            currentFocus: c,
+            removed: a,
+            remainingTree: newTree
+        )
+        #expect(newFocus == c)
+    }
+
+    @Test func focusAfterRemovingPromotesWhenClosedWasFocused() {
+        let a = TerminalID()
+        let b = TerminalID()
+        let tree = SplitTree(root: .split(.init(
+            direction: .horizontal, ratio: 0.5,
+            left: .leaf(a),
+            right: .leaf(b)
+        )))
+        let newTree = tree.removing(a)
+
+        // User was focused on A and closed A. Promote to the survivor.
+        let newFocus = SplitTree.focusAfterRemoving(
+            currentFocus: a,
+            removed: a,
+            remainingTree: newTree
+        )
+        #expect(newFocus == b)
+    }
+
+    @Test func focusAfterRemovingReturnsNilWhenTreeIsEmpty() {
+        let a = TerminalID()
+        let emptyTree = SplitTree(root: nil)
+
+        let newFocus = SplitTree.focusAfterRemoving(
+            currentFocus: a,
+            removed: a,
+            remainingTree: emptyTree
+        )
+        #expect(newFocus == nil)
+    }
+
+    @Test func focusAfterRemovingReturnsNilWhenCurrentFocusWasNil() {
+        // Worktree was just resurrected / stopped — no focus yet.
+        let a = TerminalID()
+        let b = TerminalID()
+        let tree = SplitTree(root: .split(.init(
+            direction: .horizontal, ratio: 0.5,
+            left: .leaf(a),
+            right: .leaf(b)
+        )))
+        let newTree = tree.removing(a)
+
+        let newFocus = SplitTree.focusAfterRemoving(
+            currentFocus: nil,
+            removed: a,
+            remainingTree: newTree
+        )
+        #expect(newFocus == nil)
+    }
 }
