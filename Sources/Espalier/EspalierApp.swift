@@ -399,6 +399,11 @@ struct EspalierApp: App {
                     let wt = binding.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                     if !discoveredPaths.contains(wt.path) && wt.state != .stale {
                         binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .stale
+                    } else if discoveredPaths.contains(wt.path) && wt.state == .stale {
+                        // Stale entry is back in git's view — resurrect
+                        // to .closed per GIT-3.7. Same rule as the
+                        // `.git/worktrees/`-tick reconcile path.
+                        binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
                     }
                 }
 
@@ -1225,13 +1230,20 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
                 let wt = binding.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                 if !discoveredPaths.contains(wt.path) && wt.state != .stale {
                     binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .stale
+                } else if discoveredPaths.contains(wt.path) && wt.state == .stale {
+                    // Worktree was marked stale but is now back in git's
+                    // view (e.g., a momentary FSEvents delete glitch, a
+                    // `git worktree repair`, or a force-remove+re-add).
+                    // Resurrect to `.closed`; user can click to start
+                    // terminals again per TERM-1.1 / TERM-1.2.
+                    binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
                 }
             }
 
             // watchWorktreePath / watchHeadRef are idempotent, so registering
             // for the whole repo is cheap; this is how newly-discovered
             // worktrees (external `git worktree add`) start getting HEAD
-            // tracking without an app restart.
+            // tracking without an app restart. Includes resurrected entries.
             for wt in binding.wrappedValue.repos[repoIdx].worktrees where wt.state != .stale {
                 monitor.watchWorktreePath(wt.path)
                 monitor.watchHeadRef(worktreePath: wt.path, repoPath: repoPath)
