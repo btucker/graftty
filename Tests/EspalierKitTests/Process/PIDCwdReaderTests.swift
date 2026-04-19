@@ -2,7 +2,10 @@ import Testing
 import Foundation
 @testable import EspalierKit
 
-@Suite("PIDCwdReader — proc_pidinfo wrapper")
+// Process cwd is process-wide, so `reflectsCwdChange` mutating it races
+// with `readsOwnProcessCwd` when swift-testing runs suite tests in
+// parallel (intermittently green locally, flaky in CI).
+@Suite("PIDCwdReader — proc_pidinfo wrapper", .serialized)
 struct PIDCwdReaderTests {
 
     // We read /proc-equivalent state on macOS via libproc's

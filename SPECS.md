@@ -114,9 +114,9 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **TERM-4.1** The application shall display a draggable divider between split panes.
 
-**TERM-4.2** When the user drags a divider, the application shall resize the adjacent panes proportionally.
+**TERM-4.2** When the user drags a divider, the application shall resize the adjacent panes so that the divider tracks the cursor's position inside the enclosing split container.
 
-**TERM-4.3** When the user drags a divider to a new ratio, the application shall persist the new ratio in the worktree's split tree so that the layout survives app restarts.
+**TERM-4.3** When the user releases a divider drag, the application shall persist the new ratio in the worktree's split tree so that the layout survives app restarts. Intermediate positions during the drag need not be persisted.
 
 **TERM-4.4** When a pane is removed from the split tree, the application shall forward the new layout size to libghostty so remaining panes reflow to fill the vacated space.
 

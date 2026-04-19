@@ -117,14 +117,19 @@ private struct SplitRatioContainer<Left: View, Right: View>: View {
     }
 
     var body: some View {
+        // Persist only at drag end — intermediate mouse events update the
+        // local `@State ratio` (which drives child frames directly), so
+        // the tree-level SplitTree binding is written once per gesture.
+        // Writing on every `.onChange` would re-render every sibling pane
+        // and churn PTY winsize updates through zmx on every frame.
         SplitContainerView(
             direction: direction,
             ratio: $ratio,
             left: left(),
-            right: right()
+            right: right(),
+            onDragEnd: { finalRatio in
+                onRatioChange(finalRatio)
+            }
         )
-        .onChange(of: ratio) { _, newValue in
-            onRatioChange(newValue)
-        }
     }
 }
