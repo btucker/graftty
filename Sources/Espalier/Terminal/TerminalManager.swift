@@ -478,6 +478,30 @@ final class TerminalManager: ObservableObject {
         rehydratedSurfaces.remove(terminalID)
     }
 
+    /// Whether the imminent close for `terminalID` should be treated as
+    /// session-loss (rebuild the surface) rather than a normal close
+    /// (destroy the pane). Consumes `intentionalCloses` membership so a
+    /// subsequent close for the same ID does not flip the decision.
+    ///
+    /// Returns `false` when:
+    ///   - The close was Espalier-initiated (membership in
+    ///     `intentionalCloses`, populated by `killZmxSession`).
+    ///   - We have no `ZmxLauncher` configured (zmx fallback path —
+    ///     there is no daemon to be missing).
+    ///   - The expected session is still present in `listSessions()`,
+    ///     meaning the inner shell really did exit on its own.
+    /// Returns `true` only when the close was unannounced AND the
+    /// session name is absent from the live set.
+    func shouldRestartInsteadOfClose(_ terminalID: TerminalID) -> Bool {
+        if intentionalCloses.remove(terminalID) != nil {
+            // We initiated this close — destroy as normal.
+            return false
+        }
+        guard let launcher = zmxLauncher else { return false }
+        let name = launcher.sessionName(for: terminalID.id)
+        return launcher.isSessionMissing(name)
+    }
+
     /// Whether a terminal was marked as the first pane of its worktree.
     func isFirstPane(_ terminalID: TerminalID) -> Bool {
         firstPaneMarkers.contains(terminalID)
