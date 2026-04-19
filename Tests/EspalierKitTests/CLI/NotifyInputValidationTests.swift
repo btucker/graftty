@@ -120,4 +120,51 @@ struct NotifyInputValidationTests {
         // clearAfter) must keep passing through.
         #expect(NotifyInputValidation.validate(text: nil, clear: true, clearAfter: nil) == .valid)
     }
+
+    // Attention text is rendered in a small red capsule on a narrow
+    // sidebar row. Piping `git log` or `ls -la` into `espalier notify`
+    // produces a KB-sized blob that blows up layout, stresses
+    // persistence, and reduces signal-to-noise for the "one short
+    // status ping" use case the UI is designed for.
+
+    @Test func textAtExactlyMaxLengthIsValid() {
+        let maxLen = NotifyInputValidation.textMaxLength
+        let str = String(repeating: "a", count: maxLen)
+        #expect(str.count == maxLen)
+        let r = NotifyInputValidation.validate(text: str, clear: false)
+        #expect(r == .valid)
+    }
+
+    @Test func textOneOverMaxIsRejected() {
+        let maxLen = NotifyInputValidation.textMaxLength
+        let str = String(repeating: "a", count: maxLen + 1)
+        let r = NotifyInputValidation.validate(text: str, clear: false)
+        #expect(r == .textTooLong(max: maxLen))
+        #expect(r.message?.contains("\(maxLen)") == true)
+    }
+
+    @Test func textLengthUsesGraphemeClusters() {
+        // Each flag emoji is one Character (several UTF-8 bytes /
+        // multiple scalars). If we accidentally counted bytes, the
+        // message would be orders-of-magnitude stricter than intended.
+        let oneFlag = "🇺🇸"
+        #expect(oneFlag.count == 1)
+        let maxLen = NotifyInputValidation.textMaxLength
+        let atMax = String(repeating: oneFlag, count: maxLen)
+        #expect(NotifyInputValidation.validate(text: atMax, clear: false) == .valid)
+        let overMax = atMax + "a"
+        #expect(NotifyInputValidation.validate(text: overMax, clear: false) == .textTooLong(max: maxLen))
+    }
+
+    @Test func hugeTextIsRejected() {
+        let huge = String(repeating: "x", count: 50_000)
+        #expect(NotifyInputValidation.validate(text: huge, clear: false) == .textTooLong(max: NotifyInputValidation.textMaxLength))
+    }
+
+    @Test func textTooLongOverridesEmpty() {
+        // Precedence: emptyText fires only for actually-empty strings,
+        // so textTooLong never competes. Sanity: short empty still
+        // returns emptyText.
+        #expect(NotifyInputValidation.validate(text: "", clear: false) == .emptyText)
+    }
 }

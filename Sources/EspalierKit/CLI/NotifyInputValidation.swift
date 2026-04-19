@@ -17,6 +17,15 @@ public enum NotifyInputValidation: Equatable {
     case emptyText
     case clearAfterTooLarge(max: Int)
     case clearAfterWithClearFlag
+    case textTooLong(max: Int)
+
+    /// Upper bound for notify text, in Character (grapheme cluster)
+    /// count. The sidebar capsule is laid out for short status pings;
+    /// piping `git log` or `ls -la` into `espalier notify` produces a
+    /// blob that blows up layout, stresses persistence, and drowns
+    /// real signals. 200 graphemes accommodates flag emoji, CJK, and
+    /// short sentences without being byte-permissive.
+    public static let textMaxLength = 200
 
     /// Upper bound for `--clear-after`, in seconds. 24h covers any
     /// plausible "ping me after this long build finishes" case without
@@ -42,6 +51,9 @@ public enum NotifyInputValidation: Equatable {
         case (true, false):
             if text!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return .emptyText
+            }
+            if text!.count > textMaxLength {
+                return .textTooLong(max: textMaxLength)
             }
             // Negative / zero clearAfter is handled server-side per
             // STATE-2.8 (treated as no auto-clear). Only the upper
@@ -76,6 +88,8 @@ public enum NotifyInputValidation: Equatable {
             return "--clear-after exceeds the \(max)-second (\(max / 3600)-hour) limit"
         case .clearAfterWithClearFlag:
             return "Cannot use --clear-after with --clear; --clear-after applies only to notify messages"
+        case .textTooLong(let max):
+            return "Notification text exceeds the \(max)-character limit"
         }
     }
 }
