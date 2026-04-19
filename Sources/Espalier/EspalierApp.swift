@@ -571,9 +571,14 @@ struct EspalierApp: App {
         }
         let leaves = wt.splitTree.allLeaves
         let panes = leaves.enumerated().map { (i, terminalID) -> PaneInfo in
-            PaneInfo(
+            // Use the derived label (title → PWD basename → nil) so the
+            // CLI sees the same fallback chain the sidebar renders. Map
+            // the view-level empty sentinel back to nil for the CLI
+            // contract "title is nil when unknown".
+            let display = terminalManager.displayTitle(for: terminalID)
+            return PaneInfo(
                 id: i + 1,
-                title: terminalManager.titles[terminalID],
+                title: display.isEmpty ? nil : display,
                 focused: terminalID == wt.focusedTerminalID
             )
         }

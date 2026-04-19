@@ -162,7 +162,7 @@ struct SidebarView: View {
                         onSelectPane(worktree.path, terminalID)
                     } label: {
                         PaneTitleRow(
-                            title: terminalManager.titles[terminalID] ?? "",
+                            title: terminalManager.displayTitle(for: terminalID),
                             isActiveWorktree: isActive,
                             isFocusedPane: isActive
                                 && worktree.focusedTerminalID == terminalID,

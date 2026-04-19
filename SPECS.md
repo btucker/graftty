@@ -30,7 +30,9 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **LAYOUT-2.8** While a worktree is in the running state, the sidebar shall display one indented child row per terminal pane beneath the worktree entry, each labeled by that pane's current title.
 
-**LAYOUT-2.9** If a terminal pane has no program-set title, then the pane's row shall display the fallback label "shell".
+**LAYOUT-2.9** If a terminal pane has no program-set title, then the pane's row shall display its last-known working directory's basename as the label. If the working directory is also unknown (root `/`, empty, or never reported), then the pane's row shall display the fallback label "shell".
+
+**LAYOUT-2.13** The application shall reject incoming OSC 2 titles whose trimmed value matches `^[A-Z_][A-Z0-9_]*=` (an uppercase identifier followed by `=`). These are the command-echo leak produced by ghostty's shell-integration `preexec` hook when the outer shell runs Espalier's injected `GHOSTTY_ZSH_ZDOTDIR=… ZDOTDIR=… exec zmx attach …` bootstrap line; propagating them to the sidebar would display an env-assignment string as the pane's title until the inner shell's first prompt overwrites it. The previously stored title (if any) is retained; if none, the pane falls back to the LAYOUT-2.9 chain.
 
 **LAYOUT-2.10** When the user clicks a pane row, the application shall select that pane's worktree and focus that specific pane.
 

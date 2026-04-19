@@ -84,10 +84,18 @@ final class TerminalManager: ObservableObject {
 
     /// Per-pane titles set by the running program via the OSC-0/OSC-2 escape
     /// sequences (e.g. `\033]0;TITLE\007`). Populated in response to
-    /// `GHOSTTY_ACTION_SET_TITLE`; cleaned up on `destroySurface`. Not
-    /// persisted — these are ephemeral runtime state that die with their
-    /// shell. The sidebar observes this to render pane labels.
+    /// `GHOSTTY_ACTION_SET_TITLE` after filtering obvious env-assignment
+    /// leaks via `PaneTitle.isLikelyEnvAssignment`; cleaned up on
+    /// `destroySurface`. Not persisted — these are ephemeral runtime
+    /// state that die with their shell. The sidebar reads this through
+    /// `displayTitle(for:)`, which also applies the PWD-basename fallback.
     @Published var titles: [TerminalID: String] = [:]
+
+    /// Per-pane last-known working directory, populated from OSC 7
+    /// (`GHOSTTY_ACTION_PWD`) and the PWD poller's dedup path. Used as
+    /// the second tier of the sidebar label fallback chain after
+    /// `titles`. Cleaned up on `destroySurface` alongside `titles`.
+    @Published var pwds: [TerminalID: String] = [:]
 
     /// Ghostty-config-derived keybind map, built in `initialize()` from the
     /// live `ghostty_config_t` via `GhosttyTriggerAdapter.resolver`.
@@ -277,6 +285,7 @@ final class TerminalManager: ObservableObject {
                 return self.resolveCwd(for: id)
             },
             onChange: { [weak self] id, pwd in
+                self?.pwds[id] = pwd
                 self?.onPWDChange?(id, pwd)
             }
         )
@@ -475,12 +484,24 @@ final class TerminalManager: ObservableObject {
     private func forgetSurfaceRuntimeState(for terminalID: TerminalID) {
         surfaces.removeValue(forKey: terminalID)
         titles.removeValue(forKey: terminalID)
+        pwds.removeValue(forKey: terminalID)
         shellReadyFired.remove(terminalID)
         // The rebuilt shell is a fresh process; drop the cached PID so
         // the PWD poller re-resolves on its next tick. (Belongs here
         // rather than in `forgetTrackingState` because the PID is tied
         // to the shell instance, not the pane lifecycle.)
         cachedShellPIDs.removeValue(forKey: terminalID)
+    }
+
+    /// The rendered sidebar label for a pane. Chains in priority order:
+    /// program-set title (already filtered at intake), PWD basename,
+    /// then empty — callers render the "shell" fallback on empty per
+    /// LAYOUT-2.9.
+    func displayTitle(for terminalID: TerminalID) -> String {
+        PaneTitle.display(
+            storedTitle: titles[terminalID],
+            pwd: pwds[terminalID]
+        )
     }
 
     /// Look up the `NSView` hosting a given terminal's surface.
@@ -701,7 +722,13 @@ final class TerminalManager: ObservableObject {
         case GHOSTTY_ACTION_SET_TITLE:
             guard let id = terminalID(from: target) else { return }
             let title = action.action.set_title.title.flatMap { String(cString: $0) } ?? ""
-            titles[id] = title
+            // Drop the env-assignment leak from ghostty's outer-shell
+            // preexec hook (see PaneTitle.isLikelyEnvAssignment). Any
+            // legitimate title pushed by the inner shell later still
+            // wins because we write the filtered value back.
+            if !PaneTitle.isLikelyEnvAssignment(title) {
+                titles[id] = title
+            }
 
         case GHOSTTY_ACTION_PWD:
             guard let id = terminalID(from: target) else { return }
@@ -710,6 +737,7 @@ final class TerminalManager: ObservableObject {
             // Keep the PWD-1.3 poll in sync: without this seed the
             // next tick would re-emit the value we just saw.
             pwdPoller?.seed(id, pwd: pwd)
+            pwds[id] = pwd
             onPWDChange?(id, pwd)
             if shellReadyFired.insert(id).inserted {
                 onShellReady?(id)
