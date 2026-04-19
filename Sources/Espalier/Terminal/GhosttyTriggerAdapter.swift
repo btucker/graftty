@@ -10,20 +10,22 @@ enum GhosttyTriggerAdapter {
     /// we don't have a string token for. Callers treat nil as "no
     /// shortcut hint" — the menu item still renders.
     static func chord(from trigger: ghostty_input_trigger_s) -> ShortcutChord? {
-        // The trigger key union is tagged: physical key, unicode codepoint,
-        // or catch-all. We only handle physical/translated key cases.
-        let keyEnum: ghostty_input_key_e
+        let mods = modifiers(trigger.mods)
         switch trigger.tag {
         case GHOSTTY_TRIGGER_PHYSICAL:
-            keyEnum = trigger.key.physical
+            guard let key = keyString(trigger.key.physical) else { return nil }
+            return ShortcutChord(key: key, modifiers: mods)
+        case GHOSTTY_TRIGGER_UNICODE:
+            // Ghostty stores `super+d`-style bindings as UNICODE triggers
+            // carrying the codepoint. Delegate to ShortcutChord's
+            // codepoint→token table so we cover letters, digits, and
+            // punctuation (`[`, `]`, `=`, `,`, `.`, etc.).
+            return ShortcutChord(codepoint: trigger.key.unicode, modifiers: mods)
         default:
-            // GHOSTTY_TRIGGER_UNICODE and GHOSTTY_TRIGGER_CATCH_ALL don't
-            // map cleanly to a named key string; return nil so the menu item
-            // renders without a shortcut hint.
+            // GHOSTTY_TRIGGER_CATCH_ALL has no key payload; render menu
+            // item without a shortcut hint.
             return nil
         }
-        guard let key = keyString(keyEnum) else { return nil }
-        return ShortcutChord(key: key, modifiers: modifiers(trigger.mods))
     }
 
     /// Factory for the closure `GhosttyKeybindBridge.init(resolver:)`
