@@ -66,6 +66,16 @@ struct MainWindow: View {
                             set: { worktree.wrappedValue.splitTree = $0 }
                         ),
                         onFocusTerminal: { terminalID in
+                            // Persist the focus change on the model BEFORE
+                            // routing to libghostty: `TERM-2.3`'s focus-
+                            // restore after a worktree switch reads
+                            // `focusedTerminalID`, so a mouse-click that
+                            // only called `setFocus` (the libghostty side)
+                            // used to let focus snap back to the first leaf
+                            // on the next return visit.
+                            if let wtPath = appState.selectedWorktreePath {
+                                appState.setFocusedTerminal(terminalID, forWorktreePath: wtPath)
+                            }
                             terminalManager.setFocus(terminalID)
                         }
                     )

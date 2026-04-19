@@ -38,6 +38,33 @@ public struct AppState: Codable, Sendable, Equatable {
         repos.removeAll { $0.path == path }
     }
 
+    /// Persist "this pane had focus last" on the worktree at `path`, so
+    /// `TERM-2.3`'s focus-restore contract survives a worktree switch.
+    ///
+    /// Every pane-focus site — sidebar pane-row click, split-tree
+    /// mouse-click, new-split creation, pane-close focus promotion,
+    /// PWD-migration graft — must call this rather than only
+    /// `TerminalManager.setFocus`. The libghostty focus alone is
+    /// ephemeral (lives on the `NSView` / surface); the model state is
+    /// the persisted truth that `selectWorktree` consults when
+    /// restoring focus on a return visit.
+    ///
+    /// Silent no-op for an unknown path — keeps the call site terse at
+    /// places like `TerminalContentView.onFocusTerminal` that don't
+    /// have a handy "this worktree exists" invariant.
+    public mutating func setFocusedTerminal(
+        _ terminalID: TerminalID?,
+        forWorktreePath path: String
+    ) {
+        for repoIdx in repos.indices {
+            for wtIdx in repos[repoIdx].worktrees.indices
+                where repos[repoIdx].worktrees[wtIdx].path == path
+            {
+                repos[repoIdx].worktrees[wtIdx].focusedTerminalID = terminalID
+            }
+        }
+    }
+
     public func worktree(forPath path: String) -> WorktreeEntry? {
         for repo in repos {
             if let wt = repo.worktrees.first(where: { $0.path == path }) {

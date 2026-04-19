@@ -225,4 +225,72 @@ struct AppStateTests {
         let contents = try FileManager.default.contentsOfDirectory(atPath: dir.path)
         #expect(!contents.contains { $0.hasPrefix("state.json.corrupt") })
     }
+
+    // MARK: setFocusedTerminal — focus-preservation on worktree switch
+    //
+    // `TERM-2.3`: "When the user switches back to a running worktree,
+    // the application shall restore keyboard focus to the pane that was
+    // focused when the user last switched away." That guarantee requires
+    // the UI to persist *which* pane had focus — otherwise a worktree
+    // switch round-trip snaps focus back to the first leaf regardless of
+    // where the user was typing.
+    //
+    // Before this helper existed, the TerminalContentView's
+    // `onFocusTerminal` callback called only `TerminalManager.setFocus`
+    // (the libghostty / SwiftUI side) and never touched the model —
+    // `focusedTerminalID` drifted to whatever was last written by
+    // sidebar clicks / pane splits / pane closes. The model shape has a
+    // dedicated mutator so every focus-change site updates the persisted
+    // truth in one call.
+
+    @Test func setFocusedTerminalUpdatesTheMatchingWorktree() {
+        let pane1 = TerminalID()
+        let pane2 = TerminalID()
+        let wt = WorktreeEntry(path: "/tmp/wt", branch: "main")
+        let repo = RepoEntry(path: "/tmp/wt", displayName: "repo", worktrees: [wt])
+        var state = AppState(repos: [repo])
+
+        state.setFocusedTerminal(pane1, forWorktreePath: "/tmp/wt")
+        #expect(state.worktree(forPath: "/tmp/wt")?.focusedTerminalID == pane1)
+
+        state.setFocusedTerminal(pane2, forWorktreePath: "/tmp/wt")
+        #expect(state.worktree(forPath: "/tmp/wt")?.focusedTerminalID == pane2)
+    }
+
+    @Test func setFocusedTerminalToNilClearsFocus() {
+        let pane1 = TerminalID()
+        var wt = WorktreeEntry(path: "/tmp/wt", branch: "main")
+        wt.focusedTerminalID = pane1
+        let repo = RepoEntry(path: "/tmp/wt", displayName: "repo", worktrees: [wt])
+        var state = AppState(repos: [repo])
+
+        state.setFocusedTerminal(nil, forWorktreePath: "/tmp/wt")
+        #expect(state.worktree(forPath: "/tmp/wt")?.focusedTerminalID == nil)
+    }
+
+    @Test func setFocusedTerminalOnlyTouchesTheMatchingWorktree() {
+        let paneA = TerminalID()
+        let paneB = TerminalID()
+        let wtA = WorktreeEntry(path: "/tmp/a", branch: "main")
+        let wtB = WorktreeEntry(path: "/tmp/b", branch: "main")
+        let repoA = RepoEntry(path: "/tmp/a", displayName: "A", worktrees: [wtA])
+        let repoB = RepoEntry(path: "/tmp/b", displayName: "B", worktrees: [wtB])
+        var state = AppState(repos: [repoA, repoB])
+
+        state.setFocusedTerminal(paneA, forWorktreePath: "/tmp/a")
+        state.setFocusedTerminal(paneB, forWorktreePath: "/tmp/b")
+
+        #expect(state.worktree(forPath: "/tmp/a")?.focusedTerminalID == paneA)
+        #expect(state.worktree(forPath: "/tmp/b")?.focusedTerminalID == paneB)
+    }
+
+    @Test func setFocusedTerminalOnUnknownPathIsANoOp() {
+        let pane = TerminalID()
+        let wt = WorktreeEntry(path: "/tmp/wt", branch: "main")
+        let repo = RepoEntry(path: "/tmp/wt", displayName: "repo", worktrees: [wt])
+        var state = AppState(repos: [repo])
+
+        state.setFocusedTerminal(pane, forWorktreePath: "/tmp/nonexistent")
+        #expect(state.worktree(forPath: "/tmp/wt")?.focusedTerminalID == nil)
+    }
 }
