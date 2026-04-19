@@ -16,6 +16,11 @@ public final class PRStatusStore {
     @ObservationIgnored private var inFlight: Set<String> = []
     @ObservationIgnored private var lastFetch: [String: Date] = [:]
     @ObservationIgnored private var failureStreak: [String: Int] = [:]
+    /// Per-path generation counter. Bumped by `clear(worktreePath:)` so
+    /// that an in-flight `performFetch` can detect when its result has
+    /// been invalidated and bail out before writing stale data back into
+    /// `infos`/`absent`.
+    @ObservationIgnored private var generation: [String: Int] = [:]
     @ObservationIgnored private var ticker: PollingTickerLike?
     @ObservationIgnored private var getRepos: @MainActor () -> [RepoEntry] = { [] }
     @ObservationIgnored private let logger = Logger(subsystem: "com.btucker.espalier", category: "PRStatusStore")
@@ -74,6 +79,29 @@ public final class PRStatusStore {
         }
         lastFetch.removeValue(forKey: worktreePath)
         failureStreak.removeValue(forKey: worktreePath)
+        // Release the refresh gate so a subsequent `refresh` isn't
+        // silently no-op'd while the prior Task drains. The Task's own
+        // `defer { inFlight.remove(...) }` is still safe (Set.remove
+        // with an absent key is a no-op).
+        inFlight.remove(worktreePath)
+        // Bump the generation so any in-flight fetch's late write
+        // (after its await resumes) can detect it's been invalidated
+        // and discard its result.
+        generation[worktreePath, default: 0] += 1
+    }
+
+    // Test hooks — not used in production. Kept internal so they're
+    // reachable from EspalierKitTests without widening the public API.
+    func generationForTesting(_ worktreePath: String) -> Int {
+        generation[worktreePath, default: 0]
+    }
+
+    func isInFlightForTesting(_ worktreePath: String) -> Bool {
+        inFlight.contains(worktreePath)
+    }
+
+    func beginInFlightForTesting(_ worktreePath: String) {
+        inFlight.insert(worktreePath)
     }
 
     /// Notify the store that a worktree's branch has changed. Drops the
@@ -93,6 +121,12 @@ public final class PRStatusStore {
     private func performFetch(worktreePath: String, repoPath: String, branch: String) async {
         defer { inFlight.remove(worktreePath) }
 
+        // Snapshot the generation we started under. `clear()` bumps it;
+        // if it differs after any `await`, this fetch's result is stale
+        // — Andy already expressed "forget this worktree" — and we bail
+        // before writing back to `infos`/`absent`.
+        let fetchGeneration = generation[worktreePath, default: 0]
+
         let origin: HostingOrigin?
         if let cached = hostByRepo[repoPath] {
             origin = cached
@@ -100,6 +134,7 @@ public final class PRStatusStore {
             origin = await detectHost(repoPath)
             hostByRepo[repoPath] = origin
         }
+        if generation[worktreePath, default: 0] != fetchGeneration { return }
         guard let origin, origin.provider != .unsupported,
               let fetcher = fetcherFor(origin.provider) else {
             markAbsent(worktreePath)
@@ -109,6 +144,7 @@ public final class PRStatusStore {
 
         do {
             let pr = try await fetcher.fetch(origin: origin, branch: branch)
+            if generation[worktreePath, default: 0] != fetchGeneration { return }
             lastFetch[worktreePath] = Date()
             failureStreak[worktreePath] = 0
             if let pr {
@@ -125,6 +161,7 @@ public final class PRStatusStore {
                 markAbsent(worktreePath)
             }
         } catch {
+            if generation[worktreePath, default: 0] != fetchGeneration { return }
             logger.info("PR fetch failed for \(worktreePath): \(String(describing: error))")
             failureStreak[worktreePath, default: 0] += 1
             lastFetch[worktreePath] = Date()
