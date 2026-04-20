@@ -121,4 +121,31 @@ struct PaneTitleDisplayTests {
         #expect(PaneTitle.display(storedTitle: "", pwd: nil) == "")
         #expect(PaneTitle.display(storedTitle: nil, pwd: "") == "")
     }
+
+    /// LAYOUT-2.14: a program pushing OSC-2 with a whitespace-only title
+    /// (rare — usually a buggy title-setting program — but observed in
+    /// practice) used to store `"   "` as the pane label. The sidebar
+    /// then rendered blank space where a label belongs, making the pane
+    /// look mislabelled or broken. Treat whitespace-only as "no title"
+    /// and fall through to the PWD basename like nil/empty does.
+    @Test("whitespace-only stored title falls through to PWD basename")
+    func ignoresWhitespaceOnlyStoredTitle() {
+        #expect(PaneTitle.display(storedTitle: "   ", pwd: "/tmp/work") == "work")
+        #expect(PaneTitle.display(storedTitle: "\t", pwd: "/tmp/work") == "work")
+    }
+
+    @Test("whitespace-only stored title with no PWD still returns empty")
+    func whitespaceOnlyStoredTitleWithoutPWDIsEmpty() {
+        #expect(PaneTitle.display(storedTitle: "   ", pwd: nil) == "")
+        #expect(PaneTitle.display(storedTitle: "\t\t", pwd: "") == "")
+    }
+
+    @Test("stored title with surrounding whitespace is preserved as-is")
+    func preservesSurroundingWhitespaceInContentfulTitle() {
+        // Trim-for-blankness check is a blank-vs-content test, not a
+        // normalize-the-title operation. A title like " claude " keeps
+        // its spaces so a program that deliberately formatted its own
+        // padding gets honored.
+        #expect(PaneTitle.display(storedTitle: " claude ", pwd: nil) == " claude ")
+    }
 }

@@ -2148,3 +2148,31 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 - The WorktreeStatsStore move-to-EspalierKit for testable DIVERGE-4.5 remains the biggest open item.
 - Surface `SocketServer.lastStartError` in the Espalier menu (cycle 95's still-open follow-on).
 - Andy's keyboard-first worktree navigation (Cmd+1..9 / arrow keys) — feature request, not a bug.
+
+## Cycle 109 — 2026-04-20 (whitespace-only OSC-2 titles render as blank pane labels — LAYOUT-2.14)
+
+### Explored
+- Ranged across CLI edge cases (negative `--clear-after`, out-of-range `pane close` ids, stdin-pipe patterns), WebSession write/read race (theoretical, NIO serializes), WebStaticResources asset allowlist (favicon falls through to SPA, harmless). None clean-cycle fits.
+- Found it in `PaneTitle.display`: `if let t = storedTitle, !t.isEmpty { return t }` accepts any non-empty string, including `"   "` or `"\t"`.
+
+### Diagnosed
+- An OSC-2 event with whitespace-only title payload gets stored via `titles[id] = title` in `TerminalManager.handleAction` (the env-assignment guard doesn't reject whitespace-only). `PaneTitle.display` then returns the whitespace string, and the sidebar renders visible blank space where a label should go — pane looks mislabelled or broken.
+- Real-world trigger: a program that sets its title based on a computed string that happened to evaluate to empty / whitespace (e.g., a half-loaded shell prompt). Rare, but observable.
+
+### Fixed
+- `display` now checks `!t.trimmingCharacters(in: .whitespaces).isEmpty` before returning the stored title. Contentful titles with surrounding whitespace (e.g. `" claude "`) still pass through verbatim — the check is blank-vs-content, not a trim operation.
+
+### Spec
+- Added **LAYOUT-2.14** (slotted before LAYOUT-2.13 so the existing identifier stays stable).
+
+### Tests
+- Three new cases in `PaneTitle.display` suite: whitespace-only → PWD basename, whitespace-only + no PWD → empty, contentful-with-surrounding-space preserved verbatim.
+- Failed before the fix with `"   " == "work"` assertion, pass after. 521/521 overall.
+
+### Commit
+- `fix(pane-title): fall through to PWD basename on whitespace-only stored title (LAYOUT-2.14)`
+
+### Try next cycle
+- Still open: move `WorktreeStatsStore` to EspalierKit for DIVERGE-4.5 unit coverage.
+- `SocketServer.lastStartError` UI surfacing (cycle 95 follow-on).
+- Keyboard-first worktree switching (feature).

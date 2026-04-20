@@ -62,8 +62,14 @@ public enum PaneTitle {
     /// PWD basename, and empty string (view draws "shell"). Kept as a
     /// single function so `SidebarView` and the CLI `listPanes` response
     /// agree on the rendered label.
+    ///
+    /// LAYOUT-2.14: a stored title that is whitespace-only falls through
+    /// to the PWD basename rather than rendering as visible blank space.
+    /// Any stored title with real content is preserved verbatim,
+    /// including leading / trailing whitespace the program formatted
+    /// deliberately.
     public static func display(storedTitle: String?, pwd: String?) -> String {
-        if let t = storedTitle, !t.isEmpty { return t }
+        if let t = storedTitle, !t.trimmingCharacters(in: .whitespaces).isEmpty { return t }
         if let pwd, let basename = basenameLabel(pwd: pwd) { return basename }
         return ""
     }
