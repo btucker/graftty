@@ -51,7 +51,7 @@ struct MainWindow: View {
                     repoName: selectedRepo?.displayName,
                     worktreeDisplayName: worktreeDisplayName,
                     worktreePath: selectedWorktree?.path,
-                    branchName: selectedWorktree?.branch,
+                    branchName: selectedWorktree?.displayBranch,
                     isHomeCheckout: isHomeCheckout,
                     prInfo: prInfo,
                     theme: terminalManager.theme,

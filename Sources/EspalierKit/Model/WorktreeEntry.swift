@@ -230,4 +230,15 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     private static func significantComponents(_ path: String) -> [String] {
         (path as NSString).pathComponents.filter { $0 != "/" }
     }
+
+    /// Branch name sanitized for rendering in the UI (breadcrumb,
+    /// sidebar row). Strips Unicode bidirectional-override scalars so
+    /// an attacker-controlled branch name (e.g. `feat\u{202E}lanigiro`)
+    /// can't visually deceive via RTL-reversal — same Trojan Source
+    /// defense `PR-5.5` applies to PR titles. `branch` itself stays
+    /// raw so `git` subprocess commands and `gh pr list --head` still
+    /// operate on the real ref.
+    public var displayBranch: String {
+        NotifyInputValidation.strippingBidiOverrides(branch)
+    }
 }

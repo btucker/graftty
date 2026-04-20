@@ -553,4 +553,26 @@ struct WorktreeEntryTests {
         )
         #expect(newFocus == nil)
     }
+
+    /// Branch names can contain Unicode bidirectional-override scalars
+    /// — git accepts most Unicode in ref names, and a collaborator (or
+    /// compromised account) with push access can ship a branch named
+    /// `feat\u{202E}lanigiro` which renders RTL-reversed in the
+    /// breadcrumb and sidebar. Same Trojan Source visual deception
+    /// (CVE-2021-42574) that `PR-5.5` blocks for PR titles; the
+    /// branch name comes from external data too, so strip (don't
+    /// reject). `wt.branch` stays raw so `git` / `gh pr list` can use
+    /// the real ref; `wt.displayBranch` is the sanitized version the
+    /// render sites read.
+    @Test func displayBranchStripsBidiOverrides() {
+        let entry = WorktreeEntry(path: "/p", branch: "feat\u{202E}lanigiro")
+        #expect(entry.branch == "feat\u{202E}lanigiro",
+                "raw branch must be preserved for git operations")
+        #expect(entry.displayBranch == "featlanigiro")
+    }
+
+    @Test func displayBranchUnchangedForRegularNames() {
+        #expect(WorktreeEntry(path: "/p", branch: "main").displayBranch == "main")
+        #expect(WorktreeEntry(path: "/p", branch: "feat/new-ui").displayBranch == "feat/new-ui")
+    }
 }

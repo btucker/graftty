@@ -211,9 +211,12 @@ struct WorktreeRow: View {
 
             // Secondary label: git branch, dimmed. Skip when it duplicates
             // the displayName (when the directory name matches the branch,
-            // showing both would be noise).
-            if entry.branch != displayName {
-                Text(entry.branch)
+            // showing both would be noise). Render the sanitized
+            // `displayBranch` so a BIDI-override in the ref name can't
+            // visually deceive via RTL-reversal; the raw `branch` stays
+            // available for the dedup comparison and git operations.
+            if entry.displayBranch != displayName {
+                Text(entry.displayBranch)
                     .font(.caption)
                     .foregroundColor(theme.foreground.opacity(0.45))
             }
