@@ -87,7 +87,7 @@ final class WebServerController: ObservableObject {
                 guard let api = try? TailscaleLocalAPI.autoDetected() else { return false }
                 guard let whois = try? await api.whois(peerIP: peerIP) else { return false }
                 return whois.loginName == ownerLogin
-            }
+            }.allowingLoopback()
             let provider = sessionsProvider ?? { [] }
             let s = WebServer(
                 config: .init(

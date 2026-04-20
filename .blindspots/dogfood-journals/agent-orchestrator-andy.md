@@ -1668,3 +1668,35 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 ### Try next cycle
 - Bundle the recent web UI work (WEB-5.4 picker, absolute asset paths, fd-close fix) and open a PR.
 - More adversarial testing: what happens if you quit Espalier while 10 web clients are mid-stream?
+
+## Cycle 93 — 2026-04-19 (loopback bind is dead — WEB-2.5)
+
+### Explored
+- After cycle 92 cleared up the fd-leak orphan-zmx issue, picked at the web/Tailscale auth path. Tried a naïve local probe: `curl http://127.0.0.1:8799/` → `403 forbidden`.
+
+### Diagnosed
+- `WebServerController.reconcile()` binds `127.0.0.1` alongside each Tailscale IP (WEB-1.1), but the `AuthPolicy` closure unconditionally calls `api.whois(peerIP:)`.
+- `tailscale whois 127.0.0.1` returns "peer not found". Loopback requests fail whois → WEB-2.3 → HTTP 403.
+- Net effect: the 127.0.0.1 bind is cargo — it consumes the port locally (useful for noticing double-launches) but never serves a byte.
+
+### Broke
+- User on the same Mac as Espalier cannot use the web UI via `http://127.0.0.1:<port>/`. Remote Tailscale clients work; local does not. Silently wrong, easy to assume "no web access at all" and blame the server.
+
+### Fixed
+- New `AuthPolicy.allowingLoopback()` decorator in `WebServer.swift` — wraps any policy with a fast-path that approves `127.0.0.1` / `::1` without consulting the wrapped policy. `WebServerController` composes it onto its Tailscale-whois policy.
+
+### Spec
+- Added **WEB-2.5** (loopback bypass), with the rationale tied back to WEB-1.1 and WEB-2.3.
+
+### Tests
+- New `loopbackBypassAllowsLocalConnection` — integration test: deny-all policy + `.allowingLoopback()`, 127.0.0.1 GET / expects 200. Fails without the decorator; passes with it.
+- New `loopbackBypassDelegatesForNonLoopbackPeer` — unit test of decorator.
+- Both added, failing ahead of the fix (compile error on the decorator name), passing after. 487/487 overall.
+
+### Commit
+- `fix(web): allow loopback peers without Tailscale whois (WEB-2.5)`
+
+### Try next cycle
+- Survey the AuthPolicy flow for other latent drift: do WS upgrades honor loopback bypass too? (Expect yes since WSS uses the same closure, but worth confirming in a test.)
+- Bundle + install: keep verifying the picker works end-to-end under a fresh launch.
+- Adversarial: `curl -H "X-Forwarded-For: owner-ip" http://other-ts-peer:8799/` — does our WebServer honor forwarded peer IPs? (It shouldn't; peer comes from the socket.)

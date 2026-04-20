@@ -79,6 +79,24 @@ public final class WebServer {
     public struct AuthPolicy {
         public let isAllowed: @Sendable (String) async -> Bool
         public init(isAllowed: @escaping @Sendable (String) async -> Bool) { self.isAllowed = isAllowed }
+
+        /// Wrap this policy so that loopback peers (`127.0.0.1`, `::1`)
+        /// are approved without consulting the underlying policy. WEB-2.5.
+        /// The bundled server binds to `127.0.0.1` (WEB-1.1) so the local
+        /// user can reach the web UI without routing through Tailscale,
+        /// but `api.whois(peerIP: "127.0.0.1")` returns "peer not found" —
+        /// without this bypass every loopback request hits 403.
+        public func allowingLoopback() -> AuthPolicy {
+            let underlying = isAllowed
+            return AuthPolicy { peer in
+                if AuthPolicy.isLoopback(peer) { return true }
+                return await underlying(peer)
+            }
+        }
+
+        public static func isLoopback(_ peer: String) -> Bool {
+            peer == "127.0.0.1" || peer == "::1" || peer == "0:0:0:0:0:0:0:1"
+        }
     }
 
     public private(set) var status: Status = .stopped

@@ -145,6 +145,38 @@ struct WebServerAuthTests {
                 "raw-socket read got \(body.count) bytes but Content-Length declared \(expected) — truncated")
     }
 
+    /// WEB-2.5 — loopback peers bypass the Tailscale-whois gate. The
+    /// bundled server binds to `127.0.0.1` (WEB-1.1) so the user running
+    /// Espalier can hit the web UI directly from the same Mac; without a
+    /// loopback bypass every localhost request hits whois (which returns
+    /// "peer not found" for 127.0.0.1) and is rejected 403, making the
+    /// loopback bind dead.
+    @Test func loopbackBypassAllowsLocalConnection() async throws {
+        let denyAll = WebServer.AuthPolicy(isAllowed: { _ in false })
+        let server = WebServer(
+            config: Self.makeConfig(),
+            auth: denyAll.allowingLoopback(),
+            bindAddresses: ["127.0.0.1"]
+        )
+        try server.start()
+        defer { server.stop() }
+        guard case let .listening(_, port) = server.status else {
+            Issue.record("server not listening"); return
+        }
+        let (_, response) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/")!)
+        let http = response as! HTTPURLResponse
+        #expect(http.statusCode == 200, "loopback request should bypass whois and be served")
+    }
+
+    @Test func loopbackBypassDelegatesForNonLoopbackPeer() async {
+        let allowSpecific = WebServer.AuthPolicy(isAllowed: { $0 == "100.64.0.5" })
+        let wrapped = allowSpecific.allowingLoopback()
+        await #expect(wrapped.isAllowed("127.0.0.1") == true)
+        await #expect(wrapped.isAllowed("::1") == true)
+        await #expect(wrapped.isAllowed("100.64.0.5") == true)
+        await #expect(wrapped.isAllowed("100.64.0.7") == false)
+    }
+
     @Test func appJSBodyLengthMatchesContentLength() async throws {
         let server = WebServer(
             config: Self.makeConfig(),

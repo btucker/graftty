@@ -641,6 +641,8 @@ The sweep runs once at `EspalierApp.init()`. `ZmxLauncher.subprocessEnv` additio
 
 **WEB-2.4** When Tailscale is not running, the application shall refuse all incoming connections (the server is not bound; connections are refused at TCP).
 
+**WEB-2.5** When the peer IP is a loopback address (`127.0.0.1` or `::1`), the application shall bypass the Tailscale-whois check and serve the request as if authorized. Rationale: the local user has direct access to the machine (nothing crosses the network); `whois` returns "peer not found" for loopback so without the bypass the `127.0.0.1` bind required by `WEB-1.1` would be dead, and `http://127.0.0.1:<port>/` would always 403.
+
 ### 15.3 Protocol
 
 **WEB-3.1** The application shall serve a single static page at `/` (and `/index.html`) that bootstraps the bundled web client.
