@@ -202,9 +202,12 @@ public final class PRStatusStore {
             logger.info("PR fetch failed for \(worktreePath): \(String(describing: error))")
             failureStreak[worktreePath, default: 0] += 1
             lastFetch[worktreePath] = Date()
-            if infos[worktreePath] != nil {
-                infos.removeValue(forKey: worktreePath)
-            }
+            // Keep the last-known `infos[worktreePath]` in place. A
+            // transient failure (network blip, rate limit, expired gh
+            // auth) shouldn't erase the user-visible badge — the next
+            // successful fetch will either confirm or update it, and
+            // the backoff cadence (`PR-7.2`) handles the retry
+            // timing. `PR-7.10`.
         }
     }
 
