@@ -364,7 +364,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **PWD-2.2** When a reassignment leaves the source worktree with no remaining panes, the application shall transition the source worktree to the closed state.
 
-**PWD-2.3** When a reassignment completes, the application shall set the destination worktree as the selected worktree and focus the moved pane so the UI follows the pane the user is actively typing into.
+**PWD-2.3** When a reassignment completes, the application shall set the destination worktree as the selected worktree and focus the moved pane — but only when the reassigned pane was the focused pane of the currently-selected worktree at the moment of the move. For any reassignment of a non-focused pane (a background shell's `cd`, e.g. an autonomous claude-code session in a worktree the user isn't looking at), the sidebar shall reflect the move via `PWD-2.1` / `PWD-2.2` but the user's current selection shall not change. This guards against multiple concurrent agent sessions autonomously yanking the user's view around; without the gate a single background `cd` hijacks the UI mid-typing.
 
 **PWD-2.4** When the destination worktree was previously in the closed state, the application shall transition it to the running state as part of the reassignment.
 

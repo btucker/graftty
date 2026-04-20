@@ -875,14 +875,24 @@ struct EspalierApp: App {
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].state = .running
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].focusedTerminalID = terminalID
 
-        // Follow the pane with the UI: switch the selected worktree to the
-        // one the terminal just moved into, and re-establish libghostty +
-        // AppKit focus so typing continues to route to this pane without
-        // the user having to click. The previous sidebar highlight (on the
-        // source worktree) naturally moves with `selectedWorktreePath`.
+        // Follow the pane with the UI ONLY when the reassigned pane was the
+        // user's active typing target — i.e. the focused pane of the
+        // currently-selected worktree. `PWDReassignmentPolicy` encodes the
+        // decision. Unconditionally switching selection used to hijack the
+        // user's view whenever ANY background pane `cd`'d across a
+        // worktree boundary — Andy's 3–6 concurrent Claude-session setup
+        // made that immediately pathological. `PWD-2.3` (revised).
         let targetPath = appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].path
-        appState.wrappedValue.selectedWorktreePath = targetPath
-        terminalManager.setFocus(terminalID)
+        let follow = PWDReassignmentPolicy.shouldFollowToDestination(
+            selectedWorktreePath: appState.wrappedValue.selectedWorktreePath,
+            sourceWorktreePath: sourceWt.path,
+            sourceFocusedTerminalID: sourceWt.focusedTerminalID,
+            reassignedTerminalID: terminalID
+        )
+        if follow {
+            appState.wrappedValue.selectedWorktreePath = targetPath
+            terminalManager.setFocus(terminalID)
+        }
     }
 
     /// Ensure a path ends with `/` so prefix matching can't falsely match
