@@ -2,7 +2,9 @@ import Foundation
 import Darwin
 
 /// `proc_pidinfo(PROC_PIDVNODEPATHINFO)` wrapper — reads another
-/// process's cwd. Backs the shell-independent half of `PWD-1.3`.
+/// process's cwd. Backs the right-click "Move to current worktree"
+/// menu (PWD-1.1): given the inner shell's PID, we ask the kernel
+/// where it sits without making the shell tell us.
 public enum PIDCwdReader {
 
     /// Nil if the process is gone, unreadable, or its cdir has no

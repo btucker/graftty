@@ -172,4 +172,34 @@ public struct AppState: Codable, Sendable, Equatable {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Espalier")
     }
+
+    /// Longest-prefix match of `path` against every worktree across every
+    /// repo. Returns the matching `(repo, worktree)` indices or nil when
+    /// no worktree path is a prefix of `path`. Used by both the menu's
+    /// auto-detect entry (which needs the matched worktree's *name* to
+    /// label the action) and the move primitive that performs the
+    /// reassignment. Trailing-slash normalization on both sides prevents
+    /// `/r/feat` from falsely matching `/r/feature`.
+    public func worktreeIndicesMatching(path: String) -> (repo: Int, worktree: Int)? {
+        var bestRepoIdx: Int?
+        var bestWorktreeIdx: Int?
+        var bestLen = 0
+        let normalized = Self.withTrailingSlash(path)
+        for (ri, repo) in repos.enumerated() {
+            for (wi, wt) in repo.worktrees.enumerated() {
+                let candidate = Self.withTrailingSlash(wt.path)
+                if normalized.hasPrefix(candidate), candidate.count > bestLen {
+                    bestLen = candidate.count
+                    bestRepoIdx = ri
+                    bestWorktreeIdx = wi
+                }
+            }
+        }
+        guard let bestRepoIdx, let bestWorktreeIdx else { return nil }
+        return (bestRepoIdx, bestWorktreeIdx)
+    }
+
+    private static func withTrailingSlash(_ path: String) -> String {
+        path.hasSuffix("/") ? path : path + "/"
+    }
 }

@@ -389,4 +389,58 @@ struct AppStateTests {
         #expect(removed == nil)
         #expect(state.worktree(forPath: "/tmp/r") != nil)
     }
+
+    // MARK: worktreeIndicesMatching — backs the "Move to current
+    // worktree" menu's auto-detect label and the model-side reassignment
+    // primitive. Both share this helper to stay in lockstep.
+
+    @Test func worktreeIndicesMatching_returnsLongestPrefix() {
+        let state = AppState(repos: [
+            RepoEntry(path: "/r", displayName: "r", worktrees: [
+                WorktreeEntry(path: "/r", branch: "main"),
+                WorktreeEntry(path: "/r/wt/feature", branch: "feature"),
+            ]),
+        ])
+        // PWD inside the linked worktree must beat the main checkout
+        // even though both `/r` and `/r/wt/feature` are prefixes.
+        let match = state.worktreeIndicesMatching(path: "/r/wt/feature/src/foo.swift")
+        #expect(match?.repo == 0)
+        #expect(match?.worktree == 1)
+    }
+
+    @Test func worktreeIndicesMatching_returnsNilForUnrelatedPath() {
+        let state = AppState(repos: [
+            RepoEntry(path: "/r", displayName: "r", worktrees: [
+                WorktreeEntry(path: "/r", branch: "main"),
+            ]),
+        ])
+        #expect(state.worktreeIndicesMatching(path: "/somewhere/else") == nil)
+    }
+
+    @Test func worktreeIndicesMatching_doesNotFalsePartialPrefixMatch() {
+        // Trailing-slash normalization: `/r/feat` must not match a
+        // worktree at `/r/feature` by raw `hasPrefix`.
+        let state = AppState(repos: [
+            RepoEntry(path: "/r", displayName: "r", worktrees: [
+                WorktreeEntry(path: "/r/feature", branch: "feature"),
+            ]),
+        ])
+        #expect(state.worktreeIndicesMatching(path: "/r/feat") == nil)
+        #expect(state.worktreeIndicesMatching(path: "/r/feature/src") != nil)
+        #expect(state.worktreeIndicesMatching(path: "/r/feature") != nil)
+    }
+
+    @Test func worktreeIndicesMatching_searchesAcrossRepos() {
+        let state = AppState(repos: [
+            RepoEntry(path: "/a", displayName: "a", worktrees: [
+                WorktreeEntry(path: "/a", branch: "main"),
+            ]),
+            RepoEntry(path: "/b", displayName: "b", worktrees: [
+                WorktreeEntry(path: "/b", branch: "main"),
+            ]),
+        ])
+        let match = state.worktreeIndicesMatching(path: "/b/lib/x.swift")
+        #expect(match?.repo == 1)
+        #expect(match?.worktree == 0)
+    }
 }

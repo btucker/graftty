@@ -43,8 +43,9 @@ public final class ZmxLauncher: Sendable {
     }
 
     /// Path to the per-session log file the zmx daemon writes to.
-    /// `PWD-1.3` parses these for the `pty spawned session=… pid=<N>`
-    /// line to recover the inner-shell PID.
+    /// `ZmxPIDLookup` parses these for the `pty spawned session=… pid=<N>`
+    /// line to recover the inner-shell PID (used by the right-click
+    /// "Move to current worktree" menu, PWD-1.1).
     public func logFile(forSession sessionName: String) -> URL {
         zmxDir
             .appendingPathComponent("logs", isDirectory: true)

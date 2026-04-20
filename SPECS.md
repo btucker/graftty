@@ -398,15 +398,15 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **PERSIST-4.1** The application shall not persist shell scrollback, terminal screen buffer content, or the specific processes that were running.
 
-## 7. PWD-Aware Pane Routing
+## 7. Manual Pane Routing
 
-### 7.1 Detection
+### 7.1 User-Initiated Move
 
-**PWD-1.1** When a terminal shell reports a new working directory via OSC 7, the application shall evaluate whether the pane belongs under a different worktree in the sidebar.
+**PWD-1.1** When the user opens the right-click context menu on a pane in the sidebar, the application shall offer a "Move to <worktree-name>" entry that targets the worktree whose filesystem path is the longest prefix of the pane's inner-shell working directory across all repos. The shell's working directory is resolved by reading the inner-shell PID from the zmx session log at `<ZMX_DIR>/logs/<session>.log` (falling back to the rotated sibling `<ZMX_DIR>/logs/<session>.log.old` when the spawn line is no longer in the current file) and querying its current working directory via `proc_pidinfo(PROC_PIDVNODEPATHINFO)`.
 
-**PWD-1.2** The application shall select the destination worktree as the one whose filesystem path is the longest prefix of the reported PWD across all repos. If no worktree path is a prefix of the PWD, the pane shall remain in its current worktree.
+**PWD-1.2** If no worktree path is a prefix of the inner-shell working directory, or the matching worktree is the pane's current host, then the application shall render the entry from `PWD-1.1` as a disabled "Move to current worktree" item so the user can see *why* the action is unavailable rather than have it disappear.
 
-**PWD-1.3** If a pane's inner shell does not emit OSC 7 (e.g. a `zmx` session whose inner shell predates `ZMX-6.3` and therefore has no Ghostty zsh integration loaded, or a shell for which Espalier does not install integration), the application shall poll that pane's inner-shell working directory at least every 3 seconds and, when the polled value differs from the last known PWD for that pane, invoke the same reassignment-evaluation flow required by `PWD-1.1` using the polled value. Espalier resolves the inner-shell PID by reading the zmx session log at `<ZMX_DIR>/logs/<session>.log` for the most recent `pty spawned session=<session> pid=<N>` line and, if no such line is present in the current file, falling back to the rotated sibling `<ZMX_DIR>/logs/<session>.log.old` — zmx rotates its per-session log once it reaches its internal size threshold, so for long-lived sessions the spawn line that identifies the live PID often sits in the rotated file. Once resolved, the PID's current working directory is queried via `proc_pidinfo(PROC_PIDVNODEPATHINFO)`. When no PID is discoverable (both files missing, no `pty spawned` line in either, cached PID no longer responds), the poll shall skip that pane for the current tick. OSC 7 events and polled values share one last-known-PWD memory per pane so a cd observed by one source does not re-fire via the other.
+**PWD-1.3** When the user opens the right-click context menu on a pane, the application shall additionally offer a "Move to worktree" submenu listing every other worktree in the same repository as the pane's current host. Selecting an entry shall move the pane to that worktree regardless of the pane's current shell working directory. Cross-repository moves are out of scope — the submenu shall not list worktrees from other repos.
 
 ### 7.2 Reassignment
 

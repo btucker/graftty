@@ -33,6 +33,7 @@ struct MainWindow: View {
                 onAddPath: addPath,
                 onStopWorktree: stopWorktreeWithConfirmation,
                 onDeleteWorktree: deleteWorktreeWithConfirmation,
+                onMovePane: movePane,
                 onAddWorktree: addWorktree
             )
             .navigationSplitViewColumnWidth(
@@ -535,6 +536,15 @@ struct MainWindow: View {
         alert.addButton(withTitle: "Keep")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         performDeleteWorktree(worktreePath)
+    }
+
+    private func movePane(_ terminalID: TerminalID, to newPWD: String) {
+        EspalierApp.reassignPaneByPWD(
+            appState: $appState,
+            terminalManager: terminalManager,
+            terminalID: terminalID,
+            newPWD: newPWD
+        )
     }
 
     private func stopWorktreeWithConfirmation(_ worktreePath: String) {

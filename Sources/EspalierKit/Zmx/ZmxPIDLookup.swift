@@ -6,7 +6,9 @@ import Foundation
 ///     [<ts>] [info] (default): pty spawned session=<name> pid=<N>
 ///
 /// line per spawn to `<ZMX_DIR>/logs/<session>.log`; the most recent
-/// match is the live PID. Backs `PWD-1.3` when OSC 7 is silent.
+/// match is the live PID. Backs the right-click "Move to current
+/// worktree" menu (PWD-1.1), which needs the inner-shell PID to ask
+/// the kernel for its cwd.
 public enum ZmxPIDLookup {
 
     public static func shellPID(
@@ -33,7 +35,7 @@ public enum ZmxPIDLookup {
     /// too fresh to contain one. We look in the current log first (so a
     /// post-rotation respawn supersedes stale PIDs in `.log.old`) and
     /// fall back to the rotated file only when the current log has no
-    /// matching line — otherwise PWD-1.3's PID-based PWD-follow fallback
+    /// matching line — otherwise the PID-based cwd lookup (PWD-1.1)
     /// stays silent for the remaining lifetime of every long-lived
     /// session, which is exactly how this bug manifested in practice.
     public static func shellPID(logFile: URL, sessionName: String) -> Int32? {

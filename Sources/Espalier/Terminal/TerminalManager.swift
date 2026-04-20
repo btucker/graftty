@@ -68,19 +68,13 @@ final class TerminalManager: ObservableObject {
     /// fall back to libghostty's default $SHELL spawn.
     var zmxLauncher: ZmxLauncher?
 
-    /// `PWD-1.3` fallback for panes whose inner shell doesn't emit OSC 7.
-    /// Created in `initialize()` once the zmx launcher is known.
-    private var pwdPoller: SurfacePWDPoller?
-
-    /// `(terminalID → inner-shell PID)` cache so the 3s poll only
-    /// re-parses the zmx log on a PID miss (shell died / respawn).
+    /// `(terminalID → inner-shell PID)` cache. Resolving the shell PID
+    /// from a zmx session log involves a disk read; the menu's "Move to
+    /// current worktree" action calls `shellCwd(for:)` per right-click,
+    /// so a one-shot lookup that re-uses the cached PID across clicks
+    /// keeps that interaction snappy. Entries are dropped lazily on miss
+    /// (shell exited / respawned) and via `forgetSurfaceRuntimeState`.
     private var cachedShellPIDs: [TerminalID: Int32] = [:]
-
-    private var pwdPollTimer: Timer?
-
-    /// 3s balances cd→sidebar latency against disk + syscall cost
-    /// (log read on PID miss + `proc_pidinfo` per pane per tick).
-    private static let pwdPollInterval: TimeInterval = 3
 
     /// Theme colors pulled from the ghostty config (background, foreground).
     /// Emitted post-`initialize()` once the config is read; defaults to
@@ -97,9 +91,9 @@ final class TerminalManager: ObservableObject {
     @Published var titles: [TerminalID: String] = [:]
 
     /// Per-pane last-known working directory, populated from OSC 7
-    /// (`GHOSTTY_ACTION_PWD`) and the PWD poller's dedup path. Used as
-    /// the second tier of the sidebar label fallback chain after
-    /// `titles`. Cleaned up on `destroySurface` alongside `titles`.
+    /// (`GHOSTTY_ACTION_PWD`). Used as the second tier of the sidebar
+    /// label fallback chain after `titles`. Cleaned up on
+    /// `destroySurface` alongside `titles`.
     @Published var pwds: [TerminalID: String] = [:]
 
     /// Ghostty-config-derived keybind map, built in `initialize()` from the
@@ -138,12 +132,6 @@ final class TerminalManager: ObservableObject {
     /// removes the pane from the split tree and calls `destroySurface`.
     /// Without this wired, the surface lingers and the pane appears hung.
     var onCloseRequest: ((TerminalID) -> Void)?
-
-    /// Called when a shell reports a new working directory (OSC 7 →
-    /// `GHOSTTY_ACTION_PWD`). The host decides whether to re-home the
-    /// pane under a different worktree in the sidebar based on which
-    /// worktree path is the longest prefix of the new PWD.
-    var onPWDChange: ((TerminalID, String) -> Void)?
 
     /// Called on shell-integration "command finished" events (requires
     /// ghostty shell integration to be sourced, which our env injection
@@ -217,7 +205,6 @@ final class TerminalManager: ObservableObject {
         if let wakeupObserver {
             NotificationCenter.default.removeObserver(wakeupObserver)
         }
-        pwdPollTimer?.invalidate()
     }
 
     /// One-time setup: calls `ghostty_init`, builds the shared `ghostty_app_t`,
@@ -277,45 +264,19 @@ final class TerminalManager: ObservableObject {
             )
         }
         readSplitPreserveZoomConfig()
-        startPWDPolling()
     }
 
-    /// Build `pwdPoller` and schedule its tick timer.
-    /// Resolver chain per tick: cached PID → `proc_pidinfo`; on miss,
-    /// re-parse the zmx session log for the newest spawn and re-cache.
-    private func startPWDPolling() {
-        let poller = SurfacePWDPoller(
-            resolve: { [weak self] id in
-                guard let self else { return nil }
-                return self.resolveCwd(for: id)
-            },
-            onChange: { [weak self] id, pwd in
-                self?.pwds[id] = pwd
-                self?.onPWDChange?(id, pwd)
-            }
-        )
-        self.pwdPoller = poller
-
-        // Fires on the main run loop, matching the poller's MainActor isolation.
-        pwdPollTimer = Timer.scheduledTimer(
-            withTimeInterval: Self.pwdPollInterval,
-            repeats: true
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.pwdPoller?.pollOnce()
-            }
-        }
-    }
-
-    /// Returns the inner shell's cwd for `id`, or nil if any step of
-    /// the cache → log → PID → cwd lookup fails.
-    private func resolveCwd(for id: TerminalID) -> String? {
+    /// Best-effort lookup of the inner shell's current working directory
+    /// for `id`. Returns nil when the zmx launcher is unavailable, the
+    /// session log doesn't yield a PID, or the kernel rejects the
+    /// `proc_pidinfo` call (process gone). Drives the right-click "Move
+    /// to current worktree" menu item — a stale or missing answer just
+    /// disables that item, never breaks anything.
+    func shellCwd(for id: TerminalID) -> String? {
         if let cached = cachedShellPIDs[id],
            let cwd = PIDCwdReader.cwd(ofPID: cached) {
             return cwd
         }
-        // Either no cached PID yet, or the cached one has exited.
-        // Drop stale and re-derive from the log.
         cachedShellPIDs.removeValue(forKey: id)
         guard let launcher = zmxLauncher, launcher.isAvailable else { return nil }
         let sessionName = launcher.sessionName(for: id.id)
@@ -415,7 +376,6 @@ final class TerminalManager: ObservableObject {
             ) else { continue }
             surfaces[terminalID] = handle
             created[terminalID] = handle
-            trackForPWDPoll(terminalID: terminalID, initialPWD: worktreePath)
         }
         return created
     }
@@ -445,16 +405,7 @@ final class TerminalManager: ObservableObject {
             terminalManager: self
         ) else { return nil }
         surfaces[terminalID] = handle
-        trackForPWDPoll(terminalID: terminalID, initialPWD: worktreePath)
         return handle
-    }
-
-    /// Seed with `initialPWD` so the first tick doesn't falsely fire
-    /// `onPWDChange` for the already-correct worktree path.
-    private func trackForPWDPoll(terminalID: TerminalID, initialPWD: String) {
-        guard let poller = pwdPoller else { return }
-        poller.track(terminalID)
-        poller.seed(terminalID, pwd: initialPWD)
     }
 
     /// Cold-start session-loss check (ZMX-7.1): if a rehydrated pane's
@@ -574,7 +525,6 @@ final class TerminalManager: ObservableObject {
         shellReadyFired.remove(terminalID)
         firstPaneMarkers.remove(terminalID)
         rehydratedSurfaces.remove(terminalID)
-        pwdPoller?.untrack(terminalID)
     }
 
     /// Resolve the per-surface zmx spawn parameters for a terminal pane.
@@ -705,11 +655,8 @@ final class TerminalManager: ObservableObject {
             guard let id = terminalID(from: target) else { return }
             guard let pwdPtr = action.action.pwd.pwd else { return }
             let pwd = String(cString: pwdPtr)
-            // Keep the PWD-1.3 poll in sync: without this seed the
-            // next tick would re-emit the value we just saw.
-            pwdPoller?.seed(id, pwd: pwd)
+            // Feeds `displayTitle(for:)`'s PWD-basename fallback.
             pwds[id] = pwd
-            onPWDChange?(id, pwd)
             if shellReadyFired.insert(id).inserted {
                 onShellReady?(id)
             }

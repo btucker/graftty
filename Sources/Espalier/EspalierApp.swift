@@ -298,21 +298,6 @@ struct EspalierApp: App {
             }
         }
 
-        // Shell reported a new PWD (OSC 7) → if it now sits inside a
-        // different known worktree, re-home the pane under that worktree
-        // in the sidebar. Common trigger: Claude Code or `cd` into a
-        // worktree directory, and the pane should "follow" visually.
-        terminalManager.onPWDChange = { [appState = $appState, tm = terminalManager] terminalID, pwd in
-            MainActor.assumeIsolated {
-                Self.reassignPaneByPWD(
-                    appState: appState,
-                    terminalManager: tm,
-                    terminalID: terminalID,
-                    newPWD: pwd
-                )
-            }
-        }
-
         // Shell integration semantic pings → sidebar attention badge on
         // the owning worktree. The badge is auto-clearing (3s) so it
         // behaves like a "ping", not a permanent state the user has to
@@ -878,16 +863,11 @@ struct EspalierApp: App {
         }
     }
 
-    /// When a pane reports a new working directory via OSC 7, check whether
-    /// it now lives inside a different worktree than where it's currently
-    /// parented in the sidebar — and if so, move it. Matching is
-    /// longest-prefix so nested worktrees (e.g., main checkout at `/r` and
-    /// a linked worktree at `/r/wt/feature`) resolve to the more specific
-    /// path. A PWD outside every known worktree leaves the pane where it
-    /// was — we don't invent a new sidebar entry just because a shell
-    /// wandered off.
+    /// Move a pane to the worktree whose path is the longest prefix of
+    /// `newPWD`. No-op when `newPWD` matches no worktree, or matches the
+    /// pane's current home.
     @MainActor
-    fileprivate static func reassignPaneByPWD(
+    static func reassignPaneByPWD(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         terminalID: TerminalID,
@@ -906,25 +886,12 @@ struct EspalierApp: App {
         }
         guard let currentRepoIdx, let currentWorktreeIdx else { return }
 
-        // Longest-prefix match across all worktrees of all repos. `bestLen`
-        // ensures a nested worktree beats a containing repo's main checkout.
-        var bestRepoIdx: Int?
-        var bestWorktreeIdx: Int?
-        var bestLen = 0
-        let normalizedPWD = Self.withTrailingSlash(newPWD)
-        for (ri, repo) in appState.wrappedValue.repos.enumerated() {
-            for (wi, wt) in repo.worktrees.enumerated() {
-                let candidate = Self.withTrailingSlash(wt.path)
-                if normalizedPWD.hasPrefix(candidate), candidate.count > bestLen {
-                    bestLen = candidate.count
-                    bestRepoIdx = ri
-                    bestWorktreeIdx = wi
-                }
-            }
-        }
-
-        guard let targetRepoIdx = bestRepoIdx,
-              let targetWorktreeIdx = bestWorktreeIdx,
+        // Longest-prefix match across every repo (handles nested worktrees:
+        // a linked worktree at `/r/wt/feature` beats the main checkout at
+        // `/r`). `AppState.worktreeIndicesMatching` is the single source
+        // of truth — also called by the sidebar menu's auto-detect label.
+        guard let (targetRepoIdx, targetWorktreeIdx) =
+                appState.wrappedValue.worktreeIndicesMatching(path: newPWD),
               (targetRepoIdx, targetWorktreeIdx) != (currentRepoIdx, currentWorktreeIdx)
         else { return }
 
@@ -1013,11 +980,6 @@ struct EspalierApp: App {
         }
     }
 
-    /// Ensure a path ends with `/` so prefix matching can't falsely match
-    /// `/r/feat` against `/r/feature`. We normalize both sides.
-    private static func withTrailingSlash(_ path: String) -> String {
-        path.hasSuffix("/") ? path : path + "/"
-    }
 
     /// Static navigate used by the `onGotoSplit` callback (triggered from
     /// libghostty keybinds). Uses `SplitTree.spatialNeighbor` (`TERM-7.3`)

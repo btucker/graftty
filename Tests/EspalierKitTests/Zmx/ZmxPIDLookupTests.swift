@@ -110,9 +110,9 @@ struct ZmxPIDLookupTests {
         // the rotated file while the post-rotation `.log` is still too
         // fresh to contain any spawn line. Before the fix, `shellPID`
         // only consulted `.log`, so after rotation the PID lookup went
-        // silent for the remaining lifetime of the session — and
-        // `PWD-1.3`'s PID-based PWD-follow fallback stopped firing
-        // because `resolveCwd` could never find a PID to poll.
+        // silent for the remaining lifetime of the session — and the
+        // PID-based cwd lookup (PWD-1.1, used by the right-click "Move
+        // to current worktree" menu) stopped finding a PID to query.
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("zmx-rotation-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

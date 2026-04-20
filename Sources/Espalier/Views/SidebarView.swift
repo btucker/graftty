@@ -18,6 +18,7 @@ struct SidebarView: View {
     let onAddPath: (String) -> Void
     let onStopWorktree: (String) -> Void
     let onDeleteWorktree: (String) -> Void
+    let onMovePane: (TerminalID, String) -> Void
     /// Called when the user submits the add-worktree sheet. Returns nil
     /// on success, or a user-visible error string (typically git's
     /// stderr) on failure so the sheet can display it inline.
@@ -173,7 +174,11 @@ struct SidebarView: View {
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
-                        paneContextMenu(terminalID: terminalID)
+                        paneContextMenu(
+                            terminalID: terminalID,
+                            currentWorktree: worktree,
+                            currentRepo: repo
+                        )
                     }
                 }
             }
@@ -222,14 +227,27 @@ struct SidebarView: View {
         }
     }
 
-    /// Per-pane right-click menu (LAYOUT-2.7 surface). Today its only entry
-    /// is "Copy web URL", gated on the WebServer actually listening.
+    /// Per-pane right-click menu (PWD-1.1 / 1.3, LAYOUT-2.7).
     @ViewBuilder
-    private func paneContextMenu(terminalID: TerminalID) -> some View {
+    private func paneContextMenu(
+        terminalID: TerminalID,
+        currentWorktree: WorktreeEntry,
+        currentRepo: RepoEntry
+    ) -> some View {
+        moveToCurrentWorktreeButton(
+            terminalID: terminalID,
+            currentWorktree: currentWorktree
+        )
+        moveToWorktreeMenu(
+            terminalID: terminalID,
+            currentWorktree: currentWorktree,
+            currentRepo: currentRepo
+        )
         if case let .listening(addresses, port) = webController.status,
            let host = WebURLComposer.chooseHost(
                from: addresses.filter { $0 != "127.0.0.1" }
            ) {
+            Divider()
             Button("Copy web URL") {
                 let url = WebURLComposer.url(
                     session: ZmxLauncher.sessionName(for: terminalID.id),
@@ -238,6 +256,48 @@ struct SidebarView: View {
                 )
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(url, forType: .string)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func moveToCurrentWorktreeButton(
+        terminalID: TerminalID,
+        currentWorktree: WorktreeEntry
+    ) -> some View {
+        let cwd = terminalManager.shellCwd(for: terminalID)
+        let indices = cwd.flatMap { appState.worktreeIndicesMatching(path: $0) }
+        if let indices,
+           appState.repos[indices.repo].worktrees[indices.worktree].id != currentWorktree.id {
+            let matchedRepo = appState.repos[indices.repo]
+            let matchedWt = matchedRepo.worktrees[indices.worktree]
+            Button("Move to \(label(for: matchedWt, in: matchedRepo))") {
+                onMovePane(terminalID, matchedWt.path)
+            }
+        } else {
+            Button("Move to current worktree") {}
+                .disabled(true)
+                .help("Shell cwd is not under another known worktree")
+        }
+    }
+
+    /// Same-repo only; cross-repo moves would surprise the user. Stale
+    /// worktrees are kept in the list because moving a pane there
+    /// reactivates the worktree (same effect as opening it manually).
+    @ViewBuilder
+    private func moveToWorktreeMenu(
+        terminalID: TerminalID,
+        currentWorktree: WorktreeEntry,
+        currentRepo: RepoEntry
+    ) -> some View {
+        let siblings = currentRepo.worktrees.filter { $0.id != currentWorktree.id }
+        if !siblings.isEmpty {
+            Menu("Move to worktree") {
+                ForEach(siblings) { sibling in
+                    Button(label(for: sibling, in: currentRepo)) {
+                        onMovePane(terminalID, sibling.path)
+                    }
+                }
             }
         }
     }
