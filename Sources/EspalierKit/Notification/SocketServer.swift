@@ -148,8 +148,17 @@ public final class SocketServer: @unchecked Sendable {
                    let encoded = try? JSONEncoder().encode(response) {
                     var payload = encoded
                     payload.append(0x0A) // '\n'
+                    // `SocketIO.writeAll` loops on partial writes
+                    // and surfaces errors; the pre-cycle-139 naive
+                    // one-shot `_ = Darwin.write(...)` silently
+                    // truncated under kernel-buffer pressure. Errors
+                    // here are logged-and-dropped because the socket
+                    // worker queue can't usefully escalate a per-
+                    // client write failure past this point.
                     payload.withUnsafeBytes { buf in
-                        _ = Darwin.write(fd, buf.baseAddress, buf.count)
+                        guard let base = buf.baseAddress?
+                            .assumingMemoryBound(to: UInt8.self) else { return }
+                        try? SocketIO.writeAll(fd: fd, bytes: base, count: buf.count)
                     }
                 }
             }

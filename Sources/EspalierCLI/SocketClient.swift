@@ -96,7 +96,19 @@ enum SocketClient {
     private static func writeMessage(_ message: NotificationMessage, to fd: Int32) throws {
         let data = try JSONEncoder().encode(message)
         let jsonLine = String(data: data, encoding: .utf8)! + "\n"
-        jsonLine.withCString { ptr in _ = Darwin.write(fd, ptr, strlen(ptr)) }
+        // Pre-cycle-139 this did `_ = Darwin.write(fd, ptr, strlen(ptr))`,
+        // silently dropping partial writes AND errors. `espalier notify
+        // "done"` against a just-crashed server would report success
+        // even though the server never received the message. See
+        // `SocketIO.writeAll` for the loop + errno-surfacing.
+        do {
+            try SocketIO.writeAll(fd: fd, string: jsonLine)
+        } catch let error as SocketIO.WriteError {
+            switch error {
+            case .writeFailed(let errno):
+                throw CLIError.socketError("Failed to send message (errno \(errno))")
+            }
+        }
     }
 
     private static func resolveSocketPath() -> String {
