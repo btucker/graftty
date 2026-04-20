@@ -464,13 +464,16 @@ struct EspalierApp: App {
                 )
                 binding.wrappedValue.repos[repoIdx].worktrees = result.merged
 
-                // GIT-3.13: clear cached stats/PR for newly-stale entries so
-                // stale-via-reconcile matches stale-via-fs-event. Otherwise
-                // the stale entry keeps its cached PR and stats until the
-                // next clear path (Dismiss, Delete) fires.
+                // GIT-3.13 / GIT-3.15: clear cached stats/PR AND drop
+                // the worktree's path/head/content watchers on every
+                // stale transition — not just the FSEvents-deletion
+                // path. Without this, a reconcile-driven stale keeps
+                // zombie fds that block a same-path resurrection from
+                // re-arming.
                 for wt in result.newlyStale {
                     statsStore.clear(worktreePath: wt.path)
                     prStatusStore.clear(worktreePath: wt.path)
+                    services.worktreeMonitor.stopWatchingWorktree(wt.path)
                 }
 
                 // Kick initial stats refresh for non-stale worktrees after
@@ -1436,12 +1439,15 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             )
             binding.wrappedValue.repos[repoIdx].worktrees = result.merged
 
-            // GIT-3.13: newly-stale entries clear cached stats/PR symmetrically
-            // with worktreeMonitorDidDetectDeletion, so the .stale state is
-            // consistent regardless of which FSEvents channel discovered it.
+            // GIT-3.13 / GIT-3.15: clear cached stats/PR AND drop the
+            // worktree's watchers on every stale transition, matching
+            // the FSEvents-deletion path. Zombie watchers bound to
+            // the reaped inode would otherwise block same-path
+            // resurrection from re-arming cleanly.
             for wt in result.newlyStale {
                 store.clear(worktreePath: wt.path)
                 prStore.clear(worktreePath: wt.path)
+                monitor.stopWatchingWorktree(wt.path)
             }
 
             // watchWorktreePath / watchHeadRef / watchWorktreeContents are
