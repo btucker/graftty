@@ -13,16 +13,14 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var state: WorktreeState
     /// Worktree-scoped attention slot. Driven by the CLI
     /// (`espalier notify`), which targets a worktree path rather than a
-    /// specific pane. Rendered on pane rows that don't have their own
-    /// `paneAttention[terminalID]` entry.
+    /// specific pane. Rendered on the worktree's own sidebar row
+    /// (STATE-2.3), independent of the pane rows beneath it.
     public var attention: Attention?
     /// Pane-scoped attention slots keyed by pane `TerminalID`. Driven by
     /// shell-integration events (`COMMAND_FINISHED`) that are emitted by
     /// one specific pane — so the ping must land on that pane's sidebar
-    /// row and leave its siblings untouched. A pane's entry wins over
-    /// the worktree-level `attention` slot when rendering that pane's
-    /// row, but the worktree slot stays available as a fallback for
-    /// other panes (and for the CLI path).
+    /// row and leave its siblings untouched. The two scopes render in
+    /// different rows and do not fall back onto one another.
     public var paneAttention: [TerminalID: Attention]
     public var splitTree: SplitTree
     public var focusedTerminalID: TerminalID?

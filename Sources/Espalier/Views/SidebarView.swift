@@ -132,6 +132,7 @@ struct SidebarView: View {
     @ViewBuilder
     private func worktreeBlock(_ worktree: WorktreeEntry, repo: RepoEntry) -> some View {
         let isActive = appState.selectedWorktreePath == worktree.path
+        let attention = SidebarAttentionLayout.layout(for: worktree)
         VStack(spacing: 0) {
             Button {
                 onSelect(worktree.path)
@@ -149,7 +150,8 @@ struct SidebarView: View {
                     ),
                     prBadge: prStatusStore.infos[worktree.path].map {
                         PRBadge(number: $0.number, state: $0.state, url: $0.url)
-                    }
+                    },
+                    attentionText: attention.worktreeCapsule
                 )
             }
             .buttonStyle(.plain)
@@ -168,8 +170,7 @@ struct SidebarView: View {
                             isFocusedPane: isActive
                                 && worktree.focusedTerminalID == terminalID,
                             theme: theme,
-                            attentionText: worktree.paneAttention[terminalID]?.text
-                                ?? worktree.attention?.text
+                            attentionText: attention.paneCapsules[terminalID]
                         )
                     }
                     .buttonStyle(.plain)

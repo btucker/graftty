@@ -20,10 +20,11 @@ struct PaneTitleRow: View {
     let isFocusedPane: Bool
     let theme: GhosttyTheme
     /// When non-nil, the pane title text is replaced by this string
-    /// rendered inside a red capsule — an attention ping from the CLI
-    /// `espalier notify` path. Cleared automatically when the worktree
-    /// (or any pane in it) gains focus, returning the row to showing
-    /// the shell-provided title.
+    /// rendered inside a red capsule — a pane-scoped attention ping
+    /// driven by shell-integration events (`NOTIF-2.x`). Cleared when
+    /// the user clicks the worktree (STATE-2.4). Worktree-scoped
+    /// `espalier notify` text renders on the enclosing worktree row
+    /// instead; see STATE-2.3.
     let attentionText: String?
 
     var body: some View {
@@ -114,6 +115,11 @@ struct WorktreeRow: View {
     /// deliberately narrower than `PRInfo` so unrelated changes (CI
     /// checks, title, fetchedAt) don't invalidate the row on each poll.
     let prBadge: PRBadge?
+    /// Worktree-scoped attention text (STATE-2.3). Driven by the CLI's
+    /// `espalier notify` path. Rendered as a red capsule next to the
+    /// branch label, visible regardless of the worktree's running state
+    /// so a ping set on a closed worktree stays reachable.
+    let attentionText: String?
 
     var body: some View {
         HStack(spacing: 6) {
@@ -122,6 +128,9 @@ struct WorktreeRow: View {
                 prBadgeLabel(prBadge)
             }
             branchLabel
+            if let attentionText {
+                attentionCapsule(attentionText)
+            }
             Spacer()
             WorktreeRowGutter(
                 stats: entry.state == .stale ? nil : stats,
@@ -172,6 +181,20 @@ struct WorktreeRow: View {
         .buttonStyle(.plain)
         .help("Open #\(badge.number) on \(badge.url.host ?? "")")
         .accessibilityLabel(badgeAccessibilityLabel(badge))
+    }
+
+    @ViewBuilder
+    private func attentionCapsule(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .fontWeight(.semibold)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .background(Color.red)
+            .foregroundColor(.white)
+            .clipShape(Capsule())
     }
 
     private func badgeAccessibilityLabel(_ badge: PRBadge) -> String {
