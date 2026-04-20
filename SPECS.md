@@ -564,7 +564,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 ### 13.2 Session Naming
 
-**ZMX-2.1** The application shall derive the zmx session name for each pane as the literal string `"espalier-"` followed by the lowercase hex of the first 8 bytes — i.e., the first 8 hex characters — of the pane's UUID.
+**ZMX-2.1** The application shall derive the zmx session name for each pane as the literal string `"espalier-"` followed by the first 8 lowercase hex characters (i.e., the leading 4 bytes, yielding 32 bits of namespace uniqueness) of the pane's UUID with dashes stripped.
 
 **ZMX-2.2** The session-naming function shall be deterministic and shall not change across releases without an explicit migration step, since changing it orphans every existing user's daemons.
 
