@@ -10,7 +10,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **LAYOUT-1.2** The sidebar shall be resizable via a drag handle between the sidebar and the terminal content area.
 
-**LAYOUT-1.3** The terminal content area shall display a breadcrumb bar showing the selected repository name, worktree branch, and filesystem path above the terminal split layout.
+**LAYOUT-1.3** The terminal content area shall display a breadcrumb bar above the terminal split layout showing, in order: the selected repository's display name, a `/` separator, the worktree's display name (rendered italic as `root` for the repository's main checkout, otherwise the sibling-disambiguated name per `LAYOUT-2.15`), and the branch name in parentheses at caption weight. The worktree's full filesystem path shall be available as a hover tooltip on the worktree-name element rather than rendered inline. When the worktree has a resolved PR/MR, the trailing edge of the breadcrumb shall additionally show the PR button per `PR-3.x`.
 
 ### 1.2 Sidebar — Repository List
 
