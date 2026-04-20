@@ -78,13 +78,53 @@ public final class WorktreeStatsStore {
         }
     }
 
-    public init(compute: @escaping ComputeFunction = WorktreeStatsStore.defaultCompute) {
+    /// Runs `git fetch` for the repo. Throwing means the fetch failed —
+    /// caller increments `repoFailureStreak` and applies exponential
+    /// backoff. Injected so tests can drive the failure path
+    /// deterministically without mutating the global `GitRunner.executor`
+    /// (which poisoned concurrent test suites in cycle 122).
+    @ObservationIgnored
+    private let fetch: FetchFunction
+
+    /// Signature of the fetch injection point.
+    public typealias FetchFunction = @Sendable (
+        _ repoPath: String,
+        _ defaultBranch: String
+    ) async throws -> Void
+
+    public init(
+        compute: @escaping ComputeFunction = WorktreeStatsStore.defaultCompute,
+        fetch: @escaping FetchFunction = WorktreeStatsStore.defaultFetch
+    ) {
         self.compute = compute
+        self.fetch = fetch
     }
 
     // Test hooks for DIVERGE-4.5 verification. Not used in production.
     func generationForTesting(_ worktreePath: String) -> Int {
         generation[worktreePath, default: 0]
+    }
+
+    /// Test-only accessor for the per-repo fetch failure streak used by
+    /// `ExponentialBackoff.scale`. Exposed internal so tests can observe
+    /// that a non-zero `git fetch` exit correctly increments the streak
+    /// rather than being silently treated as success.
+    func repoFailureStreakForTesting(_ repoPath: String) -> Int {
+        repoFailureStreak[repoPath, default: 0]
+    }
+
+    /// Drives `performRepoFetch` from tests without going through the
+    /// private `pollTick`. `internal` visibility avoids making the real
+    /// method public; tests use `@testable import`.
+    func performRepoFetchForTesting(repoPath: String, worktreePaths: [String]) async {
+        await performRepoFetch(repoPath: repoPath, worktreePaths: worktreePaths)
+    }
+
+    /// Seed the repo's cached default-branch so
+    /// `performRepoFetchForTesting` reaches the fetch call instead of
+    /// short-circuiting at the resolve-default-branch step.
+    func seedDefaultBranchForTesting(_ branch: String, forRepo repoPath: String) {
+        defaultBranchByRepo[repoPath] = branch
     }
 
     func isInFlightForTesting(_ worktreePath: String) -> Bool {
@@ -165,6 +205,20 @@ public final class WorktreeStatsStore {
     /// `computeOffMain` so tests can inject a stub instead of the real
     /// git subprocess chain. `nonisolated` so `init`'s default-parameter
     /// evaluation (a nonisolated context) can reference it.
+    /// Production `FetchFunction` — runs `git fetch` via the real
+    /// `GitRunner.run`. `run` throws `CLIError.nonZeroExit` on any
+    /// non-zero exit so an offline / auth-failure / rate-limited fetch
+    /// propagates as a throw the caller turns into backoff (streak++).
+    /// Pre-cycle-140 this used `GitRunner.captureAll` which returns
+    /// normally on non-zero exit, so every failed fetch silently
+    /// reset the streak and the backoff never kicked in.
+    public nonisolated static let defaultFetch: FetchFunction = { repoPath, defaultBranch in
+        _ = try await GitRunner.run(
+            args: ["fetch", "--no-tags", "--prune", "origin", defaultBranch],
+            at: repoPath
+        )
+    }
+
     public nonisolated static let defaultCompute: ComputeFunction = { worktreePath, repoPath, cachedDefault in
         let name: String?
         if let cached = cachedDefault {
@@ -262,10 +316,7 @@ public final class WorktreeStatsStore {
         }
 
         do {
-            _ = try await GitRunner.captureAll(
-                args: ["fetch", "--no-tags", "--prune", "origin", defaultBranch],
-                at: repoPath
-            )
+            try await fetch(repoPath, defaultBranch)
             self.lastRepoFetch[repoPath] = Date()
             self.repoFailureStreak[repoPath] = 0
         } catch {
