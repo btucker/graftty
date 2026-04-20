@@ -53,6 +53,15 @@ public final class WebServer {
     public let auth: AuthPolicy
     public let bindAddresses: [String]
 
+    /// Test-only hook: when non-nil, applied as `SO_SNDBUF` on every child
+    /// (accepted) channel. Exists to simulate buffer-constrained network
+    /// paths like the Tailscale `utun` interface where
+    /// `ERR_CONTENT_LENGTH_MISMATCH` was first observed — on loopback the
+    /// kernel's huge auto-sized send buffers always swallow the full
+    /// response in one go, so the bug is invisible without shrinking the
+    /// socket buffer. Unused in production.
+    internal static var testingChildSndBuf: Int?
+
     private var group: EventLoopGroup?
     private var channels: [Channel] = []
 
@@ -75,9 +84,15 @@ public final class WebServer {
         let capturedConfig = config
         let capturedAuth = auth
 
-        let bootstrap = ServerBootstrap(group: group)
+        var bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 16)
             .serverChannelOption(ChannelOptions.socketOption(.so_reuseaddr), value: 1)
+        if let sndBuf = Self.testingChildSndBuf {
+            bootstrap = bootstrap.childChannelOption(
+                ChannelOptions.socketOption(.so_sndbuf), value: .init(sndBuf)
+            )
+        }
+        bootstrap = bootstrap
             .childChannelInitializer { channel in
                 let handler = HTTPHandler(config: capturedConfig, auth: capturedAuth)
                 let upgrader = Self.makeWSUpgrader(config: capturedConfig, auth: capturedAuth)
@@ -258,8 +273,19 @@ public final class WebServer {
             var buf = context.channel.allocator.buffer(capacity: body.count)
             buf.writeBytes(body)
             context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buf))), promise: nil)
-            context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil)), promise: nil)
-            context.close(promise: nil)
+            // Chain `close` off the end-of-response flush promise. NIO's
+            // `close0(mode: .all)` cancels any writes still pending in
+            // `PendingWritesManager` *after* closing the socket fd, so
+            // closing synchronously after `writeAndFlush(..., promise: nil)`
+            // truncates the body whenever the kernel's TCP send buffer
+            // can't absorb the whole response in one pass — which is the
+            // normal case on Tailscale's `utun` (MTU ~1280) and the root
+            // cause of `ERR_CONTENT_LENGTH_MISMATCH` on `/app.js`.
+            let donePromise = context.eventLoop.makePromise(of: Void.self)
+            context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil)), promise: donePromise)
+            donePromise.futureResult.whenComplete { _ in
+                context.close(promise: nil)
+            }
         }
     }
 
