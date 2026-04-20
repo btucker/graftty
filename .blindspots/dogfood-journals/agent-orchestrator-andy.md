@@ -2201,3 +2201,35 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 ### Try next cycle
 - Move `WorktreeStatsStore` to EspalierKit — DIVERGE-4.5 unit coverage still open.
 - `SocketServer.lastStartError` UI surfacing (cycle 95).
+
+## Cycle 111 — 2026-04-20 (BOM-only notify text renders as blank badge — ATTN-1.13)
+
+### Explored
+- Looked at GitOriginHost.parse edge cases (subgroup paths handled correctly via slug), GitHubPRFetcher rollup (well-tested), CLIRunner's pipe handling (timeouts missing but no caller hit that path), ZmxRunner.captureAll (known deadlock-prone, unused in production).
+- Then probed Cf-category scalars in notify text: the cycle 107/108 rejections cover Cc but not Cf.
+
+### Diagnosed
+- `"\u{200B}"` (ZWSP) rejected — confirmed via a side experiment that Swift's `trimmingCharacters(in: .whitespacesAndNewlines)` DOES strip ZWSP (more inclusive than Apple's documentation suggests).
+- But `"\u{FEFF}"` (BOM) and `"\u{200B}\u{200C}\u{FEFF}"` (mixed) are NOT stripped — they pass the empty-text check AND the Cc-category check (since Cf ≠ Cc), landing in the sidebar as a zero-width / invisible badge. Same UX failure mode as ATTN-1.7's empty-text rejection.
+
+### Fixed
+- Added an extra guard to `NotifyInputValidation.validate`: if every scalar is whitespace or Cf, return `.emptyText`. Matches the existing empty-text semantics rather than coining a new case (the UX is identical — blank badge).
+- Server-side `Attention.isValidText` gets the same guard for raw-socket client backstop.
+- Emoji sequences with ZWJ (like `👨‍👩‍👧`) remain valid — they have visible glyphs alongside the ZWJ.
+
+### Spec
+- Added **ATTN-1.13** covering the Cf+whitespace edge case.
+
+### Tests
+- Eight new tests: 5 CLI-side (only-ZWSP, only-BOM, mixed-Cf, mixed-with-content, emoji-ZWJ) + 3 server-backstop mirrors.
+- Two failed before the fix (`textOfOnlyBOMIsInvalid` and `textOfMixedFormatScalarsIsInvalid`, both reporting `r → .valid` instead of `.emptyText`); all pass after. 531/531 overall.
+
+### Live verification
+- `swift run espalier-cli notify $'\uFEFF'` → "Error: Notification text cannot be empty or whitespace-only". Sidebar would no longer receive an invisible badge.
+
+### Commit
+- `fix(cli): reject format-only notify text that renders as blank badge (ATTN-1.13)`
+
+### Try next cycle
+- Move `WorktreeStatsStore` to EspalierKit (DIVERGE-4.5 test coverage, still open).
+- Explore GitLab PR fetcher edge cases similar to GitHub's.

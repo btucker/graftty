@@ -76,6 +76,22 @@ struct AttentionTextValidationTests {
         #expect(Attention.isValidText("日本語 テスト"))
         #expect(Attention.isValidText("café ✓"))
     }
+
+    // ATTN-1.13 server-side backstop: text that's entirely format-
+    // category (Cf) + whitespace is visually invisible. Swift's
+    // `whitespacesAndNewlines` strips ZWSP but not BOM — without
+    // the additional guard `"\u{FEFF}"` would pass.
+    @Test func formatOnlyTextIsInvalid() {
+        #expect(!Attention.isValidText("\u{200B}"))
+        #expect(!Attention.isValidText("\u{FEFF}"))
+        #expect(!Attention.isValidText("\u{200B}\u{200C}\u{FEFF}"))
+    }
+
+    @Test func formatScalarsMixedWithContentAreValid() {
+        #expect(Attention.isValidText("\u{200B}a"))
+        #expect(Attention.isValidText("a\u{200B}b"))
+        #expect(Attention.isValidText("👨\u{200D}👩\u{200D}👧"))
+    }
 }
 
 // Mirrors `NotifyInputValidationTests` clear-after cap behaviors —

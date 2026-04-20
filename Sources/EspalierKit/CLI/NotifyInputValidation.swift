@@ -51,6 +51,17 @@ public enum NotifyInputValidation: Equatable {
             if text!.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 return .emptyText
             }
+            // Swift's whitespace trim strips some Cf scalars (ZWSP
+            // U+200B) but not others (BOM U+FEFF). Without this extra
+            // check, `\u{FEFF}` or `\u{200B}\u{FEFF}` passes validation
+            // and renders as a zero-width / invisible badge — same UX
+            // as an empty string. Reject when every scalar is either
+            // whitespace or Unicode Format-category (Cf).
+            if text!.unicodeScalars.allSatisfy({
+                $0.properties.isWhitespace || $0.properties.generalCategory == .format
+            }) {
+                return .emptyText
+            }
             if text!.count > textMaxLength {
                 return .textTooLong(max: textMaxLength)
             }

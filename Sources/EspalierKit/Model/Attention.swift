@@ -34,6 +34,12 @@ public struct Attention: Codable, Sendable, Equatable {
         // validation and send text with ANSI escapes, tabs, bells, etc.
         // that the sidebar would render as garbled literal glyphs.
         if text.unicodeScalars.contains(where: { $0.properties.generalCategory == .control }) { return false }
+        // Match CLI's ATTN-1.13 guard: text entirely made of format
+        // (Cf) + whitespace scalars renders as invisible. Swift's trim
+        // strips ZWSP but not BOM, so this backstop catches the rest.
+        if text.unicodeScalars.allSatisfy({
+            $0.properties.isWhitespace || $0.properties.generalCategory == .format
+        }) { return false }
         return true
     }
 

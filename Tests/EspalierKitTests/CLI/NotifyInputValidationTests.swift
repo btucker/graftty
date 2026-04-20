@@ -242,4 +242,46 @@ struct NotifyInputValidationTests {
         let r = NotifyInputValidation.validate(text: "Build failed\n", clear: false)
         #expect(r == .controlCharactersInText)
     }
+
+    // ATTN-1.13: text made entirely of Unicode Format-category (Cf)
+    // scalars renders as a visually-empty badge — zero-width space,
+    // zero-width joiner, byte-order mark, bidi overrides, etc. These
+    // pass the whitespace-trim check (trimming doesn't strip Cf) and
+    // the control-char check (Cf is distinct from Cc). Reject when
+    // every non-whitespace scalar is Cf; accept when ANY scalar is
+    // something else, so emoji sequences that embed ZWJ (U+200D) for
+    // ligature remain valid.
+
+    @Test func textOfOnlyZeroWidthSpaceIsInvalid() {
+        // U+200B ZERO WIDTH SPACE — invisible, would render as blank.
+        let r = NotifyInputValidation.validate(text: "\u{200B}", clear: false)
+        #expect(r == .emptyText)
+    }
+
+    @Test func textOfOnlyBOMIsInvalid() {
+        // U+FEFF ZERO WIDTH NO-BREAK SPACE / BOM.
+        let r = NotifyInputValidation.validate(text: "\u{FEFF}", clear: false)
+        #expect(r == .emptyText)
+    }
+
+    @Test func textOfMixedFormatScalarsIsInvalid() {
+        // U+200B + U+200C + U+FEFF — all format-category, all invisible.
+        let r = NotifyInputValidation.validate(text: "\u{200B}\u{200C}\u{FEFF}", clear: false)
+        #expect(r == .emptyText)
+    }
+
+    @Test func formatScalarsBracketingContentAreValid() {
+        // Mixed with visible content → accepted. User may have pasted
+        // a Word-mangled string with trailing BOM; as long as *something*
+        // renders, we pass it through.
+        #expect(NotifyInputValidation.validate(text: "\u{200B}a", clear: false) == .valid)
+        #expect(NotifyInputValidation.validate(text: "a\u{200B}b", clear: false) == .valid)
+    }
+
+    @Test func emojiWithZWJLigatureIsValid() {
+        // U+200D ZERO WIDTH JOINER builds emoji sequences like family
+        // emoji 👨‍👩‍👧 — the codepoints ARE Cf, but the ligature produces
+        // a visible glyph. Mustn't reject.
+        #expect(NotifyInputValidation.validate(text: "👨\u{200D}👩\u{200D}👧", clear: false) == .valid)
+    }
 }
