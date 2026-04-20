@@ -2568,3 +2568,30 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 
 ### Try next cycle
 - All prior TODOs cleared. Fresh territory — maybe pan for bugs in the SidebarView rendering or the WorktreeMonitor FS-event handling under rapid file-system churn.
+
+## Cycle 124 — 2026-04-20 (exploration, no new fix)
+
+### Explored
+Wide scan for a concrete new bug across areas I haven't recently touched:
+- WorktreeMonitor FSEvents handler debouncing (no coalescing but git operations don't fire in pathological bursts)
+- pane-attention rendering for the focused pane of the focused worktree (redundant with terminal output but short auto-clear absorbs it)
+- AppState.loadOrFreshBackingUpCorruption treating unreadable-but-readable-file as "corrupt" (design choice documented)
+- SplitTree topology operations (togglingZoom, inserting, removing) — all look sound
+- DividerRatio edge cases (already well-covered)
+- PWDReassignmentPolicy (clear policy, no bugs)
+- GitOriginDefaultBranch probe list (only main/master/develop but primary path handles properly-configured repos)
+- TerminalID (trivial wrapper)
+- WorktreeRowIcon (pure function, well-tested)
+- SocketPathResolver + trailing-slash paths (user config, out of scope)
+- NotifySocketBanner (from cycle 123) — `describe` case coverage matches `SocketServerError`'s 4 cases
+
+### Diagnosed
+Nothing concrete. Several theoretical edge cases (e.g. `SplitTree.inserting` with newLeaf == target would duplicate IDs, but callers always pass a fresh UUID; `inserting` with missing target unconditionally clears zoom even on no-op, but all production callers pass valid targets).
+
+### Committed
+No code change this cycle. The prior ~9 cycles covered a lot of surface; diminishing returns on small defensive fixes is honest.
+
+### Try next cycle
+- Exercise the macOS app with `mcp__computer-use__*` if screenshot permission returns.
+- Revisit the race-against-apply integration test for `WorktreeStatsStore.clear` (cycle 122 skipped because of shared-state `GitRunner.executor` poisoning). Could refactor by making `computeOffMain` take an injected closure so tests can stub per-store instead of mutating the global.
+- Look at the test-suite isolation issue more broadly — `GitRunner.configure` is a thread-unsafe global seam that makes cross-suite test races possible.
