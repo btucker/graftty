@@ -29,12 +29,21 @@ enum SocketClient {
             if n <= 0 { break }
             buffer.append(contentsOf: chunk[0..<n])
         }
-        guard let str = String(data: buffer, encoding: .utf8),
-              let line = str.components(separatedBy: "\n").first(where: { !$0.isEmpty }),
-              let data = line.data(using: .utf8) else {
-            throw CLIError.socketError("Empty response from app")
+        switch SocketResponseDecoder.decode(buffer) {
+        case .success(let msg):
+            return msg
+        case .failure(.timeout):
+            // Pre-cycle-138 this was `socketError("Empty response
+            // from app")` — misleading when the actual cause is a
+            // timeout (client SO_RCVTIMEO elapsed, or server closed
+            // fd without a response per `ATTN-2.10`). `.socketTimeout`
+            // mirrors the ATTN-3.3 error shape so the user gets the
+            // same "try again / wait for the app" cue regardless of
+            // which end of the timeout fired.
+            throw CLIError.socketTimeout
+        case .failure(.unparseable):
+            throw CLIError.socketError("Unparseable response from app")
         }
-        return try JSONDecoder().decode(ResponseMessage.self, from: data)
     }
 
     // MARK: - Internals
