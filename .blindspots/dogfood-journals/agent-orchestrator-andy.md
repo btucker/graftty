@@ -2430,3 +2430,28 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 ### Try next cycle
 - `WorktreeStatsStore` → EspalierKit.
 - `SocketServer.lastStartError` UI surface.
+
+## Cycle 119 — 2026-04-20 (silent bail in performDeleteWorktree — GIT-4.11)
+
+### Explored
+- Scanned remaining bare `catch { ... }` blocks in MainWindow. Most are intentional (GitOriginDefaultBranch fallback to nil) or already surface the error (cycle 101 / 102 / 118 fixes). Found one outlier.
+
+### Diagnosed
+- `performDeleteWorktree` at line 469: `catch GitWorktreeRemove.Error.gitFailed` branch shows an NSAlert with stderr. BUT the bare `catch { return }` silently drops everything else — e.g. `CLIError.notFound` when `git` binary is missing, `CLIError.launchFailed` for subprocess launch failures.
+- Symptom: user clicks Delete Worktree on a machine with broken git (e.g., during a broken Homebrew reinstall); nothing happens. No log. GIT-4.4 specifically promises that failure is surfaced in an alert — the bare-catch path skipped that for the non-gitFailed case.
+
+### Fixed
+- The bare-catch branch now shows the same "Could not delete worktree" NSAlert (with `"\(error)"` as body) AND logs via NSLog. Matches the shape of cycle 101's GIT-1.2 fix on the delete path.
+
+### Spec
+- Added **GIT-4.11** pinning the non-gitFailed error contract, cross-referencing GIT-4.4.
+
+### Tests
+- No new unit test (Espalier app-target, not testable from EspalierKitTests). 543/543 existing tests still pass.
+
+### Commit
+- `fix(app): surface non-gitFailed errors in Delete Worktree flow (GIT-4.11)`
+
+### Try next cycle
+- `WorktreeStatsStore` → EspalierKit move (DIVERGE-4.5 coverage, still biggest open item).
+- Surface `SocketServer.lastStartError` in Espalier menu.

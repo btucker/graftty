@@ -467,6 +467,17 @@ struct MainWindow: View {
                 errorAlert.runModal()
                 return
             } catch {
+                // Non-git-exit errors (git binary missing, subprocess launch
+                // failure, etc.). User clicked Delete Worktree; a silent
+                // bail leaves them wondering why nothing happened. Match
+                // the Add Repository path (GIT-1.2) with an alert. GIT-4.11.
+                NSLog("[Espalier] performDeleteWorktree: git launch failed for %@: %@",
+                      worktreePath, String(describing: error))
+                let errorAlert = NSAlert()
+                errorAlert.messageText = "Could not delete worktree"
+                errorAlert.informativeText = "\(error)"
+                errorAlert.alertStyle = .warning
+                errorAlert.runModal()
                 return
             }
 
