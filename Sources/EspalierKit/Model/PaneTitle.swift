@@ -70,12 +70,20 @@ public enum PaneTitle {
     ///     newlines but renders `\e[31m` as literal `[31m` glyphs (the
     ///     ESC byte is invisible), producing sidebar garbage. Same
     ///     class as CLI's `ATTN-1.12` for notify text (LAYOUT-2.17).
+    ///   - Any Unicode bidirectional-override scalar (U+202A-U+202E,
+    ///     U+2066-U+2069). These are Cf-category so the Cc gate
+    ///     misses them; they reverse surrounding text at render time
+    ///     (Trojan Source, CVE-2021-42574). Same class as CLI's
+    ///     `ATTN-1.14` for notify text (LAYOUT-2.18).
     public static func sanitize(_ title: String) -> String? {
         if isLikelyEnvAssignment(title) { return nil }
         if title.count > maxStoredLength { return nil }
         if title.unicodeScalars.contains(where: {
             $0.properties.generalCategory == .control
         }) {
+            return nil
+        }
+        if title.unicodeScalars.contains(where: NotifyInputValidation.isBidiOverride) {
             return nil
         }
         return title

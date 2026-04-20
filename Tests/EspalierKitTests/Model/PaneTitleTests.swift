@@ -180,6 +180,25 @@ struct PaneTitleSanitizeTests {
         #expect(PaneTitle.sanitize("✓ build passing") == "✓ build passing")
         #expect(PaneTitle.sanitize("docker compose up — running") == "docker compose up — running")
     }
+
+    // LAYOUT-2.18: sibling rule to ATTN-1.14. A rogue inner-shell
+    // program can push an OSC 2 payload like `printf
+    // '\e]0;\u202Edecoy\u202C\a'` that slips past LAYOUT-2.17's
+    // Cc-only check (BIDI overrides are Cf, not Cc) and renders
+    // RTL-reversed in the sidebar capsule — the same Trojan-Source
+    // visual deception ATTN-1.14 blocks on the notify surface.
+    @Test func bidiOverrideInTitleIsRejected() {
+        #expect(PaneTitle.sanitize("\u{202E}evil") == nil)             // RLO
+        #expect(PaneTitle.sanitize("ok\u{202A}x\u{202C}") == nil)      // LRE..PDF
+        #expect(PaneTitle.sanitize("ok\u{2066}hidden\u{2069}") == nil) // LRI..PDI
+    }
+
+    @Test func naturalRtlTitleStillAccepted() {
+        // RTL-natural scripts use character-intrinsic directionality;
+        // no override scalars. Must still sanitize cleanly.
+        #expect(PaneTitle.sanitize("مرحبا") == "مرحبا")
+        #expect(PaneTitle.sanitize("שלום") == "שלום")
+    }
 }
 
 @Suite("PaneTitle.basenameLabel")
