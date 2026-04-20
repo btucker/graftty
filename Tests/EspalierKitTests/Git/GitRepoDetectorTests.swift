@@ -41,8 +41,11 @@ struct GitRepoDetectorTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         try shell("git init && git commit --allow-empty -m 'init'", at: dir)
         let result = try GitRepoDetector.detect(path: dir.path)
-        // Resolve symlinks on both sides (macOS /var -> /private/var)
-        let expectedPath = (dir.path as NSString).resolvingSymlinksInPath
+        // Use the same `realpath`-based canonicalization as the detector
+        // (macOS /var -> /private/var). Foundation's symlink resolver goes
+        // the opposite way and would diverge from `git worktree list`'s
+        // emitted paths.
+        let expectedPath = CanonicalPath.canonicalize(dir.path)
         #expect(result == .repoRoot(expectedPath))
     }
 
@@ -56,9 +59,8 @@ struct GitRepoDetectorTests {
         try shell("git worktree add \(wtDir.path) -b feature", at: repoDir)
 
         let result = try GitRepoDetector.detect(path: wtDir.path)
-        // Resolve symlinks on both sides (macOS /var -> /private/var)
-        let expectedWtPath = (wtDir.path as NSString).resolvingSymlinksInPath
-        let expectedRepoPath = (repoDir.path as NSString).resolvingSymlinksInPath
+        let expectedWtPath = CanonicalPath.canonicalize(wtDir.path)
+        let expectedRepoPath = CanonicalPath.canonicalize(repoDir.path)
         if case .worktree(let worktreePath, let repoPath) = result {
             #expect(worktreePath == expectedWtPath)
             #expect(repoPath == expectedRepoPath)
@@ -81,8 +83,11 @@ struct GitRepoDetectorTests {
         let subDir = dir.appendingPathComponent("src")
         try FileManager.default.createDirectory(at: subDir, withIntermediateDirectories: true)
         let result = try GitRepoDetector.detect(path: subDir.path)
-        // Resolve symlinks on both sides (macOS /var -> /private/var)
-        let expectedPath = (dir.path as NSString).resolvingSymlinksInPath
+        // Use the same `realpath`-based canonicalization as the detector
+        // (macOS /var -> /private/var). Foundation's symlink resolver goes
+        // the opposite way and would diverge from `git worktree list`'s
+        // emitted paths.
+        let expectedPath = CanonicalPath.canonicalize(dir.path)
         #expect(result == .repoRoot(expectedPath))
     }
 }

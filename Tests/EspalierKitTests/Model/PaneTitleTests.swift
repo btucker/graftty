@@ -10,6 +10,33 @@ struct PaneTitleEnvAssignmentTests {
         #expect(PaneTitle.isLikelyEnvAssignment("GHOSTTY_ZSH_ZDOTDIR=/path/to/dir ZDOTDIR=/other"))
     }
 
+    @Test("the post-ZMX-6.4 conditional bootstrap leak is filtered")
+    func filtersZmxBootstrapLeak() {
+        // After ZMX-6.4 (PR #35), the prefix changed shape from a naked
+        // `GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR" ZDOTDIR=…` (which the original
+        // uppercase-env-name heuristic caught) to a full shell conditional
+        // `if [ -n "$ZDOTDIR" ]; then export GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR"; fi; ZDOTDIR=…`.
+        // The new form starts with lowercase `if` and snuck past the
+        // uppercase-prefix filter — the entire 200+ char bootstrap string
+        // then showed up as the pane title in the sidebar, crowding out
+        // any real label. Caught live in cycle 79 dogfood. Title contains
+        // the literal `GHOSTTY_ZSH_ZDOTDIR` marker in both old and new
+        // shapes, so widening the filter to match either prefix OR that
+        // literal lets both forms land cleanly.
+        let leak = #"if [ -n "$ZDOTDIR" ]; then export GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR"; fi; ZDOTDIR='/Applications/Ghostty.app/Contents/Resources/ghostty/shell-integration/zsh' exec '/Applications/Espalier.app/Contents/Helpers/zmx' attach 'espalier-deadbeef' '/bin/zsh'"#
+        #expect(PaneTitle.isLikelyEnvAssignment(leak))
+    }
+
+    @Test("a bare `if` statement without GHOSTTY marker is not filtered")
+    func keepsLegitimateIfStatements() {
+        // Defensive: don't over-reject titles. A user whose program
+        // legitimately names itself "if you see this" shouldn't get
+        // swallowed. The marker we anchor on is `GHOSTTY_ZSH_ZDOTDIR`,
+        // not the lowercase `if` that happens to lead our current form.
+        #expect(!PaneTitle.isLikelyEnvAssignment("if you are reading this"))
+        #expect(!PaneTitle.isLikelyEnvAssignment("if-then-else flow"))
+    }
+
     @Test("any uppercase env-name prefix is filtered")
     func filtersGenericEnvAssignments() {
         #expect(PaneTitle.isLikelyEnvAssignment("FOO=bar"))

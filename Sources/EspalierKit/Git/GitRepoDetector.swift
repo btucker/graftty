@@ -8,7 +8,13 @@ public enum GitPathType: Equatable, Sendable {
 
 public enum GitRepoDetector {
     public static func detect(path: String) throws -> GitPathType {
-        var current = URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        // `CanonicalPath.canonicalize` (POSIX `realpath`) matches the path
+        // shape that `git worktree list --porcelain` emits and that
+        // `state.json` therefore stores. Foundation's symlink resolvers
+        // collapse `/private/tmp` → `/tmp` — the opposite direction —
+        // which made `espalier notify` run from under `/tmp/*` fail
+        // "Not inside a tracked worktree" even for tracked worktrees.
+        var current = URL(fileURLWithPath: CanonicalPath.canonicalize(path))
 
         while true {
             let gitPath = current.appendingPathComponent(".git")
@@ -35,7 +41,9 @@ public enum GitRepoDetector {
     }
 
     private static func resolveRepoRoot(fromGitDir gitDir: String) -> String {
-        var url = URL(fileURLWithPath: gitDir).resolvingSymlinksInPath()
+        // Same private-root issue as `detect`: use realpath so the
+        // repoPath we return matches what `state.json` holds.
+        var url = URL(fileURLWithPath: CanonicalPath.canonicalize(gitDir))
         while url.lastPathComponent != ".git" && url.path != "/" {
             url = url.deletingLastPathComponent()
         }

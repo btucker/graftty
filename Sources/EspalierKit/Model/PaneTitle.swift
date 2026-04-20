@@ -6,21 +6,37 @@ import Foundation
 /// are the policy glue that decides which one renders.
 public enum PaneTitle {
 
-    /// Titles matching `^[A-Z_][A-Z0-9_]*=` are the command-echo leak from
-    /// a shell-integration `preexec` hook — when the outer zsh runs
-    /// Espalier's injected `GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR" … exec zmx attach …`
-    /// line, ghostty's preexec emits an OSC 2 whose first token is the
-    /// env-assignment. The inner shell spawned by `zmx attach` doesn't
-    /// push a new title until the user's first prompt, so the
-    /// env-assignment stays visible in the sidebar until then. Rejecting
-    /// these at intake keeps the leak out of our title store; the view
-    /// can then fall back to the PWD basename.
+    /// Titles that are command-echo leaks from a shell-integration
+    /// `preexec` hook. When the outer zsh runs Espalier's injected
+    /// bootstrap line — `… GHOSTTY_ZSH_ZDOTDIR=… ZDOTDIR=… exec zmx attach …`
+    /// — ghostty's preexec emits an OSC 2 whose payload IS that command.
+    /// The inner shell spawned by `zmx attach` doesn't push a new title
+    /// until the user's first prompt, so the leak sits in the sidebar
+    /// until then. Rejecting these at intake keeps the leak out of the
+    /// title store; the view falls back to the PWD basename.
+    ///
+    /// Two shapes to catch (`LAYOUT-2.13`):
+    ///   1. **Pre-`ZMX-6.4` form**: starts with an uppercase identifier
+    ///      followed by `=` (e.g. `GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR" …`).
+    ///      Matched by `^[A-Z_][A-Z0-9_]*=`.
+    ///   2. **Post-`ZMX-6.4` form**: starts with a shell conditional
+    ///      (`if [ -n "$ZDOTDIR" ]; then export GHOSTTY_ZSH_ZDOTDIR=…; fi; …`),
+    ///      so the uppercase-prefix heuristic misses it. The whole line
+    ///      still carries the literal `GHOSTTY_ZSH_ZDOTDIR` marker, which
+    ///      no legitimate human-facing title would ever contain.
     ///
     /// False-positive risk: a program whose legitimate title starts with
-    /// an uppercase identifier followed by `=` would also be filtered.
-    /// Human-facing titles almost never do that, so the trade is worth it.
+    /// an uppercase identifier followed by `=` would also be filtered,
+    /// or a title that incidentally names `GHOSTTY_ZSH_ZDOTDIR`.
+    /// Human-facing titles almost never do either, so the trade is worth it.
     public static func isLikelyEnvAssignment(_ title: String) -> Bool {
         let trimmed = title.trimmingCharacters(in: .whitespaces)
+        // Shape 2: the bootstrap string containing the GHOSTTY_ZSH_ZDOTDIR
+        // marker. Catches both the post-ZMX-6.4 conditional form and any
+        // future reshape that preserves the marker (guarding against a
+        // recurrence of this exact bug class).
+        if trimmed.contains("GHOSTTY_ZSH_ZDOTDIR") { return true }
+        // Shape 1: uppercase-env-name prefix.
         guard let eq = trimmed.firstIndex(of: "=") else { return false }
         let name = trimmed[..<eq]
         guard !name.isEmpty else { return false }

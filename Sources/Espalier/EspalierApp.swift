@@ -480,6 +480,60 @@ struct EspalierApp: App {
            let target = wt.focusedTerminalID ?? wt.splitTree.allLeaves.first {
             terminalManager.setFocus(target)
         }
+
+        // STATE-2.12: resume auto-clear timers for any persisted attention
+        // that carried a `clearAfter`. The timer is in-memory only when
+        // first set (handleNotification / setAttentionForTerminal schedule
+        // a `DispatchQueue.main.asyncAfter`), so a force-quit mid-window
+        // leaves the attention stuck in state.json with no live timer.
+        // Without this resume step, the badge persists until the user
+        // clicks the worktree (STATE-2.4).
+        resumePersistedAttentionTimers()
+    }
+
+    @MainActor
+    private func resumePersistedAttentionTimers() {
+        let now = Date()
+        for repoIdx in appState.repos.indices {
+            for wtIdx in appState.repos[repoIdx].worktrees.indices {
+                let wt = appState.repos[repoIdx].worktrees[wtIdx]
+                let path = wt.path
+
+                if let attention = wt.attention,
+                   let remaining = AttentionResumePolicy.remainingTime(for: attention, now: now) {
+                    let stamp = attention.timestamp
+                    let appStateBinding = $appState
+                    DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
+                        for ri in appStateBinding.wrappedValue.repos.indices {
+                            for wi in appStateBinding.wrappedValue.repos[ri].worktrees.indices {
+                                if appStateBinding.wrappedValue.repos[ri].worktrees[wi].path == path {
+                                    appStateBinding.wrappedValue.repos[ri].worktrees[wi]
+                                        .clearAttentionIfTimestamp(stamp)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                for (terminalID, attention) in wt.paneAttention {
+                    guard let remaining = AttentionResumePolicy.remainingTime(for: attention, now: now) else {
+                        continue
+                    }
+                    let stamp = attention.timestamp
+                    let appStateBinding = $appState
+                    DispatchQueue.main.asyncAfter(deadline: .now() + remaining) {
+                        for ri in appStateBinding.wrappedValue.repos.indices {
+                            for wi in appStateBinding.wrappedValue.repos[ri].worktrees.indices {
+                                if appStateBinding.wrappedValue.repos[ri].worktrees[wi].path == path {
+                                    appStateBinding.wrappedValue.repos[ri].worktrees[wi]
+                                        .clearPaneAttentionIfTimestamp(stamp, for: terminalID)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     @MainActor
@@ -638,7 +692,12 @@ struct EspalierApp: App {
         guard let targetID = wt.splitTree.leaf(atPaneID: index) else {
             return .error("no pane with id \(index) in this worktree")
         }
-        closePane(appState: appState, terminalManager: terminalManager, targetID: targetID)
+        closePane(
+            appState: appState,
+            terminalManager: terminalManager,
+            targetID: targetID,
+            userInitiated: true
+        )
         return .ok
     }
 
@@ -1048,29 +1107,38 @@ struct EspalierApp: App {
     /// split tree, destroys the surface, promotes focus to a sibling, and
     /// transitions the worktree to `.closed` when the last pane goes away.
     /// Idempotent: no-op if the terminal isn't in any tree.
+    ///
+    /// `userInitiated`: distinguishes Cmd+W / CLI / context-menu close
+    /// (`true`) from libghostty's async `close_surface_cb` (`false`).
+    /// `PhantomPaneClosePolicy.shouldRemoveFromTree` uses this to let
+    /// user-initiated closes clean up phantom leaves (surface creation
+    /// failed, `TERM-5.8`) while keeping the `TERM-5.7` Stop-cascade guard
+    /// for libghostty-initiated callbacks.
     @MainActor
     fileprivate static func closePane(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
-        targetID: TerminalID
+        targetID: TerminalID,
+        userInitiated: Bool = false
     ) {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                 guard wt.splitTree.containsLeaf(targetID) else { continue }
 
-                // TERM-5.7: Stop-cascade guard. `worktree Stop` calls
-                // `terminalManager.destroySurfaces(allLeaves)` followed by
-                // `prepareForStop()` which deliberately PRESERVES
-                // splitTree per TERM-1.2. libghostty then asynchronously
-                // fires close_surface_cb for each just-closed surface,
-                // routing back here via `onCloseRequest → closePane`. By
-                // that point, the surface has already been torn down
-                // (`surfaces[id]` is nil) — so `handle(for: targetID)` is
-                // nil. Without this guard, the late-firing close-event
-                // would re-modify splitTree, emptying it and violating
-                // TERM-1.2's re-open-restores-layout contract.
-                guard terminalManager.handle(for: targetID) != nil else { continue }
+                // TERM-5.7 (Stop cascade) vs TERM-5.8 (phantom leaf).
+                // `handle == nil` can mean either:
+                //   * destroySurface just ran during Stop and the late
+                //     close_surface_cb arrived with splitTree preserved
+                //     per TERM-1.2 → leave it alone, or
+                //   * the surface never instantiated at all (libghostty
+                //     OOM, TERM-5.5) → the user's Cmd+W / CLI close is
+                //     their ONLY way to remove the phantom leaf.
+                // The caller tells us which by `userInitiated`.
+                guard PhantomPaneClosePolicy.shouldRemoveFromTree(
+                    userInitiated: userInitiated,
+                    handleExists: terminalManager.handle(for: targetID) != nil
+                ) else { continue }
 
                 terminalManager.destroySurface(terminalID: targetID)
                 let newTree = wt.splitTree.removing(targetID)
@@ -1180,7 +1248,12 @@ struct EspalierApp: App {
 
     private func handleClosePane() {
         guard let id = focusedTerminalID else { return }
-        Self.closePane(appState: $appState, terminalManager: terminalManager, targetID: id)
+        Self.closePane(
+            appState: $appState,
+            terminalManager: terminalManager,
+            targetID: id,
+            userInitiated: true
+        )
     }
 
     private func handleReloadConfig() {
