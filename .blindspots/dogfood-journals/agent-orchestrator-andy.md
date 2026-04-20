@@ -1994,3 +1994,35 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 ### Try next cycle
 - Actually use computer-use to verify Andy's rapid-worktree-creation scenario (still deferred from many cycles back — screenshots have been blocked in recent cycles; may need a retry).
 - Look at PRStatusStore.hostByRepo — no cleanup when a repo is removed (tiny leak, noted in cycle 102 exploration).
+
+## Cycle 104 — 2026-04-19 (stale-transition cache cleanup asymmetry — GIT-3.13)
+
+### Explored
+- Looked at PRStatusStore.hostByRepo leak on repo-remove. `removeRepo` is defined on AppState but not called anywhere in the app — there's no user-facing Remove Repo flow, so the leak is unreachable. Moved on.
+- Noticed that `worktreeMonitorDidDetectDeletion` (worktree-dir FSEvents) calls `statsStore.clear` + `prStatusStore.clear`, but the reconcile-path stale transitions at `reconcileOnLaunch` (L470) and `worktreeMonitorDidDetectChange` (L1455) do NOT. Same state transition via different channels, different cleanup. Asymmetric.
+
+### Diagnosed
+- Three paths in `EspalierApp.swift` transition a worktree to `.stale`:
+  1. `reconcileOnLaunch` — cold-start discovery detects a tracked-but-gone worktree
+  2. `worktreeMonitorDidDetectChange` — `.git/worktrees/` FSEvents tick + discover
+  3. `worktreeMonitorDidDetectDeletion` — worktree directory FSEvents tick
+- Only #3 clears the caches. So a worktree made stale via `git worktree prune` without a directory-delete event (path #1 or #2) keeps its cached PR / stats indefinitely. Rare in practice (normal `git worktree remove` triggers both FS channels), but the asymmetry is a real correctness gap — the cached PR renders on the stale row until Dismiss or Delete fires.
+
+### Fixed
+- Added `statsStore.clear(worktreePath:)` + `prStatusStore.clear(worktreePath:)` at both reconcile sites, matching the deletion handler's cleanup. Passed `prStatusStore` into `reconcileOnLaunch`'s closure capture + `worktreeMonitorDidDetectChange`'s local alias.
+
+### Spec
+- Added **GIT-3.13** cross-referencing `GIT-4.10` (remove path) + the three stale-transition FSEvents channels.
+
+### Tests
+- 505/505 pass. No new tests — the integration contract lives in EspalierApp's reconcile closures, not in unit-testable territory. `PRStatusStore.clear` / `WorktreeStatsStore.clear` are already covered.
+
+### Process note
+- Got tripped up mid-cycle: my `swift test` after the edits ran from `/Users/btucker/projects/espalier` (the main worktree, branch `fix/pr-poll-cadence-30s`) instead of the blindspots dogfood worktree. Test failure was the OLD fd-count assertion from before cycle 98's rewrite — a different HEAD. `cd` back into the blindspots worktree resolved it. Edits had gone to the right paths all along because I use absolute paths in Edit tool calls.
+
+### Commit
+- `fix(app): clear stats+PR caches on reconcile-detected stale transition (GIT-3.13)`
+
+### Try next cycle
+- Return to the attention-clear-on-focus thread (cycle 102 noted). Either verify current behavior is correct, or surface a mismatch with Andy's expectations.
+- Worth revisiting: is there a helper I could extract so the three stale-transition sites share ONE codepath? DRY fix rather than three spot-fixes.

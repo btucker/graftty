@@ -444,6 +444,7 @@ struct EspalierApp: App {
     private func reconcileOnLaunch() {
         let binding = $appState
         let statsStore = services.statsStore
+        let prStatusStore = services.prStatusStore
         Task {
             for repoIdx in binding.wrappedValue.repos.indices {
                 let repoPath = binding.wrappedValue.repos[repoIdx].path
@@ -468,6 +469,13 @@ struct EspalierApp: App {
                     let wt = binding.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                     if !discoveredPaths.contains(wt.path) && wt.state != .stale {
                         binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .stale
+                        // Match worktreeMonitorDidDetectDeletion's cleanup
+                        // so stale-via-reconcile and stale-via-fs-event
+                        // behave the same. Otherwise the stale entry
+                        // keeps its cached PR and stats until the next
+                        // clear path (Dismiss, Delete) fires. GIT-3.13.
+                        statsStore.clear(worktreePath: wt.path)
+                        prStatusStore.clear(worktreePath: wt.path)
                     } else if discoveredPaths.contains(wt.path) && wt.state == .stale {
                         // Stale entry is back in git's view — resurrect
                         // to .closed per GIT-3.7. Same rule as the
@@ -1423,6 +1431,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
     nonisolated func worktreeMonitorDidDetectChange(_ monitor: WorktreeMonitor, repoPath: String) {
         let binding = appState
         let store = statsStore
+        let prStore = prStatusStore
         // `git worktree list --porcelain` is a subprocess wait. Awaiting the
         // now-async `GitWorktreeDiscovery.discover` yields the main actor
         // during the wait so ghostty keystrokes aren't delayed (prior
@@ -1453,6 +1462,11 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
                 let wt = binding.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                 if !discoveredPaths.contains(wt.path) && wt.state != .stale {
                     binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .stale
+                    // Match worktreeMonitorDidDetectDeletion's cleanup so
+                    // the .stale state is symmetric regardless of which
+                    // FSEvents channel discovered it. GIT-3.13.
+                    store.clear(worktreePath: wt.path)
+                    prStore.clear(worktreePath: wt.path)
                 } else if discoveredPaths.contains(wt.path) && wt.state == .stale {
                     // Worktree was marked stale but is now back in git's
                     // view (e.g., a momentary FSEvents delete glitch, a
