@@ -72,11 +72,18 @@ public final class PRStatusStore {
         guard !inFlight.contains(worktreePath) else { return }
         inFlight.insert(worktreePath)
 
+        // Snapshot the generation synchronously at scheduling time.
+        // A `branchDidChange` between refresh() and the spawned Task's
+        // first line would otherwise let Task1 snapshot the POST-bump
+        // value — same as Task2 — so both pass the post-await check
+        // and the later one overwrites. See PR-7.9.
+        let fetchGeneration = generation[worktreePath, default: 0]
         Task { [weak self] in
             await self?.performFetch(
                 worktreePath: worktreePath,
                 repoPath: repoPath,
-                branch: branch
+                branch: branch,
+                fetchGeneration: fetchGeneration
             )
         }
     }
@@ -132,15 +139,19 @@ public final class PRStatusStore {
 
     // MARK: - Fetch
 
-    private func performFetch(worktreePath: String, repoPath: String, branch: String) async {
+    private func performFetch(
+        worktreePath: String,
+        repoPath: String,
+        branch: String,
+        fetchGeneration: Int
+    ) async {
         defer { inFlight.remove(worktreePath) }
 
-        // Snapshot the generation we started under. `clear()` bumps it;
-        // if it differs after any `await`, this fetch's result is stale
-        // — Andy already expressed "forget this worktree" — and we bail
-        // before writing back to `infos`/`absent`.
-        let fetchGeneration = generation[worktreePath, default: 0]
-
+        // `fetchGeneration` was snapshotted synchronously at `refresh`
+        // scheduling time. `clear()` bumps it; if it differs after any
+        // `await`, this fetch's result is stale — `Andy already
+        // expressed "forget this worktree"` — and we bail before
+        // writing back to `infos`/`absent`.
         let origin: HostingOrigin?
         if let cached = hostByRepo[repoPath] {
             origin = cached
@@ -312,11 +323,13 @@ extension PRStatusStore {
                     inflight -= 1
                 }
                 inFlight.insert(c.path)
+                let gen = generation[c.path, default: 0]
                 group.addTask { [weak self] in
                     await self?.performFetch(
                         worktreePath: c.path,
                         repoPath: c.repoPath,
-                        branch: c.branch
+                        branch: c.branch,
+                        fetchGeneration: gen
                     )
                 }
                 inflight += 1
