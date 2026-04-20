@@ -26,3 +26,60 @@ html, body, #root, #app {
   font: 12px monospace;
   pointer-events: none;
 }
+
+.picker-status {
+  padding: 24px;
+  color: #888;
+  font: 14px Menlo, monospace;
+}
+.picker-error {
+  color: #ff6b6b;
+}
+.picker {
+  padding: 24px 32px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+.picker h1 {
+  font: 600 20px -apple-system, system-ui, sans-serif;
+  margin: 0 0 24px;
+  letter-spacing: -0.01em;
+}
+.picker-repo {
+  margin-bottom: 20px;
+}
+.picker-repo h2 {
+  font: 600 12px -apple-system, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+  margin: 0 0 8px;
+}
+.picker-repo ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.picker-repo li {
+  margin: 0;
+}
+.picker-session {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--wterm-foreground);
+}
+.picker-session:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+.picker-label {
+  font: 500 14px -apple-system, system-ui, sans-serif;
+}
+.picker-path {
+  font: 11px Menlo, monospace;
+  color: #888;
+  overflow-wrap: anywhere;
+}

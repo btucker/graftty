@@ -393,6 +393,33 @@ struct EspalierApp: App {
         )
 
         restoreRunningWorktrees()
+
+        // WEB-5.4: feed the web server a snapshot of running sessions on
+        // each GET /sessions request. Binding snapshot is read on the
+        // main actor; worktree names are computed the same way the
+        // sidebar does (displayName amongst siblings) so the picker
+        // disambiguates same-basename worktrees the same way.
+        let appStateBinding = $appState
+        webController.setSessionsProvider {
+            await MainActor.run { () -> [WebServer.SessionInfo] in
+                var sessions: [WebServer.SessionInfo] = []
+                for repo in appStateBinding.wrappedValue.repos {
+                    let siblingPaths = repo.worktrees.map(\.path)
+                    for wt in repo.worktrees where wt.state == .running {
+                        for leafID in wt.splitTree.allLeaves {
+                            let sessionName = ZmxLauncher.sessionName(for: leafID.id)
+                            sessions.append(WebServer.SessionInfo(
+                                name: sessionName,
+                                worktreePath: wt.path,
+                                repoDisplayName: repo.displayName,
+                                worktreeDisplayName: wt.displayName(amongSiblingPaths: siblingPaths)
+                            ))
+                        }
+                    }
+                }
+                return sessions
+            }
+        }
     }
 
     private func reconcileOnLaunch() {

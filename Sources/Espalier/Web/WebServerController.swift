@@ -16,6 +16,12 @@ final class WebServerController: ObservableObject {
     private let zmxDir: URL
     private var cancellables = Set<AnyCancellable>()
 
+    /// Supplies `GET /sessions` with the current running sessions
+    /// (`WEB-5.4`). Injected by `EspalierApp` after `appState` + the
+    /// `terminalManager`'s session-name function exist. Nil before
+    /// injection (default-empty provider is baked into `WebServer.Config`).
+    private var sessionsProvider: (@Sendable () async -> [WebServer.SessionInfo])?
+
     /// Last `(isEnabled, port)` tuple we reconciled against. Used to suppress
     /// no-op reconciles — `objectWillChange` on `@AppStorage` fires on every
     /// property write, including ones that don't affect our server.
@@ -39,6 +45,17 @@ final class WebServerController: ObservableObject {
         status = .stopped
         currentURL = nil
         lastApplied = nil
+    }
+
+    /// Install (or replace) the provider used for `GET /sessions`. Called
+    /// from `EspalierApp.startup()` once `appState` is available. Forces
+    /// a reconcile so a running server picks up the new provider.
+    func setSessionsProvider(
+        _ provider: @escaping @Sendable () async -> [WebServer.SessionInfo]
+    ) {
+        sessionsProvider = provider
+        lastApplied = nil  // force reconcile to rebuild the Config
+        reconcile()
     }
 
     private func reconcile() {
@@ -71,8 +88,14 @@ final class WebServerController: ObservableObject {
                 guard let whois = try? await api.whois(peerIP: peerIP) else { return false }
                 return whois.loginName == ownerLogin
             }
+            let provider = sessionsProvider ?? { [] }
             let s = WebServer(
-                config: .init(port: desired.port, zmxExecutable: zmxExecutable, zmxDir: zmxDir),
+                config: .init(
+                    port: desired.port,
+                    zmxExecutable: zmxExecutable,
+                    zmxDir: zmxDir,
+                    sessionsProvider: provider
+                ),
                 auth: auth,
                 bindAddresses: bind
             )

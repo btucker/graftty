@@ -675,6 +675,8 @@ This serves the SPA fallback for client-side-routed URLs such as
 
 **WEB-5.1** The bundled client shall render a single terminal (wterm) that attaches to the session indicated by the `/session/<name>` URL path. If a client arrives at the root path `/` with a `?session=<name>` query parameter, the client shall redirect to `/session/<name>` (backward compatibility).
 
+**WEB-5.4** When a client requests `GET /sessions`, the application shall respond with a JSON array of the currently-running sessions, one entry per live pane across all running worktrees, with fields `name` (the zmx session name derived per `ZMX-2.1`), `worktreePath`, `repoDisplayName`, and `worktreeDisplayName`. The bundled client's root page (`/`) shall fetch this endpoint and render a clickable picker grouped by `repoDisplayName`, so a user who visits the server's root URL without a session query gets a functional entry point rather than a bare "no session" placeholder. Access to `/sessions` shall be gated by the same Tailscale-whois authorization as every other path (`WEB-2.1` / `WEB-2.2`).
+
 **WEB-5.2** The client shall send terminal data events as binary WebSocket frames.
 
 **WEB-5.3** The client shall send resize events as JSON control envelopes in text frames.
@@ -683,7 +685,7 @@ This serves the SPA fallback for client-side-routed URLs such as
 
 **WEB-6.1** Phase 2 shall not implement TLS at the application level; the application shall rely on Tailscale transport encryption.
 
-**WEB-6.2** Phase 2 shall not implement a session picker UI, multi-pane layout, mouse events, OSC 52 clipboard sync, or reboot survival.
+**WEB-6.2** Phase 2 shall not implement multi-pane layout, mouse events, OSC 52 clipboard sync, or reboot survival. (A minimal session-list picker is provided by `WEB-5.4`.)
 
 **WEB-6.3** Phase 2 shall not implement rate limiting, URL tokens, or cookies; authorization shall be via Tailscale WhoIs only.
 

@@ -17,14 +17,47 @@ public final class WebServer {
         case error(String)
     }
 
+    /// One entry served by `GET /sessions`. Minimum useful shape for the
+    /// client's session picker (`WEB-5.4`): the `name` is the URL segment
+    /// under `/session/`, and the label hints let the picker disambiguate
+    /// multiple worktrees sharing a directory basename.
+    public struct SessionInfo: Codable, Sendable, Equatable {
+        public let name: String
+        public let worktreePath: String
+        public let repoDisplayName: String
+        public let worktreeDisplayName: String
+
+        public init(
+            name: String,
+            worktreePath: String,
+            repoDisplayName: String,
+            worktreeDisplayName: String
+        ) {
+            self.name = name
+            self.worktreePath = worktreePath
+            self.repoDisplayName = repoDisplayName
+            self.worktreeDisplayName = worktreeDisplayName
+        }
+    }
+
     public struct Config {
         public let port: Int
         public let zmxExecutable: URL
         public let zmxDir: URL
-        public init(port: Int, zmxExecutable: URL, zmxDir: URL) {
+        /// Source for `GET /sessions`. Called on each request; runs fast
+        /// because the list is read from in-memory AppState (no git work).
+        public let sessionsProvider: @Sendable () async -> [SessionInfo]
+
+        public init(
+            port: Int,
+            zmxExecutable: URL,
+            zmxDir: URL,
+            sessionsProvider: @escaping @Sendable () async -> [SessionInfo] = { [] }
+        ) {
             self.port = port
             self.zmxExecutable = zmxExecutable
             self.zmxDir = zmxDir
+            self.sessionsProvider = sessionsProvider
         }
 
         /// Accepts the range NIO's `bootstrap.bind(host:port:)` will accept
@@ -243,6 +276,38 @@ public final class WebServer {
             // the SPA index for plain HTTP requests on those paths.
             if path == "/ws" || path.hasPrefix("/ws/") {
                 Self.respond(context: context, status: .notFound, body: Data("not found\n".utf8), contentType: "text/plain; charset=utf-8")
+                return
+            }
+            // WEB-5.4: session list endpoint for the client's minimal picker.
+            if path == "/sessions" {
+                let eventLoop = context.eventLoop
+                let provider = config.sessionsProvider
+                let promise = eventLoop.makePromise(of: [SessionInfo].self)
+                eventLoop.execute {
+                    Task {
+                        let sessions = await provider()
+                        promise.succeed(sessions)
+                    }
+                }
+                promise.futureResult.whenComplete { result in
+                    let sessions = (try? result.get()) ?? []
+                    do {
+                        let data = try JSONEncoder().encode(sessions)
+                        Self.respond(
+                            context: context,
+                            status: .ok,
+                            body: data,
+                            contentType: "application/json; charset=utf-8"
+                        )
+                    } catch {
+                        Self.respond(
+                            context: context,
+                            status: .internalServerError,
+                            body: Data("encoding error\n".utf8),
+                            contentType: "text/plain; charset=utf-8"
+                        )
+                    }
+                }
                 return
             }
             do {
