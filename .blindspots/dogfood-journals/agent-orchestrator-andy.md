@@ -1700,3 +1700,39 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 - Survey the AuthPolicy flow for other latent drift: do WS upgrades honor loopback bypass too? (Expect yes since WSS uses the same closure, but worth confirming in a test.)
 - Bundle + install: keep verifying the picker works end-to-end under a fresh launch.
 - Adversarial: `curl -H "X-Forwarded-For: owner-ip" http://other-ts-peer:8799/` — does our WebServer honor forwarded peer IPs? (It shouldn't; peer comes from the socket.)
+
+## Cycle 94 — 2026-04-19 ("Espalier is not running" lies when socket is stale — ATTN-3.4)
+
+### Explored
+- `espalier notify "Hello"` said "Espalier is not running". But `pgrep` showed Espalier PID 45975 running. So what?
+
+### Diagnosed
+- `lsof -p 45975 | grep unix` → zero Unix-domain listeners. TCP listeners on 8799 only. Espalier is alive but its notification socket is dead.
+- `lsof <sock-path>` → no process holds the socket fd. The file exists at mtime 21:39 (an earlier instance's leftover); current process started at 22:06 and did not recreate it. `try? services.socketServer.start()` in `EspalierApp.swift:342` silently swallowed some startup failure, leaving Espalier running with no CLI surface.
+- CLI's `openConnectedSocket()` conflates two cases in `errno`: `ENOENT` (file missing → app not running) and `ECONNREFUSED` (file exists, nobody listening → app running but socket broken). Both map to `.appNotRunning` / "Espalier is not running". Misleading, gives the user no lever.
+
+### Broke
+- Andy watches the sidebar for attention pings from sibling agents, fires `espalier notify …` and gets "Espalier is not running" every time. Rage-quits without knowing that a relaunch fixes it.
+
+### Fixed
+- Added `ControlSocketDiagnosis.classifyConnectFailure(errno:socketExists:path:)` in EspalierKit — pure function, splits `ECONNREFUSED + file exists` into `.staleSocket(path)`.
+- CLI `SocketClient.openConnectedSocket()` now calls the classifier, throws new `CLIError.staleControlSocket(path)` where applicable.
+- Error message: `"Espalier is running but not listening on <path>. Quit and relaunch Espalier to reset the control socket."`
+- Verified live: ran the updated CLI against the broken running Espalier and saw the new message instead of the old lie.
+
+### Spec
+- Added **ATTN-3.4** under §5.3 Error Handling, cross-referencing ATTN-3.1.
+
+### Tests
+- New `ControlSocketDiagnosis` test suite: four cases covering (ECONNREFUSED+exists→stale), (ENOENT→notRunning), (ECONNREFUSED+missing→notRunning, TOCTOU case), (other errno→timeout).
+- All pass. 490/491 overall; the lone failure is the known-flaky `watchersCloseTheirFdsWhenCancelled` fd-count test under concurrent-test pressure — delta 76 today, unrelated to this change.
+
+### Commit
+- `fix(cli): distinguish stale control socket from 'not running' (ATTN-3.4)`
+
+### Didn't touch (but should eventually)
+- `try? services.socketServer.start()` is still silent — if startup fails, the UI shows nothing wrong but the notify surface is dead. Ideally Espalier would surface socket-start failures in the Espalier menu (e.g. "Control socket unavailable — restart Espalier") or at least log via os_log. Deferred because fixing the CLI error is the user-facing lever; fixing the app's silent swallow is a follow-on.
+
+### Try next cycle
+- Audit other `try?` call sites in `EspalierApp.swift` for swallowed startup errors.
+- Andy's scenario: spin up 5 worktrees rapidly (faster than file-system events get dispatched) and see if any get left in an inconsistent state. Related to PWD reassignment / CanonicalPath (cycles 76, 82).

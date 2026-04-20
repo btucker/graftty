@@ -44,6 +44,7 @@ enum WorktreeResolver {
 enum CLIError: Error, CustomStringConvertible {
     case notInsideWorktree
     case appNotRunning
+    case staleControlSocket(path: String)
     case socketTimeout
     case socketError(String)
     case socketPathTooLong(bytes: Int, maxBytes: Int)
@@ -52,6 +53,8 @@ enum CLIError: Error, CustomStringConvertible {
         switch self {
         case .notInsideWorktree: return "Not inside a tracked worktree"
         case .appNotRunning: return "Espalier is not running"
+        case .staleControlSocket(let path):
+            return "Espalier is running but not listening on \(path). Quit and relaunch Espalier to reset the control socket."
         case .socketTimeout: return "Connection timed out after 2 seconds"
         case .socketError(let msg): return "Socket error: \(msg)"
         case .socketPathTooLong(let bytes, let maxBytes):
