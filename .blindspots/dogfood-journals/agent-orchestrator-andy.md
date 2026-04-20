@@ -1915,3 +1915,31 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 ### Try next cycle
 - Explore `.onChange(of: appState)` save frequency — every paneAttention mutation triggers a full state.json rewrite, every COMMAND_FINISHED = 2 writes. Probably harmless on SSD but worth measuring.
 - Revisit rapid-worktree-create scenario: with all three discovery paths now logging, if something breaks under rapid ops, Console.app will tell us.
+
+## Cycle 101 — 2026-04-19 (Add Repository silent-fails + cycle-100 regression — GIT-1.2)
+
+### Explored
+- Was going to look at attention-clear-on-focus rules. Detoured when I grepped `try? await GitWorktreeDiscovery` across `Sources/` and found two more sites cycle 100 missed, both in `MainWindow.swift` (the app-target file I didn't grep before).
+
+### Diagnosed
+- Worse: `swift build` on the Espalier app target FAILS. Cycle 100 wrote `[GitWorktreeDiscovery.DiscoveredWorktree]` but `DiscoveredWorktree` is a top-level type in EspalierKit, not nested in the `GitWorktreeDiscovery` enum. `swift test --test-product EspalierPackageTests` passed (tests only exercise the EspalierKit target) so cycle 100 shipped a broken app target.
+- Cycle-100 lesson: always run `swift build` as well as `swift test` — the test target doesn't cover the app's compile.
+- In MainWindow.swift: `addRepoFromPath` wraps `try? await GitWorktreeDiscovery.discover(...)` in a `Task` with a bare `return`. When the user picks a folder that isn't a git repo (or git fails), nothing happens. No alert, no log.
+
+### Fixed
+- Drop the incorrect `GitWorktreeDiscovery.` qualifier on `DiscoveredWorktree` at all four call sites (3 in `EspalierApp.swift` from cycle 100 + 1 in `MainWindow.swift` from this cycle).
+- `addRepoFromPath` on discover failure: log via NSLog AND present an `NSAlert` mirroring the pattern `addRepoFromPath`'s sibling `Delete Worktree` error path already uses.
+
+### Spec
+- Added **GIT-1.2** alongside GIT-1.1 for the alert-on-failure contract.
+
+### Tests
+- 498/498 still pass. The discover-contract test (from cycle 100) still covers the underlying throwing-behavior. UI alert presentation isn't unit-testable.
+- Reminder to myself: `swift build` every cycle going forward, not just `swift test`.
+
+### Commit
+- `fix(app): Add Repository alert-on-failure + cycle-100 DiscoveredWorktree regression (GIT-1.2)`
+
+### Try next cycle
+- Line 368 of MainWindow — the Add Worktree post-success reconcile discover path, also `try?`. Same family, lower-severity; NSLog is enough there.
+- Attention-clear-on-focus (what I was going to look at this cycle before the regression surfaced).

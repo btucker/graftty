@@ -539,8 +539,26 @@ struct MainWindow: View {
             return
         }
 
-        Task {
-            guard let discovered = try? await GitWorktreeDiscovery.discover(repoPath: repoPath) else { return }
+        Task { @MainActor in
+            let discovered: [DiscoveredWorktree]
+            do {
+                discovered = try await GitWorktreeDiscovery.discover(repoPath: repoPath)
+            } catch {
+                // User-initiated path: the user picked a folder in the
+                // Add Repository dialog. If git discovery fails (folder
+                // isn't a repo, git binary missing, permissions), a
+                // silent `return` leaves the user wondering why nothing
+                // happened. Surface the failure in an alert so they can
+                // pick a different folder or investigate. GIT-1.2.
+                NSLog("[Espalier] addRepoFromPath: discover failed for %@: %@",
+                      repoPath, String(describing: error))
+                let alert = NSAlert()
+                alert.messageText = "Could not add repository"
+                alert.informativeText = "\(repoPath)\n\n\(String(describing: error))"
+                alert.alertStyle = .warning
+                alert.runModal()
+                return
+            }
             let worktrees = discovered.map { WorktreeEntry(path: $0.path, branch: $0.branch) }
             let displayName = URL(fileURLWithPath: repoPath).lastPathComponent
             let repo = RepoEntry(path: repoPath, displayName: displayName, worktrees: worktrees)

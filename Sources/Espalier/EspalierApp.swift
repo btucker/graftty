@@ -447,7 +447,7 @@ struct EspalierApp: App {
         Task {
             for repoIdx in binding.wrappedValue.repos.indices {
                 let repoPath = binding.wrappedValue.repos[repoIdx].path
-                let discovered: [GitWorktreeDiscovery.DiscoveredWorktree]
+                let discovered: [DiscoveredWorktree]
                 do {
                     discovered = try await GitWorktreeDiscovery.discover(repoPath: repoPath)
                 } catch {
@@ -1429,7 +1429,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         // manifestation: intermittent ~1s input/render hangs under fs/
         // indexing pressure).
         Task { @MainActor in
-            let discovered: [GitWorktreeDiscovery.DiscoveredWorktree]
+            let discovered: [DiscoveredWorktree]
             do {
                 discovered = try await GitWorktreeDiscovery.discover(repoPath: repoPath)
             } catch {
@@ -1535,7 +1535,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             guard let repoPath = binding.wrappedValue.repos.first(where: { repo in
                 repo.worktrees.contains(where: { $0.path == worktreePath })
             })?.path else { return }
-            let discovered: [GitWorktreeDiscovery.DiscoveredWorktree]
+            let discovered: [DiscoveredWorktree]
             do {
                 discovered = try await GitWorktreeDiscovery.discover(repoPath: repoPath)
             } catch {
