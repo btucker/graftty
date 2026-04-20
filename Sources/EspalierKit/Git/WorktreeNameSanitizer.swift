@@ -7,11 +7,18 @@ import Foundation
 /// later `git worktree add` failure.
 ///
 /// The allowed set is intentionally narrow and ASCII-only:
-/// `A-Z a-z 0-9 . _ -`. This is a subset of what both macOS paths and
+/// `A-Z a-z 0-9 . _ - /`. This is a subset of what both macOS paths and
 /// `git check-ref-format` accept, so a sanitized name is valid for both.
+/// `/` is permitted because it's the conventional branch-namespace
+/// separator (`feature/foo`, `user/x/y`); for worktree paths it produces
+/// a nested `.worktrees/<ns>/<leaf>` directory, which `git worktree add`
+/// creates on our behalf.
+///
 /// We do not trim leading/trailing dashes — doing so mid-type would
 /// swallow the pending separator and corrupt the next keystroke; callers
-/// trim on submit instead.
+/// trim on submit instead. We also do not pre-validate the ref-format
+/// rules git already owns (`//`, leading/trailing `/`, components starting
+/// with `.`): git reports those at submit time and we surface its stderr.
 public enum WorktreeNameSanitizer {
 
     public static func sanitize(_ input: String) -> String {
@@ -43,7 +50,7 @@ public enum WorktreeNameSanitizer {
         switch s {
         case "A"..."Z", "a"..."z", "0"..."9":
             return true
-        case ".", "_", "-":
+        case ".", "_", "-", "/":
             return true
         default:
             return false

@@ -27,9 +27,24 @@ struct WorktreeNameSanitizerTests {
         #expect(WorktreeNameSanitizer.sanitize("foo\\bar") == "foo-bar")
     }
 
-    @Test func replacesPathSeparatorWithDash() {
-        // A single-segment worktree directory name; '/' would create nested dirs.
-        #expect(WorktreeNameSanitizer.sanitize("feature/foo") == "feature-foo")
+    @Test func preservesPathSeparator() {
+        // '/' is the conventional branch-namespace separator; we allow it
+        // through untouched and let `git worktree add` handle the resulting
+        // nested `.worktrees/<ns>/<leaf>` directory.
+        #expect(WorktreeNameSanitizer.sanitize("feature/foo") == "feature/foo")
+        #expect(WorktreeNameSanitizer.sanitize("user/ben/x") == "user/ben/x")
+    }
+
+    @Test func preservesSlashWhenMixedWithReplacedCharacters() {
+        // Spaces still collapse to '-' but the '/' in the same input
+        // survives — each character is decided independently.
+        #expect(WorktreeNameSanitizer.sanitize("my feature/foo") == "my-feature/foo")
+    }
+
+    @Test func doesNotCollapseConsecutiveSlashes() {
+        // We delegate `//` rejection to `git check-ref-format` at submit time
+        // rather than duplicating the rule client-side.
+        #expect(WorktreeNameSanitizer.sanitize("foo//bar") == "foo//bar")
     }
 
     @Test func replacesControlCharactersWithDash() {
@@ -40,7 +55,9 @@ struct WorktreeNameSanitizerTests {
     @Test func collapsesConsecutiveReplacements() {
         #expect(WorktreeNameSanitizer.sanitize("foo   bar") == "foo-bar")
         #expect(WorktreeNameSanitizer.sanitize("a!!!b") == "a-b")
-        #expect(WorktreeNameSanitizer.sanitize("a  /  b") == "a-b")
+        // Mixed runs of illegal chars still collapse; legal chars between
+        // them (like '/') act as boundaries that reset the collapse window.
+        #expect(WorktreeNameSanitizer.sanitize("a  !  b") == "a-b")
     }
 
     @Test func preservesExistingRunsOfDashes() {
