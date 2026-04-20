@@ -74,6 +74,22 @@ struct GitOriginHostParseTests {
         #expect(origin?.slug == "group/subgroup/proj")
         #expect(origin?.provider == .gitlab)
     }
+
+    @Test func stripsDotGitSuffixWhenScpUrlHasTrailingSlash() {
+        // `.git` strip previously ran before the trailing-slash strip,
+        // so scp-style inputs like `git@github.com:owner/repo.git/`
+        // (URL's auto-normalisation doesn't apply to the manual scp
+        // parse path) ended with repo="repo.git". The resulting
+        // `gh pr list --repo owner/repo.git` returned an empty list
+        // and the sidebar showed no PR badge.
+        let origin = GitOriginHost.parse(remoteURL: "git@github.com:btucker/espalier.git/")
+        #expect(origin == HostingOrigin(provider: .github, host: "github.com", owner: "btucker", repo: "espalier"))
+    }
+
+    @Test func stripsTrailingSlashOnScpUrlWithoutDotGit() {
+        let origin = GitOriginHost.parse(remoteURL: "git@github.com:btucker/espalier/")
+        #expect(origin == HostingOrigin(provider: .github, host: "github.com", owner: "btucker", repo: "espalier"))
+    }
 }
 
 @Suite("GitOriginHost.detect")

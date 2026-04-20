@@ -2755,3 +2755,35 @@ No code change this cycle. The prior ~9 cycles covered a lot of surface; diminis
 ### Try next cycle
 - Now that port-in-use shows "Port in use" text, add an actionable hint — the text says "Port in use" but doesn't tell the user to stop the conflicting process or change the port. Could add a secondary line.
 - Preferences shows "Port: 8,799" with a localization-grouped number — weird (matches WEB-1.7 concern for the status row but this is the INPUT field). Verify the editable field saves correctly.
+
+## Cycle 154 — 2026-04-20 (socket server unbounded per-client buffer — ATTN-2.11)
+
+### Explored
+- Audited `SocketServer.handleClient` read loop after confirming PRStatusStore/stats had their wipe-on-failure bugs fixed. Asked: what happens if a local process floods the Unix socket?
+
+### Broke
+- Looked at line 118-123: `while true { read(fd, &chunk, 4096); if <=0 break; buffer.append(...) }`. No total-bytes cap. Only SO_RCVTIMEO guards the loop, and that only fires when data STOPS flowing — a continuous writer (`cat /dev/urandom | nc -U`) never triggers it.
+- Wrote `SocketServerBufferCapTests.clientFloodingOverCapStopsReading`: 4 KB cap, 500 messages (~22 KB). Pre-fix: all 500 land. Post-fix: only those fitting within 4 KB land.
+
+### Diagnosed
+- DoS vector: local process (another user of the machine or a misbehaving script) could pin server memory at hundreds of MB in seconds. Also: `cat /dev/urandom | nc -U espalier.sock` accidentally — no malice needed.
+
+### Spec
+- Added **ATTN-2.11** requiring a per-client buffer cap. Default 1 MB (1000× the ~1 KB typical JSON message size).
+
+### Fixed
+- Added `maxPerClientBytes: Int = 1 * 1024 * 1024` on SocketServer (public `var` so tests can shrink it).
+- Read loop now: `while buffer.count < cap { read min(chunk, remaining); ... }`.
+- Client's subsequent writes either fit what was read (already processed) or encounter EPIPE when we close the fd via defer.
+
+### Tests
+- `clientFloodingOverCapStopsReading` — sets cap 4 KB, floods 500 messages, asserts `received.count < 500 && !received.isEmpty`.
+- Required `SO_NOSIGPIPE` on the client fd: when the server stops reading, the next client `write(2)` normally raises SIGPIPE and kills the test process. Set the socket option to convert to EPIPE errno instead.
+- 617/617 overall.
+
+### Commit
+- `fix(socket): cap per-client read at 1 MB to prevent buffer-flood DoS (ATTN-2.11)` (dc5b209)
+
+### Try next cycle
+- The read loop still holds messages in a single growing Data — a client sending 1000 small messages in quick succession still uses ~1 KB × 1000 = 1 MB. That's within the cap but wasteful. Line-at-a-time parsing (read until \n, decode, reset) would lower peak memory, but adds complexity. Flag for later.
+- Similar unbounded-read patterns elsewhere? Let me scan Zmx, web socket read paths, etc., next cycle.
