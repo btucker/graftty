@@ -139,4 +139,16 @@ public enum NotifyInputValidation: Equatable {
         default: return false
         }
     }
+
+    /// Drop every BIDI-override scalar from the input. Used at the
+    /// PR-title intake boundary (`PR-5.5`) where the author is
+    /// explicitly not trusted and rejecting the whole PR would hide
+    /// a legit PR behind a single poisoned title. Rejection (the
+    /// self-owned-surface policy at `ATTN-1.14` and `LAYOUT-2.18`)
+    /// assumes the text has an owner who can fix it; for external
+    /// data, stripping degrades the display gracefully.
+    public static func strippingBidiOverrides(_ s: String) -> String {
+        let safe = s.unicodeScalars.filter { !isBidiOverride($0) }
+        return String(String.UnicodeScalarView(safe))
+    }
 }

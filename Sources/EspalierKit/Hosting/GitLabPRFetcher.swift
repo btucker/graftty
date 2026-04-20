@@ -14,7 +14,10 @@ public struct GitLabPRFetcher: PRFetcher {
             let checks = opened.head_pipeline.map { Self.mapStatus($0.status) } ?? .none
             return PRInfo(
                 number: opened.iid,
-                title: opened.title,
+                // PR-5.5: strip BIDI-override scalars from the
+                // author-controlled title (same rationale as the
+                // GitHub side).
+                title: NotifyInputValidation.strippingBidiOverrides(opened.title),
                 url: opened.web_url,
                 state: .open,
                 checks: checks,
@@ -24,7 +27,7 @@ public struct GitLabPRFetcher: PRFetcher {
         if let merged = try await fetchOne(origin: origin, branch: branch, state: "merged") {
             return PRInfo(
                 number: merged.iid,
-                title: merged.title,
+                title: NotifyInputValidation.strippingBidiOverrides(merged.title),
                 url: merged.web_url,
                 state: .merged,
                 checks: .none,

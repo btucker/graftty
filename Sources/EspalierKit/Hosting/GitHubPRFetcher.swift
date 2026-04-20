@@ -22,7 +22,10 @@ public struct GitHubPRFetcher: PRFetcher {
             let checks = (try? await fetchChecks(origin: origin, number: open.number)) ?? .none
             return PRInfo(
                 number: open.number,
-                title: open.title,
+                // PR-5.5: strip BIDI-override scalars from the
+                // author-controlled title so a poisoned title can't
+                // visually deceive via RTL-reversal in the breadcrumb.
+                title: NotifyInputValidation.strippingBidiOverrides(open.title),
                 url: open.url,
                 state: .open,
                 checks: checks,
@@ -32,7 +35,7 @@ public struct GitHubPRFetcher: PRFetcher {
         if let merged = try await fetchOne(origin: origin, branch: branch, state: "merged") {
             return PRInfo(
                 number: merged.number,
-                title: merged.title,
+                title: NotifyInputValidation.strippingBidiOverrides(merged.title),
                 url: merged.url,
                 state: .merged,
                 checks: .none,

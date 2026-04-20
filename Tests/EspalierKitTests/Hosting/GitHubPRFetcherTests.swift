@@ -217,6 +217,41 @@ struct GitHubPRFetcherTests {
         // Checks degrade to neutral rather than making the PR vanish.
         #expect(pr?.checks == PRInfo.Checks.none)
     }
+
+    /// External-contributor PRs can be titled with Unicode
+    /// bidirectional-override scalars (U+202A-U+202E, U+2066-U+2069),
+    /// producing the "Trojan Source" render distortion (CVE-2021-42574)
+    /// in the breadcrumb's `PRButton` — which renders `Text(info.title)`
+    /// with no filtering of its own. ATTN-1.14 + LAYOUT-2.18 block this
+    /// on self-owned surfaces (notify text, OSC 2 titles); the PR-title
+    /// intake needs the same defense because the author is explicitly
+    /// not trusted.
+    ///
+    /// Strip (not reject) the scalars — rejection would hide the PR
+    /// entirely and worsen UX. Stripped title still conveys the human-
+    /// readable gist of the PR; if the user wants to see the raw title
+    /// they can click through to the hosting provider.
+    @Test func stripsBidiOverrideScalarsFromTitle() async throws {
+        // Inline stub with a title containing U+202E RIGHT-TO-LEFT
+        // OVERRIDE and U+202C POP DIRECTIONAL FORMATTING.
+        let rawJSON = #"""
+        [{"number":1,"title":"Fix \#u{202E}redli\#u{202C} helper","url":"https://github.com/btucker/espalier/pull/1","state":"OPEN","headRefName":"feature/git-improvements","headRepositoryOwner":{"login":"btucker"}}]
+        """#
+        let fake = FakeCLIExecutor()
+        fake.stub(command: "gh", args: listArgs(state: "open"),
+                  output: CLIOutput(stdout: rawJSON, stderr: "", exitCode: 0))
+        fake.stub(command: "gh",
+                  args: ["pr", "checks", "1", "--repo", "btucker/espalier",
+                         "--json", "name,state,bucket"],
+                  output: CLIOutput(stdout: "[]", stderr: "", exitCode: 0))
+
+        let fetcher = GitHubPRFetcher(executor: fake, now: { Date() })
+        let pr = try await fetcher.fetch(origin: origin, branch: branch)
+
+        #expect(pr?.number == 1)
+        // BIDI-override scalars stripped; the legible content remains.
+        #expect(pr?.title == "Fix redli helper")
+    }
 }
 
 @Suite("GitHubPRFetcher.rollup")
