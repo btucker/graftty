@@ -9,7 +9,8 @@ import Darwin
 /// thread that blocks on `read(masterFD)`, and exposes `write(_:)`
 /// (for binary frames from the client) and `resize(cols:rows:)`
 /// (for control frames). On `close()`, sends SIGTERM to the child
-/// and closes the master fd.
+/// and closes the master fd. SIGTERM (not SIGKILL) per WEB-4.5 so the
+/// client exits gracefully while the daemon survives.
 public final class WebSession {
 
     public struct Config {
@@ -101,11 +102,17 @@ public final class WebSession {
         stateLock.unlock()
 
         if let spawned {
-            // Straight to SIGKILL; zmx attach exiting gracefully is not
-            // required (its daemon handles abrupt client disconnect).
-            // Closing masterFD unblocks the reader thread's read() —
-            // it returns -1/EIO and the thread exits.
-            _ = kill(spawned.pid, SIGKILL)
+            // WEB-4.5: SIGTERM (not SIGKILL) so `zmx attach` gets a chance
+            // to exit cleanly — flush its read side, log the disconnect,
+            // detach from the daemon gracefully. The daemon itself
+            // survives either way per ZMX-4.4; this signal targets the
+            // short-lived client process we spawned for the web frame.
+            // The 500ms waitpid window below accommodates SIGTERM's
+            // slightly-slower convergence.
+            //
+            // Closing masterFD afterwards unblocks the reader thread's
+            // read() — it returns -1/EIO and the thread exits.
+            _ = kill(spawned.pid, SIGTERM)
             Darwin.close(spawned.masterFD)
             // Bounded nonblocking reap (≤500ms). If waitpid doesn't see
             // the child marked dead in that window, give up and leave it
