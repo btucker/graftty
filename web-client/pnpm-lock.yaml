@@ -11,9 +11,9 @@ importers:
       '@tanstack/react-router':
         specifier: ^1.95.0
         version: 1.168.23(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
-      '@wterm/react':
-        specifier: latest
-        version: 0.1.8(@wterm/dom@0.1.7)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)
+      ghostty-web:
+        specifier: ^0.4.0
+        version: 0.4.0
       react:
         specifier: ^19.0.0
         version: 19.2.5
@@ -476,19 +476,6 @@ packages:
     peerDependencies:
       vite: ^4.2.0 || ^5.0.0 || ^6.0.0 || ^7.0.0
 
-  '@wterm/core@0.1.7':
-    resolution: {integrity: sha512-uP8R/OxO/cZUVOWD2q9SLgRTjqH6Ovd3se3SOJvwTi13yJazUF9hGlTrybLgNi4hmuGTHxHPSDSHvQrgf0KEeg==}
-
-  '@wterm/dom@0.1.7':
-    resolution: {integrity: sha512-235hVbza23+OIYuOror1y7L8MknISTg5yEobNqnNgUmUJ8GjCz5ertTZpZp6zE/1x4Ik2iBd8DjeG5J0g8MR+A==}
-
-  '@wterm/react@0.1.8':
-    resolution: {integrity: sha512-eW+olCGansLe47Kz9oxsMJLAkysvHItxp7EBlpVmh3I+b98ge42vwekjH67x7ME+MShMpZ4KJhtLhqBtKV44fg==}
-    peerDependencies:
-      '@wterm/dom': 0.1.7
-      react: ^18.0.0 || ^19.0.0
-      react-dom: ^18.0.0 || ^19.0.0
-
   baseline-browser-mapping@2.10.20:
     resolution: {integrity: sha512-1AaXxEPfXT+GvTBJFuy4yXVHWJBXa4OdbIebGN/wX5DlsIkU0+wzGnd2lOzokSk51d5LUmqjgBLRLlypLUqInQ==}
     engines: {node: '>=6.0.0'}
@@ -549,6 +536,9 @@ packages:
   gensync@1.0.0-beta.2:
     resolution: {integrity: sha512-3hN7NaskYvMDLQY55gnW3NQ+mesEAepTqlg+VEbj7zzqEMBVNhzcGYYeqFo/TlYz6eQiFcp1HcsCZO+nGgS8zg==}
     engines: {node: '>=6.9.0'}
+
+  ghostty-web@0.4.0:
+    resolution: {integrity: sha512-0puDBik2qapbD/QQBW9o5ZHfXnZBqZWx/ctBiVtKZ6ZLds4NYb+wZuw1cRLXZk9zYovIQ908z3rvFhexAvc5Hg==}
 
   isbot@5.1.39:
     resolution: {integrity: sha512-obH0yYahGXdzNxo+djmHhBYThUKDkz565cxkIlt2L9hXfv1NlaLKoDBHo6KxXsYrIXx2RK3x5vY36CfZcobxEw==}
@@ -1052,18 +1042,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@wterm/core@0.1.7': {}
-
-  '@wterm/dom@0.1.7':
-    dependencies:
-      '@wterm/core': 0.1.7
-
-  '@wterm/react@0.1.8(@wterm/dom@0.1.7)(react-dom@19.2.5(react@19.2.5))(react@19.2.5)':
-    dependencies:
-      '@wterm/dom': 0.1.7
-      react: 19.2.5
-      react-dom: 19.2.5(react@19.2.5)
-
   baseline-browser-mapping@2.10.20: {}
 
   browserslist@4.28.2:
@@ -1127,6 +1105,8 @@ snapshots:
     optional: true
 
   gensync@1.0.0-beta.2: {}
+
+  ghostty-web@0.4.0: {}
 
   isbot@5.1.39: {}
 

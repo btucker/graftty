@@ -16,8 +16,11 @@ export default defineConfig({
     assetsInlineLimit: 0,
     rollupOptions: {
       output: {
+        // Inline all dynamic imports so the bundle ships as a single app.js.
+        // ghostty-web has a node-only fs.readFile branch behind a dynamic import;
+        // leaving it as a separate chunk would require a new static-asset route.
+        inlineDynamicImports: true,
         entryFileNames: 'app.js',
-        chunkFileNames: 'chunk-[name].js',
         assetFileNames: (info) => {
           const name = info.name ?? 'asset';
           if (name.endsWith('.css')) return 'app.css';

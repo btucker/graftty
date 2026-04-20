@@ -1,21 +1,21 @@
 :root {
   color-scheme: dark;
-  --wterm-background: #0d0d0d;
-  --wterm-foreground: #e5e5e5;
+  --term-background: #0d0d0d;
+  --term-foreground: #e5e5e5;
 }
 
 html, body, #root, #app {
   margin: 0;
   height: 100%;
-  background: var(--wterm-background);
-  color: var(--wterm-foreground);
+  background: var(--term-background);
+  color: var(--term-foreground);
   font-family: Menlo, monospace;
+  overflow: hidden;
 }
 
 #term {
+  width: 100vw;
   height: 100vh;
-  padding: 8px;
-  box-sizing: border-box;
 }
 
 #status {
@@ -25,6 +25,7 @@ html, body, #root, #app {
   color: #888;
   font: 12px monospace;
   pointer-events: none;
+  z-index: 1;
 }
 
 .picker-status {
@@ -70,7 +71,7 @@ html, body, #root, #app {
   padding: 10px 12px;
   border-radius: 6px;
   text-decoration: none;
-  color: var(--wterm-foreground);
+  color: var(--term-foreground);
 }
 .picker-session:hover {
   background: rgba(255, 255, 255, 0.06);

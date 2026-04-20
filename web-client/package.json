@@ -8,7 +8,7 @@
   },
   "dependencies": {
     "@tanstack/react-router": "^1.95.0",
-    "@wterm/react": "latest",
+    "ghostty-web": "^0.4.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

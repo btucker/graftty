@@ -9,3 +9,4 @@
 .blindspots/interviews/
 dist-tmp/
 web-client/node_modules/
+.playwright-mcp/

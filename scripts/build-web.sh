@@ -21,8 +21,9 @@ cp "$ROOT/dist-tmp/index.html" "$RES/index.html"
 cp "$ROOT/dist-tmp/app.js"     "$RES/app.js"
 cp "$ROOT/dist-tmp/app.css"    "$RES/app.css"
 
-WTERM_VER=$(cd "$WEB" && node -p "require('./node_modules/@wterm/react/package.json').version" 2>/dev/null || echo "unknown")
-printf "wterm-react: %s\n" "$WTERM_VER" > "$RES/VERSION"
+GWEB_VER=$(cd "$WEB" && node -p "require('./node_modules/ghostty-web/package.json').version" 2>/dev/null || echo "unknown")
+printf "ghostty-web: %s\n" "$GWEB_VER" > "$RES/VERSION"
+cp "$WEB/node_modules/ghostty-web/LICENSE" "$RES/LICENSE-ghostty-web"
 
 echo "→ done. Artifacts in $RES:"
 ls -la "$RES"
