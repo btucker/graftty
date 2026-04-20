@@ -338,6 +338,8 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **ATTN-3.4** If the control socket file exists on disk but `connect()` fails with `ECONNREFUSED`, then the CLI shall print "Espalier is running but not listening on `<path>`. Quit and relaunch Espalier to reset the control socket." and exit with code 1, rather than conflating this stale-listener case with `ATTN-3.1`'s "not running" message. The conditions differ: `ENOENT` (file missing) means the app never created the socket, whereas `ECONNREFUSED` on an existing file means a prior Espalier instance crashed without unlinking, or its `SocketServer.start()` failed after the file was created but before listening began.
 
+**ATTN-3.5** When a `pane list`, `pane add`, or `pane close` request targets a tracked worktree that is not in the `.running` state (i.e., no terminals currently alive in it), the server shall respond with `.error("worktree not running")`. `list` in particular shall NOT return an empty `.paneList` — that reads as a silent success to callers scripting `pane list | wc -l` or similar, when in fact the worktree needs to be clicked to start its terminals.
+
 ### 5.4 CLI Distribution
 
 **ATTN-4.1** The application shall provide a menu item (Espalier -> Install CLI Tool...) to create or update a symlink at `/usr/local/bin/espalier` pointing to the CLI binary in the app bundle. CLI installation is opt-in via this menu item; the application shall not auto-prompt for installation on launch.

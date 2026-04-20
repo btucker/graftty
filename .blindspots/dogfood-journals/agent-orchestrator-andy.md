@@ -2369,3 +2369,33 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 ### Try next cycle
 - `WorktreeStatsStore` → EspalierKit for DIVERGE-4.5 coverage.
 - Surface `SocketServer.lastStartError` in Espalier menu.
+
+## Cycle 117 — 2026-04-20 (pane list/close silent on .closed worktrees — ATTN-3.5)
+
+### Explored
+- Round-trip of session names through WebServer.parseSession (handles percent-encoding via `removingPercentEncoding`; cycle 116's path-encoding fix feeds correctly decoded values).
+- TailscaleLocalAPI.whois IPv6-address formatting (ambiguous in URL but API's problem, not ours).
+- `attachArgv` / `zshIntegrationPrefix` path handling for versioned zsh paths.
+- CLI SocketClient timeout semantics (2s SO_RCVTIMEO applied but not distinguished in error text — marginal).
+
+### Diagnosed
+- `listPanes` and `closePaneByIndex` handlers skip the `wt.state == .running` guard that `addPane` has. On a `.closed` worktree:
+  - `listPanes` → empty `.paneList` → CLI prints nothing, exits 0. A script doing `espalier pane list | wc -l` gets a silent 0, indistinguishable from "real zero" success.
+  - `closePaneByIndex` → `.error("no pane with id N in this worktree")`. Technically correct but misleads about the cause.
+
+### Fixed
+- Added `guard wt.state == .running else { return .error("worktree not running") }` to both handlers, symmetric with `addPane`. Now all three pane subcommands surface the worktree-state precondition consistently.
+
+### Spec
+- Added **ATTN-3.5** pinning the contract.
+
+### Tests
+- No new unit test — handlers live in `EspalierApp.swift` (app target), not reachable from EspalierKitTests. Manual verification path is straightforward: `espalier pane list` on a closed worktree now errors cleanly.
+- 540/540 existing tests pass.
+
+### Commit
+- `fix(cli): pane list/close return "worktree not running" on closed worktrees (ATTN-3.5)`
+
+### Try next cycle
+- `WorktreeStatsStore` → EspalierKit move remains the biggest structural gap (DIVERGE-4.5 coverage).
+- Surface `SocketServer.lastStartError` in Espalier menu (cycle 95 follow-on).

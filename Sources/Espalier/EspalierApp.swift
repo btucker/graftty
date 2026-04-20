@@ -693,6 +693,13 @@ struct EspalierApp: App {
         guard let wt = appState.wrappedValue.worktree(forPath: path) else {
             return .error("not tracked")
         }
+        // Symmetric with `addPane` / `closePaneByIndex`: a .closed worktree
+        // has no panes by construction, and returning an empty `.paneList`
+        // looks like a silent success to scripts. Surface the state
+        // explicitly instead (ATTN-3.5).
+        guard wt.state == .running else {
+            return .error("worktree not running")
+        }
         let leaves = wt.splitTree.allLeaves
         let panes = leaves.enumerated().map { (i, terminalID) -> PaneInfo in
             // Use the derived label (title → PWD basename → nil) so the
@@ -749,6 +756,12 @@ struct EspalierApp: App {
     ) -> ResponseMessage {
         guard let wt = appState.wrappedValue.worktree(forPath: path) else {
             return .error("not tracked")
+        }
+        // Symmetric with `addPane`. A .closed worktree's splitTree is
+        // empty; the "no pane with id N" error would technically be
+        // correct but misleads about the root cause (ATTN-3.5).
+        guard wt.state == .running else {
+            return .error("worktree not running")
         }
         guard let targetID = wt.splitTree.leaf(atPaneID: index) else {
             return .error("no pane with id \(index) in this worktree")
