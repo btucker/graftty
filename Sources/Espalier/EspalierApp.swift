@@ -396,7 +396,11 @@ struct EspalierApp: App {
         // for every non-stale worktree. Replaces the legacy 60s Timer and
         // additionally surfaces origin-side drift that WorktreeMonitor's
         // per-worktree HEAD watcher can't see.
-        services.statsStore.startPolling(appState: appState)
+        let statsTicker = PollingTicker(interval: .seconds(5))
+        services.statsStore.start(
+            ticker: statsTicker,
+            getRepos: { [appState] in appState.repos }
+        )
 
         let prTicker = PollingTicker(
             interval: .seconds(5),

@@ -2508,3 +2508,35 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 ### Try next cycle
 - Still: WorktreeStatsStore → EspalierKit for DIVERGE-4.5 coverage.
 - Surface `SocketServer.lastStartError` in Espalier menu.
+
+## Cycle 122 — 2026-04-20 (move WorktreeStatsStore to EspalierKit for DIVERGE-4.5 coverage)
+
+### Explored
+- The deferred "try next cycle" item from cycles 106, 113, 118, 119, 120, 121.
+
+### Diagnosed
+- `WorktreeStatsStore` lived in the Espalier app target, so DIVERGE-4.5's generation-counter protection couldn't be unit-tested from EspalierKitTests. The blocker was its use of concrete `PollingTicker` (which needs AppKit).
+- `PollingTickerLike` protocol already existed in EspalierKit (PR #16 era). PRStatusStore used it via injection. WorktreeStatsStore was the outlier.
+
+### Fixed
+- Changed `ticker: PollingTicker?` → `ticker: PollingTickerLike?`.
+- Replaced `startPolling(appState:)` with `start(ticker:getRepos:)` mirroring `PRStatusStore.start`. Caller constructs the concrete `PollingTicker` in the app target and injects it.
+- Moved `Sources/Espalier/Model/WorktreeStatsStore.swift` → `Sources/EspalierKit/Stats/WorktreeStatsStore.swift`. Dropped its `import EspalierKit` since it's now inside the module.
+- EspalierApp.swift call site updated to create the ticker and call `start(ticker:getRepos:)`.
+
+### Spec
+- No spec change — the contract (DIVERGE-4.5) already exists. This unblocks test coverage.
+
+### Tests
+- Added `Tests/EspalierKitTests/Stats/WorktreeStatsStoreClearTests.swift` with three pure-unit tests:
+  - `clearBumpsGenerationCounter` — single clear bumps gen by 1
+  - `repeatedClearsKeepBumpingGeneration` — repeated clears increment
+  - `refreshCapturesCurrentGeneration` — gen persists across clears so a stale refresh's captured gen detects mismatch
+- Deliberately skipped the full "race clear against in-flight apply" integration test: it requires configuring global `GitRunner.executor` which races against other concurrent test suites that rely on GitRunner. Tried it, saw 7 sibling-suite failures from stub-poisoning. Unit tests of the three primitives pin the contract adequately.
+- 546/546 pass across 3 consecutive runs.
+
+### Commit
+- `refactor(stats): move WorktreeStatsStore to EspalierKit + unit-test DIVERGE-4.5`
+
+### Try next cycle
+- Surface `SocketServer.lastStartError` in Espalier menu (cycle 95 carry-over, final biggest open item).

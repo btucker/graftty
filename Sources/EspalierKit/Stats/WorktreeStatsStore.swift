@@ -1,6 +1,5 @@
 import Foundation
 import Observation
-import EspalierKit
 
 /// Session-scoped, @MainActor-observed store of per-worktree divergence stats.
 ///
@@ -44,9 +43,21 @@ public final class WorktreeStatsStore {
     private var inFlightRepos: Set<String> = []
 
     @ObservationIgnored
-    private var ticker: PollingTicker?
+    private var ticker: PollingTickerLike?
+
+    @ObservationIgnored
+    private var getRepos: @MainActor () -> [RepoEntry] = { [] }
 
     public init() {}
+
+    // Test hooks for DIVERGE-4.5 verification. Not used in production.
+    func generationForTesting(_ worktreePath: String) -> Int {
+        generation[worktreePath, default: 0]
+    }
+
+    func isInFlightForTesting(_ worktreePath: String) -> Bool {
+        inFlight.contains(worktreePath)
+    }
 
     public func refresh(worktreePath: String, repoPath: String) {
         guard !inFlight.contains(worktreePath) else { return }
@@ -82,23 +93,25 @@ public final class WorktreeStatsStore {
         generation[worktreePath, default: 0] += 1
     }
 
-    /// Start a 5s ticker that periodically `git fetch`es each repo (on its
-    /// own cadence — see `repoFetchCadence`) and refreshes stats for every
-    /// non-stale worktree on that repo afterward. This replaces the legacy
-    /// 60s `Timer` in `EspalierApp.startup()`, and additionally surfaces
-    /// origin-side drift (remote moved, local didn't) that `WorktreeMonitor`'s
-    /// per-worktree HEAD watcher can't see.
-    public func startPolling(appState: AppState) {
-        stopPolling()
-        let getRepos: () -> [RepoEntry] = { appState.repos }
-        let ticker = PollingTicker(interval: .seconds(5))
+    /// Start the polling loop with a caller-provided ticker. The ticker
+    /// lives in the app target (it needs AppKit) and is injected so this
+    /// store can live in EspalierKit without dragging in AppKit. Mirrors
+    /// `PRStatusStore.start` and enables unit-testing DIVERGE-4.5 via a
+    /// stub PollingTickerLike + stubbed GitRunner executor.
+    public func start(
+        ticker: PollingTickerLike,
+        getRepos: @escaping @MainActor () -> [RepoEntry]
+    ) {
+        stop()
+        self.getRepos = getRepos
         self.ticker = ticker
+        let repos = getRepos
         ticker.start { [weak self] in
-            await self?.pollTick(repos: getRepos())
+            await self?.pollTick(repos: repos())
         }
     }
 
-    public func stopPolling() {
+    public func stop() {
         ticker?.stop()
         ticker = nil
     }
