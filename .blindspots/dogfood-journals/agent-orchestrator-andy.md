@@ -1768,3 +1768,34 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 - Consider surfacing `lastStartError` in the Espalier menu (next to Web server status) so even non-CLI users know when the notify surface is dead.
 - Audit remaining `try?` call sites in EspalierApp.swift (state save at :111, discover at :431/:1406/:1505 are the interesting ones).
 - Andy's rapid-worktree-creation scenario is still untouched.
+
+## Cycle 96 — 2026-04-19 (refresh() skips the fetchable-branch gate — PR-7.5)
+
+### Explored
+- Pivoted off the recent try?-audit arc. Looked at the PR status module (PR #16's async-git migration). Traced `refresh` / `branchDidChange` / polling loop against the `isFetchableBranch` gate (PR-7.3).
+
+### Diagnosed
+- The polling loop (`PRStatusStore+Poller`, line ~290) correctly `continue`s past any worktree whose branch is a git sentinel (`(detached)`, `(bare)`, etc).
+- BUT the on-demand refresh paths — `refresh(worktreePath:repoPath:branch:)` directly, and `branchDidChange(...)` which ends up calling `refresh` — do not check. Result: selecting a detached-HEAD worktree in the sidebar, or a HEAD-change event landing on a sentinel, fires two wasted `gh pr list --head '(detached)'` subprocess invocations. Andy rapid-switching worktrees during a demo = a stream of useless `gh` calls.
+- Return payload is an empty PR list so the cached state is correct (absent). No data corruption, just pointless subprocess churn.
+
+### Fixed
+- Added `guard Self.isFetchableBranch(branch) else { return }` at the top of `refresh()`. Centralised the gate at the fetch entry point instead of asking every caller to remember.
+- `branchDidChange` is covered transitively — it calls `clear` (which still runs; we DO want to wipe the cached PR when switching from a real branch to detached), then `refresh` (which now no-ops for the sentinel).
+
+### Spec
+- Added **PR-7.5** under §17.7 Polling cadence, cross-referencing PR-7.3.
+
+### Tests
+- `refreshWithSentinelBranchIsNoOp` — inject a CountingFetcher; call refresh with `(detached)`; expect `fetchCount == 0`, `inFlight` empty.
+- `branchDidChangeToSentinelDoesNotFetch` — seed inFlight; call branchDidChange with `(detached)`; expect the fake fetcher never invoked and inFlight cleared.
+- `refreshWithRealBranchStillFetches` — regression guard: `main` branch still reaches the fetcher exactly once.
+- Failed before the fix (counts 1 instead of 0), pass after. 496/496 overall.
+
+### Commit
+- `fix(prstatus): gate on-demand refresh with isFetchableBranch (PR-7.5)`
+
+### Try next cycle
+- Audit the remaining silent `try?` sites at lines :111 (state.json save), :431, :1406, :1505 (discover failures) for the same kind of follow-through.
+- Attempt the rapid-worktree-create scenario: create 10 worktrees in under 2s, see if any fall through the cracks.
+- Actually get screenshots working for a UI-centric cycle (permission was denied this cycle).

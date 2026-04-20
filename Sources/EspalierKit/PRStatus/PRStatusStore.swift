@@ -61,8 +61,14 @@ public final class PRStatusStore {
     }
 
     /// Force a fetch for one worktree, regardless of cadence. Skips if already
-    /// in flight.
+    /// in flight, and silently no-ops for git sentinel branches
+    /// (`(detached)` / `(bare)` / `(unknown)` / unborn / empty) that cannot
+    /// correspond to a real `refs/heads/` value — PR-7.5. The polling loop
+    /// applies the same gate; centralizing it here keeps on-demand callers
+    /// (MainWindow select, `branchDidChange`) from firing wasted
+    /// `gh pr list --head <sentinel>` invocations.
     public func refresh(worktreePath: String, repoPath: String, branch: String) {
+        guard Self.isFetchableBranch(branch) else { return }
         guard !inFlight.contains(worktreePath) else { return }
         inFlight.insert(worktreePath)
 
