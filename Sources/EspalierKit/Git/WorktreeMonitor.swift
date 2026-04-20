@@ -194,21 +194,8 @@ public final class WorktreeMonitor: @unchecked Sendable {
             let raw = String(contents
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .dropFirst("gitdir: ".count))
-            // Git ≥ 2.52 with `worktree.useRelativePaths=true` writes
-            // a path relative to the worktree directory. Feeding that
-            // verbatim to `open(2)` resolves against the process cwd
-            // — usually unrelated to the worktree — and the HEAD-
-            // reflog watcher silently targets the wrong path. Resolve
-            // explicitly against the worktree dir.
-            let gitDirURL: URL
-            if raw.hasPrefix("/") {
-                gitDirURL = URL(fileURLWithPath: raw)
-            } else {
-                gitDirURL = URL(fileURLWithPath: worktreePath)
-                    .appendingPathComponent(raw)
-                    .standardized
-            }
-            return gitDirURL.appendingPathComponent("logs/HEAD").path
+            let absolute = GitdirResolver.resolve(rawGitdir: raw, worktreePath: worktreePath)
+            return URL(fileURLWithPath: absolute).appendingPathComponent("logs/HEAD").path
         }
         let name = URL(fileURLWithPath: worktreePath).lastPathComponent
         return "\(repoPath)/.git/worktrees/\(name)/logs/HEAD"

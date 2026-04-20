@@ -32,14 +32,9 @@ public final class SocketServer: @unchecked Sendable {
     /// forever. Tests can override; production takes the default.
     public var onRequestTimeout: DispatchTimeInterval = .seconds(5)
 
-    /// Upper bound on how many bytes the server reads from a single
-    /// accepted client before giving up and closing the fd. `ATTN-2.9`
-    /// comments peg a well-behaved JSON notify/pane message at ≤~1 KB;
-    /// 1 MB is 1000× that headroom. Without a cap, a local writer that
-    /// keeps the pipe continuously full (`cat /dev/urandom | nc -U`)
-    /// never trips `SO_RCVTIMEO` — the read loop grew the buffer
-    /// without bound until process memory was exhausted. Tests can
-    /// shrink this to keep runtime bounded. `ATTN-2.11`.
+    /// Per-client read cap. `SO_RCVTIMEO` only fires on idle pipes,
+    /// so a continuously-writing peer needs an explicit byte bound.
+    /// `ATTN-2.11`. Tests can shrink.
     public var maxPerClientBytes: Int = 1 * 1024 * 1024
 
     /// Maximum path length for a Unix domain socket on macOS. `sockaddr_un.sun_path`

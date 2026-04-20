@@ -189,9 +189,6 @@ struct SidebarView: View {
         )
     }
 
-    /// Thin wrapper over `SidebarWorktreeLabel.text` so the sidebar
-    /// selection row, "Move to <name>" menu item, and submenu entries
-    /// share one source of truth for the displayed name.
     private func label(for worktree: WorktreeEntry, in repo: RepoEntry) -> String {
         SidebarWorktreeLabel.text(
             for: worktree,

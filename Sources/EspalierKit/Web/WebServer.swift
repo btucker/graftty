@@ -197,12 +197,8 @@ public final class WebServer {
     }
 
     /// Recognise an "address already in use" bind failure across the
-    /// various shapes NIO surfaces it as. `\(error)` renders NIO's
-    /// human-readable "Address already in use" (locale-dependent);
-    /// checking the bridged NSError POSIX errno code (EADDRINUSE = 48)
-    /// gives us a locale-stable second path. Kept as a static method
-    /// so `WebServerController` can reuse it without re-implementing
-    /// the same pattern match in its catch block.
+    /// shapes NIO surfaces it as. Bridged NSError POSIX errno is the
+    /// locale-stable check; the string match is a fallback.
     public static func isAddressInUse(_ error: Error) -> Bool {
         let ns = error as NSError
         if ns.domain == NSPOSIXErrorDomain && ns.code == Int(EADDRINUSE) { return true }

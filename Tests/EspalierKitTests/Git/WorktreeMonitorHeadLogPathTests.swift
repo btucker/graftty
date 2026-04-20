@@ -39,7 +39,7 @@ struct WorktreeMonitorHeadLogPathTests {
 
         let monitor = WorktreeMonitor()
         let result = monitor.resolveHeadLogPath(worktreePath: worktree.path, repoPath: repo.path)
-        #expect(result == "\(gitDir.path)/logs/HEAD")
+        #expect(result == "\(CanonicalPath.canonicalize(gitDir.path))/logs/HEAD")
     }
 
     @Test func relativeGitdirResolvesAgainstWorktreeDirectory() throws {
@@ -66,14 +66,14 @@ struct WorktreeMonitorHeadLogPathTests {
 
         let monitor = WorktreeMonitor()
         let result = monitor.resolveHeadLogPath(worktreePath: worktree.path, repoPath: repo.path)
-        // The returned path must be absolute and point at the same
-        // file regardless of process cwd. Use `.standardized` to
-        // strip `../` components for the equality check.
-        let expectedReflog = gitDir.appendingPathComponent("logs/HEAD").standardized
-        let resolvedReflog = URL(fileURLWithPath: result).standardized
+        // The returned path must point at the same file regardless
+        // of process cwd. Canonicalise the gitDir portion (which
+        // exists so `realpath` resolves) and append the non-existent
+        // `logs/HEAD` leaf manually.
+        let expected = "\(CanonicalPath.canonicalize(gitDir.path))/logs/HEAD"
         #expect(
-            resolvedReflog == expectedReflog,
-            "relative gitdir must resolve against worktree dir; got \(result) vs \(expectedReflog.path)"
+            result == expected,
+            "relative gitdir must resolve against worktree dir; got \(result) vs \(expected)"
         )
         #expect(result.hasPrefix("/"), "reflog path must be absolute; got \(result)")
     }

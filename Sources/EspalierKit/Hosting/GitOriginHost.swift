@@ -32,9 +32,8 @@ public enum GitOriginHost {
         guard let slash = path.firstIndex(of: "/") else { return nil }
         let owner = String(path[..<slash])
         var repo = String(path[path.index(after: slash)...])
-        // Strip trailing slashes first so `.git/` inputs (common on
-        // copy-paste from a browser URL) still have their `.git`
-        // suffix recognised and removed.
+        // `PR-5.6`: trailing `/` before `.git` so `repo.git/` →
+        // `repo` rather than `repo.git`.
         while repo.hasSuffix("/") { repo = String(repo.dropLast()) }
         if repo.hasSuffix(".git") { repo = String(repo.dropLast(".git".count)) }
 

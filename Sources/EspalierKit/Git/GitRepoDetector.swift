@@ -41,25 +41,11 @@ public enum GitRepoDetector {
     }
 
     private static func resolveRepoRoot(fromGitDir gitDir: String, worktreePath: String) -> String {
-        // Git ≥ 2.52 with `worktree.useRelativePaths=true` writes
-        // relative gitdir entries in the worktree's `.git` file
-        // (`gitdir: ../repo/.git/worktrees/name`). Feeding that to
-        // `realpath(3)` resolves against the process cwd — unrelated
-        // to the worktree dir — so the returned repoPath was wrong.
-        // Resolve relative inputs against the worktree dir first.
-        // `GIT-1.4`.
-        let absoluteGitDir: String
-        if gitDir.hasPrefix("/") {
-            absoluteGitDir = gitDir
-        } else {
-            absoluteGitDir = URL(fileURLWithPath: worktreePath)
-                .appendingPathComponent(gitDir)
-                .standardized
-                .path
-        }
-        // Same private-root issue as `detect`: use realpath so the
-        // repoPath we return matches what `state.json` holds.
-        var url = URL(fileURLWithPath: CanonicalPath.canonicalize(absoluteGitDir))
+        // `GitdirResolver` handles the relative-vs-absolute split
+        // (`GIT-1.4`) and `CanonicalPath` normalisation.
+        var url = URL(fileURLWithPath: GitdirResolver.resolve(
+            rawGitdir: gitDir, worktreePath: worktreePath
+        ))
         while url.lastPathComponent != ".git" && url.path != "/" {
             url = url.deletingLastPathComponent()
         }
