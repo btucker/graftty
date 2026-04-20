@@ -1402,9 +1402,7 @@ struct EspalierApp: App {
         alert.accessoryView = textField
 
         if alert.runModal() == .alertFirstButtonReturn {
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(command, forType: .string)
+            Pasteboard.copy(command)
         }
     }
 }

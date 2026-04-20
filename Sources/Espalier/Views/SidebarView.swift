@@ -247,13 +247,11 @@ struct SidebarView: View {
            ) {
             Divider()
             Button("Copy web URL") {
-                let url = WebURLComposer.url(
+                Pasteboard.copy(WebURLComposer.url(
                     session: ZmxLauncher.sessionName(for: terminalID.id),
                     host: host,
                     port: port
-                )
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(url, forType: .string)
+                ))
             }
         }
     }

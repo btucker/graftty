@@ -46,10 +46,7 @@ struct PRButton: View {
         .onTapGesture { NSWorkspace.shared.open(info.url) }
         .contextMenu {
             Button("Refresh now") { onRefresh() }
-            Button("Copy URL") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(info.url.absoluteString, forType: .string)
-            }
+            Button("Copy URL") { Pasteboard.copy(info.url.absoluteString) }
         }
     }
 
