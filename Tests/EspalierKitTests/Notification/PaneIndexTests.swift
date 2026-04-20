@@ -32,4 +32,23 @@ struct PaneIndexTests {
         #expect(tree.leaf(atPaneID: 4) == nil)
         #expect(tree.leaf(atPaneID: -1) == nil)
     }
+
+    /// A non-CLI socket client (`nc -U`, web surface, custom script)
+    /// can send `.closePane(path:, index: Int.min)`. Without a
+    /// lower-bound guard, `idx = paneID - 1` overflows Int.min → trap
+    /// → the Espalier process crashes. The CLI itself also marshals a
+    /// `@Argument var id: Int` through without validation, so
+    /// `espalier pane close -- -9223372036854775808` reaches here too.
+    /// Treat any non-positive paneID as out-of-range and return nil
+    /// instead.
+    @Test func intMinPaneIDReturnsNilInsteadOfTrapping() {
+        let id = TerminalID()
+        let tree = SplitTree(root: .leaf(id))
+        #expect(tree.leaf(atPaneID: Int.min) == nil)
+    }
+
+    @Test func intMinPaneIDOnEmptyTreeReturnsNil() {
+        let tree = SplitTree(root: nil)
+        #expect(tree.leaf(atPaneID: Int.min) == nil)
+    }
 }

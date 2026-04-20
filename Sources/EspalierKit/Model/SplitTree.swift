@@ -84,6 +84,13 @@ public struct SplitTree: Codable, Sendable, Equatable {
     /// out of range. Uses `allLeaves` order — the same order `list`
     /// displays.
     public func leaf(atPaneID paneID: Int) -> TerminalID? {
+        // Pane IDs are 1-based. Any non-positive value is out of range
+        // and returns nil — matters for `paneID == Int.min`, which
+        // otherwise overflows `paneID - 1` and traps the process. An
+        // attacker (or a custom script with a typo) otherwise crashes
+        // Espalier via `espalier pane close -- -9223372036854775808`
+        // or a raw `nc -U` `.closePane` with the same index.
+        guard paneID >= 1 else { return nil }
         let leaves = allLeaves
         let idx = paneID - 1
         guard leaves.indices.contains(idx) else { return nil }
