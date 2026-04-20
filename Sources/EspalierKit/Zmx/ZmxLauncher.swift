@@ -113,6 +113,13 @@ public final class ZmxLauncher: Sendable {
     /// GHOSTTY_ZSH_ZDOTDIR lets the integration's .zshenv restore the
     /// user's original dir on the other side so their .zshrc still runs.
     ///
+    /// GHOSTTY_ZSH_ZDOTDIR is assigned only when the outer shell's
+    /// ZDOTDIR is non-empty. The integration's .zshenv tests
+    /// `${GHOSTTY_ZSH_ZDOTDIR+X}` (matches empty-string-set), and
+    /// zsh's `${ZDOTDIR-$HOME}` only falls back on *unset*, not empty
+    /// — so an unguarded assignment would export ZDOTDIR="" into the
+    /// inner shell and make zsh look for .zshrc at `/.zshrc`.
+    ///
     /// Non-zsh shells (bash, fish, sh) leave the prefix off — ZDOTDIR
     /// is a zsh-only mechanism, and those shells need different
     /// injection strategies we haven't implemented yet.
@@ -167,8 +174,8 @@ public final class ZmxLauncher: Sendable {
         guard let root = ghosttyResourcesDir, !root.isEmpty else { return "" }
         guard (userShell as NSString).lastPathComponent == "zsh" else { return "" }
         let integrationDir = (root as NSString).appendingPathComponent("shell-integration/zsh")
-        return "GHOSTTY_ZSH_ZDOTDIR=\"$ZDOTDIR\""
-            + " ZDOTDIR=\(shellQuote(integrationDir))"
+        return #"if [ -n "$ZDOTDIR" ]; then export GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR"; fi; "#
+            + "ZDOTDIR=\(shellQuote(integrationDir))"
             + " "
     }
 

@@ -200,7 +200,7 @@ struct ZmxLauncherUnitTests {
         )
         #expect(
             input ==
-            "GHOSTTY_ZSH_ZDOTDIR=\"$ZDOTDIR\""
+            #"if [ -n "$ZDOTDIR" ]; then export GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR"; fi;"#
             + " ZDOTDIR='/Applications/Ghostty.app/Contents/Resources/ghostty/shell-integration/zsh'"
             + " exec '/Applications/Espalier.app/Contents/Helpers/zmx'"
             + " attach 'espalier-deadbeef' '/bin/zsh'\n"
@@ -219,7 +219,10 @@ struct ZmxLauncherUnitTests {
                 ghosttyResourcesDir: "/ghostty"
             )
             #expect(
-                input.hasPrefix("GHOSTTY_ZSH_ZDOTDIR=\"$ZDOTDIR\" ZDOTDIR='/ghostty/shell-integration/zsh' exec "),
+                input.hasPrefix(
+                    #"if [ -n "$ZDOTDIR" ]; then export GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR"; fi; "#
+                    + "ZDOTDIR='/ghostty/shell-integration/zsh' exec "
+                ),
                 "expected ZDOTDIR prefix for \(shell); got: \(input)"
             )
         }
@@ -260,7 +263,19 @@ struct ZmxLauncherUnitTests {
         #expect(input.hasPrefix("exec "))
     }
 
-    @Test func attachInitialInputShellQuotesGhosttyResourcesDir() throws {
+    @Test func attachInitialInputGuardsGHOSTTYZshZDOTDIROnNonEmptyOuter() throws {
+        // See ZmxLauncher.attachInitialInput for why a bare
+        // GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR" would break the inner shell.
+        let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/zmx"))
+        let input = launcher.attachInitialInput(
+            sessionName: "espalier-x",
+            userShell: "/bin/zsh",
+            ghosttyResourcesDir: "/ghostty"
+        )
+        #expect(input.contains(#"[ -n "$ZDOTDIR" ]"#))
+    }
+
+@Test func attachInitialInputShellQuotesGhosttyResourcesDir() throws {
         // Same ' → '\'' defense as every other substituted field. Path
         // with a space is the common real-world case (users with
         // Ghostty in `/Applications/My Apps/Ghostty.app`).
