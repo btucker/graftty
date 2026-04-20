@@ -1376,3 +1376,27 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 - TERM-4.2/4.3 divider drag — pane resize edge cases.
 - TERM-5.3 zmx shell exit — already landed; look for regressions.
 - Truly-stale click UX (placeholder + inline Dismiss) — many cycles queued.
+
+## Cycle 84 — 2026-04-19 (stale-worktree lifecycle survey, no new bug)
+
+### Exercised
+- `git worktree add .worktrees/cycle84-test -b cycle84-test` → FSEvents discovery picked it up (~instant) as `.closed` with correct branch.
+- `espalier notify` from inside the new worktree → landed on it correctly (state.json timing was just slow first check; attention appeared on second read).
+- `rm -rf .worktrees/cycle84-test` externally → worktreeMonitor's path watcher transitioned state to `.stale` within 3s.
+- `git worktree prune` → removed the `.git/worktrees/cycle84-test/` metadata. State.json still holds the `.stale` entry; reconciler has no "stale AND not in discovered → remove" rule.
+
+### Classification
+- The persistent-stale-after-prune behavior is spec-compliant per GIT-3.6: "While a worktree entry is in the stale state, the context menu shall include a 'Dismiss' action..." implies Dismiss is the ONLY remove-from-sidebar path for stale entries. Auto-cleanup on prune isn't in the spec. Minor UX annoyance for Andy's "creates worktrees faster than UI can discover them" + rm cycle, but not a bug.
+
+### Audited
+- `AppState.setFocusedTerminal` doesn't validate terminalID against splitTree. A race between click and close_surface_cb could leave `focusedTerminalID` pointing at a removed leaf. User-visible consequence: sidebar's "focused pane" highlight disappears until the next click. Not fragile enough to fix (optional chaining on consumer side keeps subsequent renders safe).
+- `WorktreeEntry` Codable decode doesn't validate `focusedTerminalID` ∈ `splitTree.allLeaves` either. Same transient-only impact on deserialization.
+- All closePane + Stop + Dismiss paths correctly clean up `paneAttention`. No orphan-badge accumulation surface remaining.
+
+### Tests
+- 476/476 pass (unchanged).
+
+### Try next cycle
+- Exercise Stop Worktree context menu interactively once screenshot comes back.
+- Web-access/Tailscale path is still unexercised this session.
+- Consider a low-priority follow-up: add the "stale-not-in-discovered → remove" rule to reconciler for Andy's rapid-churn case. Would need a new spec line (GIT-3.12?).
