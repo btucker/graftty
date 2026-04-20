@@ -12,6 +12,20 @@ public final class WorktreeMonitor: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.espalier.worktree-monitor")
     public weak var delegate: WorktreeMonitorDelegate?
 
+    /// Test-only: count of fds opened by `createFileWatcher` that have
+    /// not yet been closed by their DispatchSource cancel handler. Reads
+    /// after `stopAll` should be zero; a non-zero residue means a caller
+    /// has overridden `setCancelHandler` (the `GIT-3.11` regression).
+    /// Mutated under `fdCounterLock` because the cancel handler runs on
+    /// `queue` while test reads happen on the main actor.
+    private let fdCounterLock = NSLock()
+    private var _liveFdCount: Int = 0
+    public var liveFdCountForTesting: Int {
+        fdCounterLock.lock()
+        defer { fdCounterLock.unlock() }
+        return _liveFdCount
+    }
+
     public init() {}
 
     deinit { stopAll() }
@@ -105,8 +119,15 @@ public final class WorktreeMonitor: @unchecked Sendable {
     private func createFileWatcher(path: String, events: DispatchSource.FileSystemEvent) -> DispatchSourceFileSystemObject? {
         let fd = open(path, O_EVTONLY)
         guard fd >= 0 else { return nil }
+        fdCounterLock.lock(); _liveFdCount += 1; fdCounterLock.unlock()
         let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: events, queue: queue)
-        source.setCancelHandler { close(fd) }
+        let lock = fdCounterLock
+        source.setCancelHandler { [weak self] in
+            close(fd)
+            lock.lock()
+            self?._liveFdCount -= 1
+            lock.unlock()
+        }
         return source
     }
 

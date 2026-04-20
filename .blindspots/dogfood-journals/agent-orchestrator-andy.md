@@ -1830,3 +1830,28 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 - Bump the `watchersCloseTheirFdsWhenCancelled` threshold or serialize the test — it's been flaking for 4 cycles.
 - Remaining `try?` spots in EspalierApp: lines 431/1406/1505 (GitWorktreeDiscovery.discover failures). Same pattern, same pivot available.
 - The "Reload Ghostty Config" menu button may be a near-no-op (libghostty-spm has no reload API per the comment) — worth a demonstration cycle.
+
+## Cycle 98 — 2026-04-19 (de-flaking watchersCloseTheirFdsWhenCancelled)
+
+### Explored
+- Picked up the cycle-97 TODO. This test has recorded an issue in cycles 92, 94, 97 — delta 46/74/76 against a threshold of 40. Not a real leak, just concurrent-test /dev/fd noise.
+
+### Diagnosed
+- `openFdCount()` sampled `FileManager.contentsOfDirectory(atPath: "/dev/fd").count` — process-wide count. When other test suites ran in parallel (subprocess pipes for `git` tests, socket tests, etc.), their transient fds landed in the `after` snapshot and pushed the delta past the threshold. The monitor wasn't actually leaking; the measurement was polluted.
+- Making the threshold bigger isn't a fix — the whole point of the test is to catch a 50-fd-per-test leak (one fd per watch/stop cycle), so the threshold has to stay under 50, which makes every ambient spike a false positive.
+
+### Fixed
+- Added a `liveFdCountForTesting` counter to `WorktreeMonitor` itself. `createFileWatcher` increments it on open; the DispatchSource cancel handler decrements it alongside `close(fd)`. Mutations are guarded by an `NSLock` because the handler fires on the monitor's private queue while tests read on the main actor.
+- Rewrote the test to assert `monitor.liveFdCountForTesting == 0` after `stopAll` + a bounded drain loop. Measures only the monitor's fds, immune to concurrent-test noise.
+- Verified the regression-detection contract by temporarily re-introducing the original bug (a caller override of `setCancelHandler`) — the test failed with `liveFdCountForTesting → 50 == 0`, i.e. it catches exactly the original leak pattern. Restored before committing.
+- 497/497 pass, 3 consecutive runs green.
+
+### Spec
+- No SPECS.md change — this tightens the GIT-3.11 test, it doesn't change the contract.
+
+### Commit
+- `test(worktree-monitor): measure fds via internal counter instead of /dev/fd`
+
+### Try next cycle
+- Hunt the remaining `try?` spots at lines 431/1406/1505 (GitWorktreeDiscovery.discover) — they're the same silent-failure family that cycles 95 and 97 nibbled off.
+- Investigate whether "Reload Ghostty Config" menu item is actually reloading from disk or is a keybind-rebuild-only no-op (flagged in cycle 97).

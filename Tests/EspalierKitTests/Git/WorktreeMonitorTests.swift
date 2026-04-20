@@ -60,35 +60,32 @@ struct WorktreeMonitorTests {
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: tmp) }
 
-        // Baseline fd count BEFORE any monitor activity.
-        let baseline = openFdCount()
-
-        // Each watchWorktreePath opens one fd for the watch. With the
-        // pre-fix leak, 50 watch/stop cycles stack 50 fds. With the
-        // fix, the per-cycle delta is zero.
+        // Each watch/stop cycle opens one fd. Pre-GIT-3.11 fix, every
+        // watcher leaked its fd because the `watch*` method overrode
+        // `setCancelHandler` after `createFileWatcher` installed the
+        // close-fd handler. Post-fix, every fd `createFileWatcher`
+        // opens is closed by the cancel handler.
+        //
+        // This test used to sample process-wide `/dev/fd` count before
+        // and after, which was flaky under concurrent-test load (other
+        // suites opening subprocess/socket fds polluted the delta).
+        // We now measure the monitor's OWN counter of open fds.
+        let monitor = WorktreeMonitor()
         for _ in 0..<50 {
-            let monitor = WorktreeMonitor()
             monitor.watchWorktreePath(tmp.path)
             monitor.stopAll()
         }
 
         // Let the DispatchSource cancel handlers drain on their queue.
-        try await Task.sleep(nanoseconds: 200_000_000)
+        // The counter is decremented inside the cancel handler, which
+        // runs asynchronously relative to stopAll().
+        for _ in 0..<50 {
+            if monitor.liveFdCountForTesting == 0 { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
 
-        let after = openFdCount()
-        // Allow headroom for concurrent test execution — other suites
-        // running in parallel open fds (subprocess pipes, sockets,
-        // temp files) that land in this process's /dev/fd between our
-        // baseline and after snapshots. Pre-fix, the per-test delta
-        // was ≥50 (one fd leaked per watch/stop cycle). Post-fix, the
-        // delta should be << 50; a threshold of 40 cleanly separates
-        // "fixed" from "broken" even under parallel-test load.
-        #expect(after - baseline < 40,
-                "fd count grew by \(after - baseline) — WorktreeMonitor is leaking fds")
-    }
-
-    private func openFdCount() -> Int {
-        (try? FileManager.default.contentsOfDirectory(atPath: "/dev/fd").count) ?? 0
+        #expect(monitor.liveFdCountForTesting == 0,
+                "\(monitor.liveFdCountForTesting) fds still open on WorktreeMonitor — cancel handlers leaked")
     }
 
     @Test func branchChangeFiresOnCommit() async throws {
