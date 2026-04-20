@@ -1736,3 +1736,35 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 ### Try next cycle
 - Audit other `try?` call sites in `EspalierApp.swift` for swallowed startup errors.
 - Andy's scenario: spin up 5 worktrees rapidly (faster than file-system events get dispatched) and see if any get left in an inconsistent state. Related to PWD reassignment / CanonicalPath (cycles 76, 82).
+
+## Cycle 95 — 2026-04-19 (silent try? at socket-server startup — ATTN-2.7)
+
+### Explored
+- Cycle 94's journal flagged the `try? services.socketServer.start()` line as the root cause of the stale-socket symptom. ATTN-3.4 helps the user recover, but the app still silently swallows the reason. Picked up the deferred follow-on.
+
+### Diagnosed
+- `Sources/Espalier/EspalierApp.swift:342` wrapped `SocketServer.start()` in `try?`. On failure (overlong `ESPALIER_SOCK`, bind EACCES, listen backlog exhaustion, etc.) the error vanished and the app ran on happily.
+- `SocketServer` had no record of its last error either — there was literally no trail.
+
+### Broke
+- Support scenario: "my CLI says not-running but Espalier is right there." Even with ATTN-3.4 the user now gets a relaunch hint, but we (the maintainers) have nothing in Console.app / state to reconstruct why the socket died the first time. Silent-failure anti-pattern.
+
+### Fixed
+- `SocketServer.start()` now records its error in a new `public private(set) var lastStartError: SocketServerError?` property before throwing, and clears it on success. Implementation split into `start()` (public wrapper) + `_start()` (actual work) so the capture is centralised.
+- `EspalierApp.startup()` replaces `try?` with `do { try … } catch { NSLog(…) }`. The next time socket startup fails, Console.app records what went wrong.
+
+### Spec
+- Added **ATTN-2.7** cross-referencing ATTN-3.4.
+
+### Tests
+- `lastStartErrorCapturesFailure` — overlong path, expect `.socketPathTooLong` stored.
+- `lastStartErrorClearsOnSuccessfulRestart` — fresh server on a good path has `lastStartError == nil`, proving `start()` clears it on success.
+- 493/493 pass (the flaky fd-count test cooperated this run too).
+
+### Commit
+- `fix(app): surface SocketServer startup failures instead of silencing them (ATTN-2.7)`
+
+### Try next cycle
+- Consider surfacing `lastStartError` in the Espalier menu (next to Web server status) so even non-CLI users know when the notify surface is dead.
+- Audit remaining `try?` call sites in EspalierApp.swift (state save at :111, discover at :431/:1406/:1505 are the interesting ones).
+- Andy's rapid-worktree-creation scenario is still untouched.

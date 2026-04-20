@@ -6,6 +6,13 @@ public final class SocketServer: @unchecked Sendable {
     private var source: DispatchSourceRead?
     private let queue = DispatchQueue(label: "com.espalier.socket-server")
     public var onMessage: ((NotificationMessage) -> Void)?
+    /// The last error thrown from `start()`, or `nil` if the most
+    /// recent call succeeded (or none has been made). Exists so the
+    /// app shell can introspect a failed startup without catching
+    /// the error itself — `EspalierApp.startup` historically wrapped
+    /// `start()` in `try?` and silently ran without a notify surface
+    /// (ATTN-2.7).
+    public private(set) var lastStartError: SocketServerError?
     /// Request/response variant of `onMessage`. When set, the server calls
     /// this after `onMessage` and, if the handler returns a non-nil
     /// `ResponseMessage`, writes it to the client (as JSON + newline)
@@ -23,6 +30,16 @@ public final class SocketServer: @unchecked Sendable {
     deinit { stop() }
 
     public func start() throws {
+        do {
+            try _start()
+            lastStartError = nil
+        } catch let error as SocketServerError {
+            lastStartError = error
+            throw error
+        }
+    }
+
+    private func _start() throws {
         // Validate path length BEFORE touching anything. bind() would silently
         // accept a truncated path and create the socket at the wrong location,
         // which is worse than erroring out here.

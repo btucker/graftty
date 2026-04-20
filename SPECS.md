@@ -308,6 +308,8 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **ATTN-2.6** When the application receives a `notify` message over the socket whose text is empty or contains only whitespace characters, the application shall silently drop the message rather than render an invisible attention overlay. This backs up the CLI's ATTN-1.7 validation for non-CLI socket clients.
 
+**ATTN-2.7** When `SocketServer.start()` fails during application startup, the application shall log the error via `NSLog` (surfacing it in Console.app) and `SocketServer` shall retain the error in its `lastStartError` property for in-process introspection, rather than silently continuing without a notify surface. The app shell historically wrapped `start()` in `try?`, producing a running Espalier with a dead control socket and no diagnostic trail — ATTN-3.4 recovers this case at the CLI side, ATTN-2.7 surfaces the root cause at the app side.
+
 ### 5.3 Error Handling
 
 **ATTN-3.1** If the application is not running, then the CLI shall print "Espalier is not running" and exit with code 1.

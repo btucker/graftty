@@ -339,7 +339,16 @@ struct EspalierApp: App {
             }
         }
 
-        try? services.socketServer.start()
+        do {
+            try services.socketServer.start()
+        } catch {
+            // Surface the failure in Console.app. Previously `try?` silently
+            // swallowed it, which is how we ended up with Espalier running
+            // without a notify surface and no trail (ATTN-2.7). The CLI's
+            // ATTN-3.4 stale-socket diagnostic tells the user to relaunch;
+            // this log tells *us* why it failed in the first place.
+            NSLog("[Espalier] SocketServer.start() failed: %@", String(describing: error))
+        }
         // SocketServer already dispatches onMessage to the main queue.
         let binding = $appState
         let tm = terminalManager

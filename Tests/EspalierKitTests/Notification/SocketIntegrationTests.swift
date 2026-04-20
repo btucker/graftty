@@ -160,6 +160,44 @@ struct SocketIntegrationTests {
         }
     }
 
+    /// ATTN-2.7: `start()` records its failure in `lastStartError` so
+    /// callers (notably `EspalierApp.startup` which historically used
+    /// `try?` and discarded the error) have a diagnostic trail the UI
+    /// or log path can read back, instead of silently running without
+    /// a notify surface.
+    @Test func lastStartErrorCapturesFailure() {
+        let overLongPath = "/tmp/" + String(repeating: "a", count: 100)
+        let server = SocketServer(socketPath: overLongPath)
+        #expect(server.lastStartError == nil, "fresh server should have no error")
+
+        _ = try? server.start()
+        guard case .socketPathTooLong = server.lastStartError else {
+            Issue.record("expected .socketPathTooLong, got \(String(describing: server.lastStartError))")
+            return
+        }
+    }
+
+    @Test func lastStartErrorClearsOnSuccessfulRestart() throws {
+        let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("espalier-err-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let goodPath = dir.appendingPathComponent("s").path
+
+        // First start: fail with overlong path.
+        let bad = "/tmp/" + String(repeating: "a", count: 100)
+        let server = SocketServer(socketPath: bad)
+        _ = try? server.start()
+        #expect(server.lastStartError != nil)
+
+        // Re-issue start() on a fresh instance with a good path; the
+        // new server's lastStartError stays nil because start() cleared
+        // it on success.
+        let good = SocketServer(socketPath: goodPath)
+        try good.start()
+        defer { good.stop() }
+        #expect(good.lastStartError == nil)
+    }
+
     @Test func serverWritesResponseWhenOnRequestSet() async throws {
         let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("espalier-resp-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
