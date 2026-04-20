@@ -64,6 +64,27 @@ struct AppStateTests {
         #expect(loaded.sidebarWidth == 280)
     }
 
+    /// STATE-6.2 (regression guard): `save(to:)` must throw on I/O
+    /// failure so the caller can log / surface it. `EspalierApp` used
+    /// `try? newState.save(...)` for a long time, which silently
+    /// discarded the error — a full disk or a read-only `$HOME` would
+    /// lose every subsequent state mutation. The fix there is do/catch +
+    /// NSLog (cf. ATTN-2.7 for the socket-server analogue); this test
+    /// pins the underlying contract that `save` actually throws.
+    @Test func saveThrowsWhenTargetDirectoryCannotBeCreated() throws {
+        let tmp = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        // Create a regular file where the save() call will try to
+        // `createDirectory(at: blocker, ...)`. createDirectory on a
+        // path that is already a *file* fails with NSFileWriteFileExists.
+        let blocker = tmp.appendingPathComponent("blocker")
+        try "not a directory".data(using: .utf8)!.write(to: blocker)
+
+        let state = AppState()
+        #expect(throws: Error.self) { try state.save(to: blocker) }
+    }
+
     @Test func loadFromEmptyDirReturnsDefault() throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }

@@ -1799,3 +1799,34 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 - Audit the remaining silent `try?` sites at lines :111 (state.json save), :431, :1406, :1505 (discover failures) for the same kind of follow-through.
 - Attempt the rapid-worktree-create scenario: create 10 worktrees in under 2s, see if any fall through the cracks.
 - Actually get screenshots working for a UI-centric cycle (permission was denied this cycle).
+
+## Cycle 97 — 2026-04-19 (silent try? on state.json save — PERSIST-2.2)
+
+### Explored
+- Ranged over Ghostty keybind module (clean, nothing to fix), pane CLI validation (well-guarded), zmx session handling, `.onChange(of: appState)` persistence path.
+- Also noticed a stray `name=--help` orphan zmx session in `zmx list --short`. Tracked but *not* Espalier's bug — zmx itself accepted `--help` as a session name during some external testing. Espalier's callers all look up specific `espalier-XXXXXXXX` names so correctness isn't affected.
+
+### Diagnosed
+- `EspalierApp.swift:111` had `try? newState.save(to: AppState.defaultDirectory)` in the `onChange(of: appState)` SwiftUI closure. Same family as cycle 95's `try? services.socketServer.start()` — any I/O error on the save path (full disk, read-only $HOME, permissions) is silently dropped and every subsequent state mutation is lost on next launch.
+- `AppState.save(to:)` already throws correctly — the contract is fine. The caller was masking it.
+
+### Broke
+- Worst-case user-visible symptom: Andy opens 4 new worktrees during a demo, `$HOME` is full (or the Application Support dir is read-only from a perms issue), Espalier silently drops every save; next launch is back to the pre-demo state with the worktrees gone from the sidebar. No log, no badge, no indication.
+
+### Fixed
+- Replaced `try?` with `do { try … } catch { NSLog(…) }`. Next save failure shows up in Console.app with `[Espalier] AppState.save failed: <err>`.
+
+### Spec
+- Added **PERSIST-2.2** under §6.2, cross-referencing ATTN-2.7.
+
+### Tests
+- New `saveThrowsWhenTargetDirectoryCannotBeCreated` in AppStateTests — creates a regular file at the target path so `createDirectory(at:withIntermediateDirectories:)` fails, expects `save` to throw. This pins the contract the caller now depends on (must actually throw so NSLog runs).
+- Passes on the pre-existing code — it was the caller that was broken, not `save`. 496/497 overall; the 1 failure is the known-flaky `watchersCloseTheirFdsWhenCancelled` fd-count test (delta 74 vs threshold 40) — concurrent-test noise, appeared in cycles 92 and 94 too.
+
+### Commit
+- `fix(app): log state.save failures instead of silencing them (PERSIST-2.2)`
+
+### Try next cycle
+- Bump the `watchersCloseTheirFdsWhenCancelled` threshold or serialize the test — it's been flaking for 4 cycles.
+- Remaining `try?` spots in EspalierApp: lines 431/1406/1505 (GitWorktreeDiscovery.discover failures). Same pattern, same pivot available.
+- The "Reload Ghostty Config" menu button may be a near-no-op (libghostty-spm has no reload API per the comment) — worth a demonstration cycle.

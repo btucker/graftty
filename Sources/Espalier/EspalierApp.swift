@@ -108,7 +108,16 @@ struct EspalierApp: App {
                 .environmentObject(webController)
                 .onAppear { startup() }
                 .onChange(of: appState) { _, newState in
-                    try? newState.save(to: AppState.defaultDirectory)
+                    do {
+                        try newState.save(to: AppState.defaultDirectory)
+                    } catch {
+                        // Silently dropping this error means a full disk,
+                        // read-only `$HOME`, or permissions clash silently
+                        // stops persisting every subsequent state mutation
+                        // — and Andy loses his worktree list on next launch
+                        // with no warning. STATE-6.2 / cf. ATTN-2.7.
+                        NSLog("[Espalier] AppState.save failed: %@", String(describing: error))
+                    }
                 }
         }
         // Hide the macOS title bar so the breadcrumb row sits directly
