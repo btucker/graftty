@@ -139,6 +139,47 @@ struct PaneTitleSanitizeTests {
         #expect(PaneTitle.sanitize("") == "")
         #expect(PaneTitle.sanitize("   ") == "   ")
     }
+
+    /// OSC 2 is a byte stream from the inner shell's program. A program
+    /// (buggy or hostile) can push any Unicode, including Cc (control)
+    /// scalars. The sidebar renders titles via SwiftUI `Text` with
+    /// `.lineLimit(1)`: newlines clip, tabs render at implementation-
+    /// defined width, and ANSI escapes like `\e[31m` land as literal
+    /// glyphs (the ESC byte is invisible in SwiftUI Text, producing
+    /// strings like `[31mred[0m` in the sidebar). That's the same
+    /// garbage-rendering class as CLI's ATTN-1.12; the server-side
+    /// title intake deserves the same guard.
+    @Test func newlineInTitleIsRejected() {
+        #expect(PaneTitle.sanitize("hello\nworld") == nil)
+        #expect(PaneTitle.sanitize("hello\rworld") == nil)
+    }
+
+    @Test func tabInTitleIsRejected() {
+        #expect(PaneTitle.sanitize("col1\tcol2") == nil)
+    }
+
+    @Test func ansiEscapeInTitleIsRejected() {
+        #expect(PaneTitle.sanitize("\u{1B}[31mred\u{1B}[0m") == nil)
+    }
+
+    @Test func bellInTitleIsRejected() {
+        // Legit programs don't embed BEL in titles; a program sending
+        // one is signalling intent to annoy. Also `\u{07}` is the
+        // terminator in OSC 2 framing itself — a title that still has
+        // one post-parse means the parser may have swallowed garbage.
+        #expect(PaneTitle.sanitize("ding\u{07}") == nil)
+    }
+
+    @Test func deleteCharInTitleIsRejected() {
+        #expect(PaneTitle.sanitize("x\u{7F}y") == nil) // DEL
+    }
+
+    @Test func emojiAndPunctuationPassThrough() {
+        // Non-Cc Unicode is fine; these are the titles users actually
+        // see in real-world setups.
+        #expect(PaneTitle.sanitize("✓ build passing") == "✓ build passing")
+        #expect(PaneTitle.sanitize("docker compose up — running") == "docker compose up — running")
+    }
 }
 
 @Suite("PaneTitle.basenameLabel")

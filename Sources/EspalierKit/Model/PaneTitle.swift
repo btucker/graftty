@@ -63,10 +63,20 @@ public enum PaneTitle {
     ///   - `isLikelyEnvAssignment(_:)` — the shell-integration command-
     ///     echo leak (LAYOUT-2.13).
     ///   - Length > `maxStoredLength` grapheme clusters — bounds memory
-    ///     against a runaway title setter.
+    ///     against a runaway title setter (LAYOUT-2.16).
+    ///   - Any Unicode Cc (control) scalar — newlines, tabs, BEL, ANSI
+    ///     escapes, DEL, etc. SwiftUI `Text` with `.lineLimit(1)` clips
+    ///     newlines but renders `\e[31m` as literal `[31m` glyphs (the
+    ///     ESC byte is invisible), producing sidebar garbage. Same
+    ///     class as CLI's `ATTN-1.12` for notify text (LAYOUT-2.17).
     public static func sanitize(_ title: String) -> String? {
         if isLikelyEnvAssignment(title) { return nil }
         if title.count > maxStoredLength { return nil }
+        if title.unicodeScalars.contains(where: {
+            $0.properties.generalCategory == .control
+        }) {
+            return nil
+        }
         return title
     }
 
