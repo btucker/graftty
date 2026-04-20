@@ -2261,3 +2261,30 @@ Ran a research agent against https://github.com/ghostty-org/ghostty — specific
 ### Try next cycle
 - Move `WorktreeStatsStore` to EspalierKit — DIVERGE-4.5 coverage, still open across many cycles.
 - Surface `SocketServer.lastStartError` in the Espalier menu.
+
+## Cycle 113 — 2026-04-20 (Stop dialog awkward for detached-HEAD worktrees — TERM-1.3)
+
+### Explored
+- SidebarView context menus, SocketServer handleClient partial-write behavior, WebServerController.runBlocking (has a 2s TailscaleLocalAPI socket timeout, bounded), WorktreeStatsStore.apply behavior on gen mismatch (default-branch update is path-agnostic, correctly preserved).
+- Landed on `stopWorktreeWithConfirmation`'s dialog text: "There are running processes in \(wt.branch)". For a detached HEAD that interpolates to "…in (detached)." which reads awkwardly.
+
+### Diagnosed
+- `wt.branch` is `(detached)`, `(bare)`, `(unknown)` etc. for sentinel states (PR-7.3). The Stop dialog uses it literally. Not wrong — just ugly for the detached case.
+- Meanwhile, `WorktreeEntry.displayName(amongSiblingPaths:)` (cycle 112's LAYOUT-2.15) falls through to the directory basename for detached worktrees. Reads naturally.
+
+### Fixed
+- Replaced `wt.branch` with `wt.displayName(amongSiblingPaths: repo.worktrees.map(\.path))` in the Stop confirmation. User now sees "running processes in my-feature" instead of "running processes in (detached)".
+
+### Spec
+- Added **TERM-1.3** documenting the Stop-dialog identifier contract.
+
+### Tests
+- No new test — UI string polish in the Espalier app target, not directly reachable from EspalierKitTests. The existing `LAYOUT-2.15` displayName tests pin the underlying formatter the dialog now delegates to.
+- 533/533 pass (one transient flake on first run, green on retry).
+
+### Commit
+- `fix(ui): Stop dialog uses displayName not raw branch (TERM-1.3)`
+
+### Try next cycle
+- Move `WorktreeStatsStore` to EspalierKit — DIVERGE-4.5 still lacks direct unit coverage.
+- Surface `SocketServer.lastStartError` in the Espalier menu (cycle 95 carry-over).

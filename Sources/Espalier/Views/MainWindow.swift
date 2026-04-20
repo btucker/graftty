@@ -522,9 +522,17 @@ struct MainWindow: View {
                 if wt.path == worktreePath && wt.state == .running {
                     let terminalIDs = wt.splitTree.allLeaves
                     if terminalManager.needsConfirmQuit(terminalIDs: terminalIDs) {
+                        // TERM-1.3: the dialog identifies the worktree
+                        // with its sidebar displayName, not the raw
+                        // `wt.branch`. For a detached HEAD that's
+                        // `(detached)` — awkward ("running processes in
+                        // (detached)") — whereas displayName gives the
+                        // directory basename users actually recognise.
+                        let siblingPaths = appState.repos[repoIdx].worktrees.map(\.path)
+                        let label = wt.displayName(amongSiblingPaths: siblingPaths)
                         let alert = NSAlert()
                         alert.messageText = "Stop Worktree?"
-                        alert.informativeText = "There are running processes in \(wt.branch). Stop all terminals?"
+                        alert.informativeText = "There are running processes in \(label). Stop all terminals?"
                         alert.addButton(withTitle: "Stop")
                         alert.addButton(withTitle: "Cancel")
                         guard alert.runModal() == .alertFirstButtonReturn else { return }
