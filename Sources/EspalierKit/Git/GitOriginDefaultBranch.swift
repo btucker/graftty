@@ -15,7 +15,7 @@ public enum GitOriginDefaultBranch {
     /// `git symbolic-ref --short refs/remotes/origin/HEAD` and strips the
     /// `origin/` prefix; on failure, probes `main`, `master`, `develop` in
     /// order via `git show-ref --verify`.
-    public static func resolve(repoPath: String) async throws -> String? {
+    public static func resolve(repoPath: String) async -> String? {
         if let captured = try? await GitRunner.capture(
             args: ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
             at: repoPath

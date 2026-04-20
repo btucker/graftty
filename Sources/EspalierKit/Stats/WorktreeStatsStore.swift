@@ -224,7 +224,7 @@ public final class WorktreeStatsStore {
         if let cached = cachedDefault {
             name = cached
         } else {
-            name = (try? await GitOriginDefaultBranch.resolve(repoPath: repoPath)) ?? nil
+            name = await GitOriginDefaultBranch.resolve(repoPath: repoPath)
         }
         guard let name else {
             return ComputeResult(defaultBranch: nil, stats: nil)
@@ -306,7 +306,7 @@ public final class WorktreeStatsStore {
         if let cached = defaultBranchByRepo[repoPath] ?? nil {
             defaultBranchResult = cached
         } else {
-            defaultBranchResult = (try? await GitOriginDefaultBranch.resolve(repoPath: repoPath)) ?? nil
+            defaultBranchResult = await GitOriginDefaultBranch.resolve(repoPath: repoPath)
         }
         self.defaultBranchByRepo[repoPath] = defaultBranchResult
         guard let defaultBranch = defaultBranchResult else {

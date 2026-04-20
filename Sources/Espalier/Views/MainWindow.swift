@@ -338,12 +338,7 @@ struct MainWindow: View {
         let repoPath = repo.path
         let worktreePath = repoPath + "/.worktrees/" + worktreeName
 
-        let startPoint: String?
-        do {
-            startPoint = try await GitOriginDefaultBranch.resolve(repoPath: repoPath)
-        } catch {
-            startPoint = nil
-        }
+        let startPoint: String? = await GitOriginDefaultBranch.resolve(repoPath: repoPath)
 
         let gitError: String?
         do {

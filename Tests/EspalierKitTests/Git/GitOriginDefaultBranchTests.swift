@@ -38,7 +38,7 @@ struct GitOriginDefaultBranchTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         try shell("git init -b main && git commit --allow-empty -m init", at: dir)
 
-        let result = try await GitOriginDefaultBranch.resolve(repoPath: dir.path)
+        let result = await GitOriginDefaultBranch.resolve(repoPath: dir.path)
         #expect(result == nil)
     }
 
@@ -62,7 +62,7 @@ struct GitOriginDefaultBranchTests {
             """, at: seed)
         try shell("git clone \(upstream.path) \(clone.path)", at: root)
 
-        let result = try await GitOriginDefaultBranch.resolve(repoPath: clone.path)
+        let result = await GitOriginDefaultBranch.resolve(repoPath: clone.path)
         #expect(result == "main")
     }
 
@@ -87,7 +87,7 @@ struct GitOriginDefaultBranchTests {
         // Remove the symbolic ref so only the probe fallback can succeed.
         try shell("git remote set-head origin --delete", at: clone)
 
-        let result = try await GitOriginDefaultBranch.resolve(repoPath: clone.path)
+        let result = await GitOriginDefaultBranch.resolve(repoPath: clone.path)
         #expect(result == "main")
     }
 
@@ -110,7 +110,7 @@ struct GitOriginDefaultBranchTests {
         try shell("git clone \(upstream.path) \(clone.path)", at: root)
         try shell("git remote set-head origin --delete", at: clone)
 
-        let result = try await GitOriginDefaultBranch.resolve(repoPath: clone.path)
+        let result = await GitOriginDefaultBranch.resolve(repoPath: clone.path)
         #expect(result == "master")
     }
 }
