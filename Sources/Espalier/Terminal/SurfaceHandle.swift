@@ -366,10 +366,14 @@ final class SurfaceNSView: NSView {
         super.setFrameSize(newSize)
         guard let surface else { return }
         let pixels = convertToBacking(newSize)
+        // Naive `UInt32(max(1, Int(pixels.width)))` traps on NaN /
+        // ±Infinity — observed transiently from SwiftUI GeometryReader
+        // during certain rebinding flows, and a single trap on the
+        // main thread takes out every open pane.
         ghostty_surface_set_size(
             surface,
-            UInt32(max(1, Int(pixels.width))),
-            UInt32(max(1, Int(pixels.height)))
+            SurfacePixelDimension.clamp(pixels.width),
+            SurfacePixelDimension.clamp(pixels.height)
         )
     }
 
