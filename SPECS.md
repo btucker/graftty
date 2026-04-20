@@ -534,7 +534,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **DIVERGE-4.2** When a worktree's HEAD reference changes, the application shall recompute that worktree's divergence counts.
 
-**DIVERGE-4.3** The application shall poll every 60 seconds to recompute divergence counts for all worktrees across all repositories, to catch changes to the origin default branch that occur outside the current worktree (e.g., after `git fetch` runs in another terminal).
+**DIVERGE-4.3** The application shall run `git fetch --no-tags --prune origin <defaultBranch>` and recompute divergence counts per repository on a 5-minute base cadence, doubling the interval for each consecutive fetch failure up to a 30-minute cap, to catch changes to the origin default branch that occur outside the current worktree (e.g., after `git fetch` runs in another terminal). A fast 5-second polling ticker drives the eligibility check; actual fetches are gated by the per-repo cadence so tracked repositories are not hammered.
 
 **DIVERGE-4.4** While a divergence computation is in flight for a particular worktree, duplicate refresh requests for the same worktree shall be dropped.
 
