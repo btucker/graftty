@@ -316,6 +316,16 @@ struct MainWindow: View {
            let target = wt.focusedTerminalID ?? wt.splitTree.allLeaves.first {
             makePaneFirstResponder(target)
         }
+
+        // PR-7.5: sidebar selection is an on-demand refresh trigger.
+        // `prStatusStore.refresh` bypasses the cadence gate so a
+        // user-visible click always gets fresh data even when the poll
+        // is backed off (`PR-7.2` can push the next scheduled fetch out
+        // to 30 minutes after a run of transient `gh` failures). Without
+        // this, a merged PR can stay red in the breadcrumb until the
+        // backoff expires, and the user's only escape hatch is
+        // right-click "Refresh now" on the PR button.
+        refreshPR()
     }
 
     /// Promote the terminal's backing `NSView` to the window's first
