@@ -140,6 +140,54 @@ public struct SplitTree: Codable, Sendable, Equatable {
         return currentFocus
     }
 
+    /// Spatial directions for `spatialNeighbor(of:direction:)`. Four cardinal
+    /// directions — no diagonals.
+    public enum SpatialDirection: Sendable {
+        case left, right, up, down
+
+        /// A `.left`/`.right` neighbor can only exist across a horizontal
+        /// split ancestor; `.up`/`.down` only across a vertical one.
+        fileprivate var requiredSplitDirection: SplitDirection {
+            switch self {
+            case .left, .right: return .horizontal
+            case .up, .down: return .vertical
+            }
+        }
+
+        /// The ancestor subtree the source must live in to HAVE a neighbor
+        /// in this direction. For `.right`, the source must be on the left
+        /// of a horizontal split so the right subtree is the neighbor; for
+        /// `.left`, the reverse. `.down` mirrors `.right` across vertical
+        /// splits (top→bottom), `.up` mirrors `.left` (bottom→top).
+        fileprivate var sourceSubtreeSide: SubtreeSide {
+            switch self {
+            case .right, .down: return .left
+            case .left, .up: return .right
+            }
+        }
+    }
+
+    fileprivate enum SubtreeSide { case left, right }
+
+    /// Resolve the spatial neighbor of `terminalID` in `direction`, or nil
+    /// when there is no pane adjacent in that direction (`TERM-7.3`). The
+    /// algorithm walks from the leaf up to the root and, at the first
+    /// ancestor whose split direction matches the requested motion AND
+    /// whose source-side subtree contains us, descends the opposite
+    /// subtree's "near edge" to find the landing leaf.
+    ///
+    /// Tree-order fallback (old behavior) is intentionally not applied
+    /// here — returning nil lets the caller decide whether to ignore the
+    /// keypress or loop around. Upstream Ghostty's convention is "ignore,"
+    /// so the call site mirrors that.
+    public func spatialNeighbor(
+        of terminalID: TerminalID,
+        direction: SpatialDirection
+    ) -> TerminalID? {
+        guard let root else { return nil }
+        return root.findSpatialNeighbor(of: terminalID, direction: direction)
+    }
+
     public func updatingRatio(for target: TerminalID, ratio: Double) -> SplitTree {
         guard let root else { return self }
         return SplitTree(root: root.updatingRatio(for: target, ratio: ratio), zoomed: zoomed)
@@ -290,6 +338,69 @@ extension SplitTree.Node {
             return leafID == id
         case .split(let s):
             return s.left.containsLeaf(id) || s.right.containsLeaf(id)
+        }
+    }
+
+    /// Recursive worker for `SplitTree.spatialNeighbor`. Post-order: check
+    /// children first (they may answer internally), then — if the requested
+    /// source subtree side matches this split and matches the required
+    /// split direction — hand back the near-edge leaf of the opposite side.
+    func findSpatialNeighbor(
+        of terminalID: TerminalID,
+        direction: SplitTree.SpatialDirection
+    ) -> TerminalID? {
+        guard case let .split(split) = self else { return nil }
+
+        if split.left.containsLeaf(terminalID) {
+            if let found = split.left.findSpatialNeighbor(of: terminalID, direction: direction) {
+                return found
+            }
+            if split.direction == direction.requiredSplitDirection,
+               direction.sourceSubtreeSide == .left {
+                return split.right.nearEdgeLeaf(movingFrom: direction)
+            }
+            return nil
+        }
+        if split.right.containsLeaf(terminalID) {
+            if let found = split.right.findSpatialNeighbor(of: terminalID, direction: direction) {
+                return found
+            }
+            if split.direction == direction.requiredSplitDirection,
+               direction.sourceSubtreeSide == .right {
+                return split.left.nearEdgeLeaf(movingFrom: direction)
+            }
+            return nil
+        }
+        return nil
+    }
+
+    /// Descend into a sibling subtree to pick the leaf adjacent to the
+    /// dividing boundary.
+    ///
+    /// When the subtree's split direction matches the motion direction —
+    /// i.e., motion and split are "aligned" (`.right`/`.left` across a
+    /// horizontal split, `.down`/`.up` across a vertical split) — the
+    /// adjacent side is unambiguous: pick the side closest to the source.
+    ///
+    /// When the split direction is perpendicular to the motion, BOTH
+    /// children of the split share the boundary edge equally. Convention:
+    /// pick the left/top child ("reading order"), matching upstream
+    /// Ghostty's `SplitTree.spatialNeighbor` behavior.
+    fileprivate func nearEdgeLeaf(movingFrom direction: SplitTree.SpatialDirection) -> TerminalID {
+        switch self {
+        case .leaf(let id):
+            return id
+        case .split(let s):
+            guard s.direction == direction.requiredSplitDirection else {
+                // Perpendicular split — reading-order pick.
+                return s.left.nearEdgeLeaf(movingFrom: direction)
+            }
+            switch direction {
+            case .right, .down:
+                return s.left.nearEdgeLeaf(movingFrom: direction)
+            case .left, .up:
+                return s.right.nearEdgeLeaf(movingFrom: direction)
+            }
         }
     }
 

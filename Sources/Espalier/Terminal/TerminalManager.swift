@@ -8,6 +8,18 @@ import EspalierKit
 /// `EspalierApp` (dispatch and menu) can reference it without qualification.
 enum NavigationDirection {
     case left, right, up, down
+
+    /// Bridge to `SplitTree.SpatialDirection`. Kept as a simple 1:1 map so
+    /// the UI-layer enum stays app-local while the navigation policy lives
+    /// in EspalierKit where it can be unit-tested (TERM-7.3).
+    var asSpatial: SplitTree.SpatialDirection {
+        switch self {
+        case .left: return .left
+        case .right: return .right
+        case .up: return .up
+        case .down: return .down
+        }
+    }
 }
 
 

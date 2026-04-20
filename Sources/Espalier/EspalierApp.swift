@@ -875,14 +875,24 @@ struct EspalierApp: App {
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].state = .running
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].focusedTerminalID = terminalID
 
-        // Follow the pane with the UI: switch the selected worktree to the
-        // one the terminal just moved into, and re-establish libghostty +
-        // AppKit focus so typing continues to route to this pane without
-        // the user having to click. The previous sidebar highlight (on the
-        // source worktree) naturally moves with `selectedWorktreePath`.
+        // Follow the pane with the UI ONLY when the reassigned pane was the
+        // user's active typing target — i.e. the focused pane of the
+        // currently-selected worktree. `PWDReassignmentPolicy` encodes the
+        // decision. Unconditionally switching selection used to hijack the
+        // user's view whenever ANY background pane `cd`'d across a
+        // worktree boundary — Andy's 3–6 concurrent Claude-session setup
+        // made that immediately pathological. `PWD-2.3` (revised).
         let targetPath = appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].path
-        appState.wrappedValue.selectedWorktreePath = targetPath
-        terminalManager.setFocus(terminalID)
+        let follow = PWDReassignmentPolicy.shouldFollowToDestination(
+            selectedWorktreePath: appState.wrappedValue.selectedWorktreePath,
+            sourceWorktreePath: sourceWt.path,
+            sourceFocusedTerminalID: sourceWt.focusedTerminalID,
+            reassignedTerminalID: terminalID
+        )
+        if follow {
+            appState.wrappedValue.selectedWorktreePath = targetPath
+            terminalManager.setFocus(terminalID)
+        }
     }
 
     /// Ensure a path ends with `/` so prefix matching can't falsely match
@@ -892,8 +902,12 @@ struct EspalierApp: App {
     }
 
     /// Static navigate used by the `onGotoSplit` callback (triggered from
-    /// libghostty keybinds). Spatial direction is mapped to previous/next
-    /// in leaf order — we don't yet have geometry to do true spatial nav.
+    /// libghostty keybinds). Uses `SplitTree.spatialNeighbor` (`TERM-7.3`)
+    /// so `.down` genuinely means "the pane spatially below," not "the
+    /// next leaf in DFS order." When there is no neighbor in the requested
+    /// direction the keypress is ignored — matching upstream Ghostty and
+    /// terminal multiplexers like tmux, which leave focus put rather than
+    /// wrapping to an unrelated pane.
     @MainActor
     fileprivate static func navigatePane(
         appState: Binding<AppState>,
@@ -904,17 +918,14 @@ struct EspalierApp: App {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                let leaves = wt.splitTree.allLeaves
-                guard let currentIdx = leaves.firstIndex(of: terminalID) else { continue }
-                guard leaves.count > 1 else { return }
-                let nextIdx: Int
-                switch direction {
-                case .left, .up:
-                    nextIdx = (currentIdx - 1 + leaves.count) % leaves.count
-                case .right, .down:
-                    nextIdx = (currentIdx + 1) % leaves.count
+                guard wt.splitTree.containsLeaf(terminalID) else { continue }
+                guard let nextID = wt.splitTree.spatialNeighbor(
+                    of: terminalID,
+                    direction: direction.asSpatial
+                ) else {
+                    // No spatial neighbor — no-op, focus stays where it is.
+                    return
                 }
-                let nextID = leaves[nextIdx]
                 // Zoom preservation: Ghostty 1.3 `split-preserve-zoom = navigation` opt-in.
                 if wt.splitTree.zoomed != nil {
                     let newTree = terminalManager.splitPreserveZoomOnNavigation
@@ -929,6 +940,12 @@ struct EspalierApp: App {
         }
     }
 
+    /// `Previous Pane` / `Next Pane` cycle through the worktree's leaves in
+    /// DFS order regardless of the spatial layout — that's what the menu
+    /// items promise. Kept separate from the spatial `navigatePane` so
+    /// TERM-7.3 (arrow-key spatial nav) doesn't silently change the
+    /// semantics of Cmd+[ / Cmd+] on users who rely on the plain
+    /// round-robin sequence.
     @MainActor
     fileprivate static func navigatePaneInTreeOrder(
         appState: Binding<AppState>,
@@ -936,12 +953,27 @@ struct EspalierApp: App {
         from terminalID: TerminalID,
         forward: Bool
     ) {
-        navigatePane(
-            appState: appState,
-            terminalManager: terminalManager,
-            from: terminalID,
-            direction: forward ? .right : .left
-        )
+        for repoIdx in appState.wrappedValue.repos.indices {
+            for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
+                let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                let leaves = wt.splitTree.allLeaves
+                guard let currentIdx = leaves.firstIndex(of: terminalID) else { continue }
+                guard leaves.count > 1 else { return }
+                let nextIdx = forward
+                    ? (currentIdx + 1) % leaves.count
+                    : (currentIdx - 1 + leaves.count) % leaves.count
+                let nextID = leaves[nextIdx]
+                if wt.splitTree.zoomed != nil {
+                    let newTree = terminalManager.splitPreserveZoomOnNavigation
+                        ? wt.splitTree.withZoom(nextID)
+                        : wt.splitTree.withZoom(nil)
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
+                }
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nextID
+                terminalManager.setFocus(nextID)
+                return
+            }
+        }
     }
 
     @MainActor
