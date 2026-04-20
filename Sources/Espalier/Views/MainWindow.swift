@@ -240,6 +240,7 @@ struct MainWindow: View {
         // user expected terminals. Cleared split tree too — a stale
         // entry's old leaf IDs reference surfaces that were destroyed,
         // so starting fresh is safer than trying to restore them.
+        var resurrectedRepoPath: String?
         for repoIdx in appState.repos.indices {
             for wtIdx in appState.repos[repoIdx].worktrees.indices {
                 let wt = appState.repos[repoIdx].worktrees[wtIdx]
@@ -250,8 +251,19 @@ struct MainWindow: View {
                     if !orphan.isEmpty {
                         terminalManager.destroySurfaces(terminalIDs: orphan)
                     }
+                    resurrectedRepoPath = appState.repos[repoIdx].path
                 }
             }
+        }
+        // `GIT-3.15`: `stopWatchingWorktree` ran on the stale
+        // transition, so the resurrected worktree has no path / head /
+        // content watchers. Re-arm now so real-time stats and PR
+        // refreshes work without waiting for the next `.git/worktrees/`
+        // FSEvents tick (which a user-click resurrection never fires).
+        if let repoPath = resurrectedRepoPath {
+            worktreeMonitor.watchWorktreePath(path)
+            worktreeMonitor.watchHeadRef(worktreePath: path, repoPath: repoPath)
+            worktreeMonitor.watchWorktreeContents(worktreePath: path)
         }
 
         for repoIdx in appState.repos.indices {
