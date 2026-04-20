@@ -48,7 +48,39 @@ public final class WorktreeStatsStore {
     @ObservationIgnored
     private var getRepos: @MainActor () -> [RepoEntry] = { [] }
 
-    public init() {}
+    /// The compute function invoked off-main to resolve the default
+    /// branch and divergence stats. Injected so tests can supply a
+    /// controllable stub (yielding at a chosen point, returning canned
+    /// output) without having to mutate the global `GitRunner.executor`
+    /// — which races with concurrent test suites. In production this
+    /// defaults to `Self.defaultCompute` which uses the real GitRunner.
+    @ObservationIgnored
+    private let compute: ComputeFunction
+
+    /// Signature of the compute injection point. Sendable so the
+    /// detached-from-MainActor Task can invoke it safely.
+    public typealias ComputeFunction = @Sendable (
+        _ worktreePath: String,
+        _ repoPath: String,
+        _ cachedDefault: String?
+    ) async -> ComputeResult
+
+    /// Result of a background compute attempt. Carries the default branch
+    /// discovered (so we can cache it on main) plus the stats or nil if no
+    /// default branch exists for this repo.
+    public struct ComputeResult: Sendable {
+        public let defaultBranch: String?
+        public let stats: WorktreeStats?
+
+        public init(defaultBranch: String?, stats: WorktreeStats?) {
+            self.defaultBranch = defaultBranch
+            self.stats = stats
+        }
+    }
+
+    public init(compute: @escaping ComputeFunction = WorktreeStatsStore.defaultCompute) {
+        self.compute = compute
+    }
 
     // Test hooks for DIVERGE-4.5 verification. Not used in production.
     func generationForTesting(_ worktreePath: String) -> Int {
@@ -64,13 +96,10 @@ public final class WorktreeStatsStore {
         inFlight.insert(worktreePath)
         let cached = defaultBranchByRepo[repoPath] ?? nil
         let fetchGeneration = generation[worktreePath, default: 0]
+        let compute = self.compute
 
         Task {
-            let computed = await Self.computeOffMain(
-                worktreePath: worktreePath,
-                repoPath: repoPath,
-                cachedDefault: cached
-            )
+            let computed = await compute(worktreePath, repoPath, cached)
             self.apply(
                 worktreePath: worktreePath,
                 repoPath: repoPath,
@@ -130,19 +159,13 @@ public final class WorktreeStatsStore {
 
     // MARK: - Private
 
-    /// Result of a background compute attempt. Carries the default branch
-    /// discovered (so we can cache it on main) plus the stats or nil if no
-    /// default branch exists for this repo.
-    private struct ComputeResult: Sendable {
-        let defaultBranch: String?
-        let stats: WorktreeStats?
-    }
-
-    private static func computeOffMain(
-        worktreePath: String,
-        repoPath: String,
-        cachedDefault: String?
-    ) async -> ComputeResult {
+    /// Production `ComputeFunction` — resolves the default branch (home
+    /// checkout vs linked worktree shape) and computes divergence stats
+    /// via the real `GitRunner`. Extracted from the old private-static
+    /// `computeOffMain` so tests can inject a stub instead of the real
+    /// git subprocess chain. `nonisolated` so `init`'s default-parameter
+    /// evaluation (a nonisolated context) can reference it.
+    public nonisolated static let defaultCompute: ComputeFunction = { worktreePath, repoPath, cachedDefault in
         let name: String?
         if let cached = cachedDefault {
             name = cached

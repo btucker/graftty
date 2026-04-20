@@ -2595,3 +2595,28 @@ No code change this cycle. The prior ~9 cycles covered a lot of surface; diminis
 - Exercise the macOS app with `mcp__computer-use__*` if screenshot permission returns.
 - Revisit the race-against-apply integration test for `WorktreeStatsStore.clear` (cycle 122 skipped because of shared-state `GitRunner.executor` poisoning). Could refactor by making `computeOffMain` take an injected closure so tests can stub per-store instead of mutating the global.
 - Look at the test-suite isolation issue more broadly — `GitRunner.configure` is a thread-unsafe global seam that makes cross-suite test races possible.
+
+## Cycle 125 — 2026-04-20 (inject WorktreeStatsStore.compute; race test for DIVERGE-4.5)
+
+### Explored
+- Cycle 124 flagged: `WorktreeStatsStore.computeOffMain` is a private static that hits the global `GitRunner.executor`, which means tests that stub GitRunner race against concurrent suites.
+- The fix: make `compute` a stored closure with a default that delegates to the real GitRunner, so tests can inject a per-instance stub.
+
+### Fixed
+- `WorktreeStatsStore` now has a stored `compute: ComputeFunction` closure (typealias for `@Sendable (...) async -> ComputeResult`). `ComputeResult` is public now (test needs to construct one). Init accepts `compute:` with a default of `Self.defaultCompute` (the extracted production impl).
+- `defaultCompute` is `nonisolated static let` — needed so `init`'s default-parameter evaluation can reference it from a nonisolated context.
+- `refresh`'s Task now calls the injected closure instead of the old static function.
+
+### Spec
+- No spec change. DIVERGE-4.5's contract was already pinned in cycle 106; this cycle adds test coverage.
+
+### Tests
+- Added `clearBetweenRefreshAndApplyDropsStaleWrite` — the integration test that cycle 122 had to skip. Uses an `AsyncStream` continuation to pause the compute closure mid-flight, calls `clear()` (bumping generation), then resumes compute. Asserts `stats["/wt"] == nil` — apply saw gen mismatch and dropped the stale write.
+- 547/547 pass across 5 consecutive runs (one transient flake on retry 2 of an earlier 3-run sample unrelated to this test — known concurrent-test noise).
+
+### Commit
+- `refactor(stats): inject compute closure; add DIVERGE-4.5 race test`
+
+### Try next cycle
+- Consider: the same compute-injection pattern for `PRStatusStore`? PRStatusStore's `fetcherFor` is already injectable via init but the actual `fetch` invocation still flows through it. Cycle 96-era already handles most cases.
+- Other injection seams to audit for global-state coupling.

@@ -27,15 +27,6 @@ struct WorktreeStatsStoreClearTests {
         #expect(store.generationForTesting("/wt") == start + 3)
     }
 
-    /// Note: the full race-against-apply integration test (refresh →
-    /// concurrent clear → assert late apply dropped) would need to
-    /// configure the global `GitRunner.executor` with stubs, and that
-    /// shared-state mutation races against other suites that rely on
-    /// `GitRunner`. Verifying the three primitives that compose the
-    /// DIVERGE-4.5 guard — generation bump on clear, gen persistence
-    /// across repeated clears, and `refresh`'s captured generation
-    /// value — is enough to pin the contract without poisoning the
-    /// cross-suite executor.
     @MainActor
     @Test func refreshCapturesCurrentGeneration() async {
         let store = WorktreeStatsStore()
@@ -51,4 +42,64 @@ struct WorktreeStatsStoreClearTests {
         store.clear(worktreePath: "/wt")
         #expect(store.generationForTesting("/wt") == 3)
     }
+
+    /// Cycle-125 integration test enabled by the compute-closure
+    /// injection refactor. Simulates the DIVERGE-4.5 race deterministically:
+    /// 1. refresh → compute closure suspends mid-flight (awaits a
+    ///    signal the test owns)
+    /// 2. clear() bumps generation while compute is suspended
+    /// 3. Signal compute to resume; its output returns canned stats
+    /// 4. apply() sees gen mismatch and drops the write — `stats["/wt"]`
+    ///    stays nil instead of getting repopulated.
+    ///
+    /// Previously couldn't be written without configuring the global
+    /// `GitRunner.executor`, which poisoned concurrent suites' stubs.
+    /// With the injection the compute is per-instance and isolated.
+    @MainActor
+    @Test func clearBetweenRefreshAndApplyDropsStaleWrite() async throws {
+        // Continuation that the test will resume after calling clear().
+        let resumeStream = AsyncStream<Void>.makeStream()
+        let resumeIterator = Box(resumeStream.stream.makeAsyncIterator())
+
+        let cannedStats = WorktreeStats(ahead: 3, behind: 7, insertions: 40, deletions: 10, hasUncommittedChanges: false)
+        let compute: WorktreeStatsStore.ComputeFunction = { _, _, _ in
+            // Suspend until the test signals. This is where the Task
+            // "is in-flight" waiting on a git subprocess in production.
+            _ = await resumeIterator.value.next()
+            return WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: cannedStats)
+        }
+
+        let store = WorktreeStatsStore(compute: compute)
+
+        store.refresh(worktreePath: "/wt", repoPath: "/r")
+        #expect(store.isInFlightForTesting("/wt"))
+
+        // Clear while compute is suspended — bumps generation.
+        store.clear(worktreePath: "/wt")
+        #expect(!store.isInFlightForTesting("/wt"))
+
+        // Release compute so its apply can attempt the write.
+        resumeStream.continuation.yield(())
+        resumeStream.continuation.finish()
+
+        // Wait for apply to run.
+        for _ in 0..<50 {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            if store.stats["/wt"] != nil { break }
+        }
+        try? await Task.sleep(nanoseconds: 50_000_000)
+
+        // apply captured generation 0; clear bumped to 1; apply sees
+        // mismatch and drops the write. stats must NOT contain "/wt".
+        #expect(store.stats["/wt"] == nil,
+                "DIVERGE-4.5 violation: apply repopulated stats for cleared worktree")
+    }
+}
+
+/// Swift 6 doesn't let an AsyncStream.Iterator cross actor boundaries
+/// directly — wrap in a Sendable box (unchecked because we only use it
+/// in single-reader fashion here).
+private final class Box<T>: @unchecked Sendable {
+    var value: T
+    init(_ value: T) { self.value = value }
 }
