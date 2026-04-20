@@ -303,7 +303,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 ### 5.1 CLI Tool
 
-**ATTN-1.1** The application shall include a CLI binary (`espalier`) in the app bundle at `Espalier.app/Contents/Helpers/espalier`. The CLI is placed in `Contents/Helpers/` (not `Contents/MacOS/`) because on macOS's default case-insensitive APFS, the binary name `espalier` collides with the app's main executable `Espalier` if both are in the same directory. The Swift Package Manager product that builds this binary is named `espalier-cli` for the same reason; it is renamed to `espalier` when installed into the app bundle.
+**ATTN-1.1** The application shall include a CLI binary (`espalier`) in the app bundle at `Espalier.app/Contents/Helpers/espalier`. The CLI is placed in `Contents/Helpers/` (not `Contents/MacOS/`) because on macOS's default case-insensitive APFS, the binary name `espalier` collides with the app's main executable `Espalier` if both are in the same directory. The Swift Package Manager product that builds this binary is named `espalier-cli` for the same reason; it is renamed to `espalier` when installed into the app bundle. When the user invokes "Install CLI Tool…" and the bundled CLI is missing at this path (typical for a raw `swift run`-built Espalier that hasn't been put through `scripts/bundle.sh`), the application shall surface an actionable "CLI Binary Not Found" alert rather than create a dangling symlink at `/usr/local/bin/espalier`. `CLIInstaller.plan` returns `.sourceMissing(source:)` in this case.
 
 **ATTN-1.2** The CLI shall support the command `espalier notify "<text>"` to set attention on the worktree containing the current working directory.
 

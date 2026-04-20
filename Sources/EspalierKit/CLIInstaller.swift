@@ -16,19 +16,27 @@ public enum CLIInstaller {
         /// The parent isn't writable (e.g. /usr/local/bin owned by root).
         /// Surface `command` to the user so they can run it in Terminal.
         case showSudoCommand(command: String, destination: String)
+
+        /// The bundled CLI binary doesn't exist at `source`. Happens
+        /// when the user runs a raw `swift run`-built Espalier that
+        /// hasn't been put through `scripts/bundle.sh`. Surface an
+        /// actionable error rather than create a dangling symlink.
+        case sourceMissing(source: String)
     }
 
-    /// Decide the install strategy for `(source -> destination)`.
-    ///
-    /// Uses `isWritableFile` on the destination's parent directory. This is
-    /// a best-effort check — even a writable parent can fail to create the
-    /// link if something unusual intervenes, so callers should still handle
-    /// errors from the actual symlink call.
+    /// Decide the install strategy for `(source -> destination)`. A
+    /// source that doesn't exist short-circuits to `.sourceMissing`;
+    /// otherwise parent-writability decides between direct-symlink and
+    /// sudo-command flows. `isWritableFile` is best-effort — callers
+    /// still handle errors from the actual symlink call.
     public static func plan(
         source: String,
         destination: String,
         fileManager: FileManager = .default
     ) -> Plan {
+        guard fileManager.fileExists(atPath: source) else {
+            return .sourceMissing(source: source)
+        }
         let parentDir = (destination as NSString).deletingLastPathComponent
         if fileManager.isWritableFile(atPath: parentDir) {
             return .directSymlink(source: source, destination: destination)

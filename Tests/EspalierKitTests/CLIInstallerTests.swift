@@ -16,14 +16,17 @@ struct CLIInstallerTests {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let source = "/Applications/Espalier.app/Contents/Helpers/espalier"
+        // A real file so the source-exists check passes. Content
+        // doesn't matter — plan only checks existence.
+        let source = dir.appendingPathComponent("espalier-src").path
+        try Data("#!/bin/sh\n".utf8).write(to: URL(fileURLWithPath: source))
         let destination = dir.appendingPathComponent("espalier").path
 
         let plan = CLIInstaller.plan(source: source, destination: destination)
         #expect(plan == .directSymlink(source: source, destination: destination))
     }
 
-    @Test func unwritableParentPlansSudoCommand() {
+    @Test func unwritableParentPlansSudoCommand() throws {
         // /usr/local/bin is root:wheel 755 — unwritable as a normal user.
         // Skip if /usr/local/bin happens to be writable (unusual, but some
         // devs run with broadened perms).
@@ -31,7 +34,10 @@ struct CLIInstallerTests {
             return
         }
 
-        let source = "/Applications/Espalier.app/Contents/Helpers/espalier"
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let source = dir.appendingPathComponent("espalier-src").path
+        try Data("#!/bin/sh\n".utf8).write(to: URL(fileURLWithPath: source))
         let destination = "/usr/local/bin/espalier"
 
         let plan = CLIInstaller.plan(source: source, destination: destination)
@@ -43,7 +49,7 @@ struct CLIInstallerTests {
         #expect(dest == destination)
         #expect(command.contains("sudo"))
         #expect(command.contains("ln -sf"))
-        #expect(command.contains("/Applications/Espalier.app/Contents/Helpers/espalier"))
+        #expect(command.contains(source))
         #expect(command.contains("/usr/local/bin/espalier"))
     }
 
@@ -65,6 +71,29 @@ struct CLIInstallerTests {
         )
         // The source should be: 'It'"'"'s Espalier.app'
         #expect(cmd.contains(#"'/Applications/It'"'"'s Espalier.app/Contents/Helpers/espalier'"#))
+    }
+
+    /// When the bundled CLI binary doesn't exist — e.g. the user is
+    /// running a raw `swift run`-built Espalier that hasn't been put
+    /// through `scripts/bundle.sh` — `plan` currently happily returns
+    /// `.directSymlink`, and the GUI proceeds to `createSymbolicLink`
+    /// pointing at a non-existent file. `ln -s` doesn't verify the
+    /// target, so `/usr/local/bin/espalier` then resolves to nothing
+    /// and every future `espalier notify` fails with
+    /// "command not found" at the shell level.
+    ///
+    /// Pin the failure mode: plan must return `.sourceMissing` so the
+    /// GUI can surface an actionable error instead of silently creating
+    /// a dangling link.
+    @Test func missingSourcePlansSourceMissing() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let source = dir.appendingPathComponent("nonexistent-espalier").path
+        let destination = dir.appendingPathComponent("espalier").path
+
+        let plan = CLIInstaller.plan(source: source, destination: destination)
+        #expect(plan == .sourceMissing(source: source))
     }
 
     @Test func sudoCommandIsValidShellWhenExecuted() throws {

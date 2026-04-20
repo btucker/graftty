@@ -1321,6 +1321,19 @@ struct EspalierApp: App {
             runDirectSymlink(source: source, destination: destination)
         case .showSudoCommand(let command, let destination):
             showSudoInstallAlert(command: command, destination: destination)
+        case .sourceMissing(let source):
+            // Dev build: `swift run Espalier` skips bundle.sh so the
+            // Helpers dir doesn't exist. Surface it instead of
+            // creating a dangling symlink. `ATTN-1.1`.
+            let alert = NSAlert()
+            alert.messageText = "CLI Binary Not Found"
+            alert.informativeText = """
+                The bundled CLI was not found at \(source). \
+                If you are running a development build, run \
+                `scripts/bundle.sh` first, then install from the bundled app.
+                """
+            alert.alertStyle = .warning
+            alert.runModal()
         }
     }
 
