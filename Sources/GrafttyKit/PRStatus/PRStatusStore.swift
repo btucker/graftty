@@ -33,6 +33,15 @@ public final class PRStatusStore {
     /// the listener does not need per-PR debouncing.
     @ObservationIgnored public var onPRMerged: (@MainActor (_ worktreePath: String, _ prNumber: Int) -> Void)?
 
+    /// Fires on PR state or CI-conclusion transitions for a tracked
+    /// worktree. Idempotent polls (same info twice) do not fire. The
+    /// initial discovery of a PR (previous == nil) does not fire — a
+    /// transition requires a previous state to transition FROM.
+    ///
+    /// Consumed by ChannelRouter to deliver MCP channel events into
+    /// Claude Code sessions running in the worktree.
+    @ObservationIgnored public var onTransition: (@MainActor (_ worktreePath: String, _ message: ChannelServerMessage) -> Void)?
+
     public init(
         executor: CLIExecutor = CLIRunner(),
         fetcherFor: ((HostingProvider) -> PRFetcher?)? = nil,
@@ -187,6 +196,12 @@ public final class PRStatusStore {
                 let prev = infos[worktreePath]
                 let justMerged = pr.state == .merged
                     && (prev?.state != .merged || prev?.number != pr.number)
+                detectAndFireTransitions(
+                    worktreePath: worktreePath,
+                    previous: prev,
+                    current: pr,
+                    origin: origin
+                )
                 if prev != pr {
                     infos[worktreePath] = pr
                 }
@@ -217,6 +232,60 @@ public final class PRStatusStore {
         if !absent.contains(worktreePath) {
             absent.insert(worktreePath)
         }
+    }
+
+    private func detectAndFireTransitions(
+        worktreePath: String,
+        previous: PRInfo?,
+        current: PRInfo,
+        origin: HostingOrigin
+    ) {
+        guard let onTransition else { return }
+        guard let previous else { return }  // initial discovery: not a transition
+
+        let common: [String: String] = [
+            "pr_number": String(current.number),
+            "pr_url": current.url.absoluteString,
+            "provider": origin.provider.rawValue,
+            "repo": origin.slug,
+            "worktree": worktreePath,
+        ]
+
+        if previous.state != current.state {
+            var attrs = common
+            attrs["from"] = previous.state.rawValue
+            attrs["to"] = current.state.rawValue
+            attrs["pr_title"] = current.title
+            let body = "PR #\(current.number) state changed: \(previous.state.rawValue) → \(current.state.rawValue)"
+            onTransition(worktreePath, .event(
+                type: ChannelEventType.prStateChanged, attrs: attrs, body: body
+            ))
+        }
+
+        if previous.checks != current.checks {
+            var attrs = common
+            attrs["from"] = previous.checks.rawValue
+            attrs["to"] = current.checks.rawValue
+            let body = "CI on PR #\(current.number): \(previous.checks.rawValue) → \(current.checks.rawValue)"
+            onTransition(worktreePath, .event(
+                type: ChannelEventType.ciConclusionChanged, attrs: attrs, body: body
+            ))
+        }
+    }
+
+    /// Test seam so tests can exercise transition detection without
+    /// spinning up a fetcher. `internal` so `@testable import` reaches it
+    /// from `GrafttyKitTests` without widening the public surface.
+    internal func detectAndFireTransitionsForTesting(
+        worktreePath: String,
+        previous: PRInfo?,
+        current: PRInfo,
+        origin: HostingOrigin
+    ) {
+        detectAndFireTransitions(
+            worktreePath: worktreePath,
+            previous: previous, current: current, origin: origin
+        )
     }
 }
 
