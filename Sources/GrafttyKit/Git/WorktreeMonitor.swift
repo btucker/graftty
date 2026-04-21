@@ -44,6 +44,22 @@ public final class WorktreeMonitor: @unchecked Sendable {
 
     deinit { stopAll() }
 
+    /// Install the full watcher set for a repo and its non-stale worktrees.
+    /// Used at launch (`startup`), after a relocate (LAYOUT-4.8), and
+    /// whenever a repo's worktree membership changes. The per-worktree
+    /// install is idempotent on the monitor's side (duplicate registers
+    /// coalesce by path key), so calling this multiple times with overlapping
+    /// repos is safe — it just no-ops the ones already armed.
+    public func installRepoWatchers(repo: RepoEntry) {
+        watchWorktreeDirectory(repoPath: repo.path)
+        watchOriginRefs(repoPath: repo.path)
+        for wt in repo.worktrees where wt.state != .stale {
+            watchWorktreePath(wt.path)
+            watchHeadRef(worktreePath: wt.path, repoPath: repo.path)
+            watchWorktreeContents(worktreePath: wt.path)
+        }
+    }
+
     public func watchWorktreeDirectory(repoPath: String) {
         let gitWorktreesDir = "\(repoPath)/.git/worktrees"
         try? FileManager.default.createDirectory(atPath: gitWorktreesDir, withIntermediateDirectories: true)

@@ -35,16 +35,26 @@ public enum RepoBookmark {
     /// bookmark is stale (cross-volume move, APFS firmlink resolution,
     /// etc.) so callers can re-mint.
     ///
+    /// The returned URL's path is canonicalized via `CanonicalPath` so
+    /// callers can compare against `RepoEntry.path` (which always flows
+    /// through `GitRepoDetector.detect` → `CanonicalPath.canonicalize`).
+    /// Without this, `URL(resolvingBookmarkData:)` can hand back
+    /// `/var/...` where the canonical form is `/private/var/...` on
+    /// macOS, false-positively flagging a "move" and contaminating the
+    /// model with non-canonical paths that break downstream
+    /// `hasPrefix`-based watcher teardown.
+    ///
     /// Throws if the bookmark cannot be resolved (referenced folder
     /// deleted, bookmark corrupt, filesystem unavailable).
     public static func resolve(_ bookmark: Data) throws -> Resolved {
         var isStale = false
-        let url = try URL(
+        let raw = try URL(
             resolvingBookmarkData: bookmark,
             options: [],
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
         )
-        return Resolved(url: url, isStale: isStale)
+        let canonical = URL(fileURLWithPath: CanonicalPath.canonicalize(raw.path))
+        return Resolved(url: canonical, isStale: isStale)
     }
 }

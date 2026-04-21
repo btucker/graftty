@@ -369,13 +369,7 @@ struct GrafttyApp: App {
         services.worktreeMonitorBridge = bridge
         services.worktreeMonitor.delegate = bridge
         for repo in appState.repos {
-            services.worktreeMonitor.watchWorktreeDirectory(repoPath: repo.path)
-            services.worktreeMonitor.watchOriginRefs(repoPath: repo.path)
-            for wt in repo.worktrees where wt.state != .stale {
-                services.worktreeMonitor.watchWorktreePath(wt.path)
-                services.worktreeMonitor.watchHeadRef(worktreePath: wt.path, repoPath: repo.path)
-                services.worktreeMonitor.watchWorktreeContents(worktreePath: wt.path)
-            }
+            services.worktreeMonitor.installRepoWatchers(repo: repo)
         }
 
         reconcileOnLaunch()
@@ -564,9 +558,16 @@ struct GrafttyApp: App {
         // A rename into a non-git directory (e.g. bookmark survived a
         // cross-volume move that clobbered `.git`) has no recovery path;
         // falling through to the stale transition is correct.
-        let gitEntry = newURL.appendingPathComponent(".git").path
-        guard FileManager.default.fileExists(atPath: gitEntry) else {
-            NSLog("[Graftty] relocateRepo: resolved URL is not a git repo: %@", newRepoPath)
+        do {
+            let detection = try GitRepoDetector.detect(path: newRepoPath)
+            guard case .repoRoot = detection else {
+                NSLog("[Graftty] relocateRepo: resolved URL is not a repo root (detection=%@): %@",
+                      String(describing: detection), newRepoPath)
+                return
+            }
+        } catch {
+            NSLog("[Graftty] relocateRepo: detect failed at %@: %@",
+                  newRepoPath, String(describing: error))
             return
         }
 
@@ -576,22 +577,19 @@ struct GrafttyApp: App {
             appState.wrappedValue.repos[repoIdx].bookmark = fresh
         }
 
-        // (c) Stop repo-level and per-worktree watchers before any
-        // mutation of `appState.repos[repoIdx].path` — `stopWatching`
-        // matches watcher keys by the repoPath we pass in, not by the
-        // repo's current model value.
-        worktreeMonitor.stopWatching(repoPath: oldRepoPath)
-        for wt in appState.wrappedValue.repos[repoIdx].worktrees {
-            worktreeMonitor.stopWatchingWorktree(wt.path)
-        }
-
-        // (d) Clear per-old-path caches so a worktree that carries
-        // forward with its path rewritten doesn't observe a stale cache
-        // entry keyed by the old path.
-        for wt in appState.wrappedValue.repos[repoIdx].worktrees {
-            prStatusStore.clear(worktreePath: wt.path)
-            statsStore.clear(worktreePath: wt.path)
-        }
+        // (c) + (d) Stop repo-level and per-worktree watchers and clear
+        // per-old-path caches before any mutation of
+        // `appState.repos[repoIdx].path` — `stopWatching` matches
+        // watcher keys by the repoPath we pass in, not by the repo's
+        // current model value, and caches keyed by the old path would
+        // bleed into carried-forward worktrees. Shared with Remove
+        // Repository via `RepoTeardown`.
+        RepoTeardown.stopWatchersAndClearCaches(
+            repo: appState.wrappedValue.repos[repoIdx],
+            worktreeMonitor: worktreeMonitor,
+            statsStore: statsStore,
+            prStatusStore: prStatusStore
+        )
 
         // (e) Snapshot the pre-relocate repo for the pure decision
         // function, then apply the repo-level path/displayName update.
@@ -691,13 +689,7 @@ struct GrafttyApp: App {
         // `startup()`'s initial watcher-install loop exactly so the
         // post-relocate watcher graph is indistinguishable from a
         // from-scratch launch at the new location.
-        worktreeMonitor.watchWorktreeDirectory(repoPath: newRepoPath)
-        worktreeMonitor.watchOriginRefs(repoPath: newRepoPath)
-        for wt in appState.wrappedValue.repos[repoIdx].worktrees where wt.state != .stale {
-            worktreeMonitor.watchWorktreePath(wt.path)
-            worktreeMonitor.watchHeadRef(worktreePath: wt.path, repoPath: newRepoPath)
-            worktreeMonitor.watchWorktreeContents(worktreePath: wt.path)
-        }
+        worktreeMonitor.installRepoWatchers(repo: appState.wrappedValue.repos[repoIdx])
 
         NSLog("[Graftty] relocateRepo: %@ → %@", oldRepoPath, newRepoPath)
     }

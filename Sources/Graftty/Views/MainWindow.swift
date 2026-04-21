@@ -489,22 +489,15 @@ struct MainWindow: View {
         for wt in repo.worktrees where wt.state == .running {
             terminalManager.destroySurfaces(terminalIDs: wt.splitTree.allLeaves)
         }
-        // (b) Stop repo-level and per-worktree watchers. The per-worktree
-        // loop is load-bearing, not redundant: linked worktrees can live
-        // outside `repo.path` (e.g. `git worktree add /tmp/feature` from
-        // `/projects/foo`), and `stopWatching(repoPath:)` only matches
-        // watcher keys whose path is `repoPath` or a descendant. Without
-        // this loop, watchers on such "detached-location" worktrees
-        // would leak fds per GIT-3.11.
-        worktreeMonitor.stopWatching(repoPath: repo.path)
-        for wt in repo.worktrees {
-            worktreeMonitor.stopWatchingWorktree(wt.path)
-        }
-        // (c) Clear per-path caches before model mutation.
-        for wt in repo.worktrees {
-            prStatusStore.clear(worktreePath: wt.path)
-            statsStore.clear(worktreePath: wt.path)
-        }
+        // (b) + (c) Stop repo-level and per-worktree watchers and clear
+        // per-path caches. Shared with the relocate cascade — see
+        // `RepoTeardown` for the rationale on the per-worktree loop.
+        RepoTeardown.stopWatchersAndClearCaches(
+            repo: repo,
+            worktreeMonitor: worktreeMonitor,
+            statsStore: statsStore,
+            prStatusStore: prStatusStore
+        )
         // (d) + (e) `AppState.removeRepo` clears selection when victim.
         appState.removeRepo(atPath: repo.path)
     }
