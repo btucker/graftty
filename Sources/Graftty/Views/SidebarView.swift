@@ -16,6 +16,7 @@ struct SidebarView: View {
     let onSelectPane: (String, TerminalID) -> Void
     let onAddRepo: () -> Void
     let onAddPath: (String) -> Void
+    let onRemoveRepo: (RepoEntry) -> Void
     let onStopWorktree: (String) -> Void
     let onDeleteWorktree: (String) -> Void
     let onMovePane: (TerminalID, String) -> Void
@@ -118,6 +119,11 @@ struct SidebarView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Add worktree to \(repo.displayName)")
+            }
+            .contextMenu {
+                Button("Remove Repository") {
+                    onRemoveRepo(repo)
+                }
             }
         }
     }
