@@ -20,17 +20,17 @@ struct WorktreeStatsStoreFetchTests {
 
     @MainActor
     @Test func successfulFetchKeepsStreakAtZero() async {
-        let compute: WorktreeStatsStore.ComputeFunction = { _, _, _ in
+        let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
             WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
         }
-        let fetch: WorktreeStatsStore.FetchFunction = { _, _ in
+        let fetch: WorktreeStatsStore.FetchFunction = { _ in
             // No-op success.
         }
         let store = WorktreeStatsStore(compute: compute, fetch: fetch)
         store.seedDefaultBranchForTesting("main", forRepo: "/r")
         #expect(store.repoFailureStreakForTesting("/r") == 0)
 
-        await store.performRepoFetchForTesting(repoPath: "/r", worktreePaths: [])
+        await store.performRepoFetchForTesting(repoPath: "/r", worktrees: [])
 
         #expect(store.repoFailureStreakForTesting("/r") == 0,
                 "successful fetch must leave the streak alone")
@@ -41,16 +41,16 @@ struct WorktreeStatsStoreFetchTests {
         // This is the regression target: a `git fetch` that throws
         // (non-zero exit) must be treated as a failure, not as success.
         struct StubError: Error {}
-        let compute: WorktreeStatsStore.ComputeFunction = { _, _, _ in
+        let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
             WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
         }
-        let fetch: WorktreeStatsStore.FetchFunction = { _, _ in
+        let fetch: WorktreeStatsStore.FetchFunction = { _ in
             throw StubError()
         }
         let store = WorktreeStatsStore(compute: compute, fetch: fetch)
         store.seedDefaultBranchForTesting("main", forRepo: "/r")
 
-        await store.performRepoFetchForTesting(repoPath: "/r", worktreePaths: [])
+        await store.performRepoFetchForTesting(repoPath: "/r", worktrees: [])
 
         #expect(store.repoFailureStreakForTesting("/r") == 1,
                 "a throwing fetch must increment the streak so exponential backoff kicks in")
@@ -59,17 +59,17 @@ struct WorktreeStatsStoreFetchTests {
     @MainActor
     @Test func repeatedFailuresAccumulate() async {
         struct StubError: Error {}
-        let compute: WorktreeStatsStore.ComputeFunction = { _, _, _ in
+        let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
             WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
         }
-        let fetch: WorktreeStatsStore.FetchFunction = { _, _ in
+        let fetch: WorktreeStatsStore.FetchFunction = { _ in
             throw StubError()
         }
         let store = WorktreeStatsStore(compute: compute, fetch: fetch)
         store.seedDefaultBranchForTesting("main", forRepo: "/r")
 
         for expected in 1...5 {
-            await store.performRepoFetchForTesting(repoPath: "/r", worktreePaths: [])
+            await store.performRepoFetchForTesting(repoPath: "/r", worktrees: [])
             #expect(store.repoFailureStreakForTesting("/r") == expected)
         }
     }
@@ -79,23 +79,23 @@ struct WorktreeStatsStoreFetchTests {
         // Proves the streak is NOT sticky — once fetch succeeds again,
         // backoff disengages.
         struct StubError: Error {}
-        let compute: WorktreeStatsStore.ComputeFunction = { _, _, _ in
+        let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
             WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
         }
         // Per-call behavior: first two calls throw, third succeeds.
         let callCount = IntBox()
-        let fetch: WorktreeStatsStore.FetchFunction = { _, _ in
+        let fetch: WorktreeStatsStore.FetchFunction = { _ in
             callCount.value += 1
             if callCount.value < 3 { throw StubError() }
         }
         let store = WorktreeStatsStore(compute: compute, fetch: fetch)
         store.seedDefaultBranchForTesting("main", forRepo: "/r")
 
-        await store.performRepoFetchForTesting(repoPath: "/r", worktreePaths: [])
-        await store.performRepoFetchForTesting(repoPath: "/r", worktreePaths: [])
+        await store.performRepoFetchForTesting(repoPath: "/r", worktrees: [])
+        await store.performRepoFetchForTesting(repoPath: "/r", worktrees: [])
         #expect(store.repoFailureStreakForTesting("/r") == 2)
 
-        await store.performRepoFetchForTesting(repoPath: "/r", worktreePaths: [])
+        await store.performRepoFetchForTesting(repoPath: "/r", worktrees: [])
         #expect(store.repoFailureStreakForTesting("/r") == 0,
                 "streak resets on first successful fetch")
     }

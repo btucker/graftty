@@ -5,34 +5,28 @@ import Foundation
 @Suite("GitWorktreeStats — parsers")
 struct GitWorktreeStatsParserTests {
 
-    // MARK: parseRevListCounts
-    // Format is `<behind>\t<ahead>\n` because we invoke
-    // `rev-list --left-right --count <default>...HEAD` — the left side
-    // of A...B is "commits in A not B" (behind for us), right side is
-    // "commits in B not A" (ahead).
+    // MARK: parseSingleCount
+    // `git rev-list --count <refs>` prints a single non-negative integer.
+    // Ahead and behind are computed with separate invocations now that
+    // the union-of-upstreams semantics (two refs on the left) rules out
+    // `--left-right --count`'s symmetric-diff shortcut.
 
-    @Test func parsesRevListBothNonZero() throws {
-        let result = GitWorktreeStats.parseRevListCounts("2\t5\n")
-        #expect(result?.behind == 2)
-        #expect(result?.ahead == 5)
+    @Test func parsesSingleCountNonZero() throws {
+        #expect(GitWorktreeStats.parseSingleCount("42\n") == 42)
     }
 
-    @Test func parsesRevListAllZeros() throws {
-        let result = GitWorktreeStats.parseRevListCounts("0\t0\n")
-        #expect(result?.behind == 0)
-        #expect(result?.ahead == 0)
+    @Test func parsesSingleCountZero() throws {
+        #expect(GitWorktreeStats.parseSingleCount("0\n") == 0)
     }
 
-    @Test func parsesRevListWithTrailingWhitespace() throws {
-        let result = GitWorktreeStats.parseRevListCounts("  3\t7  \n")
-        #expect(result?.behind == 3)
-        #expect(result?.ahead == 7)
+    @Test func parsesSingleCountWithSurroundingWhitespace() throws {
+        #expect(GitWorktreeStats.parseSingleCount("   7   \n") == 7)
     }
 
-    @Test func rejectsMalformedRevListOutput() throws {
-        #expect(GitWorktreeStats.parseRevListCounts("") == nil)
-        #expect(GitWorktreeStats.parseRevListCounts("not a number\tnope\n") == nil)
-        #expect(GitWorktreeStats.parseRevListCounts("only-one-column\n") == nil)
+    @Test func rejectsMalformedSingleCount() throws {
+        #expect(GitWorktreeStats.parseSingleCount("") == nil)
+        #expect(GitWorktreeStats.parseSingleCount("not a number\n") == nil)
+        #expect(GitWorktreeStats.parseSingleCount("1\t2\n") == nil)
     }
 
     // MARK: parseShortStat
@@ -92,73 +86,27 @@ struct GitWorktreeStatsParserTests {
 @Suite("GitWorktreeStats — compute (integration)")
 struct GitWorktreeStatsComputeTests {
 
-    func makeTempDir() throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-stats-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
-    @discardableResult
-    func shell(_ command: String, at dir: URL) throws -> Int32 {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        process.arguments = ["-c", command]
-        process.currentDirectoryURL = dir
-        process.environment = [
-            "PATH": "/usr/bin:/bin:/usr/local/bin",
-            "HOME": NSHomeDirectory(),
-            "GIT_AUTHOR_NAME": "Test",
-            "GIT_AUTHOR_EMAIL": "test@test.com",
-            "GIT_COMMITTER_NAME": "Test",
-            "GIT_COMMITTER_EMAIL": "test@test.com",
-        ]
-        process.standardOutput = Pipe()
-        process.standardError = Pipe()
-        try process.run()
-        process.waitUntilExit()
-        return process.terminationStatus
-    }
-
-    /// Sets up a clone with origin/main as the default branch and returns
-    /// the clone path.
-    func makeClonedRepo() throws -> (root: URL, clone: URL) {
-        let root = try makeTempDir()
-        let upstream = root.appendingPathComponent("upstream.git")
-        let clone = root.appendingPathComponent("clone")
-        try FileManager.default.createDirectory(at: upstream, withIntermediateDirectories: true)
-        try shell("git init --bare -b main", at: upstream)
-        let seed = root.appendingPathComponent("seed")
-        try FileManager.default.createDirectory(at: seed, withIntermediateDirectories: true)
-        try shell("""
-            git init -b main && \
-            printf 'alpha\\nbeta\\ngamma\\n' > file.txt && \
-            git add file.txt && \
-            git commit -m init && \
-            git remote add origin \(upstream.path) && \
-            git push -u origin main
-            """, at: seed)
-        try shell("git clone \(upstream.path) \(clone.path)", at: root)
-        return (root, clone)
-    }
-
     @Test func returnsZerosAtParity() async throws {
-        let (root, clone) = try makeClonedRepo()
+        let (root, clone, _) = try makeClonedRepo()
         defer { try? FileManager.default.removeItem(at: root) }
 
         let stats = try await GitWorktreeStats.compute(
             worktreePath: clone.path,
-            defaultBranchRef: "origin/main"
+            upstreamRefs: UpstreamRefs(defaultRef: "origin/main")
         )
-        #expect(stats == WorktreeStats(ahead: 0, behind: 0, insertions: 0, deletions: 0))
+        #expect(stats.ahead == 0)
+        #expect(stats.behind == 0)
+        #expect(stats.insertions == 0)
+        #expect(stats.deletions == 0)
+        #expect(stats.upstreamRefs == UpstreamRefs(defaultRef: "origin/main"))
     }
 
     @Test func countsAheadAndLineChanges() async throws {
-        let (root, clone) = try makeClonedRepo()
+        let (root, clone, _) = try makeClonedRepo()
         defer { try? FileManager.default.removeItem(at: root) }
 
         // Add two commits on HEAD with alpha tweaked + new lines added.
-        try shell("""
+        try shellInRepo("""
             printf 'alpha\\nbeta\\ngamma\\ndelta\\n' > file.txt && \
             git add file.txt && git commit -m 'add delta' && \
             printf 'ALPHA\\nbeta\\ngamma\\ndelta\\nepsilon\\nzeta\\n' > file.txt && \
@@ -167,7 +115,7 @@ struct GitWorktreeStatsComputeTests {
 
         let stats = try await GitWorktreeStats.compute(
             worktreePath: clone.path,
-            defaultBranchRef: "origin/main"
+            upstreamRefs: UpstreamRefs(defaultRef: "origin/main")
         )
         #expect(stats.ahead == 2)
         #expect(stats.behind == 0)
@@ -178,22 +126,22 @@ struct GitWorktreeStatsComputeTests {
     }
 
     @Test func countsBehindWhenOriginAdvances() async throws {
-        let (root, clone) = try makeClonedRepo()
+        let (root, clone, _) = try makeClonedRepo()
         defer { try? FileManager.default.removeItem(at: root) }
 
         // Push one new commit to origin from a second clone, then fetch.
         let other = root.appendingPathComponent("other-clone")
-        try shell("git clone \(root.appendingPathComponent("upstream.git").path) \(other.path)", at: root)
-        try shell("""
+        try shellInRepo("git clone \(root.appendingPathComponent("upstream.git").path) \(other.path)", at: root)
+        try shellInRepo("""
             printf 'alpha\\nbeta\\ngamma\\nomega\\n' > file.txt && \
             git add file.txt && git commit -m 'omega' && \
             git push origin main
             """, at: other)
-        try shell("git fetch origin", at: clone)
+        try shellInRepo("git fetch origin", at: clone)
 
         let stats = try await GitWorktreeStats.compute(
             worktreePath: clone.path,
-            defaultBranchRef: "origin/main"
+            upstreamRefs: UpstreamRefs(defaultRef: "origin/main")
         )
         #expect(stats.ahead == 0)
         #expect(stats.behind == 1)
@@ -202,34 +150,37 @@ struct GitWorktreeStatsComputeTests {
     @Test func throwsWhenWorktreeMissing() async throws {
         let bogus = "/nonexistent-graftty-path-\(UUID().uuidString)"
         await #expect(throws: Error.self) {
-            try await GitWorktreeStats.compute(worktreePath: bogus, defaultBranchRef: "origin/main")
+            try await GitWorktreeStats.compute(
+                worktreePath: bogus,
+                upstreamRefs: UpstreamRefs(defaultRef: "origin/main")
+            )
         }
     }
 
     @Test func cleanWorktreeReportsNoUncommittedChanges() async throws {
-        let (root, clone) = try makeClonedRepo()
+        let (root, clone, _) = try makeClonedRepo()
         defer { try? FileManager.default.removeItem(at: root) }
 
         let stats = try await GitWorktreeStats.compute(
             worktreePath: clone.path,
-            defaultBranchRef: "origin/main"
+            upstreamRefs: UpstreamRefs(defaultRef: "origin/main")
         )
         #expect(stats.hasUncommittedChanges == false)
     }
 
     @Test func modifiedTrackedFileMarksDirty() async throws {
-        let (root, clone) = try makeClonedRepo()
+        let (root, clone, _) = try makeClonedRepo()
         defer { try? FileManager.default.removeItem(at: root) }
 
         // Modify file.txt without committing.
-        try shell(
+        try shellInRepo(
             "printf 'alpha\\nbeta\\ngamma\\ndelta\\n' > file.txt",
             at: clone
         )
 
         let stats = try await GitWorktreeStats.compute(
             worktreePath: clone.path,
-            defaultBranchRef: "origin/main"
+            upstreamRefs: UpstreamRefs(defaultRef: "origin/main")
         )
         #expect(stats.ahead == 0)
         #expect(stats.behind == 0)
@@ -237,16 +188,263 @@ struct GitWorktreeStatsComputeTests {
     }
 
     @Test func untrackedFileMarksDirty() async throws {
-        let (root, clone) = try makeClonedRepo()
+        let (root, clone, _) = try makeClonedRepo()
         defer { try? FileManager.default.removeItem(at: root) }
 
         // Untracked files also count as uncommitted work per spec intent.
-        try shell("printf 'scratch' > newfile.txt", at: clone)
+        try shellInRepo("printf 'scratch' > newfile.txt", at: clone)
 
         let stats = try await GitWorktreeStats.compute(
             worktreePath: clone.path,
-            defaultBranchRef: "origin/main"
+            upstreamRefs: UpstreamRefs(defaultRef: "origin/main")
         )
         #expect(stats.hasUncommittedChanges == true)
+    }
+}
+
+/// Regression target for the "↓N doesn't reflect origin commits on each
+/// worktree" bug. Before the fix, DIVERGE-3.0 compared a linked worktree's
+/// HEAD to the *local* default branch, so commits landing on
+/// `origin/<defaultBranch>` (PR merges) or `origin/<worktree-branch>`
+/// (collaborator pushes) were both invisible to the gutter even after a
+/// successful `git fetch`.
+///
+/// The fix measures `↓N` against the **union** of upstream refs:
+/// `origin/<defaultBranch>` is always included so a PR merge surfaces on
+/// every worktree; `origin/<branch>` is additionally included when that
+/// tracking ref exists so collaborator pushes also surface.
+@Suite("GitWorktreeStats.resolveUpstreamRefs — union-of-upstreams")
+struct GitWorktreeStatsResolveUpstreamRefsTests {
+
+    @Test func homeWorktreeOnDefaultResolvesToSingleRef() async throws {
+        let (root, clone, _) = try makeClonedRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let refs = await GitWorktreeStats.resolveUpstreamRefs(
+            worktreePath: clone.path,
+            branch: "main",
+            defaultBranch: "main"
+        )
+        #expect(refs == UpstreamRefs(defaultRef: "origin/main"),
+                "branch == default → no separate branch ref, avoids \"origin/main + origin/main\"")
+    }
+
+    @Test func linkedWorktreeWithTrackedUpstreamIncludesBothRefs() async throws {
+        let (root, clone, _) = try makeClonedRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try shellInRepo("""
+            git checkout -b feature && \
+            printf 'alpha\\nbeta\\ngamma\\ndelta\\n' > file.txt && \
+            git add file.txt && git commit -m 'feature work' && \
+            git push -u origin feature && \
+            git checkout main
+            """, at: clone)
+
+        let wtPath = root.appendingPathComponent("feature-wt").path
+        try shellInRepo("git worktree add \(wtPath) feature", at: clone)
+
+        let refs = await GitWorktreeStats.resolveUpstreamRefs(
+            worktreePath: wtPath,
+            branch: "feature",
+            defaultBranch: "main"
+        )
+        #expect(refs.defaultRef == "origin/main")
+        #expect(refs.branchRef == "origin/feature")
+        #expect(refs.all == ["origin/main", "origin/feature"])
+        #expect(refs.displayLabel == "origin/main + origin/feature")
+    }
+
+    @Test func linkedWorktreeWithoutUpstreamKeepsOnlyDefaultRef() async throws {
+        // Never-pushed branch: ↓N still tracks origin/<default>, so a
+        // PR merge on main surfaces on this scratch worktree too — matches
+        // the user's "every worktree that doesn't have the merged commits"
+        // mental model.
+        let (root, clone, _) = try makeClonedRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try shellInRepo("git checkout -b scratch", at: clone)
+        let wtPath = root.appendingPathComponent("scratch-wt").path
+        try shellInRepo("git worktree add \(wtPath) scratch", at: clone)
+
+        let refs = await GitWorktreeStats.resolveUpstreamRefs(
+            worktreePath: wtPath,
+            branch: "scratch",
+            defaultBranch: "main"
+        )
+        #expect(refs == UpstreamRefs(defaultRef: "origin/main"))
+        #expect(refs.displayLabel == "origin/main",
+                "never-pushed branch → just the default ref; union collapses to one")
+    }
+
+    @Test func resolverUsesRepoConfiguredDefaultNotHardcodedMain() async throws {
+        // Repo's default branch is `trunk`, not `main`. resolveUpstreamRefs
+        // must honor whatever name the caller passes in via `defaultBranch:`
+        // — there must be no literal `"main"` fallback at the compute level.
+        let root = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let upstream = root.appendingPathComponent("upstream.git")
+        let clone = root.appendingPathComponent("clone")
+        try FileManager.default.createDirectory(at: upstream, withIntermediateDirectories: true)
+        try shellInRepo("git init --bare -b trunk", at: upstream)
+        let seed = root.appendingPathComponent("seed")
+        try FileManager.default.createDirectory(at: seed, withIntermediateDirectories: true)
+        try shellInRepo("""
+            git init -b trunk && \
+            printf 'alpha\\n' > file.txt && \
+            git add file.txt && git commit -m init && \
+            git remote add origin \(upstream.path) && \
+            git push -u origin trunk
+            """, at: seed)
+        try shellInRepo("git clone \(upstream.path) \(clone.path)", at: root)
+
+        let refs = await GitWorktreeStats.resolveUpstreamRefs(
+            worktreePath: clone.path,
+            branch: "trunk",
+            defaultBranch: "trunk"
+        )
+        #expect(refs.defaultRef == "origin/trunk",
+                "compute must use the repo's actual default, not a hardcoded main")
+    }
+
+    /// The scenario from the user's clarifying question: "if another PR
+    /// merges, then within 30s it should show up as ↓N on each worktree
+    /// that doesn't have those commits". The feature branch's own
+    /// upstream didn't move, but origin/main did — the union semantics
+    /// mean the merge shows up anyway.
+    @Test func prMergeOnDefaultSurfacesOnFeatureBranchWorktree() async throws {
+        let (root, clone, upstream) = try makeClonedRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // Push feature branch, leave the branch pointing at the initial
+        // commit — same starting state as someone who branched earlier
+        // and is now reviewing their work.
+        try shellInRepo("""
+            git checkout -b feature && \
+            git push -u origin feature && \
+            git checkout main
+            """, at: clone)
+
+        // Teammate's clone merges a PR by advancing origin/main.
+        let other = root.appendingPathComponent("other-clone")
+        try shellInRepo("git clone \(upstream.path) \(other.path)", at: root)
+        try shellInRepo("""
+            printf 'alpha\\nbeta\\ngamma\\ndelta\\n' > file.txt && \
+            git add file.txt && git commit -m 'merged PR' && \
+            git push origin main
+            """, at: other)
+
+        // Our side: fetch all branches.
+        try shellInRepo("git fetch --no-tags --prune origin", at: clone)
+
+        let wtPath = root.appendingPathComponent("feature-wt").path
+        try shellInRepo("git worktree add \(wtPath) feature", at: clone)
+
+        let refs = await GitWorktreeStats.resolveUpstreamRefs(
+            worktreePath: wtPath,
+            branch: "feature",
+            defaultBranch: "main"
+        )
+        let stats = try await GitWorktreeStats.compute(
+            worktreePath: wtPath,
+            upstreamRefs: refs
+        )
+        #expect(stats.behind == 1,
+                "PR merge on origin/main must surface as ↓1 on the feature worktree, even though origin/feature didn't move")
+        #expect(stats.ahead == 0)
+    }
+
+    /// The other half of the union: a collaborator push to the feature
+    /// branch's own upstream still surfaces as ↓N, even when main is
+    /// unchanged. `origin/feature` moved; `origin/main` didn't.
+    @Test func collaboratorPushToFeatureUpstreamStillSurfaces() async throws {
+        let (root, clone, upstream) = try makeClonedRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try shellInRepo("""
+            git checkout -b feature && \
+            printf 'alpha\\nbeta\\ngamma\\ndelta\\n' > file.txt && \
+            git add file.txt && git commit -m 'feature work' && \
+            git push -u origin feature && \
+            git checkout main
+            """, at: clone)
+
+        // Teammate pushes one more commit onto origin/feature only.
+        let other = root.appendingPathComponent("other-clone")
+        try shellInRepo("git clone \(upstream.path) \(other.path)", at: root)
+        try shellInRepo("""
+            git checkout feature && \
+            printf 'alpha\\nbeta\\ngamma\\ndelta\\nepsilon\\n' > file.txt && \
+            git add file.txt && git commit -m 'add epsilon' && \
+            git push origin feature
+            """, at: other)
+
+        try shellInRepo("git fetch --no-tags --prune origin", at: clone)
+
+        let wtPath = root.appendingPathComponent("feature-wt").path
+        try shellInRepo("git worktree add \(wtPath) feature", at: clone)
+
+        let refs = await GitWorktreeStats.resolveUpstreamRefs(
+            worktreePath: wtPath,
+            branch: "feature",
+            defaultBranch: "main"
+        )
+        let stats = try await GitWorktreeStats.compute(
+            worktreePath: wtPath,
+            upstreamRefs: refs
+        )
+        #expect(stats.behind == 1)
+        #expect(stats.ahead == 0)
+    }
+
+    /// Both signals fire at once: origin/main advances AND someone pushes
+    /// a commit to origin/feature. The union counts distinct commits
+    /// once — the user sees a single ↓2, not a double-counted ↓3 or
+    /// separate columns that have to be mentally summed.
+    @Test func bothSignalsFireAtOnceDedupedByUnion() async throws {
+        let (root, clone, upstream) = try makeClonedRepo()
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try shellInRepo("""
+            git checkout -b feature && \
+            git push -u origin feature && \
+            git checkout main
+            """, at: clone)
+
+        let other = root.appendingPathComponent("other-clone")
+        try shellInRepo("git clone \(upstream.path) \(other.path)", at: root)
+        // One commit to origin/main (PR merge).
+        try shellInRepo("""
+            printf 'beta\\n' > other.txt && \
+            git add other.txt && git commit -m 'on main' && \
+            git push origin main
+            """, at: other)
+        // One distinct commit to origin/feature (collaborator push) —
+        // branched from the ORIGINAL main, so it doesn't contain main's
+        // new commit.
+        try shellInRepo("""
+            git checkout feature && \
+            printf 'gamma\\n' > feat.txt && \
+            git add feat.txt && git commit -m 'on feature' && \
+            git push origin feature
+            """, at: other)
+
+        try shellInRepo("git fetch --no-tags --prune origin", at: clone)
+
+        let wtPath = root.appendingPathComponent("feature-wt").path
+        try shellInRepo("git worktree add \(wtPath) feature", at: clone)
+
+        let refs = await GitWorktreeStats.resolveUpstreamRefs(
+            worktreePath: wtPath,
+            branch: "feature",
+            defaultBranch: "main"
+        )
+        let stats = try await GitWorktreeStats.compute(
+            worktreePath: wtPath,
+            upstreamRefs: refs
+        )
+        #expect(stats.behind == 2,
+                "two distinct commits — one on origin/main, one on origin/feature — should count as ↓2 via union, not double-counted as ↓3")
+        #expect(stats.ahead == 0)
     }
 }

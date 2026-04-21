@@ -1,7 +1,30 @@
 import Foundation
 
-/// Ephemeral per-worktree divergence information vs. the origin default branch.
-/// Not persisted — lives in `WorktreeStatsStore` for the session only.
+/// The set of refs a worktree's divergence is measured against.
+/// Always at least `defaultRef`; also includes `branchRef` when the
+/// worktree's own branch has an `origin/<branch>` tracking ref.
+public struct UpstreamRefs: Equatable, Sendable {
+    public let defaultRef: String
+    public let branchRef: String?
+
+    public init(defaultRef: String, branchRef: String? = nil) {
+        self.defaultRef = defaultRef
+        self.branchRef = branchRef
+    }
+
+    /// Every ref to include on the reachable side of `rev-list`.
+    public var all: [String] {
+        branchRef.map { [defaultRef, $0] } ?? [defaultRef]
+    }
+
+    /// Sidebar tooltip label: either the single ref or both joined with `" + "`.
+    public var displayLabel: String {
+        branchRef.map { "\(defaultRef) + \($0)" } ?? defaultRef
+    }
+}
+
+/// Ephemeral per-worktree divergence information. Not persisted — lives
+/// in `WorktreeStatsStore` for the session only.
 public struct WorktreeStats: Equatable, Sendable {
     public let ahead: Int
     public let behind: Int
@@ -12,19 +35,25 @@ public struct WorktreeStats: Equatable, Sendable {
     /// user can distinguish "clean branch, 2 commits ahead" from
     /// "2 commits ahead plus work in progress" at a glance.
     public let hasUncommittedChanges: Bool
+    /// The upstream refs these counts were measured against. Nil only
+    /// for test fixtures that pre-build stats without going through
+    /// compute; production always populates it.
+    public let upstreamRefs: UpstreamRefs?
 
     public init(
         ahead: Int,
         behind: Int,
         insertions: Int,
         deletions: Int,
-        hasUncommittedChanges: Bool = false
+        hasUncommittedChanges: Bool = false,
+        upstreamRefs: UpstreamRefs? = nil
     ) {
         self.ahead = ahead
         self.behind = behind
         self.insertions = insertions
         self.deletions = deletions
         self.hasUncommittedChanges = hasUncommittedChanges
+        self.upstreamRefs = upstreamRefs
     }
 
     public var isEmpty: Bool {
@@ -34,20 +63,33 @@ public struct WorktreeStats: Equatable, Sendable {
 
 public enum GitWorktreeStats {
 
-    /// Parse output of `git rev-list --left-right --count <ref>...HEAD`.
-    /// A single line of the form `<left>\t<right>\n`, where left = commits
-    /// reachable from `<ref>` but not HEAD (behind), right = commits
-    /// reachable from HEAD but not `<ref>` (ahead).
-    public static func parseRevListCounts(_ output: String) -> (behind: Int, ahead: Int)? {
-        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let parts = trimmed.split(separator: "\t", omittingEmptySubsequences: false)
-        guard parts.count == 2,
-              let behind = Int(parts[0].trimmingCharacters(in: .whitespaces)),
-              let ahead = Int(parts[1].trimmingCharacters(in: .whitespaces)) else {
-            return nil
+    /// Picks the upstream refs a worktree's divergence is measured
+    /// against: always `origin/<defaultBranch>`, plus `origin/<branch>`
+    /// when that tracking ref exists. The union semantics then surface
+    /// both PR merges on the default branch and collaborator pushes to
+    /// the worktree's own branch as ↓N. See `DIVERGE-3.0`.
+    public static func resolveUpstreamRefs(
+        worktreePath: String,
+        branch: String,
+        defaultBranch: String
+    ) async -> UpstreamRefs {
+        let defaultRef = "origin/\(defaultBranch)"
+        let fallback = UpstreamRefs(defaultRef: defaultRef)
+        guard !branch.isEmpty, branch != defaultBranch else { return fallback }
+        let branchCandidate = "origin/\(branch)"
+        guard let captured = try? await GitRunner.capture(
+            args: ["show-ref", "--verify", "--quiet", "refs/remotes/\(branchCandidate)"],
+            at: worktreePath
+        ), captured.exitCode == 0 else {
+            return fallback
         }
-        return (behind: behind, ahead: ahead)
+        return UpstreamRefs(defaultRef: defaultRef, branchRef: branchCandidate)
+    }
+
+    /// Parse `git rev-list --count …` output — a single non-negative
+    /// integer on its own line. Returns nil on non-numeric input.
+    public static func parseSingleCount(_ output: String) -> Int? {
+        Int(output.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// Parse output of `git diff --shortstat`. Empty output means no diff —
@@ -76,36 +118,59 @@ public enum GitWorktreeStats {
         return Int(digits)
     }
 
-    /// Computes divergence stats for a worktree vs. an origin default branch ref.
-    /// Runs three local git commands in sequence; each is awaited so callers
-    /// yield rather than block. Throws if git fails to launch or exits non-zero
-    /// on rev-list/diff. Uncommitted-changes detection uses `git status
-    /// --porcelain`: any output (modified, staged, deleted, untracked) counts
-    /// as dirty.
+    /// Computes divergence stats for a worktree vs. the union of its
+    /// upstream refs. Runs four local git commands in sequence; each is
+    /// awaited so callers yield rather than block. Throws if git fails
+    /// to launch or exits non-zero.
+    ///
+    /// Semantics:
+    /// - `behind` = commits reachable from any upstream ref but not
+    ///   HEAD. `git rev-list` natively dedupes so overlap (e.g. a push
+    ///   to `origin/<branch>` that was already rebased onto `origin/<default>`)
+    ///   is counted once.
+    /// - `ahead` = commits reachable from HEAD but not from any
+    ///   upstream ref — the user's truly unpushed local work.
+    /// - Lines and dirty-flag semantics unchanged; the `git diff` uses
+    ///   the worktree's own branch upstream when present (so the
+    ///   tooltip describes "your work on this branch"), falling back
+    ///   to the default ref.
     public static func compute(
         worktreePath: String,
-        defaultBranchRef: String
+        upstreamRefs: UpstreamRefs
     ) async throws -> WorktreeStats {
-        let range = "\(defaultBranchRef)...HEAD"
+        let allRefs = upstreamRefs.all
 
-        let revListOutput: String
+        let behindArgs = ["rev-list", "--count"] + allRefs + ["^HEAD"]
+        let behindOutput: String
         do {
-            revListOutput = try await GitRunner.run(
-                args: ["rev-list", "--left-right", "--count", range],
-                at: worktreePath
-            )
+            behindOutput = try await GitRunner.run(args: behindArgs, at: worktreePath)
         } catch let err as CLIError {
             throw GitWorktreeStatsError.gitFailed(err)
         }
-
-        guard let counts = parseRevListCounts(revListOutput) else {
-            throw GitWorktreeStatsError.unparseableRevList(revListOutput)
+        guard let behind = parseSingleCount(behindOutput) else {
+            throw GitWorktreeStatsError.unparseableRevList(behindOutput)
         }
 
+        var aheadArgs = ["rev-list", "--count", "HEAD"]
+        aheadArgs.append(contentsOf: allRefs.map { "^\($0)" })
+        let aheadOutput: String
+        do {
+            aheadOutput = try await GitRunner.run(args: aheadArgs, at: worktreePath)
+        } catch let err as CLIError {
+            throw GitWorktreeStatsError.gitFailed(err)
+        }
+        guard let ahead = parseSingleCount(aheadOutput) else {
+            throw GitWorktreeStatsError.unparseableRevList(aheadOutput)
+        }
+
+        // Lines: use the worktree's own branch upstream when present,
+        // else the default. `branch...HEAD` (three-dot) counts work from
+        // the merge-base forward — i.e. "your commits on this branch".
+        let diffBase = upstreamRefs.branchRef ?? upstreamRefs.defaultRef
         let diffOutput: String
         do {
             diffOutput = try await GitRunner.run(
-                args: ["diff", "--shortstat", range],
+                args: ["diff", "--shortstat", "\(diffBase)...HEAD"],
                 at: worktreePath
             )
         } catch let err as CLIError {
@@ -125,11 +190,12 @@ public enum GitWorktreeStats {
         let dirty = !statusOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         return WorktreeStats(
-            ahead: counts.ahead,
-            behind: counts.behind,
+            ahead: ahead,
+            behind: behind,
             insertions: diff.insertions,
             deletions: diff.deletions,
-            hasUncommittedChanges: dirty
+            hasUncommittedChanges: dirty,
+            upstreamRefs: upstreamRefs
         )
     }
 }

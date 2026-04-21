@@ -756,7 +756,7 @@ struct GrafttyApp: App {
                 // reconciliation. Preserves the pre-migration "reconcile,
                 // then refresh" ordering without blocking startup.
                 for wt in binding.wrappedValue.repos[repoIdx].worktrees where wt.state != .stale {
-                    statsStore.refresh(worktreePath: wt.path, repoPath: repoPath)
+                    statsStore.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
                 }
             }
         }
@@ -1806,7 +1806,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             // callbacks and the polling loop, so a `.git/worktrees/`
             // directory tick only needs to seed stats for new entries.
             for wt in result.newlyAdded {
-                store.refresh(worktreePath: wt.path, repoPath: repoPath)
+                store.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
             }
         }
     }
@@ -1894,7 +1894,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
                 // worktree now has a new "behind" count. Refresh stats
                 // symmetrically with PR so the sidebar doesn't need a
                 // full poll cycle to catch up.
-                statsStore.refresh(worktreePath: wt.path, repoPath: repoPath)
+                statsStore.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
                 guard PRStatusStore.isFetchableBranch(wt.branch) else { continue }
                 prStore.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
             }
@@ -1911,10 +1911,12 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         let binding = appState
         let store = statsStore
         Task { @MainActor in
-            guard let repoPath = binding.wrappedValue.repos.first(where: { repo in
+            guard let repo = binding.wrappedValue.repos.first(where: { repo in
                 repo.worktrees.contains(where: { $0.path == worktreePath && $0.state != .stale })
-            })?.path else { return }
-            store.refresh(worktreePath: worktreePath, repoPath: repoPath)
+            }),
+                  let wt = repo.worktrees.first(where: { $0.path == worktreePath })
+            else { return }
+            store.refresh(worktreePath: worktreePath, repoPath: repo.path, branch: wt.branch)
         }
     }
 
@@ -1942,7 +1944,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             guard let repoIdx = binding.wrappedValue.repos.firstIndex(where: { $0.path == repoPath }),
                   let wtIdx = binding.wrappedValue.repos[repoIdx].worktrees.firstIndex(where: { $0.path == worktreePath }) else { return }
             binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].branch = match.branch
-            store.refresh(worktreePath: worktreePath, repoPath: repoPath)
+            store.refresh(worktreePath: worktreePath, repoPath: repoPath, branch: match.branch)
             prStore.branchDidChange(worktreePath: worktreePath, repoPath: repoPath, branch: match.branch)
         }
     }

@@ -549,8 +549,8 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 **DIVERGE-1.1** Each worktree entry in the sidebar shall display a trailing-aligned divergence indicator, placed to the left of the attention badge (or at the trailing edge when no attention badge is present).
 
 **DIVERGE-1.2** The indicator shall display zero, one, or both of the following on a single line, separated by a single space when both are present:
-- `↑<N>` when the worktree's HEAD has N commits not reachable from the base ref (ahead). Additionally, when the worktree has uncommitted changes, a `+` shall be appended, yielding `↑<N>+`. When N is zero, the ahead segment shall be rendered (as `↑0+`) only if uncommitted changes exist; otherwise the ahead segment shall be omitted.
-- `↓<N>` when the base ref has N commits not reachable from the worktree's HEAD (behind). Omitted when N is zero.
+- `↑<N>` when the worktree's HEAD has N commits not reachable from the base ref (ahead). Additionally, when the worktree has uncommitted changes, a `+` shall be appended, yielding `↑<N>+`. When N is zero, the ahead segment shall be rendered (as `↑0+`) only if uncommitted changes exist; otherwise the ahead segment shall be omitted. The ahead segment shall be rendered in the sidebar's muted ambient color.
+- `↓<N>` when the base ref has N commits not reachable from the worktree's HEAD (behind). Omitted when N is zero. The behind segment shall be rendered in red so incoming origin commits draw the eye in contrast to the muted `↑` segment.
 
 **DIVERGE-1.3** On hover, the indicator shall surface a system tooltip containing the insertion/deletion line counts in the form `+<I> -<D> lines` (with zero sides omitted), optionally suffixed with `, uncommitted changes` when the worktree has uncommitted changes. When there are neither line changes nor uncommitted changes, no tooltip is shown.
 
@@ -572,13 +572,15 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 ### 11.3 Computation
 
-**DIVERGE-3.0** The base ref for divergence computation shall depend on the worktree's role in the repository:
-- For the main checkout (the worktree whose path equals the repository's path), the base ref shall be `origin/<name>`, where `<name>` is the resolved default branch name. This surfaces unpushed work on the main checkout.
-- For linked worktrees (every other worktree), the base ref shall be the local `<name>` branch. This shows how far a feature branch has diverged from the point it was branched off rather than double-counting commits already on local main.
+**DIVERGE-3.0** Divergence shall be measured against the union of a worktree's upstream refs:
+- `origin/<defaultBranch>` — always included. Catches PR merges on the default branch, which advance this ref regardless of which worktree is in focus.
+- `origin/<worktree-branch>` — additionally included when `git show-ref --verify refs/remotes/origin/<branch>` succeeds. Catches collaborator pushes to the worktree's own branch.
 
-**DIVERGE-3.1** The application shall compute ahead and behind commit counts by running `git rev-list --left-right --count <base-ref>...HEAD` in the worktree directory, interpreting the left count as behind and the right count as ahead. `<base-ref>` is determined per DIVERGE-3.0.
+When `branch == defaultBranch` or no tracking ref exists for the worktree's branch, the union collapses to the single default ref. The default branch name shall be the one `GitOriginDefaultBranch.resolve` returns per `DIVERGE-2.x` — the compute path shall contain no hardcoded branch names.
 
-**DIVERGE-3.2** The application shall compute insertion and deletion line counts by running `git diff --shortstat <base-ref>...HEAD` in the worktree directory, with `<base-ref>` per DIVERGE-3.0.
+**DIVERGE-3.1** The application shall compute the behind count by running `git rev-list --count <refs> ^HEAD` and the ahead count by running `git rev-list --count HEAD ^<refs>` (each `<ref>` from `DIVERGE-3.0` prefixed with `^` for the ahead command). `rev-list` natively dedupes, so a commit reachable from both upstream refs is counted once.
+
+**DIVERGE-3.2** The application shall compute insertion and deletion line counts by running `git diff --shortstat <ref>...HEAD` where `<ref>` is `origin/<worktree-branch>` when that tracking ref exists, otherwise `origin/<defaultBranch>`. The diff uses a single ref rather than the full union so the tooltip reports "your commits on this branch" rather than conflating feature-branch work with default-branch churn.
 
 **DIVERGE-3.3** The application shall detect uncommitted changes in each worktree by running `git status --porcelain` and treating any non-empty output (including modified, staged, deleted, or untracked entries) as "has uncommitted changes".
 
@@ -592,13 +594,13 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **DIVERGE-4.2** When a worktree's HEAD reference changes, the application shall recompute that worktree's divergence counts.
 
-**DIVERGE-4.3** The application shall run `git fetch --no-tags --prune origin <defaultBranch>` and recompute divergence counts per repository on a 5-minute base cadence, doubling the interval for each consecutive fetch failure up to a 30-minute cap, to catch changes to the origin default branch that occur outside the current worktree (e.g., after `git fetch` runs in another terminal). A fast 5-second polling ticker drives the eligibility check; actual fetches are gated by the per-repo cadence so tracked repositories are not hammered.
+**DIVERGE-4.3** The application shall run `git fetch --no-tags --prune origin` (with no refspec, so the remote's configured fetch rules advance every tracked branch) and recompute divergence counts per repository on a 30-second base cadence, doubling the interval for each consecutive fetch failure (capped by `ExponentialBackoff`'s 32× max shift and a 30-minute hard cap, whichever binds first). A fast 5-second polling ticker drives the eligibility check; actual fetches are gated by the per-repo cadence so tracked repositories are not hammered.
 
 **DIVERGE-4.4** While a divergence computation is in flight for a particular worktree, duplicate refresh requests for the same worktree shall be dropped.
 
 **DIVERGE-4.5** When `WorktreeStatsStore.clear(worktreePath:)` is called — whether from a stale transition (GIT-3.13), a Dismiss (GIT-3.6), or a Delete (GIT-4.10) — a fetch that was already in flight at that moment shall not repopulate `stats` after the clear. Each `clear` bumps a per-path generation counter; `apply` captures the generation at refresh time and drops the write if the counter changed during the await. Without this, a `git worktree remove` that fires shortly after the 5s-polling refresh leaves the divergence indicator flashing back onto a cleared row for the duration of the git subprocess (~50–200ms). Mirrors `PRStatusStore`'s pattern (PR status gained this protection earlier; stats store was lagging).
 
-**DIVERGE-4.6** The polling loop shall also recompute divergence counts for every non-stale worktree on a 30-second per-worktree cadence, independent of the 5-minute `git fetch` cadence in DIVERGE-4.3. Local-only recomputation uses no network — `git rev-list`, `git diff --shortstat`, and `git status --porcelain` all run against the local object store — so gating it behind the fetch cadence leaves local changes (a `git add` in an external shell, a commit made by a tool other than Graftty) stale for up to five minutes. When a tick finds a per-repo fetch is due in the same cycle, the per-worktree cadence is skipped for that repo because the fetch handler itself recomputes every worktree on success.
+**DIVERGE-4.6** The polling loop shall also recompute divergence counts for every non-stale worktree on a 30-second per-worktree cadence, independent of the network `git fetch` cadence in DIVERGE-4.3. Local-only recomputation uses no network — `git rev-list`, `git diff --shortstat`, and `git status --porcelain` all run against the local object store — so it catches local changes (a `git add` in an external shell, a commit made by a tool other than Graftty) even when the repo's fetch cooldown is still active. When a tick finds a per-repo fetch is due in the same cycle, the per-worktree cadence is skipped for that repo because the fetch handler itself recomputes every worktree on success.
 
 **DIVERGE-4.7** When a remote-tracking-ref change event fires (GIT-2.5), the application shall refresh divergence stats for every non-stale worktree in the affected repository in addition to PR status. Local `git fetch` from another terminal advances `origin/<defaultBranch>` and therefore changes every worktree's ahead/behind count against it, not just the PR state.
 

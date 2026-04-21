@@ -16,7 +16,7 @@ struct WorktreeStatsStorePollTickTests {
     @MainActor
     @Test func pollTickRefreshesWorktreeEvenWhenFetchCooldownActive() async throws {
         let compute = RecordingCompute()
-        let store = WorktreeStatsStore(compute: compute.function, fetch: { _, _ in })
+        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in })
 
         // Fresh repo-fetch timestamp → 5-min fetch cadence NOT elapsed.
         store.seedLastRepoFetchForTesting(Date(), forRepo: "/r")
@@ -38,7 +38,7 @@ struct WorktreeStatsStorePollTickTests {
     @MainActor
     @Test func pollTickSkipsWorktreeWhenBothGatesAreFresh() async throws {
         let compute = RecordingCompute()
-        let store = WorktreeStatsStore(compute: compute.function, fetch: { _, _ in })
+        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in })
 
         // Both gates fresh: fetch cooldown active AND stats cooldown active.
         store.seedLastRepoFetchForTesting(Date(), forRepo: "/r")
@@ -60,7 +60,7 @@ struct WorktreeStatsStorePollTickTests {
     @MainActor
     @Test func pollTickSkipsStaleWorktrees() async throws {
         let compute = RecordingCompute()
-        let store = WorktreeStatsStore(compute: compute.function, fetch: { _, _ in })
+        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in })
 
         store.seedLastRepoFetchForTesting(Date(), forRepo: "/r")
         // No stats-cadence seed → gate would otherwise fire, but the
@@ -109,7 +109,7 @@ private final class RecordingCompute: @unchecked Sendable {
     }
 
     var function: WorktreeStatsStore.ComputeFunction {
-        { [weak self] worktreePath, _, _ in
+        { [weak self] worktreePath, _, _, _ in
             self?.record(worktreePath)
             return WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
         }

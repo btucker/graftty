@@ -19,31 +19,37 @@ struct WorktreeStatsStoreComputeFailureTests {
         // returns when the subprocess throws) on call 2.
         let callCount = SyncCounter()
         let okStats = WorktreeStats(ahead: 3, behind: 2, insertions: 0, deletions: 0)
-        let compute: WorktreeStatsStore.ComputeFunction = { _, _, _ in
+        let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
             let n = callCount.incrementAndGet()
             if n == 1 {
-                return WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: okStats)
+                return WorktreeStatsStore.ComputeResult(
+                    defaultBranch: "main",
+                    stats: okStats
+                )
             } else {
                 // Default branch still resolvable (so we know this
                 // isn't the "repo has no default branch" case), but
                 // stats compute threw — `try?` swallowed it.
-                return WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
+                return WorktreeStatsStore.ComputeResult(
+                    defaultBranch: "main",
+                    stats: nil
+                )
             }
         }
 
         let store = WorktreeStatsStore(
             compute: compute,
-            fetch: { _, _ in }
+            fetch: { _ in }
         )
 
-        store.refresh(worktreePath: "/wt", repoPath: "/repo")
+        store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "main")
         for _ in 0..<100 {
             if store.stats["/wt"] == okStats { break }
             try await Task.sleep(for: .milliseconds(5))
         }
         #expect(store.stats["/wt"] == okStats, "first compute publishes stats")
 
-        store.refresh(worktreePath: "/wt", repoPath: "/repo")
+        store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "main")
         try await Task.sleep(for: .milliseconds(120))
 
         #expect(
@@ -60,30 +66,36 @@ struct WorktreeStatsStoreComputeFailureTests {
         // the fix can't over-correct.
         let callCount = SyncCounter()
         let okStats = WorktreeStats(ahead: 1, behind: 0, insertions: 0, deletions: 0)
-        let compute: WorktreeStatsStore.ComputeFunction = { _, _, _ in
+        let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
             let n = callCount.incrementAndGet()
             if n == 1 {
-                return WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: okStats)
+                return WorktreeStatsStore.ComputeResult(
+                    defaultBranch: "main",
+                    stats: okStats
+                )
             } else {
                 // No default branch this time — legitimately nothing
                 // to compare against (user removed origin, etc.).
-                return WorktreeStatsStore.ComputeResult(defaultBranch: nil, stats: nil)
+                return WorktreeStatsStore.ComputeResult(
+                    defaultBranch: nil,
+                    stats: nil
+                )
             }
         }
 
         let store = WorktreeStatsStore(
             compute: compute,
-            fetch: { _, _ in }
+            fetch: { _ in }
         )
 
-        store.refresh(worktreePath: "/wt", repoPath: "/repo")
+        store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "main")
         for _ in 0..<100 {
             if store.stats["/wt"] == okStats { break }
             try await Task.sleep(for: .milliseconds(5))
         }
         #expect(store.stats["/wt"] == okStats)
 
-        store.refresh(worktreePath: "/wt", repoPath: "/repo")
+        store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "main")
         try await Task.sleep(for: .milliseconds(120))
 
         #expect(
