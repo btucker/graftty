@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace xterm.js with wterm in Espalier's web access client; introduce a React + Vite + TypeScript + TanStack Router workspace at `web-client/`; keep the Swift server contract unchanged except for SPA fallback and a URL-composer tweak.
+**Goal:** Replace xterm.js with wterm in Graftty's web access client; introduce a React + Vite + TypeScript + TanStack Router workspace at `web-client/`; keep the Swift server contract unchanged except for SPA fallback and a URL-composer tweak.
 
-**Architecture:** New `web-client/` pnpm workspace builds a small React SPA. Built artifacts (`index.html`, `app.js`, `app.css`, `wterm.wasm`) commit into `Sources/EspalierKit/Web/Resources/` and are served by the existing Swift HTTPHandler. TanStack Router owns `/` and `/session/$name`. The root route redirects legacy `/?session=<name>` URLs to `/session/<name>`. A small `HTTPHandler` edit adds SPA-fallback so client-side-routed paths resolve to `index.html`.
+**Architecture:** New `web-client/` pnpm workspace builds a small React SPA. Built artifacts (`index.html`, `app.js`, `app.css`, `wterm.wasm`) commit into `Sources/GrafttyKit/Web/Resources/` and are served by the existing Swift HTTPHandler. TanStack Router owns `/` and `/session/$name`. The root route redirects legacy `/?session=<name>` URLs to `/session/<name>`. A small `HTTPHandler` edit adds SPA-fallback so client-side-routed paths resolve to `index.html`.
 
 **Tech Stack:** React 19, Vite 6, TypeScript 5, TanStack Router 1.x, @wterm/react (latest), pnpm, Swift + swift-nio (existing).
 
@@ -25,7 +25,7 @@ Expected: node 20+ and pnpm 9+. If missing, install via `brew install node pnpm`
 - [ ] **Verify starting test suite is green**
 
 ```bash
-cd /Users/btucker/projects/espalier/.worktrees/wterm
+cd /Users/btucker/projects/graftty/.worktrees/wterm
 swift test 2>&1 | tail -20
 ```
 
@@ -55,7 +55,7 @@ Create the workspace layout. No `pnpm install` yet — that lands in Task 2. Not
 
 ```json
 {
-  "name": "espalier-web-client",
+  "name": "graftty-web-client",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -136,7 +136,7 @@ export default defineConfig({
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Espalier</title>
+    <title>Graftty</title>
   </head>
   <body>
     <div id="root"></div>
@@ -416,19 +416,19 @@ git commit -m "feat(web): install web-client deps; align TerminalPane to real @w
 
 ## Task 3: Build-and-vendor script, remove xterm assets
 
-Write `scripts/build-web.sh`, run it to publish artifacts into `Sources/EspalierKit/Web/Resources/`, and delete the xterm artifacts in the same commit (kept together so the Swift side never sees stale resources).
+Write `scripts/build-web.sh`, run it to publish artifacts into `Sources/GrafttyKit/Web/Resources/`, and delete the xterm artifacts in the same commit (kept together so the Swift side never sees stale resources).
 
 **Files:**
 - Create: `scripts/build-web.sh`
 - Modify: root `.gitignore` (add `web-client/dist-tmp/`)
-- Modify: `Sources/EspalierKit/Web/Resources/index.html` (overwritten)
-- Create: `Sources/EspalierKit/Web/Resources/app.js`
-- Create: `Sources/EspalierKit/Web/Resources/app.css`
-- Create: `Sources/EspalierKit/Web/Resources/wterm.wasm`
-- Modify: `Sources/EspalierKit/Web/Resources/VERSION`
-- Delete: `Sources/EspalierKit/Web/Resources/xterm.min.js`
-- Delete: `Sources/EspalierKit/Web/Resources/xterm.min.css`
-- Delete: `Sources/EspalierKit/Web/Resources/xterm-addon-fit.min.js`
+- Modify: `Sources/GrafttyKit/Web/Resources/index.html` (overwritten)
+- Create: `Sources/GrafttyKit/Web/Resources/app.js`
+- Create: `Sources/GrafttyKit/Web/Resources/app.css`
+- Create: `Sources/GrafttyKit/Web/Resources/wterm.wasm`
+- Modify: `Sources/GrafttyKit/Web/Resources/VERSION`
+- Delete: `Sources/GrafttyKit/Web/Resources/xterm.min.js`
+- Delete: `Sources/GrafttyKit/Web/Resources/xterm.min.css`
+- Delete: `Sources/GrafttyKit/Web/Resources/xterm-addon-fit.min.js`
 
 - [ ] **Step 3.1: Add `web-client/dist-tmp/` to root .gitignore**
 
@@ -449,7 +449,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEB="$ROOT/web-client"
-RES="$ROOT/Sources/EspalierKit/Web/Resources"
+RES="$ROOT/Sources/GrafttyKit/Web/Resources"
 
 if ! command -v pnpm >/dev/null 2>&1; then
   echo "ERROR: pnpm not found. Install with: brew install pnpm" >&2
@@ -480,7 +480,7 @@ cp "$WASM_SRC" "$RES/wterm.wasm"
 
 WTERM_VER=$(cd "$WEB" && node -p "require('./node_modules/@wterm/react/package.json').version" 2>/dev/null || echo "unknown")
 GIT_SHA=$(cd "$ROOT" && git rev-parse --short HEAD)
-printf "wterm-react: %s\nespalier-build-sha: %s\nbuilt: %s\n" "$WTERM_VER" "$GIT_SHA" "$(date -u +%FT%TZ)" > "$RES/VERSION"
+printf "wterm-react: %s\ngraftty-build-sha: %s\nbuilt: %s\n" "$WTERM_VER" "$GIT_SHA" "$(date -u +%FT%TZ)" > "$RES/VERSION"
 
 echo "→ done. Artifacts in $RES:"
 ls -la "$RES"
@@ -495,26 +495,26 @@ chmod +x scripts/build-web.sh
 - [ ] **Step 3.3: Run the build script**
 
 ```bash
-cd /Users/btucker/projects/espalier/.worktrees/wterm
+cd /Users/btucker/projects/graftty/.worktrees/wterm
 ./scripts/build-web.sh
 ```
 
-Expected: script completes; `Sources/EspalierKit/Web/Resources/` contains fresh `index.html`, `app.js`, `app.css`, `wterm.wasm`, and an updated `VERSION`.
+Expected: script completes; `Sources/GrafttyKit/Web/Resources/` contains fresh `index.html`, `app.js`, `app.css`, `wterm.wasm`, and an updated `VERSION`.
 
 If the script references a `.wasm` path that doesn't exist, adjust the `cp` logic to match the real Vite output layout, then re-run.
 
 - [ ] **Step 3.4: Delete stale xterm assets**
 
 ```bash
-rm Sources/EspalierKit/Web/Resources/xterm.min.js
-rm Sources/EspalierKit/Web/Resources/xterm.min.css
-rm Sources/EspalierKit/Web/Resources/xterm-addon-fit.min.js
+rm Sources/GrafttyKit/Web/Resources/xterm.min.js
+rm Sources/GrafttyKit/Web/Resources/xterm.min.css
+rm Sources/GrafttyKit/Web/Resources/xterm-addon-fit.min.js
 ```
 
 - [ ] **Step 3.5: Stage and commit**
 
 ```bash
-git add scripts/build-web.sh .gitignore Sources/EspalierKit/Web/Resources/
+git add scripts/build-web.sh .gitignore Sources/GrafttyKit/Web/Resources/
 git commit -m "feat(web): build-web.sh; swap xterm.js resources for wterm bundle"
 ```
 
@@ -525,13 +525,13 @@ git commit -m "feat(web): build-web.sh; swap xterm.js resources for wterm bundle
 Apache 2.0 attribution obligations.
 
 **Files:**
-- Create: `Sources/EspalierKit/Web/Resources/LICENSE-wterm`
-- Possibly create: `Sources/EspalierKit/Web/Resources/NOTICE-wterm`
+- Create: `Sources/GrafttyKit/Web/Resources/LICENSE-wterm`
+- Possibly create: `Sources/GrafttyKit/Web/Resources/NOTICE-wterm`
 
 - [ ] **Step 4.1: Pull LICENSE from upstream**
 
 ```bash
-curl -fL -o Sources/EspalierKit/Web/Resources/LICENSE-wterm https://raw.githubusercontent.com/vercel-labs/wterm/main/LICENSE
+curl -fL -o Sources/GrafttyKit/Web/Resources/LICENSE-wterm https://raw.githubusercontent.com/vercel-labs/wterm/main/LICENSE
 ```
 
 Expected: file downloads; first line reads "Apache License".
@@ -539,7 +539,7 @@ Expected: file downloads; first line reads "Apache License".
 - [ ] **Step 4.2: Check for upstream NOTICE file**
 
 ```bash
-curl -fL -o /tmp/wterm-NOTICE https://raw.githubusercontent.com/vercel-labs/wterm/main/NOTICE 2>/dev/null && mv /tmp/wterm-NOTICE Sources/EspalierKit/Web/Resources/NOTICE-wterm || echo "No NOTICE file upstream — skipping"
+curl -fL -o /tmp/wterm-NOTICE https://raw.githubusercontent.com/vercel-labs/wterm/main/NOTICE 2>/dev/null && mv /tmp/wterm-NOTICE Sources/GrafttyKit/Web/Resources/NOTICE-wterm || echo "No NOTICE file upstream — skipping"
 ```
 
 If upstream has no NOTICE, skip creating one. Apache 2.0 only requires NOTICE reproduction if upstream ships one.
@@ -547,7 +547,7 @@ If upstream has no NOTICE, skip creating one. Apache 2.0 only requires NOTICE re
 - [ ] **Step 4.3: Commit**
 
 ```bash
-git add Sources/EspalierKit/Web/Resources/LICENSE-wterm Sources/EspalierKit/Web/Resources/NOTICE-wterm 2>/dev/null || git add Sources/EspalierKit/Web/Resources/LICENSE-wterm
+git add Sources/GrafttyKit/Web/Resources/LICENSE-wterm Sources/GrafttyKit/Web/Resources/NOTICE-wterm 2>/dev/null || git add Sources/GrafttyKit/Web/Resources/LICENSE-wterm
 git commit -m "docs(web): include wterm Apache-2.0 LICENSE (and NOTICE if upstream ships one)"
 ```
 
@@ -558,13 +558,13 @@ git commit -m "docs(web): include wterm Apache-2.0 LICENSE (and NOTICE if upstre
 Add `/wterm.wasm` to the asset table, replace the hardcoded xterm paths with `app.js`/`app.css`, add `application/wasm` content type. Use extension-based MIME lookup so future assets don't need code changes.
 
 **Files:**
-- Modify: `Sources/EspalierKit/Web/WebStaticResources.swift`
-- Modify: `Tests/EspalierKitTests/Web/WebStaticResourcesTests.swift`
+- Modify: `Sources/GrafttyKit/Web/WebStaticResources.swift`
+- Modify: `Tests/GrafttyKitTests/Web/WebStaticResourcesTests.swift`
 
 - [ ] **Step 5.1: Read existing tests to understand the test style**
 
 ```bash
-cat Tests/EspalierKitTests/Web/WebStaticResourcesTests.swift
+cat Tests/GrafttyKitTests/Web/WebStaticResourcesTests.swift
 ```
 
 Match the style (XCTest vs Swift Testing, assertion conventions).
@@ -611,7 +611,7 @@ Expected: new tests fail (the resource paths don't exist in the current `asset(f
 
 - [ ] **Step 5.4: Update `WebStaticResources.swift`**
 
-Replace the body of `Sources/EspalierKit/Web/WebStaticResources.swift` with:
+Replace the body of `Sources/GrafttyKit/Web/WebStaticResources.swift` with:
 
 ```swift
 import Foundation
@@ -687,7 +687,7 @@ Expected: all four new tests pass. If the existing `testIndexResolves` test (or 
 - [ ] **Step 5.6: Commit**
 
 ```bash
-git add Sources/EspalierKit/Web/WebStaticResources.swift Tests/EspalierKitTests/Web/WebStaticResourcesTests.swift
+git add Sources/GrafttyKit/Web/WebStaticResources.swift Tests/GrafttyKitTests/Web/WebStaticResourcesTests.swift
 git commit -m "feat(web): extension-based MIME map; add wterm.wasm + app.js/app.css entries
 
 Adds application/wasm MIME so WebAssembly.instantiateStreaming() works.
@@ -701,20 +701,20 @@ Adds WebStaticResources.indexHTML() accessor for SPA fallback in WebServer."
 Unknown, non-`/ws` GET paths return `index.html` so TanStack Router can resolve client-side routes like `/session/foo`. HTTP-level tests for the WebServer live in `WebServerAuthTests.swift` (it has the `URLSession.shared.data(from:)` pattern and a helper `makeConfig`). Add these there.
 
 **Files:**
-- Modify: `Sources/EspalierKit/Web/WebServer.swift`
-- Modify: `Tests/EspalierKitTests/Web/WebServerAuthTests.swift`
+- Modify: `Sources/GrafttyKit/Web/WebServer.swift`
+- Modify: `Tests/GrafttyKitTests/Web/WebServerAuthTests.swift`
 
 - [ ] **Step 6.1: Read the existing HTTPHandler implementation**
 
 ```bash
-grep -n "HTTPHandler\|channelRead\|asset(for:" Sources/EspalierKit/Web/WebServer.swift | head -40
+grep -n "HTTPHandler\|channelRead\|asset(for:" Sources/GrafttyKit/Web/WebServer.swift | head -40
 ```
 
 Locate the path-dispatch switch (the place today that returns 404 for unknown paths). The fix goes there.
 
 - [ ] **Step 6.2: Write failing tests — SPA fallback + /ws still 404s + WASM MIME**
 
-Add to `Tests/EspalierKitTests/Web/WebServerAuthTests.swift` inside the `struct WebServerAuthTests { … }`. Match the existing style (use `makeConfig`, start a server, hit `127.0.0.1:<port>`, use `#expect`):
+Add to `Tests/GrafttyKitTests/Web/WebServerAuthTests.swift` inside the `struct WebServerAuthTests { … }`. Match the existing style (use `makeConfig`, start a server, hit `127.0.0.1:<port>`, use `#expect`):
 
 ```swift
 @Test func spaFallbackServesIndexForUnknownPath() async throws {
@@ -833,7 +833,7 @@ Expected: all auth tests pass (existing two + three new).
 - [ ] **Step 6.6: Commit**
 
 ```bash
-git add Sources/EspalierKit/Web/WebServer.swift Tests/EspalierKitTests/Web/WebServerAuthTests.swift
+git add Sources/GrafttyKit/Web/WebServer.swift Tests/GrafttyKitTests/Web/WebServerAuthTests.swift
 git commit -m "feat(web): SPA fallback + generic asset delegation in HTTPHandler
 
 Unknown non-/ws GET paths now return index.html so TanStack Router can
@@ -849,22 +849,22 @@ hardcoding each path, picking up /wterm.wasm automatically."
 Change `/?session=<name>` → `/session/<name>`.
 
 **Files:**
-- Modify: `Sources/EspalierKit/Web/WebURLComposer.swift`
-- Modify: `Tests/EspalierKitTests/Web/WebURLComposerTests.swift`
+- Modify: `Sources/GrafttyKit/Web/WebURLComposer.swift`
+- Modify: `Tests/GrafttyKitTests/Web/WebURLComposerTests.swift`
 
 - [ ] **Step 7.1: Read the existing composer and tests**
 
 ```bash
-cat Sources/EspalierKit/Web/WebURLComposer.swift
-cat Tests/EspalierKitTests/Web/WebURLComposerTests.swift
+cat Sources/GrafttyKit/Web/WebURLComposer.swift
+cat Tests/GrafttyKitTests/Web/WebURLComposerTests.swift
 ```
 
 - [ ] **Step 7.2: Update test assertions first**
 
 In `WebURLComposerTests.swift`, replace the expected URL strings:
 
-- `"http://100.64.1.7:8799/?session=espalier-abc"` → `"http://100.64.1.7:8799/session/espalier-abc"`
-- IPv6 equivalent: `"http://[fd7a:...]:8799/?session=espalier-abc"` → `"http://[fd7a:...]:8799/session/espalier-abc"`
+- `"http://100.64.1.7:8799/?session=graftty-abc"` → `"http://100.64.1.7:8799/session/graftty-abc"`
+- IPv6 equivalent: `"http://[fd7a:...]:8799/?session=graftty-abc"` → `"http://[fd7a:...]:8799/session/graftty-abc"`
 
 Any test that composes a URL for a session name with URL-unsafe characters should continue to percent-encode the name component — preserve that assertion.
 
@@ -898,7 +898,7 @@ swift test --filter WebURLComposerTests 2>&1 | tail -20
 - [ ] **Step 7.6: Commit**
 
 ```bash
-git add Sources/EspalierKit/Web/WebURLComposer.swift Tests/EspalierKitTests/Web/WebURLComposerTests.swift
+git add Sources/GrafttyKit/Web/WebURLComposer.swift Tests/GrafttyKitTests/Web/WebURLComposerTests.swift
 git commit -m "feat(web): emit path-based /session/<name> URLs from WebURLComposer
 
 Legacy /?session=<name> URLs still work via the index-route redirect in
@@ -912,7 +912,7 @@ the client (web-client/src/routes/index.tsx)."
 `WebServerAuthTests.allowedRequestServesHTML` asserts that the served `/` body contains `"xterm.min.js"` — this fails now that the bundle is wterm. Update the assertion to match the new HTML.
 
 **Files:**
-- Modify: `Tests/EspalierKitTests/Web/WebServerAuthTests.swift`
+- Modify: `Tests/GrafttyKitTests/Web/WebServerAuthTests.swift`
 
 - [ ] **Step 8.1: Run the full Web test suite**
 
@@ -948,7 +948,7 @@ Expected: all Web tests pass. Same zmx-requires-CI skip as before.
 - [ ] **Step 8.4: Commit**
 
 ```bash
-git add Tests/EspalierKitTests/Web/WebServerAuthTests.swift
+git add Tests/GrafttyKitTests/Web/WebServerAuthTests.swift
 git commit -m "test(web): update allowedRequestServesHTML assertion for Vite bundle"
 ```
 
@@ -959,17 +959,17 @@ git commit -m "test(web): update allowedRequestServesHTML assertion for Vite bun
 Run the app in a browser; check whether wterm's WASM needs SharedArrayBuffer.
 
 **Files:**
-- Possibly modify: `Sources/EspalierKit/Web/WebServer.swift` (header response)
-- Possibly modify: `Tests/EspalierKitTests/Web/WebServerIntegrationTests.swift`
+- Possibly modify: `Sources/GrafttyKit/Web/WebServer.swift` (header response)
+- Possibly modify: `Tests/GrafttyKitTests/Web/WebServerIntegrationTests.swift`
 - Possibly modify: `SPECS.md`
 
-- [ ] **Step 9.1: Launch Espalier locally**
+- [ ] **Step 9.1: Launch Graftty locally**
 
 ```bash
-swift build && open .build/debug/Espalier  # adjust to the actual launch path
+swift build && open .build/debug/Graftty  # adjust to the actual launch path
 ```
 
-Open an Espalier window, enable web access in Settings, open one pane. Copy the web URL.
+Open an Graftty window, enable web access in Settings, open one pane. Copy the web URL.
 
 - [ ] **Step 9.2: Open the URL in Safari with devtools**
 
@@ -1027,7 +1027,7 @@ requires cross-origin isolation for SharedArrayBuffer.
 - [ ] **Step 9.5: Commit if anything changed**
 
 ```bash
-git add Sources/EspalierKit/Web/WebServer.swift Tests/EspalierKitTests/Web/WebServerIntegrationTests.swift SPECS.md
+git add Sources/GrafttyKit/Web/WebServer.swift Tests/GrafttyKitTests/Web/WebServerIntegrationTests.swift SPECS.md
 git status
 # if nothing is staged, skip the commit
 git commit -m "feat(web): cross-origin isolation headers for wterm WASM SharedArrayBuffer"
@@ -1086,7 +1086,7 @@ Add under the existing "Development" or equivalent section. If no such section e
 ```markdown
 ## Developing the web client
 
-Espalier's browser-facing web access client lives in `web-client/` (React +
+Graftty's browser-facing web access client lives in `web-client/` (React +
 Vite + TypeScript + TanStack Router). If you change anything under
 `web-client/`, rebuild the bundle that ships with the app:
 
@@ -1094,7 +1094,7 @@ Vite + TypeScript + TanStack Router). If you change anything under
 ./scripts/build-web.sh
 ```
 
-This refreshes `Sources/EspalierKit/Web/Resources/{index.html,app.js,app.css,wterm.wasm}`.
+This refreshes `Sources/GrafttyKit/Web/Resources/{index.html,app.js,app.css,wterm.wasm}`.
 CI verifies the committed bundle matches a fresh build.
 
 You need `node` (LTS) and `pnpm` installed locally for web-client work:
@@ -1147,7 +1147,7 @@ Insert a step near the start of the existing macOS Swift job, before `swift test
       - name: Verify web-client bundle is up to date
         run: |
           ./scripts/build-web.sh
-          git diff --exit-code Sources/EspalierKit/Web/Resources/ \
+          git diff --exit-code Sources/GrafttyKit/Web/Resources/ \
             || { echo "::error::web-client/ changed but the committed bundle is stale. Run ./scripts/build-web.sh locally and recommit."; exit 1; }
 ```
 
@@ -1206,7 +1206,7 @@ git commit -m "docs(checklist): add native-text-selection smoke step; path URLs"
 ```bash
 rm -rf web-client/dist-tmp
 ./scripts/build-web.sh
-git diff --stat Sources/EspalierKit/Web/Resources/
+git diff --stat Sources/GrafttyKit/Web/Resources/
 ```
 
 Expected: no diff. If there IS a diff, commit it.
@@ -1223,7 +1223,7 @@ Expected: all tests pass. Same skip set as before this PR.
 
 ```bash
 swift build
-open .build/debug/Espalier  # or the correct launch path
+open .build/debug/Graftty  # or the correct launch path
 ```
 
 Enable web access, open a pane, copy URL, open in Safari on the Mac (loopback), confirm:

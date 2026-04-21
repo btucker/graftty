@@ -2,11 +2,11 @@
 
 ## Product
 
-Espalier — a macOS app that organizes persistent terminal sessions by git worktree, plus a companion CLI tool (`espalier`) for sending attention notifications from inside terminals.
+Graftty — a macOS app that organizes persistent terminal sessions by git worktree, plus a companion CLI tool (`graftty`) for sending attention notifications from inside terminals.
 
 Two surfaces to test:
-- **macOS app** (`Espalier`) — SwiftUI + AppKit + libghostty. Sidebar of repositories, each expandable to show worktrees. Click a worktree to get persistent terminal sessions in that directory. Terminals support splits and stay alive across worktree switches.
-- **CLI tool** (`espalier`) — small command-line utility that runs inside a worktree's terminal and signals attention needed to the app via a Unix domain socket.
+- **macOS app** (`Graftty`) — SwiftUI + AppKit + libghostty. Sidebar of repositories, each expandable to show worktrees. Click a worktree to get persistent terminal sessions in that directory. Terminals support splits and stay alive across worktree switches.
+- **CLI tool** (`graftty`) — small command-line utility that runs inside a worktree's terminal and signals attention needed to the app via a Unix domain socket.
 
 ## Setup
 
@@ -15,37 +15,37 @@ Two surfaces to test:
 swift build
 
 # Run the macOS app
-swift run Espalier
+swift run Graftty
 
 # Run the CLI
-swift run espalier --help
-swift run espalier notify "Build failed"
-swift run espalier notify --clear
+swift run graftty --help
+swift run graftty notify "Build failed"
+swift run graftty notify --clear
 
 # Run tests
-swift test --test-product EspalierPackageTests
+swift test --test-product GrafttyPackageTests
 ```
 
-Note: as of this writing, the macOS app UI is not yet implemented (implementation plan tasks 12-15 remain). The CLI and the `EspalierKit` library are functional and testable.
+Note: as of this writing, the macOS app UI is not yet implemented (implementation plan tasks 12-15 remain). The CLI and the `GrafttyKit` library are functional and testable.
 
 ## Start
 
-**For the CLI:** `cd` into a git repository or worktree, then run `espalier notify "<text>"`. The CLI reads `$PWD`, walks up to find the enclosing `.git`, and sends a message to the app's Unix domain socket at `$ESPALIER_SOCK` (or `~/Library/Application Support/Espalier/espalier.sock`).
+**For the CLI:** `cd` into a git repository or worktree, then run `graftty notify "<text>"`. The CLI reads `$PWD`, walks up to find the enclosing `.git`, and sends a message to the app's Unix domain socket at `$GRAFTTY_SOCK` (or `~/Library/Application Support/Graftty/graftty.sock`).
 
-**For the app:** Launch Espalier, click "Add Repository" in the sidebar, choose a git repo directory. Espalier discovers all the repo's worktrees and lists them. Click any worktree to get a terminal in that directory.
+**For the app:** Launch Graftty, click "Add Repository" in the sidebar, choose a git repo directory. Graftty discovers all the repo's worktrees and lists them. Click any worktree to get a terminal in that directory.
 
 ## Computer Use
 
 Full macOS computer-use tools are available (`mcp__computer-use__*`): screenshots, left/right/double/triple click, mouse move/drag, type, key, scroll, open_application, read/write_clipboard, zoom, list_granted_applications. Testing strategies:
 
-- **CLI**: terminal explorer — run `espalier` commands in a shell, observe exit codes and stderr.
-- **macOS app**: open Espalier via `open_application`, take screenshots, click sidebar entries, drag to resize, use keyboard shortcuts (Cmd+D for split, Cmd+Opt+Arrow for pane navigation). Computer-use requires accessibility permission — use `list_granted_applications` / `request_access` when needed.
+- **CLI**: terminal explorer — run `graftty` commands in a shell, observe exit codes and stderr.
+- **macOS app**: open Graftty via `open_application`, take screenshots, click sidebar entries, drag to resize, use keyboard shortcuts (Cmd+D for split, Cmd+Opt+Arrow for pane navigation). Computer-use requires accessibility permission — use `list_granted_applications` / `request_access` when needed.
 
 ## Specs
 
 - `SPECS.md` — EARS requirements, 59 requirements across 7 sections (LAYOUT, STATE, TERM, GIT, ATTN, PERSIST, TECH)
-- `docs/superpowers/specs/2026-04-16-espalier-design.md` — narrative design spec with architecture, data flow, and Ghostty code reuse notes
-- `docs/superpowers/plans/2026-04-16-espalier-implementation.md` — implementation plan (16 tasks, TDD throughout)
+- `docs/superpowers/specs/2026-04-16-graftty-design.md` — narrative design spec with architecture, data flow, and Ghostty code reuse notes
+- `docs/superpowers/plans/2026-04-16-graftty-implementation.md` — implementation plan (16 tasks, TDD throughout)
 
 ## Explore
 
@@ -60,14 +60,14 @@ All surfaces:
 ## Diagnose
 
 - **Build errors**: `swift build 2>&1 | tail -20`
-- **Test failures**: `swift test --test-product EspalierPackageTests 2>&1 | tail -20`
-- **Socket communication**: the app logs to stderr; the CLI exits with code 1 and a message on stderr. Check if the socket file exists at `~/Library/Application Support/Espalier/espalier.sock`.
-- **Persistence**: inspect `~/Library/Application Support/Espalier/state.json`.
+- **Test failures**: `swift test --test-product GrafttyPackageTests 2>&1 | tail -20`
+- **Socket communication**: the app logs to stderr; the CLI exits with code 1 and a message on stderr. Check if the socket file exists at `~/Library/Application Support/Graftty/graftty.sock`.
+- **Persistence**: inspect `~/Library/Application Support/Graftty/state.json`.
 
 ## Test
 
 ```bash
-swift test --test-product EspalierPackageTests
+swift test --test-product GrafttyPackageTests
 ```
 
 36 tests across 7 suites currently. Unit tests cover the model layer (SplitTree, AppState, WorktreeEntry), git integration (GitRepoDetector, GitWorktreeDiscovery), and notification protocol (NotificationMessage, SocketServer integration test). No tests for FSEvents-based monitoring (tested manually) or the macOS app UI (not yet built).

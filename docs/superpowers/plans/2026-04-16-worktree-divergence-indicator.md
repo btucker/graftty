@@ -4,7 +4,7 @@
 
 **Goal:** Render a fixed-width left-gutter indicator on each sidebar worktree row showing `↑X ↓Y` commits and `+I -D` lines changed vs. the repository's origin default branch.
 
-**Architecture:** Pure git-parsing + compute functions in `EspalierKit/Git/`. An `@Observable` app-level `WorktreeStatsStore` owns ephemeral stats keyed by worktree path. `WorktreeMonitorBridge` triggers refreshes on HEAD-change / repo-change events; a 60s timer catches external-fetch drift. A new `WorktreeRowGutter` view reads from the store and prepends itself to `WorktreeRow`.
+**Architecture:** Pure git-parsing + compute functions in `GrafttyKit/Git/`. An `@Observable` app-level `WorktreeStatsStore` owns ephemeral stats keyed by worktree path. `WorktreeMonitorBridge` triggers refreshes on HEAD-change / repo-change events; a 60s timer catches external-fetch drift. A new `WorktreeRowGutter` view reads from the store and prepends itself to `WorktreeRow`.
 
 **Tech Stack:** Swift 5.9+, Swift Testing (`@Suite`/`@Test`), SwiftUI (macOS 14+), `@Observable`. Git invoked via `Process` with `/usr/bin/git` (matches existing `GitWorktreeDiscovery` pattern).
 
@@ -14,40 +14,40 @@
 
 ## File Structure
 
-**Create (EspalierKit):**
-- `Sources/EspalierKit/Git/GitWorktreeStats.swift` — `WorktreeStats` struct, pure parsers (`parseRevListCounts`, `parseShortStat`), `compute(worktreePath:defaultBranchRef:)`.
-- `Sources/EspalierKit/Git/GitOriginDefaultBranch.swift` — `resolve(repoPath:)` with local-only symbolic-ref + show-ref fallback.
-- `Tests/EspalierKitTests/Git/GitWorktreeStatsTests.swift`
-- `Tests/EspalierKitTests/Git/GitOriginDefaultBranchTests.swift`
+**Create (GrafttyKit):**
+- `Sources/GrafttyKit/Git/GitWorktreeStats.swift` — `WorktreeStats` struct, pure parsers (`parseRevListCounts`, `parseShortStat`), `compute(worktreePath:defaultBranchRef:)`.
+- `Sources/GrafttyKit/Git/GitOriginDefaultBranch.swift` — `resolve(repoPath:)` with local-only symbolic-ref + show-ref fallback.
+- `Tests/GrafttyKitTests/Git/GitWorktreeStatsTests.swift`
+- `Tests/GrafttyKitTests/Git/GitOriginDefaultBranchTests.swift`
 
-**Create (Espalier app):**
-- `Sources/Espalier/Model/WorktreeStatsStore.swift` — `@Observable` class, refresh/clear/dedup.
-- `Sources/Espalier/Views/WorktreeRowGutter.swift` — the two-line gutter view.
+**Create (Graftty app):**
+- `Sources/Graftty/Model/WorktreeStatsStore.swift` — `@Observable` class, refresh/clear/dedup.
+- `Sources/Graftty/Views/WorktreeRowGutter.swift` — the two-line gutter view.
 
 **Modify:**
-- `Sources/Espalier/Views/WorktreeRow.swift` — prepend `WorktreeRowGutter`, pass stats in.
-- `Sources/Espalier/Views/SidebarView.swift` — take store, pass stats to row.
-- `Sources/Espalier/Views/MainWindow.swift` — thread store through to sidebar.
-- `Sources/Espalier/EspalierApp.swift` — instantiate store, wire it to bridge, initial population, 60s timer.
+- `Sources/Graftty/Views/WorktreeRow.swift` — prepend `WorktreeRowGutter`, pass stats in.
+- `Sources/Graftty/Views/SidebarView.swift` — take store, pass stats to row.
+- `Sources/Graftty/Views/MainWindow.swift` — thread store through to sidebar.
+- `Sources/Graftty/GrafttyApp.swift` — instantiate store, wire it to bridge, initial population, 60s timer.
 
 ---
 
 ## Task 1: `WorktreeStats` type + pure parsers
 
 **Files:**
-- Create: `Sources/EspalierKit/Git/GitWorktreeStats.swift`
-- Create: `Tests/EspalierKitTests/Git/GitWorktreeStatsTests.swift`
+- Create: `Sources/GrafttyKit/Git/GitWorktreeStats.swift`
+- Create: `Tests/GrafttyKitTests/Git/GitWorktreeStatsTests.swift`
 
 Covers spec DIVERGE-3.1, DIVERGE-3.2 (parsing portion only).
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `Tests/EspalierKitTests/Git/GitWorktreeStatsTests.swift`:
+Create `Tests/GrafttyKitTests/Git/GitWorktreeStatsTests.swift`:
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("GitWorktreeStats — parsers")
 struct GitWorktreeStatsParserTests {
@@ -144,7 +144,7 @@ Expected: FAIL — `WorktreeStats` and `GitWorktreeStats` are not defined.
 
 - [ ] **Step 3: Implement the type + parsers**
 
-Create `Sources/EspalierKit/Git/GitWorktreeStats.swift`:
+Create `Sources/GrafttyKit/Git/GitWorktreeStats.swift`:
 
 ```swift
 import Foundation
@@ -223,8 +223,8 @@ Expected: PASS — all 11 tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Git/GitWorktreeStats.swift \
-        Tests/EspalierKitTests/Git/GitWorktreeStatsTests.swift
+git add Sources/GrafttyKit/Git/GitWorktreeStats.swift \
+        Tests/GrafttyKitTests/Git/GitWorktreeStatsTests.swift
 git commit -m "feat(diverge): WorktreeStats type + rev-list/shortstat parsers"
 ```
 
@@ -233,26 +233,26 @@ git commit -m "feat(diverge): WorktreeStats type + rev-list/shortstat parsers"
 ## Task 2: `GitOriginDefaultBranch.resolve` + integration tests
 
 **Files:**
-- Create: `Sources/EspalierKit/Git/GitOriginDefaultBranch.swift`
-- Create: `Tests/EspalierKitTests/Git/GitOriginDefaultBranchTests.swift`
+- Create: `Sources/GrafttyKit/Git/GitOriginDefaultBranch.swift`
+- Create: `Tests/GrafttyKitTests/Git/GitOriginDefaultBranchTests.swift`
 
 Covers spec DIVERGE-2.1, DIVERGE-2.2, DIVERGE-2.3.
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `Tests/EspalierKitTests/Git/GitOriginDefaultBranchTests.swift`:
+Create `Tests/GrafttyKitTests/Git/GitOriginDefaultBranchTests.swift`:
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("GitOriginDefaultBranch")
 struct GitOriginDefaultBranchTests {
 
     func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("espalier-origin-\(UUID().uuidString)")
+            .appendingPathComponent("graftty-origin-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -368,7 +368,7 @@ Expected: FAIL — `GitOriginDefaultBranch` is not defined.
 
 - [ ] **Step 3: Implement `GitOriginDefaultBranch`**
 
-Create `Sources/EspalierKit/Git/GitOriginDefaultBranch.swift`:
+Create `Sources/GrafttyKit/Git/GitOriginDefaultBranch.swift`:
 
 ```swift
 import Foundation
@@ -435,8 +435,8 @@ Expected: PASS — all 4 tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Git/GitOriginDefaultBranch.swift \
-        Tests/EspalierKitTests/Git/GitOriginDefaultBranchTests.swift
+git add Sources/GrafttyKit/Git/GitOriginDefaultBranch.swift \
+        Tests/GrafttyKitTests/Git/GitOriginDefaultBranchTests.swift
 git commit -m "feat(diverge): GitOriginDefaultBranch.resolve (local-only)"
 ```
 
@@ -445,14 +445,14 @@ git commit -m "feat(diverge): GitOriginDefaultBranch.resolve (local-only)"
 ## Task 3: `GitWorktreeStats.compute` + integration tests
 
 **Files:**
-- Modify: `Sources/EspalierKit/Git/GitWorktreeStats.swift` (add `compute`)
-- Modify: `Tests/EspalierKitTests/Git/GitWorktreeStatsTests.swift` (add integration suite)
+- Modify: `Sources/GrafttyKit/Git/GitWorktreeStats.swift` (add `compute`)
+- Modify: `Tests/GrafttyKitTests/Git/GitWorktreeStatsTests.swift` (add integration suite)
 
 Covers spec DIVERGE-3.1, DIVERGE-3.2.
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `Tests/EspalierKitTests/Git/GitWorktreeStatsTests.swift`:
+Append to `Tests/GrafttyKitTests/Git/GitWorktreeStatsTests.swift`:
 
 ```swift
 @Suite("GitWorktreeStats — compute (integration)")
@@ -460,7 +460,7 @@ struct GitWorktreeStatsComputeTests {
 
     func makeTempDir() throws -> URL {
         let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("espalier-stats-\(UUID().uuidString)")
+            .appendingPathComponent("graftty-stats-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -566,7 +566,7 @@ struct GitWorktreeStatsComputeTests {
     }
 
     @Test func throwsWhenWorktreeMissing() throws {
-        let bogus = "/nonexistent-espalier-path-\(UUID().uuidString)"
+        let bogus = "/nonexistent-graftty-path-\(UUID().uuidString)"
         #expect(throws: Error.self) {
             try GitWorktreeStats.compute(worktreePath: bogus, defaultBranchRef: "origin/main")
         }
@@ -581,7 +581,7 @@ Expected: FAIL — `GitWorktreeStats.compute` is not defined.
 
 - [ ] **Step 3: Implement `compute`**
 
-Append to `Sources/EspalierKit/Git/GitWorktreeStats.swift` inside the `public enum GitWorktreeStats` namespace:
+Append to `Sources/GrafttyKit/Git/GitWorktreeStats.swift` inside the `public enum GitWorktreeStats` namespace:
 
 ```swift
     /// Computes divergence stats for a worktree vs. an origin default branch ref.
@@ -647,8 +647,8 @@ Expected: PASS — all 4 tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Git/GitWorktreeStats.swift \
-        Tests/EspalierKitTests/Git/GitWorktreeStatsTests.swift
+git add Sources/GrafttyKit/Git/GitWorktreeStats.swift \
+        Tests/GrafttyKitTests/Git/GitWorktreeStatsTests.swift
 git commit -m "feat(diverge): GitWorktreeStats.compute against default branch"
 ```
 
@@ -657,24 +657,24 @@ git commit -m "feat(diverge): GitWorktreeStats.compute against default branch"
 ## Task 4: `WorktreeStatsStore` (refresh + dedup, no timer)
 
 **Files:**
-- Create: `Sources/Espalier/Model/WorktreeStatsStore.swift`
+- Create: `Sources/Graftty/Model/WorktreeStatsStore.swift`
 
 Covers spec DIVERGE-3.3, DIVERGE-3.4, DIVERGE-4.4, part of DIVERGE-2.4.
 
 - [ ] **Step 1: Create the directory**
 
 ```bash
-mkdir -p Sources/Espalier/Model
+mkdir -p Sources/Graftty/Model
 ```
 
 - [ ] **Step 2: Implement the store**
 
-Create `Sources/Espalier/Model/WorktreeStatsStore.swift`:
+Create `Sources/Graftty/Model/WorktreeStatsStore.swift`:
 
 ```swift
 import Foundation
 import Observation
-import EspalierKit
+import GrafttyKit
 
 /// Session-scoped, @MainActor-observed store of per-worktree divergence stats.
 ///
@@ -779,7 +779,7 @@ Expected: build succeeds (the file compiles; nothing uses it yet).
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/Espalier/Model/WorktreeStatsStore.swift
+git add Sources/Graftty/Model/WorktreeStatsStore.swift
 git commit -m "feat(diverge): WorktreeStatsStore with dedup + bg compute"
 ```
 
@@ -788,13 +788,13 @@ git commit -m "feat(diverge): WorktreeStatsStore with dedup + bg compute"
 ## Task 5: Wire bridge to store + initial population
 
 **Files:**
-- Modify: `Sources/Espalier/EspalierApp.swift`
+- Modify: `Sources/Graftty/GrafttyApp.swift`
 
 Covers spec DIVERGE-4.1, DIVERGE-4.2 and supports DIVERGE-1.6 (stale → clear).
 
 - [ ] **Step 1: Add the store to `AppServices`**
 
-Edit `Sources/Espalier/EspalierApp.swift` — change the `AppServices` class (lines 7-17):
+Edit `Sources/Graftty/GrafttyApp.swift` — change the `AppServices` class (lines 7-17):
 
 ```swift
 @MainActor
@@ -814,7 +814,7 @@ final class AppServices {
 
 - [ ] **Step 2: Update `WorktreeMonitorBridge` to take the store and call it**
 
-Edit `Sources/Espalier/EspalierApp.swift` — replace the `WorktreeMonitorBridge` class (lines 422-482) with:
+Edit `Sources/Graftty/GrafttyApp.swift` — replace the `WorktreeMonitorBridge` class (lines 422-482) with:
 
 ```swift
 @MainActor
@@ -900,7 +900,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
 
 - [ ] **Step 3: Pass the store into the bridge at startup**
 
-Edit `Sources/Espalier/EspalierApp.swift` — change the bridge construction in `startup()` (line 141):
+Edit `Sources/Graftty/GrafttyApp.swift` — change the bridge construction in `startup()` (line 141):
 
 ```swift
         let bridge = WorktreeMonitorBridge(
@@ -911,7 +911,7 @@ Edit `Sources/Espalier/EspalierApp.swift` — change the bridge construction in 
 
 - [ ] **Step 4: Kick off initial stats population after reconcile**
 
-Edit `Sources/Espalier/EspalierApp.swift` — after the call to `reconcileOnLaunch()` in `startup()` (line 152), add:
+Edit `Sources/Graftty/GrafttyApp.swift` — after the call to `reconcileOnLaunch()` in `startup()` (line 152), add:
 
 ```swift
         reconcileOnLaunch()
@@ -931,7 +931,7 @@ Expected: build succeeds.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Sources/Espalier/EspalierApp.swift
+git add Sources/Graftty/GrafttyApp.swift
 git commit -m "feat(diverge): wire WorktreeStatsStore into monitor bridge"
 ```
 
@@ -940,21 +940,21 @@ git commit -m "feat(diverge): wire WorktreeStatsStore into monitor bridge"
 ## Task 6: `WorktreeRowGutter` view + row/sidebar wiring
 
 **Files:**
-- Create: `Sources/Espalier/Views/WorktreeRowGutter.swift`
-- Modify: `Sources/Espalier/Views/WorktreeRow.swift`
-- Modify: `Sources/Espalier/Views/SidebarView.swift`
-- Modify: `Sources/Espalier/Views/MainWindow.swift`
-- Modify: `Sources/Espalier/EspalierApp.swift`
+- Create: `Sources/Graftty/Views/WorktreeRowGutter.swift`
+- Modify: `Sources/Graftty/Views/WorktreeRow.swift`
+- Modify: `Sources/Graftty/Views/SidebarView.swift`
+- Modify: `Sources/Graftty/Views/MainWindow.swift`
+- Modify: `Sources/Graftty/GrafttyApp.swift`
 
 Covers spec DIVERGE-1.1 through DIVERGE-1.6.
 
 - [ ] **Step 1: Create `WorktreeRowGutter`**
 
-Create `Sources/Espalier/Views/WorktreeRowGutter.swift`:
+Create `Sources/Graftty/Views/WorktreeRowGutter.swift`:
 
 ```swift
 import SwiftUI
-import EspalierKit
+import GrafttyKit
 
 /// Fixed-width leading block on each sidebar worktree row showing divergence
 /// vs. the origin default branch. Reserves its width even when empty so
@@ -1000,11 +1000,11 @@ struct WorktreeRowGutter: View {
 
 - [ ] **Step 2: Prepend gutter to `WorktreeRow`**
 
-Edit `Sources/Espalier/Views/WorktreeRow.swift` — replace the entire file with:
+Edit `Sources/Graftty/Views/WorktreeRow.swift` — replace the entire file with:
 
 ```swift
 import SwiftUI
-import EspalierKit
+import GrafttyKit
 
 struct WorktreeRow: View {
     let entry: WorktreeEntry
@@ -1115,7 +1115,7 @@ struct WorktreeRow: View {
 
 - [ ] **Step 3: Thread the store through `SidebarView`**
 
-Edit `Sources/Espalier/Views/SidebarView.swift` — add the store as a property and pass stats to the row:
+Edit `Sources/Graftty/Views/SidebarView.swift` — add the store as a property and pass stats to the row:
 
 Change the struct's properties (lines 5-11):
 
@@ -1148,15 +1148,15 @@ Change the `WorktreeRow` call inside `repoSection` (currently lines 65-71):
 Run this to find every call site that constructs `SidebarView`:
 
 ```bash
-grep -n "SidebarView(" Sources/Espalier/Views/MainWindow.swift
+grep -n "SidebarView(" Sources/Graftty/Views/MainWindow.swift
 ```
 
 At each call site, add `statsStore: statsStore` after `theme:`. And add `let statsStore: WorktreeStatsStore` to `MainWindow`'s properties. The exact existing code depends on the file; follow the pattern already used for `theme`.
 
-Run this to find where MainWindow is constructed in EspalierApp:
+Run this to find where MainWindow is constructed in GrafttyApp:
 
 ```bash
-grep -n "MainWindow(" Sources/Espalier/EspalierApp.swift
+grep -n "MainWindow(" Sources/Graftty/GrafttyApp.swift
 ```
 
 Pass `statsStore: services.statsStore` there too.
@@ -1172,11 +1172,11 @@ Expected: all tests pass (no regressions).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Sources/Espalier/Views/WorktreeRowGutter.swift \
-        Sources/Espalier/Views/WorktreeRow.swift \
-        Sources/Espalier/Views/SidebarView.swift \
-        Sources/Espalier/Views/MainWindow.swift \
-        Sources/Espalier/EspalierApp.swift
+git add Sources/Graftty/Views/WorktreeRowGutter.swift \
+        Sources/Graftty/Views/WorktreeRow.swift \
+        Sources/Graftty/Views/SidebarView.swift \
+        Sources/Graftty/Views/MainWindow.swift \
+        Sources/Graftty/GrafttyApp.swift
 git commit -m "feat(diverge): gutter view + sidebar wiring"
 ```
 
@@ -1185,13 +1185,13 @@ git commit -m "feat(diverge): gutter view + sidebar wiring"
 ## Task 7: 60-second periodic poll
 
 **Files:**
-- Modify: `Sources/Espalier/EspalierApp.swift`
+- Modify: `Sources/Graftty/GrafttyApp.swift`
 
 Covers spec DIVERGE-4.3.
 
 - [ ] **Step 1: Add a poll Timer to `AppServices`**
 
-Edit `Sources/Espalier/EspalierApp.swift` — change `AppServices` to hold a timer:
+Edit `Sources/Graftty/GrafttyApp.swift` — change `AppServices` to hold a timer:
 
 ```swift
 @MainActor
@@ -1212,7 +1212,7 @@ final class AppServices {
 
 - [ ] **Step 2: Start the timer in `startup()`**
 
-Edit `Sources/Espalier/EspalierApp.swift` — after the initial stats-population block added in Task 5 Step 4, start the timer:
+Edit `Sources/Graftty/GrafttyApp.swift` — after the initial stats-population block added in Task 5 Step 4, start the timer:
 
 ```swift
         reconcileOnLaunch()
@@ -1253,7 +1253,7 @@ Expected: build succeeds.
 Build and run the app:
 
 ```bash
-swift run Espalier
+swift run Graftty
 ```
 
 Expected behavior:
@@ -1264,7 +1264,7 @@ Expected behavior:
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/Espalier/EspalierApp.swift
+git add Sources/Graftty/GrafttyApp.swift
 git commit -m "feat(diverge): 60s poll for origin default branch drift"
 ```
 

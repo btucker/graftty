@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add `espalier pane list|add|close` CLI subcommands that let users enumerate, create, and destroy panes in the PWD's worktree from the shell.
+**Goal:** Add `graftty pane list|add|close` CLI subcommands that let users enumerate, create, and destroy panes in the PWD's worktree from the shell.
 
-**Architecture:** Extend the existing `NotificationMessage`-over-Unix-domain-socket protocol with three new cases (`listPanes`, `addPane`, `closePane`) and introduce a small `ResponseMessage` reply channel so the CLI can get structured output back. The app-side handler reuses the existing `splitPane` / `closePane` static helpers in `EspalierApp.swift` — the new branches just translate 1-based integer pane IDs to `TerminalID`s, look up the target worktree by PWD, and dispatch.
+**Architecture:** Extend the existing `NotificationMessage`-over-Unix-domain-socket protocol with three new cases (`listPanes`, `addPane`, `closePane`) and introduce a small `ResponseMessage` reply channel so the CLI can get structured output back. The app-side handler reuses the existing `splitPane` / `closePane` static helpers in `GrafttyApp.swift` — the new branches just translate 1-based integer pane IDs to `TerminalID`s, look up the target worktree by PWD, and dispatch.
 
 **Tech Stack:** Swift 5.10, SwiftUI/AppKit, swift-argument-parser, libghostty (GhosttyKit), Unix domain sockets, Swift Testing framework.
 
@@ -15,32 +15,32 @@
 ## File Structure
 
 **Modified:**
-- `Sources/EspalierKit/Notification/NotificationMessage.swift` — add three new `NotificationMessage` cases, `PaneSplitWire` enum, `ResponseMessage` enum, `PaneInfo` struct. Keep the wire protocol co-located.
-- `Sources/EspalierKit/Notification/SocketServer.swift` — add an `onRequest` callback; when set, the server calls it after `onMessage` and writes the returned `ResponseMessage` (if any) to the client before closing.
-- `Sources/EspalierCLI/SocketClient.swift` — add `sendExpectingResponse(_:) -> ResponseMessage` alongside `send(_:)`. The existing `send` stays fire-and-forget.
-- `Sources/EspalierCLI/CLI.swift` — register a `Pane` parent subcommand with three children: `PaneList`, `PaneAdd`, `PaneClose`.
-- `Sources/Espalier/EspalierApp.swift` — wire `services.socketServer.onRequest` in `startup()`; add three handler branches that reuse `splitPane` / `closePane`. `splitPane`'s signature changes to return `TerminalID?` so the `addPane` branch can address the newly-created pane when typing `--command` into it.
+- `Sources/GrafttyKit/Notification/NotificationMessage.swift` — add three new `NotificationMessage` cases, `PaneSplitWire` enum, `ResponseMessage` enum, `PaneInfo` struct. Keep the wire protocol co-located.
+- `Sources/GrafttyKit/Notification/SocketServer.swift` — add an `onRequest` callback; when set, the server calls it after `onMessage` and writes the returned `ResponseMessage` (if any) to the client before closing.
+- `Sources/GrafttyCLI/SocketClient.swift` — add `sendExpectingResponse(_:) -> ResponseMessage` alongside `send(_:)`. The existing `send` stays fire-and-forget.
+- `Sources/GrafttyCLI/CLI.swift` — register a `Pane` parent subcommand with three children: `PaneList`, `PaneAdd`, `PaneClose`.
+- `Sources/Graftty/GrafttyApp.swift` — wire `services.socketServer.onRequest` in `startup()`; add three handler branches that reuse `splitPane` / `closePane`. `splitPane`'s signature changes to return `TerminalID?` so the `addPane` branch can address the newly-created pane when typing `--command` into it.
 
 **New:**
-- `Tests/EspalierKitTests/Notification/PaneMessageTests.swift` — encoding/decoding round-trips for the three new message cases and `ResponseMessage`.
-- `Tests/EspalierKitTests/Notification/PaneIndexTests.swift` — unit tests for a small `leaf(atPaneID:in:)` helper that translates a 1-based ID to a `TerminalID` from a `SplitTree`.
+- `Tests/GrafttyKitTests/Notification/PaneMessageTests.swift` — encoding/decoding round-trips for the three new message cases and `ResponseMessage`.
+- `Tests/GrafttyKitTests/Notification/PaneIndexTests.swift` — unit tests for a small `leaf(atPaneID:in:)` helper that translates a 1-based ID to a `TerminalID` from a `SplitTree`.
 
 ---
 
 ## Task 1: Add `PaneSplitWire`, `PaneInfo`, and `ResponseMessage` types
 
 **Files:**
-- Modify: `Sources/EspalierKit/Notification/NotificationMessage.swift`
-- Test: `Tests/EspalierKitTests/Notification/PaneMessageTests.swift` (new)
+- Modify: `Sources/GrafttyKit/Notification/NotificationMessage.swift`
+- Test: `Tests/GrafttyKitTests/Notification/PaneMessageTests.swift` (new)
 
 - [ ] **Step 1: Write the failing tests for new types**
 
-Create `Tests/EspalierKitTests/Notification/PaneMessageTests.swift`:
+Create `Tests/GrafttyKitTests/Notification/PaneMessageTests.swift`:
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("Pane Message Types")
 struct PaneMessageTests {
@@ -134,11 +134,11 @@ Expected: build errors — `PaneSplitWire`, `PaneInfo`, `ResponseMessage` do not
 
 - [ ] **Step 3: Add the types to NotificationMessage.swift**
 
-Edit `Sources/EspalierKit/Notification/NotificationMessage.swift`. At the bottom of the file, append:
+Edit `Sources/GrafttyKit/Notification/NotificationMessage.swift`. At the bottom of the file, append:
 
 ```swift
 /// Wire-level representation of a four-way pane split direction. Mirrors
-/// the app-layer `PaneSplit` enum, but lives in EspalierKit so the CLI can
+/// the app-layer `PaneSplit` enum, but lives in GrafttyKit so the CLI can
 /// encode/decode it without importing app-layer code.
 public enum PaneSplitWire: String, Codable, Sendable {
     case right, left, up, down
@@ -215,7 +215,7 @@ Expected: all tests in the suite pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Notification/NotificationMessage.swift Tests/EspalierKitTests/Notification/PaneMessageTests.swift
+git add Sources/GrafttyKit/Notification/NotificationMessage.swift Tests/GrafttyKitTests/Notification/PaneMessageTests.swift
 git commit -m "feat(kit): add PaneSplitWire, PaneInfo, ResponseMessage wire types"
 ```
 
@@ -224,12 +224,12 @@ git commit -m "feat(kit): add PaneSplitWire, PaneInfo, ResponseMessage wire type
 ## Task 2: Add `listPanes`, `addPane`, `closePane` cases to `NotificationMessage`
 
 **Files:**
-- Modify: `Sources/EspalierKit/Notification/NotificationMessage.swift`
-- Test: `Tests/EspalierKitTests/Notification/PaneMessageTests.swift`
+- Modify: `Sources/GrafttyKit/Notification/NotificationMessage.swift`
+- Test: `Tests/GrafttyKitTests/Notification/PaneMessageTests.swift`
 
 - [ ] **Step 1: Append failing tests for the three new cases**
 
-Append to `Tests/EspalierKitTests/Notification/PaneMessageTests.swift`:
+Append to `Tests/GrafttyKitTests/Notification/PaneMessageTests.swift`:
 
 ```swift
 @Suite("NotificationMessage Pane Cases")
@@ -322,7 +322,7 @@ Expected: compile failure — the enum cases don't exist.
 
 - [ ] **Step 3: Extend the NotificationMessage enum**
 
-Edit `Sources/EspalierKit/Notification/NotificationMessage.swift`. Replace the `NotificationMessage` enum and its `Codable` conformance block entirely with:
+Edit `Sources/GrafttyKit/Notification/NotificationMessage.swift`. Replace the `NotificationMessage` enum and its `Codable` conformance block entirely with:
 
 ```swift
 public enum NotificationMessage: Sendable {
@@ -403,7 +403,7 @@ Expected: every test passes, including the two pre-existing `NotificationMessage
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Notification/NotificationMessage.swift Tests/EspalierKitTests/Notification/PaneMessageTests.swift
+git add Sources/GrafttyKit/Notification/NotificationMessage.swift Tests/GrafttyKitTests/Notification/PaneMessageTests.swift
 git commit -m "feat(kit): add listPanes/addPane/closePane to NotificationMessage"
 ```
 
@@ -412,16 +412,16 @@ git commit -m "feat(kit): add listPanes/addPane/closePane to NotificationMessage
 ## Task 3: Add `onRequest` callback and response writing to `SocketServer`
 
 **Files:**
-- Modify: `Sources/EspalierKit/Notification/SocketServer.swift`
-- Test: `Tests/EspalierKitTests/Notification/SocketIntegrationTests.swift`
+- Modify: `Sources/GrafttyKit/Notification/SocketServer.swift`
+- Test: `Tests/GrafttyKitTests/Notification/SocketIntegrationTests.swift`
 
 - [ ] **Step 1: Write a failing integration test for request/response**
 
-Append to `Tests/EspalierKitTests/Notification/SocketIntegrationTests.swift` (inside the existing `@Suite`):
+Append to `Tests/GrafttyKitTests/Notification/SocketIntegrationTests.swift` (inside the existing `@Suite`):
 
 ```swift
 @Test func serverWritesResponseWhenOnRequestSet() async throws {
-    let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("espalier-resp-\(UUID().uuidString.prefix(8))")
+    let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("graftty-resp-\(UUID().uuidString.prefix(8))")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -481,7 +481,7 @@ Append to `Tests/EspalierKitTests/Notification/SocketIntegrationTests.swift` (in
 
 @Test func serverOmitsResponseWhenOnRequestUnset() async throws {
     // Fire-and-forget path must still work — notify/clear don't expect replies.
-    let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("espalier-fnf-\(UUID().uuidString.prefix(8))")
+    let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("graftty-fnf-\(UUID().uuidString.prefix(8))")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: dir) }
 
@@ -527,7 +527,7 @@ Expected: compile failure — `server.onRequest` does not exist.
 
 - [ ] **Step 3: Add `onRequest` to SocketServer and write responses**
 
-Edit `Sources/EspalierKit/Notification/SocketServer.swift`. Add the new public property below `onMessage`:
+Edit `Sources/GrafttyKit/Notification/SocketServer.swift`. Add the new public property below `onMessage`:
 
 ```swift
     /// Request/response variant of `onMessage`. When set, the server calls
@@ -588,7 +588,7 @@ Expected: all five socket integration tests pass, including the two new ones.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Notification/SocketServer.swift Tests/EspalierKitTests/Notification/SocketIntegrationTests.swift
+git add Sources/GrafttyKit/Notification/SocketServer.swift Tests/GrafttyKitTests/Notification/SocketIntegrationTests.swift
 git commit -m "feat(kit): support response messages in SocketServer via onRequest"
 ```
 
@@ -597,18 +597,18 @@ git commit -m "feat(kit): support response messages in SocketServer via onReques
 ## Task 4: Add 1-based pane-ID resolver helper
 
 **Files:**
-- Modify: `Sources/EspalierKit/Model/SplitTree.swift`
-- Test: `Tests/EspalierKitTests/Notification/PaneIndexTests.swift` (new)
+- Modify: `Sources/GrafttyKit/Model/SplitTree.swift`
+- Test: `Tests/GrafttyKitTests/Notification/PaneIndexTests.swift` (new)
 
-We expose a small helper on `SplitTree` that translates a 1-based user-facing pane ID to a `TerminalID`. Living on `SplitTree` (not on `EspalierApp`) lets us unit-test it without running the app.
+We expose a small helper on `SplitTree` that translates a 1-based user-facing pane ID to a `TerminalID`. Living on `SplitTree` (not on `GrafttyApp`) lets us unit-test it without running the app.
 
 - [ ] **Step 1: Write failing tests**
 
-Create `Tests/EspalierKitTests/Notification/PaneIndexTests.swift`:
+Create `Tests/GrafttyKitTests/Notification/PaneIndexTests.swift`:
 
 ```swift
 import Testing
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("Pane Index Resolution")
 struct PaneIndexTests {
@@ -651,10 +651,10 @@ Expected: compile failure — `leaf(atPaneID:)` does not exist.
 
 - [ ] **Step 3: Add the helper to SplitTree**
 
-Edit `Sources/EspalierKit/Model/SplitTree.swift`. Add inside the `SplitTree` struct, in the "Queries" section (below `allLeaves`):
+Edit `Sources/GrafttyKit/Model/SplitTree.swift`. Add inside the `SplitTree` struct, in the "Queries" section (below `allLeaves`):
 
 ```swift
-    /// Resolve a user-facing 1-based pane ID (as printed by `espalier
+    /// Resolve a user-facing 1-based pane ID (as printed by `graftty
     /// pane list`) to its underlying `TerminalID`, or nil if the ID is
     /// out of range. Uses `allLeaves` order — the same order `list`
     /// displays.
@@ -674,7 +674,7 @@ Expected: all three tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Model/SplitTree.swift Tests/EspalierKitTests/Notification/PaneIndexTests.swift
+git add Sources/GrafttyKit/Model/SplitTree.swift Tests/GrafttyKitTests/Notification/PaneIndexTests.swift
 git commit -m "feat(kit): add SplitTree.leaf(atPaneID:) 1-based resolver"
 ```
 
@@ -683,14 +683,14 @@ git commit -m "feat(kit): add SplitTree.leaf(atPaneID:) 1-based resolver"
 ## Task 5: CLI `sendExpectingResponse` and the `Pane` subcommand tree
 
 **Files:**
-- Modify: `Sources/EspalierCLI/SocketClient.swift`
-- Modify: `Sources/EspalierCLI/CLI.swift`
+- Modify: `Sources/GrafttyCLI/SocketClient.swift`
+- Modify: `Sources/GrafttyCLI/CLI.swift`
 
 No tests — the CLI surface talks to a live socket (exercised in Task 7 manual verification). The types are unit-tested in earlier tasks.
 
 - [ ] **Step 1: Add `sendExpectingResponse` to SocketClient**
 
-Edit `Sources/EspalierCLI/SocketClient.swift`. Replace the entire `SocketClient` enum with:
+Edit `Sources/GrafttyCLI/SocketClient.swift`. Replace the entire `SocketClient` enum with:
 
 ```swift
 enum SocketClient {
@@ -771,34 +771,34 @@ enum SocketClient {
     }
 
     private static func resolveSocketPath() -> String {
-        if let envPath = ProcessInfo.processInfo.environment["ESPALIER_SOCK"] { return envPath }
-        return AppState.defaultDirectory.appendingPathComponent("espalier.sock").path
+        if let envPath = ProcessInfo.processInfo.environment["GRAFTTY_SOCK"] { return envPath }
+        return AppState.defaultDirectory.appendingPathComponent("graftty.sock").path
     }
 }
 ```
 
-Prepend Foundation + EspalierKit imports if the file doesn't already have them. (It does — keep them.)
+Prepend Foundation + GrafttyKit imports if the file doesn't already have them. (It does — keep them.)
 
 - [ ] **Step 2: Add the `Pane` subcommand tree to CLI.swift**
 
-Edit `Sources/EspalierCLI/CLI.swift`. Replace the entire `EspalierCLI` configuration and the file contents with:
+Edit `Sources/GrafttyCLI/CLI.swift`. Replace the entire `GrafttyCLI` configuration and the file contents with:
 
 ```swift
 import ArgumentParser
 import Foundation
-import EspalierKit
+import GrafttyKit
 
 @main
-struct EspalierCLI: ParsableCommand {
+struct GrafttyCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
-        commandName: "espalier",
-        abstract: "Espalier terminal multiplexer CLI",
+        commandName: "graftty",
+        abstract: "Graftty terminal multiplexer CLI",
         subcommands: [Notify.self, Pane.self]
     )
 }
 
 struct Notify: ParsableCommand {
-    static let configuration = CommandConfiguration(abstract: "Send an attention notification to Espalier")
+    static let configuration = CommandConfiguration(abstract: "Send an attention notification to Graftty")
 
     @Argument(help: "Notification text to display in the sidebar")
     var text: String?
@@ -896,7 +896,7 @@ struct PaneClose: ParsableCommand {
         abstract: "Close a pane by its 1-based ID as shown by `pane list`"
     )
 
-    @Argument(help: "Pane ID from `espalier pane list`")
+    @Argument(help: "Pane ID from `graftty pane list`")
     var id: Int
 
     func run() throws {
@@ -953,14 +953,14 @@ enum CLIEnv {
     }
 
     static func printError(_ msg: String) {
-        FileHandle.standardError.write(Data("espalier: \(msg)\n".utf8))
+        FileHandle.standardError.write(Data("graftty: \(msg)\n".utf8))
     }
 }
 ```
 
 - [ ] **Step 3: Build to verify CLI compiles**
 
-Run: `swift build --target espalier-cli`
+Run: `swift build --target graftty-cli`
 Expected: build succeeds with no errors.
 
 - [ ] **Step 4: Run full test suite to verify no regressions**
@@ -971,22 +971,22 @@ Expected: all tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierCLI/SocketClient.swift Sources/EspalierCLI/CLI.swift
-git commit -m "feat(cli): add espalier pane list/add/close subcommands"
+git add Sources/GrafttyCLI/SocketClient.swift Sources/GrafttyCLI/CLI.swift
+git commit -m "feat(cli): add graftty pane list/add/close subcommands"
 ```
 
 ---
 
-## Task 6: Wire `onRequest` in `EspalierApp` and dispatch to per-case handlers
+## Task 6: Wire `onRequest` in `GrafttyApp` and dispatch to per-case handlers
 
 **Files:**
-- Modify: `Sources/Espalier/EspalierApp.swift`
+- Modify: `Sources/Graftty/GrafttyApp.swift`
 
 This task changes `splitPane`'s signature to return `TerminalID?` (was `Void`), adds `handlePaneRequest`, and registers `services.socketServer.onRequest`.
 
 - [ ] **Step 1: Change `splitPane` to return `TerminalID?`**
 
-Edit `Sources/Espalier/EspalierApp.swift` around `splitPane` (starts at line ~348).
+Edit `Sources/Graftty/GrafttyApp.swift` around `splitPane` (starts at line ~348).
 
 Replace the declaration and body:
 
@@ -1158,7 +1158,7 @@ In the same file, add (place it just after `handleNotification`'s closing brace)
     }
 ```
 
-**Note:** `ghostty_surface_text` is declared in the `GhosttyKit` module header (`void ghostty_surface_text(ghostty_surface_t, const char*, uintptr_t);`). The file already imports `GhosttyKit`? Check: `Sources/Espalier/EspalierApp.swift` imports `SwiftUI`, `AppKit`, `EspalierKit`. **Add** at the top:
+**Note:** `ghostty_surface_text` is declared in the `GhosttyKit` module header (`void ghostty_surface_text(ghostty_surface_t, const char*, uintptr_t);`). The file already imports `GhosttyKit`? Check: `Sources/Graftty/GrafttyApp.swift` imports `SwiftUI`, `AppKit`, `GrafttyKit`. **Add** at the top:
 
 ```swift
 import GhosttyKit
@@ -1168,7 +1168,7 @@ If this breaks anything (it shouldn't — `TerminalManager.swift` already depend
 
 - [ ] **Step 3: Register `onRequest` in `startup()`**
 
-In `Sources/Espalier/EspalierApp.swift`, find the existing block (around line 197–203) that sets `services.socketServer.onMessage`. Just below it, add:
+In `Sources/Graftty/GrafttyApp.swift`, find the existing block (around line 197–203) that sets `services.socketServer.onMessage`. Just below it, add:
 
 ```swift
         services.socketServer.onRequest = { message in
@@ -1193,7 +1193,7 @@ Expected: all pre-existing + newly-added tests pass.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Sources/Espalier/EspalierApp.swift
+git add Sources/Graftty/GrafttyApp.swift
 git commit -m "feat(app): handle pane list/add/close requests from the CLI"
 ```
 
@@ -1205,13 +1205,13 @@ This task has no code to write up front — it's the "run it, find issues, add f
 
 - [ ] **Step 1: Build and install the CLI**
 
-Run the existing install path. From the app: **Espalier menu → Install CLI Tool...**, or via the app's `CLIInstaller.install()` (see `Sources/EspalierKit/CLIInstaller.swift`). For a dev build without full installation, use the built CLI directly:
+Run the existing install path. From the app: **Graftty menu → Install CLI Tool...**, or via the app's `CLIInstaller.install()` (see `Sources/GrafttyKit/CLIInstaller.swift`). For a dev build without full installation, use the built CLI directly:
 
 ```bash
 swift build
-APP_PID=$(pgrep -x Espalier || echo "not running")
+APP_PID=$(pgrep -x Graftty || echo "not running")
 echo "App pid: $APP_PID"
-# If the app isn't running, launch it from Xcode or: open -a Espalier
+# If the app isn't running, launch it from Xcode or: open -a Graftty
 ```
 
 - [ ] **Step 2: Smoke test `pane list`**
@@ -1219,7 +1219,7 @@ echo "App pid: $APP_PID"
 From a shell inside a tracked worktree:
 
 ```bash
-.build/debug/espalier-cli pane list
+.build/debug/graftty-cli pane list
 ```
 
 Expected: one or more lines like `* 1  zsh` with `*` on the focused pane. If it errors with "Not inside a tracked worktree", cd into a worktree the app knows about.
@@ -1227,10 +1227,10 @@ Expected: one or more lines like `* 1  zsh` with `*` on the focused pane. If it 
 - [ ] **Step 3: Smoke test `pane add`**
 
 ```bash
-.build/debug/espalier-cli pane add
+.build/debug/graftty-cli pane add
 # New pane appears to the right of the focused one.
-.build/debug/espalier-cli pane add --direction down
-.build/debug/espalier-cli pane add --direction up --command "echo hello world"
+.build/debug/graftty-cli pane add --direction down
+.build/debug/graftty-cli pane add --direction up --command "echo hello world"
 ```
 
 Expected: three new panes appear. The third runs `echo hello world` and shows the output.
@@ -1238,12 +1238,12 @@ Expected: three new panes appear. The third runs `echo hello world` and shows th
 - [ ] **Step 4: Smoke test `pane close`**
 
 ```bash
-.build/debug/espalier-cli pane list   # note the IDs
-.build/debug/espalier-cli pane close 2
-.build/debug/espalier-cli pane close 99   # should error
+.build/debug/graftty-cli pane list   # note the IDs
+.build/debug/graftty-cli pane close 2
+.build/debug/graftty-cli pane close 99   # should error
 ```
 
-Expected: pane 2 closes. The `99` invocation prints `espalier: no pane with id 99 in this worktree` to stderr and exits 1.
+Expected: pane 2 closes. The `99` invocation prints `graftty: no pane with id 99 in this worktree` to stderr and exits 1.
 
 - [ ] **Step 5: Fix any bugs found, TDD-style**
 
@@ -1267,7 +1267,7 @@ Expected: all tests pass.
 
 Checking against the spec:
 
-- ✅ CLI shape `espalier pane list|add|close [--direction ...] [--command ...]` — Task 5.
+- ✅ CLI shape `graftty pane list|add|close [--direction ...] [--command ...]` — Task 5.
 - ✅ 1-based per-worktree pane IDs in `allLeaves` order — Task 4 (`leaf(atPaneID:)`) + Task 6 (`listPanes` handler).
 - ✅ `* 1  zsh — /repo` output format with focus marker — Task 5 (`PaneList.run`).
 - ✅ Response channel (`ok`/`error`/`paneList`) over the existing socket — Tasks 1, 3, 5.

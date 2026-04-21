@@ -15,13 +15,13 @@
 ## File Structure
 
 **Create:**
-- `Sources/EspalierKit/Hosting/PRBadge.swift` — narrow value type (number, state, url) for sidebar rendering. Lives in `EspalierKit` rather than the app target because it has no SwiftUI dependency and needs a pure-Swift test.
-- `Tests/EspalierKitTests/Hosting/PRBadgeTests.swift` — equality coverage.
+- `Sources/GrafttyKit/Hosting/PRBadge.swift` — narrow value type (number, state, url) for sidebar rendering. Lives in `GrafttyKit` rather than the app target because it has no SwiftUI dependency and needs a pure-Swift test.
+- `Tests/GrafttyKitTests/Hosting/PRBadgeTests.swift` — equality coverage.
 
 **Modify:**
-- `Sources/Espalier/Views/WorktreeRow.swift` — replace `hasPR: Bool` parameter with `prBadge: PRBadge?`; add badge rendering between icon and branch label.
-- `Sources/Espalier/Views/SidebarView.swift:149` — derive `PRBadge?` from `prStatusStore.infos`.
-- `Sources/Espalier/Views/PRButton.swift` — delete local `mergedText` helper; add `PRInfo.State.statusColor` extension; use it in the merged-text-color call site.
+- `Sources/Graftty/Views/WorktreeRow.swift` — replace `hasPR: Bool` parameter with `prBadge: PRBadge?`; add badge rendering between icon and branch label.
+- `Sources/Graftty/Views/SidebarView.swift:149` — derive `PRBadge?` from `prStatusStore.infos`.
+- `Sources/Graftty/Views/PRButton.swift` — delete local `mergedText` helper; add `PRInfo.State.statusColor` extension; use it in the merged-text-color call site.
 - `SPECS.md` — add `PR-3.2`, `PR-3.3`, `PR-3.4` requirements under the existing PR section.
 
 ---
@@ -29,22 +29,22 @@
 ## Task 1: Define `PRBadge` value type
 
 **Files:**
-- Create: `Sources/EspalierKit/Hosting/PRBadge.swift`
-- Test: `Tests/EspalierKitTests/Hosting/PRBadgeTests.swift`
+- Create: `Sources/GrafttyKit/Hosting/PRBadge.swift`
+- Test: `Tests/GrafttyKitTests/Hosting/PRBadgeTests.swift`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `Tests/EspalierKitTests/Hosting/PRBadgeTests.swift`:
+Create `Tests/GrafttyKitTests/Hosting/PRBadgeTests.swift`:
 
 ```swift
 import Foundation
 import Testing
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("PRBadge")
 struct PRBadgeTests {
-    private let sampleURL = URL(string: "https://github.com/btucker/espalier/pull/42")!
-    private let otherURL = URL(string: "https://github.com/btucker/espalier/pull/99")!
+    private let sampleURL = URL(string: "https://github.com/btucker/graftty/pull/42")!
+    private let otherURL = URL(string: "https://github.com/btucker/graftty/pull/99")!
 
     @Test func equalWhenAllFieldsMatch() {
         let a = PRBadge(number: 42, state: .open, url: sampleURL)
@@ -80,7 +80,7 @@ Expected: Build error — `cannot find 'PRBadge' in scope`.
 
 - [ ] **Step 3: Implement `PRBadge`**
 
-Create `Sources/EspalierKit/Hosting/PRBadge.swift`:
+Create `Sources/GrafttyKit/Hosting/PRBadge.swift`:
 
 ```swift
 import Foundation
@@ -111,7 +111,7 @@ Expected: All four tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Hosting/PRBadge.swift Tests/EspalierKitTests/Hosting/PRBadgeTests.swift
+git add Sources/GrafttyKit/Hosting/PRBadge.swift Tests/GrafttyKitTests/Hosting/PRBadgeTests.swift
 git commit -m "feat(pr): add PRBadge value type for sidebar rendering"
 ```
 
@@ -120,13 +120,13 @@ git commit -m "feat(pr): add PRBadge value type for sidebar rendering"
 ## Task 2: Centralize `PRInfo.State.statusColor`
 
 **Files:**
-- Modify: `Sources/Espalier/Views/PRButton.swift`
+- Modify: `Sources/Graftty/Views/PRButton.swift`
 
-There's no Espalier-app test target, so this task has no direct test. The palette is locked by virtue of being a `switch` over a fixed enum — Swift's exhaustiveness check catches any missing case when a future `.closed` is added.
+There's no Graftty-app test target, so this task has no direct test. The palette is locked by virtue of being a `switch` over a fixed enum — Swift's exhaustiveness check catches any missing case when a future `.closed` is added.
 
 - [ ] **Step 1: Add `statusColor` extension and remove duplicate**
 
-Open `Sources/Espalier/Views/PRButton.swift`. Current file ends at line 101 with the `PulseIfPending` modifier. Make three edits:
+Open `Sources/Graftty/Views/PRButton.swift`. Current file ends at line 101 with the `PulseIfPending` modifier. Make three edits:
 
 **Edit A** — delete lines 62-64 (the `private var mergedText` computed property):
 
@@ -174,7 +174,7 @@ Expected: Build succeeds (no warnings-as-errors).
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/Espalier/Views/PRButton.swift
+git add Sources/Graftty/Views/PRButton.swift
 git commit -m "refactor(pr): centralize PR state color in PRInfo.State.statusColor"
 ```
 
@@ -183,11 +183,11 @@ git commit -m "refactor(pr): centralize PR state color in PRInfo.State.statusCol
 ## Task 3: Update `WorktreeRow` to consume `PRBadge?`
 
 **Files:**
-- Modify: `Sources/Espalier/Views/WorktreeRow.swift`
+- Modify: `Sources/Graftty/Views/WorktreeRow.swift`
 
 - [ ] **Step 1: Replace `hasPR` parameter**
 
-In `Sources/Espalier/Views/WorktreeRow.swift`, find the current declaration at lines 110-113:
+In `Sources/Graftty/Views/WorktreeRow.swift`, find the current declaration at lines 110-113:
 
 ```swift
     /// True when a PR/MR is associated with this worktree's branch.
@@ -298,7 +298,7 @@ Current (lines 1-2):
 
 ```swift
 import SwiftUI
-import EspalierKit
+import GrafttyKit
 ```
 
 Change to:
@@ -306,7 +306,7 @@ Change to:
 ```swift
 import SwiftUI
 import AppKit
-import EspalierKit
+import GrafttyKit
 ```
 
 Then add the view builder inside the `WorktreeRow` struct. The badge uses a nested `Button` (not `.onTapGesture`) because the entire row is already wrapped in a `Button` in `SidebarView.swift:135-151` — nested Buttons with `.buttonStyle(.plain)` are the standard SwiftUI pattern for inner interactive elements and correctly receive the click without triggering the outer button.
@@ -348,11 +348,11 @@ This task's changes don't compile standalone — they need Task 4 to land togeth
 ## Task 4: Update `SidebarView` to pass `PRBadge?`
 
 **Files:**
-- Modify: `Sources/Espalier/Views/SidebarView.swift`
+- Modify: `Sources/Graftty/Views/SidebarView.swift`
 
 - [ ] **Step 1: Replace `hasPR` call site with `prBadge`**
 
-Open `Sources/Espalier/Views/SidebarView.swift`. Find line 149:
+Open `Sources/Graftty/Views/SidebarView.swift`. Find line 149:
 
 ```swift
                     hasPR: prStatusStore.infos[worktree.path] != nil
@@ -381,7 +381,7 @@ Expected: All tests pass (no tests should have regressed; `PRBadgeTests` still p
 - [ ] **Step 4: Commit Tasks 3 and 4 together**
 
 ```bash
-git add Sources/Espalier/Views/WorktreeRow.swift Sources/Espalier/Views/SidebarView.swift
+git add Sources/Graftty/Views/WorktreeRow.swift Sources/Graftty/Views/SidebarView.swift
 git commit -m "feat(pr): show PR number badge in sidebar (PR-3.2, PR-3.3, PR-3.4)"
 ```
 
@@ -427,13 +427,13 @@ git commit -m "docs(specs): PR-3.2/3.3/3.4 sidebar PR number badge"
 
 - [ ] **Step 1: Build and launch**
 
-Run: `swift build 2>&1 | tail -5 && swift run Espalier &`
+Run: `swift build 2>&1 | tail -5 && swift run Graftty &`
 
 (Or launch via Xcode if that's the established pattern.)
 
 - [ ] **Step 2: Verify badge on an open PR**
 
-Open Espalier on a repo where at least one worktree has an open PR. Confirm:
+Open Graftty on a repo where at least one worktree has an open PR. Confirm:
 
 - `#<number>` appears in green immediately to the right of the worktree's icon.
 - The icon is `arrow.triangle.pull` (the PR glyph, existing behavior — regression check).
@@ -453,7 +453,7 @@ Confirm worktrees without a PR show no badge (no `#` text) and use the house/bra
 
 - [ ] **Step 5: Stop the app**
 
-Quit Espalier cleanly (Cmd-Q).
+Quit Graftty cleanly (Cmd-Q).
 
 No commit for this task — it's verification.
 
@@ -469,7 +469,7 @@ No commit for this task — it's verification.
 - `statusColor` extension (spec §5.1) → Task 2 ✓
 - `PRButton.mergedText` consolidation (spec §5.2) → Task 2 ✓
 - `PRBadge` equality test (spec §6.1) → Task 1 ✓
-- `statusColor` palette test (spec §6.2) → Deferred: no Espalier-app test target exists; the switch exhaustiveness + manual smoke test (Task 6) covers this adequately. Adding a test target is out of scope for this change.
+- `statusColor` palette test (spec §6.2) → Deferred: no Graftty-app test target exists; the switch exhaustiveness + manual smoke test (Task 6) covers this adequately. Adding a test target is out of scope for this change.
 - Row rendering tests (spec §6.3) → Deferred: same reason. The `WorktreeRowIcon` icon-symbol logic (the only pure-Swift portion of row rendering) is already covered by existing `WorktreeRowIconTests`, and the icon-swap behavior is unchanged.
 - Manual smoke (spec §6.4) → Task 6 ✓
 - SPECS.md requirements (spec §7) → Task 5 ✓

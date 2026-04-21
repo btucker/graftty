@@ -39,7 +39,7 @@ jobs:
       - name: Verify web-client bundle is up to date
         run: |
           ./scripts/build-web.sh
-          git diff --exit-code Sources/EspalierKit/Web/Resources/ \
+          git diff --exit-code Sources/GrafttyKit/Web/Resources/ \
             || { echo "::error::web-client/ changed but the committed bundle is stale. Run ./scripts/build-web.sh locally and recommit."; exit 1; }
 
       - name: Cache SwiftPM build

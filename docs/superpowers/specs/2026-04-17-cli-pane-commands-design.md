@@ -4,16 +4,16 @@
 
 ## Problem
 
-The `espalier` CLI currently has one subcommand, `notify`. Users have no way to add, remove, or enumerate panes from the shell. Everything goes through the UI (Cmd+D, context menu, Cmd+W). We want shell-driven pane management so users can script pane layouts, launch tools into fresh panes from a shell alias, etc.
+The `graftty` CLI currently has one subcommand, `notify`. Users have no way to add, remove, or enumerate panes from the shell. Everything goes through the UI (Cmd+D, context menu, Cmd+W). We want shell-driven pane management so users can script pane layouts, launch tools into fresh panes from a shell alias, etc.
 
 ## Scope
 
 Three new subcommands, grouped under `pane`:
 
 ```
-espalier pane list
-espalier pane add   [--direction right|left|up|down]  [--command "..."]
-espalier pane close <id>
+graftty pane list
+graftty pane add   [--direction right|left|up|down]  [--command "..."]
+graftty pane close <id>
 ```
 
 All three resolve the target worktree from the current working directory, same rule `notify` uses. If PWD is not inside a tracked worktree, they exit 1 with the existing error message.
@@ -68,7 +68,7 @@ Implication for scripts: if you're closing multiple panes, do it high-to-low (`c
 
 ### Three new `NotificationMessage` cases
 
-Added to `Sources/EspalierKit/Notification/NotificationMessage.swift`:
+Added to `Sources/GrafttyKit/Notification/NotificationMessage.swift`:
 
 ```swift
 case listPanes(path: String)
@@ -76,7 +76,7 @@ case addPane(path: String, direction: PaneSplitWire, command: String?)
 case closePane(path: String, index: Int)
 ```
 
-`PaneSplitWire` is a `String`-backed `Codable` enum (`"right" | "left" | "up" | "down"`) living in `EspalierKit` so the CLI can encode it without depending on the app-layer `PaneSplit` enum. The app maps it to `PaneSplit` when handling.
+`PaneSplitWire` is a `String`-backed `Codable` enum (`"right" | "left" | "up" | "down"`) living in `GrafttyKit` so the CLI can encode it without depending on the app-layer `PaneSplit` enum. The app maps it to `PaneSplit` when handling.
 
 Codable `type` keys: `"list_panes"`, `"add_pane"`, `"close_pane"` — snake_case, matching the existing `"notify"` / `"clear"` convention.
 
@@ -88,7 +88,7 @@ Minimal change:
 
 - `SocketServer` gains a new callback: `onRequest: ((NotificationMessage) -> ResponseMessage?)?`. When set, after `onMessage` fires, the server calls `onRequest` and, if it returns non-nil, writes the encoded JSON + `\n` to the client before closing.
 - `SocketClient.send(_:)` grows a `sendExpectingResponse(_:) -> ResponseMessage?` variant. For `notify` / `clear`, the CLI keeps using the existing fire-and-forget `send`.
-- `ResponseMessage` is a new `Codable` enum in `EspalierKit`:
+- `ResponseMessage` is a new `Codable` enum in `GrafttyKit`:
 
   ```swift
   enum ResponseMessage: Codable {
@@ -108,7 +108,7 @@ The CLI prints `paneList` in the format above, prints `.error` to stderr and exi
 
 ## In-App Execution
 
-In `EspalierApp.handleNotification`, add three branches (pattern-match on the new cases). Each finds the target worktree via the existing path (scan `appState.repos[*].worktrees` for one matching `path`).
+In `GrafttyApp.handleNotification`, add three branches (pattern-match on the new cases). Each finds the target worktree via the existing path (scan `appState.repos[*].worktrees` for one matching `path`).
 
 ### `.listPanes`
 
@@ -145,20 +145,20 @@ New files:
 - None.
 
 Modified files:
-- `Sources/EspalierKit/Notification/NotificationMessage.swift` — add three cases, codable encoding. `ResponseMessage` + `PaneInfo` live in this same file to keep the wire protocol co-located.
-- `Sources/EspalierKit/Notification/SocketServer.swift` — add `onRequest` callback, write response before close.
-- `Sources/EspalierCLI/SocketClient.swift` — add `sendExpectingResponse`.
-- `Sources/EspalierCLI/CLI.swift` — add `Pane` parent command with three subcommands.
-- `Sources/Espalier/EspalierApp.swift` — wire `onRequest` in `startup()`, add the three branches to `handleNotification` (or split it into a dispatcher + per-case helpers — file is 745 lines already, worth keeping tidy). `splitPane` gains a `TerminalID?` return value.
+- `Sources/GrafttyKit/Notification/NotificationMessage.swift` — add three cases, codable encoding. `ResponseMessage` + `PaneInfo` live in this same file to keep the wire protocol co-located.
+- `Sources/GrafttyKit/Notification/SocketServer.swift` — add `onRequest` callback, write response before close.
+- `Sources/GrafttyCLI/SocketClient.swift` — add `sendExpectingResponse`.
+- `Sources/GrafttyCLI/CLI.swift` — add `Pane` parent command with three subcommands.
+- `Sources/Graftty/GrafttyApp.swift` — wire `onRequest` in `startup()`, add the three branches to `handleNotification` (or split it into a dispatcher + per-case helpers — file is 745 lines already, worth keeping tidy). `splitPane` gains a `TerminalID?` return value.
 
 ## Testing
 
-Unit tests (in `Tests/EspalierKitTests`):
+Unit tests (in `Tests/GrafttyKitTests`):
 - `NotificationMessage` round-trip encoding/decoding for each new case, including the `command: nil` vs `command: "x"` branches.
 - `ResponseMessage` round-trip encoding/decoding.
 - Index-to-leaf resolution: given a `SplitTree` with N leaves, index 0 / N+1 / negative return nil; valid indices return the expected `TerminalID`.
 
-Integration test (in `Tests/EspalierKitTests`):
+Integration test (in `Tests/GrafttyKitTests`):
 - Spin up a `SocketServer` with a stub `onRequest` that returns `.paneList([...])`, write a `listPanes` request from a test client, assert the decoded response.
 
 No integration tests for `addPane` / `closePane` — they require a live `TerminalManager` and libghostty surfaces, which the existing test harness doesn't set up. The risk surface is covered by the unit tests on the message plumbing + the reused `splitPane`/`closePane` helpers that have existing coverage via the UI paths.

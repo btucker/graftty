@@ -1,12 +1,12 @@
 #!/bin/bash
-# Package the Espalier app + CLI into a proper macOS .app bundle.
+# Package the Graftty app + CLI into a proper macOS .app bundle.
 #
-# Output: .build/Espalier.app/
+# Output: .build/Graftty.app/
 #   Contents/
 #     Info.plist
 #     MacOS/
-#       Espalier    (the SwiftUI app)
-#       espalier    (the CLI, renamed from espalier-cli per ATTN-1.1)
+#       Graftty    (the SwiftUI app)
+#       graftty    (the CLI, renamed from graftty-cli per ATTN-1.1)
 
 set -euo pipefail
 
@@ -15,18 +15,18 @@ REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO"
 
 CONFIGURATION="${CONFIGURATION:-debug}"
-ESPALIER_VERSION="${ESPALIER_VERSION:-0.0.0-dev}"
-if [[ ! "$ESPALIER_VERSION" =~ ^[A-Za-z0-9._+-]+$ ]]; then
-  echo "ESPALIER_VERSION must match [A-Za-z0-9._+-]+ (got '$ESPALIER_VERSION')" >&2
+GRAFTTY_VERSION="${GRAFTTY_VERSION:-0.0.0-dev}"
+if [[ ! "$GRAFTTY_VERSION" =~ ^[A-Za-z0-9._+-]+$ ]]; then
+  echo "GRAFTTY_VERSION must match [A-Za-z0-9._+-]+ (got '$GRAFTTY_VERSION')" >&2
   exit 1
 fi
 
-echo "→ ESPALIER_VERSION=$ESPALIER_VERSION"
+echo "→ GRAFTTY_VERSION=$GRAFTTY_VERSION"
 echo "→ swift build --configuration $CONFIGURATION"
 swift build --configuration "$CONFIGURATION"
 
 BIN_DIR="$(swift build --configuration "$CONFIGURATION" --show-bin-path)"
-APP="$REPO/.build/Espalier.app"
+APP="$REPO/.build/Graftty.app"
 
 echo "→ rm -rf $APP && mkdir bundle dirs"
 rm -rf "$APP"
@@ -35,22 +35,22 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
 echo "→ copy binaries"
 # The main app binary goes in Contents/MacOS/ per Apple convention.
 # The CLI lives in Contents/Helpers/ to avoid the case-insensitive filesystem
-# collision that happens when both "Espalier" and "espalier" sit in the same
+# collision that happens when both "Graftty" and "graftty" sit in the same
 # directory (APFS treats them as the same filename).
-cp "$BIN_DIR/Espalier" "$APP/Contents/MacOS/Espalier"
-cp "$BIN_DIR/espalier-cli" "$APP/Contents/Helpers/espalier"
+cp "$BIN_DIR/Graftty" "$APP/Contents/MacOS/Graftty"
+cp "$BIN_DIR/graftty-cli" "$APP/Contents/Helpers/graftty"
 
 # Copy SwiftPM resource bundles. `Bundle.module` resolves relative to
 # Bundle.main.resourceURL first, which maps to Contents/Resources/ for an
 # .app. Without this, WebStaticResources and anything else using
 # Bundle.module fails at runtime inside the installed app.
-for b in "$BIN_DIR"/*_EspalierKit.bundle "$BIN_DIR"/*_EspalierCLI.bundle; do
+for b in "$BIN_DIR"/*_GrafttyKit.bundle "$BIN_DIR"/*_GrafttyCLI.bundle; do
     [[ -e "$b" ]] || continue
     cp -R "$b" "$APP/Contents/Resources/$(basename "$b")"
 done
 
 echo "→ install bundled zmx"
-# zmx is the per-pane PTY child for every Espalier terminal, providing
+# zmx is the per-pane PTY child for every Graftty terminal, providing
 # session persistence so shells survive app quits. The binary is vendored
 # at Resources/zmx-binary/zmx; bundle.sh just copies it into Helpers/.
 cp "$REPO/Resources/zmx-binary/zmx" "$APP/Contents/Helpers/zmx"
@@ -60,7 +60,7 @@ echo "→ build + copy app icon"
 "$SCRIPT_DIR/build-icon.sh" "$APP/Contents/Resources/AppIcon.icns"
 
 echo "→ write Info.plist"
-# NOTE: heredoc is unquoted so $ESPALIER_VERSION expands.
+# NOTE: heredoc is unquoted so $GRAFTTY_VERSION expands.
 # Any other $ or backticks added below will also expand — keep
 # this body to literal XML plus that single substitution.
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -71,23 +71,23 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleExecutable</key>
-    <string>Espalier</string>
+    <string>Graftty</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundleIconName</key>
     <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
-    <string>com.espalier.app</string>
+    <string>com.graftty.app</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>Espalier</string>
+    <string>Graftty</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>$ESPALIER_VERSION</string>
+    <string>$GRAFTTY_VERSION</string>
     <key>CFBundleVersion</key>
-    <string>$ESPALIER_VERSION</string>
+    <string>$GRAFTTY_VERSION</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSApplicationCategoryType</key>
@@ -109,11 +109,11 @@ echo "→ ad-hoc codesign (inner → outer)"
 # --options runtime, --timestamp, --entitlements, and a separate
 # notarytool/stapler pass after.
 codesign --force --sign - "$APP/Contents/Helpers/zmx"
-codesign --force --sign - "$APP/Contents/Helpers/espalier"
-codesign --force --sign - "$APP/Contents/MacOS/Espalier"
+codesign --force --sign - "$APP/Contents/Helpers/graftty"
+codesign --force --sign - "$APP/Contents/MacOS/Graftty"
 codesign --force --sign - "$APP"
 codesign --verify --strict "$APP"
 
 echo "✓ Bundle at $APP"
 echo "  Run:  open '$APP'"
-echo "  CLI:  '$APP/Contents/Helpers/espalier' notify 'hello'"
+echo "  CLI:  '$APP/Contents/Helpers/graftty' notify 'hello'"

@@ -1,11 +1,11 @@
 # Ghostty Keybind Parity — Design Specification
 
-Make Espalier honor the user's Ghostty keybind configuration so that every
+Make Graftty honor the user's Ghostty keybind configuration so that every
 default Ghostty shortcut — and every customization in the user's `config`
-file — drives the equivalent Espalier behavior. `Cmd+D` splitting a pane,
+file — drives the equivalent Graftty behavior. `Cmd+D` splitting a pane,
 `Cmd+Opt+Arrow` navigating between splits, `Cmd+Shift+Return` toggling
 zoom: whatever chord the user has bound in Ghostty's config should produce
-the matching action in Espalier, without Espalier duplicating the keybind
+the matching action in Graftty, without Graftty duplicating the keybind
 table.
 
 ## Multi-Spec Context
@@ -14,7 +14,7 @@ This is the first of three planned specs addressing "support all the
 keyboard shortcuts that Ghostty.app does":
 
 - **Spec 1 (this spec):** config-driven keybind plumbing; dispatch for
-  every Ghostty apprt action that maps to Espalier's existing pane model;
+  every Ghostty apprt action that maps to Graftty's existing pane model;
   two new pane-layout actions (`toggle_split_zoom`, `resize_split`).
 - **Spec 2 (future):** command palette. Needs its own UX design (fuzzy
   ranking, action naming, visual treatment). Depends on the dispatch layer
@@ -30,7 +30,7 @@ deliberately shaped so they can plug into it without refactoring.
 After this spec ships, these user stories work:
 
 > I open my `~/Library/Application Support/com.mitchellh.ghostty/config`
-> and set `keybind = super+shift+n=new_split:right`. I relaunch Espalier.
+> and set `keybind = super+shift+n=new_split:right`. I relaunch Graftty.
 > `Cmd+Shift+N` now splits the focused pane to the right, and the "Split
 > Horizontally" menu item in the menu bar shows `⇧⌘N` as its hint.
 
@@ -44,7 +44,7 @@ After this spec ships, these user stories work:
 > divider reverses direction.
 
 All chords above are Ghostty's defaults (or trivial rebinds thereof).
-None are hardcoded in Espalier.
+None are hardcoded in Graftty.
 
 ## Architecture
 
@@ -58,14 +58,14 @@ SurfaceNSView.keyDown ──► ghostty_surface_key ──► libghostty reads c
                                                                                 │
 SwiftUI menu click   ──► .onClick closure ────────────────────────────────────► TerminalManager.handleAction
                                                                                 │
-                                                                                ├── new_split:* ──► onSplitRequest ──► EspalierApp.splitPane
-                                                                                ├── close_surface ──► onCloseRequest ──► EspalierApp.closePane
+                                                                                ├── new_split:* ──► onSplitRequest ──► GrafttyApp.splitPane
+                                                                                ├── close_surface ──► onCloseRequest ──► GrafttyApp.closePane
                                                                                 ├── goto_split:* ──► setFocus
                                                                                 ├── toggle_split_zoom ──► SplitTree.toggleZoom
                                                                                 └── resize_split ──► SplitTree.resizing
 ```
 
-`EspalierApp.commands` renders menu items whose `.keyboardShortcut(...)`
+`GrafttyApp.commands` renders menu items whose `.keyboardShortcut(...)`
 comes from the keybind bridge, not hardcoded strings. Non-menu actions
 reach `handleAction` via the action-callback path and never touch AppKit's
 menu dispatch.
@@ -73,20 +73,20 @@ menu dispatch.
 The important property: **the dispatch code (the switch inside
 `handleAction`) is the single source of truth for what each action does**.
 Menu click closures call into the same dispatch. There is no parallel
-Espalier-side keymap to maintain.
+Graftty-side keymap to maintain.
 
 ## Components
 
-### New — `Sources/Espalier/Terminal/GhosttyKeybindBridge.swift`
+### New — `Sources/Graftty/Terminal/GhosttyKeybindBridge.swift`
 
 ```swift
 /// Resolves chords from the user's Ghostty config for the subset of
-/// actions Espalier exposes as menu items.
+/// actions Graftty exposes as menu items.
 ///
 /// Rebuilt whenever the config reloads (reload_config action).
 @MainActor
 final class GhosttyKeybindBridge {
-    /// Actions Espalier cares about for menu-shortcut bridging. Not all
+    /// Actions Graftty cares about for menu-shortcut bridging. Not all
     /// handleAction cases appear here — only actions that also have a
     /// CommandMenu representation.
     enum Action: String, CaseIterable {
@@ -115,13 +115,13 @@ Implementation:
    `ghostty_input_trigger_s` carries a `ghostty_input_key_e` and a
    `ghostty_input_mods_e` bitfield, or a marker meaning "no binding."
 2. Translate via `Trigger → KeyboardShortcut` helper
-   (`Sources/Espalier/Terminal/KeyEquivalentFromTrigger.swift`).
+   (`Sources/Graftty/Terminal/KeyEquivalentFromTrigger.swift`).
 3. Cache in `[Action: KeyboardShortcut]`.
 
 Lookup failures (no binding, or unmapped key enum) return `nil` →
 menu item just omits the shortcut hint.
 
-### New — `Sources/Espalier/Terminal/KeyEquivalentFromTrigger.swift`
+### New — `Sources/Graftty/Terminal/KeyEquivalentFromTrigger.swift`
 
 Pure translator:
 
@@ -139,7 +139,7 @@ Two internal helpers:
 - `EventModifiers` from `ghostty_input_mods_e`: bitfield translation
   (SHIFT, CTRL, ALT, SUPER → `.shift, .control, .option, .command`).
 
-### Modified — `Sources/Espalier/EspalierApp.swift`
+### Modified — `Sources/Graftty/GrafttyApp.swift`
 
 - `@StateObject private var keybindBridge: GhosttyKeybindBridge` (or held
   by `TerminalManager` and surfaced via `@Published`).
@@ -151,16 +151,16 @@ Two internal helpers:
   Split`, `Equalize Splits`, `Reload Ghostty Config`, navigate
   prev/next leaf. Each gets its shortcut from the bridge.
 
-### Modified — `Sources/Espalier/Terminal/TerminalManager.swift`
+### Modified — `Sources/Graftty/Terminal/TerminalManager.swift`
 
 Add `handleAction` cases for every action in bucket A2 (see Action
 Coverage below). Cases that fan out to the host call their respective
 `onSplitRequest` / `onCloseRequest` / new `onReloadConfig` closures.
 Cases that mutate layout (`toggle_split_zoom`, `resize_split`,
 `equalize_splits`) call back through `onSplitTreeMutation` with a
-mutation enum so `EspalierApp` can update `AppState`.
+mutation enum so `GrafttyApp` can update `AppState`.
 
-### Modified — `Sources/EspalierKit/Layout/SplitTree.swift`
+### Modified — `Sources/GrafttyKit/Layout/SplitTree.swift`
 
 Add zoom state and three new mutation methods. Details in sections
 "Pane Zoom" and "Split Resize" below.
@@ -170,10 +170,10 @@ Add zoom state and three new mutation methods. Details in sections
 Four buckets. Every keybind in Ghostty's default set lives in exactly one
 bucket.
 
-### A1. Already working — libghostty-internal, no Espalier code needed
+### A1. Already working — libghostty-internal, no Graftty code needed
 
 These fire inside libghostty during `ghostty_surface_key` and never reach
-Espalier's action callback. User config customizations work today because
+Graftty's action callback. User config customizations work today because
 `loadGhosttyMacOSConfigIfPresent` already feeds the user's config into
 libghostty.
 
@@ -184,7 +184,7 @@ Listed for completeness (so we don't accidentally re-plumb):
 `jump_to_prompt_next`, `increase_font_size`, `decrease_font_size`,
 `reset_font_size`, `toggle_inspector`.
 
-### A2. New dispatch — Espalier already has the operation
+### A2. New dispatch — Graftty already has the operation
 
 Wire `handleAction` cases; query `ghostty_config_trigger` for menu
 bindings where applicable.
@@ -199,7 +199,7 @@ bindings where applicable.
 | `goto_split:left/right/top/bottom` | `navigatePane(direction)` → `setFocus` | Navigate Left/Right/Up/Down (existing) |
 | `goto_split:previous/next` | traverse leaves in tree-order | Previous/Next Pane (new) |
 | `equalize_splits` | `SplitTree.equalizing()` on focused worktree | Equalize Splits (new) |
-| `reload_config` | reload Ghostty config, rebuild `GhosttyKeybindBridge`, notify SwiftUI | Reload Ghostty Config (new, under Espalier menu) |
+| `reload_config` | reload Ghostty config, rebuild `GhosttyKeybindBridge`, notify SwiftUI | Reload Ghostty Config (new, under Graftty menu) |
 | `present_terminal` | `setFocus(terminalID)` | — (action-only; fired when libghostty wants a specific surface focused) |
 
 ### A3. New dispatch + new model work
@@ -214,7 +214,7 @@ in the next two sections.
 
 ### A4. Silent no-op — registered in comments
 
-These actions correspond to Ghostty concepts Espalier doesn't model. User
+These actions correspond to Ghostty concepts Graftty doesn't model. User
 may have them bound in their config; pressing the chord does nothing. No
 menu entry, no case in `handleAction` (falls into `default: break`).
 Comment in the switch documents each so future readers know we looked at
@@ -227,7 +227,7 @@ Windows: `new_window`, `close_all_windows`, `toggle_window_decorations`,
 Overlays & chrome: `toggle_quick_terminal`, `toggle_command_palette`,
 `toggle_tab_overview`, `check_for_updates`, `open_config`.
 Search: `start_search`, `search_{next,previous}`, `start_search_reverse` —
-deferred until Espalier has a scrollback search UI.
+deferred until Graftty has a scrollback search UI.
 
 ## Pane Zoom (`toggle_split_zoom`)
 
@@ -242,7 +242,7 @@ struct SplitTree {
 }
 ```
 
-Ephemeral, not persisted. One zoom state per worktree (since Espalier has
+Ephemeral, not persisted. One zoom state per worktree (since Graftty has
 one `SplitTree` per worktree). This matches upstream Ghostty's
 `SplitTree.swift` where `zoomed` lives on the tree, not on any per-split
 node.
@@ -380,7 +380,7 @@ extension SplitTree {
 **Why `ancestorBounds` is a parameter** (not looked up internally):
 `SplitTree` is a pure model; it doesn't know its rendered pixel size.
 Ghostty does the equivalent — `SplitTree.resizing` takes the split's
-pixel-size slot. The call site (inside `EspalierApp` or `TerminalManager`)
+pixel-size slot. The call site (inside `GrafttyApp` or `TerminalManager`)
 reads bounds from the SwiftUI layout and passes them in. This keeps
 `SplitTree` layout-independent and testable without a renderer.
 
@@ -394,7 +394,7 @@ case GHOSTTY_ACTION_RESIZE_SPLIT:
     onResizeSplit?(id, direction, resize.amount)
 ```
 
-`EspalierApp` resolves `ancestorBounds` from the current layout (stored
+`GrafttyApp` resolves `ancestorBounds` from the current layout (stored
 per-worktree in `@State` indexed by split-node id) and calls
 `tree.resizing(...)` with the full argument list. If `throws`, log +
 no-op.
@@ -426,10 +426,10 @@ saturate (no overflow, no error).
 
 ## Testing
 
-Existing constraint: the `Espalier` app target has no test target. Tests
-live in `EspalierKitTests` (model layer) or as manual smoke checks.
+Existing constraint: the `Graftty` app target has no test target. Tests
+live in `GrafttyKitTests` (model layer) or as manual smoke checks.
 
-### Automated — in `EspalierKitTests`
+### Automated — in `GrafttyKitTests`
 
 - **`KeyEquivalentFromTriggerTests`**: exhaustive table test covering
   every `ghostty_input_key_e` we care about. Assert
@@ -459,7 +459,7 @@ Captured in the final commit of the implementation plan. Covers:
    reload config).
 2. Add `keybind = super+shift+x=close_surface` to
    `~/Library/Application Support/com.mitchellh.ghostty/config`.
-   Restart Espalier. Verify (a) `Cmd+Shift+X` closes the focused pane,
+   Restart Graftty. Verify (a) `Cmd+Shift+X` closes the focused pane,
    (b) the Close Pane menu item shows `⇧⌘X`.
 3. Zoom a pane. Verify only that pane visible, siblings hidden. Unzoom;
    verify split tree restores without flicker or scrollback loss.
@@ -479,11 +479,11 @@ Add a new section §14 (after §13 zmx):
 ## §14 Keyboard Shortcuts
 
 **KBD-1.1** When the user presses a chord bound in their Ghostty config
-to an apprt action Espalier supports, the application shall dispatch
+to an apprt action Graftty supports, the application shall dispatch
 that action.
 
 **KBD-1.2** When the user's Ghostty config omits a binding for an action,
-the corresponding Espalier menu item shall render without a shortcut hint
+the corresponding Graftty menu item shall render without a shortcut hint
 but remain clickable.
 
 **KBD-2.1** When the user presses `toggle_split_zoom` on a focused pane
@@ -513,9 +513,9 @@ its Ghostty-config-derived menu shortcuts without requiring a restart.
 
 - Command palette UI (spec 2).
 - Quick terminal window (spec 3).
-- Scrollback search (`start_search` etc.). Deferred until Espalier has
+- Scrollback search (`start_search` etc.). Deferred until Graftty has
   a search UI.
-- Espalier-specific chord customization (a user wanting an Espalier-only
+- Graftty-specific chord customization (a user wanting an Graftty-only
   shortcut that Ghostty doesn't know about). Not needed for parity with
   Ghostty; tracked separately if requested.
 - Per-worktree or per-pane keybind scoping. Ghostty's config is

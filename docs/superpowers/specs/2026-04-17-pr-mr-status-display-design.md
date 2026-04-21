@@ -1,6 +1,6 @@
 # PR/MR Status Display — Design Specification
 
-Surface GitHub PR and GitLab MR status for each worktree's branch in Espalier's UI. When the repo's origin points at a recognized host and the corresponding CLI (`gh` or `glab`) is available, a compact button in the breadcrumb shows the PR/MR number, title, and CI rollup. Clicking opens the PR/MR in the user's default browser.
+Surface GitHub PR and GitLab MR status for each worktree's branch in Graftty's UI. When the repo's origin points at a recognized host and the corresponding CLI (`gh` or `glab`) is available, a compact button in the breadcrumb shows the PR/MR number, title, and CI rollup. Clicking opens the PR/MR in the user's default browser.
 
 This work also rewires git/CLI invocations to be async-native and PATH-agnostic, and adds polling to `WorktreeStatsStore` so divergence counts stay live without requiring the user to manually fetch.
 
@@ -18,7 +18,7 @@ This work also rewires git/CLI invocations to be async-native and PATH-agnostic,
 
 **Non-goals (explicit):**
 
-- Creating PRs or MRs from Espalier.
+- Creating PRs or MRs from Graftty.
 - Showing reviews, comments, or checks detail.
 - Per-worktree status dots in the sidebar (the store is designed to support this later; out of scope for this spec).
 - Certifying GitHub Enterprise or self-hosted GitLab (they should work since `gh`/`glab` handle enterprise auth natively, but we don't validate).
@@ -26,12 +26,12 @@ This work also rewires git/CLI invocations to be async-native and PATH-agnostic,
 
 ## 2. Architecture
 
-Three-layer split, matching existing project convention (pure model in `EspalierKit`, app-level observable stores, SwiftUI views).
+Three-layer split, matching existing project convention (pure model in `GrafttyKit`, app-level observable stores, SwiftUI views).
 
-### 2.1 EspalierKit (pure Swift, no UI)
+### 2.1 GrafttyKit (pure Swift, no UI)
 
 ```
-Sources/EspalierKit/
+Sources/GrafttyKit/
   CLI/
     CLIRunner.swift               ← new: async Process wrapper, PATH-enriched
     CLIExecutor.swift             ← new: protocol for test injection
@@ -48,10 +48,10 @@ Sources/EspalierKit/
     (existing callers migrated to async)
 ```
 
-### 2.2 Espalier (app, @MainActor observable state)
+### 2.2 Graftty (app, @MainActor observable state)
 
 ```
-Sources/Espalier/Model/
+Sources/Graftty/Model/
   PRStatusStore.swift             ← new
   PollingTicker.swift             ← new: shared tick helper
   WorktreeStatsStore.swift        ← existing, gains polling + git-fetch
@@ -60,7 +60,7 @@ Sources/Espalier/Model/
 ### 2.3 Views
 
 ```
-Sources/Espalier/Views/
+Sources/Graftty/Views/
   BreadcrumbBar.swift             ← rewritten
   PRButton.swift                  ← new
   WorktreeRow.swift               ← small edit: italic "root" for home
@@ -152,7 +152,7 @@ public struct HostingOrigin: Codable, Sendable, Equatable {
     public let provider: HostingProvider
     public let host: String      // "github.com", "gitlab.com", "github.acme.com", ...
     public let owner: String     // "btucker"
-    public let repo: String      // "espalier"
+    public let repo: String      // "graftty"
 }
 ```
 
@@ -173,9 +173,9 @@ public enum GitOriginHost {
 
 | Input | Result |
 |---|---|
-| `git@github.com:btucker/espalier.git` | `.github / github.com / btucker / espalier` |
-| `https://github.com/btucker/espalier.git` | same |
-| `https://github.com/btucker/espalier` (no `.git`) | same |
+| `git@github.com:btucker/graftty.git` | `.github / github.com / btucker / graftty` |
+| `https://github.com/btucker/graftty.git` | same |
+| `https://github.com/btucker/graftty` (no `.git`) | same |
 | `git@gitlab.com:foo/bar.git` | `.gitlab / gitlab.com / foo / bar` |
 | `git@github.acme.com:team/proj.git` | `.github / github.acme.com / team / proj` (heuristic: host contains "github") |
 | `git@gitlab.acme.com:team/proj.git` | `.gitlab / gitlab.acme.com / team / proj` |
@@ -383,7 +383,7 @@ In `branchLabel`, when `isMainCheckout && entry.state != .stale`, render `Text("
 
 ### 7.4 `MainWindow` wiring
 
-`MainWindow` gains `let prStatusStore: PRStatusStore` alongside `statsStore`. Both stores are instantiated at the `EspalierApp` level and passed into `MainWindow`. `MainWindow` calls `prStatusStore.start(appState:)` and `statsStore.startPolling(appState:)` on first appearance; both are stopped on app quit.
+`MainWindow` gains `let prStatusStore: PRStatusStore` alongside `statsStore`. Both stores are instantiated at the `GrafttyApp` level and passed into `MainWindow`. `MainWindow` calls `prStatusStore.start(appState:)` and `statsStore.startPolling(appState:)` on first appearance; both are stopped on app quit.
 
 `BreadcrumbBar` receives the selected worktree's `PRInfo?` via lookup against `prStatusStore.infos[worktreePath]`.
 
@@ -409,7 +409,7 @@ Worktree stats polling failures are also silent — the existing `baseRef` / `st
 | `CLIRunner` | Integration against `/bin/echo` and a shell script fixture; assert PATH enrichment, exit codes, stderr capture, error types. |
 | `GitOriginHost.parse` | Pure unit tests against fixture URLs. |
 | `GitOriginHost.detect` | `FakeCLIExecutor` returns canned `git remote get-url` output. |
-| `GitHubPRFetcher` / `GitLabPRFetcher` | `FakeCLIExecutor` returns JSON fixtures captured from real CLI output (checked into `Tests/EspalierKitTests/Fixtures/hosting/`). Assert correct CLI arg shape and `PRInfo` decoding. |
+| `GitHubPRFetcher` / `GitLabPRFetcher` | `FakeCLIExecutor` returns JSON fixtures captured from real CLI output (checked into `Tests/GrafttyKitTests/Fixtures/hosting/`). Assert correct CLI arg shape and `PRInfo` decoding. |
 | `PRStatusStore` | Inject fake fetcher; drive the ticker manually; assert cadence progression, dedup, back-off, pause-on-inactive, pulse-from-refresh-now. |
 | `WorktreeStatsStore` polling | Inject fake `CLIExecutor`; assert fetch then recompute sequencing; failure back-off. |
 | Existing `Git*` callers | Tests updated to use `FakeCLIExecutor` rather than relying on a real git binary. |

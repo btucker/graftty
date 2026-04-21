@@ -6,7 +6,7 @@ Run before each release that touches the web access feature (§15).
 
 ### Step 1 — Basic couch-terminal flow
 
-Enable web access in Settings. Open a pane in Espalier. Right-click its row →
+Enable web access in Settings. Open a pane in Graftty. Right-click its row →
 "Copy web URL". The URL will be of the form `http://<tailscale-ip>:8799/session/<name>`.
 Open it in Safari on your phone (same tailnet). Pane renders. Type on phone →
 echo on Mac. Type on Mac → echo on phone. Resize phone's browser width → shell
@@ -36,7 +36,7 @@ In Settings, disable web access. Safari on phone → connection refused.
 
 ### Step 5 — Tailscale unavailable
 
-Quit Tailscale from the menu bar. Relaunch Espalier (web access still
+Quit Tailscale from the menu bar. Relaunch Graftty (web access still
 enabled). Settings pane shows "Tailscale unavailable"; no port is bound
 (verify with `lsof -i :8799`).
 

@@ -1,16 +1,16 @@
 # Homebrew Distribution — Design Specification
 
-Ship Espalier as a Homebrew Cask installable from a personal tap, with releases built and published automatically when a `v*` git tag is pushed.
+Ship Graftty as a Homebrew Cask installable from a personal tap, with releases built and published automatically when a `v*` git tag is pushed.
 
 ## Goal
 
 After this ships, this user story works:
 
-> I want to try Espalier. I run `brew tap btucker/espalier && brew install --cask espalier`. Homebrew downloads the latest release, drops `Espalier.app` into `/Applications`, and symlinks the bundled CLI onto my PATH so `espalier --help` works in my terminal. I right-click the app once to clear the Gatekeeper warning (until notarization lands), and I'm running.
+> I want to try Graftty. I run `brew tap btucker/graftty && brew install --cask graftty`. Homebrew downloads the latest release, drops `Graftty.app` into `/Applications`, and symlinks the bundled CLI onto my PATH so `graftty --help` works in my terminal. I right-click the app once to clear the Gatekeeper warning (until notarization lands), and I'm running.
 
 For the maintainer (Ben):
 
-> I bump the version, run `git tag v0.2.0 && git push origin v0.2.0`. Within a few minutes, GitHub Actions has built the release-mode bundle, ad-hoc signed it, zipped it, attached the zip to a fresh GitHub release, and pushed an updated `Casks/espalier.rb` to the tap. No further manual steps.
+> I bump the version, run `git tag v0.2.0 && git push origin v0.2.0`. Within a few minutes, GitHub Actions has built the release-mode bundle, ad-hoc signed it, zipped it, attached the zip to a fresh GitHub release, and pushed an updated `Casks/graftty.rb` to the tap. No further manual steps.
 
 ## Scope
 
@@ -23,11 +23,11 @@ This spec covers the **personal-tap + ad-hoc-signed** path. Out of scope:
 
 ## Architecture
 
-The system has four components — three living in `btucker/espalier` and one in a new tap repo:
+The system has four components — three living in `btucker/graftty` and one in a new tap repo:
 
 ```
-btucker/espalier (this repo)            btucker/homebrew-espalier (new)
-├── scripts/bundle.sh        ┐          └── Casks/espalier.rb
+btucker/graftty (this repo)            btucker/homebrew-graftty (new)
+├── scripts/bundle.sh        ┐          └── Casks/graftty.rb
 │   (version-aware,          │              ↑
 │    ad-hoc signed)          │              │ updated on each release
 ├── .github/workflows/       │              │ via cross-repo PAT
@@ -41,11 +41,11 @@ The release workflow is the integration point — everything else is independent
 
 Today `scripts/bundle.sh` hardcodes `0.1.0` in the Info.plist heredoc. With tag-driven releases this immediately drifts. Change the script to:
 
-- Read `ESPALIER_VERSION` from environment, defaulting to `0.0.0-dev` for local builds
+- Read `GRAFTTY_VERSION` from environment, defaulting to `0.0.0-dev` for local builds
 - Substitute that value into both `CFBundleShortVersionString` and `CFBundleVersion`
 - Print the version it's building at the start of the run, so local invocations are unambiguous
 
-Implementation: replace the static heredoc with one that interpolates `$ESPALIER_VERSION`, or write the plist via `/usr/libexec/PlistBuddy` after templating. Either works; the heredoc edit is smaller.
+Implementation: replace the static heredoc with one that interpolates `$GRAFTTY_VERSION`, or write the plist via `/usr/libexec/PlistBuddy` after templating. Either works; the heredoc edit is smaller.
 
 ### Component 2: Ad-hoc codesigning step in `bundle.sh`
 
@@ -53,8 +53,8 @@ After all binaries are in place but before "✓ Bundle at …", sign every Mach-
 
 ```bash
 codesign --force --sign - "$APP/Contents/Helpers/zmx"
-codesign --force --sign - "$APP/Contents/Helpers/espalier"
-codesign --force --sign - "$APP/Contents/MacOS/Espalier"
+codesign --force --sign - "$APP/Contents/Helpers/graftty"
+codesign --force --sign - "$APP/Contents/MacOS/Graftty"
 codesign --force --sign - "$APP"
 ```
 
@@ -77,53 +77,53 @@ Runs on `macos-14`. Steps:
 1. Checkout (full history not required, but `fetch-depth: 0` is harmless and helps if the script ever wants `git describe`)
 2. Select stable Xcode (whatever the existing CI workflow pins)
 3. Extract version: `VERSION=${GITHUB_REF_NAME#v}` (strip leading `v`, fail loudly if it's not there)
-4. `CONFIGURATION=release ESPALIER_VERSION="$VERSION" scripts/bundle.sh`
-5. Zip with `ditto -c -k --keepParent .build/Espalier.app "Espalier-$VERSION.zip"` (`ditto` over `zip` because it preserves resource forks and extended attributes that `codesign` cares about)
-6. Compute sha256: `shasum -a 256 "Espalier-$VERSION.zip"`
-7. Create the release: `gh release create "v$VERSION" "Espalier-$VERSION.zip" --generate-notes` (uses default `GITHUB_TOKEN`, scoped to this repo)
+4. `CONFIGURATION=release GRAFTTY_VERSION="$VERSION" scripts/bundle.sh`
+5. Zip with `ditto -c -k --keepParent .build/Graftty.app "Graftty-$VERSION.zip"` (`ditto` over `zip` because it preserves resource forks and extended attributes that `codesign` cares about)
+6. Compute sha256: `shasum -a 256 "Graftty-$VERSION.zip"`
+7. Create the release: `gh release create "v$VERSION" "Graftty-$VERSION.zip" --generate-notes` (uses default `GITHUB_TOKEN`, scoped to this repo)
 8. Update the tap (see below) — uses cross-repo `HOMEBREW_TAP_TOKEN` PAT
 
 #### Tap update step (within the release workflow)
 
 ```bash
-git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/btucker/homebrew-espalier.git" tap
+git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/btucker/homebrew-graftty.git" tap
 cd tap
-sed -i '' -E "s/^  version \".*\"/  version \"$VERSION\"/" Casks/espalier.rb
-sed -i '' -E "s/^  sha256 \".*\"/  sha256 \"$SHA256\"/" Casks/espalier.rb
-git config user.name  "espalier-release-bot"
-git config user.email "espalier-release-bot@users.noreply.github.com"
-git commit -am "espalier $VERSION"
+sed -i '' -E "s/^  version \".*\"/  version \"$VERSION\"/" Casks/graftty.rb
+sed -i '' -E "s/^  sha256 \".*\"/  sha256 \"$SHA256\"/" Casks/graftty.rb
+git config user.name  "graftty-release-bot"
+git config user.email "graftty-release-bot@users.noreply.github.com"
+git commit -am "graftty $VERSION"
 git push
 ```
 
 Direct push (not PR) to the tap's `main` since it's a personal tap and there's no review workflow to gate on. Two `sed` calls instead of one because keeping them separate makes the failure mode obvious if either field's literal text drifts in the cask.
 
-### Component 4: The cask file — `Casks/espalier.rb`
+### Component 4: The cask file — `Casks/graftty.rb`
 
 ```ruby
-cask "espalier" do
+cask "graftty" do
   version "0.1.0"
   sha256 "..."
 
-  url "https://github.com/btucker/espalier/releases/download/v#{version}/Espalier-#{version}.zip"
-  name "Espalier"
+  url "https://github.com/btucker/graftty/releases/download/v#{version}/Graftty-#{version}.zip"
+  name "Graftty"
   desc "Worktree-aware terminal multiplexer"
-  homepage "https://github.com/btucker/espalier"
+  homepage "https://github.com/btucker/graftty"
 
   depends_on macos: ">= :sonoma"
 
-  app "Espalier.app"
-  binary "#{appdir}/Espalier.app/Contents/Helpers/espalier"
+  app "Graftty.app"
+  binary "#{appdir}/Graftty.app/Contents/Helpers/graftty"
 
   zap trash: [
-    "~/Library/Application Support/Espalier",
-    "~/Library/Preferences/com.espalier.app.plist",
-    "~/Library/Caches/com.espalier.app",
+    "~/Library/Application Support/Graftty",
+    "~/Library/Preferences/com.graftty.app.plist",
+    "~/Library/Caches/com.graftty.app",
   ]
 
   caveats <<~EOS
-    Espalier is currently ad-hoc signed (not notarized). On first launch,
-    macOS will refuse to open it. Right-click Espalier in Applications and
+    Graftty is currently ad-hoc signed (not notarized). On first launch,
+    macOS will refuse to open it. Right-click Graftty in Applications and
     choose "Open" to approve it once.
   EOS
 end
@@ -131,18 +131,18 @@ end
 
 Key points:
 
-- `binary "#{appdir}/Espalier.app/Contents/Helpers/espalier"` — Homebrew creates `/opt/homebrew/bin/espalier` as a symlink into the app bundle. No copy, no second source of truth. When the cask uninstalls, the symlink is removed automatically.
+- `binary "#{appdir}/Graftty.app/Contents/Helpers/graftty"` — Homebrew creates `/opt/homebrew/bin/graftty` as a symlink into the app bundle. No copy, no second source of truth. When the cask uninstalls, the symlink is removed automatically.
 - `depends_on macos: ">= :sonoma"` matches `LSMinimumSystemVersion` 14.0 in the Info.plist.
-- `zap` runs only on `brew uninstall --zap`. The trio listed mirrors what the app actually writes (Application Support for app data, Preferences plist for `@AppStorage`, Caches for transient data). Nothing under `~/Library/LaunchAgents` because Espalier ships no agents.
+- `zap` runs only on `brew uninstall --zap`. The trio listed mirrors what the app actually writes (Application Support for app data, Preferences plist for `@AppStorage`, Caches for transient data). Nothing under `~/Library/LaunchAgents` because Graftty ships no agents.
 - `caveats` exists only until notarization lands; deletable in one PR thereafter.
 
 ## One-time setup the user does by hand
 
 Before the first tagged release can succeed:
 
-1. Create empty public repo `btucker/homebrew-espalier` on GitHub
-2. Create a fine-grained PAT scoped to that repo with **Contents: read & write** permission. Save as repository secret `HOMEBREW_TAP_TOKEN` on `btucker/espalier`.
-3. Commit an initial `Casks/espalier.rb` to the tap (the workflow updates it in-place via `sed`, so the file has to exist with the literal `version "..."` and `sha256 "..."` lines for `sed` to match). Initial values can be placeholders — they'll be overwritten on the first release.
+1. Create empty public repo `btucker/homebrew-graftty` on GitHub
+2. Create a fine-grained PAT scoped to that repo with **Contents: read & write** permission. Save as repository secret `HOMEBREW_TAP_TOKEN` on `btucker/graftty`.
+3. Commit an initial `Casks/graftty.rb` to the tap (the workflow updates it in-place via `sed`, so the file has to exist with the literal `version "..."` and `sha256 "..."` lines for `sed` to match). Initial values can be placeholders — they'll be overwritten on the first release.
 
 After this, every `git tag v*.*.* && git push --tags` is hands-off.
 
@@ -155,15 +155,15 @@ Tag pushed: v0.2.0
 GitHub Actions: release.yml on macos-14
    │
    ├─ swift build --configuration release
-   ├─ scripts/bundle.sh (with ESPALIER_VERSION=0.2.0)
+   ├─ scripts/bundle.sh (with GRAFTTY_VERSION=0.2.0)
    │     └─ codesign --sign - all Mach-Os, inner→outer
-   ├─ ditto -c -k --keepParent → Espalier-0.2.0.zip
+   ├─ ditto -c -k --keepParent → Graftty-0.2.0.zip
    ├─ shasum -a 256 → SHA256
-   ├─ gh release create v0.2.0 Espalier-0.2.0.zip
+   ├─ gh release create v0.2.0 Graftty-0.2.0.zip
    └─ clone tap, sed version+sha256, commit, push
    │
    ▼
-brew update + brew install --cask espalier picks up new version
+brew update + brew install --cask graftty picks up new version
 ```
 
 ## Failure modes and recovery
@@ -178,9 +178,9 @@ brew update + brew install --cask espalier picks up new version
 Local sanity (no network):
 
 ```bash
-ESPALIER_VERSION=0.0.0-test scripts/bundle.sh
-codesign --verify --verbose=2 .build/Espalier.app
-codesign --display --verbose=2 .build/Espalier.app
+GRAFTTY_VERSION=0.0.0-test scripts/bundle.sh
+codesign --verify --verbose=2 .build/Graftty.app
+codesign --display --verbose=2 .build/Graftty.app
 ```
 
 Workflow shakedown (cuts a real release; fine for v0.0.0-rc tags):
@@ -194,12 +194,12 @@ git push origin v0.0.0-rc1
 End-to-end (on a clean Mac or fresh Homebrew prefix):
 
 ```bash
-brew tap btucker/espalier
-brew install --cask espalier
-espalier --help                   # CLI symlink works
-open /Applications/Espalier.app   # app launches (after first-run Gatekeeper override)
-brew uninstall --cask --zap espalier
-ls ~/Library/Application\ Support/Espalier 2>/dev/null  # zap removed it
+brew tap btucker/graftty
+brew install --cask graftty
+graftty --help                   # CLI symlink works
+open /Applications/Graftty.app   # app launches (after first-run Gatekeeper override)
+brew uninstall --cask --zap graftty
+ls ~/Library/Application\ Support/Graftty 2>/dev/null  # zap removed it
 ```
 
 ## Future extensions

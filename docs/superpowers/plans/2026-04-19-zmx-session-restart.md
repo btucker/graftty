@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Detect zmx session loss at the two moments Espalier touches zmx (cold-start surface creation, libghostty close-callback) and recover with one shared mechanism — no pane disappears just because a daemon died.
+**Goal:** Detect zmx session loss at the two moments Graftty touches zmx (cold-start surface creation, libghostty close-callback) and recover with one shared mechanism — no pane disappears just because a daemon died.
 
 **Architecture:** Add one detection helper (`ZmxLauncher.isSessionMissing(_:)`), one piece of TerminalManager state (`intentionalCloses` populated by `killZmxSession`), and two effects: clear the `wasRehydrated` label on cold-start when the daemon is dead (so the default command runs), and rebuild the surface in place on mid-flight death (so the pane stays).
 
@@ -16,30 +16,30 @@
 
 | File | Disposition | Responsibility |
 | ---- | ----------- | -------------- |
-| `Sources/EspalierKit/Zmx/ZmxLauncher.swift` | Modify | Add `isSessionMissing(_:)` wrapping `listSessions()` |
-| `Sources/EspalierKit/Zmx/SessionRestartBanner.swift` | Create | Pure function: timestamp → banner string for `initial_input` |
-| `Sources/Espalier/Terminal/TerminalManager.swift` | Modify | Add `intentionalCloses`, `clearRehydrated`, `restartSurface`, `shouldRestartInsteadOfClose`; populate `intentionalCloses` from `killZmxSession`; check + clear in `createSurface(s)` |
-| `Sources/Espalier/EspalierApp.swift` | Modify | Route `onCloseRequest` through `shouldRestartInsteadOfClose` to decide destroy vs restart |
-| `Tests/EspalierKitTests/Zmx/ZmxLauncherTests.swift` | Modify | Unit tests for `isSessionMissing` |
-| `Tests/EspalierKitTests/Zmx/SessionRestartBannerTests.swift` | Create | Pure unit tests for banner formatting |
-| `Tests/EspalierKitTests/Zmx/ZmxSurvivalIntegrationTests.swift` | Modify | Integration test for `isSessionMissing` against real zmx |
+| `Sources/GrafttyKit/Zmx/ZmxLauncher.swift` | Modify | Add `isSessionMissing(_:)` wrapping `listSessions()` |
+| `Sources/GrafttyKit/Zmx/SessionRestartBanner.swift` | Create | Pure function: timestamp → banner string for `initial_input` |
+| `Sources/Graftty/Terminal/TerminalManager.swift` | Modify | Add `intentionalCloses`, `clearRehydrated`, `restartSurface`, `shouldRestartInsteadOfClose`; populate `intentionalCloses` from `killZmxSession`; check + clear in `createSurface(s)` |
+| `Sources/Graftty/GrafttyApp.swift` | Modify | Route `onCloseRequest` through `shouldRestartInsteadOfClose` to decide destroy vs restart |
+| `Tests/GrafttyKitTests/Zmx/ZmxLauncherTests.swift` | Modify | Unit tests for `isSessionMissing` |
+| `Tests/GrafttyKitTests/Zmx/SessionRestartBannerTests.swift` | Create | Pure unit tests for banner formatting |
+| `Tests/GrafttyKitTests/Zmx/ZmxSurvivalIntegrationTests.swift` | Modify | Integration test for `isSessionMissing` against real zmx |
 | `SPECS.md` | Modify | Add §13.7 (ZMX-7.1 — ZMX-7.4); amend ZMX-4.3 |
 
-The `SessionRestartBanner` lives in `EspalierKit/Zmx/` rather than at the EspalierKit root because it's a zmx-survival concern; co-locating with `ZmxLauncher` keeps the surface cohesive.
+The `SessionRestartBanner` lives in `GrafttyKit/Zmx/` rather than at the GrafttyKit root because it's a zmx-survival concern; co-locating with `ZmxLauncher` keeps the surface cohesive.
 
-The split between TerminalManager and EspalierApp matches the existing pattern: TerminalManager exposes capabilities (`restartSurface`, `shouldRestartInsteadOfClose`); EspalierApp's `startup()` closure picks the policy (destroy vs restart). This mirrors `onCloseRequest` → `closePane` and `onSplitRequest` → `splitPane`.
+The split between TerminalManager and GrafttyApp matches the existing pattern: TerminalManager exposes capabilities (`restartSurface`, `shouldRestartInsteadOfClose`); GrafttyApp's `startup()` closure picks the policy (destroy vs restart). This mirrors `onCloseRequest` → `closePane` and `onSplitRequest` → `splitPane`.
 
 ---
 
 ## Task 1: Add `isSessionMissing(_:)` to `ZmxLauncher`
 
 **Files:**
-- Modify: `Sources/EspalierKit/Zmx/ZmxLauncher.swift` (after `listSessions()` near line 213)
-- Test: `Tests/EspalierKitTests/Zmx/ZmxLauncherTests.swift` (add a `MARK: isSessionMissing` block at the end of the suite)
+- Modify: `Sources/GrafttyKit/Zmx/ZmxLauncher.swift` (after `listSessions()` near line 213)
+- Test: `Tests/GrafttyKitTests/Zmx/ZmxLauncherTests.swift` (add a `MARK: isSessionMissing` block at the end of the suite)
 
 - [ ] **Step 1: Write failing tests**
 
-Append to `Tests/EspalierKitTests/Zmx/ZmxLauncherTests.swift`, just inside the `}` that closes the test struct:
+Append to `Tests/GrafttyKitTests/Zmx/ZmxLauncherTests.swift`, just inside the `}` that closes the test struct:
 
 ```swift
     // MARK: isSessionMissing
@@ -57,7 +57,7 @@ Append to `Tests/EspalierKitTests/Zmx/ZmxLauncherTests.swift`, just inside the `
         let launcher = ZmxLauncher(
             executable: URL(fileURLWithPath: "/nonexistent/path/zmx")
         )
-        #expect(launcher.isSessionMissing("espalier-aaaa1111") == false)
+        #expect(launcher.isSessionMissing("graftty-aaaa1111") == false)
         // ^ binary missing means listSessions returns [] without throwing
         // (per its `guard isAvailable else { return [] }` clause). Empty
         // set → not missing? No — empty set means we observed zero
@@ -97,7 +97,7 @@ Replace the test block above with:
         )
         // Binary missing — no way to query — return "not missing" so
         // callers don't react to a pseudo-loss.
-        #expect(launcher.isSessionMissing("espalier-aaaa1111") == false)
+        #expect(launcher.isSessionMissing("graftty-aaaa1111") == false)
     }
 
     @Test func isSessionMissingTrueWhenAbsentFromListSessions() throws {
@@ -124,7 +124,7 @@ Expected: compile error — `isSessionMissing` not defined on `ZmxLauncher`.
 
 - [ ] **Step 3: Add `isSessionMissing` to `ZmxLauncher`**
 
-In `Sources/EspalierKit/Zmx/ZmxLauncher.swift`, immediately after `listSessions()` (around line 213), insert:
+In `Sources/GrafttyKit/Zmx/ZmxLauncher.swift`, immediately after `listSessions()` (around line 213), insert:
 
 ```swift
     /// Whether the zmx daemon for the given session name is *known to be
@@ -133,7 +133,7 @@ In `Sources/EspalierKit/Zmx/ZmxLauncher.swift`, immediately after `listSessions(
     /// toward not fabricating a session-loss event, since spurious
     /// restarts are visible to the user and missed restarts are not.
     ///
-    /// Use at the two moments Espalier touches zmx for a specific pane:
+    /// Use at the two moments Graftty touches zmx for a specific pane:
     /// before creating a surface for a rehydrated pane (cold-start
     /// daemon-loss detection), and inside the close-surface handler
     /// (mid-flight daemon-loss detection).
@@ -155,7 +155,7 @@ Expected: both tests PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Zmx/ZmxLauncher.swift Tests/EspalierKitTests/Zmx/ZmxLauncherTests.swift
+git add Sources/GrafttyKit/Zmx/ZmxLauncher.swift Tests/GrafttyKitTests/Zmx/ZmxLauncherTests.swift
 git commit -m "$(cat <<'EOF'
 feat(zmx): add isSessionMissing helper for session-loss detection
 
@@ -173,16 +173,16 @@ EOF
 ## Task 2: Integration test for `isSessionMissing` against real zmx
 
 **Files:**
-- Test: `Tests/EspalierKitTests/Zmx/ZmxSurvivalIntegrationTests.swift` (add a new `@Test` near the end of the suite)
+- Test: `Tests/GrafttyKitTests/Zmx/ZmxSurvivalIntegrationTests.swift` (add a new `@Test` near the end of the suite)
 
 - [ ] **Step 1: Write failing test**
 
-Append to `Tests/EspalierKitTests/Zmx/ZmxSurvivalIntegrationTests.swift`, inside the `struct ZmxSurvivalIntegrationTests`:
+Append to `Tests/GrafttyKitTests/Zmx/ZmxSurvivalIntegrationTests.swift`, inside the `struct ZmxSurvivalIntegrationTests`:
 
 ```swift
     @Test func isSessionMissingFlipsAfterKill() throws {
         try Self.withScopedZmxDir { launcher in
-            let name = "espalier-detect1"
+            let name = "graftty-detect1"
             // Create a session by spawning a noop-ish attach via PTY
             // (mirroring the helper used elsewhere in this suite).
             let pty = try Self.spawnAttach(launcher: launcher, sessionName: name)
@@ -243,7 +243,7 @@ Expected: PASS (this test exercises the new code from Task 1, which is already c
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Tests/EspalierKitTests/Zmx/ZmxSurvivalIntegrationTests.swift
+git add Tests/GrafttyKitTests/Zmx/ZmxSurvivalIntegrationTests.swift
 git commit -m "$(cat <<'EOF'
 test(zmx): integration test for isSessionMissing against real daemon
 
@@ -260,22 +260,22 @@ EOF
 ## Task 3: Pure-function `SessionRestartBanner` for the in-pane banner
 
 **Files:**
-- Create: `Sources/EspalierKit/Zmx/SessionRestartBanner.swift`
-- Test: `Tests/EspalierKitTests/Zmx/SessionRestartBannerTests.swift`
+- Create: `Sources/GrafttyKit/Zmx/SessionRestartBanner.swift`
+- Test: `Tests/GrafttyKitTests/Zmx/SessionRestartBannerTests.swift`
 
 - [ ] **Step 1: Write failing test**
 
-Create `Tests/EspalierKitTests/Zmx/SessionRestartBannerTests.swift`:
+Create `Tests/GrafttyKitTests/Zmx/SessionRestartBannerTests.swift`:
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("SessionRestartBanner")
 struct SessionRestartBannerTests {
 
-    /// The banner is the bytes Espalier prepends to a rebuilt pane's
+    /// The banner is the bytes Graftty prepends to a rebuilt pane's
     /// initial_input so the user sees a visible marker that the
     /// underlying zmx session was replaced. We test the pure formatter
     /// here; placement into initial_input is exercised by integration
@@ -339,12 +339,12 @@ Expected: compile error — `sessionRestartBanner` and source file don't exist.
 
 - [ ] **Step 3: Create the banner module**
 
-Create `Sources/EspalierKit/Zmx/SessionRestartBanner.swift`:
+Create `Sources/GrafttyKit/Zmx/SessionRestartBanner.swift`:
 
 ```swift
 import Foundation
 
-/// Bytes Espalier prepends to a rebuilt pane's `initial_input` so the
+/// Bytes Graftty prepends to a rebuilt pane's `initial_input` so the
 /// user sees a visible marker that the underlying zmx session has been
 /// replaced. Intended to be concatenated *before* the existing
 /// `exec zmx attach …` line.
@@ -382,7 +382,7 @@ Expected: all four tests PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Zmx/SessionRestartBanner.swift Tests/EspalierKitTests/Zmx/SessionRestartBannerTests.swift
+git add Sources/GrafttyKit/Zmx/SessionRestartBanner.swift Tests/GrafttyKitTests/Zmx/SessionRestartBannerTests.swift
 git commit -m "$(cat <<'EOF'
 feat(zmx): pure-function banner for restarted sessions
 
@@ -400,18 +400,18 @@ EOF
 ## Task 4: TerminalManager — `intentionalCloses` tracking + `clearRehydrated`
 
 **Files:**
-- Modify: `Sources/Espalier/Terminal/TerminalManager.swift`
+- Modify: `Sources/Graftty/Terminal/TerminalManager.swift`
 
 - [ ] **Step 1: Add the state and the clear method**
 
-In `Sources/Espalier/Terminal/TerminalManager.swift`, just below the existing `private var rehydratedSurfaces: Set<TerminalID> = []` declaration (around line 49), insert:
+In `Sources/Graftty/Terminal/TerminalManager.swift`, just below the existing `private var rehydratedSurfaces: Set<TerminalID> = []` declaration (around line 49), insert:
 
 ```swift
-    /// Terminal IDs whose close was initiated by Espalier — user Cmd+W,
+    /// Terminal IDs whose close was initiated by Graftty — user Cmd+W,
     /// shell-driven exit propagation, Stop-worktree. Consulted by the
     /// close handler to distinguish "we wanted this gone" from
     /// "the daemon died underneath us." Populated by `killZmxSession`
-    /// (which is the single funnel for every Espalier-initiated kill)
+    /// (which is the single funnel for every Graftty-initiated kill)
     /// and consumed by `shouldRestartInsteadOfClose`.
     private var intentionalCloses: Set<TerminalID> = []
 ```
@@ -431,7 +431,7 @@ Then below `markRehydrated` (around line 388), add:
 
 - [ ] **Step 2: Populate `intentionalCloses` from `killZmxSession`**
 
-In `Sources/Espalier/Terminal/TerminalManager.swift`, modify `killZmxSession` (around line 448) to insert into `intentionalCloses` as its first action:
+In `Sources/Graftty/Terminal/TerminalManager.swift`, modify `killZmxSession` (around line 448) to insert into `intentionalCloses` as its first action:
 
 ```swift
     private func killZmxSession(for terminalID: TerminalID) {
@@ -451,7 +451,7 @@ In `Sources/Espalier/Terminal/TerminalManager.swift`, modify `killZmxSession` (a
 
 - [ ] **Step 3: Clean up `intentionalCloses` in `forgetTrackingState`**
 
-In `Sources/Espalier/Terminal/TerminalManager.swift`, modify `forgetTrackingState` (around line 403) to also drop the intentional-close membership so destroyed IDs do not leak entries:
+In `Sources/Graftty/Terminal/TerminalManager.swift`, modify `forgetTrackingState` (around line 403) to also drop the intentional-close membership so destroyed IDs do not leak entries:
 
 ```swift
     private func forgetTrackingState(for terminalID: TerminalID) {
@@ -473,12 +473,12 @@ Expected: build succeeds. No tests yet — the next task adds the policy decisio
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/Espalier/Terminal/TerminalManager.swift
+git add Sources/Graftty/Terminal/TerminalManager.swift
 git commit -m "$(cat <<'EOF'
 feat(terminal): track intentional closes; expose clearRehydrated
 
 intentionalCloses is populated by killZmxSession (the single funnel for
-Espalier-initiated kills) so a subsequent close_surface_cb can be
+Graftty-initiated kills) so a subsequent close_surface_cb can be
 distinguished from a daemon-died-underneath-us event. clearRehydrated
 gives the cold-start session-loss check somewhere to land.
 
@@ -492,7 +492,7 @@ EOF
 ## Task 5: TerminalManager — `shouldRestartInsteadOfClose` decision
 
 **Files:**
-- Modify: `Sources/Espalier/Terminal/TerminalManager.swift`
+- Modify: `Sources/Graftty/Terminal/TerminalManager.swift`
 
 - [ ] **Step 1: Add the decision method**
 
@@ -505,7 +505,7 @@ Below `clearRehydrated` (added in Task 4), insert:
     /// subsequent close for the same ID does not flip the decision.
     ///
     /// Returns `false` when:
-    ///   - The close was Espalier-initiated (membership in
+    ///   - The close was Graftty-initiated (membership in
     ///     `intentionalCloses`, populated by `killZmxSession`).
     ///   - We have no `ZmxLauncher` configured (zmx fallback path —
     ///     there is no daemon to be missing).
@@ -535,7 +535,7 @@ Expected: build succeeds.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/Espalier/Terminal/TerminalManager.swift
+git add Sources/Graftty/Terminal/TerminalManager.swift
 git commit -m "$(cat <<'EOF'
 feat(terminal): shouldRestartInsteadOfClose decision
 
@@ -553,17 +553,17 @@ EOF
 ## Task 6: TerminalManager — `restartSurface(for:)` rebuild in place
 
 **Files:**
-- Modify: `Sources/Espalier/Terminal/TerminalManager.swift`
+- Modify: `Sources/Graftty/Terminal/TerminalManager.swift`
 
 - [ ] **Step 1: Add the rebuild method**
 
-In `Sources/Espalier/Terminal/TerminalManager.swift`, add a method on TerminalManager (place it just below `createSurface(terminalID:worktreePath:)` near line 329):
+In `Sources/Graftty/Terminal/TerminalManager.swift`, add a method on TerminalManager (place it just below `createSurface(terminalID:worktreePath:)` near line 329):
 
 ```swift
     /// Rebuild the libghostty surface for an existing pane in place,
     /// keeping the same `TerminalID` (and therefore its split-tree slot,
     /// remembered position, title, etc.) but starting a fresh zmx
-    /// session under the same name. Called by EspalierApp's close
+    /// session under the same name. Called by GrafttyApp's close
     /// handler when `shouldRestartInsteadOfClose` returns true.
     ///
     /// Prepends a `sessionRestartBanner(at:)` line to the new surface's
@@ -619,7 +619,7 @@ Expected: build succeeds.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/Espalier/Terminal/TerminalManager.swift
+git add Sources/Graftty/Terminal/TerminalManager.swift
 git commit -m "$(cat <<'EOF'
 feat(terminal): restartSurface rebuilds a pane in place after session loss
 
@@ -636,11 +636,11 @@ EOF
 ## Task 7: Cold-start call site — clear rehydration label when daemon is missing
 
 **Files:**
-- Modify: `Sources/Espalier/Terminal/TerminalManager.swift`
+- Modify: `Sources/Graftty/Terminal/TerminalManager.swift`
 
 - [ ] **Step 1: Modify `createSurfaces(for:worktreePath:)`**
 
-In `Sources/Espalier/Terminal/TerminalManager.swift`, modify the existing `createSurfaces(for:worktreePath:)` method (around line 283). Replace the loop body so the rehydration label is corrected before the surface is created:
+In `Sources/Graftty/Terminal/TerminalManager.swift`, modify the existing `createSurfaces(for:worktreePath:)` method (around line 283). Replace the loop body so the rehydration label is corrected before the surface is created:
 
 ```swift
     @discardableResult
@@ -727,7 +727,7 @@ Expected: build succeeds.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/Espalier/Terminal/TerminalManager.swift
+git add Sources/Graftty/Terminal/TerminalManager.swift
 git commit -m "$(cat <<'EOF'
 feat(terminal): clear rehydration label when zmx daemon is missing
 
@@ -746,11 +746,11 @@ EOF
 ## Task 8: Mid-flight call site — route close handler through restart decision
 
 **Files:**
-- Modify: `Sources/Espalier/EspalierApp.swift`
+- Modify: `Sources/Graftty/GrafttyApp.swift`
 
 - [ ] **Step 1: Modify the `onCloseRequest` wiring in `startup()`**
 
-In `Sources/Espalier/EspalierApp.swift`, find the existing `onCloseRequest` wiring (around line 213):
+In `Sources/Graftty/GrafttyApp.swift`, find the existing `onCloseRequest` wiring (around line 213):
 
 ```swift
         terminalManager.onCloseRequest = { [appState = $appState, tm = terminalManager] terminalID in
@@ -809,7 +809,7 @@ If a test fails because `killZmxSession` runs *after* the close callback fires (
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/Espalier/EspalierApp.swift
+git add Sources/Graftty/GrafttyApp.swift
 git commit -m "$(cat <<'EOF'
 feat(terminal): route close handler through restart decision
 
@@ -853,7 +853,7 @@ After the existing §13.6 block (last requirement: ZMX-6.3) and before `## 14. D
 
 **ZMX-7.1** When the application restores a worktree's split tree on launch (per `PERSIST-3.x` and `ZMX-4.2`), it shall, before creating each pane's surface, query the live zmx session set and clear the pane's rehydration label if the expected session name is absent. This ensures a freshly-created daemon (the result of `zmx attach`'s create-on-miss semantics) is not mistaken for a surviving session by `defaultCommandDecision`.
 
-**ZMX-7.2** When `close_surface_cb` fires for a pane and Espalier did not initiate the close, the application shall query the live zmx session set; if the expected session name is absent, the application shall rebuild the pane's libghostty surface in place — same `TerminalID`, same split-tree position, fresh `zmx attach` — instead of removing the pane from the tree.
+**ZMX-7.2** When `close_surface_cb` fires for a pane and Graftty did not initiate the close, the application shall query the live zmx session set; if the expected session name is absent, the application shall rebuild the pane's libghostty surface in place — same `TerminalID`, same split-tree position, fresh `zmx attach` — instead of removing the pane from the tree.
 
 **ZMX-7.3** While rebuilding a surface per `ZMX-7.2`, the application shall prepend a single visually-distinct banner line ("`— session restarted at HH:MM —`", ANSI dim) to the new pane's `initial_input` so the user can recognize that the underlying session has been replaced.
 

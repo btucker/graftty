@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make every Espalier pane's PTY child a `zmx attach <session>` process instead of `$SHELL`, so terminal sessions survive Espalier quits, crashes, and relaunches. Native UX otherwise unchanged.
+**Goal:** Make every Graftty pane's PTY child a `zmx attach <session>` process instead of `$SHELL`, so terminal sessions survive Graftty quits, crashes, and relaunches. Native UX otherwise unchanged.
 
-**Architecture:** A vendored `zmx` binary at `Resources/zmx-binary/zmx` is bundled into the .app at `Contents/Helpers/zmx` (mirroring the existing `espalier` CLI placement). A new `ZmxLauncher` (in `EspalierKit`) resolves the binary path, derives session names from pane UUIDs, builds the `zmx attach …` command string, and shells out to `zmx kill` / `zmx list`. `SurfaceHandle` sets `ghostty_surface_config_s.command` to the launcher's invocation; `TerminalManager` calls `kill` on surface destruction. Sessions are scoped to a private `ZMX_DIR` under app support. If the bundled binary is missing/unloadable, `SurfaceHandle` falls back to libghostty's default `$SHELL` spawn behavior and the app surfaces a one-time banner.
+**Architecture:** A vendored `zmx` binary at `Resources/zmx-binary/zmx` is bundled into the .app at `Contents/Helpers/zmx` (mirroring the existing `graftty` CLI placement). A new `ZmxLauncher` (in `GrafttyKit`) resolves the binary path, derives session names from pane UUIDs, builds the `zmx attach …` command string, and shells out to `zmx kill` / `zmx list`. `SurfaceHandle` sets `ghostty_surface_config_s.command` to the launcher's invocation; `TerminalManager` calls `kill` on surface destruction. Sessions are scoped to a private `ZMX_DIR` under app support. If the bundled binary is missing/unloadable, `SurfaceHandle` falls back to libghostty's default `$SHELL` spawn behavior and the app surfaces a one-time banner.
 
-**Tech Stack:** Swift 5.10, Swift Testing (`@Suite`/`@Test`/`#expect`), SwiftUI/AppKit (macOS 14+), `Process` for subprocess invocation (mirroring `EspalierKit/Git/GitRunner` style), libghostty C API via `GhosttyKit`. Bash for the bump script. zmx is a Zig binary distributed as `.tar.gz` artifacts at `https://zmx.sh/a/`.
+**Tech Stack:** Swift 5.10, Swift Testing (`@Suite`/`@Test`/`#expect`), SwiftUI/AppKit (macOS 14+), `Process` for subprocess invocation (mirroring `GrafttyKit/Git/GitRunner` style), libghostty C API via `GhosttyKit`. Bash for the bump script. zmx is a Zig binary distributed as `.tar.gz` artifacts at `https://zmx.sh/a/`.
 
 **Spec:** `docs/superpowers/specs/2026-04-17-zmx-integration-design.md`
 
@@ -20,29 +20,29 @@
 - `Resources/zmx-binary/VERSION` — committed plain-text version string.
 - `Resources/zmx-binary/CHECKSUMS` — committed SHA256s for arm64 + x86_64 + universal.
 
-**Create (EspalierKit):**
-- `Sources/EspalierKit/Zmx/ZmxRunner.swift` — sync subprocess wrapper, three flavors mirroring `GitRunner`. Injectable executable URL + env.
-- `Sources/EspalierKit/Zmx/ZmxLauncher.swift` — bundled-binary resolution, session naming, attach-command construction, `kill`, `listSessions`, `isAvailable`.
-- `Tests/EspalierKitTests/Zmx/ZmxRunnerTests.swift`
-- `Tests/EspalierKitTests/Zmx/ZmxLauncherTests.swift` — pure-logic unit tests.
-- `Tests/EspalierKitTests/Zmx/ZmxSurvivalIntegrationTests.swift` — end-to-end survival contract via real `zmx` subprocess.
+**Create (GrafttyKit):**
+- `Sources/GrafttyKit/Zmx/ZmxRunner.swift` — sync subprocess wrapper, three flavors mirroring `GitRunner`. Injectable executable URL + env.
+- `Sources/GrafttyKit/Zmx/ZmxLauncher.swift` — bundled-binary resolution, session naming, attach-command construction, `kill`, `listSessions`, `isAvailable`.
+- `Tests/GrafttyKitTests/Zmx/ZmxRunnerTests.swift`
+- `Tests/GrafttyKitTests/Zmx/ZmxLauncherTests.swift` — pure-logic unit tests.
+- `Tests/GrafttyKitTests/Zmx/ZmxSurvivalIntegrationTests.swift` — end-to-end survival contract via real `zmx` subprocess.
 
-**Create (Espalier app):**
-- `Sources/Espalier/Views/ZmxFallbackBanner.swift` — small banner shown when `ZmxLauncher.isAvailable == false`.
+**Create (Graftty app):**
+- `Sources/Graftty/Views/ZmxFallbackBanner.swift` — small banner shown when `ZmxLauncher.isAvailable == false`.
 
 **Modify:**
 - `Package.swift` — no change (the binary is *not* a Swift Package resource; it's copied at bundle time).
 - `scripts/bundle.sh` — install `Resources/zmx-binary/zmx` to `Contents/Helpers/zmx` and `chmod +x`.
-- `Sources/Espalier/Terminal/SurfaceHandle.swift` — add `zmxCommand: String?` init parameter; if non-nil, set `config.command`.
-- `Sources/Espalier/Terminal/TerminalManager.swift` — own a `ZmxLauncher`; pass `zmxCommand` to new surfaces; call `launcher.kill(sessionName:)` from `destroySurface(s)`.
-- `Sources/Espalier/EspalierApp.swift` — instantiate `ZmxLauncher`, hand it to `TerminalManager`, present the fallback banner once on launch if unavailable.
+- `Sources/Graftty/Terminal/SurfaceHandle.swift` — add `zmxCommand: String?` init parameter; if non-nil, set `config.command`.
+- `Sources/Graftty/Terminal/TerminalManager.swift` — own a `ZmxLauncher`; pass `zmxCommand` to new surfaces; call `launcher.kill(sessionName:)` from `destroySurface(s)`.
+- `Sources/Graftty/GrafttyApp.swift` — instantiate `ZmxLauncher`, hand it to `TerminalManager`, present the fallback banner once on launch if unavailable.
 - `SPECS.md` — append §13 "zmx Session Backing" (EARS requirements). The existing §11 (Worktree Divergence Indicator) and §12 (Technology Constraints) stay; this becomes §13.
 
 ---
 
 ## Test Infrastructure Notes
 
-The Espalier *app* target has no test target today (`ls Tests/` shows only `EspalierKitTests/`). The spec's "end-to-end survival via TerminalManager" test is therefore implemented as `ZmxSurvivalIntegrationTests` inside `EspalierKitTests`, which exercises `ZmxLauncher` end-to-end (spawn → write marker → close PTY → re-spawn → read marker). The libghostty-mediated path is verified by the manual smoke tests at the end of this plan.
+The Graftty *app* target has no test target today (`ls Tests/` shows only `GrafttyKitTests/`). The spec's "end-to-end survival via TerminalManager" test is therefore implemented as `ZmxSurvivalIntegrationTests` inside `GrafttyKitTests`, which exercises `ZmxLauncher` end-to-end (spawn → write marker → close PTY → re-spawn → read marker). The libghostty-mediated path is verified by the manual smoke tests at the end of this plan.
 
 Integration tests skip themselves with `try #require(launcher.isAvailable, "zmx binary not vendored — run scripts/bump-zmx.sh")` so a fresh contributor who hasn't run the bump script gets a clear skip message rather than a confusing failure.
 
@@ -160,11 +160,11 @@ EOF
 
 - [ ] **Step 1: Add the install line**
 
-Open `scripts/bundle.sh`. After the line `cp "$BIN_DIR/espalier-cli" "$APP/Contents/Helpers/espalier"` (currently line 35), add:
+Open `scripts/bundle.sh`. After the line `cp "$BIN_DIR/graftty-cli" "$APP/Contents/Helpers/graftty"` (currently line 35), add:
 
 ```bash
 echo "→ install bundled zmx"
-# zmx is the per-pane PTY child for every Espalier terminal, providing
+# zmx is the per-pane PTY child for every Graftty terminal, providing
 # session persistence so shells survive app quits. The binary is vendored
 # at Resources/zmx-binary/zmx; bundle.sh just copies it into Helpers/.
 cp "$REPO/Resources/zmx-binary/zmx" "$APP/Contents/Helpers/zmx"
@@ -175,11 +175,11 @@ chmod +x "$APP/Contents/Helpers/zmx"
 
 ```bash
 ./scripts/bundle.sh
-ls -l .build/Espalier.app/Contents/Helpers/
-.build/Espalier.app/Contents/Helpers/zmx version
+ls -l .build/Graftty.app/Contents/Helpers/
+.build/Graftty.app/Contents/Helpers/zmx version
 ```
 
-Expected: `Helpers/` lists both `espalier` and `zmx` as executables. The `zmx version` invocation prints the version banner.
+Expected: `Helpers/` lists both `graftty` and `zmx` as executables. The `zmx version` invocation prints the version banner.
 
 - [ ] **Step 3: Commit**
 
@@ -189,7 +189,7 @@ git commit -m "$(cat <<'EOF'
 build: install vendored zmx into Contents/Helpers
 
 The bundle script now copies Resources/zmx-binary/zmx into
-Espalier.app/Contents/Helpers/zmx so the runtime can spawn it as
+Graftty.app/Contents/Helpers/zmx so the runtime can spawn it as
 the PTY child for every pane.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
@@ -202,19 +202,19 @@ EOF
 ## Task 3: `ZmxRunner` — sync subprocess wrapper
 
 **Files:**
-- Create: `Sources/EspalierKit/Zmx/ZmxRunner.swift`
-- Create: `Tests/EspalierKitTests/Zmx/ZmxRunnerTests.swift`
+- Create: `Sources/GrafttyKit/Zmx/ZmxRunner.swift`
+- Create: `Tests/GrafttyKitTests/Zmx/ZmxRunnerTests.swift`
 
-Mirrors the shape of `Sources/EspalierKit/Git/GitRunner.swift` (66 lines), but with an injectable executable URL and env-passing support.
+Mirrors the shape of `Sources/GrafttyKit/Git/GitRunner.swift` (66 lines), but with an injectable executable URL and env-passing support.
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `Tests/EspalierKitTests/Zmx/ZmxRunnerTests.swift`:
+Create `Tests/GrafttyKitTests/Zmx/ZmxRunnerTests.swift`:
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("ZmxRunner")
 struct ZmxRunnerTests {
@@ -282,7 +282,7 @@ Expected: build error — `ZmxRunner` is undefined.
 
 - [ ] **Step 3: Implement `ZmxRunner`**
 
-Create `Sources/EspalierKit/Zmx/ZmxRunner.swift`:
+Create `Sources/GrafttyKit/Zmx/ZmxRunner.swift`:
 
 ```swift
 import Foundation
@@ -375,7 +375,7 @@ Expected: 5 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Zmx/ZmxRunner.swift Tests/EspalierKitTests/Zmx/ZmxRunnerTests.swift
+git add Sources/GrafttyKit/Zmx/ZmxRunner.swift Tests/GrafttyKitTests/Zmx/ZmxRunnerTests.swift
 git commit -m "$(cat <<'EOF'
 feat(zmx): ZmxRunner — sync subprocess wrapper
 
@@ -393,26 +393,26 @@ EOF
 ## Task 4: `ZmxLauncher` unit tests + implementation (pure logic)
 
 **Files:**
-- Create: `Sources/EspalierKit/Zmx/ZmxLauncher.swift`
-- Create: `Tests/EspalierKitTests/Zmx/ZmxLauncherTests.swift`
+- Create: `Sources/GrafttyKit/Zmx/ZmxLauncher.swift`
+- Create: `Tests/GrafttyKitTests/Zmx/ZmxLauncherTests.swift`
 
 Pure-logic surface: session-name derivation, attach-command construction, list parsing, `isAvailable`. No subprocess calls in this task — those are exercised in Task 5.
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `Tests/EspalierKitTests/Zmx/ZmxLauncherTests.swift`:
+Create `Tests/GrafttyKitTests/Zmx/ZmxLauncherTests.swift`:
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("ZmxLauncher — pure logic")
 struct ZmxLauncherUnitTests {
 
     // MARK: sessionName(for:)
     //
-    // The session name is the join key between Espalier and the zmx
+    // The session name is the join key between Graftty and the zmx
     // daemon. Once a user upgrades and starts a daemon under a given
     // name, changing this function would orphan that daemon — they'd
     // get a fresh shell instead of their reattached one.
@@ -421,14 +421,14 @@ struct ZmxLauncherUnitTests {
         let id = UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!
         let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/dev/null"))
         let name = launcher.sessionName(for: id)
-        #expect(name == "espalier-deadbeef")
+        #expect(name == "graftty-deadbeef")
     }
 
     @Test func sessionNameUsesFirst8HexCharsOfUUID() throws {
         // First 8 hex chars of any UUID are the leading 4 bytes.
         let id = UUID(uuidString: "01234567-89AB-CDEF-FEDC-BA9876543210")!
         let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/dev/null"))
-        #expect(launcher.sessionName(for: id) == "espalier-01234567")
+        #expect(launcher.sessionName(for: id) == "graftty-01234567")
     }
 
     @Test func sessionNameDiffersForDifferentUUIDs() throws {
@@ -442,14 +442,14 @@ struct ZmxLauncherUnitTests {
     //
     // libghostty's `command` field is a single string (shell parses it).
     // We single-quote the executable path defensively in case the user
-    // installed Espalier somewhere with spaces in the path.
+    // installed Graftty somewhere with spaces in the path.
 
     @Test func attachCommandIncludesQuotedExecutableAndSession() throws {
         let launcher = ZmxLauncher(
-            executable: URL(fileURLWithPath: "/Applications/Espalier.app/Contents/Helpers/zmx")
+            executable: URL(fileURLWithPath: "/Applications/Graftty.app/Contents/Helpers/zmx")
         )
-        let cmd = launcher.attachCommand(sessionName: "espalier-deadbeef")
-        #expect(cmd == "'/Applications/Espalier.app/Contents/Helpers/zmx' attach espalier-deadbeef $SHELL")
+        let cmd = launcher.attachCommand(sessionName: "graftty-deadbeef")
+        #expect(cmd == "'/Applications/Graftty.app/Contents/Helpers/zmx' attach graftty-deadbeef $SHELL")
     }
 
     @Test func attachCommandEscapesSingleQuotesInExecutablePath() throws {
@@ -458,8 +458,8 @@ struct ZmxLauncherUnitTests {
         let launcher = ZmxLauncher(
             executable: URL(fileURLWithPath: "/tmp/it's/zmx")
         )
-        let cmd = launcher.attachCommand(sessionName: "espalier-cafe1234")
-        #expect(cmd == "'/tmp/it'\\''s/zmx' attach espalier-cafe1234 $SHELL")
+        let cmd = launcher.attachCommand(sessionName: "graftty-cafe1234")
+        #expect(cmd == "'/tmp/it'\\''s/zmx' attach graftty-cafe1234 $SHELL")
     }
 
     // MARK: parseListOutput
@@ -475,28 +475,28 @@ struct ZmxLauncherUnitTests {
 
     @Test func parsesSingleSession() throws {
         let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/dev/null"))
-        #expect(launcher.parseListOutput("espalier-deadbeef\n") == ["espalier-deadbeef"])
+        #expect(launcher.parseListOutput("graftty-deadbeef\n") == ["graftty-deadbeef"])
     }
 
     @Test func parsesManySessions() throws {
         let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/dev/null"))
         let output = """
-        espalier-aaaa1111
-        espalier-bbbb2222
-        espalier-cccc3333
+        graftty-aaaa1111
+        graftty-bbbb2222
+        graftty-cccc3333
         """
         #expect(
             launcher.parseListOutput(output) ==
-            ["espalier-aaaa1111", "espalier-bbbb2222", "espalier-cccc3333"]
+            ["graftty-aaaa1111", "graftty-bbbb2222", "graftty-cccc3333"]
         )
     }
 
     @Test func parseListSkipsBlankLines() throws {
         let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/dev/null"))
-        let output = "espalier-aaaa1111\n\n\nespalier-bbbb2222\n"
+        let output = "graftty-aaaa1111\n\n\ngraftty-bbbb2222\n"
         #expect(
             launcher.parseListOutput(output) ==
-            ["espalier-aaaa1111", "espalier-bbbb2222"]
+            ["graftty-aaaa1111", "graftty-bbbb2222"]
         )
     }
 
@@ -524,12 +524,12 @@ Expected: build error — `ZmxLauncher` is undefined.
 
 - [ ] **Step 3: Implement `ZmxLauncher`**
 
-Create `Sources/EspalierKit/Zmx/ZmxLauncher.swift`:
+Create `Sources/GrafttyKit/Zmx/ZmxLauncher.swift`:
 
 ```swift
 import Foundation
 
-/// Resolves the bundled `zmx` binary and translates Espalier pane
+/// Resolves the bundled `zmx` binary and translates Graftty pane
 /// identifiers into zmx invocations.
 ///
 /// # Lifetime
@@ -553,14 +553,14 @@ public final class ZmxLauncher {
     }
 
     /// Convenience init that defaults `zmxDir` to
-    /// `~/Library/Application Support/Espalier/zmx/`. Used by tests that
+    /// `~/Library/Application Support/Graftty/zmx/`. Used by tests that
     /// don't care about the dir.
     public convenience init(executable: URL) {
         let appSupport = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first ?? URL(fileURLWithPath: NSTemporaryDirectory())
         let dir = appSupport
-            .appendingPathComponent("Espalier", isDirectory: true)
+            .appendingPathComponent("Graftty", isDirectory: true)
             .appendingPathComponent("zmx", isDirectory: true)
         self.init(executable: executable, zmxDir: dir)
     }
@@ -575,7 +575,7 @@ public final class ZmxLauncher {
     /// **Do not change this mapping** without a migration strategy —
     /// changing it orphans every existing user's daemons.
     ///
-    /// Returns `"espalier-" + first-8-hex-of-uuid`. 32 bits of namespace
+    /// Returns `"graftty-" + first-8-hex-of-uuid`. 32 bits of namespace
     /// uniqueness within a single user's `ZMX_DIR` is ample for the
     /// expected concurrent-pane count (dozens, not millions).
     public func sessionName(for paneID: UUID) -> String {
@@ -584,7 +584,7 @@ public final class ZmxLauncher {
         let hex = paneID.uuidString
             .replacingOccurrences(of: "-", with: "")
             .lowercased()
-        return "espalier-\(hex.prefix(8))"
+        return "graftty-\(hex.prefix(8))"
     }
 
     /// The single-string command to hand to `ghostty_surface_config_s.command`.
@@ -594,7 +594,7 @@ public final class ZmxLauncher {
         "\(shellQuote(executable.path)) attach \(sessionName) $SHELL"
     }
 
-    /// Env additions that should accompany every zmx invocation Espalier
+    /// Env additions that should accompany every zmx invocation Graftty
     /// makes (both inline subprocess calls AND the libghostty-spawned
     /// `zmx attach` PTY child). Caller merges with any existing env.
     public func envAdditions() -> [String: String] {
@@ -654,12 +654,12 @@ Expected: 11 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Zmx/ZmxLauncher.swift Tests/EspalierKitTests/Zmx/ZmxLauncherTests.swift
+git add Sources/GrafttyKit/Zmx/ZmxLauncher.swift Tests/GrafttyKitTests/Zmx/ZmxLauncherTests.swift
 git commit -m "$(cat <<'EOF'
 feat(zmx): ZmxLauncher — session-name + attach-command derivation
 
 Pure-logic surface: deterministic session naming from pane UUID
-(espalier-<first-8-hex>), attach-command construction with shell
+(graftty-<first-8-hex>), attach-command construction with shell
 quoting of the binary path, list-output parsing, and isAvailable
 checks. The session-name function is a hard contract — changing it
 orphans every existing user's daemons.
@@ -674,18 +674,18 @@ EOF
 ## Task 5: `ZmxLauncher` integration test — survival contract
 
 **Files:**
-- Create: `Tests/EspalierKitTests/Zmx/ZmxSurvivalIntegrationTests.swift`
+- Create: `Tests/GrafttyKitTests/Zmx/ZmxSurvivalIntegrationTests.swift`
 
 This is the **acceptance test** for Phase 1's core invariant: a session detached without `kill` survives, and reattach restores prior screen output. Tests skip themselves if the bundled zmx isn't present.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `Tests/EspalierKitTests/Zmx/ZmxSurvivalIntegrationTests.swift`:
+Create `Tests/GrafttyKitTests/Zmx/ZmxSurvivalIntegrationTests.swift`:
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("ZmxLauncher — survival contract (integration)")
 struct ZmxSurvivalIntegrationTests {
@@ -697,12 +697,12 @@ struct ZmxSurvivalIntegrationTests {
     /// Returns nil if the binary hasn't been vendored — tests should
     /// `try #require()` on this and surface a helpful skip message.
     static func vendoredZmx() -> URL? {
-        // #file resolves to /…/Tests/EspalierKitTests/Zmx/ZmxSurvivalIntegrationTests.swift
-        // Walk up: Zmx → EspalierKitTests → Tests → repo-root.
+        // #file resolves to /…/Tests/GrafttyKitTests/Zmx/ZmxSurvivalIntegrationTests.swift
+        // Walk up: Zmx → GrafttyKitTests → Tests → repo-root.
         let here = URL(fileURLWithPath: #file)
         let repoRoot = here
             .deletingLastPathComponent()  // Zmx/
-            .deletingLastPathComponent()  // EspalierKitTests/
+            .deletingLastPathComponent()  // GrafttyKitTests/
             .deletingLastPathComponent()  // Tests/
             .deletingLastPathComponent()  // repo root
         let candidate = repoRoot
@@ -854,7 +854,7 @@ struct ZmxSurvivalIntegrationTests {
     @Test func killOfNonexistentSessionIsHarmless() throws {
         try Self.withScopedZmxDir { launcher in
             // Should not throw and should not crash.
-            launcher.kill(sessionName: "espalier-doesnotexist")
+            launcher.kill(sessionName: "graftty-doesnotexist")
         }
     }
 }
@@ -868,7 +868,7 @@ Expected: 3 tests pass (vendored binary present from Task 1) OR the tests are sk
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Tests/EspalierKitTests/Zmx/ZmxSurvivalIntegrationTests.swift
+git add Tests/GrafttyKitTests/Zmx/ZmxSurvivalIntegrationTests.swift
 git commit -m "$(cat <<'EOF'
 test(zmx): survival contract integration tests
 
@@ -888,13 +888,13 @@ EOF
 ## Task 6: Wire `SurfaceHandle` to spawn via `ZmxLauncher`
 
 **Files:**
-- Modify: `Sources/Espalier/Terminal/SurfaceHandle.swift` (init signature + config setup, around lines 45-125)
+- Modify: `Sources/Graftty/Terminal/SurfaceHandle.swift` (init signature + config setup, around lines 45-125)
 
 `SurfaceHandle.init` currently leaves `config.command` unset, so libghostty defaults to spawning `$SHELL`. We add a `zmxCommand: String?` init parameter; if non-nil, set `config.command` to it.
 
 - [ ] **Step 1: Modify `SurfaceHandle.init`**
 
-In `Sources/Espalier/Terminal/SurfaceHandle.swift`, change the init signature and command setup. The full updated init signature and surrounding logic:
+In `Sources/Graftty/Terminal/SurfaceHandle.swift`, change the init signature and command setup. The full updated init signature and surrounding logic:
 
 Change:
 
@@ -932,7 +932,7 @@ In the same init, after the existing `let sockVal = strdup(socketPath)` line, ad
         let cmdCStr: UnsafeMutablePointer<CChar>? = zmxCommand.flatMap { strdup($0) }
 ```
 
-Then update the env-vars block. Currently it allocates capacity 1 for `ESPALIER_SOCK`; we need capacity 2 when `zmxDir` is non-nil, so we can also pass `ZMX_DIR`. Replace:
+Then update the env-vars block. Currently it allocates capacity 1 for `GRAFTTY_SOCK`; we need capacity 2 when `zmxDir` is non-nil, so we can also pass `ZMX_DIR`. Replace:
 
 ```swift
         let envVarsPtr = UnsafeMutablePointer<ghostty_env_var_s>.allocate(capacity: 1)
@@ -1004,7 +1004,7 @@ Expected: compiles cleanly. (No new tests for this layer — it's a thin wrapper
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/Espalier/Terminal/SurfaceHandle.swift
+git add Sources/Graftty/Terminal/SurfaceHandle.swift
 git commit -m "$(cat <<'EOF'
 feat(zmx): SurfaceHandle accepts zmxCommand + zmxDir
 
@@ -1021,26 +1021,26 @@ EOF
 
 ---
 
-## Task 7: Wire `TerminalManager` and `EspalierApp` to use `ZmxLauncher`
+## Task 7: Wire `TerminalManager` and `GrafttyApp` to use `ZmxLauncher`
 
 **Files:**
-- Modify: `Sources/Espalier/Terminal/TerminalManager.swift` (add launcher; pass through to surfaces; call kill in destroy)
-- Modify: `Sources/Espalier/EspalierApp.swift` (instantiate launcher, pass to manager)
+- Modify: `Sources/Graftty/Terminal/TerminalManager.swift` (add launcher; pass through to surfaces; call kill in destroy)
+- Modify: `Sources/Graftty/GrafttyApp.swift` (instantiate launcher, pass to manager)
 
 - [ ] **Step 1: Add launcher to `TerminalManager`**
 
-In `Sources/Espalier/Terminal/TerminalManager.swift`, add an import (if not present):
+In `Sources/Graftty/Terminal/TerminalManager.swift`, add an import (if not present):
 
 ```swift
-import EspalierKit
+import GrafttyKit
 ```
 
 Add a stored property near the top of the class (after `private var surfaces`):
 
 ```swift
-    /// Set by `EspalierApp` at startup. When non-nil and `isAvailable`,
+    /// Set by `GrafttyApp` at startup. When non-nil and `isAvailable`,
     /// every new surface spawns `zmx attach <session> $SHELL` so the
-    /// session survives Espalier quits. When nil or unavailable, surfaces
+    /// session survives Graftty quits. When nil or unavailable, surfaces
     /// fall back to libghostty's default $SHELL spawn.
     var zmxLauncher: ZmxLauncher?
 ```
@@ -1103,9 +1103,9 @@ Modify `destroySurfaces(terminalIDs:)` (around line 238). After the existing loo
     }
 ```
 
-- [ ] **Step 2: Instantiate the launcher in `EspalierApp`**
+- [ ] **Step 2: Instantiate the launcher in `GrafttyApp`**
 
-In `Sources/Espalier/EspalierApp.swift`, the `TerminalManager` is constructed at line 33 inside `init()` as a `@StateObject` — we can't mutate it there. The right place to wire the launcher is `startup()` (line 121, called from `.onAppear`), where `terminalManager.initialize()` is already invoked.
+In `Sources/Graftty/GrafttyApp.swift`, the `TerminalManager` is constructed at line 33 inside `init()` as a `@StateObject` — we can't mutate it there. The right place to wire the launcher is `startup()` (line 121, called from `.onAppear`), where `terminalManager.initialize()` is already invoked.
 
 Inside `startup()`, immediately *before* the existing `terminalManager.initialize()` line, insert:
 
@@ -1116,23 +1116,23 @@ Inside `startup()`, immediately *before* the existing `terminalManager.initializ
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first ?? URL(fileURLWithPath: NSTemporaryDirectory())
         let zmxDir = appSupport
-            .appendingPathComponent("Espalier", isDirectory: true)
+            .appendingPathComponent("Graftty", isDirectory: true)
             .appendingPathComponent("zmx", isDirectory: true)
         try? FileManager.default.createDirectory(at: zmxDir, withIntermediateDirectories: true)
         let zmxLauncher = ZmxLauncher(executable: zmxBinary, zmxDir: zmxDir)
         terminalManager.zmxLauncher = zmxLauncher
 ```
 
-`EspalierKit` is already imported at the top of the file (line 3), so no import addition needed.
+`GrafttyKit` is already imported at the top of the file (line 3), so no import addition needed.
 
 - [ ] **Step 3: Build the bundle and smoke-test manually**
 
 ```bash
 ./scripts/bundle.sh
-open .build/Espalier.app
+open .build/Graftty.app
 ```
 
-In the app: add a worktree, type `echo MARKER`, quit Espalier (Cmd-Q), reopen `.build/Espalier.app`. Expected: the worktree comes back with `MARKER` visible in the scrollback. (If it doesn't survive, check `~/Library/Application\ Support/Espalier/zmx/` for socket files and run `ZMX_DIR=~/Library/Application\ Support/Espalier/zmx /Applications/Espalier.app/Contents/Helpers/zmx list` to inspect.)
+In the app: add a worktree, type `echo MARKER`, quit Graftty (Cmd-Q), reopen `.build/Graftty.app`. Expected: the worktree comes back with `MARKER` visible in the scrollback. (If it doesn't survive, check `~/Library/Application\ Support/Graftty/zmx/` for socket files and run `ZMX_DIR=~/Library/Application\ Support/Graftty/zmx /Applications/Graftty.app/Contents/Helpers/zmx list` to inspect.)
 
 - [ ] **Step 4: Run the full test suite to make sure nothing broke**
 
@@ -1145,13 +1145,13 @@ Expected: all tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/Espalier/Terminal/TerminalManager.swift Sources/Espalier/EspalierApp.swift
+git add Sources/Graftty/Terminal/TerminalManager.swift Sources/Graftty/GrafttyApp.swift
 git commit -m "$(cat <<'EOF'
 feat(zmx): TerminalManager spawns panes via zmx attach
 
-Every new surface now spawns `zmx attach espalier-<short-id> $SHELL`
+Every new surface now spawns `zmx attach graftty-<short-id> $SHELL`
 as its PTY child (when the bundled binary is available); destroy
-fires `zmx kill` off the main thread. EspalierApp constructs the
+fires `zmx kill` off the main thread. GrafttyApp constructs the
 ZmxLauncher pointing at Contents/Helpers/zmx and a private ZMX_DIR
 under Application Support. Falls back to libghostty's default $SHELL
 spawn when the binary is missing.
@@ -1166,14 +1166,14 @@ EOF
 ## Task 8: Fallback banner when `zmx` is unavailable
 
 **Files:**
-- Create: `Sources/Espalier/Views/ZmxFallbackBanner.swift`
-- Modify: `Sources/Espalier/EspalierApp.swift` (present banner once if launcher unavailable)
+- Create: `Sources/Graftty/Views/ZmxFallbackBanner.swift`
+- Modify: `Sources/Graftty/GrafttyApp.swift` (present banner once if launcher unavailable)
 
 A non-blocking one-time alert. Don't keep nagging — once acknowledged, don't show again that session.
 
 - [ ] **Step 1: Create the banner**
 
-Create `Sources/Espalier/Views/ZmxFallbackBanner.swift`:
+Create `Sources/Graftty/Views/ZmxFallbackBanner.swift`:
 
 ```swift
 import AppKit
@@ -1200,8 +1200,8 @@ enum ZmxFallbackBanner {
         alert.alertStyle = .informational
         alert.messageText = "zmx unavailable"
         alert.informativeText = """
-            Espalier couldn't load its bundled session-persistence helper. \
-            Terminals will work, but they won't survive Espalier quitting.
+            Graftty couldn't load its bundled session-persistence helper. \
+            Terminals will work, but they won't survive Graftty quitting.
 
             This usually means the app bundle was modified or wasn't \
             built with `scripts/bundle.sh`. Re-running the bundle script \
@@ -1213,9 +1213,9 @@ enum ZmxFallbackBanner {
 }
 ```
 
-- [ ] **Step 2: Wire it into `EspalierApp`**
+- [ ] **Step 2: Wire it into `GrafttyApp`**
 
-In `Sources/Espalier/EspalierApp.swift` `startup()`, just after the `terminalManager.zmxLauncher = zmxLauncher` line added in Task 7, add:
+In `Sources/Graftty/GrafttyApp.swift` `startup()`, just after the `terminalManager.zmxLauncher = zmxLauncher` line added in Task 7, add:
 
 ```swift
         if !zmxLauncher.isAvailable {
@@ -1231,8 +1231,8 @@ The dispatch defers to the next runloop turn so the modal alert doesn't run duri
 
 ```bash
 ./scripts/bundle.sh
-mv .build/Espalier.app/Contents/Helpers/zmx{,.bak}
-open .build/Espalier.app
+mv .build/Graftty.app/Contents/Helpers/zmx{,.bak}
+open .build/Graftty.app
 ```
 
 Expected: the banner appears. Click OK; create a worktree; verify a shell still spawns and works (just won't survive quit).
@@ -1240,18 +1240,18 @@ Expected: the banner appears. Click OK; create a worktree; verify a shell still 
 Restore the binary:
 
 ```bash
-mv .build/Espalier.app/Contents/Helpers/zmx{.bak,}
+mv .build/Graftty.app/Contents/Helpers/zmx{.bak,}
 ```
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/Espalier/Views/ZmxFallbackBanner.swift Sources/Espalier/EspalierApp.swift
+git add Sources/Graftty/Views/ZmxFallbackBanner.swift Sources/Graftty/GrafttyApp.swift
 git commit -m "$(cat <<'EOF'
 feat(zmx): one-time banner when zmx binary is unavailable
 
 If Bundle.main's Contents/Helpers/zmx is missing or unloadable,
-Espalier presents a single informational alert at launch explaining
+Graftty presents a single informational alert at launch explaining
 that survival won't work, then continues with the libghostty
 default-shell fallback (already wired in TerminalManager).
 
@@ -1279,7 +1279,7 @@ Open `SPECS.md`. After the last line of §12 (the existing "Technology Constrain
 
 ### 13.1 Bundling
 
-**ZMX-1.1** The application shall include a `zmx` binary in the app bundle at `Espalier.app/Contents/Helpers/zmx`, mirroring the placement of the `espalier` CLI.
+**ZMX-1.1** The application shall include a `zmx` binary in the app bundle at `Graftty.app/Contents/Helpers/zmx`, mirroring the placement of the `graftty` CLI.
 
 **ZMX-1.2** The bundled `zmx` binary shall be a universal Mach-O containing both `arm64` and `x86_64` slices, produced by `scripts/bump-zmx.sh`.
 
@@ -1287,19 +1287,19 @@ Open `SPECS.md`. After the last line of §12 (the existing "Technology Constrain
 
 ### 13.2 Session Naming
 
-**ZMX-2.1** The application shall derive the zmx session name for each pane as the literal string `"espalier-"` followed by the lowercase hex of the first 8 bytes — i.e., the first 8 hex characters — of the pane's UUID.
+**ZMX-2.1** The application shall derive the zmx session name for each pane as the literal string `"graftty-"` followed by the lowercase hex of the first 8 bytes — i.e., the first 8 hex characters — of the pane's UUID.
 
 **ZMX-2.2** The session-naming function shall be deterministic and shall not change across releases without an explicit migration step, since changing it orphans every existing user's daemons.
 
 ### 13.3 Sandboxing
 
-**ZMX-3.1** The application shall pass `ZMX_DIR=~/Library/Application Support/Espalier/zmx/` in the environment of every spawned `zmx` invocation, so Espalier-owned daemons live in a private socket directory distinct from any user-personal `zmx` usage.
+**ZMX-3.1** The application shall pass `ZMX_DIR=~/Library/Application Support/Graftty/zmx/` in the environment of every spawned `zmx` invocation, so Graftty-owned daemons live in a private socket directory distinct from any user-personal `zmx` usage.
 
 **ZMX-3.2** The application shall create the `ZMX_DIR` path if it does not exist at launch.
 
 ### 13.4 Lifecycle Mapping
 
-**ZMX-4.1** When the application creates a new terminal pane, it shall set the libghostty surface configuration's `command` field to `'<bundled-zmx-path>' attach espalier-<short-id> $SHELL`, with the bundled-zmx-path single-quoted to defend against spaces in the install path.
+**ZMX-4.1** When the application creates a new terminal pane, it shall set the libghostty surface configuration's `command` field to `'<bundled-zmx-path>' attach graftty-<short-id> $SHELL`, with the bundled-zmx-path single-quoted to defend against spaces in the install path.
 
 **ZMX-4.2** When the application restores a worktree's split tree on launch (per `PERSIST-3.x`), each restored pane's surface shall be created with the same session name derived from the persisted pane UUID, so reattach to a surviving daemon is automatic.
 
@@ -1317,7 +1317,7 @@ Open `SPECS.md`. After the last line of §12 (the existing "Technology Constrain
 
 **ZMX-6.1** Shell-integration OSC sequences (OSC 7 working directory, OSC 9 desktop notification, OSC 133 prompt marks, OSC 9;4 progress reports) shall continue to flow from the inner shell through `zmx` to libghostty unchanged. The `PWD-x.x`, `NOTIF-x.x`, and `KEY-x.x` requirements remain in force regardless of whether `zmx` is mediating the PTY.
 
-**ZMX-6.2** The `ESPALIER_SOCK` environment variable shall continue to be set in the spawned shell's environment per `ATTN-2.4`. Because `zmx` inherits its child shell's env from the spawning process, this is satisfied by setting it on the libghostty surface as today.
+**ZMX-6.2** The `GRAFTTY_SOCK` environment variable shall continue to be set in the spawned shell's environment per `ATTN-2.4`. Because `zmx` inherits its child shell's env from the spawning process, this is satisfied by setting it on the libghostty surface as today.
 ```
 
 - [ ] **Step 2: Commit**
@@ -1348,34 +1348,34 @@ This task is a **manual checklist** — no code changes. The plan's executor wal
 
 ```bash
 ./scripts/bundle.sh
-open .build/Espalier.app
+open .build/Graftty.app
 ```
 
-In the app: add a repository, click into a worktree, type `echo HELLO_FROM_PRE_QUIT`, then Cmd-Q to quit. Reopen `.build/Espalier.app`. Expected: the worktree restores with `HELLO_FROM_PRE_QUIT` visible in the scrollback.
+In the app: add a repository, click into a worktree, type `echo HELLO_FROM_PRE_QUIT`, then Cmd-Q to quit. Reopen `.build/Graftty.app`. Expected: the worktree restores with `HELLO_FROM_PRE_QUIT` visible in the scrollback.
 
 - [ ] **Smoke 2: External zmx visibility**
 
-With Espalier closed, run:
+With Graftty closed, run:
 
 ```bash
-ZMX_DIR=~/Library/Application\ Support/Espalier/zmx /Applications/Espalier.app/Contents/Helpers/zmx list 2>/dev/null \
-  || ZMX_DIR=~/Library/Application\ Support/Espalier/zmx .build/Espalier.app/Contents/Helpers/zmx list
+ZMX_DIR=~/Library/Application\ Support/Graftty/zmx /Applications/Graftty.app/Contents/Helpers/zmx list 2>/dev/null \
+  || ZMX_DIR=~/Library/Application\ Support/Graftty/zmx .build/Graftty.app/Contents/Helpers/zmx list
 ```
 
-Expected: prints one line per surviving pane (`espalier-<short>` style names).
+Expected: prints one line per surviving pane (`graftty-<short>` style names).
 
 - [ ] **Smoke 3: Fallback path**
 
 ```bash
-mv .build/Espalier.app/Contents/Helpers/zmx{,.bak}
-open .build/Espalier.app
+mv .build/Graftty.app/Contents/Helpers/zmx{,.bak}
+open .build/Graftty.app
 ```
 
-Expected: an alert appears explaining zmx is unavailable. Dismiss it; verify creating a new worktree still spawns a working shell. Quit; restore: `mv .build/Espalier.app/Contents/Helpers/zmx{.bak,}`.
+Expected: an alert appears explaining zmx is unavailable. Dismiss it; verify creating a new worktree still spawns a working shell. Quit; restore: `mv .build/Graftty.app/Contents/Helpers/zmx{.bak,}`.
 
 - [ ] **Smoke 4: Stop kills sessions**
 
-Reopen Espalier, create panes, then right-click the worktree row → Stop. Confirm. Then run smoke 2's `zmx list` invocation — those sessions should no longer appear.
+Reopen Graftty, create panes, then right-click the worktree row → Stop. Confirm. Then run smoke 2's `zmx list` invocation — those sessions should no longer appear.
 
 If all four pass, Phase 1 is done.
 

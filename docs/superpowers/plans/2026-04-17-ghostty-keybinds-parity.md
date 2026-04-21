@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Route every Ghostty apprt action in the user's config to the matching Espalier pane operation, including two new pane-layout features (zoom and programmatic split resize). Espalier never hardcodes chords; menu shortcut hints are derived from Ghostty's config at startup.
+**Goal:** Route every Ghostty apprt action in the user's config to the matching Graftty pane operation, including two new pane-layout features (zoom and programmatic split resize). Graftty never hardcodes chords; menu shortcut hints are derived from Ghostty's config at startup.
 
-**Architecture:** Pure-Swift keybind types + bridge in `EspalierKit` (testable without GhosttyKit). Thin GhosttyKit-aware adapter + SwiftUI translator in the `Espalier` app target. `TerminalManager.handleAction` grows cases for the new actions. `SplitTree` gets `zoomed`, `resizing`, `equalizing`, `togglingZoom`. Menu `.commands` block pulls shortcuts from the bridge instead of hardcoded strings.
+**Architecture:** Pure-Swift keybind types + bridge in `GrafttyKit` (testable without GhosttyKit). Thin GhosttyKit-aware adapter + SwiftUI translator in the `Graftty` app target. `TerminalManager.handleAction` grows cases for the new actions. `SplitTree` gets `zoomed`, `resizing`, `equalizing`, `togglingZoom`. Menu `.commands` block pulls shortcuts from the bridge instead of hardcoded strings.
 
-**Tech Stack:** Swift 5.10, Swift Testing, SwiftUI, GhosttyKit (libghostty-spm), EspalierKit.
+**Tech Stack:** Swift 5.10, Swift Testing, SwiftUI, GhosttyKit (libghostty-spm), GrafttyKit.
 
 Spec: `docs/superpowers/specs/2026-04-17-ghostty-keybinds-parity-design.md`
 
@@ -16,25 +16,25 @@ Spec: `docs/superpowers/specs/2026-04-17-ghostty-keybinds-parity-design.md`
 
 ### Created
 
-- `Sources/EspalierKit/Keybinds/ShortcutChord.swift` — pure-Swift `ShortcutChord` struct and `ShortcutKey` / `ShortcutModifiers`.
-- `Sources/EspalierKit/Keybinds/GhosttyAction.swift` — enum of actions Espalier cares about, with raw-value action names matching Ghostty's config syntax.
-- `Sources/EspalierKit/Keybinds/GhosttyKeybindBridge.swift` — resolver-driven action-to-chord map. No GhosttyKit, no SwiftUI.
-- `Sources/EspalierKit/Model/ResizeDirection.swift` — enum used by `SplitTree.resizing`.
-- `Sources/Espalier/Terminal/GhosttyTriggerAdapter.swift` — `ghostty_input_trigger_s → ShortcutChord?`.
-- `Sources/Espalier/Terminal/KeyboardShortcutFromChord.swift` — `ShortcutChord → SwiftUI.KeyboardShortcut?`.
-- `Tests/EspalierKitTests/Keybinds/ShortcutChordTests.swift`
-- `Tests/EspalierKitTests/Keybinds/GhosttyKeybindBridgeTests.swift`
-- `Tests/EspalierKitTests/Keybinds/GhosttyActionTests.swift`
-- `Tests/EspalierKitTests/Model/SplitTreeZoomTests.swift`
-- `Tests/EspalierKitTests/Model/SplitTreeResizeTests.swift`
-- `Tests/EspalierKitTests/Model/SplitTreeEqualizeTests.swift`
+- `Sources/GrafttyKit/Keybinds/ShortcutChord.swift` — pure-Swift `ShortcutChord` struct and `ShortcutKey` / `ShortcutModifiers`.
+- `Sources/GrafttyKit/Keybinds/GhosttyAction.swift` — enum of actions Graftty cares about, with raw-value action names matching Ghostty's config syntax.
+- `Sources/GrafttyKit/Keybinds/GhosttyKeybindBridge.swift` — resolver-driven action-to-chord map. No GhosttyKit, no SwiftUI.
+- `Sources/GrafttyKit/Model/ResizeDirection.swift` — enum used by `SplitTree.resizing`.
+- `Sources/Graftty/Terminal/GhosttyTriggerAdapter.swift` — `ghostty_input_trigger_s → ShortcutChord?`.
+- `Sources/Graftty/Terminal/KeyboardShortcutFromChord.swift` — `ShortcutChord → SwiftUI.KeyboardShortcut?`.
+- `Tests/GrafttyKitTests/Keybinds/ShortcutChordTests.swift`
+- `Tests/GrafttyKitTests/Keybinds/GhosttyKeybindBridgeTests.swift`
+- `Tests/GrafttyKitTests/Keybinds/GhosttyActionTests.swift`
+- `Tests/GrafttyKitTests/Model/SplitTreeZoomTests.swift`
+- `Tests/GrafttyKitTests/Model/SplitTreeResizeTests.swift`
+- `Tests/GrafttyKitTests/Model/SplitTreeEqualizeTests.swift`
 
 ### Modified
 
-- `Sources/EspalierKit/Model/SplitTree.swift` — add `zoomed`, update `inserting/insertingBefore/removing` to enforce invariants, add `togglingZoom`, `resizing`, `equalizing`.
-- `Sources/Espalier/Terminal/TerminalManager.swift` — new callbacks (`onResizeSplit`, `onEqualizeSplits`, `onToggleZoom`, `onReloadConfig`), new `handleAction` cases, `keybindBridge` property.
-- `Sources/Espalier/EspalierApp.swift` — wire callbacks, rebuild `.commands` using bridge shortcuts.
-- `Sources/Espalier/Views/SplitContainerView.swift` — render only the zoomed leaf when `tree.zoomed != nil`.
+- `Sources/GrafttyKit/Model/SplitTree.swift` — add `zoomed`, update `inserting/insertingBefore/removing` to enforce invariants, add `togglingZoom`, `resizing`, `equalizing`.
+- `Sources/Graftty/Terminal/TerminalManager.swift` — new callbacks (`onResizeSplit`, `onEqualizeSplits`, `onToggleZoom`, `onReloadConfig`), new `handleAction` cases, `keybindBridge` property.
+- `Sources/Graftty/GrafttyApp.swift` — wire callbacks, rebuild `.commands` using bridge shortcuts.
+- `Sources/Graftty/Views/SplitContainerView.swift` — render only the zoomed leaf when `tree.zoomed != nil`.
 - `SPECS.md` — new §14 per spec doc.
 
 ---
@@ -42,17 +42,17 @@ Spec: `docs/superpowers/specs/2026-04-17-ghostty-keybinds-parity-design.md`
 ## Task 1: Add `zoomed` field to `SplitTree`
 
 **Files:**
-- Modify: `Sources/EspalierKit/Model/SplitTree.swift`
-- Test: `Tests/EspalierKitTests/Model/SplitTreeZoomTests.swift`
+- Modify: `Sources/GrafttyKit/Model/SplitTree.swift`
+- Test: `Tests/GrafttyKitTests/Model/SplitTreeZoomTests.swift`
 
 - [ ] **Step 1: Write failing test**
 
-Create `Tests/EspalierKitTests/Model/SplitTreeZoomTests.swift`:
+Create `Tests/GrafttyKitTests/Model/SplitTreeZoomTests.swift`:
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("SplitTree — zoom state")
 struct SplitTreeZoomTests {
@@ -98,7 +98,7 @@ Expected: FAIL — `zoomed` is not a member of `SplitTree`.
 
 - [ ] **Step 3: Add field to `SplitTree`**
 
-Edit `Sources/EspalierKit/Model/SplitTree.swift`. Replace the existing struct declaration with:
+Edit `Sources/GrafttyKit/Model/SplitTree.swift`. Replace the existing struct declaration with:
 
 ```swift
 public struct SplitTree: Codable, Sendable, Equatable {
@@ -137,7 +137,7 @@ Expected: both pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Model/SplitTree.swift Tests/EspalierKitTests/Model/SplitTreeZoomTests.swift
+git add Sources/GrafttyKit/Model/SplitTree.swift Tests/GrafttyKitTests/Model/SplitTreeZoomTests.swift
 git commit -m "feat(kit): SplitTree gains zoomed: TerminalID? field"
 ```
 
@@ -146,8 +146,8 @@ git commit -m "feat(kit): SplitTree gains zoomed: TerminalID? field"
 ## Task 2: Update mutations to enforce zoom invariants
 
 **Files:**
-- Modify: `Sources/EspalierKit/Model/SplitTree.swift`
-- Test: `Tests/EspalierKitTests/Model/SplitTreeZoomTests.swift` (extend)
+- Modify: `Sources/GrafttyKit/Model/SplitTree.swift`
+- Test: `Tests/GrafttyKitTests/Model/SplitTreeZoomTests.swift` (extend)
 
 - [ ] **Step 1: Add failing tests**
 
@@ -199,7 +199,7 @@ Expected: FAIL — `withZoom` not defined; mutations don't yet touch `zoomed`.
 
 - [ ] **Step 3: Implement**
 
-Edit `Sources/EspalierKit/Model/SplitTree.swift`:
+Edit `Sources/GrafttyKit/Model/SplitTree.swift`:
 
 ```swift
 public func withZoom(_ id: TerminalID?) -> SplitTree {
@@ -238,7 +238,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Model/SplitTree.swift Tests/EspalierKitTests/Model/SplitTreeZoomTests.swift
+git add Sources/GrafttyKit/Model/SplitTree.swift Tests/GrafttyKitTests/Model/SplitTreeZoomTests.swift
 git commit -m "feat(kit): SplitTree mutations enforce zoom invariants"
 ```
 
@@ -247,8 +247,8 @@ git commit -m "feat(kit): SplitTree mutations enforce zoom invariants"
 ## Task 3: Add `togglingZoom`
 
 **Files:**
-- Modify: `Sources/EspalierKit/Model/SplitTree.swift`
-- Test: `Tests/EspalierKitTests/Model/SplitTreeZoomTests.swift` (extend)
+- Modify: `Sources/GrafttyKit/Model/SplitTree.swift`
+- Test: `Tests/GrafttyKitTests/Model/SplitTreeZoomTests.swift` (extend)
 
 - [ ] **Step 1: Add failing tests**
 
@@ -318,7 +318,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Model/SplitTree.swift Tests/EspalierKitTests/Model/SplitTreeZoomTests.swift
+git add Sources/GrafttyKit/Model/SplitTree.swift Tests/GrafttyKitTests/Model/SplitTreeZoomTests.swift
 git commit -m "feat(kit): SplitTree.togglingZoom(at:)"
 ```
 
@@ -327,13 +327,13 @@ git commit -m "feat(kit): SplitTree.togglingZoom(at:)"
 ## Task 4: `ResizeDirection` + `SplitTree.resizing`
 
 **Files:**
-- Create: `Sources/EspalierKit/Model/ResizeDirection.swift`
-- Modify: `Sources/EspalierKit/Model/SplitTree.swift`
-- Create: `Tests/EspalierKitTests/Model/SplitTreeResizeTests.swift`
+- Create: `Sources/GrafttyKit/Model/ResizeDirection.swift`
+- Modify: `Sources/GrafttyKit/Model/SplitTree.swift`
+- Create: `Tests/GrafttyKitTests/Model/SplitTreeResizeTests.swift`
 
 - [ ] **Step 1: Create the enum**
 
-`Sources/EspalierKit/Model/ResizeDirection.swift`:
+`Sources/GrafttyKit/Model/ResizeDirection.swift`:
 
 ```swift
 import Foundation
@@ -367,13 +367,13 @@ public enum ResizeDirection: Sendable {
 
 - [ ] **Step 2: Write failing tests**
 
-`Tests/EspalierKitTests/Model/SplitTreeResizeTests.swift`:
+`Tests/GrafttyKitTests/Model/SplitTreeResizeTests.swift`:
 
 ```swift
 import Testing
 import Foundation
 import CoreGraphics
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("SplitTree — resizing")
 struct SplitTreeResizeTests {
@@ -554,7 +554,7 @@ Expected: all pass.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Sources/EspalierKit/Model/ResizeDirection.swift Sources/EspalierKit/Model/SplitTree.swift Tests/EspalierKitTests/Model/SplitTreeResizeTests.swift
+git add Sources/GrafttyKit/Model/ResizeDirection.swift Sources/GrafttyKit/Model/SplitTree.swift Tests/GrafttyKitTests/Model/SplitTreeResizeTests.swift
 git commit -m "feat(kit): SplitTree.resizing + ResizeDirection + clamp at [0.1, 0.9]"
 ```
 
@@ -563,15 +563,15 @@ git commit -m "feat(kit): SplitTree.resizing + ResizeDirection + clamp at [0.1, 
 ## Task 5: `SplitTree.equalizing()`
 
 **Files:**
-- Modify: `Sources/EspalierKit/Model/SplitTree.swift`
-- Create: `Tests/EspalierKitTests/Model/SplitTreeEqualizeTests.swift`
+- Modify: `Sources/GrafttyKit/Model/SplitTree.swift`
+- Create: `Tests/GrafttyKitTests/Model/SplitTreeEqualizeTests.swift`
 
 - [ ] **Step 1: Write failing tests**
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("SplitTree — equalizing")
 struct SplitTreeEqualizeTests {
@@ -605,7 +605,7 @@ struct SplitTreeEqualizeTests {
 }
 ```
 
-(`forEachSplit` is a test-only helper to walk splits; add as an internal extension in `EspalierKitTests` or publicize on `SplitTree` — plan publicizes to keep the test simple.)
+(`forEachSplit` is a test-only helper to walk splits; add as an internal extension in `GrafttyKitTests` or publicize on `SplitTree` — plan publicizes to keep the test simple.)
 
 - [ ] **Step 2: Run, verify fail**
 
@@ -669,7 +669,7 @@ Expected: pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Model/SplitTree.swift Tests/EspalierKitTests/Model/SplitTreeEqualizeTests.swift
+git add Sources/GrafttyKit/Model/SplitTree.swift Tests/GrafttyKitTests/Model/SplitTreeEqualizeTests.swift
 git commit -m "feat(kit): SplitTree.equalizing resets all split ratios to 0.5"
 ```
 
@@ -678,18 +678,18 @@ git commit -m "feat(kit): SplitTree.equalizing resets all split ratios to 0.5"
 ## Task 6: Pure keybind types (`ShortcutChord`, `ShortcutModifiers`, `GhosttyAction`)
 
 **Files:**
-- Create: `Sources/EspalierKit/Keybinds/ShortcutChord.swift`
-- Create: `Sources/EspalierKit/Keybinds/GhosttyAction.swift`
-- Create: `Tests/EspalierKitTests/Keybinds/ShortcutChordTests.swift`
-- Create: `Tests/EspalierKitTests/Keybinds/GhosttyActionTests.swift`
+- Create: `Sources/GrafttyKit/Keybinds/ShortcutChord.swift`
+- Create: `Sources/GrafttyKit/Keybinds/GhosttyAction.swift`
+- Create: `Tests/GrafttyKitTests/Keybinds/ShortcutChordTests.swift`
+- Create: `Tests/GrafttyKitTests/Keybinds/GhosttyActionTests.swift`
 
 - [ ] **Step 1: Write failing tests**
 
-`Tests/EspalierKitTests/Keybinds/ShortcutChordTests.swift`:
+`Tests/GrafttyKitTests/Keybinds/ShortcutChordTests.swift`:
 
 ```swift
 import Testing
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("ShortcutChord")
 struct ShortcutChordTests {
@@ -710,11 +710,11 @@ struct ShortcutChordTests {
 }
 ```
 
-`Tests/EspalierKitTests/Keybinds/GhosttyActionTests.swift`:
+`Tests/GrafttyKitTests/Keybinds/GhosttyActionTests.swift`:
 
 ```swift
 import Testing
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("GhosttyAction — action-name contract")
 struct GhosttyActionTests {
@@ -753,7 +753,7 @@ Expected: FAIL — types not defined.
 
 - [ ] **Step 3: Create files**
 
-`Sources/EspalierKit/Keybinds/ShortcutChord.swift`:
+`Sources/GrafttyKit/Keybinds/ShortcutChord.swift`:
 
 ```swift
 import Foundation
@@ -792,12 +792,12 @@ public struct ShortcutChord: Hashable, Sendable, Codable {
 }
 ```
 
-`Sources/EspalierKit/Keybinds/GhosttyAction.swift`:
+`Sources/GrafttyKit/Keybinds/GhosttyAction.swift`:
 
 ```swift
 import Foundation
 
-/// Subset of Ghostty apprt actions Espalier exposes as menu items and
+/// Subset of Ghostty apprt actions Graftty exposes as menu items and
 /// queries in `GhosttyKeybindBridge`. `rawValue` is the exact string
 /// Ghostty's config parser accepts on the RHS of a `keybind = chord=...`.
 ///
@@ -832,7 +832,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Keybinds Tests/EspalierKitTests/Keybinds/ShortcutChordTests.swift Tests/EspalierKitTests/Keybinds/GhosttyActionTests.swift
+git add Sources/GrafttyKit/Keybinds Tests/GrafttyKitTests/Keybinds/ShortcutChordTests.swift Tests/GrafttyKitTests/Keybinds/GhosttyActionTests.swift
 git commit -m "feat(kit): ShortcutChord + GhosttyAction pure-Swift types"
 ```
 
@@ -841,14 +841,14 @@ git commit -m "feat(kit): ShortcutChord + GhosttyAction pure-Swift types"
 ## Task 7: `GhosttyKeybindBridge` with resolver closure
 
 **Files:**
-- Create: `Sources/EspalierKit/Keybinds/GhosttyKeybindBridge.swift`
-- Create: `Tests/EspalierKitTests/Keybinds/GhosttyKeybindBridgeTests.swift`
+- Create: `Sources/GrafttyKit/Keybinds/GhosttyKeybindBridge.swift`
+- Create: `Tests/GrafttyKitTests/Keybinds/GhosttyKeybindBridgeTests.swift`
 
 - [ ] **Step 1: Write failing tests**
 
 ```swift
 import Testing
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("GhosttyKeybindBridge")
 struct GhosttyKeybindBridgeTests {
@@ -892,7 +892,7 @@ Expected: FAIL — bridge not defined.
 
 - [ ] **Step 3: Implement**
 
-`Sources/EspalierKit/Keybinds/GhosttyKeybindBridge.swift`:
+`Sources/GrafttyKit/Keybinds/GhosttyKeybindBridge.swift`:
 
 ```swift
 import Foundation
@@ -934,7 +934,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Keybinds/GhosttyKeybindBridge.swift Tests/EspalierKitTests/Keybinds/GhosttyKeybindBridgeTests.swift
+git add Sources/GrafttyKit/Keybinds/GhosttyKeybindBridge.swift Tests/GrafttyKitTests/Keybinds/GhosttyKeybindBridgeTests.swift
 git commit -m "feat(kit): GhosttyKeybindBridge with resolver closure"
 ```
 
@@ -943,20 +943,20 @@ git commit -m "feat(kit): GhosttyKeybindBridge with resolver closure"
 ## Task 8: `GhosttyTriggerAdapter` (app-target GhosttyKit → `ShortcutChord`)
 
 **Files:**
-- Create: `Sources/Espalier/Terminal/GhosttyTriggerAdapter.swift`
+- Create: `Sources/Graftty/Terminal/GhosttyTriggerAdapter.swift`
 
 No test target available for the app module; this adapter is intentionally trivial (two switches + a bitfield map). Smoke test via the end-to-end build.
 
 - [ ] **Step 1: Write the adapter**
 
-`Sources/Espalier/Terminal/GhosttyTriggerAdapter.swift`:
+`Sources/Graftty/Terminal/GhosttyTriggerAdapter.swift`:
 
 ```swift
 import Foundation
 import GhosttyKit
-import EspalierKit
+import GrafttyKit
 
-/// Translates libghostty's `ghostty_input_trigger_s` into Espalier's
+/// Translates libghostty's `ghostty_input_trigger_s` into Graftty's
 /// pure-Swift `ShortcutChord`. Lives in the app target because it's
 /// the only module that imports GhosttyKit.
 enum GhosttyTriggerAdapter {
@@ -1084,12 +1084,12 @@ enum GhosttyTriggerAdapter {
 swift build --configuration debug
 ```
 
-Expected: success. (If specific `GHOSTTY_KEY_*` names don't exist in the vendored libghostty-spm header, strip the missing cases — check `/Users/btucker/projects/espalier/.worktrees/ghostty-keybinds/.build/artifacts/libghostty-spm/libghostty/GhosttyKit.xcframework/macos-arm64_x86_64/Headers/ghostty.h` line ~128 onward for the exact enum values. At minimum keep letters, digits, arrows, common punctuation, F-keys.)
+Expected: success. (If specific `GHOSTTY_KEY_*` names don't exist in the vendored libghostty-spm header, strip the missing cases — check `/Users/btucker/projects/graftty/.worktrees/ghostty-keybinds/.build/artifacts/libghostty-spm/libghostty/GhosttyKit.xcframework/macos-arm64_x86_64/Headers/ghostty.h` line ~128 onward for the exact enum values. At minimum keep letters, digits, arrows, common punctuation, F-keys.)
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/Espalier/Terminal/GhosttyTriggerAdapter.swift
+git add Sources/Graftty/Terminal/GhosttyTriggerAdapter.swift
 git commit -m "feat(app): GhosttyTriggerAdapter — libghostty trigger → ShortcutChord"
 ```
 
@@ -1098,15 +1098,15 @@ git commit -m "feat(app): GhosttyTriggerAdapter — libghostty trigger → Short
 ## Task 9: `KeyboardShortcutFromChord` (SwiftUI translator)
 
 **Files:**
-- Create: `Sources/Espalier/Terminal/KeyboardShortcutFromChord.swift`
+- Create: `Sources/Graftty/Terminal/KeyboardShortcutFromChord.swift`
 
 - [ ] **Step 1: Write**
 
 ```swift
 import SwiftUI
-import EspalierKit
+import GrafttyKit
 
-/// Translates Espalier's pure `ShortcutChord` into SwiftUI's
+/// Translates Graftty's pure `ShortcutChord` into SwiftUI's
 /// `KeyboardShortcut`. Unmapped keys return `nil` — the caller must
 /// gracefully skip the `.keyboardShortcut(...)` modifier.
 enum KeyboardShortcutFromChord {
@@ -1163,7 +1163,7 @@ Expected: success. If a SwiftUI `KeyEquivalent` constant is misnamed for your SD
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/Espalier/Terminal/KeyboardShortcutFromChord.swift
+git add Sources/Graftty/Terminal/KeyboardShortcutFromChord.swift
 git commit -m "feat(app): ShortcutChord → SwiftUI KeyboardShortcut translator"
 ```
 
@@ -1172,7 +1172,7 @@ git commit -m "feat(app): ShortcutChord → SwiftUI KeyboardShortcut translator"
 ## Task 10: Expose `keybindBridge` on `TerminalManager` + plumb callbacks
 
 **Files:**
-- Modify: `Sources/Espalier/Terminal/TerminalManager.swift`
+- Modify: `Sources/Graftty/Terminal/TerminalManager.swift`
 
 - [ ] **Step 1: Add bridge + callback fields**
 
@@ -1181,7 +1181,7 @@ In `TerminalManager.swift`, just after the existing `@Published var titles`:
 ```swift
 /// Ghostty-config-derived keybind map, built in `initialize()` from the
 /// live `ghostty_config_t` via `GhosttyTriggerAdapter.resolver`.
-/// `EspalierApp.commands` reads this to set menu `.keyboardShortcut(...)`
+/// `GrafttyApp.commands` reads this to set menu `.keyboardShortcut(...)`
 /// modifiers dynamically.
 @Published private(set) var keybindBridge: GhosttyKeybindBridge =
     GhosttyKeybindBridge(resolver: { _ in nil })
@@ -1245,16 +1245,16 @@ Expected: success.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/Espalier/Terminal/TerminalManager.swift
+git add Sources/Graftty/Terminal/TerminalManager.swift
 git commit -m "feat(app): TerminalManager exposes keybindBridge + zoom/resize/reload callbacks"
 ```
 
 ---
 
-## Task 11: Add `handleAction` cases for Espalier-modelable actions
+## Task 11: Add `handleAction` cases for Graftty-modelable actions
 
 **Files:**
-- Modify: `Sources/Espalier/Terminal/TerminalManager.swift`
+- Modify: `Sources/Graftty/Terminal/TerminalManager.swift`
 
 - [ ] **Step 1: Locate `handleAction`**
 
@@ -1277,7 +1277,7 @@ case GHOSTTY_ACTION_NEW_SPLIT:
 
 case GHOSTTY_ACTION_CLOSE_TAB:
     // Ghostty reuses close_tab for close_surface in single-pane
-    // contexts; Espalier treats pane close the same way.
+    // contexts; Graftty treats pane close the same way.
     guard let id = terminalID(from: target) else { return }
     onCloseRequest?(id)
 
@@ -1326,7 +1326,7 @@ case GHOSTTY_ACTION_EQUALIZE_SPLITS:
 case GHOSTTY_ACTION_RELOAD_CONFIG:
     onReloadConfig?()
 
-// Silent no-ops for Ghostty concepts Espalier doesn't model. Listed
+// Silent no-ops for Ghostty concepts Graftty doesn't model. Listed
 // explicitly (rather than falling into default) so future maintainers
 // know we looked at them.
 case GHOSTTY_ACTION_NEW_TAB,
@@ -1352,7 +1352,7 @@ var onGotoSplit: ((TerminalID, NavigationDirection) -> Void)?
 var onGotoSplitOrder: ((TerminalID, _ forward: Bool) -> Void)?
 ```
 
-And move the `NavigationDirection` enum from `EspalierApp.swift` to `TerminalManager.swift` (or keep it where it is and import it — plan keeps it in `EspalierApp` and uses the fully-qualified name `EspalierApp.NavigationDirection` or promotes to a top-level type; simplest is promote):
+And move the `NavigationDirection` enum from `GrafttyApp.swift` to `TerminalManager.swift` (or keep it where it is and import it — plan keeps it in `GrafttyApp` and uses the fully-qualified name `GrafttyApp.NavigationDirection` or promotes to a top-level type; simplest is promote):
 
 ```swift
 enum NavigationDirection {
@@ -1360,7 +1360,7 @@ enum NavigationDirection {
 }
 ```
 
-Replace `EspalierApp.NavigationDirection` references to use the top-level type.
+Replace `GrafttyApp.NavigationDirection` references to use the top-level type.
 
 - [ ] **Step 3: Build**
 
@@ -1368,21 +1368,21 @@ Replace `EspalierApp.NavigationDirection` references to use the top-level type.
 swift build --configuration debug
 ```
 
-Expected: success. (If any `GHOSTTY_ACTION_*` or `GHOSTTY_SPLIT_DIRECTION_*` enum case name is different in the vendored header, check ghostty.h and adjust — the header will have the exact values. At the file `/Users/btucker/projects/espalier/.worktrees/ghostty-keybinds/.build/artifacts/libghostty-spm/libghostty/GhosttyKit.xcframework/macos-arm64_x86_64/Headers/ghostty.h`.)
+Expected: success. (If any `GHOSTTY_ACTION_*` or `GHOSTTY_SPLIT_DIRECTION_*` enum case name is different in the vendored header, check ghostty.h and adjust — the header will have the exact values. At the file `/Users/btucker/projects/graftty/.worktrees/ghostty-keybinds/.build/artifacts/libghostty-spm/libghostty/GhosttyKit.xcframework/macos-arm64_x86_64/Headers/ghostty.h`.)
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/Espalier/Terminal/TerminalManager.swift
+git add Sources/Graftty/Terminal/TerminalManager.swift
 git commit -m "feat(app): handleAction cases for new_split/goto_split/zoom/resize/equalize/reload_config"
 ```
 
 ---
 
-## Task 12: Wire callbacks in `EspalierApp`, add new menu items, bridge shortcuts
+## Task 12: Wire callbacks in `GrafttyApp`, add new menu items, bridge shortcuts
 
 **Files:**
-- Modify: `Sources/Espalier/EspalierApp.swift`
+- Modify: `Sources/Graftty/GrafttyApp.swift`
 
 - [ ] **Step 1: Wire callbacks**
 
@@ -1525,7 +1525,7 @@ private static func mutateWorktreeContaining(
 
 - [ ] **Step 3: Update `.commands` block to use bridge**
 
-Add a SwiftUI view-builder helper near the top of `EspalierApp.swift`:
+Add a SwiftUI view-builder helper near the top of `GrafttyApp.swift`:
 
 ```swift
 /// Wraps a menu button so its keyboard shortcut is derived from the
@@ -1554,7 +1554,7 @@ Rewrite the `.commands` block:
 ```swift
 .commands {
     CommandGroup(after: .newItem) {
-        Button("Add Repository...") { ... }  // keep Cmd+Shift+O hardcoded — Espalier-specific
+        Button("Add Repository...") { ... }  // keep Cmd+Shift+O hardcoded — Graftty-specific
             .keyboardShortcut("o", modifiers: [.command, .shift])
 
         bridgedButton("Split Right",  action: .newSplitRight)  { self.handleSplit(.right) }
@@ -1634,7 +1634,7 @@ Expected: success. Fix up any `NavigationDirection` import / naming mismatches t
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/Espalier/EspalierApp.swift
+git add Sources/Graftty/GrafttyApp.swift
 git commit -m "feat(app): bridged menu shortcuts + zoom/resize/equalize/reload handlers"
 ```
 
@@ -1643,12 +1643,12 @@ git commit -m "feat(app): bridged menu shortcuts + zoom/resize/equalize/reload h
 ## Task 13: Render zoomed pane in `SplitContainerView`
 
 **Files:**
-- Modify: `Sources/Espalier/Views/SplitContainerView.swift`
+- Modify: `Sources/Graftty/Views/SplitContainerView.swift`
 
 - [ ] **Step 1: Inspect current structure**
 
 ```bash
-cat Sources/Espalier/Views/SplitContainerView.swift
+cat Sources/Graftty/Views/SplitContainerView.swift
 ```
 
 Find the top-level body that builds the split tree view hierarchy.
@@ -1683,7 +1683,7 @@ Expected: success.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/Espalier/Views/SplitContainerView.swift
+git add Sources/Graftty/Views/SplitContainerView.swift
 git commit -m "feat(app): SplitContainerView renders only the zoomed leaf when set"
 ```
 
@@ -1692,8 +1692,8 @@ git commit -m "feat(app): SplitContainerView renders only the zoomed leaf when s
 ## Task 14: Honor `split-preserve-zoom = navigation` config flag
 
 **Files:**
-- Modify: `Sources/Espalier/Terminal/TerminalManager.swift`
-- Modify: `Sources/Espalier/EspalierApp.swift`
+- Modify: `Sources/Graftty/Terminal/TerminalManager.swift`
+- Modify: `Sources/Graftty/GrafttyApp.swift`
 
 - [ ] **Step 1: Expose the flag on `TerminalManager`**
 
@@ -1728,7 +1728,7 @@ Call `readSplitPreserveZoomConfig()` at the end of `initialize()` and `rebuildKe
 
 - [ ] **Step 2: Update `navigatePane` to check the flag**
 
-In `EspalierApp.navigatePane` (and its `navigatePaneInTreeOrder` sibling), after computing the next leaf, before setting focus:
+In `GrafttyApp.navigatePane` (and its `navigatePaneInTreeOrder` sibling), after computing the next leaf, before setting focus:
 
 ```swift
 // Zoom preservation: Ghostty 1.3 split-preserve-zoom=navigation.
@@ -1754,7 +1754,7 @@ Expected: success.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/Espalier/Terminal/TerminalManager.swift Sources/Espalier/EspalierApp.swift
+git add Sources/Graftty/Terminal/TerminalManager.swift Sources/Graftty/GrafttyApp.swift
 git commit -m "feat(app): honor split-preserve-zoom=navigation for zoom-during-nav"
 ```
 
@@ -1773,11 +1773,11 @@ Append to the bottom of `SPECS.md`:
 ## §14 Keyboard Shortcuts
 
 **KBD-1.1** When the user presses a chord bound in their Ghostty config
-to an apprt action Espalier supports, the application shall dispatch
+to an apprt action Graftty supports, the application shall dispatch
 that action.
 
 **KBD-1.2** When the user's Ghostty config omits a binding for an action,
-the corresponding Espalier menu item shall render without a shortcut hint
+the corresponding Graftty menu item shall render without a shortcut hint
 but remain clickable.
 
 **KBD-2.1** When the user presses `toggle_split_zoom` on a focused pane
@@ -1819,9 +1819,9 @@ git commit -m "docs(specs): §14 keyboard shortcuts — config-driven keybind pa
 - [ ] **Step 1: Run everything**
 
 ```bash
-cd /Users/btucker/projects/espalier/.worktrees/ghostty-keybinds
+cd /Users/btucker/projects/graftty/.worktrees/ghostty-keybinds
 swift build --configuration debug 2>&1 | tail
-swift test --filter EspalierKitTests 2>&1 | tail -30
+swift test --filter GrafttyKitTests 2>&1 | tail -30
 scripts/bundle.sh 2>&1 | tail -10
 ```
 
@@ -1831,7 +1831,7 @@ Expected: build succeeds, every test passes, bundle produced.
 
 Manual checklist (from the spec):
 
-1. Open `.build/Espalier.app`. Open a pane. Press `Cmd+D` → split right.
+1. Open `.build/Graftty.app`. Open a pane. Press `Cmd+D` → split right.
 2. Verify menu bar shows "Split Right" with `⌘D` hint.
 3. Press `Cmd+Shift+Return` → pane zooms. Press again → unzooms.
 4. With a 3-way split (split right once, then split down on the right pane), press `Cmd+Opt+Shift+Right` → verify only the inner vertical divider moves.
@@ -1853,7 +1853,7 @@ If the smoke test revealed anything, capture as a follow-up note; otherwise noth
 - [ ] **Step 1: Push branch**
 
 ```bash
-cd /Users/btucker/projects/espalier/.worktrees/ghostty-keybinds
+cd /Users/btucker/projects/graftty/.worktrees/ghostty-keybinds
 git push -u origin feature/ghostty-keybinds
 ```
 
@@ -1875,7 +1875,7 @@ gh pr create --title "feat: config-driven keybind parity with Ghostty + pane zoo
 Covers §14 of SPECS.md. Follow-up specs (command palette, quick terminal) plug into this dispatch layer without further refactors.
 
 ## Test plan
-- [x] `swift test --filter EspalierKitTests` (SplitTree zoom / resize / equalize, ShortcutChord, GhosttyAction, GhosttyKeybindBridge)
+- [x] `swift test --filter GrafttyKitTests` (SplitTree zoom / resize / equalize, ShortcutChord, GhosttyAction, GhosttyKeybindBridge)
 - [x] Bundle via `scripts/bundle.sh`
 - [x] Smoke checklist per plan Task 16 step 2
 

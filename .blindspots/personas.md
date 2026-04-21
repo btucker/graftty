@@ -4,7 +4,7 @@
 
 > "I've got four Claude Code sessions running in four worktrees and I need to know the second one stops asking me questions."
 
-You are a senior software engineer at a fast-moving startup. You discovered git worktrees six months ago when you started running multiple Claude Code agents in parallel on the same repo, each on a different feature branch. You came to Espalier because you were tired of `tmux` windows that didn't track which worktree belonged to which repo, and you wanted a proper sidebar.
+You are a senior software engineer at a fast-moving startup. You discovered git worktrees six months ago when you started running multiple Claude Code agents in parallel on the same repo, each on a different feature branch. You came to Graftty because you were tired of `tmux` windows that didn't track which worktree belonged to which repo, and you wanted a proper sidebar.
 
 **Jobs-to-be-Done**
 - Functional: Keep 3-6 long-running agent sessions alive in per-worktree terminals, notice instantly when one needs attention
@@ -37,7 +37,7 @@ You are a senior software engineer at a fast-moving startup. You discovered git 
 
 > "tmux has worked fine for fifteen years — convince me why I should change."
 
-You are a staff engineer with two decades of terminal-first habits. Your tmux config is 400 lines. You've tried every terminal multiplexer — kitty, wezterm, zellij — and always come back. A teammate insisted you try Espalier specifically for the worktree integration.
+You are a staff engineer with two decades of terminal-first habits. Your tmux config is 400 lines. You've tried every terminal multiplexer — kitty, wezterm, zellij — and always come back. A teammate insisted you try Graftty specifically for the worktree integration.
 
 **Jobs-to-be-Done**
 - Functional: Preserve every workflow tmux gives you (detach/reattach, named sessions, custom prefix keys)
@@ -70,10 +70,10 @@ You are a staff engineer with two decades of terminal-first habits. Your tmux co
 
 > "If I can pipe my CI output to a sidebar badge, this becomes my dashboard."
 
-You are a developer-tools engineer at a mid-size company. You maintain the internal CI system and you're always looking for better ways to surface build/test status without Slack spam. You heard about `espalier notify` and want to integrate it into your team's build scripts.
+You are a developer-tools engineer at a mid-size company. You maintain the internal CI system and you're always looking for better ways to surface build/test status without Slack spam. You heard about `graftty notify` and want to integrate it into your team's build scripts.
 
 **Jobs-to-be-Done**
-- Functional: Wire `espalier notify` into a watcher that runs tests on file changes, updates the badge on pass/fail
+- Functional: Wire `graftty notify` into a watcher that runs tests on file changes, updates the badge on pass/fail
 - Emotional: Stop feeling interrupted by notifications that aren't relevant to the worktree you're focused on
 - Social: Share a reusable shell snippet so the whole team uses it
 
@@ -85,11 +85,11 @@ You are a developer-tools engineer at a mid-size company. You maintain the inter
 - Checks what environment variables the CLI requires
 
 **Behavior**
-- First thing he does is run `espalier notify --help` and `espalier --help`
+- First thing he does is run `graftty notify --help` and `graftty --help`
 - Writes a test script that sends notifications rapid-fire to see if they queue, coalesce, or get dropped
 - Runs the CLI from a subshell in a non-worktree directory to test error handling
 - Reads `state.json` to see if notifications persist (they shouldn't)
-- Checks the socket path under `$ESPALIER_SOCK` and writes directly to it with `nc -U`
+- Checks the socket path under `$GRAFTTY_SOCK` and writes directly to it with `nc -U`
 
 **Tech Profile**
 - MacBook Pro M1, prefers bash over zsh, runs scripts out of `~/bin`
@@ -155,7 +155,7 @@ You are a contractor with three simultaneous clients, each with their own repo a
 - Force-quits the app periodically to test restoration
 - Switches Wi-Fi networks mid-workflow to test offline tolerance
 - Opens three worktrees across different clients simultaneously
-- Inspects `~/Library/Application Support/Espalier/state.json` manually
+- Inspects `~/Library/Application Support/Graftty/state.json` manually
 
 **Tech Profile**
 - 14" MacBook Pro M2, often on LTE hotspot
@@ -169,6 +169,6 @@ You are a contractor with three simultaneous clients, each with their own repo a
 
 > "I need centralized policy management, audit logs, and MDM deployment across 10,000 seats."
 
-This is NOT the target user. Espalier is a single-user developer tool for personal productivity. Testing from this perspective would surface feature requests (fleet management, audit logging, SAML SSO, encrypted-at-rest config, centralized policy enforcement, license seat allocation) that are intentionally out of scope.
+This is NOT the target user. Graftty is a single-user developer tool for personal productivity. Testing from this perspective would surface feature requests (fleet management, audit logging, SAML SSO, encrypted-at-rest config, centralized policy enforcement, license seat allocation) that are intentionally out of scope.
 
-**Why they're excluded**: Espalier is opinionated, single-user, and filesystem-local. It assumes the user controls their machine, can edit their own config, and has shell access. Enterprise procurement, compliance certifications, and mass deployment tooling are not part of the product's mission.
+**Why they're excluded**: Graftty is opinionated, single-user, and filesystem-local. It assumes the user controls their machine, can edit their own config, and has shell access. Enterprise procurement, compliance certifications, and mass deployment tooling are not part of the product's mission.

@@ -12,16 +12,16 @@ let strictWarnings: [SwiftSetting] = [
 ]
 
 let package = Package(
-    name: "Espalier",
+    name: "Graftty",
     platforms: [.macOS(.v14)],
     products: [
-        .executable(name: "Espalier", targets: ["Espalier"]),
-        // Product name "espalier-cli" (not "espalier") to avoid case-insensitive
-        // filesystem collision with the "Espalier" app binary. When the app is
-        // bundled for distribution, this binary is installed as "espalier"
-        // at Espalier.app/Contents/MacOS/espalier per ATTN-1.1.
-        .executable(name: "espalier-cli", targets: ["EspalierCLI"]),
-        .library(name: "EspalierKit", targets: ["EspalierKit"]),
+        .executable(name: "Graftty", targets: ["Graftty"]),
+        // Product name "graftty-cli" (not "graftty") to avoid case-insensitive
+        // filesystem collision with the "Graftty" app binary. When the app is
+        // bundled for distribution, this binary is installed as "graftty"
+        // at Graftty.app/Contents/MacOS/graftty per ATTN-1.1.
+        .executable(name: "graftty-cli", targets: ["GrafttyCLI"]),
+        .library(name: "GrafttyKit", targets: ["GrafttyKit"]),
     ],
     dependencies: [
         .package(url: "https://github.com/Lakr233/libghostty-spm.git", from: "1.0.0"),
@@ -30,7 +30,7 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "EspalierKit",
+            name: "GrafttyKit",
             dependencies: [
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
@@ -42,24 +42,24 @@ let package = Package(
             swiftSettings: strictWarnings
         ),
         .executableTarget(
-            name: "Espalier",
+            name: "Graftty",
             dependencies: [
-                "EspalierKit",
+                "GrafttyKit",
                 .product(name: "GhosttyKit", package: "libghostty-spm"),
             ],
             swiftSettings: strictWarnings
         ),
         .executableTarget(
-            name: "EspalierCLI",
+            name: "GrafttyCLI",
             dependencies: [
-                "EspalierKit",
+                "GrafttyKit",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             swiftSettings: strictWarnings
         ),
         .testTarget(
-            name: "EspalierKitTests",
-            dependencies: ["EspalierKit"],
+            name: "GrafttyKitTests",
+            dependencies: ["GrafttyKit"],
             resources: [
                 .process("Hosting/Fixtures"),
                 .copy("Web/Fixtures"),

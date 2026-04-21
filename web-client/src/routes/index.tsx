@@ -58,7 +58,7 @@ export function IndexPage() {
   if (state.sessions.length === 0) {
     return (
       <div className="picker-status">
-        No running sessions. Start one in Espalier.
+        No running sessions. Start one in Graftty.
       </div>
     );
   }
@@ -74,7 +74,7 @@ export function IndexPage() {
 
   return (
     <div className="picker">
-      <h1>Espalier sessions</h1>
+      <h1>Graftty sessions</h1>
       {[...grouped.entries()].map(([repo, sessions]) => (
         <section key={repo} className="picker-repo">
           <h2>{repo}</h2>

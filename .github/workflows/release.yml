@@ -41,11 +41,11 @@ jobs:
       - name: Build app bundle
         env:
           CONFIGURATION: release
-          ESPALIER_VERSION: ${{ steps.version.outputs.version }}
+          GRAFTTY_VERSION: ${{ steps.version.outputs.version }}
         run: scripts/bundle.sh
 
       - name: Verify codesign
-        run: codesign --verify --strict --verbose=2 .build/Espalier.app
+        run: codesign --verify --strict --verbose=2 .build/Graftty.app
 
       - name: Zip artifact
         id: zip
@@ -53,10 +53,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          ZIP="Espalier-$VERSION.zip"
+          ZIP="Graftty-$VERSION.zip"
           # ditto preserves resource forks and extended attributes that
           # codesign cares about; plain `zip` strips them.
-          ditto -c -k --keepParent .build/Espalier.app "$ZIP"
+          ditto -c -k --keepParent .build/Graftty.app "$ZIP"
           SHA256="$(shasum -a 256 "$ZIP" | awk '{print $1}')"
           echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
           echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
@@ -90,24 +90,24 @@ jobs:
           SHA256: ${{ steps.zip.outputs.sha256 }}
         run: |
           set -euo pipefail
-          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/btucker/homebrew-espalier.git" tap
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/btucker/homebrew-graftty.git" tap
           cd tap
           # Pull-rebase before editing in case a manual cask edit landed
           # between our clone and our push (e.g., a maintainer syncing
-          # caveats from docs/release/Casks/espalier.rb in the source repo).
+          # caveats from docs/release/Casks/graftty.rb in the source repo).
           # No-op when there's nothing new.
           git pull --rebase origin main
           # Rewrite version + sha256 in place. Two seds (not one) so the
           # failure mode is obvious if either field's literal text drifts
           # in the cask.
-          sed -i '' -E "s/^  version \".*\"/  version \"$VERSION\"/" Casks/espalier.rb
-          sed -i '' -E "s/^  sha256 \".*\"/  sha256 \"$SHA256\"/" Casks/espalier.rb
-          git config user.name  "espalier-release-bot"
-          git config user.email "espalier-release-bot@users.noreply.github.com"
-          git add Casks/espalier.rb
+          sed -i '' -E "s/^  version \".*\"/  version \"$VERSION\"/" Casks/graftty.rb
+          sed -i '' -E "s/^  sha256 \".*\"/  sha256 \"$SHA256\"/" Casks/graftty.rb
+          git config user.name  "graftty-release-bot"
+          git config user.email "graftty-release-bot@users.noreply.github.com"
+          git add Casks/graftty.rb
           if git diff --cached --quiet; then
             echo "No cask changes — re-releasing the same version?"
             exit 0
           fi
-          git commit -m "espalier $VERSION"
+          git commit -m "graftty $VERSION"
           git push
