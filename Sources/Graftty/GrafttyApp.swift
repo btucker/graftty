@@ -474,15 +474,28 @@ struct GrafttyApp: App {
     /// would have armed watchers at stale paths; by the time
     /// `reconcileOnLaunch`'s own discover loop runs, each `RepoEntry` is
     /// already at its current-on-disk location.
+    ///
+    /// Static so the bridge (`WorktreeMonitorBridge`) can reach it
+    /// without holding a reference to `GrafttyApp` (a SwiftUI App
+    /// struct). Dependencies are threaded in as params.
     @MainActor
-    private func resolveRepoLocations() async {
-        for repoIdx in appState.repos.indices {
-            let repo = appState.repos[repoIdx]
+    fileprivate static func resolveRepoLocations(
+        appState: Binding<AppState>,
+        worktreeMonitor: WorktreeMonitor,
+        statsStore: WorktreeStatsStore,
+        prStatusStore: PRStatusStore
+    ) async {
+        for repoIdx in appState.wrappedValue.repos.indices {
+            let repo = appState.wrappedValue.repos[repoIdx]
             if let bookmark = repo.bookmark {
                 do {
                     let resolved = try RepoBookmark.resolve(bookmark)
                     if resolved.url.path != repo.path {
                         await relocateRepo(
+                            appState: appState,
+                            worktreeMonitor: worktreeMonitor,
+                            statsStore: statsStore,
+                            prStatusStore: prStatusStore,
                             repoIdx: repoIdx,
                             newURL: resolved.url,
                             isStale: resolved.isStale
@@ -492,7 +505,7 @@ struct GrafttyApp: App {
                         // volume move, APFS firmlink resolution). Re-mint
                         // so next launch's resolve is fast and we don't
                         // accumulate staleness.
-                        appState.repos[repoIdx].bookmark = try? RepoBookmark.mint(atPath: repo.path)
+                        appState.wrappedValue.repos[repoIdx].bookmark = try? RepoBookmark.mint(atPath: repo.path)
                     }
                 } catch {
                     NSLog("[Graftty] resolveRepoLocations: bookmark resolve failed for %@: %@",
@@ -504,7 +517,7 @@ struct GrafttyApp: App {
                 // on disk, so mint a fresh bookmark from it — subsequent
                 // renames/moves will then be recoverable automatically.
                 if let fresh = try? RepoBookmark.mint(atPath: repo.path) {
-                    appState.repos[repoIdx].bookmark = fresh
+                    appState.wrappedValue.repos[repoIdx].bookmark = fresh
                 }
             }
         }
@@ -513,25 +526,38 @@ struct GrafttyApp: App {
     /// Orchestrator for LAYOUT-4.8 — enacts the relocate decisions
     /// produced by `RepoRelocator` against the live model, watchers, and
     /// caches. Called from two entry points: the launch-time pre-pass
-    /// (`resolveRepoLocations`) and, starting in Task 10, the
-    /// `WorktreeMonitor.worktreeMonitorDidDetectDeletion` FSEvents hook.
+    /// (`resolveRepoLocations`) and the
+    /// `WorktreeMonitor.worktreeMonitorDidDetectDeletion` FSEvents hook
+    /// on `WorktreeMonitorBridge` (LAYOUT-4.7).
     ///
     /// Ordering matters: watcher stop + cache clear MUST happen before
     /// the `appState.repos[repoIdx].path` assignment, otherwise later
     /// `stopWatching(repoPath:)` / `clear(worktreePath:)` calls would
     /// see the new path and the old-path watchers + cache entries would
     /// leak (GIT-3.11 / GIT-3.13).
+    ///
+    /// Static so the bridge can reach it without capturing the SwiftUI
+    /// `GrafttyApp` struct. All live deps (appState binding, watcher,
+    /// stores) are threaded in as params.
     @MainActor
-    private func relocateRepo(repoIdx: Int, newURL: URL, isStale: Bool) async {
+    fileprivate static func relocateRepo(
+        appState: Binding<AppState>,
+        worktreeMonitor: WorktreeMonitor,
+        statsStore: WorktreeStatsStore,
+        prStatusStore: PRStatusStore,
+        repoIdx: Int,
+        newURL: URL,
+        isStale: Bool
+    ) async {
         // Guard: the caller may have suspended on an `await` between the
         // index lookup and here; if the repo vanished in the meantime
         // (e.g. concurrent Remove Repository), skip silently.
-        guard appState.repos.indices.contains(repoIdx) else {
+        guard appState.wrappedValue.repos.indices.contains(repoIdx) else {
             NSLog("[Graftty] relocateRepo: repoIdx %d out of range after suspension", repoIdx)
             return
         }
 
-        let oldRepoPath = appState.repos[repoIdx].path
+        let oldRepoPath = appState.wrappedValue.repos[repoIdx].path
         let newRepoPath = newURL.path
 
         // (a) Abort if the resolved folder is no longer a git repo.
@@ -547,24 +573,24 @@ struct GrafttyApp: App {
         // (b) Re-mint stale bookmark from the new path so future
         // resolves don't pay the staleness cost.
         if isStale, let fresh = try? RepoBookmark.mint(atPath: newRepoPath) {
-            appState.repos[repoIdx].bookmark = fresh
+            appState.wrappedValue.repos[repoIdx].bookmark = fresh
         }
 
         // (c) Stop repo-level and per-worktree watchers before any
         // mutation of `appState.repos[repoIdx].path` — `stopWatching`
         // matches watcher keys by the repoPath we pass in, not by the
         // repo's current model value.
-        services.worktreeMonitor.stopWatching(repoPath: oldRepoPath)
-        for wt in appState.repos[repoIdx].worktrees {
-            services.worktreeMonitor.stopWatchingWorktree(wt.path)
+        worktreeMonitor.stopWatching(repoPath: oldRepoPath)
+        for wt in appState.wrappedValue.repos[repoIdx].worktrees {
+            worktreeMonitor.stopWatchingWorktree(wt.path)
         }
 
         // (d) Clear per-old-path caches so a worktree that carries
         // forward with its path rewritten doesn't observe a stale cache
         // entry keyed by the old path.
-        for wt in appState.repos[repoIdx].worktrees {
-            services.prStatusStore.clear(worktreePath: wt.path)
-            services.statsStore.clear(worktreePath: wt.path)
+        for wt in appState.wrappedValue.repos[repoIdx].worktrees {
+            prStatusStore.clear(worktreePath: wt.path)
+            statsStore.clear(worktreePath: wt.path)
         }
 
         // (e) Snapshot the pre-relocate repo for the pure decision
@@ -572,9 +598,9 @@ struct GrafttyApp: App {
         // The snapshot is load-bearing: the decision reads old paths to
         // compute rewrites, and we're about to clobber them in the
         // model.
-        let pre = appState.repos[repoIdx]
-        appState.repos[repoIdx].path = newRepoPath
-        appState.repos[repoIdx].displayName = newURL.lastPathComponent
+        let pre = appState.wrappedValue.repos[repoIdx]
+        appState.wrappedValue.repos[repoIdx].path = newRepoPath
+        appState.wrappedValue.repos[repoIdx].displayName = newURL.lastPathComponent
 
         // (f) Discover at the new location. On failure, leave the
         // repo.path updated but worktrees untouched — the per-worktree
@@ -596,7 +622,7 @@ struct GrafttyApp: App {
             repo: pre,
             newRepoPath: newRepoPath,
             discovered: discovered,
-            selectedWorktreePath: appState.selectedWorktreePath
+            selectedWorktreePath: appState.wrappedValue.selectedWorktreePath
         )
         let finalDecision: RepoRelocator.Decision
         if firstDecision.needsRepair {
@@ -617,7 +643,7 @@ struct GrafttyApp: App {
                 repo: pre,
                 newRepoPath: newRepoPath,
                 discovered: discovered,
-                selectedWorktreePath: appState.selectedWorktreePath
+                selectedWorktreePath: appState.wrappedValue.selectedWorktreePath
             )
         } else {
             finalDecision = firstDecision
@@ -654,23 +680,23 @@ struct GrafttyApp: App {
         for d in discovered where !carriedPaths.contains(d.path) {
             newWorktrees.append(WorktreeEntry(path: d.path, branch: d.branch))
         }
-        appState.repos[repoIdx].worktrees = newWorktrees
+        appState.wrappedValue.repos[repoIdx].worktrees = newWorktrees
 
         // (i) Update selection to the relocated path (decision already
         // mapped old→new or nil'd it when the selected worktree went
         // stale).
-        appState.selectedWorktreePath = finalDecision.newSelectedWorktreePath
+        appState.wrappedValue.selectedWorktreePath = finalDecision.newSelectedWorktreePath
 
         // (j) Install fresh watchers at the new paths. Matches
         // `startup()`'s initial watcher-install loop exactly so the
         // post-relocate watcher graph is indistinguishable from a
         // from-scratch launch at the new location.
-        services.worktreeMonitor.watchWorktreeDirectory(repoPath: newRepoPath)
-        services.worktreeMonitor.watchOriginRefs(repoPath: newRepoPath)
-        for wt in appState.repos[repoIdx].worktrees where wt.state != .stale {
-            services.worktreeMonitor.watchWorktreePath(wt.path)
-            services.worktreeMonitor.watchHeadRef(worktreePath: wt.path, repoPath: newRepoPath)
-            services.worktreeMonitor.watchWorktreeContents(worktreePath: wt.path)
+        worktreeMonitor.watchWorktreeDirectory(repoPath: newRepoPath)
+        worktreeMonitor.watchOriginRefs(repoPath: newRepoPath)
+        for wt in appState.wrappedValue.repos[repoIdx].worktrees where wt.state != .stale {
+            worktreeMonitor.watchWorktreePath(wt.path)
+            worktreeMonitor.watchHeadRef(worktreePath: wt.path, repoPath: newRepoPath)
+            worktreeMonitor.watchWorktreeContents(worktreePath: wt.path)
         }
 
         NSLog("[Graftty] relocateRepo: %@ → %@", oldRepoPath, newRepoPath)
@@ -680,6 +706,7 @@ struct GrafttyApp: App {
         let binding = $appState
         let statsStore = services.statsStore
         let prStatusStore = services.prStatusStore
+        let worktreeMonitor = services.worktreeMonitor
         Task { @MainActor in
             // LAYOUT-4.6 / LAYOUT-4.9: resolve bookmarks and run any
             // relocate cascades BEFORE the discover+reconcile loop below.
@@ -687,7 +714,12 @@ struct GrafttyApp: App {
             // path (and per-worktree paths) so the subsequent discover
             // uses the right repoPath and the reconcile doesn't flag
             // every worktree as newly-stale.
-            await resolveRepoLocations()
+            await Self.resolveRepoLocations(
+                appState: binding,
+                worktreeMonitor: worktreeMonitor,
+                statsStore: statsStore,
+                prStatusStore: prStatusStore
+            )
 
             for repoIdx in binding.wrappedValue.repos.indices {
                 let repoPath = binding.wrappedValue.repos[repoIdx].path
@@ -1715,6 +1747,42 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         let store = statsStore
         let prStore = prStatusStore
         Task { @MainActor in
+            // LAYOUT-4.7: before marking the worktree stale, see if the
+            // owning repo has a bookmark and whether it now resolves to
+            // a different path. If it does, run the relocate cascade —
+            // this catches the "user renamed the repo folder in Finder
+            // while Graftty was running" case. FSEvents delivered a
+            // deletion on the old path; the bookmark points at the new
+            // one. Running the cascade here means the user never sees
+            // the yellow stale state for a renamed repo.
+            if let (repoIdx, _) = binding.wrappedValue.indices(forWorktreePath: worktreePath),
+               let bookmark = binding.wrappedValue.repos[repoIdx].bookmark {
+                do {
+                    let resolved = try RepoBookmark.resolve(bookmark)
+                    if resolved.url.path != binding.wrappedValue.repos[repoIdx].path {
+                        await GrafttyApp.relocateRepo(
+                            appState: binding,
+                            worktreeMonitor: monitor,
+                            statsStore: store,
+                            prStatusStore: prStore,
+                            repoIdx: repoIdx,
+                            newURL: resolved.url,
+                            isStale: resolved.isStale
+                        )
+                        // Relocate ran — worktrees either moved with
+                        // it or went stale via RepoRelocator
+                        // decisions. Skip the existing unconditional
+                        // stale path below so we don't double-clear
+                        // caches or re-stop already-stopped watchers.
+                        return
+                    }
+                } catch {
+                    NSLog("[Graftty] worktreeMonitorDidDetectDeletion: bookmark resolve failed: %@",
+                          String(describing: error))
+                    // fall through to the existing stale path
+                }
+            }
+
             for repoIdx in binding.wrappedValue.repos.indices {
                 for wtIdx in binding.wrappedValue.repos[repoIdx].worktrees.indices {
                     if binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].path == worktreePath {
