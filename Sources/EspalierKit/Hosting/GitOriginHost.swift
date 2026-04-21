@@ -55,12 +55,21 @@ public enum GitOriginHost {
 
 extension GitOriginHost {
     /// Resolves the repo's `origin` remote URL and parses it.
-    /// Returns nil if there's no origin remote or the URL is unparseable.
+    /// Returns nil only when git reports `origin` does not exist — a
+    /// legitimate "no origin remote" answer that `PR-7.11` permits the
+    /// store to cache. `PR-4.4`: every other `nonZeroExit` (transient
+    /// failures like a concurrent `git worktree add` rewriting
+    /// `.git/config`, a brief lock contention, or an FSEvents-driven
+    /// re-read mid-pack-operation) is rethrown so the store's
+    /// don't-cache-on-throw safeguard kicks in — otherwise a single
+    /// transient nil poisons `hostByRepo` for the whole session and
+    /// the repo's PR status never resolves until Espalier relaunches.
     public static func detect(repoPath: String) async throws -> HostingOrigin? {
         let output: String
         do {
             output = try await GitRunner.run(args: ["remote", "get-url", "origin"], at: repoPath)
-        } catch CLIError.nonZeroExit {
+        } catch CLIError.nonZeroExit(_, _, let stderr)
+            where stderr.range(of: "no such remote", options: .caseInsensitive) != nil {
             return nil
         }
         return parse(remoteURL: output)

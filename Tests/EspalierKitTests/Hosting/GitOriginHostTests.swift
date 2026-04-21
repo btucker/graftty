@@ -92,7 +92,7 @@ struct GitOriginHostParseTests {
     }
 }
 
-@Suite("GitOriginHost.detect")
+@Suite("GitOriginHost.detect", .serialized)
 struct GitOriginHostDetectTests {
     @Test func detectsGitHubOrigin() async throws {
         let fake = FakeCLIExecutor()
@@ -121,5 +121,28 @@ struct GitOriginHostDetectTests {
 
         let origin = try await GitOriginHost.detect(repoPath: "/tmp/repo")
         #expect(origin == nil)
+    }
+
+    @Test func throwsOnTransientGitFailure() async throws {
+        // PR-4.4: any `git remote get-url origin` failure OTHER than
+        // "no such remote" is transient (e.g., `.git/config` being
+        // rewritten during a concurrent `git worktree add`, a `.git`
+        // lock held briefly under load, an FSEvents-driven re-read
+        // mid-pack-operation). `detect` must throw so PR-7.11's caller
+        // safeguard can skip caching — otherwise the transient nil
+        // poisons `hostByRepo` for the whole session and the repo's
+        // PR status never resolves until Espalier is relaunched.
+        let fake = FakeCLIExecutor()
+        fake.stub(
+            command: "git",
+            args: ["remote", "get-url", "origin"],
+            error: .nonZeroExit(command: "git", exitCode: 128, stderr: "fatal: unable to read tree")
+        )
+        GitRunner.configure(executor: fake)
+        defer { GitRunner.resetForTests() }
+
+        await #expect(throws: (any Error).self) {
+            _ = try await GitOriginHost.detect(repoPath: "/tmp/repo")
+        }
     }
 }
