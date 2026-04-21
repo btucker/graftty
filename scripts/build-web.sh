@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEB="$ROOT/web-client"
-RES="$ROOT/Sources/EspalierKit/Web/Resources"
+RES="$ROOT/Sources/GrafttyKit/Web/Resources"
 
 if ! command -v pnpm >/dev/null 2>&1; then
   echo "ERROR: pnpm not found. Install with: brew install pnpm" >&2

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Expose every running Espalier pane over a local WebSocket server bound only to Tailscale IPs (+ 127.0.0.1), gated by Tailscale `WhoIs` identity. Ship a single-page xterm.js web client that attaches to a pane via `?session=<name>`, renders the VT stream, and handles keystrokes + resize.
+**Goal:** Expose every running Graftty pane over a local WebSocket server bound only to Tailscale IPs (+ 127.0.0.1), gated by Tailscale `WhoIs` identity. Ship a single-page xterm.js web client that attaches to a pane via `?session=<name>`, renders the VT stream, and handles keystrokes + resize.
 
-**Architecture:** A new `EspalierKit/Web/` module houses a `swift-nio`-based HTTP + WebSocket server (`WebServer`), a Tailscale LocalAPI client (`TailscaleLocalAPI`), and a per-connection bridge (`WebSession`) that allocates a PTY pair (`PtyProcess`), forks `zmx attach <session>` into it, and pipes PTY bytes to/from WS binary frames. Text frames carry JSON control events (only `resize` in Phase 2). AppKit glue (`WebServerController` + `WebSettingsPane`) exposes an off-by-default toggle and a port field in macOS Settings. The sidebar pane-row context menu gains a "Copy web URL" item when listening.
+**Architecture:** A new `GrafttyKit/Web/` module houses a `swift-nio`-based HTTP + WebSocket server (`WebServer`), a Tailscale LocalAPI client (`TailscaleLocalAPI`), and a per-connection bridge (`WebSession`) that allocates a PTY pair (`PtyProcess`), forks `zmx attach <session>` into it, and pipes PTY bytes to/from WS binary frames. Text frames carry JSON control events (only `resize` in Phase 2). AppKit glue (`WebServerController` + `WebSettingsPane`) exposes an off-by-default toggle and a port field in macOS Settings. The sidebar pane-row context menu gains a "Copy web URL" item when listening.
 
 **Tech Stack:** Swift 5.10, Swift Testing (`@Suite`/`@Test`/`#expect`), SwiftUI/AppKit (macOS 14+), `swift-nio` 2.x (+ `swift-nio-http1`, `swift-nio-websocket`), POSIX PTY APIs via Darwin (`posix_openpt`, `grantpt`, `unlockpt`, `ptsname`, `forkpty` alternative via manual `fork` + `setsid` + `TIOCSCTTY`), `Network.framework` for the Unix-socket client to Tailscale LocalAPI. Vendored `xterm.js` 5.x (minified JS + CSS).
 
@@ -14,19 +14,19 @@
 
 ## File Structure
 
-**Create (EspalierKit — pure Swift, testable without AppKit):**
-- `Sources/EspalierKit/Web/WebServer.swift` — NIO HTTP + WS server, auth gate, channel config.
-- `Sources/EspalierKit/Web/WebSession.swift` — per-WS bridge: PTY ↔ WS.
-- `Sources/EspalierKit/Web/WebControlEnvelope.swift` — JSON envelope types + parser (`resize`).
-- `Sources/EspalierKit/Web/WebURLComposer.swift` — `(session, ip, port) → URL` + IP selection.
-- `Sources/EspalierKit/Web/WebStaticResources.swift` — accessors for the bundled HTML/JS.
-- `Sources/EspalierKit/Web/TailscaleLocalAPI.swift` — Unix-socket client for `status` + `whois`.
-- `Sources/EspalierKit/Web/PtyProcess.swift` — open PTY, fork, exec with slave as controlling terminal.
+**Create (GrafttyKit — pure Swift, testable without AppKit):**
+- `Sources/GrafttyKit/Web/WebServer.swift` — NIO HTTP + WS server, auth gate, channel config.
+- `Sources/GrafttyKit/Web/WebSession.swift` — per-WS bridge: PTY ↔ WS.
+- `Sources/GrafttyKit/Web/WebControlEnvelope.swift` — JSON envelope types + parser (`resize`).
+- `Sources/GrafttyKit/Web/WebURLComposer.swift` — `(session, ip, port) → URL` + IP selection.
+- `Sources/GrafttyKit/Web/WebStaticResources.swift` — accessors for the bundled HTML/JS.
+- `Sources/GrafttyKit/Web/TailscaleLocalAPI.swift` — Unix-socket client for `status` + `whois`.
+- `Sources/GrafttyKit/Web/PtyProcess.swift` — open PTY, fork, exec with slave as controlling terminal.
 
-**Create (Espalier app — AppKit/SwiftUI glue):**
-- `Sources/Espalier/Web/WebServerController.swift` — owns `WebServer` lifetime, reacts to Settings.
-- `Sources/Espalier/Web/WebSettingsPane.swift` — SwiftUI view in the Settings window.
-- `Sources/Espalier/Web/WebAccessSettings.swift` — `@AppStorage`-backed settings model.
+**Create (Graftty app — AppKit/SwiftUI glue):**
+- `Sources/Graftty/Web/WebServerController.swift` — owns `WebServer` lifetime, reacts to Settings.
+- `Sources/Graftty/Web/WebSettingsPane.swift` — SwiftUI view in the Settings window.
+- `Sources/Graftty/Web/WebAccessSettings.swift` — `@AppStorage`-backed settings model.
 
 **Create (Resources):**
 - `Resources/web/index.html` — the minimal client shell.
@@ -36,27 +36,27 @@
 - `Resources/web/VERSION` — plain text "xterm.js 5.3.0 — vendored YYYY-MM-DD".
 
 **Create (tests):**
-- `Tests/EspalierKitTests/Web/TailscaleLocalAPITests.swift`
-- `Tests/EspalierKitTests/Web/PtyProcessTests.swift`
-- `Tests/EspalierKitTests/Web/WebControlEnvelopeTests.swift`
-- `Tests/EspalierKitTests/Web/WebURLComposerTests.swift`
-- `Tests/EspalierKitTests/Web/WebServerAuthTests.swift`
-- `Tests/EspalierKitTests/Web/WebServerIntegrationTests.swift` — requires `zmx`.
-- `Tests/EspalierKitTests/Web/Fixtures/tailscale-status.json`
-- `Tests/EspalierKitTests/Web/Fixtures/tailscale-whois-owner.json`
-- `Tests/EspalierKitTests/Web/Fixtures/tailscale-whois-peer.json`
+- `Tests/GrafttyKitTests/Web/TailscaleLocalAPITests.swift`
+- `Tests/GrafttyKitTests/Web/PtyProcessTests.swift`
+- `Tests/GrafttyKitTests/Web/WebControlEnvelopeTests.swift`
+- `Tests/GrafttyKitTests/Web/WebURLComposerTests.swift`
+- `Tests/GrafttyKitTests/Web/WebServerAuthTests.swift`
+- `Tests/GrafttyKitTests/Web/WebServerIntegrationTests.swift` — requires `zmx`.
+- `Tests/GrafttyKitTests/Web/Fixtures/tailscale-status.json`
+- `Tests/GrafttyKitTests/Web/Fixtures/tailscale-whois-owner.json`
+- `Tests/GrafttyKitTests/Web/Fixtures/tailscale-whois-peer.json`
 
 **Modify:**
-- `Package.swift` — add swift-nio deps; register `Resources/web/` as a resource of `EspalierKit`.
-- `Sources/Espalier/EspalierApp.swift` — instantiate `WebServerController`; tear down on quit.
-- `Sources/Espalier/Views/` (sidebar pane-row context menu — specific file TBD by grep) — add "Copy web URL" item gated on `.listening`.
+- `Package.swift` — add swift-nio deps; register `Resources/web/` as a resource of `GrafttyKit`.
+- `Sources/Graftty/GrafttyApp.swift` — instantiate `WebServerController`; tear down on quit.
+- `Sources/Graftty/Views/` (sidebar pane-row context menu — specific file TBD by grep) — add "Copy web URL" item gated on `.listening`.
 - `SPECS.md` — append §14 "Web Access" (EARS requirements).
 
 ---
 
 ## Test Infrastructure Notes
 
-Tests follow the same pattern as Phase 1 (`Tests/EspalierKitTests/Zmx/ZmxSurvivalIntegrationTests.swift`):
+Tests follow the same pattern as Phase 1 (`Tests/GrafttyKitTests/Zmx/ZmxSurvivalIntegrationTests.swift`):
 
 - Pure logic tests use `@Suite`/`@Test`/`#expect`, no sockets.
 - Integration tests that need `zmx` installed gate with `try #require(ZmxLauncher(executable: …).isAvailable, "zmx binary not vendored")`.
@@ -95,11 +95,11 @@ dependencies: [
 ],
 ```
 
-Then modify the `EspalierKit` target:
+Then modify the `GrafttyKit` target:
 
 ```swift
 .target(
-    name: "EspalierKit",
+    name: "GrafttyKit",
     dependencies: [
         .product(name: "NIO", package: "swift-nio"),
         .product(name: "NIOHTTP1", package: "swift-nio"),
@@ -142,7 +142,7 @@ Create `Resources/web/index.html`:
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Espalier</title>
+    <title>Graftty</title>
     <link rel="stylesheet" href="./xterm.min.css">
     <style>
         html, body { margin: 0; height: 100%; background: #0d0d0d; }
@@ -225,10 +225,10 @@ git add Package.swift Resources/web/
 git commit -m "$(cat <<'EOF'
 build(web): swift-nio deps + vendored xterm.js 5.3.0
 
-- Adds swift-nio (NIO + HTTP1 + WebSocket) to EspalierKit target
+- Adds swift-nio (NIO + HTTP1 + WebSocket) to GrafttyKit target
 - Vendors xterm.js 5.3.0 + fit addon + CSS under Resources/web/
 - Authors minimal index.html client that reads ?session= and opens /ws
-- Registers Resources/web/ as a copy resource of EspalierKit
+- Registers Resources/web/ as a copy resource of GrafttyKit
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 EOF
@@ -240,11 +240,11 @@ EOF
 ## Task 2: TailscaleLocalAPI — Unix-socket client for WhoIs
 
 **Files:**
-- Create: `Sources/EspalierKit/Web/TailscaleLocalAPI.swift`
-- Create: `Tests/EspalierKitTests/Web/Fixtures/tailscale-status.json`
-- Create: `Tests/EspalierKitTests/Web/Fixtures/tailscale-whois-owner.json`
-- Create: `Tests/EspalierKitTests/Web/Fixtures/tailscale-whois-peer.json`
-- Create: `Tests/EspalierKitTests/Web/TailscaleLocalAPITests.swift`
+- Create: `Sources/GrafttyKit/Web/TailscaleLocalAPI.swift`
+- Create: `Tests/GrafttyKitTests/Web/Fixtures/tailscale-status.json`
+- Create: `Tests/GrafttyKitTests/Web/Fixtures/tailscale-whois-owner.json`
+- Create: `Tests/GrafttyKitTests/Web/Fixtures/tailscale-whois-peer.json`
+- Create: `Tests/GrafttyKitTests/Web/TailscaleLocalAPITests.swift`
 
 - [ ] **Step 2.1: Capture fixtures**
 
@@ -257,7 +257,7 @@ curl --unix-socket /var/run/tailscaled.socket "http://local-tailscaled.sock/loca
 
 If not, use these synthesized fixtures — they match the documented schema.
 
-Create `Tests/EspalierKitTests/Web/Fixtures/tailscale-status.json`:
+Create `Tests/GrafttyKitTests/Web/Fixtures/tailscale-status.json`:
 
 ```json
 {
@@ -273,7 +273,7 @@ Create `Tests/EspalierKitTests/Web/Fixtures/tailscale-status.json`:
 }
 ```
 
-Create `Tests/EspalierKitTests/Web/Fixtures/tailscale-whois-owner.json`:
+Create `Tests/GrafttyKitTests/Web/Fixtures/tailscale-whois-owner.json`:
 
 ```json
 {
@@ -288,7 +288,7 @@ Create `Tests/EspalierKitTests/Web/Fixtures/tailscale-whois-owner.json`:
 }
 ```
 
-Create `Tests/EspalierKitTests/Web/Fixtures/tailscale-whois-peer.json`:
+Create `Tests/GrafttyKitTests/Web/Fixtures/tailscale-whois-peer.json`:
 
 ```json
 {
@@ -305,12 +305,12 @@ Create `Tests/EspalierKitTests/Web/Fixtures/tailscale-whois-peer.json`:
 
 - [ ] **Step 2.2: Write failing tests for `TailscaleLocalAPI` parsers**
 
-Create `Tests/EspalierKitTests/Web/TailscaleLocalAPITests.swift`:
+Create `Tests/GrafttyKitTests/Web/TailscaleLocalAPITests.swift`:
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("TailscaleLocalAPI — parsing")
 struct TailscaleLocalAPIParsingTests {
@@ -361,7 +361,7 @@ Expected: compilation error — `TailscaleLocalAPI` unknown.
 
 - [ ] **Step 2.4: Implement `TailscaleLocalAPI.swift`**
 
-Create `Sources/EspalierKit/Web/TailscaleLocalAPI.swift`:
+Create `Sources/GrafttyKit/Web/TailscaleLocalAPI.swift`:
 
 ```swift
 import Foundation
@@ -569,9 +569,9 @@ Expected: 4/4 pass.
 - [ ] **Step 2.6: Commit**
 
 ```bash
-git add Sources/EspalierKit/Web/TailscaleLocalAPI.swift \
-        Tests/EspalierKitTests/Web/TailscaleLocalAPITests.swift \
-        Tests/EspalierKitTests/Web/Fixtures/
+git add Sources/GrafttyKit/Web/TailscaleLocalAPI.swift \
+        Tests/GrafttyKitTests/Web/TailscaleLocalAPITests.swift \
+        Tests/GrafttyKitTests/Web/Fixtures/
 git commit -m "$(cat <<'EOF'
 feat(web): TailscaleLocalAPI — Unix-socket client for status + whois
 
@@ -591,18 +591,18 @@ EOF
 ## Task 3: PtyProcess — POSIX PTY open/fork/exec helper
 
 **Files:**
-- Create: `Sources/EspalierKit/Web/PtyProcess.swift`
-- Create: `Tests/EspalierKitTests/Web/PtyProcessTests.swift`
+- Create: `Sources/GrafttyKit/Web/PtyProcess.swift`
+- Create: `Tests/GrafttyKitTests/Web/PtyProcessTests.swift`
 
 - [ ] **Step 3.1: Write failing tests for `PtyProcess`**
 
-Create `Tests/EspalierKitTests/Web/PtyProcessTests.swift`:
+Create `Tests/GrafttyKitTests/Web/PtyProcessTests.swift`:
 
 ```swift
 import Testing
 import Foundation
 import Darwin
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("PtyProcess — PTY allocation + fork/exec")
 struct PtyProcessTests {
@@ -677,7 +677,7 @@ Expected: compilation error — `PtyProcess` unknown.
 
 - [ ] **Step 3.3: Implement `PtyProcess.swift`**
 
-Create `Sources/EspalierKit/Web/PtyProcess.swift`:
+Create `Sources/GrafttyKit/Web/PtyProcess.swift`:
 
 ```swift
 import Foundation
@@ -807,7 +807,7 @@ Expected: 3/3 pass. If `childHasControllingTerminal` fails, the `TIOCSCTTY` path
 - [ ] **Step 3.5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Web/PtyProcess.swift Tests/EspalierKitTests/Web/PtyProcessTests.swift
+git add Sources/GrafttyKit/Web/PtyProcess.swift Tests/GrafttyKitTests/Web/PtyProcessTests.swift
 git commit -m "$(cat <<'EOF'
 feat(web): PtyProcess — open PTY + fork + exec helper
 
@@ -829,17 +829,17 @@ EOF
 ## Task 4: WebControlEnvelope — JSON parser for WS text frames
 
 **Files:**
-- Create: `Sources/EspalierKit/Web/WebControlEnvelope.swift`
-- Create: `Tests/EspalierKitTests/Web/WebControlEnvelopeTests.swift`
+- Create: `Sources/GrafttyKit/Web/WebControlEnvelope.swift`
+- Create: `Tests/GrafttyKitTests/Web/WebControlEnvelopeTests.swift`
 
 - [ ] **Step 4.1: Write failing tests**
 
-Create `Tests/EspalierKitTests/Web/WebControlEnvelopeTests.swift`:
+Create `Tests/GrafttyKitTests/Web/WebControlEnvelopeTests.swift`:
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("WebControlEnvelope — parse")
 struct WebControlEnvelopeTests {
@@ -906,7 +906,7 @@ Expected: compilation error.
 
 - [ ] **Step 4.3: Implement `WebControlEnvelope.swift`**
 
-Create `Sources/EspalierKit/Web/WebControlEnvelope.swift`:
+Create `Sources/GrafttyKit/Web/WebControlEnvelope.swift`:
 
 ```swift
 import Foundation
@@ -957,7 +957,7 @@ Expected: 7/7 pass.
 - [ ] **Step 4.5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Web/WebControlEnvelope.swift Tests/EspalierKitTests/Web/WebControlEnvelopeTests.swift
+git add Sources/GrafttyKit/Web/WebControlEnvelope.swift Tests/GrafttyKitTests/Web/WebControlEnvelopeTests.swift
 git commit -m "$(cat <<'EOF'
 feat(web): WebControlEnvelope — JSON parser for WS text control frames
 
@@ -975,29 +975,29 @@ EOF
 ## Task 5: WebURLComposer — `(session, ip, port) → URL`
 
 **Files:**
-- Create: `Sources/EspalierKit/Web/WebURLComposer.swift`
-- Create: `Tests/EspalierKitTests/Web/WebURLComposerTests.swift`
+- Create: `Sources/GrafttyKit/Web/WebURLComposer.swift`
+- Create: `Tests/GrafttyKitTests/Web/WebURLComposerTests.swift`
 
 - [ ] **Step 5.1: Write failing tests**
 
-Create `Tests/EspalierKitTests/Web/WebURLComposerTests.swift`:
+Create `Tests/GrafttyKitTests/Web/WebURLComposerTests.swift`:
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("WebURLComposer")
 struct WebURLComposerTests {
 
     @Test func ipv4Url() {
-        let url = WebURLComposer.url(session: "espalier-abcd1234", host: "100.64.0.5", port: 8799)
-        #expect(url == "http://100.64.0.5:8799/?session=espalier-abcd1234")
+        let url = WebURLComposer.url(session: "graftty-abcd1234", host: "100.64.0.5", port: 8799)
+        #expect(url == "http://100.64.0.5:8799/?session=graftty-abcd1234")
     }
 
     @Test func ipv6UrlBrackets() {
-        let url = WebURLComposer.url(session: "espalier-abcd1234", host: "fd7a:115c::5", port: 8799)
-        #expect(url == "http://[fd7a:115c::5]:8799/?session=espalier-abcd1234")
+        let url = WebURLComposer.url(session: "graftty-abcd1234", host: "fd7a:115c::5", port: 8799)
+        #expect(url == "http://[fd7a:115c::5]:8799/?session=graftty-abcd1234")
     }
 
     @Test func chooseHostPrefersIPv4() {
@@ -1031,7 +1031,7 @@ Expected: compilation error.
 
 - [ ] **Step 5.3: Implement**
 
-Create `Sources/EspalierKit/Web/WebURLComposer.swift`:
+Create `Sources/GrafttyKit/Web/WebURLComposer.swift`:
 
 ```swift
 import Foundation
@@ -1070,7 +1070,7 @@ Expected: 6/6 pass.
 - [ ] **Step 5.5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Web/WebURLComposer.swift Tests/EspalierKitTests/Web/WebURLComposerTests.swift
+git add Sources/GrafttyKit/Web/WebURLComposer.swift Tests/GrafttyKitTests/Web/WebURLComposerTests.swift
 git commit -m "$(cat <<'EOF'
 feat(web): WebURLComposer — URL + IP selection
 
@@ -1086,11 +1086,11 @@ EOF
 ## Task 6: WebStaticResources — access bundled HTML/JS/CSS
 
 **Files:**
-- Create: `Sources/EspalierKit/Web/WebStaticResources.swift`
+- Create: `Sources/GrafttyKit/Web/WebStaticResources.swift`
 
 - [ ] **Step 6.1: Write + implement together (tiny file)**
 
-Create `Sources/EspalierKit/Web/WebStaticResources.swift`:
+Create `Sources/GrafttyKit/Web/WebStaticResources.swift`:
 
 ```swift
 import Foundation
@@ -1154,7 +1154,7 @@ Expected: success.
 - [ ] **Step 6.3: Commit**
 
 ```bash
-git add Sources/EspalierKit/Web/WebStaticResources.swift
+git add Sources/GrafttyKit/Web/WebStaticResources.swift
 git commit -m "feat(web): WebStaticResources — accessors for bundled index.html + xterm.js
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
@@ -1165,13 +1165,13 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Task 7: WebSession — per-WS PTY bridge
 
 **Files:**
-- Create: `Sources/EspalierKit/Web/WebSession.swift`
+- Create: `Sources/GrafttyKit/Web/WebSession.swift`
 
 `WebSession` is NOT tested in isolation — its behavior is integration-tested in Task 9 via a real WS. It's a composition of PtyProcess + control envelope + a callback surface.
 
 - [ ] **Step 7.1: Implement `WebSession.swift`**
 
-Create `Sources/EspalierKit/Web/WebSession.swift`:
+Create `Sources/GrafttyKit/Web/WebSession.swift`:
 
 ```swift
 import Foundation
@@ -1312,7 +1312,7 @@ Expected: success.
 - [ ] **Step 7.3: Commit**
 
 ```bash
-git add Sources/EspalierKit/Web/WebSession.swift
+git add Sources/GrafttyKit/Web/WebSession.swift
 git commit -m "$(cat <<'EOF'
 feat(web): WebSession — PTY bridge for one WebSocket connection
 
@@ -1330,13 +1330,13 @@ EOF
 ## Task 8: WebServer — NIO HTTP + WS server with auth gate
 
 **Files:**
-- Create: `Sources/EspalierKit/Web/WebServer.swift`
+- Create: `Sources/GrafttyKit/Web/WebServer.swift`
 
 `WebServer` is the NIO glue: HTTP/1.1 pipeline, WS upgrade, per-connection auth. Integration-tested separately (Task 9).
 
 - [ ] **Step 8.1: Implement `WebServer.swift`**
 
-Create `Sources/EspalierKit/Web/WebServer.swift`:
+Create `Sources/GrafttyKit/Web/WebServer.swift`:
 
 ```swift
 import Foundation
@@ -1655,7 +1655,7 @@ Expected: success. If NIO API mismatch errors, the plan's NIO 2.65 assumption ma
 - [ ] **Step 8.3: Commit**
 
 ```bash
-git add Sources/EspalierKit/Web/WebServer.swift
+git add Sources/GrafttyKit/Web/WebServer.swift
 git commit -m "$(cat <<'EOF'
 feat(web): WebServer — NIO HTTP/1.1 + WebSocket server with auth gate
 
@@ -1674,17 +1674,17 @@ EOF
 ## Task 9: WebServerAuthTests + integration tests
 
 **Files:**
-- Create: `Tests/EspalierKitTests/Web/WebServerAuthTests.swift`
-- Create: `Tests/EspalierKitTests/Web/WebServerIntegrationTests.swift`
+- Create: `Tests/GrafttyKitTests/Web/WebServerAuthTests.swift`
+- Create: `Tests/GrafttyKitTests/Web/WebServerIntegrationTests.swift`
 
 - [ ] **Step 9.1: Write auth tests (HTTP-level; no zmx needed)**
 
-Create `Tests/EspalierKitTests/Web/WebServerAuthTests.swift`:
+Create `Tests/GrafttyKitTests/Web/WebServerAuthTests.swift`:
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("WebServer — auth gate")
 struct WebServerAuthTests {
@@ -1750,12 +1750,12 @@ Note: when `port: 0`, NIO returns the actual ephemeral port. The `WebServer.star
 
 - [ ] **Step 9.2: Write integration test (zmx-gated)**
 
-Create `Tests/EspalierKitTests/Web/WebServerIntegrationTests.swift`:
+Create `Tests/GrafttyKitTests/Web/WebServerIntegrationTests.swift`:
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("WebServer — integration (requires zmx on PATH)")
 struct WebServerIntegrationTests {
@@ -1777,7 +1777,7 @@ struct WebServerIntegrationTests {
 
     private static func scopedZmxDir() throws -> URL {
         let dir = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("espalier-web-it-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("graftty-web-it-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }
@@ -1803,7 +1803,7 @@ struct WebServerIntegrationTests {
         }
 
         // Use URLSession's WebSocket support for a simple client.
-        let sessionName = "espalier-it\(UUID().uuidString.prefix(6).lowercased())"
+        let sessionName = "graftty-it\(UUID().uuidString.prefix(6).lowercased())"
         let url = URL(string: "ws://127.0.0.1:\(port)/ws?session=\(sessionName)")!
         let wsTask = URLSession.shared.webSocketTask(with: url)
         wsTask.resume()
@@ -1853,8 +1853,8 @@ Expected: 1/1 pass (skip if `zmx` not installed — add a fallback `XCTSkip` if 
 - [ ] **Step 9.4: Commit**
 
 ```bash
-git add Tests/EspalierKitTests/Web/WebServerAuthTests.swift \
-        Tests/EspalierKitTests/Web/WebServerIntegrationTests.swift
+git add Tests/GrafttyKitTests/Web/WebServerAuthTests.swift \
+        Tests/GrafttyKitTests/Web/WebServerIntegrationTests.swift
 git commit -m "$(cat <<'EOF'
 test(web): WebServer auth gate + integration round-trip
 
@@ -1873,13 +1873,13 @@ EOF
 ## Task 10: WebAccessSettings + WebSettingsPane + WebServerController
 
 **Files:**
-- Create: `Sources/Espalier/Web/WebAccessSettings.swift`
-- Create: `Sources/Espalier/Web/WebServerController.swift`
-- Create: `Sources/Espalier/Web/WebSettingsPane.swift`
+- Create: `Sources/Graftty/Web/WebAccessSettings.swift`
+- Create: `Sources/Graftty/Web/WebServerController.swift`
+- Create: `Sources/Graftty/Web/WebSettingsPane.swift`
 
 - [ ] **Step 10.1: Implement `WebAccessSettings.swift`**
 
-Create `Sources/Espalier/Web/WebAccessSettings.swift`:
+Create `Sources/Graftty/Web/WebAccessSettings.swift`:
 
 ```swift
 import SwiftUI
@@ -1897,11 +1897,11 @@ final class WebAccessSettings: ObservableObject {
 
 - [ ] **Step 10.2: Implement `WebServerController.swift`**
 
-Create `Sources/Espalier/Web/WebServerController.swift`:
+Create `Sources/Graftty/Web/WebServerController.swift`:
 
 ```swift
 import Foundation
-import EspalierKit
+import GrafttyKit
 import Combine
 
 /// Owns the `WebServer` lifetime at app scope. Subscribes to
@@ -1995,11 +1995,11 @@ final class WebServerController: ObservableObject {
 
 - [ ] **Step 10.3: Implement `WebSettingsPane.swift`**
 
-Create `Sources/Espalier/Web/WebSettingsPane.swift`:
+Create `Sources/Graftty/Web/WebSettingsPane.swift`:
 
 ```swift
 import SwiftUI
-import EspalierKit
+import GrafttyKit
 
 struct WebSettingsPane: View {
     @StateObject private var settings = WebAccessSettings.shared
@@ -2059,12 +2059,12 @@ Expected: success. (If SwiftUI imports warn about macOS targets, no action neede
 - [ ] **Step 10.5: Commit**
 
 ```bash
-git add Sources/Espalier/Web/
+git add Sources/Graftty/Web/
 git commit -m "$(cat <<'EOF'
 feat(web): WebServerController + Settings pane
 
 Controller subscribes to WebAccessSettings and reconciles the
-EspalierKit WebServer's lifetime. Reads Tailscale status via the
+GrafttyKit WebServer's lifetime. Reads Tailscale status via the
 LocalAPI, binds to each tailnet IP + 127.0.0.1, installs an
 owner-only WhoIs AuthPolicy. Settings pane exposes toggle + port
 + live status line.
@@ -2076,10 +2076,10 @@ EOF
 
 ---
 
-## Task 11: Wire into EspalierApp + sidebar context menu + SPECS.md + smoke + PR
+## Task 11: Wire into GrafttyApp + sidebar context menu + SPECS.md + smoke + PR
 
 **Files:**
-- Modify: `Sources/Espalier/EspalierApp.swift`
+- Modify: `Sources/Graftty/GrafttyApp.swift`
 - Modify: sidebar pane-row context menu (find via grep)
 - Modify: `SPECS.md`
 
@@ -2088,7 +2088,7 @@ EOF
 Run:
 
 ```bash
-grep -rn "LAYOUT-2.7\|contextMenu\|Copy" Sources/Espalier/Views/ | head
+grep -rn "LAYOUT-2.7\|contextMenu\|Copy" Sources/Graftty/Views/ | head
 ```
 
 Expect a SwiftUI file containing `.contextMenu { ... }` on a pane row. Open it; add a "Copy web URL" item gated on `controller.status == .listening`.
@@ -2114,9 +2114,9 @@ if case .listening = controller.status,
 
 Verify `controller` + `launcher` are in scope for the menu view; if not, pass them as properties from the owning view.
 
-- [ ] **Step 11.3: Instantiate `WebServerController` in `EspalierApp`**
+- [ ] **Step 11.3: Instantiate `WebServerController` in `GrafttyApp`**
 
-In `Sources/Espalier/EspalierApp.swift`, next to the existing subsystem setup (look for `ZmxLauncher` instantiation), add:
+In `Sources/Graftty/GrafttyApp.swift`, next to the existing subsystem setup (look for `ZmxLauncher` instantiation), add:
 
 ```swift
 @StateObject private var webController: WebServerController = {
@@ -2228,11 +2228,11 @@ Expected: build succeeds; tests pass (integration tests skip without zmx but sho
 - [ ] **Step 11.6: Commit**
 
 ```bash
-git add Sources/Espalier/EspalierApp.swift Sources/Espalier/Views SPECS.md
+git add Sources/Graftty/GrafttyApp.swift Sources/Graftty/Views SPECS.md
 git commit -m "$(cat <<'EOF'
 feat(web): wire WebServerController into the app + Sidebar URL menu + SPECS §14
 
-- EspalierApp instantiates WebServerController and adds a Web Access
+- GrafttyApp instantiates WebServerController and adds a Web Access
   tab to the Settings scene.
 - Pane-row context menu (LAYOUT-2.7 surface) gains a "Copy web URL"
   item, enabled only when the server is listening.
@@ -2284,8 +2284,8 @@ EOF
 - Binding posture (§Architecture → Binding posture) → Task 8 (WebServer.bindAddresses), Task 10 (Controller builds the list), SPECS-14.1/2/3.
 - Authorization (§Architecture → Authorization) → Task 2 (TailscaleLocalAPI.parseWhois), Task 8 (AuthPolicy + `shouldUpgrade`), SPECS-14.2.
 - Protocol (§Architecture → Protocol) → Task 4 (control envelope), Task 8 (WS handler dispatch), SPECS-14.3.
-- Components list — all 9 new files have tasks; modifications (Package.swift, EspalierApp.swift, sidebar, SPECS.md) covered in 1, 11.
-- Data flows 1–6 → integration test covers Flow 1–4; WebServerController covers Flow 5; app quit (Flow 6) covered by `webController.stop()` in EspalierApp teardown.
+- Components list — all 9 new files have tasks; modifications (Package.swift, GrafttyApp.swift, sidebar, SPECS.md) covered in 1, 11.
+- Data flows 1–6 → integration test covers Flow 1–4; WebServerController covers Flow 5; app quit (Flow 6) covered by `webController.stop()` in GrafttyApp teardown.
 - Error modes → auth tests cover denied path; Controller status enum enumerates the error modes; documented in comments. No silent failures.
 - Tests: unit tests for TailscaleLocalAPI, PtyProcess, ControlEnvelope, URLComposer; integration for WebServer (both HTTP-only auth test and zmx-gated WS echo).
 - Acceptance criteria 1 (all tests pass) → Task 11 step 11.5.
@@ -2301,4 +2301,4 @@ EOF
 **Known fragilities (call out to implementer):**
 - NIO API surface varies by version. If `configureHTTPServerPipeline(withServerUpgrade:)` signature differs in installed 2.x, adapt: the tuple `(upgraders:, completionHandler:)` may be named params or a struct.
 - The `URLSession.webSocketTask` in Task 9 integration test sometimes requires macOS 11+; the package platform is macOS 14, so fine.
-- If `swift build` chokes on `Bundle.module` access from `Sources/EspalierKit/Web/WebStaticResources.swift` because the resources didn't actually get wired, verify the `Package.swift` `.copy("../../Resources/web")` path — alternative: relocate `Resources/web/` under `Sources/EspalierKit/Web/Resources/` and use `.copy("Resources")` or `.process("Resources")`.
+- If `swift build` chokes on `Bundle.module` access from `Sources/GrafttyKit/Web/WebStaticResources.swift` because the resources didn't actually get wired, verify the `Package.swift` `.copy("../../Resources/web")` path — alternative: relocate `Resources/web/` under `Sources/GrafttyKit/Web/Resources/` and use `.copy("Resources")` or `.process("Resources")`.

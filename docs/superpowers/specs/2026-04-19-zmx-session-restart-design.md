@@ -1,14 +1,14 @@
 # zmx Session Restart Recovery — Design Specification
 
-How Espalier detects and recovers from a zmx session that no longer exists at the moment Espalier touches it. Covers two scenarios — cold-start with a missing daemon, and mid-flight daemon death — using one detection mechanism and one recovery shape.
+How Graftty detects and recovers from a zmx session that no longer exists at the moment Graftty touches it. Covers two scenarios — cold-start with a missing daemon, and mid-flight daemon death — using one detection mechanism and one recovery shape.
 
 ## Goal
 
 After this ships, these user stories work:
 
-> **Cold-start, daemon missing.** I quit Espalier. While Espalier is closed, my Mac reboots (or I delete `~/Library/Application Support/Espalier/zmx`, or zmx itself crashes — anything that loses the daemons). I relaunch Espalier. The worktree that was open before relaunches with its panes restored, and the panes work. Because the underlying session is fresh, my configured **default command** runs in those panes, just as if I had freshly opened the worktree.
+> **Cold-start, daemon missing.** I quit Graftty. While Graftty is closed, my Mac reboots (or I delete `~/Library/Application Support/Graftty/zmx`, or zmx itself crashes — anything that loses the daemons). I relaunch Graftty. The worktree that was open before relaunches with its panes restored, and the panes work. Because the underlying session is fresh, my configured **default command** runs in those panes, just as if I had freshly opened the worktree.
 
-> **Mid-flight, daemon dies.** I'm using Espalier with a worktree open and an active pane. Something kills the zmx daemon backing that pane (manual `zmx kill` from another terminal, OOM, zmx crash, `ZMX_DIR` wiped). My pane does not silently disappear. Instead, the pane stays in its split-tree slot, a banner line `— session restarted at HH:MM —` is printed, and a fresh shell appears in the same pane.
+> **Mid-flight, daemon dies.** I'm using Graftty with a worktree open and an active pane. Something kills the zmx daemon backing that pane (manual `zmx kill` from another terminal, OOM, zmx crash, `ZMX_DIR` wiped). My pane does not silently disappear. Instead, the pane stays in its split-tree slot, a banner line `— session restarted at HH:MM —` is printed, and a fresh shell appears in the same pane.
 
 ## Scope
 
@@ -16,7 +16,7 @@ This spec covers the recovery-on-detection behavior. It does **not** address:
 
 - Notifying the user out-of-band (no menu-bar badge, no Notification Center alert) — recovery is silent except for the in-pane banner.
 - Preserving any pre-restart shell state — scrollback, cwd, env, jobs are all gone with the daemon (we verified `zmx history` returns nothing across daemon restarts; see **Background** below).
-- Heuristics for "is the daemon healthy right now" — we only check at moments where Espalier is already touching zmx (create, close).
+- Heuristics for "is the daemon healthy right now" — we only check at moments where Graftty is already touching zmx (create, close).
 
 ## Background
 
@@ -25,11 +25,11 @@ Two relevant facts gathered before writing this spec:
 1. **`zmx attach <name>` is idempotent-or-create.** From `zmx --help`: "Attach to session, creating if needed." If the daemon for `<name>` exists, `attach` reattaches and replays scrollback. If it does not, `attach` spawns a new daemon under that name and starts a fresh shell in it. There is no "session not found" failure path when the name is simply absent.
 2. **Scrollback does not survive daemon death.** Verified empirically: `zmx run name echo X` → `zmx history name` shows X → `zmx kill --force name` → `zmx run name echo Y` → `zmx history name` shows only Y. zmx keeps scrollback in the daemon's in-memory ring buffer; there is no on-disk WAL.
 
-The first fact means cold-start recovery is largely automatic at the libghostty/zmx layer: a restored pane that points at a dead daemon will quietly get a fresh daemon and a fresh shell with no errors. The user-visible problem is purely Espalier-layer state — specifically the **rehydration label** described next.
+The first fact means cold-start recovery is largely automatic at the libghostty/zmx layer: a restored pane that points at a dead daemon will quietly get a fresh daemon and a fresh shell with no errors. The user-visible problem is purely Graftty-layer state — specifically the **rehydration label** described next.
 
 ## The bug being fixed
 
-`Sources/EspalierKit/DefaultCommandDecision.swift:32` short-circuits on `wasRehydrated`:
+`Sources/GrafttyKit/DefaultCommandDecision.swift:32` short-circuits on `wasRehydrated`:
 
 ```swift
 if wasRehydrated { return .skip }
@@ -41,7 +41,7 @@ The accompanying comment reads: *"Rehydrated panes never auto-run — the comman
 
 ### One detection function
 
-A new `EspalierKit` helper:
+A new `GrafttyKit` helper:
 
 ```swift
 /// True when the zmx daemon for the given session name is not currently
@@ -62,9 +62,9 @@ The detection function is called from exactly two places, each handling one of t
 
 **Site 1 — cold-start, in `TerminalManager.createSurface(s)`.** Just before invoking `ghostty_surface_new`, if the pane is in `rehydratedSurfaces`, call `isSessionMissing` for the pane's session name. If the session is missing, remove the pane from `rehydratedSurfaces`. This makes the rehydration label reflect post-spawn truth: a pane is only "rehydrated" if there was actually something to rehydrate to.
 
-**Site 2 — mid-flight, in `TerminalManager`'s close-surface handling.** When `close_surface_cb` fires (today this destroys the surface and emits `onCloseRequest`), check `isSessionMissing` for the pane's session. If the session is missing **and** Espalier did not initiate the close, route to the recovery path instead of destroying.
+**Site 2 — mid-flight, in `TerminalManager`'s close-surface handling.** When `close_surface_cb` fires (today this destroys the surface and emits `onCloseRequest`), check `isSessionMissing` for the pane's session. If the session is missing **and** Graftty did not initiate the close, route to the recovery path instead of destroying.
 
-"Espalier did not initiate the close" needs a small piece of state to disambiguate — the user typing `exit` triggers our `zmx kill --force`, and the subsequent close should not be treated as session-loss. A `Set<TerminalID>` named `intentionalCloses` populated by `requestClose`/the Cmd+W path covers it. Membership is consumed by the close handler.
+"Graftty did not initiate the close" needs a small piece of state to disambiguate — the user typing `exit` triggers our `zmx kill --force`, and the subsequent close should not be treated as session-loss. A `Set<TerminalID>` named `intentionalCloses` populated by `requestClose`/the Cmd+W path covers it. Membership is consumed by the close handler.
 
 ### One recovery shape
 
@@ -73,7 +73,7 @@ The detection function is called from exactly two places, each handling one of t
 **For Site 2 (mid-flight)** we rebuild the surface in place:
 
 1. Destroy the dead `SurfaceHandle` (libghostty surface free, userdata box release).
-2. Create a new `SurfaceHandle` with the same `TerminalID`, the same worktree path, the same `ESPALIER_SOCK`, and the same `ZMX_DIR`. Same session name (deterministic from `TerminalID.id`), so `zmx attach` self-creates the daemon under the expected name.
+2. Create a new `SurfaceHandle` with the same `TerminalID`, the same worktree path, the same `GRAFTTY_SOCK`, and the same `ZMX_DIR`. Same session name (deterministic from `TerminalID.id`), so `zmx attach` self-creates the daemon under the expected name.
 3. Prepend a banner line to `initial_input` ahead of the `exec zmx attach …`:
    ```
    printf '\n\033[2m— session restarted at <HH:MM> —\033[0m\n'
@@ -95,17 +95,17 @@ Trying to force a single recovery routine across both would require either defer
 ## Component interfaces
 
 ```swift
-// EspalierKit
+// GrafttyKit
 public extension ZmxLauncher {
     func isSessionMissing(_ sessionName: String) -> Bool
 }
 
-// TerminalManager (Sources/Espalier/Terminal/TerminalManager.swift)
+// TerminalManager (Sources/Graftty/Terminal/TerminalManager.swift)
 @MainActor
 final class TerminalManager: ObservableObject {
     // existing surface map, rehydratedSurfaces, etc.
 
-    // NEW: panes whose close was initiated by Espalier (user Cmd+W,
+    // NEW: panes whose close was initiated by Graftty (user Cmd+W,
     // shell exit propagation, Stop-worktree). Consulted by the close
     // handler to distinguish intentional closes from session-loss.
     private var intentionalCloses: Set<TerminalID> = []
@@ -148,7 +148,7 @@ Identical flow, but `isSessionMissing` returns false → `clearRehydrated` is no
 ### Mid-flight, daemon dies
 
 ```
-zmx daemon for espalier-deadbeef dies
+zmx daemon for graftty-deadbeef dies
   → zmx attach client loses connection, exits
   → libghostty close_surface_cb fires
   → TerminalManager close handler:
@@ -168,7 +168,7 @@ User exit → outer shell's exec'd zmx attach exits cleanly → our `ZMX-4.3` `z
 - **Kill races ahead of close handler:** `isSessionMissing` returns true, but `intentionalCloses` is empty (we didn't populate it for shell-driven exits — only for explicit user actions like Cmd+W). False-positive: we'd rebuild a pane the user just exited.
 - **Close handler races ahead of kill:** `isSessionMissing` returns false (daemon still alive), close proceeds normally.
 
-Resolution: populate `intentionalCloses` from the same place that calls `killZmxSession(for:)` — every Espalier-initiated close already goes through `forgetTrackingState`, which is the natural place to also stamp the intent. Shell-driven exit goes through `requestClose` → the Cmd+W path. So the rule is "if we're about to kill the session, we are also intentionally closing the pane."
+Resolution: populate `intentionalCloses` from the same place that calls `killZmxSession(for:)` — every Graftty-initiated close already goes through `forgetTrackingState`, which is the natural place to also stamp the intent. Shell-driven exit goes through `requestClose` → the Cmd+W path. So the rule is "if we're about to kill the session, we are also intentionally closing the pane."
 
 This means one of two equivalent invariants must hold:
 
@@ -185,7 +185,7 @@ Option 2 is one place to maintain. Use it.
 
 ## Testing
 
-### Pure logic — `EspalierKitTests`
+### Pure logic — `GrafttyKitTests`
 
 `DefaultCommandDecisionTests` already covers the four `wasRehydrated × isFirstPane × firstPaneOnly × command` permutations. **Unchanged.** The pure decision function does not need to know about session-loss; the relabel happens at the call site.
 
@@ -195,7 +195,7 @@ New `ZmxLauncherTests` cases for `isSessionMissing`:
 - session absent → returns `true`.
 - `listSessions()` throws (executable missing) → returns `false`.
 
-### Integration — `EspalierKitTests/Zmx`
+### Integration — `GrafttyKitTests/Zmx`
 
 Two new tests in `ZmxSurvivalIntegrationTests`:
 
@@ -206,8 +206,8 @@ Two new tests in `ZmxSurvivalIntegrationTests`:
 
 Two manual checks for the PR description:
 
-1. **Cold-start with default command.** Set default command to `echo HELLO`. Open a worktree. Verify HELLO appears. Quit Espalier. Run `rm -rf ~/Library/Application\ Support/Espalier/zmx`. Relaunch. Verify HELLO appears again in the restored pane.
-2. **Mid-flight kill.** Open a worktree, type some output. From another terminal, `ZMX_DIR=~/Library/Application\ Support/Espalier/zmx zmx kill --force espalier-<id>`. Verify the pane stays in place, banner appears, fresh prompt is usable.
+1. **Cold-start with default command.** Set default command to `echo HELLO`. Open a worktree. Verify HELLO appears. Quit Graftty. Run `rm -rf ~/Library/Application\ Support/Graftty/zmx`. Relaunch. Verify HELLO appears again in the restored pane.
+2. **Mid-flight kill.** Open a worktree, type some output. From another terminal, `ZMX_DIR=~/Library/Application\ Support/Graftty/zmx zmx kill --force graftty-<id>`. Verify the pane stays in place, banner appears, fresh prompt is usable.
 
 ## SPECS.md updates
 
@@ -217,7 +217,7 @@ New requirements under `## 13. zmx Session Backing`:
 
 **ZMX-7.1** When the application restores a worktree's split tree on launch (per `PERSIST-3.x` and `ZMX-4.2`), it shall, before creating each pane's surface, query the live zmx session set and clear the pane's rehydration label if the expected session name is absent. This ensures a freshly-created daemon (the result of `zmx attach`'s create-on-miss semantics) is not mistaken for a surviving session by `defaultCommandDecision`.
 
-**ZMX-7.2** When `close_surface_cb` fires for a pane and Espalier did not initiate the close, the application shall query the live zmx session set; if the expected session name is absent, the application shall rebuild the pane's libghostty surface in place — same `TerminalID`, same split-tree position, fresh `zmx attach` — instead of removing the pane from the tree.
+**ZMX-7.2** When `close_surface_cb` fires for a pane and Graftty did not initiate the close, the application shall query the live zmx session set; if the expected session name is absent, the application shall rebuild the pane's libghostty surface in place — same `TerminalID`, same split-tree position, fresh `zmx attach` — instead of removing the pane from the tree.
 
 **ZMX-7.3** While rebuilding a surface per `ZMX-7.2`, the application shall prepend a single visually-distinct banner line ("`— session restarted at HH:MM —`", ANSI dim) to the new pane's `initial_input` so the user can recognize that the underlying session has been replaced.
 
@@ -234,5 +234,5 @@ None. Behaviour, detection points, recovery shape, error handling, and test surf
 ## Future extensions
 
 - **Banner customization.** Currently hard-coded to `— session restarted at HH:MM —`. Could become a `@AppStorage("zmxRestartBanner")` later if users want to disable it or change the format.
-- **Out-of-band notification.** A "session restarted" Notification Center alert for users running with the Espalier window backgrounded. Deliberately deferred — the in-pane banner is the minimum viable signal.
+- **Out-of-band notification.** A "session restarted" Notification Center alert for users running with the Graftty window backgrounded. Deliberately deferred — the in-pane banner is the minimum viable signal.
 - **Daemon-presence health monitor.** A periodic (e.g., 5s) `zmx list` poll that detects daemon death between events. Deferred because the `close_surface_cb` path already catches every observable death; a poll would only matter for daemons whose client connection is still alive but daemon-side state is corrupt — a scenario zmx's protocol does not currently expose.

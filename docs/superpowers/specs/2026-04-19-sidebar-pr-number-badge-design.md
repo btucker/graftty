@@ -28,17 +28,17 @@ This is a small extension of the existing PR status infrastructure. No new store
 2. `WorktreeRow` adds one new `@ViewBuilder` that renders the badge label.
 3. `PRInfo.State.statusColor` becomes the single source of truth for the green/purple palette, replacing the inline `mergedText` helper in `PRButton`.
 
-No changes to `EspalierKit`'s hosting layer, no changes to polling cadence, no changes to fetchers.
+No changes to `GrafttyKit`'s hosting layer, no changes to polling cadence, no changes to fetchers.
 
 ## 3. Data Flow
 
 ### 3.1 `PRBadge` value type
 
-New file: `Sources/Espalier/Views/PRBadge.swift` (app-target; sidebar is app-level UI).
+New file: `Sources/Graftty/Views/PRBadge.swift` (app-target; sidebar is app-level UI).
 
 ```swift
 import Foundation
-import EspalierKit
+import GrafttyKit
 
 /// Minimal PR snapshot consumed by the sidebar row. Narrower than
 /// `PRInfo` on purpose — only the fields the sidebar badge renders —
@@ -51,7 +51,7 @@ struct PRBadge: Equatable {
 }
 ```
 
-Lives in the app target (not `EspalierKit`) because it's a view-layer concern — `EspalierKit` should remain UI-free. If a future consumer needs a similar narrow type outside the app target, it can be promoted then.
+Lives in the app target (not `GrafttyKit`) because it's a view-layer concern — `GrafttyKit` should remain UI-free. If a future consumer needs a similar narrow type outside the app target, it can be promoted then.
 
 ### 3.2 `SidebarView` derivation
 
@@ -96,7 +96,7 @@ Image(systemName: WorktreeRowIcon.symbolName(
 ))
 ```
 
-`WorktreeRowIcon.symbolName` stays in `EspalierKit` unchanged — it still takes a `Bool` and knows nothing about `PRBadge`.
+`WorktreeRowIcon.symbolName` stays in `GrafttyKit` unchanged — it still takes a `Bool` and knows nothing about `PRBadge`.
 
 ### 4.2 Layout
 
@@ -158,7 +158,7 @@ Verify the `onTapGesture` form works first; fall back to `Button` only if needed
 
 ### 5.1 `PRInfo.State.statusColor`
 
-New file or addition in `Sources/Espalier/Views/PRButton.swift` (keeps the color palette next to its primary consumer):
+New file or addition in `Sources/Graftty/Views/PRButton.swift` (keeps the color palette next to its primary consumer):
 
 ```swift
 extension PRInfo.State {
@@ -203,7 +203,7 @@ Pure unit test: assert `.open.statusColor` and `.merged.statusColor` return the 
 
 ### 6.3 Row rendering
 
-Extend `Tests/EspalierKitTests/Model/WorktreeRowIconTests.swift` (or create a sibling `WorktreeRowBadgeTests.swift` in the Espalier target, since `PRBadge` lives there):
+Extend `Tests/GrafttyKitTests/Model/WorktreeRowIconTests.swift` (or create a sibling `WorktreeRowBadgeTests.swift` in the Graftty target, since `PRBadge` lives there):
 
 - `prBadge == nil` → icon is non-PR glyph; no `#` text in the row.
 - `prBadge.state == .open` → icon is PR glyph; `#<number>` present with open color.
@@ -213,7 +213,7 @@ Use SwiftUI introspection / ViewInspector if already depended on; otherwise asse
 
 ### 6.4 Manual smoke
 
-On a real repo with `gh` installed, open Espalier with a worktree that has an open PR and verify:
+On a real repo with `gh` installed, open Graftty with a worktree that has an open PR and verify:
 - Badge renders green.
 - Clicking the badge opens the browser without changing the sidebar selection.
 - Merging the PR upstream → within one polling cycle, the badge turns purple.

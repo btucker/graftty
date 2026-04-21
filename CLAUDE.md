@@ -1,4 +1,4 @@
-# Espalier — Agent Instructions
+# Graftty — Agent Instructions
 
 ## Keep SPECS.md in sync with behavior
 

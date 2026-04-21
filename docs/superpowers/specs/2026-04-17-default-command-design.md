@@ -6,7 +6,7 @@ A user-configurable "default command" that runs automatically the first time a w
 
 After this ships, this user story works:
 
-> I set "Default command" to `claude` in Settings. I click Open on a closed worktree in the sidebar. A pane appears, zsh starts, and a moment later `claude` is running inside it. If I Ctrl-D out of `claude`, I'm at a normal shell prompt — I can hit `↑ Enter` to restart it. If I quit Espalier and relaunch, `claude` is still running (zmx kept the shell alive) — it is **not** re-invoked on top of itself. If I explicitly Stop the worktree and reopen it, `claude` launches again.
+> I set "Default command" to `claude` in Settings. I click Open on a closed worktree in the sidebar. A pane appears, zsh starts, and a moment later `claude` is running inside it. If I Ctrl-D out of `claude`, I'm at a normal shell prompt — I can hit `↑ Enter` to restart it. If I quit Graftty and relaunch, `claude` is still running (zmx kept the shell alive) — it is **not** re-invoked on top of itself. If I explicitly Stop the worktree and reopen it, `claude` launches again.
 
 ## Scope
 
@@ -23,7 +23,7 @@ Two `UserDefaults` keys, accessed via SwiftUI's `@AppStorage`:
 | `defaultCommand`                 | String | `""`    | Command to run. Empty string = feature disabled.                   |
 | `defaultCommandFirstPaneOnly`    | Bool   | `true`  | If true, only the first pane of a worktree runs the command.       |
 
-Why UserDefaults (plist at `~/Library/Preferences/com.espalier.app.plist`) rather than extending `AppState` (`state.json`):
+Why UserDefaults (plist at `~/Library/Preferences/com.graftty.app.plist`) rather than extending `AppState` (`state.json`):
 
 - Preferences are user-scoped; `AppState` is workspace-scoped (open repos, window frame, selected worktree). Keeping them separate matches Apple conventions and keeps each store focused.
 - `@AppStorage` is write-through and KVO-observed, so every SwiftUI view reads a live value without any glue.
@@ -31,7 +31,7 @@ Why UserDefaults (plist at `~/Library/Preferences/com.espalier.app.plist`) rathe
 
 ### Settings UI
 
-A new SwiftUI `Settings` scene attached to `EspalierApp.body`:
+A new SwiftUI `Settings` scene attached to `GrafttyApp.body`:
 
 ```swift
 Settings {
@@ -41,7 +41,7 @@ Settings {
 
 Declaring the `Settings` scene is what causes macOS to:
 
-- add a **Settings…** item to the app menu under "About Espalier", and
+- add a **Settings…** item to the app menu under "About Graftty", and
 - wire the standard `⌘,` keyboard shortcut to it.
 
 No `CommandGroup` modifications are needed; SwiftUI handles this automatically.
@@ -49,7 +49,7 @@ No `CommandGroup` modifications are needed; SwiftUI handles this automatically.
 `SettingsView` is a single-tab preferences window:
 
 ```
-┌─ Espalier Settings ────────────────────────────┐
+┌─ Graftty Settings ────────────────────────────┐
 │                                                │
 │   General   ← (only tab; TabView anticipates   │
 │               future additions)                │
@@ -82,7 +82,7 @@ It fires at most once per `TerminalID`, on the first `GHOSTTY_ACTION_PWD` event 
 
 **Why derive from PWD instead of adding a new action upstream:** adding a new `GHOSTTY_ACTION_PROMPT_START` would require patching libghostty and carrying a downstream fork, which is disproportionate for this feature. The PWD-based signal is functionally equivalent — Ghostty's zsh integration always emits OSC 7 from `precmd`, so "first PWD" and "first prompt" are the same event in practice.
 
-`EspalierApp.startup()` wires it:
+`GrafttyApp.startup()` wires it:
 
 ```swift
 terminalManager.onShellReady = { [appState = $appState, tm = terminalManager] terminalID in
@@ -106,7 +106,7 @@ terminalManager.onShellReady = { [appState = $appState, tm = terminalManager] te
 
 ### First-pane identity
 
-A worktree's "first pane" is the pane whose creation caused the worktree to transition from `.closed → .running`. This is determined at creation time, not at run time: when `createSurfaces` (or `createSurface`) is called as part of the open-worktree action in the sidebar / CLI `espalier open`, the resulting pane is marked as first-pane for that worktree.
+A worktree's "first pane" is the pane whose creation caused the worktree to transition from `.closed → .running`. This is determined at creation time, not at run time: when `createSurfaces` (or `createSurface`) is called as part of the open-worktree action in the sidebar / CLI `graftty open`, the resulting pane is marked as first-pane for that worktree.
 
 Concretely, `TerminalManager` gains a map:
 
@@ -117,7 +117,7 @@ private var firstPaneMarkers: [TerminalID: Bool] = [:]
 Callers that are opening a worktree (not rehydrating, not splitting) set the flag at surface-creation time. The two call sites are:
 
 - `MainWindow` / sidebar open-worktree action — the pane it creates is a first pane.
-- `handleNotification(.notify)` path for CLI `espalier open` when it causes a `.closed → .running` transition (if that code path exists; if not, no-op).
+- `handleNotification(.notify)` path for CLI `graftty open` when it causes a `.closed → .running` transition (if that code path exists; if not, no-op).
 
 Splits (Cmd+D, context menu, `splitPane`) never mark first-pane. PWD migration (`reassignPaneByPWD`) never marks first-pane — a pane that *moves* into a worktree is not a first-pane event.
 
@@ -148,13 +148,13 @@ We type `defaultCommand + "\r"` — carriage return, not newline, matching what 
 
 ## Components
 
-### Modified — `Sources/Espalier/EspalierApp.swift`
+### Modified — `Sources/Graftty/GrafttyApp.swift`
 
 - Add the `Settings { SettingsView() }` scene to `body`.
 - Add a static `maybeRunDefaultCommand(appState:terminalManager:terminalID:)` that implements the gating logic.
 - Wire `terminalManager.onShellReady` in `startup()`.
 
-### Modified — `Sources/Espalier/Terminal/TerminalManager.swift`
+### Modified — `Sources/Graftty/Terminal/TerminalManager.swift`
 
 - New public callback: `var onShellReady: ((TerminalID) -> Void)?` — fired on first PWD event per `TerminalID`.
 - Private state: `shellReadyFired: Set<TerminalID>`, `firstPaneMarkers: [TerminalID: Bool]`, `rehydratedSurfaces: Set<TerminalID>`.
@@ -167,15 +167,15 @@ We type `defaultCommand + "\r"` — carriage return, not newline, matching what 
 - Internal: dispatch `onShellReady` on the first prompt-ready event per ID. Gate via `shellReadyFired`.
 - Cleanup: when a surface is destroyed, remove its entries from all three tracking sets.
 
-### Modified — `Sources/Espalier/Terminal/SurfaceHandle.swift`
+### Modified — `Sources/Graftty/Terminal/SurfaceHandle.swift`
 
 - New method `typeText(_ text: String)` that forwards to libghostty's text-input API.
 
-### New — `Sources/EspalierKit/DefaultCommandDecision.swift`
+### New — `Sources/GrafttyKit/DefaultCommandDecision.swift`
 
-Pure decision function extracted from `maybeRunDefaultCommand` so it can be unit-tested without a running `NSApplication` or libghostty surface. See "Testing" below for the exact signature. `EspalierApp.maybeRunDefaultCommand` becomes a thin wrapper: gather inputs from UserDefaults / TerminalManager, call the pure function, act on the result.
+Pure decision function extracted from `maybeRunDefaultCommand` so it can be unit-tested without a running `NSApplication` or libghostty surface. See "Testing" below for the exact signature. `GrafttyApp.maybeRunDefaultCommand` becomes a thin wrapper: gather inputs from UserDefaults / TerminalManager, call the pure function, act on the result.
 
-### New — `Sources/Espalier/Views/SettingsView.swift`
+### New — `Sources/Graftty/Views/SettingsView.swift`
 
 - A `TabView` with one tab ("General") containing:
   - `TextField` bound to `@AppStorage("defaultCommand")`.
@@ -199,7 +199,7 @@ Before invoking `createSurfaces`, call `terminalManager.markRehydrated(...)` for
 
 **Worktree re-opened after explicit Stop.** Stop tears down zmx sessions. The next Open is a fresh `.closed → .running` transition. The command fires again. Correct.
 
-**Pane migrates in via OSC 7.** A shell that `cd`s into a different worktree triggers `reassignPaneByPWD` (EspalierApp.swift:174), which moves the pane's ownership in the sidebar. The migrated pane is not a "first pane" of the destination worktree — `firstPaneMarkers` for its `TerminalID` was never set. Correct.
+**Pane migrates in via OSC 7.** A shell that `cd`s into a different worktree triggers `reassignPaneByPWD` (GrafttyApp.swift:174), which moves the pane's ownership in the sidebar. The migrated pane is not a "first pane" of the destination worktree — `firstPaneMarkers` for its `TerminalID` was never set. Correct.
 
 **Worktree is `.stale`.** Stale worktrees cannot be opened (the sidebar prevents it). N/A.
 
@@ -209,11 +209,11 @@ Before invoking `createSurfaces`, call `terminalManager.markRehydrated(...)` for
 
 ## Testing
 
-Scope: EspalierKit has unit tests; `Espalier` (UI target) has no test target today. This feature's core logic is a gating function — `maybeRunDefaultCommand` — that consumes a snapshot of (UserDefaults values, `firstPaneMarkers`, `rehydratedSurfaces`, worktree lookup) and emits a "type this string" decision. That is pure enough to test.
+Scope: GrafttyKit has unit tests; `Graftty` (UI target) has no test target today. This feature's core logic is a gating function — `maybeRunDefaultCommand` — that consumes a snapshot of (UserDefaults values, `firstPaneMarkers`, `rehydratedSurfaces`, worktree lookup) and emits a "type this string" decision. That is pure enough to test.
 
 Plan:
 
-- Extract the decision into a pure function in `EspalierKit`:
+- Extract the decision into a pure function in `GrafttyKit`:
   ```swift
   public enum DefaultCommandDecision: Equatable {
       case skip
@@ -227,7 +227,7 @@ Plan:
       wasRehydrated: Bool
   ) -> DefaultCommandDecision
   ```
-- Write unit tests in `EspalierKitTests` covering:
+- Write unit tests in `GrafttyKitTests` covering:
   - empty command → `.skip`
   - rehydrated pane → `.skip` (regardless of other inputs)
   - non-first-pane + `firstPaneOnly == true` → `.skip`

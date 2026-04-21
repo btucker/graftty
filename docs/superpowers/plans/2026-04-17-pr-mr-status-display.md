@@ -4,7 +4,7 @@
 
 **Goal:** Surface GitHub PR / GitLab MR status (number, title, CI rollup) in the breadcrumb for each worktree's branch, clickable to open the PR/MR in a browser. Along the way: migrate all git/CLI invocation to async + PATH-agnostic execution, and add polling (with `git fetch`) to `WorktreeStatsStore` so divergence stats stay live.
 
-**Architecture:** Three phases. (1) New async `CLIRunner` replaces the synchronous `Process` pattern; `GitRunner` is rewritten on top of it and every existing caller migrates. (2) New `EspalierKit/Hosting/` subsystem parses origin URLs, models PR/MR info, and shells out to `gh`/`glab`. (3) New `PRStatusStore` (with a shared `PollingTicker` helper) and polling extension on `WorktreeStatsStore` drive live updates into UI that renders `{repo} / {worktree-name} ({branch})` with a trailing PR button.
+**Architecture:** Three phases. (1) New async `CLIRunner` replaces the synchronous `Process` pattern; `GitRunner` is rewritten on top of it and every existing caller migrates. (2) New `GrafttyKit/Hosting/` subsystem parses origin URLs, models PR/MR info, and shells out to `gh`/`glab`. (3) New `PRStatusStore` (with a shared `PollingTicker` helper) and polling extension on `WorktreeStatsStore` drive live updates into UI that renders `{repo} / {worktree-name} ({branch})` with a trailing PR button.
 
 **Tech Stack:** Swift 5.10, SwiftUI, `@Observable` (Observation framework), Swift Testing (`@Test`/`#expect`), `Process` + `withCheckedThrowingContinuation` for async shell-outs. External CLIs: `gh`, `glab`.
 
@@ -13,11 +13,11 @@
 **File structure being created/modified:**
 
 ```
-Sources/EspalierKit/CLI/                  ← new directory
+Sources/GrafttyKit/CLI/                  ← new directory
   CLIExecutor.swift                       ← new: protocol + value types
   CLIRunner.swift                         ← new: production implementation
 
-Sources/EspalierKit/Hosting/              ← new directory
+Sources/GrafttyKit/Hosting/              ← new directory
   HostingProvider.swift                   ← new
   HostingOrigin.swift                     ← new
   GitOriginHost.swift                     ← new
@@ -26,7 +26,7 @@ Sources/EspalierKit/Hosting/              ← new directory
   GitHubPRFetcher.swift                   ← new
   GitLabPRFetcher.swift                   ← new
 
-Sources/EspalierKit/Git/
+Sources/GrafttyKit/Git/
   GitRunner.swift                         ← rewritten as async on top of CLIRunner
   GitRepoDetector.swift                   ← migrated to async
   GitWorktreeDiscovery.swift              ← migrated to async
@@ -34,19 +34,19 @@ Sources/EspalierKit/Git/
   GitOriginDefaultBranch.swift            ← migrated to async
   GitWorktreeAdd.swift                    ← migrated to async
 
-Sources/Espalier/Model/
+Sources/Graftty/Model/
   PollingTicker.swift                     ← new
   PRStatusStore.swift                     ← new
   WorktreeStatsStore.swift                ← extended with polling + git fetch
 
-Sources/Espalier/Views/
+Sources/Graftty/Views/
   BreadcrumbBar.swift                     ← rewritten
   PRButton.swift                          ← new
   WorktreeRow.swift                       ← edited (italic "root" for home)
   MainWindow.swift                        ← wires PRStatusStore
-  EspalierApp.swift                       ← instantiates PRStatusStore, removes old 60s Timer
+  GrafttyApp.swift                       ← instantiates PRStatusStore, removes old 60s Timer
 
-Tests/EspalierKitTests/
+Tests/GrafttyKitTests/
   CLI/                                    ← new
     CLIRunnerTests.swift                  ← new
     FakeCLIExecutor.swift                 ← new: shared test helper
@@ -57,7 +57,7 @@ Tests/EspalierKitTests/
     Fixtures/hosting/                     ← sample gh/glab JSON
   Git/                                    ← existing tests updated for async + FakeCLIExecutor
 
-Tests/EspalierKitTests/ — already exists; tests for:
+Tests/GrafttyKitTests/ — already exists; tests for:
   PollingTickerTests.swift                ← new (under a new Model/ dir)
   PRStatusStoreTests.swift                ← new
 ```
@@ -69,7 +69,7 @@ Tests/EspalierKitTests/ — already exists; tests for:
 ### Task A1: Create `CLIExecutor` protocol + value types
 
 **Files:**
-- Create: `Sources/EspalierKit/CLI/CLIExecutor.swift`
+- Create: `Sources/GrafttyKit/CLI/CLIExecutor.swift`
 
 - [ ] **Step 1: Write the file**
 
@@ -118,7 +118,7 @@ Expected: no errors.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/EspalierKit/CLI/CLIExecutor.swift
+git add Sources/GrafttyKit/CLI/CLIExecutor.swift
 git commit -m "feat(cli): add CLIExecutor protocol and value types"
 ```
 
@@ -127,7 +127,7 @@ git commit -m "feat(cli): add CLIExecutor protocol and value types"
 ### Task A2: Implement `CLIRunner`
 
 **Files:**
-- Create: `Sources/EspalierKit/CLI/CLIRunner.swift`
+- Create: `Sources/GrafttyKit/CLI/CLIRunner.swift`
 
 - [ ] **Step 1: Write the implementation**
 
@@ -240,7 +240,7 @@ Expected: no errors.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/EspalierKit/CLI/CLIRunner.swift
+git add Sources/GrafttyKit/CLI/CLIRunner.swift
 git commit -m "feat(cli): add async CLIRunner with PATH enrichment"
 ```
 
@@ -249,13 +249,13 @@ git commit -m "feat(cli): add async CLIRunner with PATH enrichment"
 ### Task A3: `FakeCLIExecutor` test helper
 
 **Files:**
-- Create: `Tests/EspalierKitTests/CLI/FakeCLIExecutor.swift`
+- Create: `Tests/GrafttyKitTests/CLI/FakeCLIExecutor.swift`
 
 - [ ] **Step 1: Write the helper**
 
 ```swift
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 /// Test double for `CLIExecutor`. Returns canned `CLIOutput` for matching
 /// `(command, args)` tuples. Asserts on unexpected invocations so tests
@@ -314,13 +314,13 @@ final class FakeCLIExecutor: CLIExecutor, @unchecked Sendable {
 
 - [ ] **Step 2: Compile tests**
 
-Run: `swift test --no-build 2>&1 | head -20` then `swift build --target EspalierKitTests`
+Run: `swift test --no-build 2>&1 | head -20` then `swift build --target GrafttyKitTests`
 Expected: no errors; helper class available to other test files.
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Tests/EspalierKitTests/CLI/FakeCLIExecutor.swift
+git add Tests/GrafttyKitTests/CLI/FakeCLIExecutor.swift
 git commit -m "test(cli): add FakeCLIExecutor for stubbed shell-outs"
 ```
 
@@ -329,14 +329,14 @@ git commit -m "test(cli): add FakeCLIExecutor for stubbed shell-outs"
 ### Task A4: `CLIRunner` integration tests
 
 **Files:**
-- Create: `Tests/EspalierKitTests/CLI/CLIRunnerTests.swift`
+- Create: `Tests/GrafttyKitTests/CLI/CLIRunnerTests.swift`
 
 - [ ] **Step 1: Write the tests**
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("CLIRunner Tests")
 struct CLIRunnerTests {
@@ -418,7 +418,7 @@ Expected: all 6 tests pass.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Tests/EspalierKitTests/CLI/CLIRunnerTests.swift
+git add Tests/GrafttyKitTests/CLI/CLIRunnerTests.swift
 git commit -m "test(cli): CLIRunner integration tests for PATH, stdout/stderr, exit codes"
 ```
 
@@ -431,7 +431,7 @@ This phase migrates every existing git caller to async. **Run `swift build && sw
 ### Task B1: Rewrite `GitRunner` as async wrapper over `CLIRunner`
 
 **Files:**
-- Modify: `Sources/EspalierKit/Git/GitRunner.swift` (full rewrite)
+- Modify: `Sources/GrafttyKit/Git/GitRunner.swift` (full rewrite)
 
 - [ ] **Step 1: Replace the file contents**
 
@@ -496,8 +496,8 @@ Expected: errors pointing at existing call sites that use the old sync API. That
 ### Task B2: Migrate `GitRepoDetector` to async
 
 **Files:**
-- Modify: `Sources/EspalierKit/Git/GitRepoDetector.swift`
-- Modify: `Tests/EspalierKitTests/Git/GitRepoDetectorTests.swift`
+- Modify: `Sources/GrafttyKit/Git/GitRepoDetector.swift`
+- Modify: `Tests/GrafttyKitTests/Git/GitRepoDetectorTests.swift`
 
 - [ ] **Step 1: Update GitRepoDetector**
 
@@ -505,7 +505,7 @@ Expected: errors pointing at existing call sites that use the old sync API. That
 
 - [ ] **Step 2: Verify no changes needed**
 
-Run: `grep GitRunner Sources/EspalierKit/Git/GitRepoDetector.swift`
+Run: `grep GitRunner Sources/GrafttyKit/Git/GitRepoDetector.swift`
 Expected: no matches.
 
 Skip this task's "modify source" step — the file is already fine.
@@ -524,8 +524,8 @@ Nothing changed for this task. Move on.
 ### Task B3: Migrate `GitWorktreeDiscovery` to async
 
 **Files:**
-- Modify: `Sources/EspalierKit/Git/GitWorktreeDiscovery.swift`
-- Modify: `Tests/EspalierKitTests/Git/GitWorktreeDiscoveryTests.swift`
+- Modify: `Sources/GrafttyKit/Git/GitWorktreeDiscovery.swift`
+- Modify: `Tests/GrafttyKitTests/Git/GitWorktreeDiscoveryTests.swift`
 
 - [ ] **Step 1: Make `discover` async throws**
 
@@ -562,7 +562,7 @@ Expected: all tests pass.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/EspalierKit/Git/GitWorktreeDiscovery.swift Tests/EspalierKitTests/Git/GitWorktreeDiscoveryTests.swift
+git add Sources/GrafttyKit/Git/GitWorktreeDiscovery.swift Tests/GrafttyKitTests/Git/GitWorktreeDiscoveryTests.swift
 git commit -m "refactor(git): migrate GitWorktreeDiscovery to async"
 ```
 
@@ -571,8 +571,8 @@ git commit -m "refactor(git): migrate GitWorktreeDiscovery to async"
 ### Task B4: Migrate `GitWorktreeStats` to async
 
 **Files:**
-- Modify: `Sources/EspalierKit/Git/GitWorktreeStats.swift`
-- Modify: `Tests/EspalierKitTests/Git/GitWorktreeStatsTests.swift`
+- Modify: `Sources/GrafttyKit/Git/GitWorktreeStats.swift`
+- Modify: `Tests/GrafttyKitTests/Git/GitWorktreeStatsTests.swift`
 
 - [ ] **Step 1: Make `compute` async throws**
 
@@ -643,7 +643,7 @@ Expected: all tests pass.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/EspalierKit/Git/GitWorktreeStats.swift Tests/EspalierKitTests/Git/GitWorktreeStatsTests.swift
+git add Sources/GrafttyKit/Git/GitWorktreeStats.swift Tests/GrafttyKitTests/Git/GitWorktreeStatsTests.swift
 git commit -m "refactor(git): migrate GitWorktreeStats to async"
 ```
 
@@ -652,8 +652,8 @@ git commit -m "refactor(git): migrate GitWorktreeStats to async"
 ### Task B5: Migrate `GitOriginDefaultBranch` to async
 
 **Files:**
-- Modify: `Sources/EspalierKit/Git/GitOriginDefaultBranch.swift`
-- Modify: `Tests/EspalierKitTests/Git/GitOriginDefaultBranchTests.swift`
+- Modify: `Sources/GrafttyKit/Git/GitOriginDefaultBranch.swift`
+- Modify: `Tests/GrafttyKitTests/Git/GitOriginDefaultBranchTests.swift`
 
 - [ ] **Step 1: Make `resolve` async throws**
 
@@ -698,7 +698,7 @@ Expected: all tests pass.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/EspalierKit/Git/GitOriginDefaultBranch.swift Tests/EspalierKitTests/Git/GitOriginDefaultBranchTests.swift
+git add Sources/GrafttyKit/Git/GitOriginDefaultBranch.swift Tests/GrafttyKitTests/Git/GitOriginDefaultBranchTests.swift
 git commit -m "refactor(git): migrate GitOriginDefaultBranch to async"
 ```
 
@@ -707,7 +707,7 @@ git commit -m "refactor(git): migrate GitOriginDefaultBranch to async"
 ### Task B6: Migrate `GitWorktreeAdd` to async
 
 **Files:**
-- Modify: `Sources/EspalierKit/Git/GitWorktreeAdd.swift`
+- Modify: `Sources/GrafttyKit/Git/GitWorktreeAdd.swift`
 
 - [ ] **Step 1: Rewrite `add` as async throws**
 
@@ -749,7 +749,7 @@ Expected: `MainWindow.swift` will fail where it calls `GitWorktreeAdd.add` insid
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/EspalierKit/Git/GitWorktreeAdd.swift
+git add Sources/GrafttyKit/Git/GitWorktreeAdd.swift
 git commit -m "refactor(git): migrate GitWorktreeAdd to async"
 ```
 
@@ -758,13 +758,13 @@ git commit -m "refactor(git): migrate GitWorktreeAdd to async"
 ### Task B7: Migrate app-layer callers
 
 **Files:**
-- Modify: `Sources/Espalier/Model/WorktreeStatsStore.swift`
-- Modify: `Sources/Espalier/Views/MainWindow.swift`
-- Modify: `Sources/Espalier/EspalierApp.swift` (`reconcileOnLaunch` + `WorktreeMonitorBridge`)
+- Modify: `Sources/Graftty/Model/WorktreeStatsStore.swift`
+- Modify: `Sources/Graftty/Views/MainWindow.swift`
+- Modify: `Sources/Graftty/GrafttyApp.swift` (`reconcileOnLaunch` + `WorktreeMonitorBridge`)
 
 - [ ] **Step 1: `WorktreeStatsStore.computeOffMain` becomes async-naïve**
 
-In `Sources/Espalier/Model/WorktreeStatsStore.swift`, change `computeOffMain` to use `async` and drop the sync-over-async wrapping. Replace the existing `computeOffMain` and the `Task.detached` call in `refresh` with:
+In `Sources/Graftty/Model/WorktreeStatsStore.swift`, change `computeOffMain` to use `async` and drop the sync-over-async wrapping. Replace the existing `computeOffMain` and the `Task.detached` call in `refresh` with:
 
 ```swift
 public func refresh(worktreePath: String, repoPath: String) {
@@ -894,7 +894,7 @@ private func addRepoFromPath(_ repoPath: String, selectWorktree: String?) {
 }
 ```
 
-- [ ] **Step 3: Update `EspalierApp.reconcileOnLaunch`**
+- [ ] **Step 3: Update `GrafttyApp.reconcileOnLaunch`**
 
 `reconcileOnLaunch` currently calls `GitWorktreeDiscovery.discover` synchronously. Change to a `Task`:
 
@@ -955,7 +955,7 @@ Expected: all tests pass, no warnings about unhandled async.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Sources/Espalier Sources/EspalierKit
+git add Sources/Graftty Sources/GrafttyKit
 git commit -m "refactor: migrate app-layer callers to async git API"
 ```
 
@@ -982,8 +982,8 @@ Expected: all pre-existing tests pass. Phase B is complete.
 ### Task C1: `HostingProvider` + `HostingOrigin` types
 
 **Files:**
-- Create: `Sources/EspalierKit/Hosting/HostingProvider.swift`
-- Create: `Sources/EspalierKit/Hosting/HostingOrigin.swift`
+- Create: `Sources/GrafttyKit/Hosting/HostingProvider.swift`
+- Create: `Sources/GrafttyKit/Hosting/HostingOrigin.swift`
 
 - [ ] **Step 1: Write `HostingProvider`**
 
@@ -1027,7 +1027,7 @@ Expected: no errors.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/EspalierKit/Hosting/
+git add Sources/GrafttyKit/Hosting/
 git commit -m "feat(hosting): add HostingProvider and HostingOrigin types"
 ```
 
@@ -1036,31 +1036,31 @@ git commit -m "feat(hosting): add HostingProvider and HostingOrigin types"
 ### Task C2: `GitOriginHost.parse` + tests
 
 **Files:**
-- Create: `Sources/EspalierKit/Hosting/GitOriginHost.swift`
-- Create: `Tests/EspalierKitTests/Hosting/GitOriginHostTests.swift`
+- Create: `Sources/GrafttyKit/Hosting/GitOriginHost.swift`
+- Create: `Tests/GrafttyKitTests/Hosting/GitOriginHostTests.swift`
 
 - [ ] **Step 1: Write a failing test first**
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("GitOriginHost.parse")
 struct GitOriginHostParseTests {
     @Test func parsesGitHubSSHURL() {
-        let origin = GitOriginHost.parse(remoteURL: "git@github.com:btucker/espalier.git")
-        #expect(origin == HostingOrigin(provider: .github, host: "github.com", owner: "btucker", repo: "espalier"))
+        let origin = GitOriginHost.parse(remoteURL: "git@github.com:btucker/graftty.git")
+        #expect(origin == HostingOrigin(provider: .github, host: "github.com", owner: "btucker", repo: "graftty"))
     }
 
     @Test func parsesGitHubHTTPSURL() {
-        let origin = GitOriginHost.parse(remoteURL: "https://github.com/btucker/espalier.git")
-        #expect(origin == HostingOrigin(provider: .github, host: "github.com", owner: "btucker", repo: "espalier"))
+        let origin = GitOriginHost.parse(remoteURL: "https://github.com/btucker/graftty.git")
+        #expect(origin == HostingOrigin(provider: .github, host: "github.com", owner: "btucker", repo: "graftty"))
     }
 
     @Test func parsesGitHubHTTPSWithoutDotGit() {
-        let origin = GitOriginHost.parse(remoteURL: "https://github.com/btucker/espalier")
-        #expect(origin == HostingOrigin(provider: .github, host: "github.com", owner: "btucker", repo: "espalier"))
+        let origin = GitOriginHost.parse(remoteURL: "https://github.com/btucker/graftty")
+        #expect(origin == HostingOrigin(provider: .github, host: "github.com", owner: "btucker", repo: "graftty"))
     }
 
     @Test func parsesGitLabSSHURL() {
@@ -1191,7 +1191,7 @@ Expected: all tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Hosting/GitOriginHost.swift Tests/EspalierKitTests/Hosting/GitOriginHostTests.swift
+git add Sources/GrafttyKit/Hosting/GitOriginHost.swift Tests/GrafttyKitTests/Hosting/GitOriginHostTests.swift
 git commit -m "feat(hosting): parse origin remote URLs into HostingOrigin"
 ```
 
@@ -1200,8 +1200,8 @@ git commit -m "feat(hosting): parse origin remote URLs into HostingOrigin"
 ### Task C3: `GitOriginHost.detect` + test
 
 **Files:**
-- Modify: `Sources/EspalierKit/Hosting/GitOriginHost.swift`
-- Modify: `Tests/EspalierKitTests/Hosting/GitOriginHostTests.swift`
+- Modify: `Sources/GrafttyKit/Hosting/GitOriginHost.swift`
+- Modify: `Tests/GrafttyKitTests/Hosting/GitOriginHostTests.swift`
 
 - [ ] **Step 1: Add a failing test (using FakeCLIExecutor via GitRunner.configure)**
 
@@ -1215,14 +1215,14 @@ struct GitOriginHostDetectTests {
         fake.stub(
             command: "git",
             args: ["remote", "get-url", "origin"],
-            output: CLIOutput(stdout: "git@github.com:btucker/espalier.git\n", stderr: "", exitCode: 0)
+            output: CLIOutput(stdout: "git@github.com:btucker/graftty.git\n", stderr: "", exitCode: 0)
         )
         GitRunner.configure(executor: fake)
         defer { GitRunner.resetForTests() }
 
         let origin = try await GitOriginHost.detect(repoPath: "/tmp/repo")
         #expect(origin?.provider == .github)
-        #expect(origin?.slug == "btucker/espalier")
+        #expect(origin?.slug == "btucker/graftty")
     }
 
     @Test func returnsNilWhenRemoteMissing() async throws {
@@ -1269,7 +1269,7 @@ Expected: both tests pass.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/EspalierKit/Hosting/GitOriginHost.swift Tests/EspalierKitTests/Hosting/GitOriginHostTests.swift
+git add Sources/GrafttyKit/Hosting/GitOriginHost.swift Tests/GrafttyKitTests/Hosting/GitOriginHostTests.swift
 git commit -m "feat(hosting): detect origin remote via GitRunner"
 ```
 
@@ -1280,7 +1280,7 @@ git commit -m "feat(hosting): detect origin remote via GitRunner"
 ### Task D1: `PRInfo` value type
 
 **Files:**
-- Create: `Sources/EspalierKit/Hosting/PRInfo.swift`
+- Create: `Sources/GrafttyKit/Hosting/PRInfo.swift`
 
 - [ ] **Step 1: Write the type**
 
@@ -1334,7 +1334,7 @@ Run: `swift build`
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/EspalierKit/Hosting/PRInfo.swift
+git add Sources/GrafttyKit/Hosting/PRInfo.swift
 git commit -m "feat(hosting): add PRInfo value type"
 ```
 
@@ -1343,7 +1343,7 @@ git commit -m "feat(hosting): add PRInfo value type"
 ### Task D2: `PRFetcher` protocol
 
 **Files:**
-- Create: `Sources/EspalierKit/Hosting/PRFetcher.swift`
+- Create: `Sources/GrafttyKit/Hosting/PRFetcher.swift`
 
 - [ ] **Step 1: Write the protocol**
 
@@ -1366,7 +1366,7 @@ Run: `swift build`
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/EspalierKit/Hosting/PRFetcher.swift
+git add Sources/GrafttyKit/Hosting/PRFetcher.swift
 git commit -m "feat(hosting): PRFetcher protocol"
 ```
 
@@ -1375,28 +1375,28 @@ git commit -m "feat(hosting): PRFetcher protocol"
 ### Task D3: `GitHubPRFetcher` + fixtures + tests
 
 **Files:**
-- Create: `Sources/EspalierKit/Hosting/GitHubPRFetcher.swift`
-- Create: `Tests/EspalierKitTests/Hosting/GitHubPRFetcherTests.swift`
-- Create: `Tests/EspalierKitTests/Hosting/Fixtures/gh-pr-open-passing.json`
-- Create: `Tests/EspalierKitTests/Hosting/Fixtures/gh-pr-open-pending.json`
-- Create: `Tests/EspalierKitTests/Hosting/Fixtures/gh-pr-open-failing.json`
-- Create: `Tests/EspalierKitTests/Hosting/Fixtures/gh-pr-empty.json`
-- Create: `Tests/EspalierKitTests/Hosting/Fixtures/gh-pr-merged.json`
-- Create: `Tests/EspalierKitTests/Hosting/Fixtures/gh-pr-checks-passing.json`
-- Create: `Tests/EspalierKitTests/Hosting/Fixtures/gh-pr-checks-pending.json`
-- Create: `Tests/EspalierKitTests/Hosting/Fixtures/gh-pr-checks-failing.json`
-- Create: `Tests/EspalierKitTests/Hosting/Fixtures/gh-pr-checks-none.json`
+- Create: `Sources/GrafttyKit/Hosting/GitHubPRFetcher.swift`
+- Create: `Tests/GrafttyKitTests/Hosting/GitHubPRFetcherTests.swift`
+- Create: `Tests/GrafttyKitTests/Hosting/Fixtures/gh-pr-open-passing.json`
+- Create: `Tests/GrafttyKitTests/Hosting/Fixtures/gh-pr-open-pending.json`
+- Create: `Tests/GrafttyKitTests/Hosting/Fixtures/gh-pr-open-failing.json`
+- Create: `Tests/GrafttyKitTests/Hosting/Fixtures/gh-pr-empty.json`
+- Create: `Tests/GrafttyKitTests/Hosting/Fixtures/gh-pr-merged.json`
+- Create: `Tests/GrafttyKitTests/Hosting/Fixtures/gh-pr-checks-passing.json`
+- Create: `Tests/GrafttyKitTests/Hosting/Fixtures/gh-pr-checks-pending.json`
+- Create: `Tests/GrafttyKitTests/Hosting/Fixtures/gh-pr-checks-failing.json`
+- Create: `Tests/GrafttyKitTests/Hosting/Fixtures/gh-pr-checks-none.json`
 
 - [ ] **Step 1: Write the fixtures**
 
 `gh-pr-open-passing.json`:
 ```json
-[{"number":412,"title":"Add PR/MR status button to breadcrumb","url":"https://github.com/btucker/espalier/pull/412","state":"OPEN","headRefName":"feature/git-improvements"}]
+[{"number":412,"title":"Add PR/MR status button to breadcrumb","url":"https://github.com/btucker/graftty/pull/412","state":"OPEN","headRefName":"feature/git-improvements"}]
 ```
 
 `gh-pr-merged.json`:
 ```json
-[{"number":398,"title":"GitHub integration scaffold","url":"https://github.com/btucker/espalier/pull/398","state":"MERGED","headRefName":"feature/github-integration","mergedAt":"2026-04-15T10:00:00Z"}]
+[{"number":398,"title":"GitHub integration scaffold","url":"https://github.com/btucker/graftty/pull/398","state":"MERGED","headRefName":"feature/github-integration","mergedAt":"2026-04-15T10:00:00Z"}]
 ```
 
 `gh-pr-empty.json`:
@@ -1424,12 +1424,12 @@ git commit -m "feat(hosting): PRFetcher protocol"
 []
 ```
 
-Register fixtures in `Package.swift` — update the `EspalierKitTests` target:
+Register fixtures in `Package.swift` — update the `GrafttyKitTests` target:
 
 ```swift
 .testTarget(
-    name: "EspalierKitTests",
-    dependencies: ["EspalierKit"],
+    name: "GrafttyKitTests",
+    dependencies: ["GrafttyKit"],
     resources: [.process("Hosting/Fixtures")]
 )
 ```
@@ -1441,11 +1441,11 @@ Create `GitHubPRFetcherTests.swift`:
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("GitHubPRFetcher")
 struct GitHubPRFetcherTests {
-    let origin = HostingOrigin(provider: .github, host: "github.com", owner: "btucker", repo: "espalier")
+    let origin = HostingOrigin(provider: .github, host: "github.com", owner: "btucker", repo: "graftty")
     let branch = "feature/git-improvements"
 
     func loadFixture(_ name: String) -> String {
@@ -1459,7 +1459,7 @@ struct GitHubPRFetcherTests {
             command: "gh",
             args: [
                 "pr", "list",
-                "--repo", "btucker/espalier",
+                "--repo", "btucker/graftty",
                 "--head", branch,
                 "--state", "open",
                 "--limit", "1",
@@ -1469,7 +1469,7 @@ struct GitHubPRFetcherTests {
         )
         fake.stub(
             command: "gh",
-            args: ["pr", "checks", "412", "--repo", "btucker/espalier", "--json", "name,state,conclusion"],
+            args: ["pr", "checks", "412", "--repo", "btucker/graftty", "--json", "name,state,conclusion"],
             output: CLIOutput(stdout: loadFixture("gh-pr-checks-passing"), stderr: "", exitCode: 0)
         )
 
@@ -1480,7 +1480,7 @@ struct GitHubPRFetcherTests {
         #expect(pr?.state == .open)
         #expect(pr?.checks == .success)
         #expect(pr?.title == "Add PR/MR status button to breadcrumb")
-        #expect(pr?.url.absoluteString == "https://github.com/btucker/espalier/pull/412")
+        #expect(pr?.url.absoluteString == "https://github.com/btucker/graftty/pull/412")
     }
 
     @Test func returnsMergedPRWhenNoOpen() async throws {
@@ -1488,7 +1488,7 @@ struct GitHubPRFetcherTests {
         fake.stub(
             command: "gh",
             args: [
-                "pr", "list", "--repo", "btucker/espalier",
+                "pr", "list", "--repo", "btucker/graftty",
                 "--head", branch, "--state", "open", "--limit", "1",
                 "--json", "number,title,url,state,headRefName"
             ],
@@ -1497,7 +1497,7 @@ struct GitHubPRFetcherTests {
         fake.stub(
             command: "gh",
             args: [
-                "pr", "list", "--repo", "btucker/espalier",
+                "pr", "list", "--repo", "btucker/graftty",
                 "--head", branch, "--state", "merged", "--limit", "1",
                 "--json", "number,title,url,state,headRefName,mergedAt"
             ],
@@ -1517,7 +1517,7 @@ struct GitHubPRFetcherTests {
         fake.stub(
             command: "gh",
             args: [
-                "pr", "list", "--repo", "btucker/espalier",
+                "pr", "list", "--repo", "btucker/graftty",
                 "--head", branch, "--state", "open", "--limit", "1",
                 "--json", "number,title,url,state,headRefName"
             ],
@@ -1526,7 +1526,7 @@ struct GitHubPRFetcherTests {
         fake.stub(
             command: "gh",
             args: [
-                "pr", "list", "--repo", "btucker/espalier",
+                "pr", "list", "--repo", "btucker/graftty",
                 "--head", branch, "--state", "merged", "--limit", "1",
                 "--json", "number,title,url,state,headRefName,mergedAt"
             ],
@@ -1543,7 +1543,7 @@ struct GitHubPRFetcherTests {
         fake.stub(
             command: "gh",
             args: [
-                "pr", "list", "--repo", "btucker/espalier",
+                "pr", "list", "--repo", "btucker/graftty",
                 "--head", branch, "--state", "open", "--limit", "1",
                 "--json", "number,title,url,state,headRefName"
             ],
@@ -1551,7 +1551,7 @@ struct GitHubPRFetcherTests {
         )
         fake.stub(
             command: "gh",
-            args: ["pr", "checks", "412", "--repo", "btucker/espalier", "--json", "name,state,conclusion"],
+            args: ["pr", "checks", "412", "--repo", "btucker/graftty", "--json", "name,state,conclusion"],
             output: CLIOutput(stdout: loadFixture("gh-pr-checks-pending"), stderr: "", exitCode: 0)
         )
 
@@ -1565,7 +1565,7 @@ struct GitHubPRFetcherTests {
         fake.stub(
             command: "gh",
             args: [
-                "pr", "list", "--repo", "btucker/espalier",
+                "pr", "list", "--repo", "btucker/graftty",
                 "--head", branch, "--state", "open", "--limit", "1",
                 "--json", "number,title,url,state,headRefName"
             ],
@@ -1573,7 +1573,7 @@ struct GitHubPRFetcherTests {
         )
         fake.stub(
             command: "gh",
-            args: ["pr", "checks", "412", "--repo", "btucker/espalier", "--json", "name,state,conclusion"],
+            args: ["pr", "checks", "412", "--repo", "btucker/graftty", "--json", "name,state,conclusion"],
             output: CLIOutput(stdout: loadFixture("gh-pr-checks-failing"), stderr: "", exitCode: 0)
         )
 
@@ -1587,7 +1587,7 @@ struct GitHubPRFetcherTests {
         fake.stub(
             command: "gh",
             args: [
-                "pr", "list", "--repo", "btucker/espalier",
+                "pr", "list", "--repo", "btucker/graftty",
                 "--head", branch, "--state", "open", "--limit", "1",
                 "--json", "number,title,url,state,headRefName"
             ],
@@ -1595,7 +1595,7 @@ struct GitHubPRFetcherTests {
         )
         fake.stub(
             command: "gh",
-            args: ["pr", "checks", "412", "--repo", "btucker/espalier", "--json", "name,state,conclusion"],
+            args: ["pr", "checks", "412", "--repo", "btucker/graftty", "--json", "name,state,conclusion"],
             output: CLIOutput(stdout: loadFixture("gh-pr-checks-none"), stderr: "", exitCode: 0)
         )
 
@@ -1731,7 +1731,7 @@ Expected: all 6 tests pass.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Sources/EspalierKit/Hosting/GitHubPRFetcher.swift Tests/EspalierKitTests/Hosting Package.swift
+git add Sources/GrafttyKit/Hosting/GitHubPRFetcher.swift Tests/GrafttyKitTests/Hosting Package.swift
 git commit -m "feat(hosting): GitHubPRFetcher with CI rollup"
 ```
 
@@ -1740,15 +1740,15 @@ git commit -m "feat(hosting): GitHubPRFetcher with CI rollup"
 ### Task D4: `GitLabPRFetcher` + fixtures + tests
 
 **Files:**
-- Create: `Sources/EspalierKit/Hosting/GitLabPRFetcher.swift`
-- Create: `Tests/EspalierKitTests/Hosting/GitLabPRFetcherTests.swift`
+- Create: `Sources/GrafttyKit/Hosting/GitLabPRFetcher.swift`
+- Create: `Tests/GrafttyKitTests/Hosting/GitLabPRFetcherTests.swift`
 - Create fixtures:
-  - `Tests/EspalierKitTests/Hosting/Fixtures/glab-mr-opened.json`
-  - `Tests/EspalierKitTests/Hosting/Fixtures/glab-mr-merged.json`
-  - `Tests/EspalierKitTests/Hosting/Fixtures/glab-mr-empty.json`
-  - `Tests/EspalierKitTests/Hosting/Fixtures/glab-pipeline-success.json`
-  - `Tests/EspalierKitTests/Hosting/Fixtures/glab-pipeline-running.json`
-  - `Tests/EspalierKitTests/Hosting/Fixtures/glab-pipeline-failed.json`
+  - `Tests/GrafttyKitTests/Hosting/Fixtures/glab-mr-opened.json`
+  - `Tests/GrafttyKitTests/Hosting/Fixtures/glab-mr-merged.json`
+  - `Tests/GrafttyKitTests/Hosting/Fixtures/glab-mr-empty.json`
+  - `Tests/GrafttyKitTests/Hosting/Fixtures/glab-pipeline-success.json`
+  - `Tests/GrafttyKitTests/Hosting/Fixtures/glab-pipeline-running.json`
+  - `Tests/GrafttyKitTests/Hosting/Fixtures/glab-pipeline-failed.json`
 
 - [ ] **Step 1: Write fixtures**
 
@@ -1787,7 +1787,7 @@ git commit -m "feat(hosting): GitHubPRFetcher with CI rollup"
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("GitLabPRFetcher")
 struct GitLabPRFetcherTests {
@@ -1989,7 +1989,7 @@ Expected: all tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/Hosting/GitLabPRFetcher.swift Tests/EspalierKitTests/Hosting
+git add Sources/GrafttyKit/Hosting/GitLabPRFetcher.swift Tests/GrafttyKitTests/Hosting
 git commit -m "feat(hosting): GitLabPRFetcher with pipeline status mapping"
 ```
 
@@ -2000,12 +2000,12 @@ git commit -m "feat(hosting): GitLabPRFetcher with pipeline status mapping"
 ### Task E1: Implement `PollingTicker` + tests
 
 **Files:**
-- Create: `Sources/Espalier/Model/PollingTicker.swift`
-- Create: `Tests/EspalierKitTests/Model/PollingTickerTests.swift`
+- Create: `Sources/Graftty/Model/PollingTicker.swift`
+- Create: `Tests/GrafttyKitTests/Model/PollingTickerTests.swift`
 
-Note: `PollingTicker` lives in the `Espalier` target (app-level), not `EspalierKit`, because it depends on `AppKit` for active/inactive notifications. Tests exist in `EspalierKitTests` only if they don't require AppKit. Since `PollingTicker` uses `NSApplication`, tests exercise only the interval + pulse logic via a test-only init that skips NSApplication observation.
+Note: `PollingTicker` lives in the `Graftty` target (app-level), not `GrafttyKit`, because it depends on `AppKit` for active/inactive notifications. Tests exist in `GrafttyKitTests` only if they don't require AppKit. Since `PollingTicker` uses `NSApplication`, tests exercise only the interval + pulse logic via a test-only init that skips NSApplication observation.
 
-Revise: keep `PollingTicker` in `Sources/Espalier/Model/` but provide a test-only `init(interval:pauseWhenInactive:observeAppActivity:)` that lets tests skip AppKit. Tests go in `Tests/EspalierTests` — but Espalier has no test target today. **Skip automated tests for this class**; validate via integration tests of `PRStatusStore` that use `PollingTicker` with a very short interval.
+Revise: keep `PollingTicker` in `Sources/Graftty/Model/` but provide a test-only `init(interval:pauseWhenInactive:observeAppActivity:)` that lets tests skip AppKit. Tests go in `Tests/GrafttyTests` — but Graftty has no test target today. **Skip automated tests for this class**; validate via integration tests of `PRStatusStore` that use `PollingTicker` with a very short interval.
 
 - [ ] **Step 1: Write `PollingTicker`**
 
@@ -2132,7 +2132,7 @@ Expected: no errors.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/Espalier/Model/PollingTicker.swift
+git add Sources/Graftty/Model/PollingTicker.swift
 git commit -m "feat(polling): add PollingTicker shared helper"
 ```
 
@@ -2143,7 +2143,7 @@ git commit -m "feat(polling): add PollingTicker shared helper"
 ### Task F1: `PRStatusStore` shape + manual refresh
 
 **Files:**
-- Create: `Sources/Espalier/Model/PRStatusStore.swift`
+- Create: `Sources/Graftty/Model/PRStatusStore.swift`
 
 - [ ] **Step 1: Write the initial store**
 
@@ -2151,7 +2151,7 @@ git commit -m "feat(polling): add PollingTicker shared helper"
 import Foundation
 import Observation
 import SwiftUI
-import EspalierKit
+import GrafttyKit
 import os
 
 @MainActor
@@ -2169,7 +2169,7 @@ public final class PRStatusStore {
     @ObservationIgnored private var failureStreak: [String: Int] = [:]
     @ObservationIgnored private var ticker: PollingTicker?
     @ObservationIgnored private var getRepos: () -> [RepoEntry] = { [] }
-    @ObservationIgnored private let logger = Logger(subsystem: "com.btucker.espalier", category: "PRStatusStore")
+    @ObservationIgnored private let logger = Logger(subsystem: "com.btucker.graftty", category: "PRStatusStore")
 
     public init(
         executor: CLIExecutor = CLIRunner(),
@@ -2261,7 +2261,7 @@ Expected: no errors.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/Espalier/Model/PRStatusStore.swift
+git add Sources/Graftty/Model/PRStatusStore.swift
 git commit -m "feat(pr-status): PRStatusStore with manual refresh"
 ```
 
@@ -2270,7 +2270,7 @@ git commit -m "feat(pr-status): PRStatusStore with manual refresh"
 ### Task F2: Polling with tiered cadence
 
 **Files:**
-- Modify: `Sources/Espalier/Model/PRStatusStore.swift`
+- Modify: `Sources/Graftty/Model/PRStatusStore.swift`
 
 - [ ] **Step 1: Add cadence calculation and polling loop**
 
@@ -2388,7 +2388,7 @@ Expected: no errors.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/Espalier/Model/PRStatusStore.swift
+git add Sources/Graftty/Model/PRStatusStore.swift
 git commit -m "feat(pr-status): polling with tiered cadence and backoff"
 ```
 
@@ -2397,15 +2397,15 @@ git commit -m "feat(pr-status): polling with tiered cadence and backoff"
 ### Task F3: Minimal tests for cadence logic
 
 **Files:**
-- Create: `Tests/EspalierKitTests/Model/PRStatusStoreCadenceTests.swift`
+- Create: `Tests/GrafttyKitTests/Model/PRStatusStoreCadenceTests.swift`
 
-Note: `PRStatusStore` lives in the `Espalier` target (app-level), not `EspalierKit`, so the tests need to be in a target that can import `Espalier`. Since Espalier has no test target, we validate cadence logic by extracting the pure function into an internal helper inside `EspalierKit`, OR we add a minimal Espalier test target. Simplest: extract cadence logic.
+Note: `PRStatusStore` lives in the `Graftty` target (app-level), not `GrafttyKit`, so the tests need to be in a target that can import `Graftty`. Since Graftty has no test target, we validate cadence logic by extracting the pure function into an internal helper inside `GrafttyKit`, OR we add a minimal Graftty test target. Simplest: extract cadence logic.
 
 Actually — cadence only depends on `infos` and `failureStreak` snapshots. Create a free function in the store's file that's pure and testable:
 
 - [ ] **Step 1: Extract `cadenceFor` as a static pure function**
 
-Edit `Sources/Espalier/Model/PRStatusStore.swift`: replace the `cadence(for:)` method body with a call to a static function that also lives in the file:
+Edit `Sources/Graftty/Model/PRStatusStore.swift`: replace the `cadence(for:)` method body with a call to a static function that also lives in the file:
 
 ```swift
 static func cadenceFor(
@@ -2441,16 +2441,16 @@ func cadence(for worktreePath: String) -> Duration {
 }
 ```
 
-- [ ] **Step 2: Since PRStatusStore is in the Espalier target, we can't test it from EspalierKitTests**
+- [ ] **Step 2: Since PRStatusStore is in the Graftty target, we can't test it from GrafttyKitTests**
 
-Two options: (a) add an Espalier test target, (b) move PRStatusStore to EspalierKit.
+Two options: (a) add an Graftty test target, (b) move PRStatusStore to GrafttyKit.
 
-Move it. `PRStatusStore` is pure model logic — it belongs in EspalierKit. The only app-coupling is `PollingTicker` (AppKit), which can be abstracted behind a protocol.
+Move it. `PRStatusStore` is pure model logic — it belongs in GrafttyKit. The only app-coupling is `PollingTicker` (AppKit), which can be abstracted behind a protocol.
 
 Edit Package.swift — no change needed. But:
 
-- Move `Sources/Espalier/Model/PRStatusStore.swift` → `Sources/EspalierKit/PRStatus/PRStatusStore.swift`
-- Move `Sources/Espalier/Model/PollingTicker.swift` → keep in `Espalier/Model/` (uses AppKit)
+- Move `Sources/Graftty/Model/PRStatusStore.swift` → `Sources/GrafttyKit/PRStatus/PRStatusStore.swift`
+- Move `Sources/Graftty/Model/PollingTicker.swift` → keep in `Graftty/Model/` (uses AppKit)
 - In PRStatusStore, change the `PollingTicker` dependency to a protocol:
 
 ```swift
@@ -2461,27 +2461,27 @@ public protocol PollingTickerLike: AnyObject {
 }
 ```
 
-And `PollingTicker` (in Espalier) conforms to `PollingTickerLike`. `PRStatusStore.start(appState:ticker:)` accepts a `PollingTickerLike`.
+And `PollingTicker` (in Graftty) conforms to `PollingTickerLike`. `PRStatusStore.start(appState:ticker:)` accepts a `PollingTickerLike`.
 
 Commit the reorganization:
 
 ```bash
-git mv Sources/Espalier/Model/PRStatusStore.swift Sources/EspalierKit/PRStatus/PRStatusStore.swift
+git mv Sources/Graftty/Model/PRStatusStore.swift Sources/GrafttyKit/PRStatus/PRStatusStore.swift
 # hand-edit imports and add PollingTickerLike
 git add -A
-git commit -m "refactor(pr-status): move PRStatusStore to EspalierKit for testability"
+git commit -m "refactor(pr-status): move PRStatusStore to GrafttyKit for testability"
 ```
 
 - [ ] **Step 3: Make `PollingTicker` conform**
 
-Edit `Sources/Espalier/Model/PollingTicker.swift`, add `: PollingTickerLike` to the class declaration (all methods already match).
+Edit `Sources/Graftty/Model/PollingTicker.swift`, add `: PollingTickerLike` to the class declaration (all methods already match).
 
 - [ ] **Step 4: Write cadence tests**
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("PRStatusStore cadence")
 struct PRStatusStoreCadenceTests {
@@ -2539,7 +2539,7 @@ Expected: all tests pass.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Tests/EspalierKitTests/Model/PRStatusStoreCadenceTests.swift
+git add Tests/GrafttyKitTests/Model/PRStatusStoreCadenceTests.swift
 git commit -m "test(pr-status): cadence function tests"
 ```
 
@@ -2548,14 +2548,14 @@ git commit -m "test(pr-status): cadence function tests"
 ### Task F4: End-to-end fetch integration test
 
 **Files:**
-- Create: `Tests/EspalierKitTests/Model/PRStatusStoreIntegrationTests.swift`
+- Create: `Tests/GrafttyKitTests/Model/PRStatusStoreIntegrationTests.swift`
 
 - [ ] **Step 1: Write integration test using FakeCLIExecutor**
 
 ```swift
 import Testing
 import Foundation
-@testable import EspalierKit
+@testable import GrafttyKit
 
 @Suite("PRStatusStore integration")
 struct PRStatusStoreIntegrationTests {
@@ -2668,7 +2668,7 @@ Expected: all three tests pass.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Tests/EspalierKitTests/Model/PRStatusStoreIntegrationTests.swift
+git add Tests/GrafttyKitTests/Model/PRStatusStoreIntegrationTests.swift
 git commit -m "test(pr-status): end-to-end integration with FakeCLIExecutor"
 ```
 
@@ -2679,7 +2679,7 @@ git commit -m "test(pr-status): end-to-end integration with FakeCLIExecutor"
 ### Task G1: Add `startPolling` / `stopPolling`
 
 **Files:**
-- Modify: `Sources/Espalier/Model/WorktreeStatsStore.swift`
+- Modify: `Sources/Graftty/Model/WorktreeStatsStore.swift`
 
 - [ ] **Step 1: Add polling ticker and methods**
 
@@ -2716,7 +2716,7 @@ Expected: no errors.
 ### Task G2: `git fetch` + recompute in poll tick
 
 **Files:**
-- Modify: `Sources/Espalier/Model/WorktreeStatsStore.swift`
+- Modify: `Sources/Graftty/Model/WorktreeStatsStore.swift`
 
 - [ ] **Step 1: Add repo-level fetch state and tick implementation**
 
@@ -2813,16 +2813,16 @@ Expected: no errors.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/Espalier/Model/WorktreeStatsStore.swift
+git add Sources/Graftty/Model/WorktreeStatsStore.swift
 git commit -m "feat(stats): add polling with periodic git fetch for WorktreeStatsStore"
 ```
 
 ---
 
-### Task G3: Remove legacy 60s Timer from `EspalierApp`
+### Task G3: Remove legacy 60s Timer from `GrafttyApp`
 
 **Files:**
-- Modify: `Sources/Espalier/EspalierApp.swift`
+- Modify: `Sources/Graftty/GrafttyApp.swift`
 
 - [ ] **Step 1: Remove `statsPollTimer`**
 
@@ -2847,7 +2847,7 @@ Expected: no errors.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/Espalier/EspalierApp.swift
+git add Sources/Graftty/GrafttyApp.swift
 git commit -m "refactor(stats): replace 60s Timer with WorktreeStatsStore polling"
 ```
 
@@ -2858,14 +2858,14 @@ git commit -m "refactor(stats): replace 60s Timer with WorktreeStatsStore pollin
 ### Task H1: `PRButton` view
 
 **Files:**
-- Create: `Sources/Espalier/Views/PRButton.swift`
+- Create: `Sources/Graftty/Views/PRButton.swift`
 
 - [ ] **Step 1: Write the view**
 
 ```swift
 import SwiftUI
 import AppKit
-import EspalierKit
+import GrafttyKit
 
 struct PRButton: View {
     let info: PRInfo
@@ -2974,7 +2974,7 @@ Expected: no errors.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/Espalier/Views/PRButton.swift
+git add Sources/Graftty/Views/PRButton.swift
 git commit -m "feat(ui): PRButton pill view with CI dot and states"
 ```
 
@@ -2983,13 +2983,13 @@ git commit -m "feat(ui): PRButton pill view with CI dot and states"
 ### Task H2: Rewrite `BreadcrumbBar`
 
 **Files:**
-- Modify: `Sources/Espalier/Views/BreadcrumbBar.swift`
+- Modify: `Sources/Graftty/Views/BreadcrumbBar.swift`
 
 - [ ] **Step 1: Rewrite the view**
 
 ```swift
 import SwiftUI
-import EspalierKit
+import GrafttyKit
 
 /// The row that sits at the very top of the detail column. Shows:
 /// `{repo} / {worktree-display-name} ({branch})` on the left and, when
@@ -3076,7 +3076,7 @@ Expected: error — `MainWindow` still instantiates `BreadcrumbBar` with the old
 ### Task H3: Italic "root" in `WorktreeRow`
 
 **Files:**
-- Modify: `Sources/Espalier/Views/WorktreeRow.swift`
+- Modify: `Sources/Graftty/Views/WorktreeRow.swift`
 
 - [ ] **Step 1: Modify `branchLabel`**
 
@@ -3130,7 +3130,7 @@ Expected: no errors (this is a leaf change).
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/Espalier/Views/WorktreeRow.swift
+git add Sources/Graftty/Views/WorktreeRow.swift
 git commit -m "feat(ui): render home checkout as italic 'root' in sidebar"
 ```
 
@@ -3139,12 +3139,12 @@ git commit -m "feat(ui): render home checkout as italic 'root' in sidebar"
 ### Task H4: Wire `PRStatusStore` into app and `MainWindow`
 
 **Files:**
-- Modify: `Sources/Espalier/EspalierApp.swift`
-- Modify: `Sources/Espalier/Views/MainWindow.swift`
+- Modify: `Sources/Graftty/GrafttyApp.swift`
+- Modify: `Sources/Graftty/Views/MainWindow.swift`
 
 - [ ] **Step 1: Instantiate `PRStatusStore` in `AppServices`**
 
-In `EspalierApp.swift`:
+In `GrafttyApp.swift`:
 
 ```swift
 @MainActor
@@ -3239,7 +3239,7 @@ Expected: no errors.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/Espalier/EspalierApp.swift Sources/Espalier/Views/MainWindow.swift Sources/Espalier/Views/BreadcrumbBar.swift
+git add Sources/Graftty/GrafttyApp.swift Sources/Graftty/Views/MainWindow.swift Sources/Graftty/Views/BreadcrumbBar.swift
 git commit -m "feat(ui): wire PRStatusStore through MainWindow to BreadcrumbBar"
 ```
 
@@ -3247,7 +3247,7 @@ git commit -m "feat(ui): wire PRStatusStore through MainWindow to BreadcrumbBar"
 
 ### Task H5: Manual smoke test checklist
 
-- [ ] **Step 1: Launch the app from Xcode or `swift run Espalier` against a GitHub repo**
+- [ ] **Step 1: Launch the app from Xcode or `swift run Graftty` against a GitHub repo**
 
 Verify: with `gh` installed and authenticated, the PR button appears for a worktree whose branch has an open PR. Click opens the PR in the default browser. Title truncates cleanly.
 
@@ -3269,7 +3269,7 @@ Home checkout: breadcrumb and sidebar both show italic "root". Linked worktrees 
 
 - [ ] **Step 6: Verify graceful divergence refresh**
 
-In a terminal outside Espalier, push a commit to `origin/main`. Wait ≤5 min. The sidebar divergence "behind" count should update without the user doing anything.
+In a terminal outside Graftty, push a commit to `origin/main`. Wait ≤5 min. The sidebar divergence "behind" count should update without the user doing anything.
 
 - [ ] **Step 7: (Optional) Test GitLab**
 
@@ -3301,6 +3301,6 @@ Install `glab`, add a GitLab-hosted repo. Verify MR button renders.
 
 **Known caveats:**
 
-- Task F3's reorganization (moving `PRStatusStore` to `EspalierKit`) keeps pure logic testable. The store's polling loop runs on `MainActor`, which is still valid in `EspalierKit` (it's Swift concurrency, not AppKit).
-- `PollingTicker` remains in `Espalier` (app) because of AppKit notifications; `PRStatusStore` receives a `PollingTickerLike` at start time.
+- Task F3's reorganization (moving `PRStatusStore` to `GrafttyKit`) keeps pure logic testable. The store's polling loop runs on `MainActor`, which is still valid in `GrafttyKit` (it's Swift concurrency, not AppKit).
+- `PollingTicker` remains in `Graftty` (app) because of AppKit notifications; `PRStatusStore` receives a `PollingTickerLike` at start time.
 - Cadence uses `Duration.components.seconds` — verify this yields Int64 seconds (it does on macOS 14).

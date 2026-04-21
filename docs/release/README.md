@@ -1,7 +1,7 @@
-# Releasing Espalier
+# Releasing Graftty
 
-Espalier is distributed as a Homebrew Cask from the personal tap
-[`btucker/homebrew-espalier`](https://github.com/btucker/homebrew-espalier).
+Graftty is distributed as a Homebrew Cask from the personal tap
+[`btucker/homebrew-graftty`](https://github.com/btucker/homebrew-graftty).
 The `.github/workflows/release.yml` workflow handles per-release work:
 it builds the bundle, ad-hoc codesigns it, zips it, attaches the zip to
 a GitHub release, and pushes a version+sha256 bump to the tap.
@@ -14,36 +14,36 @@ release will succeed.
 ### 1. Create the tap repository
 
 Create an empty public repository on GitHub named exactly
-`btucker/homebrew-espalier`. The `homebrew-` prefix is what makes
-`brew tap btucker/espalier` resolvable by the short name.
+`btucker/homebrew-graftty`. The `homebrew-` prefix is what makes
+`brew tap btucker/graftty` resolvable by the short name.
 
 ### 2. Create a Personal Access Token for cross-repo writes
 
 Go to GitHub → Settings → Developer settings → Personal access tokens
 → Fine-grained tokens → Generate new token.
 
-- Name: `espalier-release-bot` (any name; this is just a label)
+- Name: `graftty-release-bot` (any name; this is just a label)
 - Expiration: 1 year (renew as needed)
-- Repository access: Only select repositories → `btucker/homebrew-espalier`
+- Repository access: Only select repositories → `btucker/homebrew-graftty`
 - Repository permissions: **Contents: Read and write**
 - (Leave all other permissions at "no access".)
 
-Copy the generated token. Then on `btucker/espalier` go to Settings →
+Copy the generated token. Then on `btucker/graftty` go to Settings →
 Secrets and variables → Actions → New repository secret. Name it
 **`HOMEBREW_TAP_TOKEN`** and paste the token value.
 
 ### 3. Bootstrap the tap with the initial cask file
 
-Copy `docs/release/Casks/espalier.rb` from this repo into the tap
+Copy `docs/release/Casks/graftty.rb` from this repo into the tap
 repo at the same path:
 
 ```bash
 cd /tmp
-git clone git@github.com:btucker/homebrew-espalier.git
-mkdir -p homebrew-espalier/Casks
-cp /path/to/espalier/docs/release/Casks/espalier.rb homebrew-espalier/Casks/espalier.rb
-cd homebrew-espalier
-git add Casks/espalier.rb
+git clone git@github.com:btucker/homebrew-graftty.git
+mkdir -p homebrew-graftty/Casks
+cp /path/to/graftty/docs/release/Casks/graftty.rb homebrew-graftty/Casks/graftty.rb
+cd homebrew-graftty
+git add Casks/graftty.rb
 git commit -m "Initial cask"
 git push
 ```
@@ -54,10 +54,10 @@ release workflow rewrites both on the first real release.
 ### Keeping the cask in sync
 
 The release workflow only rewrites the `version` and `sha256` lines in
-the tap's `Casks/espalier.rb` — every other stanza (`url`, `app`,
+the tap's `Casks/graftty.rb` — every other stanza (`url`, `app`,
 `binary`, `zap`, `caveats`, etc.) is the copy you bootstrapped above.
 If you change any of those stanzas in this repo's
-`docs/release/Casks/espalier.rb`, you must manually re-sync that change
+`docs/release/Casks/graftty.rb`, you must manually re-sync that change
 into the tap repo. The workflow will not propagate it on the next
 release.
 
@@ -70,14 +70,14 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Watch GitHub Actions on `btucker/espalier`. The `release` workflow
+Watch GitHub Actions on `btucker/graftty`. The `release` workflow
 will build, sign, zip, publish, and bump the cask. Within a few
 minutes:
 
 ```bash
-brew tap btucker/espalier        # one-time per machine
-brew install --cask espalier
-espalier --help
+brew tap btucker/graftty        # one-time per machine
+brew install --cask graftty
+graftty --help
 ```
 
 ## Migration path: Developer ID + notarization

@@ -41,9 +41,9 @@ the same path). That's git's problem to report, not ours to pre-validate.
 
 ## Files touched
 
-- `Sources/EspalierKit/Git/WorktreeNameSanitizer.swift` — add `"/"` to
+- `Sources/GrafttyKit/Git/WorktreeNameSanitizer.swift` — add `"/"` to
   `isAllowed`.
-- `Tests/EspalierKitTests/Git/WorktreeNameSanitizerTests.swift` — replace
+- `Tests/GrafttyKitTests/Git/WorktreeNameSanitizerTests.swift` — replace
   the existing `replacesPathSeparatorWithDash` test (which asserts the old
   behavior) with `preservesPathSeparator`, and add one mixed-input test
   (`"my feature/foo"` → `"my-feature/foo"`) to cover interaction with the

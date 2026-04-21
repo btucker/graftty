@@ -4,7 +4,7 @@
 
 **Goal:** Implement a global "Default command" setting that auto-types a user-configured command (e.g., `claude`) into the first pane of a freshly-opened worktree once the shell is ready.
 
-**Architecture:** UserDefaults-backed settings via `@AppStorage`, a SwiftUI `Settings` scene, a pure decision function in `EspalierKit` (unit-testable), and a new `onShellReady` callback on `TerminalManager` derived from the first `GHOSTTY_ACTION_PWD` event per pane. Injection happens by typing the command into the surface via `ghostty_surface_text`.
+**Architecture:** UserDefaults-backed settings via `@AppStorage`, a SwiftUI `Settings` scene, a pure decision function in `GrafttyKit` (unit-testable), and a new `onShellReady` callback on `TerminalManager` derived from the first `GHOSTTY_ACTION_PWD` event per pane. Injection happens by typing the command into the surface via `ghostty_surface_text`.
 
 **Tech Stack:** Swift 5.10, SwiftUI, AppKit, libghostty (via GhosttyKit), SwiftPM.
 
@@ -15,31 +15,31 @@
 ## File Structure
 
 **New files:**
-- `Sources/EspalierKit/DefaultCommandDecision.swift` — pure function deciding whether to inject a command and what to type. No UI or system dependencies.
-- `Tests/EspalierKitTests/DefaultCommandDecisionTests.swift` — unit tests covering the decision matrix.
-- `Sources/Espalier/Views/SettingsView.swift` — SwiftUI preferences pane (TextField + Toggle + footer text).
+- `Sources/GrafttyKit/DefaultCommandDecision.swift` — pure function deciding whether to inject a command and what to type. No UI or system dependencies.
+- `Tests/GrafttyKitTests/DefaultCommandDecisionTests.swift` — unit tests covering the decision matrix.
+- `Sources/Graftty/Views/SettingsView.swift` — SwiftUI preferences pane (TextField + Toggle + footer text).
 
 **Modified files:**
-- `Sources/Espalier/Terminal/SurfaceHandle.swift` — add `typeText(_:)` method that forwards to `ghostty_surface_text`.
-- `Sources/Espalier/Terminal/TerminalManager.swift` — add `onShellReady` callback, `shellReadyFired` / `firstPaneMarkers` / `rehydratedSurfaces` tracking sets, `markFirstPane` / `markRehydrated` / `isFirstPane` / `wasRehydrated` methods, destroy-time cleanup, and fire-on-first-PWD logic inside the existing `GHOSTTY_ACTION_PWD` case.
-- `Sources/Espalier/EspalierApp.swift` — add `Settings { SettingsView() }` scene, wire `terminalManager.onShellReady`, add `maybeRunDefaultCommand` static function, call `markRehydrated` inside `restoreRunningWorktrees`.
-- `Sources/Espalier/Views/MainWindow.swift` — inside `selectWorktree` after `createSurfaces`, call `terminalManager.markFirstPane(<first leaf id>)`.
+- `Sources/Graftty/Terminal/SurfaceHandle.swift` — add `typeText(_:)` method that forwards to `ghostty_surface_text`.
+- `Sources/Graftty/Terminal/TerminalManager.swift` — add `onShellReady` callback, `shellReadyFired` / `firstPaneMarkers` / `rehydratedSurfaces` tracking sets, `markFirstPane` / `markRehydrated` / `isFirstPane` / `wasRehydrated` methods, destroy-time cleanup, and fire-on-first-PWD logic inside the existing `GHOSTTY_ACTION_PWD` case.
+- `Sources/Graftty/GrafttyApp.swift` — add `Settings { SettingsView() }` scene, wire `terminalManager.onShellReady`, add `maybeRunDefaultCommand` static function, call `markRehydrated` inside `restoreRunningWorktrees`.
+- `Sources/Graftty/Views/MainWindow.swift` — inside `selectWorktree` after `createSurfaces`, call `terminalManager.markFirstPane(<first leaf id>)`.
 
 ---
 
 ## Task 1: Pure decision function + unit tests
 
 **Files:**
-- Create: `Sources/EspalierKit/DefaultCommandDecision.swift`
-- Create: `Tests/EspalierKitTests/DefaultCommandDecisionTests.swift`
+- Create: `Sources/GrafttyKit/DefaultCommandDecision.swift`
+- Create: `Tests/GrafttyKitTests/DefaultCommandDecisionTests.swift`
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `Tests/EspalierKitTests/DefaultCommandDecisionTests.swift`:
+Create `Tests/GrafttyKitTests/DefaultCommandDecisionTests.swift`:
 
 ```swift
 import XCTest
-@testable import EspalierKit
+@testable import GrafttyKit
 
 final class DefaultCommandDecisionTests: XCTestCase {
     func testEmptyCommandSkips() {
@@ -131,7 +131,7 @@ Expected: compilation error — `cannot find 'defaultCommandDecision' in scope` 
 
 - [ ] **Step 3: Implement the pure function**
 
-Create `Sources/EspalierKit/DefaultCommandDecision.swift`:
+Create `Sources/GrafttyKit/DefaultCommandDecision.swift`:
 
 ```swift
 import Foundation
@@ -179,12 +179,12 @@ Expected: `Test Suite 'DefaultCommandDecisionTests' passed` with 8 tests execute
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/EspalierKit/DefaultCommandDecision.swift \
-       Tests/EspalierKitTests/DefaultCommandDecisionTests.swift
+git add Sources/GrafttyKit/DefaultCommandDecision.swift \
+       Tests/GrafttyKitTests/DefaultCommandDecisionTests.swift
 git commit -m "feat(kit): add DefaultCommandDecision pure function + tests
 
 Extracts the 'should we auto-type the default command?' gating logic
-into EspalierKit so it can be unit-tested without NSApplication.
+into GrafttyKit so it can be unit-tested without NSApplication.
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ```
@@ -194,11 +194,11 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Task 2: SurfaceHandle.typeText method
 
 **Files:**
-- Modify: `Sources/Espalier/Terminal/SurfaceHandle.swift` (add method inside the `SurfaceHandle` class, before the `requestClose()` method near line 198)
+- Modify: `Sources/Graftty/Terminal/SurfaceHandle.swift` (add method inside the `SurfaceHandle` class, before the `requestClose()` method near line 198)
 
 - [ ] **Step 1: Add `typeText` method**
 
-Open `Sources/Espalier/Terminal/SurfaceHandle.swift`. Locate the `requestClose()` method (near line 198). Add directly *above* it:
+Open `Sources/Graftty/Terminal/SurfaceHandle.swift`. Locate the `requestClose()` method (near line 198). Add directly *above* it:
 
 ```swift
     /// Programmatically inject text into the surface's PTY, as if the user
@@ -219,13 +219,13 @@ Open `Sources/Espalier/Terminal/SurfaceHandle.swift`. Locate the `requestClose()
 
 - [ ] **Step 2: Build to verify**
 
-Run: `swift build --target Espalier 2>&1 | tail -15`
+Run: `swift build --target Graftty 2>&1 | tail -15`
 Expected: `Build complete!` (warnings about `Sendable` are pre-existing and unrelated).
 
 - [ ] **Step 3: Commit**
 
 ```bash
-git add Sources/Espalier/Terminal/SurfaceHandle.swift
+git add Sources/Graftty/Terminal/SurfaceHandle.swift
 git commit -m "feat(surface): add typeText for programmatic PTY input
 
 Forwards a UTF-8 string into ghostty_surface_text, the same path the
@@ -240,7 +240,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Task 3: TerminalManager — onShellReady callback and tracking state
 
 **Files:**
-- Modify: `Sources/Espalier/Terminal/TerminalManager.swift`
+- Modify: `Sources/Graftty/Terminal/TerminalManager.swift`
 
 - [ ] **Step 1: Add the `onShellReady` callback and tracking state**
 
@@ -272,7 +272,7 @@ Next, find the section declaring private state near the top of the class (search
 
     /// Terminal IDs that were recreated by restore-on-launch rather than
     /// user-initiated open. Populated by `markRehydrated(_:)` from
-    /// `EspalierApp.restoreRunningWorktrees`.
+    /// `GrafttyApp.restoreRunningWorktrees`.
     private var rehydratedSurfaces: Set<TerminalID> = []
 ```
 
@@ -293,7 +293,7 @@ Locate the `destroySurface(terminalID:)` method (near line 259). Directly *after
     /// than freshly opened by the user. Rehydrated panes never auto-run
     /// a default command — the command is presumed already running under
     /// zmx from the previous session. Called by
-    /// `EspalierApp.restoreRunningWorktrees` before creating surfaces.
+    /// `GrafttyApp.restoreRunningWorktrees` before creating surfaces.
     func markRehydrated(_ terminalID: TerminalID) {
         rehydratedSurfaces.insert(terminalID)
     }
@@ -365,13 +365,13 @@ with:
 
 - [ ] **Step 5: Build to verify**
 
-Run: `swift build --target Espalier 2>&1 | tail -10`
+Run: `swift build --target Graftty 2>&1 | tail -10`
 Expected: `Build complete!`
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add Sources/Espalier/Terminal/TerminalManager.swift
+git add Sources/Graftty/Terminal/TerminalManager.swift
 git commit -m "feat(terminal): add onShellReady, first-pane + rehydration markers
 
 Introduces the 'shell is ready to accept input' signal derived from the
@@ -387,18 +387,18 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Task 4: SettingsView and Settings scene
 
 **Files:**
-- Create: `Sources/Espalier/Views/SettingsView.swift`
-- Modify: `Sources/Espalier/EspalierApp.swift`
+- Create: `Sources/Graftty/Views/SettingsView.swift`
+- Modify: `Sources/Graftty/GrafttyApp.swift`
 
 - [ ] **Step 1: Create the SettingsView**
 
-Create `Sources/Espalier/Views/SettingsView.swift`:
+Create `Sources/Graftty/Views/SettingsView.swift`:
 
 ```swift
 import SwiftUI
 
-/// Preferences pane for Espalier. Exposed via the SwiftUI `Settings` scene,
-/// so the system adds a "Settings…" menu item under "About Espalier" and
+/// Preferences pane for Graftty. Exposed via the SwiftUI `Settings` scene,
+/// so the system adds a "Settings…" menu item under "About Graftty" and
 /// binds the standard ⌘, shortcut automatically.
 struct SettingsView: View {
     @AppStorage("defaultCommand") private var defaultCommand: String = ""
@@ -428,9 +428,9 @@ struct SettingsView: View {
 }
 ```
 
-- [ ] **Step 2: Add the Settings scene to EspalierApp.body**
+- [ ] **Step 2: Add the Settings scene to GrafttyApp.body**
 
-Open `Sources/Espalier/EspalierApp.swift`. Locate the `body` property's `WindowGroup { ... }` block. Directly *after* the closing brace of the `WindowGroup`'s trailing `.commands { ... }` modifier chain (i.e., as a sibling scene inside `body`), add:
+Open `Sources/Graftty/GrafttyApp.swift`. Locate the `body` property's `WindowGroup { ... }` block. Directly *after* the closing brace of the `WindowGroup`'s trailing `.commands { ... }` modifier chain (i.e., as a sibling scene inside `body`), add:
 
 ```swift
         Settings {
@@ -442,20 +442,20 @@ The enclosing `var body: some Scene { ... }` must return multiple scenes. Swift'
 
 - [ ] **Step 3: Build to verify**
 
-Run: `swift build --target Espalier 2>&1 | tail -10`
+Run: `swift build --target Graftty 2>&1 | tail -10`
 Expected: `Build complete!`
 
 - [ ] **Step 4: Smoke test the Settings window**
 
-Run: `./scripts/bundle.sh && open -n .build/Espalier.app`
+Run: `./scripts/bundle.sh && open -n .build/Graftty.app`
 Then: with the new instance focused, press ⌘, — expected: a preferences window opens with the General tab showing the text field and checkbox. Close it.
 
-Verify: `defaults read com.espalier.app` should now list `defaultCommand` and `defaultCommandFirstPaneOnly` if you interacted with the controls.
+Verify: `defaults read com.graftty.app` should now list `defaultCommand` and `defaultCommandFirstPaneOnly` if you interacted with the controls.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/Espalier/Views/SettingsView.swift Sources/Espalier/EspalierApp.swift
+git add Sources/Graftty/Views/SettingsView.swift Sources/Graftty/GrafttyApp.swift
 git commit -m "feat(settings): add SwiftUI Settings scene with default-command prefs
 
 Introduces @AppStorage-backed 'defaultCommand' and
@@ -468,19 +468,19 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 
 ---
 
-## Task 5: Wire `maybeRunDefaultCommand` in EspalierApp
+## Task 5: Wire `maybeRunDefaultCommand` in GrafttyApp
 
 **Files:**
-- Modify: `Sources/Espalier/EspalierApp.swift`
+- Modify: `Sources/Graftty/GrafttyApp.swift`
 
 - [ ] **Step 1: Add the `maybeRunDefaultCommand` static function**
 
-Open `Sources/Espalier/EspalierApp.swift`. Locate the `closePane` static function (near line 629). Directly *after* its closing brace, add:
+Open `Sources/Graftty/GrafttyApp.swift`. Locate the `closePane` static function (near line 629). Directly *after* its closing brace, add:
 
 ```swift
     /// Called on the first `onShellReady` signal for a pane. Reads the
     /// user's default-command preferences from UserDefaults, consults the
-    /// pure decision function in EspalierKit, and — if the decision is
+    /// pure decision function in GrafttyKit, and — if the decision is
     /// `.type(command)` — types the command into the pane via
     /// `SurfaceHandle.typeText` followed by `\r` to trigger execution.
     @MainActor
@@ -513,7 +513,7 @@ Open `Sources/Espalier/EspalierApp.swift`. Locate the `closePane` static functio
 
 - [ ] **Step 2: Wire `onShellReady` in `startup()`**
 
-Locate `startup()` in `EspalierApp.swift` (near line 121). Find the block where other terminal callbacks are wired — the existing `terminalManager.onPWDChange = { ... }` and `terminalManager.onCommandFinished = { ... }` assignments. Directly *after* `terminalManager.onCommandFinished = { ... }` (which ends around line 200), add:
+Locate `startup()` in `GrafttyApp.swift` (near line 121). Find the block where other terminal callbacks are wired — the existing `terminalManager.onPWDChange = { ... }` and `terminalManager.onCommandFinished = { ... }` assignments. Directly *after* `terminalManager.onCommandFinished = { ... }` (which ends around line 200), add:
 
 ```swift
         // First prompt on a newly-ready pane → maybe type the user's
@@ -532,17 +532,17 @@ Locate `startup()` in `EspalierApp.swift` (near line 121). Find the block where 
 
 - [ ] **Step 3: Build to verify**
 
-Run: `swift build --target Espalier 2>&1 | tail -10`
+Run: `swift build --target Graftty 2>&1 | tail -10`
 Expected: `Build complete!`
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add Sources/Espalier/EspalierApp.swift
+git add Sources/Graftty/GrafttyApp.swift
 git commit -m "feat(app): wire default-command injection on first shell-ready
 
 Adds maybeRunDefaultCommand — reads @AppStorage prefs, consults the
-pure EspalierKit decision function, and types the command on .type
+pure GrafttyKit decision function, and types the command on .type
 outcomes. Wired to TerminalManager.onShellReady in startup().
 
 Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
@@ -553,12 +553,12 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 ## Task 6: Mark first-pane and rehydrated call sites
 
 **Files:**
-- Modify: `Sources/Espalier/Views/MainWindow.swift` (around line 203)
-- Modify: `Sources/Espalier/EspalierApp.swift` (inside `restoreRunningWorktrees`, around line 288)
+- Modify: `Sources/Graftty/Views/MainWindow.swift` (around line 203)
+- Modify: `Sources/Graftty/GrafttyApp.swift` (inside `restoreRunningWorktrees`, around line 288)
 
 - [ ] **Step 1: Mark first pane in sidebar `selectWorktree`**
 
-Open `Sources/Espalier/Views/MainWindow.swift`. Locate `selectWorktree(_:)` (near line 187). Find the block that transitions a closed worktree to running — specifically the section with `_ = terminalManager.createSurfaces(...)` followed by `appState.repos[repoIdx].worktrees[wtIdx].state = .running`. Replace that block:
+Open `Sources/Graftty/Views/MainWindow.swift`. Locate `selectWorktree(_:)` (near line 187). Find the block that transitions a closed worktree to running — specifically the section with `_ = terminalManager.createSurfaces(...)` followed by `appState.repos[repoIdx].worktrees[wtIdx].state = .running`. Replace that block:
 
 ```swift
                     if appState.repos[repoIdx].worktrees[wtIdx].splitTree.root == nil {
@@ -598,7 +598,7 @@ with:
 
 - [ ] **Step 2: Mark rehydrated panes in `restoreRunningWorktrees`**
 
-Open `Sources/Espalier/EspalierApp.swift`. Locate `restoreRunningWorktrees()` (near line 288). Replace the function body:
+Open `Sources/Graftty/GrafttyApp.swift`. Locate `restoreRunningWorktrees()` (near line 288). Replace the function body:
 
 ```swift
     private func restoreRunningWorktrees() {
@@ -635,7 +635,7 @@ with:
                     // surface creation so the first-PWD event (which
                     // triggers onShellReady) finds wasRehydrated == true
                     // and short-circuits command injection. Without this
-                    // guard, relaunching Espalier would type the default
+                    // guard, relaunching Graftty would type the default
                     // command on top of whatever process is already
                     // running inside the persisted zmx session.
                     for leafID in appState.repos[repoIdx].worktrees[wtIdx].splitTree.allLeaves {
@@ -654,10 +654,10 @@ with:
 
 - [ ] **Step 3: Build to verify**
 
-Run: `swift build --target Espalier 2>&1 | tail -10`
+Run: `swift build --target Graftty 2>&1 | tail -10`
 Expected: `Build complete!`
 
-- [ ] **Step 4: Run the EspalierKit test suite**
+- [ ] **Step 4: Run the GrafttyKit test suite**
 
 Run: `swift test 2>&1 | tail -20`
 Expected: `Test Suite 'All tests' passed`, `DefaultCommandDecisionTests` still included and green. This guards against an accidental regression in the pure function from any refactors during Tasks 2-6.
@@ -665,7 +665,7 @@ Expected: `Test Suite 'All tests' passed`, `DefaultCommandDecisionTests` still i
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Sources/Espalier/Views/MainWindow.swift Sources/Espalier/EspalierApp.swift
+git add Sources/Graftty/Views/MainWindow.swift Sources/Graftty/GrafttyApp.swift
 git commit -m "feat(app): mark first-pane and rehydrated leaves at creation sites
 
 Sidebar selectWorktree marks the first leaf(s) of a freshly-opened
@@ -687,7 +687,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 Run:
 
 ```bash
-./scripts/bundle.sh && open -n .build/Espalier.app
+./scripts/bundle.sh && open -n .build/Graftty.app
 ```
 
 - [ ] **Step 2: Set the default command**
@@ -708,7 +708,7 @@ Inside the same worktree, press ⌘D to split horizontally. Expected: a new pane
 
 - [ ] **Step 5: Verify rehydration does not re-run**
 
-Quit Espalier (⌘Q). Relaunch (`open -n .build/Espalier.app`). Expected: the worktree's pane restores with its existing zsh session (no new `echo` typed). You can confirm by checking that the pane does not show a second `hello-from-default-command` line after restoration.
+Quit Graftty (⌘Q). Relaunch (`open -n .build/Graftty.app`). Expected: the worktree's pane restores with its existing zsh session (no new `echo` typed). You can confirm by checking that the pane does not show a second `hello-from-default-command` line after restoration.
 
 - [ ] **Step 6: Verify firstPaneOnly=false**
 
@@ -720,7 +720,7 @@ Open Settings, clear the "Default command" field, close. Stop + reopen the workt
 
 - [ ] **Step 8: Kill the test instance**
 
-Locate the test instance (pid from `open -n`) and quit it. Your primary Espalier instance was never touched.
+Locate the test instance (pid from `open -n`) and quit it. Your primary Graftty instance was never touched.
 
 - [ ] **Step 9: No commit for this task** — manual verification only.
 
@@ -744,14 +744,14 @@ gh pr create --title "feat: default-command setting" --body "$(cat <<'EOF'
 - Adds a user-configurable "Default command" that auto-types into the first pane of a freshly-opened worktree once its shell is ready (e.g., `claude`).
 - Adds a SwiftUI Settings scene (⌘,) with two controls: command text + "Run in first pane only" checkbox.
 - Fires via the first `GHOSTTY_ACTION_PWD` event per pane; skips on restore-from-disk so relaunch does not retype over existing processes.
-- Incidental: replaces `CommandMenu("Espalier")` with `CommandGroup(after: .appInfo)` so the menubar has one "Espalier" item instead of two.
+- Incidental: replaces `CommandMenu("Graftty")` with `CommandGroup(after: .appInfo)` so the menubar has one "Graftty" item instead of two.
 
 See `docs/superpowers/specs/2026-04-17-default-command-design.md` for the full design.
 
 ## Test plan
 - [x] `swift test` — `DefaultCommandDecisionTests` covers the gating matrix
 - [x] Manual: first-pane open types the command; split does not; rehydration does not; empty command disables; unchecked firstPaneOnly fires on every pane
-- [x] `swift build --target Espalier` clean
+- [x] `swift build --target Graftty` clean
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF
