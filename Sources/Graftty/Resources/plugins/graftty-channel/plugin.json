@@ -1,0 +1,8 @@
+{
+  "name": "graftty-channel",
+  "version": "0.1.0",
+  "description": "Graftty-provided channel: PR state, CI conclusion, and merge-state events for the Claude session's worktree.",
+  "author": {
+    "name": "Graftty"
+  }
+}
