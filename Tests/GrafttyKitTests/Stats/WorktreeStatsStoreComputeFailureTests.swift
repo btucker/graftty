@@ -24,7 +24,6 @@ struct WorktreeStatsStoreComputeFailureTests {
             if n == 1 {
                 return WorktreeStatsStore.ComputeResult(
                     defaultBranch: "main",
-                    upstreamRefs: UpstreamRefs(defaultRef: "origin/main"),
                     stats: okStats
                 )
             } else {
@@ -33,7 +32,6 @@ struct WorktreeStatsStoreComputeFailureTests {
                 // stats compute threw — `try?` swallowed it.
                 return WorktreeStatsStore.ComputeResult(
                     defaultBranch: "main",
-                    upstreamRefs: nil,
                     stats: nil
                 )
             }
@@ -73,7 +71,6 @@ struct WorktreeStatsStoreComputeFailureTests {
             if n == 1 {
                 return WorktreeStatsStore.ComputeResult(
                     defaultBranch: "main",
-                    upstreamRefs: UpstreamRefs(defaultRef: "origin/main"),
                     stats: okStats
                 )
             } else {
@@ -81,7 +78,6 @@ struct WorktreeStatsStoreComputeFailureTests {
                 // to compare against (user removed origin, etc.).
                 return WorktreeStatsStore.ComputeResult(
                     defaultBranch: nil,
-                    upstreamRefs: nil,
                     stats: nil
                 )
             }

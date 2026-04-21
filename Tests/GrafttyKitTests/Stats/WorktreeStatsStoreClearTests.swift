@@ -66,11 +66,7 @@ struct WorktreeStatsStoreClearTests {
             // Suspend until the test signals. This is where the Task
             // "is in-flight" waiting on a git subprocess in production.
             _ = await resumeIterator.value.next()
-            return WorktreeStatsStore.ComputeResult(
-                defaultBranch: "main",
-                upstreamRefs: UpstreamRefs(defaultRef: "origin/main"),
-                stats: cannedStats
-            )
+            return WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: cannedStats)
         }
 
         let store = WorktreeStatsStore(compute: compute)

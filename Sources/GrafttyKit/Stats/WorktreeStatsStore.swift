@@ -14,14 +14,6 @@ public final class WorktreeStatsStore {
     /// Keyed by worktree path. Absent key means "not computed yet or cleared".
     public private(set) var stats: [String: WorktreeStats] = [:]
 
-    /// Keyed by worktree path. The upstream refs the most recent
-    /// successful compute measured against. `baseRef` exposes
-    /// `.displayLabel` to the UI so the tooltip can render the actual
-    /// union (e.g. `"origin/main + origin/feature/foo"`) rather than a
-    /// recomputed guess.
-    @ObservationIgnored
-    private var upstreamRefsByPath: [String: UpstreamRefs] = [:]
-
     /// Cached origin default branch name (e.g. `"main"`) per repo path.
     /// `.some(nil)` caches a "no default branch resolvable" result so we
     /// don't retry on every poll. The name (not the ref) is stored because
@@ -52,10 +44,10 @@ public final class WorktreeStatsStore {
 
     /// Last successful stats compute per worktree. Used to gate the
     /// per-worktree recompute cadence (DIVERGE-4.6), which runs at 30s
-    /// independent of the 5-minute `git fetch` cadence. FSEvents on the
-    /// worktree contents (GIT-2.6) drives the common case; this poll is
-    /// a safety net for bursts the FSEvents coalescer ate and for
-    /// changes that happened while the app was backgrounded.
+    /// independent of the `git fetch` cadence. FSEvents on the worktree
+    /// contents (GIT-2.6) drives the common case; this poll is a safety
+    /// net for bursts the FSEvents coalescer ate and for changes that
+    /// happened while the app was backgrounded.
     @ObservationIgnored
     private var lastStatsRefresh: [String: Date] = [:]
 
@@ -86,23 +78,19 @@ public final class WorktreeStatsStore {
         _ cachedDefault: String?
     ) async -> ComputeResult
 
-    /// Result of a background compute attempt. Carries the default branch
-    /// discovered (so we can cache it on main), the upstream refs the
-    /// stats were measured against (cached so the UI tooltip shows the
-    /// truth — e.g. `"origin/main + origin/feature/foo"`), plus the
-    /// stats or nil if no default branch exists for this repo.
+    /// Result of a background compute attempt. `defaultBranch` is cached
+    /// on main regardless of whether stats landed; `stats` carries its
+    /// own `upstreamRefs` so the UI tooltip shows the actual ref
+    /// measured against (`WorktreeStats.upstreamRefs.displayLabel`).
+    /// `stats == nil` with `defaultBranch != nil` is a transient compute
+    /// failure (`DIVERGE-4.9`); `defaultBranch == nil` means the repo
+    /// has no resolvable default and the gutter should render nothing.
     public struct ComputeResult: Sendable {
         public let defaultBranch: String?
-        public let upstreamRefs: UpstreamRefs?
         public let stats: WorktreeStats?
 
-        public init(
-            defaultBranch: String?,
-            upstreamRefs: UpstreamRefs?,
-            stats: WorktreeStats?
-        ) {
+        public init(defaultBranch: String?, stats: WorktreeStats?) {
             self.defaultBranch = defaultBranch
-            self.upstreamRefs = upstreamRefs
             self.stats = stats
         }
     }
@@ -128,7 +116,6 @@ public final class WorktreeStatsStore {
         self.fetch = fetch
     }
 
-    // Test hooks for DIVERGE-4.5 verification. Not used in production.
     func generationForTesting(_ worktreePath: String) -> Int {
         generation[worktreePath, default: 0]
     }
@@ -204,7 +191,6 @@ public final class WorktreeStatsStore {
 
     public func clear(worktreePath: String) {
         stats.removeValue(forKey: worktreePath)
-        upstreamRefsByPath.removeValue(forKey: worktreePath)
         // Release the in-flight gate so a subsequent `refresh` isn't
         // silently suppressed while the prior Task drains. The Task's
         // late `apply` is handled by the generation check.
@@ -239,15 +225,11 @@ public final class WorktreeStatsStore {
         ticker = nil
     }
 
-    /// Returns the display label for the upstream refs the most recent
-    /// successful compute measured against — `"origin/main"` alone for
-    /// a home checkout / never-pushed-branch worktree, or
-    /// `"origin/main + origin/feature/foo"` for a linked worktree whose
-    /// branch has an upstream. Nil until the first successful compute
-    /// lands. The UI tooltip uses this so the label always matches the
-    /// numbers it sits next to.
+    /// Display label for the upstream refs the most recent successful
+    /// compute measured against, for the sidebar tooltip. Nil until the
+    /// first successful compute lands.
     public func baseRef(worktreePath: String, repoPath: String) -> String? {
-        upstreamRefsByPath[worktreePath]?.displayLabel
+        stats[worktreePath]?.upstreamRefs?.displayLabel
     }
 
     // MARK: - Private
@@ -268,12 +250,11 @@ public final class WorktreeStatsStore {
         )
     }
 
-    /// Production `ComputeFunction` — resolves the default branch and
-    /// the per-worktree upstream refs, then computes divergence via
-    /// `GitRunner`. `nonisolated` so `init`'s default-parameter
+    /// Production `ComputeFunction` — resolves the default branch,
+    /// picks the per-worktree upstream refs, and computes divergence
+    /// via `GitRunner`. `nonisolated` so `init`'s default-parameter
     /// evaluation can reference it.
     public nonisolated static let defaultCompute: ComputeFunction = { worktreePath, repoPath, branch, cachedDefault in
-        _ = repoPath // retained for future cache keys; compute itself is repo-agnostic
         let name: String?
         if let cached = cachedDefault {
             name = cached
@@ -281,7 +262,7 @@ public final class WorktreeStatsStore {
             name = await GitOriginDefaultBranch.resolve(repoPath: repoPath)
         }
         guard let name else {
-            return ComputeResult(defaultBranch: nil, upstreamRefs: nil, stats: nil)
+            return ComputeResult(defaultBranch: nil, stats: nil)
         }
         let refs = await GitWorktreeStats.resolveUpstreamRefs(
             worktreePath: worktreePath,
@@ -292,7 +273,7 @@ public final class WorktreeStatsStore {
             worktreePath: worktreePath,
             upstreamRefs: refs
         )
-        return ComputeResult(defaultBranch: name, upstreamRefs: refs, stats: stats)
+        return ComputeResult(defaultBranch: name, stats: stats)
     }
 
     private func apply(
@@ -302,19 +283,14 @@ public final class WorktreeStatsStore {
         fetchGeneration: Int
     ) {
         inFlight.remove(worktreePath)
-        // The repo-level default-branch cache is path-agnostic and a
-        // valid side-effect regardless of whether the worktree-scoped
-        // stats write is still current, so always update it.
+        // Repo-level cache is path-agnostic; always update it.
         defaultBranchByRepo[repoPath] = result.defaultBranch
         // DIVERGE-4.5: drop the stats write if the caller's clear()
         // invalidated us while the git subprocess was running.
         if generation[worktreePath, default: 0] != fetchGeneration { return }
-        // Gate the stats cadence off successful computes only — an errored
-        // compute (result.stats == nil while defaultBranch is resolvable)
-        // shouldn't reset the clock, otherwise a repeatedly-failing
-        // subprocess (e.g. `git rev-list` aborted on a corrupted pack)
-        // would silently pace itself at the full cadence instead of
-        // retrying on the next tick.
+        // Only advance the cadence clock on successful computes — a
+        // repeatedly-failing subprocess must retry on the next tick
+        // rather than silently pacing itself at the full cadence.
         if result.stats != nil || result.defaultBranch == nil {
             lastStatsRefresh[worktreePath] = Date()
         }
@@ -322,15 +298,8 @@ public final class WorktreeStatsStore {
             if stats[worktreePath] != s {
                 stats[worktreePath] = s
             }
-            if let refs = result.upstreamRefs {
-                upstreamRefsByPath[worktreePath] = refs
-            }
         } else if result.defaultBranch == nil {
-            // No default branch → no divergence to compute against.
-            if stats[worktreePath] != nil {
-                stats.removeValue(forKey: worktreePath)
-            }
-            upstreamRefsByPath.removeValue(forKey: worktreePath)
+            stats.removeValue(forKey: worktreePath)
         }
         // `DIVERGE-4.9`: nil stats with a resolved defaultBranch
         // means compute threw — preserve the last-known ↑N ↓M.

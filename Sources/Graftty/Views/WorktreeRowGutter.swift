@@ -16,27 +16,30 @@ struct WorktreeRowGutter: View {
 
     var body: some View {
         if let stats, !stats.isEmpty {
-            HStack(spacing: 4) {
-                if let ahead = aheadToken(stats) {
-                    Text(ahead)
-                        .foregroundColor(theme.foreground.opacity(0.55))
-                }
-                if stats.behind > 0 {
-                    Text("↓\(stats.behind)")
-                        .foregroundColor(.red)
-                }
-            }
-            .font(.system(size: 10, design: .monospaced))
-            .help(tooltip(stats))
+            commitsText(stats)
+                .font(.system(size: 10, design: .monospaced))
+                .help(tooltip(stats))
         }
     }
 
-    /// `↑X[+]` with the ahead side shown (as `↑0+`) when the worktree has
-    /// uncommitted changes even if ahead is zero — so the dirty indicator
-    /// never disappears. Nil when neither ahead nor dirty.
-    private func aheadToken(_ s: WorktreeStats) -> String? {
-        guard s.ahead > 0 || s.hasUncommittedChanges else { return nil }
-        return "↑\(s.ahead)\(s.hasUncommittedChanges ? "+" : "")"
+    /// `↑X[+] ↓Y` as a concatenated `Text` so the two tokens share a
+    /// single text run (native baseline/kerning, no HStack gap) while
+    /// each carries its own color. Ahead side is shown as `↑0+` when
+    /// uncommitted changes exist even if ahead is zero — so the dirty
+    /// indicator never disappears.
+    private func commitsText(_ s: WorktreeStats) -> Text {
+        let aheadShown = s.ahead > 0 || s.hasUncommittedChanges
+        let behindShown = s.behind > 0
+        let ahead = Text("↑\(s.ahead)\(s.hasUncommittedChanges ? "+" : "")")
+            .foregroundColor(theme.foreground.opacity(0.55))
+        let behind = Text("↓\(s.behind)")
+            .foregroundColor(.red)
+        switch (aheadShown, behindShown) {
+        case (true, true): return ahead + Text(" ") + behind
+        case (true, false): return ahead
+        case (false, true): return behind
+        case (false, false): return Text("")
+        }
     }
 
     /// Hover tooltip detail: the committed-diff line counts, optionally

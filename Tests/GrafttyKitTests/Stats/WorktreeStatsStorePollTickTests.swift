@@ -111,11 +111,7 @@ private final class RecordingCompute: @unchecked Sendable {
     var function: WorktreeStatsStore.ComputeFunction {
         { [weak self] worktreePath, _, _, _ in
             self?.record(worktreePath)
-            return WorktreeStatsStore.ComputeResult(
-                defaultBranch: "main",
-                upstreamRefs: UpstreamRefs(defaultRef: "origin/main"),
-                stats: nil
-            )
+            return WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
         }
     }
 

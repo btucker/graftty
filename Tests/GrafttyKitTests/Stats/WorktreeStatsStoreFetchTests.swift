@@ -21,11 +21,7 @@ struct WorktreeStatsStoreFetchTests {
     @MainActor
     @Test func successfulFetchKeepsStreakAtZero() async {
         let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
-            WorktreeStatsStore.ComputeResult(
-                defaultBranch: "main",
-                upstreamRefs: UpstreamRefs(defaultRef: "origin/main"),
-                stats: nil
-            )
+            WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
         }
         let fetch: WorktreeStatsStore.FetchFunction = { _ in
             // No-op success.
@@ -46,11 +42,7 @@ struct WorktreeStatsStoreFetchTests {
         // (non-zero exit) must be treated as a failure, not as success.
         struct StubError: Error {}
         let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
-            WorktreeStatsStore.ComputeResult(
-                defaultBranch: "main",
-                upstreamRefs: UpstreamRefs(defaultRef: "origin/main"),
-                stats: nil
-            )
+            WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
         }
         let fetch: WorktreeStatsStore.FetchFunction = { _ in
             throw StubError()
@@ -68,11 +60,7 @@ struct WorktreeStatsStoreFetchTests {
     @Test func repeatedFailuresAccumulate() async {
         struct StubError: Error {}
         let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
-            WorktreeStatsStore.ComputeResult(
-                defaultBranch: "main",
-                upstreamRefs: UpstreamRefs(defaultRef: "origin/main"),
-                stats: nil
-            )
+            WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
         }
         let fetch: WorktreeStatsStore.FetchFunction = { _ in
             throw StubError()
@@ -92,11 +80,7 @@ struct WorktreeStatsStoreFetchTests {
         // backoff disengages.
         struct StubError: Error {}
         let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
-            WorktreeStatsStore.ComputeResult(
-                defaultBranch: "main",
-                upstreamRefs: UpstreamRefs(defaultRef: "origin/main"),
-                stats: nil
-            )
+            WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
         }
         // Per-call behavior: first two calls throw, third succeeds.
         let callCount = IntBox()

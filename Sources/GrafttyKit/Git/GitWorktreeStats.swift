@@ -1,9 +1,30 @@
 import Foundation
 
-/// Ephemeral per-worktree divergence information vs. the worktree's
-/// upstream refs (union of `origin/<defaultBranch>` and `origin/<branch>`
-/// when both exist). Not persisted — lives in `WorktreeStatsStore` for
-/// the session only.
+/// The set of refs a worktree's divergence is measured against.
+/// Always at least `defaultRef`; also includes `branchRef` when the
+/// worktree's own branch has an `origin/<branch>` tracking ref.
+public struct UpstreamRefs: Equatable, Sendable {
+    public let defaultRef: String
+    public let branchRef: String?
+
+    public init(defaultRef: String, branchRef: String? = nil) {
+        self.defaultRef = defaultRef
+        self.branchRef = branchRef
+    }
+
+    /// Every ref to include on the reachable side of `rev-list`.
+    public var all: [String] {
+        branchRef.map { [defaultRef, $0] } ?? [defaultRef]
+    }
+
+    /// Sidebar tooltip label: either the single ref or both joined with `" + "`.
+    public var displayLabel: String {
+        branchRef.map { "\(defaultRef) + \($0)" } ?? defaultRef
+    }
+}
+
+/// Ephemeral per-worktree divergence information. Not persisted — lives
+/// in `WorktreeStatsStore` for the session only.
 public struct WorktreeStats: Equatable, Sendable {
     public let ahead: Int
     public let behind: Int
@@ -14,19 +35,25 @@ public struct WorktreeStats: Equatable, Sendable {
     /// user can distinguish "clean branch, 2 commits ahead" from
     /// "2 commits ahead plus work in progress" at a glance.
     public let hasUncommittedChanges: Bool
+    /// The upstream refs these counts were measured against. Nil only
+    /// for test fixtures that pre-build stats without going through
+    /// compute; production always populates it.
+    public let upstreamRefs: UpstreamRefs?
 
     public init(
         ahead: Int,
         behind: Int,
         insertions: Int,
         deletions: Int,
-        hasUncommittedChanges: Bool = false
+        hasUncommittedChanges: Bool = false,
+        upstreamRefs: UpstreamRefs? = nil
     ) {
         self.ahead = ahead
         self.behind = behind
         self.insertions = insertions
         self.deletions = deletions
         self.hasUncommittedChanges = hasUncommittedChanges
+        self.upstreamRefs = upstreamRefs
     }
 
     public var isEmpty: Bool {
@@ -34,62 +61,27 @@ public struct WorktreeStats: Equatable, Sendable {
     }
 }
 
-/// The set of refs a worktree's divergence is measured against. Always
-/// at least `defaultRef` (the repo's `origin/<defaultBranch>`); also
-/// includes `branchRef` = `origin/<worktree-branch>` when that tracking
-/// ref exists. `↓N` is computed as the union — "commits reachable from
-/// any upstream ref but not HEAD" — so a PR merge on the default branch
-/// *and* a collaborator push to the worktree's own branch both surface
-/// as new behind commits, on every worktree that doesn't yet have them.
-public struct UpstreamRefs: Equatable, Sendable {
-    public let defaultRef: String
-    public let branchRef: String?
-
-    public init(defaultRef: String, branchRef: String? = nil) {
-        self.defaultRef = defaultRef
-        // Collapse the degenerate "branch == default" case (home checkout
-        // on the default branch) so `rev-list` isn't handed the same ref
-        // twice and the tooltip doesn't render `"origin/main + origin/main"`.
-        self.branchRef = (branchRef == defaultRef) ? nil : branchRef
-    }
-
-    /// Every ref to include on the reachable side of `rev-list`.
-    public var all: [String] {
-        branchRef.map { [defaultRef, $0] } ?? [defaultRef]
-    }
-
-    /// Human-readable label for the sidebar tooltip: either the single
-    /// default ref or both refs joined with `" + "`.
-    public var displayLabel: String {
-        branchRef.map { "\(defaultRef) + \($0)" } ?? defaultRef
-    }
-}
-
 public enum GitWorktreeStats {
 
-    /// Picks the upstream refs to measure against for a given worktree.
-    /// Always includes `origin/<defaultBranch>` so a PR merge on the
-    /// default branch surfaces on every worktree — including linked
-    /// feature-branch worktrees that don't have the merged commits yet.
-    /// Additionally includes `origin/<branch>` when that tracking ref
-    /// exists, so a collaborator push to the worktree's own branch also
-    /// surfaces. Returns nil when the default branch isn't resolvable
-    /// (callers already gate rendering on that, per `DIVERGE-1.5`).
+    /// Picks the upstream refs a worktree's divergence is measured
+    /// against: always `origin/<defaultBranch>`, plus `origin/<branch>`
+    /// when that tracking ref exists. The union semantics then surface
+    /// both PR merges on the default branch and collaborator pushes to
+    /// the worktree's own branch as ↓N. See `DIVERGE-3.0`.
     public static func resolveUpstreamRefs(
         worktreePath: String,
         branch: String,
         defaultBranch: String
     ) async -> UpstreamRefs {
         let defaultRef = "origin/\(defaultBranch)"
-        guard !branch.isEmpty, branch != defaultBranch else {
-            return UpstreamRefs(defaultRef: defaultRef)
-        }
+        let fallback = UpstreamRefs(defaultRef: defaultRef)
+        guard !branch.isEmpty, branch != defaultBranch else { return fallback }
         let branchCandidate = "origin/\(branch)"
         guard let captured = try? await GitRunner.capture(
             args: ["show-ref", "--verify", "--quiet", "refs/remotes/\(branchCandidate)"],
             at: worktreePath
         ), captured.exitCode == 0 else {
-            return UpstreamRefs(defaultRef: defaultRef)
+            return fallback
         }
         return UpstreamRefs(defaultRef: defaultRef, branchRef: branchCandidate)
     }
@@ -202,7 +194,8 @@ public enum GitWorktreeStats {
             behind: behind,
             insertions: diff.insertions,
             deletions: diff.deletions,
-            hasUncommittedChanges: dirty
+            hasUncommittedChanges: dirty,
+            upstreamRefs: upstreamRefs
         )
     }
 }
