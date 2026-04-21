@@ -21,4 +21,5 @@ public enum GhosttyAction: String, CaseIterable, Sendable {
     case toggleSplitZoom = "toggle_split_zoom"
     case equalizeSplits  = "equalize_splits"
     case reloadConfig    = "reload_config"
+    case openConfig      = "open_config"
 }

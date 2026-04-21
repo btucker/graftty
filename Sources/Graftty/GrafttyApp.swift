@@ -173,6 +173,7 @@ struct GrafttyApp: App {
                 Button("Install CLI Tool...") {
                     installCLI()
                 }
+                bridgedButton("Open Ghostty Settings", action: .openConfig) { handleOpenGhosttySettings() }
                 bridgedButton("Reload Ghostty Config", action: .reloadConfig) { handleReloadConfig() }
             }
         }
@@ -183,7 +184,7 @@ struct GrafttyApp: App {
         // triggers the controller's `reconcile()` via its Combine subscription.
         Settings {
             TabView {
-                SettingsView()
+                SettingsView(onRestartZMX: { restartZMXWithConfirmation() })
                     .tabItem { Label("General", systemImage: "gear") }
                 WebSettingsPane()
                     .environmentObject(webController)
@@ -295,6 +296,15 @@ struct GrafttyApp: App {
         terminalManager.onReloadConfig = { [tm = terminalManager] in
             MainActor.assumeIsolated {
                 tm.reloadGhosttyConfig()
+            }
+        }
+
+        // Ghostty keybind mapped to `open_config` → same flow as the
+        // "Open Ghostty Settings" menu item: resolve the config path,
+        // create it if missing, hand to NSWorkspace. TERM-9.2.
+        terminalManager.onOpenConfig = {
+            MainActor.assumeIsolated {
+                Self.openGhosttySettings()
             }
         }
 
@@ -1308,6 +1318,73 @@ struct GrafttyApp: App {
 
     private func handleReloadConfig() {
         terminalManager.reloadGhosttyConfig()
+    }
+
+    private func handleOpenGhosttySettings() {
+        Self.openGhosttySettings()
+    }
+
+    /// Confirm with the user, then destroy every running worktree's panes
+    /// (which fires `zmx kill --force` per session via `destroySurface` →
+    /// `killZmxSession`) and mark those worktrees `.closed` via
+    /// `prepareForStop` — mirroring the per-worktree Stop flow (`TERM-1.2` /
+    /// `STATE-2.11`) but applied in bulk. Re-opening any worktree
+    /// afterwards spawns fresh zmx daemons. `ZMX-8.1`.
+    private func restartZMXWithConfirmation() {
+        struct RunningEntry {
+            let repoIdx: Int
+            let worktreeIdx: Int
+            let terminalIDs: [TerminalID]
+        }
+        var running: [RunningEntry] = []
+        var totalPanes = 0
+        for (repoIdx, repo) in appState.repos.enumerated() {
+            for (wtIdx, wt) in repo.worktrees.enumerated() where wt.state == .running {
+                let leaves = wt.splitTree.allLeaves
+                running.append(RunningEntry(repoIdx: repoIdx, worktreeIdx: wtIdx, terminalIDs: leaves))
+                totalPanes += leaves.count
+            }
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Restart ZMX?"
+        alert.informativeText = ZmxRestartConfirmation.informativeText(
+            paneCount: totalPanes,
+            worktreeCount: running.count
+        )
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Restart ZMX")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        for entry in running {
+            terminalManager.destroySurfaces(terminalIDs: entry.terminalIDs)
+            appState.repos[entry.repoIdx].worktrees[entry.worktreeIdx].prepareForStop()
+        }
+    }
+
+    /// Resolve the user's Ghostty config file path, create it if missing,
+    /// and hand it to `NSWorkspace.open` so it launches in the user's
+    /// default editor for that file type — same behavior as Ghostty.app's
+    /// own "Open Configuration" menu. `TERM-9.2`.
+    ///
+    /// Static so the `open_config` keybind callback in `startup()` (which
+    /// can't capture `self` cleanly) can share the implementation with
+    /// the menu button's instance handler.
+    fileprivate static func openGhosttySettings() {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let url = GhosttyConfigLocator.resolveURL(home: home)
+        do {
+            try GhosttyConfigLocator.ensureExists(at: url)
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Could Not Create Ghostty Config"
+            alert.informativeText = "Failed to create \(url.path): \(error.localizedDescription)"
+            alert.alertStyle = .warning
+            alert.runModal()
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: - View builder for bridge-shortcutted menu buttons

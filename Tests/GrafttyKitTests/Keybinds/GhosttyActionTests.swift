@@ -18,9 +18,10 @@ struct GhosttyActionTests {
         #expect(GhosttyAction.toggleSplitZoom.rawValue == "toggle_split_zoom")
         #expect(GhosttyAction.equalizeSplits.rawValue  == "equalize_splits")
         #expect(GhosttyAction.reloadConfig.rawValue    == "reload_config")
+        #expect(GhosttyAction.openConfig.rawValue      == "open_config")
     }
 
     @Test func allCasesCountMatchesEnumSize() {
-        #expect(GhosttyAction.allCases.count == 14)
+        #expect(GhosttyAction.allCases.count == 15)
     }
 }

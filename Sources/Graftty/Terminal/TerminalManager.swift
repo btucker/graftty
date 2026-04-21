@@ -183,6 +183,10 @@ final class TerminalManager: ObservableObject {
     /// shortcuts update to match the new config.
     var onReloadConfig: (() -> Void)?
 
+    /// Called on `open_config`. Host resolves the on-disk config file and
+    /// hands it to the user's default editor via `NSWorkspace`. `TERM-9.2`.
+    var onOpenConfig: (() -> Void)?
+
     /// Swift-native mirror of `ghostty_action_progress_report_s` so
     /// callers outside the Terminal module don't need to import
     /// GhosttyKit just to pattern-match on progress state.
@@ -771,6 +775,9 @@ final class TerminalManager: ObservableObject {
         case GHOSTTY_ACTION_RELOAD_CONFIG:
             onReloadConfig?()
 
+        case GHOSTTY_ACTION_OPEN_CONFIG:
+            onOpenConfig?()
+
         // Silent no-ops for Ghostty concepts Graftty doesn't model. Listed
         // explicitly (rather than falling into default) so future maintainers
         // know we considered them.
@@ -785,8 +792,7 @@ final class TerminalManager: ObservableObject {
              GHOSTTY_ACTION_TOGGLE_FULLSCREEN,
              GHOSTTY_ACTION_TOGGLE_MAXIMIZE,
              GHOSTTY_ACTION_TOGGLE_WINDOW_DECORATIONS,
-             GHOSTTY_ACTION_CHECK_FOR_UPDATES,
-             GHOSTTY_ACTION_OPEN_CONFIG:
+             GHOSTTY_ACTION_CHECK_FOR_UPDATES:
             break
 
         default:

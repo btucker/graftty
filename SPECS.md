@@ -655,6 +655,10 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 The sweep runs once at `GrafttyApp.init()`. `ZmxLauncher.subprocessEnv` additionally strips `ZMX_SESSION` from inline subprocess envs as belt-and-suspenders, but the process-level sweep is the primary defense — it also covers libghostty's surface env overlay, which cannot be routed through `subprocessEnv` before the spawn.
 
+### 13.8 Manual Restart
+
+**ZMX-8.1** The Settings → General pane shall expose a "Restart ZMX…" button that, after user confirmation, tears down every running pane across every worktree — invoking the same `destroySurface` / `zmx kill --force` path as per-worktree Stop (`TERM-1.2` / `ZMX-4.3`) — and then marks each affected worktree `.closed` via `prepareForStop` (`STATE-2.11`), preserving each worktree's `splitTree` and `focusedTerminalID` so re-opening recreates the same layout at the same leaf IDs under freshly-spawned zmx daemons. The confirmation alert (`NSAlert` with `.warning` style) shall name the destructive consequence explicitly — how many sessions across how many worktrees will end, with a "Any unsaved work in those sessions will be lost" warning (pluralization per `ZmxRestartConfirmation.informativeText`) — and shall offer "Restart ZMX" and "Cancel" buttons with Cancel as the default dismissal. If no worktrees are running at click time, the alert shall state that the action will have no effect rather than silently no-op.
+
 ## 14. Distribution
 
 ### 14.1 Build Bundle
@@ -821,6 +825,23 @@ presses and theme reads reflect edits to the on-disk config without
 a restart. A stale earlier comment claimed libghostty-spm lacked a
 reload C API; `ghostty_app_update_config` has been available on the
 vendored surface and is what this spec pins.
+
+**TERM-9.2** When the user activates "Open Ghostty Settings"
+(either via the Graftty menu under the app-info group or via a
+Ghostty keybinding mapped to the `open_config` action), the
+application shall resolve the on-disk Ghostty config file and open
+it via `NSWorkspace.shared.open`, which hands the file to the user's
+default editor for that file type — mirroring Ghostty.app's own
+"Open Configuration" behavior. Resolution priority matches Ghostty's
+load order: (1) `$XDG_CONFIG_HOME/ghostty/config` if `XDG_CONFIG_HOME`
+is set and non-empty, (2) `~/.config/ghostty/config`, (3)
+`~/Library/Application Support/com.mitchellh.ghostty/config`; the
+highest-priority existing file wins. If none of the candidate files
+exist, the application shall create an empty file at location (3)
+(and any missing parent directories) before opening, so the user
+always receives an editable file rather than a failed-to-open no-op
+on first run. If directory or file creation fails, the application
+shall surface an actionable alert rather than silently continue.
 
 ## 17. PR/MR Status Display
 
