@@ -81,4 +81,75 @@ final class DefaultCommandDecisionTests: XCTestCase {
         )
         XCTAssertEqual(decision, .skip)
     }
+
+    func testChannelsEnabledInsertsFlagsAfterClaudeBinaryName() {
+        let decision = defaultCommandDecision(
+            defaultCommand: "claude",
+            firstPaneOnly: true,
+            isFirstPane: true,
+            wasRehydrated: false,
+            channelsEnabled: true
+        )
+        XCTAssertEqual(decision, .type(
+            "claude --channels plugin:graftty-channel --dangerously-load-development-channels plugin:graftty-channel"
+        ))
+    }
+
+    func testChannelsEnabledWithExistingArgsInsertsFlagsBeforeArgs() {
+        let decision = defaultCommandDecision(
+            defaultCommand: "claude --model opus",
+            firstPaneOnly: true,
+            isFirstPane: true,
+            wasRehydrated: false,
+            channelsEnabled: true
+        )
+        XCTAssertEqual(decision, .type(
+            "claude --channels plugin:graftty-channel --dangerously-load-development-channels plugin:graftty-channel --model opus"
+        ))
+    }
+
+    func testChannelsEnabledForNonClaudeCommandLeavesUnchanged() {
+        let decision = defaultCommandDecision(
+            defaultCommand: "zsh",
+            firstPaneOnly: true,
+            isFirstPane: true,
+            wasRehydrated: false,
+            channelsEnabled: true
+        )
+        XCTAssertEqual(decision, .type("zsh"))
+    }
+
+    func testChannelsDisabledLeavesCommandUnchanged() {
+        let decision = defaultCommandDecision(
+            defaultCommand: "claude",
+            firstPaneOnly: true,
+            isFirstPane: true,
+            wasRehydrated: false,
+            channelsEnabled: false
+        )
+        XCTAssertEqual(decision, .type("claude"))
+    }
+
+    func testChannelsEnabledDoesNotMatchClaudeInLargerWord() {
+        // "claudex" shouldn't match "claude" — we do token matching, not prefix.
+        let decision = defaultCommandDecision(
+            defaultCommand: "claudex",
+            firstPaneOnly: true,
+            isFirstPane: true,
+            wasRehydrated: false,
+            channelsEnabled: true
+        )
+        XCTAssertEqual(decision, .type("claudex"))
+    }
+
+    func testChannelsEnabledDefaultArgumentIsFalse() {
+        // Existing callsites (no channelsEnabled:) must keep old behavior.
+        let decision = defaultCommandDecision(
+            defaultCommand: "claude",
+            firstPaneOnly: true,
+            isFirstPane: true,
+            wasRehydrated: false
+        )
+        XCTAssertEqual(decision, .type("claude"))
+    }
 }
