@@ -2,7 +2,7 @@
 
 ## Problem
 
-Espalier has Add Repository (LAYOUT-3.x) but no complementary remove action, and it tracks repositories by absolute path — so a Finder-side rename or move of the repo folder silently turns every worktree stale despite the folder still existing.
+Graftty has Add Repository (LAYOUT-3.x) but no complementary remove action, and it tracks repositories by absolute path — so a Finder-side rename or move of the repo folder silently turns every worktree stale despite the folder still existing.
 
 Two related gaps, one design:
 
@@ -18,7 +18,7 @@ This design adds a right-click "Remove Repository" context-menu action and intro
 Right-clicking the repo header row (the `DisclosureGroup` label in `SidebarView.repoSection`) surfaces a context menu with **Remove Repository**. Clicking it presents an `NSAlert`:
 
 - Message: `Remove "<repo displayName>"?`
-- Informative: `This removes the repository from Espalier but does not delete any files from disk.`
+- Informative: `This removes the repository from Graftty but does not delete any files from disk.`
 - Buttons: **Remove**, **Cancel**.
 
 On confirmation, the repository and all its worktrees disappear from the sidebar together. Files on disk — worktree directories, branches, git metadata — are untouched.
@@ -42,7 +42,7 @@ If recovery succeeds, the user sees nothing except the updated label. If it fail
 public var bookmark: Data?
 ```
 
-Holds the bytes returned by `URL(fileURLWithPath: path).bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)` at repo-add time. Regular (not security-scoped) bookmarks are sufficient because Espalier is not sandboxed — `NSOpenPanel` already hands us arbitrary-path URLs. Security-scoped bookmarks would require pairing every resolve with `startAccessingSecurityScopedResource()` / `stopAccessing…`, adding complexity with no access gained.
+Holds the bytes returned by `URL(fileURLWithPath: path).bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)` at repo-add time. Regular (not security-scoped) bookmarks are sufficient because Graftty is not sandboxed — `NSOpenPanel` already hands us arbitrary-path URLs. Security-scoped bookmarks would require pairing every resolve with `startAccessingSecurityScopedResource()` / `stopAccessing…`, adding complexity with no access gained.
 
 ### Codable migration
 
@@ -141,7 +141,7 @@ Ordering rationale:
 - **Cross-volume move (`isStale == true`).** Mint a fresh bookmark from the resolved URL and store it. Subsequent resolutions will not be stale.
 - **Repo copied between machines via `state.json` sync.** Bookmarks are machine-local. On the new machine, `URL(resolvingBookmarkData:)` fails. The code falls back to `repo.path` as-is; if the path resolves on this machine, the existing flow works; if not, stale. On the next successful access (first subsequent add-or-launch-with-path-existing), a fresh bookmark is minted.
 - **Two repos at paths that share a prefix, one renamed.** Bookmarks track the specific folder (inode + volume), not the path string — the other repo is unaffected.
-- **User renames the repo folder while Espalier is open.** FSEvents on the worktree-path watchers fire deletion. `worktreeMonitorDidDetectDeletion` runs bookmark resolution first, relocate cascade fires, watchers re-install at the new paths, user sees the sidebar label update.
+- **User renames the repo folder while Graftty is open.** FSEvents on the worktree-path watchers fire deletion. `worktreeMonitorDidDetectDeletion` runs bookmark resolution first, relocate cascade fires, watchers re-install at the new paths, user sees the sidebar label update.
 - **User renames a parent directory.** Same mechanism — bookmarks resolve to the new location regardless of whether the rename happened at the tracked folder itself or any ancestor.
 - **User deletes the folder entirely.** Bookmark resolution throws. Fall through to existing stale behavior (GIT-3.3).
 - **User renames, then re-creates a different folder at the old path.** Bookmark resolves to the actual original folder at its new location. The new folder at the old path is a different inode — the bookmark doesn't mis-fire. A user who wanted to "swap repos" at the same path needs to Add Repository explicitly.
@@ -149,7 +149,7 @@ Ordering rationale:
 
 ## Error handling
 
-- Bookmark minting: failures are non-fatal (field is optional). A repo without a bookmark cannot auto-recover; it behaves exactly like pre-migration Espalier.
+- Bookmark minting: failures are non-fatal (field is optional). A repo without a bookmark cannot auto-recover; it behaves exactly like pre-migration Graftty.
 - Bookmark resolution: throws are caught silently; the existing `.stale` path handles the visible behavior.
 - `git worktree repair` runs only when discovery comes back short and would otherwise drop worktrees. A failed `repair` leaves the missing worktrees dropped — no worse than dropping them without repair.
 - `GitWorktreeDiscovery.discover` throws: during relocation, swallow and fall through to `.stale`. The add-repository NSAlert path (GIT-1.2) does not apply here because relocation is background work the user did not directly trigger.
@@ -161,9 +161,9 @@ New subsection **1.4 Repository Lifecycle** inserted after **1.3 Adding Reposito
 ### Remove
 
 - **LAYOUT-4.1** When the user right-clicks a repository header row in the sidebar, the application shall display a context menu containing a "Remove Repository" action.
-- **LAYOUT-4.2** When the user triggers "Remove Repository", the application shall display a confirmation dialog whose informative text explicitly states "This removes the repository from Espalier but does not delete any files from disk."
+- **LAYOUT-4.2** When the user triggers "Remove Repository", the application shall display a confirmation dialog whose informative text explicitly states "This removes the repository from Graftty but does not delete any files from disk."
 - **LAYOUT-4.3** When the user confirms "Remove Repository", the application shall (a) tear down all terminal surfaces in every worktree of the repository whose `state == .running`, (b) stop the repository-level FSEvents watchers (`.git/worktrees/` and origin refs) and each worktree's per-path, HEAD-reflog, and content watchers, (c) clear the cached PR status and divergence stats for every worktree of the repository, (d) clear `selectedWorktreePath` if it pointed to any worktree in the repository, and (e) remove the repository entry from `AppState`. Steps (a)–(d) must precede (e) for the same orphan-surfaces / orphan-caches reasons as GIT-3.10 / GIT-4.10 / GIT-3.13 and the watcher-fd-lifetime reason as GIT-3.11.
-- **LAYOUT-4.4** The "Remove Repository" action shall not invoke `git` and shall not modify any files on disk. Worktree directories, branches, and git metadata remain untouched; the operation affects only Espalier's in-memory model and persisted `state.json`.
+- **LAYOUT-4.4** The "Remove Repository" action shall not invoke `git` and shall not modify any files on disk. Worktree directories, branches, and git metadata remain untouched; the operation affects only Graftty's in-memory model and persisted `state.json`.
 
 ### Rename / Move recovery
 
@@ -172,23 +172,23 @@ New subsection **1.4 Repository Lifecycle** inserted after **1.3 Adding Reposito
 - **LAYOUT-4.7** When `WorktreeMonitor` reports a deletion event for a worktree path whose owning repository has a non-nil bookmark, the application shall resolve the bookmark and, if the resolved path differs from the stored `RepoEntry.path`, run the relocate cascade described in LAYOUT-4.8 before applying the existing transition-to-`.stale` path (GIT-3.3). If bookmark resolution fails or the resolved folder is no longer a git repository, the application shall fall through to the existing `.stale` path.
 - **LAYOUT-4.8** The relocate cascade for a repository resolved to `newURL` differing from the stored path shall: (a) verify a `.git` entry exists at `newURL.path`, aborting if not, (b) stop all existing watchers tied to old paths, (c) run `GitWorktreeDiscovery.discover(repoPath: newURL.path)`, running `git worktree repair` and re-discovering if any previously-known linked worktree is omitted from the discovery result, (d) update the `RepoEntry`'s `path` and `displayName` to the new location, (e) match each existing `WorktreeEntry` to a discovered worktree by **branch name** and preserve `id`, `splitTree`, `state`, `focusedTerminalID`, `paneAttention`, `attention`, and `offeredDeleteForMergedPR`, updating only `path`, (f) clear per-path PR-status and divergence-stats cache entries for every worktree whose path changed, (g) update `selectedWorktreePath` from its old path to the corresponding new path if applicable, and (h) re-install repository-level and per-worktree FSEvents watchers at the new paths. Steps (a)–(c) shall precede (d) so that a discovery failure leaves the model unchanged.
 - **LAYOUT-4.9** For a repository entry loaded from `state.json` without a bookmark (migration from a pre-LAYOUT-4.5 build), the application shall mint a fresh bookmark from the stored `path` if that path still resolves on disk, and persist it.
-- **LAYOUT-4.10** The application shall use regular (not security-scoped) bookmarks. Security-scoped bookmarks are unnecessary because Espalier is not sandboxed and `NSOpenPanel` already grants the app arbitrary-path URLs.
+- **LAYOUT-4.10** The application shall use regular (not security-scoped) bookmarks. Security-scoped bookmarks are unnecessary because Graftty is not sandboxed and `NSOpenPanel` already grants the app arbitrary-path URLs.
 
 ## Tests
 
-### `Tests/EspalierKitTests/Model/AppStateTests.swift`
+### `Tests/GrafttyKitTests/Model/AppStateTests.swift`
 
 - `removeRepo_clearsSelection_whenSelectedWorktreeIsInsideRemovedRepo`.
 - `removeRepo_preservesSelection_whenSelectedWorktreeIsInDifferentRepo`.
 - `removeRepo_unknownPath_isNoOp`.
 - `removeRepo_selectionIsRepoMainCheckoutPath_clearsSelection`.
 
-### `Tests/EspalierKitTests/Model/RepoEntryCodableTests.swift` (new)
+### `Tests/GrafttyKitTests/Model/RepoEntryCodableTests.swift` (new)
 
 - `roundTrip_preservesBookmark_whenPresent`.
 - `decode_omittedBookmark_yieldsNilBookmark` — schema-migration path.
 
-### `Tests/EspalierKitTests/Git/BookmarkRelocateTests.swift` (new, uses `FileManager`-created temp repos)
+### `Tests/GrafttyKitTests/Git/BookmarkRelocateTests.swift` (new, uses `FileManager`-created temp repos)
 
 Each test sets up a throwaway git repo in a temporary directory, mints a bookmark, renames the folder, and exercises the resolution path:
 
@@ -205,15 +205,15 @@ Higher-level coverage of runtime recovery (FSEvents-deletion entry point) and la
 
 ## Files touched
 
-- `Sources/EspalierKit/Model/AppState.swift` — teach `removeRepo(atPath:)` to clear `selectedWorktreePath`.
-- `Sources/EspalierKit/Model/RepoEntry.swift` — add `bookmark: Data?`, add custom `init(from:)` using `decodeIfPresent`.
-- `Sources/EspalierKit/Git/RepoBookmark.swift` (new) — small module wrapping mint / resolve so call sites stay readable and tests are easy.
-- `Sources/EspalierKit/Git/RepoRelocator.swift` (new) — owns the relocate cascade, depending on `GitWorktreeDiscovery`, `WorktreeMonitor`, `PRStatusStore`, `WorktreeStatsStore` via protocol seams.
-- `Sources/Espalier/Views/SidebarView.swift` — add `onRemoveRepo`; attach `.contextMenu` to repo header row.
-- `Sources/Espalier/Views/MainWindow.swift` — add `removeRepoWithConfirmation`, `performRemoveRepo`; add bookmark minting in `addRepoFromPath`; add launch-time resolve in `reconcileOnLaunch`; add runtime resolve in the delegate's `worktreeMonitorDidDetectDeletion` path before `.stale` transition.
-- `Tests/EspalierKitTests/Model/AppStateTests.swift` — new `removeRepo` cases.
-- `Tests/EspalierKitTests/Model/RepoEntryCodableTests.swift` (new).
-- `Tests/EspalierKitTests/Git/BookmarkRelocateTests.swift` (new).
+- `Sources/GrafttyKit/Model/AppState.swift` — teach `removeRepo(atPath:)` to clear `selectedWorktreePath`.
+- `Sources/GrafttyKit/Model/RepoEntry.swift` — add `bookmark: Data?`, add custom `init(from:)` using `decodeIfPresent`.
+- `Sources/GrafttyKit/Git/RepoBookmark.swift` (new) — small module wrapping mint / resolve so call sites stay readable and tests are easy.
+- `Sources/GrafttyKit/Git/RepoRelocator.swift` (new) — owns the relocate cascade, depending on `GitWorktreeDiscovery`, `WorktreeMonitor`, `PRStatusStore`, `WorktreeStatsStore` via protocol seams.
+- `Sources/Graftty/Views/SidebarView.swift` — add `onRemoveRepo`; attach `.contextMenu` to repo header row.
+- `Sources/Graftty/Views/MainWindow.swift` — add `removeRepoWithConfirmation`, `performRemoveRepo`; add bookmark minting in `addRepoFromPath`; add launch-time resolve in `reconcileOnLaunch`; add runtime resolve in the delegate's `worktreeMonitorDidDetectDeletion` path before `.stale` transition.
+- `Tests/GrafttyKitTests/Model/AppStateTests.swift` — new `removeRepo` cases.
+- `Tests/GrafttyKitTests/Model/RepoEntryCodableTests.swift` (new).
+- `Tests/GrafttyKitTests/Git/BookmarkRelocateTests.swift` (new).
 - `SPECS.md` — new §1.4 with LAYOUT-4.1…4.10.
 
 ## Non-goals
