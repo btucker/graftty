@@ -11,4 +11,6 @@ dist-tmp/
 web-client/node_modules/
 .playwright-mcp/
 Apps/*/build/
-Apps/*/*/xcuserdata/
+**/xcuserdata/
+**/*.xcuserstate
+.swiftpm/xcode/
