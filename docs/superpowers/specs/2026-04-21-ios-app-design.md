@@ -10,7 +10,7 @@ After v1 ships, this user story works:
 
 ## Core promise
 
-**Shared renderer.** The iOS app uses `GhosttyTerminal.TerminalView` + `InMemoryTerminalSession` from `libghostty-spm` — the same Swift package the Mac app already depends on. libghostty-spm ships a UIKit `TerminalViewRepresentable` alongside its AppKit one and targets `.iOS(.v16)`. The VT parser is identical on every Graftty surface (macOS native pane, web client WASM, iOS native) — per `WEB-5.1`'s "single parser keeps escape-sequence behavior identical" ethos.
+**Shared renderer.** The iOS app uses `GhosttyTerminal.TerminalView` + `InMemoryTerminalSession` from `libghostty-spm` — the same Swift package the Mac app already depends on. libghostty-spm ships a UIKit `TerminalViewRepresentable` alongside its AppKit one and targets `.iOS(.v17)`. The VT parser is identical on every Graftty surface (macOS native pane, web client WASM, iOS native) — per `WEB-5.1`'s "single parser keeps escape-sequence behavior identical" ethos.
 
 **No new server protocol.** The iOS client speaks exactly what the web client speaks today:
 
@@ -107,7 +107,7 @@ All business logic lives in SwiftPM targets so it's testable and reusable across
 `Package.swift` becomes multi-platform:
 
 ```
-platforms: [.macOS(.v14), .iOS(.v16)]
+platforms: [.macOS(.v14), .iOS(.v17)]
 
 targets:
   + .target(name: "GrafttyProtocol")                  // NEW, platform-neutral
@@ -194,7 +194,7 @@ These are the requirements that will land in `SPECS.md` under a new top-level se
 
 #### 18.1 Target and platform
 
-**IOS-1.1** The application shall provide a universal iOS app, `GrafttyMobile`, targeting iOS 16 or later, running on both iPhone and iPad form factors with layouts forked on `horizontalSizeClass`.
+**IOS-1.1** The application shall provide a universal iOS app, `GrafttyMobile`, targeting iOS 17 or later, running on both iPhone and iPad form factors with layouts forked on `horizontalSizeClass`. (iOS 17 is the minimum because the app uses Swift's `@Observable` macro, which requires iOS 17 at runtime.)
 
 **IOS-1.2** All iOS business logic (views, stores, session management, terminal bridging) shall live in the SwiftPM library target `GrafttyMobileKit`. The iOS .app bundle shall live in a separate Xcode project at `Apps/GrafttyMobile/GrafttyMobile.xcodeproj` that depends on `GrafttyMobileKit` by local package reference.
 
