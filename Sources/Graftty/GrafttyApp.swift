@@ -486,6 +486,50 @@ struct GrafttyApp: App {
             }
         }
 
+        // WEB-7.1: feed the web server the repo list for the "Add
+        // Worktree" picker. Mirrors the native sidebar's top-level
+        // repos.
+        webController.setReposProvider {
+            await MainActor.run { () -> [WebServer.RepoInfo] in
+                appStateBinding.wrappedValue.repos.map { repo in
+                    WebServer.RepoInfo(path: repo.path, displayName: repo.displayName)
+                }
+            }
+        }
+
+        // WEB-7.2: drive `POST /worktrees` into the shared
+        // `AddWorktreeFlow`. `AddWorktreeFlow.add` is itself
+        // `@MainActor`; calling it from this non-isolated async closure
+        // inserts an implicit hop, so every write to appState and every
+        // terminal-surface creation happens on the main actor — same
+        // isolation as the native sidebar's "+" button.
+        let worktreeMonitor = services.worktreeMonitor
+        let statsStore = services.statsStore
+        webController.setWorktreeCreator { req in
+            let result = await AddWorktreeFlow.add(
+                repoPath: req.repoPath,
+                worktreeName: req.worktreeName,
+                branchName: req.branchName,
+                appState: appStateBinding,
+                worktreeMonitor: worktreeMonitor,
+                statsStore: statsStore,
+                terminalManager: tm
+            )
+            switch result {
+            case .success(let outcome):
+                return .success(WebServer.CreateWorktreeResponse(
+                    sessionName: outcome.sessionName,
+                    worktreePath: outcome.worktreePath
+                ))
+            case .failure(let err):
+                switch err {
+                case .gitFailed(let msg): return .gitFailed(msg)
+                case .repoNotFound: return .invalid("repository not tracked")
+                case .discoveryFailed(let msg): return .internalFailure(msg)
+                }
+            }
+        }
+
         // WEB-4.3: close the NIO listen sockets + SIGTERM any in-flight
         // `zmx attach` children as part of normal shutdown. Process exit
         // would eventually do both, but we can't rely on that: WEB-4.6's

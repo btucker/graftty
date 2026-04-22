@@ -40,6 +40,59 @@ public final class WebServer {
         }
     }
 
+    /// One entry served by `GET /repos` — the set of repositories the
+    /// web user can create a new worktree under, mirroring the native
+    /// sidebar's repo disclosures. `path` is opaque to the client and
+    /// round-tripped as `repoPath` on `POST /worktrees` so the server
+    /// doesn't have to re-derive it from a display name (which could
+    /// collide when two repos share a basename).
+    public struct RepoInfo: Codable, Sendable, Equatable {
+        public let path: String
+        public let displayName: String
+
+        public init(path: String, displayName: String) {
+            self.path = path
+            self.displayName = displayName
+        }
+    }
+
+    /// JSON shape accepted by `POST /worktrees`.
+    public struct CreateWorktreeRequest: Codable, Sendable, Equatable {
+        public let repoPath: String
+        public let worktreeName: String
+        public let branchName: String
+
+        public init(repoPath: String, worktreeName: String, branchName: String) {
+            self.repoPath = repoPath
+            self.worktreeName = worktreeName
+            self.branchName = branchName
+        }
+    }
+
+    /// JSON shape returned by `POST /worktrees` on success. Callers
+    /// navigate to `/session/<sessionName>` to attach to the first pane
+    /// of the new worktree.
+    public struct CreateWorktreeResponse: Codable, Sendable, Equatable {
+        public let sessionName: String
+        public let worktreePath: String
+
+        public init(sessionName: String, worktreePath: String) {
+            self.sessionName = sessionName
+            self.worktreePath = worktreePath
+        }
+    }
+
+    /// Outcome a `worktreeCreator` reports back. Success carries the
+    /// session name to steer the client to; failure carries the
+    /// user-visible message (typically `git worktree add`'s stderr) and
+    /// a coarse reason so the handler can pick the right HTTP status.
+    public enum CreateWorktreeOutcome: Sendable {
+        case success(CreateWorktreeResponse)
+        case invalid(String)       // 400 — bad input (empty names, unknown repo)
+        case gitFailed(String)     // 409 — `git worktree add` rejected the request
+        case internalFailure(String) // 500 — post-success discovery or spawn broke
+    }
+
     public struct Config {
         public let port: Int
         public let zmxExecutable: URL
@@ -47,17 +100,31 @@ public final class WebServer {
         /// Source for `GET /sessions`. Called on each request; runs fast
         /// because the list is read from in-memory AppState (no git work).
         public let sessionsProvider: @Sendable () async -> [SessionInfo]
+        /// Source for `GET /repos`. Same fast-snapshot contract as
+        /// `sessionsProvider`: read from in-memory AppState, no git.
+        public let reposProvider: @Sendable () async -> [RepoInfo]
+        /// Executes `POST /worktrees`. Nil (default) means the endpoint
+        /// is disabled — it responds `503` rather than `404` so the web
+        /// client can tell "server doesn't support this yet" apart from
+        /// "wrong URL". In production `GrafttyApp` always injects a real
+        /// creator; the default exists for tests and early-boot states
+        /// where `AppState` isn't wired yet.
+        public let worktreeCreator: (@Sendable (CreateWorktreeRequest) async -> CreateWorktreeOutcome)?
 
         public init(
             port: Int,
             zmxExecutable: URL,
             zmxDir: URL,
-            sessionsProvider: @escaping @Sendable () async -> [SessionInfo] = { [] }
+            sessionsProvider: @escaping @Sendable () async -> [SessionInfo] = { [] },
+            reposProvider: @escaping @Sendable () async -> [RepoInfo] = { [] },
+            worktreeCreator: (@Sendable (CreateWorktreeRequest) async -> CreateWorktreeOutcome)? = nil
         ) {
             self.port = port
             self.zmxExecutable = zmxExecutable
             self.zmxDir = zmxDir
             self.sessionsProvider = sessionsProvider
+            self.reposProvider = reposProvider
+            self.worktreeCreator = worktreeCreator
         }
 
         /// Accepts the range NIO's `bootstrap.bind(host:port:)` will accept
@@ -256,9 +323,22 @@ public final class WebServer {
         typealias InboundIn = HTTPServerRequestPart
         typealias OutboundOut = HTTPServerResponsePart
 
+        /// Cap accumulated request body before we give up. `POST /worktrees`
+        /// accepts a tiny JSON object (~150 bytes); 64 KiB is ~400× larger
+        /// than anything legitimate and a hard stop against a malicious
+        /// loopback client streaming an endless body to pin server memory.
+        /// Since every other route is a GET (no body), this cap never
+        /// bites a real request.
+        private static let maxBodyBytes = 64 * 1024
+
         let config: Config
         let auth: AuthPolicy
         var currentRequestHead: HTTPRequestHead?
+        /// Accumulated request body for the current in-flight request.
+        /// Cleared on `.end`. Short-circuited to "body too large" once
+        /// we cross `maxBodyBytes`.
+        var currentRequestBody: Data = Data()
+        var bodyTooLarge: Bool = false
 
         init(config: Config, auth: AuthPolicy) {
             self.config = config
@@ -270,21 +350,38 @@ public final class WebServer {
             switch part {
             case .head(let head):
                 currentRequestHead = head
-            case .body:
-                break
+                currentRequestBody.removeAll(keepingCapacity: true)
+                bodyTooLarge = false
+            case .body(var buf):
+                guard !bodyTooLarge else { return }
+                if let bytes = buf.readBytes(length: buf.readableBytes) {
+                    if currentRequestBody.count + bytes.count > Self.maxBodyBytes {
+                        bodyTooLarge = true
+                        currentRequestBody.removeAll(keepingCapacity: false)
+                    } else {
+                        currentRequestBody.append(contentsOf: bytes)
+                    }
+                }
             case .end:
                 guard let head = currentRequestHead else { return }
                 currentRequestHead = nil
+                let body = currentRequestBody
+                let wasTooLarge = bodyTooLarge
+                currentRequestBody = Data()
+                bodyTooLarge = false
+
                 let peer = context.channel.remoteAddress?.ipAddress ?? "unknown"
                 let loop = context.eventLoop
                 let promise = loop.makePromise(of: Bool.self)
                 let auth = self.auth
-                loop.execute {
-                    Task {
-                        let allowed = await auth.isAllowed(peer)
-                        promise.succeed(allowed)
-                    }
-                }
+                // Register `whenComplete` *before* launching the Task so
+                // a very-fast auth check can't succeed the promise before
+                // the completion handler is hooked. Launch the Task
+                // directly — `promise.succeed` hops to the event loop
+                // internally, so wrapping the Task in
+                // `eventLoop.execute` is redundant and turned out to
+                // wedge on CI (macos-26) when nested bridges ran
+                // back-to-back (auth → endpoint handler → respond).
                 promise.futureResult.whenComplete { [weak self] result in
                     guard let self else { return }
                     let allowed = (try? result.get()) ?? false
@@ -292,12 +389,24 @@ public final class WebServer {
                         Self.respond(context: context, status: .forbidden, body: Data("forbidden\n".utf8), contentType: "text/plain; charset=utf-8")
                         return
                     }
-                    self.serveStatic(context: context, head: head)
+                    if wasTooLarge {
+                        Self.respondJSON(
+                            context: context,
+                            status: .payloadTooLarge,
+                            error: "request body exceeds \(Self.maxBodyBytes) bytes"
+                        )
+                        return
+                    }
+                    self.serveStatic(context: context, head: head, body: body)
+                }
+                Task {
+                    let allowed = await auth.isAllowed(peer)
+                    promise.succeed(allowed)
                 }
             }
         }
 
-        func serveStatic(context: ChannelHandlerContext, head: HTTPRequestHead) {
+        func serveStatic(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
             let path = head.uri.split(separator: "?").first.map(String.init) ?? "/"
             // /ws paths are reserved for WebSocket upgrade; never fall through to
             // the SPA index for plain HTTP requests on those paths.
@@ -307,34 +416,42 @@ public final class WebServer {
             }
             // WEB-5.4: session list endpoint for the client's minimal picker.
             if path == "/sessions" {
-                let eventLoop = context.eventLoop
                 let provider = config.sessionsProvider
-                let promise = eventLoop.makePromise(of: [SessionInfo].self)
-                eventLoop.execute {
-                    Task {
-                        let sessions = await provider()
-                        promise.succeed(sessions)
-                    }
-                }
+                let promise = context.eventLoop.makePromise(of: [SessionInfo].self)
                 promise.futureResult.whenComplete { result in
                     let sessions = (try? result.get()) ?? []
-                    do {
-                        let data = try JSONEncoder().encode(sessions)
-                        Self.respond(
-                            context: context,
-                            status: .ok,
-                            body: data,
-                            contentType: "application/json; charset=utf-8"
-                        )
-                    } catch {
-                        Self.respond(
-                            context: context,
-                            status: .internalServerError,
-                            body: Data("encoding error\n".utf8),
-                            contentType: "text/plain; charset=utf-8"
-                        )
-                    }
+                    Self.respondEncodable(context: context, items: sessions)
                 }
+                Task {
+                    promise.succeed(await provider())
+                }
+                return
+            }
+            // WEB-7.1: repo list for the "Add Worktree" picker.
+            if path == "/repos" {
+                let provider = config.reposProvider
+                let promise = context.eventLoop.makePromise(of: [RepoInfo].self)
+                promise.futureResult.whenComplete { result in
+                    let repos = (try? result.get()) ?? []
+                    Self.respondEncodable(context: context, items: repos)
+                }
+                Task {
+                    promise.succeed(await provider())
+                }
+                return
+            }
+            // WEB-7.2: create a new worktree. POST-only; other verbs get
+            // 405 to keep caching proxies from surprising the client.
+            if path == "/worktrees" {
+                guard head.method == .POST else {
+                    Self.respondJSON(
+                        context: context,
+                        status: .methodNotAllowed,
+                        error: "only POST is supported"
+                    )
+                    return
+                }
+                handleCreateWorktree(context: context, body: body)
                 return
             }
             do {
@@ -353,6 +470,126 @@ public final class WebServer {
             } catch {
                 Self.respond(context: context, status: .notFound, body: Data("not found\n".utf8), contentType: "text/plain; charset=utf-8")
             }
+        }
+
+        /// Decode the JSON body, invoke the injected `worktreeCreator`,
+        /// and map its `CreateWorktreeOutcome` to an HTTP status +
+        /// `{error|sessionName+worktreePath}` JSON envelope. The handler
+        /// is synchronous-style (no `Task` escaping the handler's scope
+        /// beyond the awaited creator) and schedules the async work on
+        /// the event loop so NIO's handler lifecycle stays predictable.
+        private func handleCreateWorktree(context: ChannelHandlerContext, body: Data) {
+            guard let creator = config.worktreeCreator else {
+                Self.respondJSON(
+                    context: context,
+                    status: .serviceUnavailable,
+                    error: "worktree creation not available"
+                )
+                return
+            }
+            let decoded: CreateWorktreeRequest
+            do {
+                decoded = try JSONDecoder().decode(CreateWorktreeRequest.self, from: body)
+            } catch {
+                Self.respondJSON(
+                    context: context,
+                    status: .badRequest,
+                    error: "invalid JSON body: \(error)"
+                )
+                return
+            }
+            // Reject empty inputs here rather than letting git produce a
+            // cryptic error. The name sanitizer runs client-side, but a
+            // hand-crafted request could still arrive with whitespace
+            // that trims to empty.
+            let wtTrim = decoded.worktreeName.trimmingCharacters(in: .whitespaces)
+            let brTrim = decoded.branchName.trimmingCharacters(in: .whitespaces)
+            if decoded.repoPath.isEmpty || wtTrim.isEmpty || brTrim.isEmpty {
+                Self.respondJSON(
+                    context: context,
+                    status: .badRequest,
+                    error: "repoPath, worktreeName, and branchName are required"
+                )
+                return
+            }
+
+            let promise = context.eventLoop.makePromise(of: CreateWorktreeOutcome.self)
+            promise.futureResult.whenComplete { result in
+                let outcome = (try? result.get()) ?? .internalFailure("creator dispatch failed")
+                switch outcome {
+                case .success(let resp):
+                    do {
+                        let data = try JSONEncoder().encode(resp)
+                        Self.respond(
+                            context: context,
+                            status: .ok,
+                            body: data,
+                            contentType: "application/json; charset=utf-8"
+                        )
+                    } catch {
+                        Self.respondJSON(
+                            context: context,
+                            status: .internalServerError,
+                            error: "encoding error"
+                        )
+                    }
+                case .invalid(let msg):
+                    Self.respondJSON(context: context, status: .badRequest, error: msg)
+                case .gitFailed(let msg):
+                    Self.respondJSON(context: context, status: .conflict, error: msg)
+                case .internalFailure(let msg):
+                    Self.respondJSON(context: context, status: .internalServerError, error: msg)
+                }
+            }
+            Task {
+                promise.succeed(await creator(decoded))
+            }
+        }
+
+        /// Encode a concrete array and respond 200 (or 500 on encoding
+        /// failure). Called from the `/sessions` and `/repos` handlers
+        /// once they've resolved their respective providers — kept
+        /// non-generic so there's no runtime-generic dispatch on NIO's
+        /// event loop, which surfaced as an unreachable-test hang on
+        /// CI when the first call site was generic.
+        private static func respondEncodable<T: Encodable>(
+            context: ChannelHandlerContext,
+            items: [T]
+        ) {
+            do {
+                let data = try JSONEncoder().encode(items)
+                Self.respond(
+                    context: context,
+                    status: .ok,
+                    body: data,
+                    contentType: "application/json; charset=utf-8"
+                )
+            } catch {
+                Self.respondJSON(
+                    context: context,
+                    status: .internalServerError,
+                    error: "encoding error"
+                )
+            }
+        }
+
+        /// Respond with `{"error": "<msg>"}`. The client always gets
+        /// JSON even for 4xx/5xx so it can render the error inline next
+        /// to the form field without special-casing content type.
+        static func respondJSON(
+            context: ChannelHandlerContext,
+            status: HTTPResponseStatus,
+            error: String
+        ) {
+            struct ErrorBody: Codable { let error: String }
+            let body = (try? JSONEncoder().encode(ErrorBody(error: error)))
+                ?? Data(#"{"error":"unknown"}"#.utf8)
+            Self.respond(
+                context: context,
+                status: status,
+                body: body,
+                contentType: "application/json; charset=utf-8"
+            )
         }
 
         static func respond(context: ChannelHandlerContext, status: HTTPResponseStatus, body: Data, contentType: String) {

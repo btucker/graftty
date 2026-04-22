@@ -343,77 +343,47 @@ struct MainWindow: View {
         }
     }
 
-    /// Creates a new worktree at `<repo>/.worktrees/<name>` with a fresh
-    /// branch checked out. Starts from the repo's resolved default branch
-    /// so new feature worktrees branch off main (vs. whatever the main
-    /// checkout happens to have checked out right now). Returns nil on
-    /// success or the stderr message on failure, for the sheet to display.
-    ///
-    /// On success, discovers the new worktree inline, registers
-    /// its FSEvents watches, kicks its divergence stats, and selects
-    /// it. The existing `.git/worktrees/` watcher will also fire
-    /// `worktreeMonitorDidDetectChange` asynchronously — that path is
-    /// idempotent, so duplicate discovery is a no-op.
+    /// Delegates to `AddWorktreeFlow.add` for the git + discover + spawn
+    /// pipeline (shared with the web client's `POST /worktrees`), then
+    /// flips `selectedWorktreePath` and routes keyboard focus — the
+    /// parts of "select" that only apply to the local Mac window. The
+    /// web entry point deliberately skips those so remote-creating a
+    /// worktree doesn't yank local focus away.
     private func addWorktree(
         repo: RepoEntry,
         worktreeName: String,
         branchName: String
     ) async -> String? {
-        let repoPath = repo.path
-        let worktreePath = repoPath + "/.worktrees/" + worktreeName
-
-        let startPoint: String? = await GitOriginDefaultBranch.resolve(repoPath: repoPath)
-
-        let gitError: String?
-        do {
-            try await GitWorktreeAdd.add(
-                repoPath: repoPath,
-                worktreePath: worktreePath,
-                branchName: branchName,
-                startPoint: startPoint
-            )
-            gitError = nil
-        } catch GitWorktreeAdd.Error.gitFailed(_, let stderr) {
-            gitError = stderr.isEmpty ? "git worktree add failed" : stderr
-        } catch {
-            gitError = "\(error)"
-        }
-        if let gitError { return gitError }
-
-        // Run discovery now rather than waiting for FSEvents so the new
-        // entry is in appState by the time we call selectWorktree below
-        // — otherwise selectWorktree's terminal-launch logic sees no
-        // matching entry and no-ops. If discover fails here, log but
-        // proceed — FSEvents will catch up shortly and the user's
-        // `selectWorktree` call below will still work if the entry
-        // lands before the user notices (GIT-3.12). Not user-hostile
-        // like GIT-1.2 because the worktree creation itself already
-        // succeeded; this is just the eager-reconcile optimization.
-        let discovered: [DiscoveredWorktree]
-        do {
-            discovered = try await GitWorktreeDiscovery.discover(repoPath: repoPath)
-        } catch {
-            NSLog("[Graftty] addWorktree: post-success discover failed for %@: %@",
-                  repoPath, String(describing: error))
-            discovered = []
-        }
-        if let repoIdx = appState.repos.firstIndex(where: { $0.path == repoPath }) {
-            let existingPaths = Set(appState.repos[repoIdx].worktrees.map(\.path))
-            for d in discovered where !existingPaths.contains(d.path) {
-                let entry = WorktreeEntry(path: d.path, branch: d.branch)
-                appState.repos[repoIdx].worktrees.append(entry)
-                worktreeMonitor.watchWorktreePath(entry.path)
-                worktreeMonitor.watchHeadRef(worktreePath: entry.path, repoPath: repoPath)
-                worktreeMonitor.watchWorktreeContents(worktreePath: entry.path)
-                statsStore.refresh(worktreePath: entry.path, repoPath: repoPath, branch: entry.branch)
+        let result = await AddWorktreeFlow.add(
+            repoPath: repo.path,
+            worktreeName: worktreeName,
+            branchName: branchName,
+            appState: $appState,
+            worktreeMonitor: worktreeMonitor,
+            statsStore: statsStore,
+            terminalManager: terminalManager
+        )
+        switch result {
+        case .failure(let err):
+            switch err {
+            case .gitFailed(let msg): return msg
+            case .repoNotFound: return "repository no longer tracked"
+            case .discoveryFailed(let msg):
+                // The worktree creation itself succeeded; we just can't
+                // confirm it. Log and mirror the GIT-3.12 pattern of
+                // letting FSEvents eventually catch up.
+                NSLog("[Graftty] addWorktree: post-success discover failed for %@: %@",
+                      repo.path, msg)
+                return nil
             }
+        case .success(let outcome):
+            // `selectWorktree` is idempotent on the `.closed → .running`
+            // transition `AddWorktreeFlow.add` already performed; its
+            // remaining work is the UI-local side effects (first
+            // responder, PR refresh, `selectedWorktreePath`).
+            selectWorktree(outcome.worktreePath)
+            return nil
         }
-
-        // Switching to the new worktree also starts its terminal
-        // surface since selectWorktree transitions a closed entry into
-        // running.
-        selectWorktree(worktreePath)
-        return nil
     }
 
     private func addRepository() {

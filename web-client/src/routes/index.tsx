@@ -57,8 +57,12 @@ export function IndexPage() {
   }
   if (state.sessions.length === 0) {
     return (
-      <div className="picker-status">
-        No running sessions. Start one in Graftty.
+      <div className="picker">
+        <h1>Graftty sessions</h1>
+        <div className="picker-status">
+          No running sessions yet.
+        </div>
+        <Link to="/new" className="picker-add-worktree">+ Add worktree</Link>
       </div>
     );
   }
@@ -74,7 +78,10 @@ export function IndexPage() {
 
   return (
     <div className="picker">
-      <h1>Graftty sessions</h1>
+      <div className="picker-header">
+        <h1>Graftty sessions</h1>
+        <Link to="/new" className="picker-add-worktree">+ Add worktree</Link>
+      </div>
       {[...grouped.entries()].map(([repo, sessions]) => (
         <section key={repo} className="picker-repo">
           <h2>{repo}</h2>

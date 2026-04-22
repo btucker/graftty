@@ -2,6 +2,7 @@ import { createRouter, createRootRoute, createRoute } from '@tanstack/react-rout
 import { RootLayout } from './routes/__root';
 import { IndexPage } from './routes/index';
 import { SessionPage } from './routes/session.$name';
+import { NewWorktreePage } from './routes/new';
 
 const rootRoute = createRootRoute({ component: RootLayout });
 
@@ -17,6 +18,12 @@ const sessionRoute = createRoute({
   component: SessionPage,
 });
 
-const routeTree = rootRoute.addChildren([indexRoute, sessionRoute]);
+const newWorktreeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/new',
+  component: NewWorktreePage,
+});
+
+const routeTree = rootRoute.addChildren([indexRoute, sessionRoute, newWorktreeRoute]);
 
 export const router = createRouter({ routeTree });

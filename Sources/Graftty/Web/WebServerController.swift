@@ -21,6 +21,13 @@ final class WebServerController: ObservableObject {
     /// `terminalManager`'s session-name function exist. Nil before
     /// injection (default-empty provider is baked into `WebServer.Config`).
     private var sessionsProvider: (@Sendable () async -> [WebServer.SessionInfo])?
+    /// Supplies `GET /repos` (`WEB-7.1`). Same injection timing as
+    /// `sessionsProvider` — both read from `AppState`.
+    private var reposProvider: (@Sendable () async -> [WebServer.RepoInfo])?
+    /// Executes `POST /worktrees` (`WEB-7.2`). Routes into
+    /// `AddWorktreeFlow.add` on the main actor. Nil before injection
+    /// causes the endpoint to respond `503 service unavailable`.
+    private var worktreeCreator: (@Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome)?
 
     /// Last `(isEnabled, port)` tuple we reconciled against. Used to suppress
     /// no-op reconciles — `objectWillChange` on `@AppStorage` fires on every
@@ -58,6 +65,28 @@ final class WebServerController: ObservableObject {
         reconcile()
     }
 
+    /// Install the provider used for `GET /repos`. Same contract as
+    /// `setSessionsProvider`; see there for the force-reconcile
+    /// rationale.
+    func setReposProvider(
+        _ provider: @escaping @Sendable () async -> [WebServer.RepoInfo]
+    ) {
+        reposProvider = provider
+        lastApplied = nil
+        reconcile()
+    }
+
+    /// Install the creator used for `POST /worktrees`. Must be wired
+    /// before the endpoint is useful; prior to injection requests get
+    /// `503 service unavailable`.
+    func setWorktreeCreator(
+        _ creator: @escaping @Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome
+    ) {
+        worktreeCreator = creator
+        lastApplied = nil
+        reconcile()
+    }
+
     private func reconcile() {
         let desired = (enabled: settings.isEnabled, port: settings.port)
         if let last = lastApplied, last == desired { return }
@@ -88,12 +117,16 @@ final class WebServerController: ObservableObject {
                 return whois.loginName == ownerLogin
             }.allowingLoopback()
             let provider = sessionsProvider ?? { [] }
+            let repos = reposProvider ?? { [] }
+            let creator = worktreeCreator
             let s = WebServer(
                 config: .init(
                     port: desired.port,
                     zmxExecutable: zmxExecutable,
                     zmxDir: zmxDir,
-                    sessionsProvider: provider
+                    sessionsProvider: provider,
+                    reposProvider: repos,
+                    worktreeCreator: creator
                 ),
                 auth: auth,
                 bindAddresses: bind

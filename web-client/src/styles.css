@@ -16,6 +16,13 @@ html, body, #root, #app {
 #term {
   width: 100vw;
   height: 100vh;
+  /* Mobile: don't let the browser interpret single-finger drag as
+     page-scroll/pan/zoom; our touch handler owns the gesture and
+     feeds it to the terminal's scrollback. */
+  touch-action: none;
+  /* Disable overscroll so iOS's rubber-band doesn't visually detach
+     the terminal from the viewport during scrollback drags. */
+  overscroll-behavior: none;
 }
 
 #status {
@@ -83,4 +90,117 @@ html, body, #root, #app {
   font: 11px Menlo, monospace;
   color: #888;
   overflow-wrap: anywhere;
+}
+
+.picker-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.picker-header h1 {
+  margin: 0;
+}
+.picker-add-worktree {
+  display: inline-block;
+  padding: 6px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--term-foreground);
+  text-decoration: none;
+  font: 500 13px -apple-system, system-ui, sans-serif;
+}
+.picker-add-worktree:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.new-worktree-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 480px;
+}
+.new-worktree-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.new-worktree-field > span {
+  font: 500 12px -apple-system, system-ui, sans-serif;
+  color: #aaa;
+}
+.new-worktree-field input,
+.new-worktree-field select {
+  font: 14px Menlo, monospace;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--term-foreground);
+}
+.new-worktree-field input:focus,
+.new-worktree-field select:focus {
+  outline: none;
+  border-color: rgba(120, 170, 255, 0.6);
+  background: rgba(255, 255, 255, 0.06);
+}
+.new-worktree-field input:disabled,
+.new-worktree-field select:disabled {
+  opacity: 0.5;
+}
+.new-worktree-repo {
+  color: #9cf;
+}
+.new-worktree-error {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: rgba(255, 107, 107, 0.12);
+  color: #ff9f9f;
+  font: 13px Menlo, monospace;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.new-worktree-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 8px;
+}
+.new-worktree-cancel {
+  padding: 8px 16px;
+  border-radius: 6px;
+  color: #aaa;
+  text-decoration: none;
+  font: 500 13px -apple-system, system-ui, sans-serif;
+}
+.new-worktree-cancel:hover {
+  color: var(--term-foreground);
+}
+.new-worktree-submit {
+  padding: 8px 16px;
+  border-radius: 6px;
+  border: 1px solid rgba(120, 170, 255, 0.6);
+  background: rgba(120, 170, 255, 0.2);
+  color: var(--term-foreground);
+  font: 500 13px -apple-system, system-ui, sans-serif;
+  cursor: pointer;
+}
+.new-worktree-submit:hover:not(:disabled) {
+  background: rgba(120, 170, 255, 0.3);
+}
+.new-worktree-submit:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.new-worktree-back {
+  display: inline-block;
+  margin-top: 12px;
+  color: #888;
+  text-decoration: none;
+  font: 13px -apple-system, system-ui, sans-serif;
+}
+.new-worktree-back:hover {
+  color: var(--term-foreground);
 }
