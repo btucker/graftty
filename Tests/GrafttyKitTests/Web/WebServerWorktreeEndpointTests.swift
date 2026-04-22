@@ -7,7 +7,13 @@ import Foundation
 /// independent of AppState, AddWorktreeFlow, and the `git` binary —
 /// those paths are covered by their own tests and the native sheet's
 /// path is exercised by integration testing of the app.
-@Suite("WebServer — /repos + /worktrees endpoints", .serialized)
+///
+/// Not `.serialized`: each test binds its own server to `port: 0`, so
+/// per-test isolation is already guaranteed at the socket layer, and
+/// Swift Testing's serialized-suite scheduler turned out to wedge the
+/// whole suite on CI (macos-26) when the first test's async promise
+/// bridge didn't fire — letting tests run in parallel sidesteps that.
+@Suite("WebServer — /repos + /worktrees endpoints")
 struct WebServerWorktreeEndpointTests {
 
     private static func makeConfig(
