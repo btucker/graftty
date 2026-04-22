@@ -13,13 +13,23 @@ public final class PRStatusStore {
     @ObservationIgnored private let fetcherFor: (HostingProvider) -> PRFetcher?
     @ObservationIgnored private let detectHost: @Sendable (String) async throws -> HostingOrigin?
     @ObservationIgnored private var hostByRepo: [String: HostingOrigin?] = [:]
-    @ObservationIgnored private var inFlight: Set<String> = []
+    /// Per-path timestamp of the most recently dispatched fetch. Stored
+    /// as a date rather than a bare Set so a hung prior Task (a `gh pr
+    /// list` / `gh pr checks` subprocess stuck on an HTTP response or
+    /// rate-limit back-off) is considered abandoned after
+    /// `refreshCadence`, at which point a new refresh is allowed
+    /// through. Bumping `generation` on each allowed refresh drops the
+    /// stuck Task's late write if it ever returns. Mirrors
+    /// `WorktreeStatsStore`'s DIVERGE-4.4 pattern. `PR-7.13`.
+    @ObservationIgnored private var inFlight: [String: Date] = [:]
     @ObservationIgnored private var lastFetch: [String: Date] = [:]
     @ObservationIgnored private var failureStreak: [String: Int] = [:]
-    /// Per-path generation counter. Bumped by `clear(worktreePath:)` so
-    /// that an in-flight `performFetch` can detect when its result has
-    /// been invalidated and bail out before writing stale data back into
-    /// `infos`/`absent`.
+    /// Per-path generation counter. Bumped by `clear(worktreePath:)`
+    /// and by `refresh`/`tick` dispatches so that an in-flight
+    /// `performFetch` can detect when its result has been invalidated —
+    /// either by a user-triggered `clear` or by a superseding dispatch
+    /// that took over the `inFlight` slot — and bail out before writing
+    /// stale data back into `infos`/`absent`.
     @ObservationIgnored private var generation: [String: Int] = [:]
     @ObservationIgnored private var ticker: PollingTickerLike?
     @ObservationIgnored private var getRepos: @MainActor () -> [RepoEntry] = { [] }
@@ -69,17 +79,25 @@ public final class PRStatusStore {
         }
     }
 
-    /// Force a fetch for one worktree, regardless of cadence. Skips if already
-    /// in flight, and silently no-ops for git sentinel branches
-    /// (`(detached)` / `(bare)` / `(unknown)` / unborn / empty) that cannot
-    /// correspond to a real `refs/heads/` value — PR-7.5. The polling loop
-    /// applies the same gate; centralizing it here keeps on-demand callers
-    /// (MainWindow select, `branchDidChange`) from firing wasted
-    /// `gh pr list --head <sentinel>` invocations.
+    /// Force a fetch for one worktree, regardless of cadence. Silently
+    /// no-ops for git sentinel branches (`(detached)` / `(bare)` /
+    /// `(unknown)` / unborn / empty) that cannot correspond to a real
+    /// `refs/heads/` value — `PR-7.5`. Defers to an in-flight prior
+    /// fetch only while that fetch is plausibly still running
+    /// (`PR-7.13`): beyond the `refreshCadence` cap, the prior Task is
+    /// treated as abandoned (stuck `gh` subprocess) and a fresh fetch
+    /// supersedes it. Bumping `generation` ensures the abandoned Task's
+    /// late write is dropped if it ever returns.
     public func refresh(worktreePath: String, repoPath: String, branch: String) {
         guard Self.isFetchableBranch(branch) else { return }
-        guard !inFlight.contains(worktreePath) else { return }
-        inFlight.insert(worktreePath)
+        let now = Date()
+        let cap = Double(Self.refreshCadence().components.seconds)
+        if let started = inFlight[worktreePath],
+           now.timeIntervalSince(started) < cap {
+            return
+        }
+        inFlight[worktreePath] = now
+        generation[worktreePath, default: 0] += 1
 
         // Snapshot synchronously — a `clear()` between here and Task
         // start must invalidate this fetch. `PR-7.9`.
@@ -106,11 +124,11 @@ public final class PRStatusStore {
         }
         lastFetch.removeValue(forKey: worktreePath)
         failureStreak.removeValue(forKey: worktreePath)
-        // Release the refresh gate so a subsequent `refresh` isn't
-        // silently no-op'd while the prior Task drains. The Task's own
-        // `defer { inFlight.remove(...) }` is still safe (Set.remove
-        // with an absent key is a no-op).
-        inFlight.remove(worktreePath)
+        // Release the in-flight gate so a subsequent `refresh` isn't
+        // silently suppressed while the prior Task drains. The Task's
+        // late write is handled by the generation check in
+        // `performFetch`.
+        inFlight.removeValue(forKey: worktreePath)
         // Bump the generation so any in-flight fetch's late write
         // (after its await resumes) can detect it's been invalidated
         // and discard its result.
@@ -124,22 +142,30 @@ public final class PRStatusStore {
     }
 
     func isInFlightForTesting(_ worktreePath: String) -> Bool {
-        inFlight.contains(worktreePath)
+        inFlight[worktreePath] != nil
     }
 
     func beginInFlightForTesting(_ worktreePath: String) {
-        inFlight.insert(worktreePath)
+        inFlight[worktreePath] = Date()
+    }
+
+    /// Seed the in-flight timestamp so tests can simulate a prior
+    /// refresh Task that's been pending longer than `refreshCadence`
+    /// — i.e., considered abandoned. A subsequent `refresh` call must
+    /// then dispatch a fresh Task rather than silently deferring to the
+    /// stuck one. Mirrors `WorktreeStatsStore.seedInFlightSinceForTesting`.
+    func seedInFlightSinceForTesting(_ date: Date, forWorktree worktreePath: String) {
+        inFlight[worktreePath] = date
     }
 
     /// Notify the store that a worktree's branch has changed. Drops the
     /// cached PR info synchronously so the UI doesn't keep showing the
     /// previous branch's PR through the gh-fetch in-flight window, then
-    /// schedules a fresh fetch for the new branch — bypassing the
-    /// `inFlight` guard so a concurrent polling-cycle fetch doesn't
-    /// suppress the re-resolve.
+    /// schedules a fresh fetch for the new branch — `clear` already
+    /// released the `inFlight` gate, so the subsequent `refresh` won't
+    /// be suppressed by a concurrent polling-cycle fetch.
     public func branchDidChange(worktreePath: String, repoPath: String, branch: String) {
         clear(worktreePath: worktreePath)
-        inFlight.remove(worktreePath)
         refresh(worktreePath: worktreePath, repoPath: repoPath, branch: branch)
     }
 
@@ -151,7 +177,17 @@ public final class PRStatusStore {
         branch: String,
         fetchGeneration: Int
     ) async {
-        defer { inFlight.remove(worktreePath) }
+        // Release the in-flight slot only if our generation is still
+        // the current one. A superseding dispatch (user `clear`, branch
+        // change, or a `PR-7.13` stuck-Task recovery) already took over
+        // the slot with its own timestamp; blindly removing here would
+        // let yet another dispatch race in alongside the live one.
+        // Mirrors `WorktreeStatsStore.apply`'s release discipline.
+        defer {
+            if generation[worktreePath, default: 0] == fetchGeneration {
+                inFlight.removeValue(forKey: worktreePath)
+            }
+        }
 
         // Caller snapshotted `fetchGeneration`; we re-read `generation`
         // after each await and bail on mismatch so a `clear()` during
@@ -311,6 +347,17 @@ extension PRStatusStore {
         return !branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Base refresh cadence — also the time-bound cap on the `inFlight`
+    /// guard (`PR-7.13`). A normal `gh pr list` + `gh pr checks` pair
+    /// resolves in under a few seconds; anything in-flight longer than a
+    /// full refresh window is assumed abandoned (stuck subprocess, rate-
+    /// limit back-off, auth retry loop) and superseded by the next
+    /// dispatch. Kept in sync with `PR-7.1`'s 30-second base — both the
+    /// poll cadence and the stuck-guard cap are the same clock.
+    nonisolated static func refreshCadence() -> Duration {
+        .seconds(30)
+    }
+
     nonisolated static func cadenceFor(
         info: PRInfo?,
         isAbsent: Bool,
@@ -370,6 +417,7 @@ extension PRStatusStore {
     private func tick() async {
         let repos = getRepos()
         let now = Date()
+        let inFlightCap = Double(Self.refreshCadence().components.seconds)
 
         struct Candidate { let path, repoPath, branch: String }
         var candidates: [Candidate] = []
@@ -382,7 +430,14 @@ extension PRStatusStore {
                 continue
             }
             for wt in repo.worktrees where wt.state != .stale {
-                if inFlight.contains(wt.path) { continue }
+                // `PR-7.13` time-bounded in-flight check: defer to a
+                // prior dispatch only while it's plausibly still
+                // running. Past the cap it's treated as abandoned and
+                // a fresh fetch supersedes it below.
+                if let started = inFlight[wt.path],
+                   now.timeIntervalSince(started) < inFlightCap {
+                    continue
+                }
                 if !Self.isFetchableBranch(wt.branch) { continue }
                 let interval = cadence(for: wt.path)
                 let last = lastFetch[wt.path]
@@ -401,7 +456,8 @@ extension PRStatusStore {
                     await group.next()
                     inflight -= 1
                 }
-                inFlight.insert(c.path)
+                inFlight[c.path] = Date()
+                generation[c.path, default: 0] += 1
                 let gen = generation[c.path, default: 0]
                 group.addTask { [weak self] in
                     await self?.performFetch(
