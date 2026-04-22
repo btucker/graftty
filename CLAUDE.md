@@ -13,3 +13,16 @@ Write requirements in the EARS (Easy Approach to Requirements Syntax) style alre
 Each requirement gets a scoped identifier (e.g., `GIT-4.3`, `LAYOUT-2.12`) so it can be cited in PRs and commit messages. Place new requirements under the feature section they concern (context-menu items go under their feature's section, not in a central "context menu" cluster) and extend the existing numbering rather than renumbering siblings.
 
 If a change removes or modifies behavior, update or delete the matching requirements in the same commit — the goal is that SPECS.md never lags behind the code.
+
+## Cutting a release
+
+Releases are tag-driven — no source changes needed to bump the version.
+
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+`.github/workflows/release.yml` takes it from there: builds the bundle (picking up `GRAFTTY_VERSION` from the tag), ad-hoc codesigns, zips with `ditto`, attaches the zip to a GitHub release, and pushes a `version`+`sha256` bump to the `btucker/homebrew-graftty` cask tap. Bootstrap + migration notes (Developer ID + notarization) live in `docs/release/README.md`.
+
+The release workflow does not run tests — it only runs `swift build`. A flaky `ci.yml` failure on the head commit does not block a release, but confirm the failure is unrelated to the shipped changes before tagging.
