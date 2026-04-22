@@ -18,6 +18,7 @@ struct SettingsView: View {
         Form {
             TextField("Default command:", text: $defaultCommand, prompt: Text("e.g., claude"))
                 .textFieldStyle(.roundedBorder)
+                .multilineTextAlignment(.leading)
 
             Toggle("Run in first pane only", isOn: $firstPaneOnly)
 
