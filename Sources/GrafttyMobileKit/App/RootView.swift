@@ -98,7 +98,16 @@ struct SingleSessionView: View {
     @Binding var navigationPath: NavigationPath
 
     @State private var client: SessionClient
+    /// Actual system state (driven by keyboardWillShow/Hide).
     @State private var isKeyboardVisible: Bool = false
+    /// User-controlled: false after the user taps "Hide keyboard". A
+    /// stray tap that tries to re-summon the keyboard is immediately
+    /// dismissed; the only way back on is the "Show keyboard" button.
+    @State private var keyboardAllowed: Bool = true
+    /// Monotonic counter: bumping it makes TerminalPaneView call
+    /// becomeFirstResponder() on next update. Used to summon the
+    /// keyboard programmatically from the show-keyboard button.
+    @State private var focusRequestCount: Int = 0
 
     init(step: SessionStep, navigationPath: Binding<NavigationPath>) {
         self.step = step
@@ -109,34 +118,37 @@ struct SingleSessionView: View {
     }
 
     var body: some View {
-        TerminalPaneView(session: client.session)
-            .ignoresSafeArea(edges: .top)
+        TerminalPaneView(session: client.session, focusRequestCount: focusRequestCount)
+            // Fill every edge — top (under the notch), bottom (under the
+            // home indicator), and in landscape the left/right safe-area
+            // strips. libghostty renders its background color to the full
+            // bounds, so the unsafe areas pick up the terminal's own
+            // background rather than the SwiftUI default.
+            .ignoresSafeArea()
             .toolbar(.hidden, for: .navigationBar)
             .overlay(alignment: .bottomTrailing) {
-                if isKeyboardVisible {
-                    Button {
-                        UIApplication.shared.sendAction(
-                            #selector(UIResponder.resignFirstResponder),
-                            to: nil, from: nil, for: nil
-                        )
-                    } label: {
-                        Image(systemName: "keyboard.chevron.compact.down")
-                            .font(.title2)
-                            .foregroundStyle(.primary)
-                            .padding(10)
-                            .background(.ultraThinMaterial, in: Circle())
-                            .shadow(radius: 1)
-                    }
+                keyboardButton
                     .padding(.trailing, 12)
                     .padding(.bottom, 12)
-                    .accessibilityLabel("Hide keyboard")
                     .transition(.opacity.combined(with: .scale))
-                }
             }
             .animation(.easeInOut(duration: 0.15), value: isKeyboardVisible)
+            .animation(.easeInOut(duration: 0.15), value: keyboardAllowed)
             .onReceive(NotificationCenter.default.publisher(
                 for: UIResponder.keyboardWillShowNotification
-            )) { _ in isKeyboardVisible = true }
+            )) { _ in
+                isKeyboardVisible = true
+                // If the user had explicitly hidden the keyboard, a stray
+                // tap on the terminal can make UITerminalView ask for
+                // first-responder again. Immediately dismiss — brief
+                // flicker (one frame) but honours the user's intent.
+                if !keyboardAllowed {
+                    UIApplication.shared.sendAction(
+                        #selector(UIResponder.resignFirstResponder),
+                        to: nil, from: nil, for: nil
+                    )
+                }
+            }
             .onReceive(NotificationCenter.default.publisher(
                 for: UIResponder.keyboardWillHideNotification
             )) { _ in isKeyboardVisible = false }
@@ -147,6 +159,45 @@ struct SingleSessionView: View {
                 }
             }
             .onDisappear { client.stop() }
+    }
+
+    /// Tri-state floating button:
+    ///   - keyboard visible → chevron-down, "Hide keyboard" (disables + resigns)
+    ///   - keyboard hidden by user → chevron-up, "Show keyboard" (re-enables,
+    ///     TerminalPaneView.updateUIView calls becomeFirstResponder on the
+    ///     off→on edge so the keyboard reappears without requiring a tap)
+    ///   - otherwise → no button
+    @ViewBuilder
+    private var keyboardButton: some View {
+        if isKeyboardVisible {
+            Button {
+                keyboardAllowed = false
+                UIApplication.shared.sendAction(
+                    #selector(UIResponder.resignFirstResponder),
+                    to: nil, from: nil, for: nil
+                )
+            } label: {
+                keyboardGlyph("keyboard.chevron.compact.down")
+            }
+            .accessibilityLabel("Hide keyboard")
+        } else if !keyboardAllowed {
+            Button {
+                keyboardAllowed = true
+                focusRequestCount += 1
+            } label: {
+                keyboardGlyph("keyboard")
+            }
+            .accessibilityLabel("Show keyboard")
+        }
+    }
+
+    private func keyboardGlyph(_ systemName: String) -> some View {
+        Image(systemName: systemName)
+            .font(.title2)
+            .foregroundStyle(.primary)
+            .padding(10)
+            .background(.ultraThinMaterial, in: Circle())
+            .shadow(radius: 1)
     }
 }
 
