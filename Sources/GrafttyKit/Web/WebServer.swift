@@ -3,6 +3,7 @@ import NIO
 import NIOHTTP1
 import NIOSSL
 import NIOWebSocket
+import GrafttyProtocol
 
 /// HTTP + WebSocket server for Phase 2 web access. Binds to each
 /// Tailscale IP (plus 127.0.0.1), serves static assets at `/`,
@@ -19,29 +20,6 @@ public final class WebServer {
         case certFetchFailed(String)
         case portUnavailable
         case error(String)
-    }
-
-    /// One entry served by `GET /sessions`. Minimum useful shape for the
-    /// client's session picker (`WEB-5.4`): the `name` is the URL segment
-    /// under `/session/`, and the label hints let the picker disambiguate
-    /// multiple worktrees sharing a directory basename.
-    public struct SessionInfo: Codable, Sendable, Equatable {
-        public let name: String
-        public let worktreePath: String
-        public let repoDisplayName: String
-        public let worktreeDisplayName: String
-
-        public init(
-            name: String,
-            worktreePath: String,
-            repoDisplayName: String,
-            worktreeDisplayName: String
-        ) {
-            self.name = name
-            self.worktreePath = worktreePath
-            self.repoDisplayName = repoDisplayName
-            self.worktreeDisplayName = worktreeDisplayName
-        }
     }
 
     /// One entry served by `GET /repos` — the set of repositories the

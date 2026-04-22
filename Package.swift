@@ -13,7 +13,7 @@ let strictWarnings: [SwiftSetting] = [
 
 let package = Package(
     name: "Graftty",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v14), .iOS(.v17)],
     products: [
         .executable(name: "Graftty", targets: ["Graftty"]),
         // Product name "graftty-cli" (not "graftty") to avoid case-insensitive
@@ -22,6 +22,7 @@ let package = Package(
         // at Graftty.app/Contents/MacOS/graftty per ATTN-1.1.
         .executable(name: "graftty-cli", targets: ["GrafttyCLI"]),
         .library(name: "GrafttyKit", targets: ["GrafttyKit"]),
+        .library(name: "GrafttyMobileKit", targets: ["GrafttyMobileKit"]),
     ],
     dependencies: [
         .package(url: "https://github.com/Lakr233/libghostty-spm.git", from: "1.0.0"),
@@ -31,8 +32,13 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "GrafttyProtocol",
+            swiftSettings: strictWarnings
+        ),
+        .target(
             name: "GrafttyKit",
             dependencies: [
+                "GrafttyProtocol",
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOWebSocket", package: "swift-nio"),
@@ -47,6 +53,7 @@ let package = Package(
             name: "Graftty",
             dependencies: [
                 "GrafttyKit",
+                "GrafttyProtocol",
                 .product(name: "GhosttyKit", package: "libghostty-spm"),
             ],
             swiftSettings: strictWarnings
@@ -60,12 +67,30 @@ let package = Package(
             swiftSettings: strictWarnings
         ),
         .testTarget(
+            name: "GrafttyProtocolTests",
+            dependencies: ["GrafttyProtocol"],
+            swiftSettings: strictWarnings
+        ),
+        .testTarget(
             name: "GrafttyKitTests",
-            dependencies: ["GrafttyKit"],
+            dependencies: ["GrafttyKit", "GrafttyProtocol"],
             resources: [
                 .process("Hosting/Fixtures"),
                 .copy("Web/Fixtures"),
             ],
+            swiftSettings: strictWarnings
+        ),
+        .target(
+            name: "GrafttyMobileKit",
+            dependencies: [
+                "GrafttyProtocol",
+                .product(name: "GhosttyTerminal", package: "libghostty-spm"),
+            ],
+            swiftSettings: strictWarnings
+        ),
+        .testTarget(
+            name: "GrafttyMobileKitTests",
+            dependencies: ["GrafttyMobileKit"],
             swiftSettings: strictWarnings
         ),
     ]

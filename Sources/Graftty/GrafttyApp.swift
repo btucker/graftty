@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import GrafttyKit
+import GrafttyProtocol
 
 /// Holds long-lived non-SwiftUI services for the app. Retained for the lifetime of
 /// `GrafttyApp` so weak delegates (e.g. `WorktreeMonitor.delegate`) stay alive.
@@ -478,14 +479,14 @@ struct GrafttyApp: App {
         // disambiguates same-basename worktrees the same way.
         let appStateBinding = $appState
         webController.setSessionsProvider {
-            await MainActor.run { () -> [WebServer.SessionInfo] in
-                var sessions: [WebServer.SessionInfo] = []
+            await MainActor.run { () -> [SessionInfo] in
+                var sessions: [SessionInfo] = []
                 for repo in appStateBinding.wrappedValue.repos {
                     let siblingPaths = repo.worktrees.map(\.path)
                     for wt in repo.worktrees where wt.state == .running {
                         for leafID in wt.splitTree.allLeaves {
                             let sessionName = ZmxLauncher.sessionName(for: leafID.id)
-                            sessions.append(WebServer.SessionInfo(
+                            sessions.append(SessionInfo(
                                 name: sessionName,
                                 worktreePath: wt.path,
                                 repoDisplayName: repo.displayName,
