@@ -17,7 +17,7 @@
 		209AA99D93CB6F87F6505EF6 /* ios-app */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "ios-app"; path = ../..; sourceTree = SOURCE_ROOT; };
 		60476F2F86616EAD082CF370 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		8E56F1F52D5AD50167862DB5 /* GrafttyMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrafttyMobileApp.swift; sourceTree = "<group>"; };
-		D0E517DBD6A521AB367A54A6 /* GrafttyMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GrafttyMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D0E517DBD6A521AB367A54A6 /* GrafttyMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GrafttyMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -274,7 +274,9 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGNING_REQUIRED = NO;
 				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Z565684959;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = GrafttyMobile/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -296,7 +298,9 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGNING_REQUIRED = NO;
 				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = Z565684959;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = GrafttyMobile/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;

@@ -24,6 +24,7 @@ public struct QRScannerView: UIViewControllerRepresentable {
         var onDetect: ((String) -> Void)?
         private let session = AVCaptureSession()
         private lazy var preview = AVCaptureVideoPreviewLayer(session: session)
+        private var didDetect = false
 
         override public func viewDidLoad() {
             super.viewDidLoad()
@@ -59,9 +60,16 @@ public struct QRScannerView: UIViewControllerRepresentable {
             didOutput metadataObjects: [AVMetadataObject],
             from _: AVCaptureConnection
         ) {
+            // AVFoundation fires this on every frame while a QR code is in
+            // view — tens of times per second. Latch after the first hit so
+            // we don't spawn N concurrent onDetect callbacks before SwiftUI
+            // dismisses the sheet.
+            guard !didDetect else { return }
             for obj in metadataObjects {
                 if let readable = obj as? AVMetadataMachineReadableCodeObject,
                    let value = readable.stringValue {
+                    didDetect = true
+                    session.stopRunning()
                     onDetect?(value)
                     return
                 }

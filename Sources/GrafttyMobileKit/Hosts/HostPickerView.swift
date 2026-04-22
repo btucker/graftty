@@ -4,11 +4,9 @@ import SwiftUI
 public struct HostPickerView: View {
     @Bindable var store: HostStore
     @State private var showingAdd = false
-    public let onSelect: (Host) -> Void
 
-    public init(store: HostStore, onSelect: @escaping (Host) -> Void) {
+    public init(store: HostStore) {
         self.store = store
-        self.onSelect = onSelect
     }
 
     public var body: some View {
@@ -18,9 +16,11 @@ public struct HostPickerView: View {
                     Text("No saved hosts yet.").foregroundStyle(.secondary)
                 }
                 ForEach(store.hosts) { host in
-                    Button {
-                        onSelect(host)
-                    } label: {
+                    // NavigationLink(value:) pushes the host onto the
+                    // NavigationSplitView detail stack; a plain Button
+                    // only mutates state and doesn't navigate on the
+                    // iPhone compact layout where the split collapses.
+                    NavigationLink(value: host) {
                         VStack(alignment: .leading) {
                             Text(host.label).font(.body)
                             Text(host.baseURL.absoluteString).font(.caption).foregroundStyle(.secondary)

@@ -50,12 +50,30 @@ public final class HostStore {
 
     public func add(_ host: Host) throws {
         var next = hosts
-        if let idx = next.firstIndex(where: { $0.id == host.id }) {
+        // Dedupe by normalized baseURL first (belt-and-suspenders against
+        // the scanner firing twice before the Save sheet dismisses). If a
+        // host with the same URL exists, refresh its timestamp + label
+        // rather than inserting a duplicate under a new UUID.
+        if let idx = next.firstIndex(where: { Self.sameURL($0.baseURL, host.baseURL) }) {
+            var existing = next[idx]
+            existing.label = host.label
+            existing.lastUsedAt = Date()
+            next[idx] = existing
+        } else if let idx = next.firstIndex(where: { $0.id == host.id }) {
             next[idx] = host
         } else {
             next.append(host)
         }
         try write(next)
+    }
+
+    /// URLs compare case-insensitively on scheme/host and pass-through on
+    /// path/port. `http://Mac.local:8799/` and `http://mac.local:8799`
+    /// address the same server.
+    private static func sameURL(_ a: URL, _ b: URL) -> Bool {
+        (a.scheme?.lowercased() ?? "") == (b.scheme?.lowercased() ?? "")
+            && (a.host?.lowercased() ?? "") == (b.host?.lowercased() ?? "")
+            && (a.port ?? -1) == (b.port ?? -1)
     }
 
     public func update(_ host: Host) throws {

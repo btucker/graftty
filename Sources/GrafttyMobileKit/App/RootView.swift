@@ -7,6 +7,7 @@ public struct RootView: View {
 
     @State private var hostStore = HostStore()
     @State private var gate = BiometricGate()
+    @State private var navigationPath: [HostStep] = []
     @State private var activeController: HostController?
     @State private var sessionClients: [UUID: SessionClient] = [:]
     @State private var activePaneID: UUID?
@@ -16,12 +17,17 @@ public struct RootView: View {
 
     public var body: some View {
         ZStack {
-            NavigationSplitView {
-                HostPickerView(store: hostStore) { host in
-                    Task { await openHost(host) }
-                }
-            } detail: {
-                detail
+            NavigationStack(path: $navigationPath) {
+                HostPickerView(store: hostStore)
+                    .navigationDestination(for: Host.self) { host in
+                        hostDetail(for: host)
+                    }
+                    .navigationDestination(for: HostStep.self) { step in
+                        switch step {
+                        case let .paneGrid(host):
+                            paneDetail(for: host)
+                        }
+                    }
             }
             if gate.state == .locked {
                 lockOverlay
@@ -33,6 +39,7 @@ public struct RootView: View {
             case .background:
                 gate.applicationDidEnterBackground()
                 activeController?.tearDownForBackground()
+                for c in sessionClients.values { c.stop() }
                 sessionClients.removeAll()
             case .active:
                 gate.applicationWillEnterForeground()
@@ -47,33 +54,44 @@ public struct RootView: View {
         }
     }
 
+    /// Second-level views on the stack. Host is the first destination;
+    /// `.paneGrid` is the deeper destination after tapping a session.
+    private enum HostStep: Hashable {
+        case paneGrid(Host)
+    }
+
     @ViewBuilder
-    private var detail: some View {
-        if let controller = activeController {
-            if controller.panes.isEmpty {
-                SessionPickerView(controller: controller) { info in
-                    openPane(sessionName: info.name, on: controller)
+    private func hostDetail(for host: Host) -> some View {
+        let controller = ensureController(for: host)
+        SessionPickerView(controller: controller) { info in
+            openPane(sessionName: info.name, on: controller)
+            navigationPath.append(HostStep.paneGrid(host))
+        }
+    }
+
+    @ViewBuilder
+    private func paneDetail(for host: Host) -> some View {
+        if let controller = activeController, controller.host.id == host.id {
+            VStack(spacing: 0) {
+                SplitContainerView(panes: controller.panes) { id in
+                    sessionClients[id]?.session
                 }
-            } else {
-                VStack(spacing: 0) {
-                    SplitContainerView(panes: controller.panes) { id in
-                        sessionClients[id]?.session
-                    }
-                    SessionSwitcherView(
-                        controller: controller,
-                        activePaneID: $activePaneID
-                    )
-                }
-                .toolbar {
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        Button("Back to sessions") {
-                            closeAllPanes(on: controller)
-                        }
+                SessionSwitcherView(
+                    controller: controller,
+                    activePaneID: $activePaneID
+                )
+            }
+            .navigationTitle(host.label)
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button("Close") {
+                        closeAllPanes(on: controller)
+                        if !navigationPath.isEmpty { navigationPath.removeLast() }
                     }
                 }
             }
         } else {
-            ContentUnavailableView("Pick a host", systemImage: "terminal")
+            ContentUnavailableView("Session ended", systemImage: "xmark.circle")
         }
     }
 
@@ -89,7 +107,10 @@ public struct RootView: View {
     }
 
     @MainActor
-    private func openHost(_ host: Host) async {
+    private func ensureController(for host: Host) -> HostController {
+        if let existing = activeController, existing.host.id == host.id {
+            return existing
+        }
         let ctl = HostController(
             host: host,
             fetcher: { [host] in
@@ -97,7 +118,7 @@ public struct RootView: View {
             }
         )
         activeController = ctl
-        await ctl.refreshSessions()
+        return ctl
     }
 
     @MainActor
@@ -125,7 +146,6 @@ public struct RootView: View {
     private func resumeSessions(on ctl: HostController) async {
         let fresh = (try? await SessionsFetcher.fetch(baseURL: ctl.host.baseURL)) ?? []
         await ctl.resumeForForeground(currentSessions: fresh)
-        // Rebuild SessionClients for surviving panes.
         sessionClients.removeAll()
         for pane in ctl.panes {
             let wsURL = Self.makeWebSocketURL(base: ctl.host.baseURL, session: pane.sessionName)

@@ -2,7 +2,7 @@
 import Foundation
 
 /// A saved Graftty server the user has onboarded via QR or manual entry.
-public struct Host: Codable, Sendable, Equatable, Identifiable {
+public struct Host: Codable, Sendable, Hashable, Identifiable {
     public let id: UUID
     public var label: String
     public var baseURL: URL
