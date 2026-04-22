@@ -110,7 +110,28 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
 
       ws.onmessage = (ev) => {
         if (ev.data instanceof ArrayBuffer) {
-          termRef.current?.write(new Uint8Array(ev.data));
+          const term = termRef.current;
+          if (!term) return;
+          const data = new Uint8Array(ev.data);
+          // ghostty-web's write() calls scrollToBottom() whenever
+          // viewportY !== 0, yanking the user out of scrollback on
+          // every PTY chunk. When the user is scrolled up, save
+          // viewportY, let write() run, then restore shifted by
+          // scrollback growth so we pin the same absolute line rather
+          // than the same offset-from-bottom. Skip on the alt screen
+          // (vim/less): no scrollback, should stay at bottom.
+          const savedViewportY = term.viewportY;
+          if (savedViewportY === 0) {
+            term.write(data);
+            return;
+          }
+          const savedScrollbackLen = term.getScrollbackLength();
+          const wasNormal = term.buffer.active.type === 'normal';
+          term.write(data);
+          if (wasNormal && term.buffer.active.type === 'normal') {
+            const delta = term.getScrollbackLength() - savedScrollbackLen;
+            term.scrollToLine(savedViewportY + delta);
+          }
         } else {
           try {
             const msg = JSON.parse(String(ev.data));
