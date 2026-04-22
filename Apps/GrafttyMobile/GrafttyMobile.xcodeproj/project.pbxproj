@@ -288,6 +288,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = net.graftty.GrafttyMobile;
 				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
 				SWIFT_VERSION = 5.10;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -311,6 +312,7 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = net.graftty.GrafttyMobile;
 				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
 				SWIFT_VERSION = 5.10;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

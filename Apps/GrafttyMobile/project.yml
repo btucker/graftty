@@ -29,6 +29,7 @@ targets:
         SWIFT_VERSION: "5.10"
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_ENTITLEMENTS: GrafttyMobile/GrafttyMobile.entitlements
+        SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
     dependencies:
       - package: GrafttyMobileKit
         product: GrafttyMobileKit
