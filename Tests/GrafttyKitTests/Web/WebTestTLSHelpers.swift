@@ -1,3 +1,7 @@
+// Test-only. Everything in this file trusts any server certificate
+// and is meant exclusively for the bundled localhost fixture cert —
+// do NOT reuse these helpers in production code paths.
+
 import Foundation
 import Testing
 @testable import GrafttyKit
