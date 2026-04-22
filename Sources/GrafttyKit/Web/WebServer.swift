@@ -1,6 +1,7 @@
 import Foundation
 import NIO
 import NIOHTTP1
+import NIOSSL
 import NIOWebSocket
 
 /// HTTP + WebSocket server for Phase 2 web access. Binds to each
@@ -12,7 +13,10 @@ public final class WebServer {
     public enum Status: Equatable {
         case stopped
         case listening(addresses: [String], port: Int)
-        case disabledNoTailscale
+        case tailscaleUnavailable
+        case magicDNSDisabled
+        case httpsCertsNotEnabled
+        case certFetchFailed(String)
         case portUnavailable
         case error(String)
     }
@@ -146,30 +150,13 @@ public final class WebServer {
     public struct AuthPolicy {
         public let isAllowed: @Sendable (String) async -> Bool
         public init(isAllowed: @escaping @Sendable (String) async -> Bool) { self.isAllowed = isAllowed }
-
-        /// Wrap this policy so that loopback peers (`127.0.0.1`, `::1`)
-        /// are approved without consulting the underlying policy. WEB-2.5.
-        /// The bundled server binds to `127.0.0.1` (WEB-1.1) so the local
-        /// user can reach the web UI without routing through Tailscale,
-        /// but `api.whois(peerIP: "127.0.0.1")` returns "peer not found" —
-        /// without this bypass every loopback request hits 403.
-        public func allowingLoopback() -> AuthPolicy {
-            let underlying = isAllowed
-            return AuthPolicy { peer in
-                if AuthPolicy.isLoopback(peer) { return true }
-                return await underlying(peer)
-            }
-        }
-
-        public static func isLoopback(_ peer: String) -> Bool {
-            peer == "127.0.0.1" || peer == "::1" || peer == "0:0:0:0:0:0:0:1"
-        }
     }
 
     public private(set) var status: Status = .stopped
     public let config: Config
     public let auth: AuthPolicy
     public let bindAddresses: [String]
+    public let tlsProvider: WebTLSContextProvider
 
     /// Test-only hook: when non-nil, applied as `SO_SNDBUF` on every child
     /// (accepted) channel. Exists to simulate buffer-constrained network
@@ -183,17 +170,23 @@ public final class WebServer {
     private var group: EventLoopGroup?
     private var channels: [Channel] = []
 
-    public init(config: Config, auth: AuthPolicy, bindAddresses: [String]) {
+    public init(
+        config: Config,
+        auth: AuthPolicy,
+        bindAddresses: [String],
+        tlsProvider: WebTLSContextProvider
+    ) {
         self.config = config
         self.auth = auth
         self.bindAddresses = bindAddresses
+        self.tlsProvider = tlsProvider
     }
 
     public func start() throws {
         precondition(group == nil, "WebServer already started")
         guard !bindAddresses.isEmpty else {
-            status = .disabledNoTailscale
-            throw Status.disabledNoTailscale.asError
+            status = .tailscaleUnavailable
+            throw Status.tailscaleUnavailable.asError
         }
 
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
@@ -201,6 +194,7 @@ public final class WebServer {
 
         let capturedConfig = config
         let capturedAuth = auth
+        let capturedTLS = tlsProvider
 
         var bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 16)
@@ -227,6 +221,24 @@ public final class WebServer {
                         context.channel.pipeline.removeHandler(handler, promise: nil)
                     }
                 )
+                // Snapshot the current TLS context at channel-accept time. Any
+                // in-flight handshake uses this exact context even if a renewal
+                // swaps the provider mid-handshake; that's fine — new connections
+                // accepted after the swap pick up the fresh context on their
+                // next initializer call. WEB-8.3.
+                //
+                // `NIOSSLServerHandler` is explicitly not `Sendable`, so we
+                // add it via `pipeline.syncOperations` (which doesn't require
+                // Sendable) rather than the async `pipeline.addHandler`. The
+                // child-channel initializer runs on the accepting channel's
+                // event loop (see `ServerBootstrap.AcceptHandler.channelRead`
+                // in NIOPosix), so `syncOperations` is safe here.
+                do {
+                    let sslHandler = NIOSSLServerHandler(context: capturedTLS.current())
+                    try channel.pipeline.syncOperations.addHandler(sslHandler)
+                } catch {
+                    return channel.eventLoop.makeFailedFuture(error)
+                }
                 return channel.pipeline.configureHTTPServerPipeline(
                     withServerUpgrade: upgradeConfig
                 ).flatMap {
