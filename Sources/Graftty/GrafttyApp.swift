@@ -50,6 +50,11 @@ struct GrafttyApp: App {
     @StateObject private var webController: WebServerController
     private let services: AppServices
 
+    // SwiftUI re-fires `.onAppear` on dock-reopen and File → New Window
+    // because the WindowGroup content closure reruns; `startup()` is
+    // one-time-per-launch (ghostty_init, pollers, observers). LAYOUT-5.3.
+    @State private var didStartup = false
+
     init() {
         // Graftty is single-instance: the state.json, the graftty.sock
         // listener, and (most visibly) the per-pane zmx session names are
@@ -129,7 +134,11 @@ struct GrafttyApp: App {
                 worktreeMonitor: services.worktreeMonitor
             )
                 .environmentObject(webController)
-                .onAppear { startup() }
+                .onAppear {
+                    guard !didStartup else { return }
+                    didStartup = true
+                    startup()
+                }
                 .onChange(of: appState) { _, newState in
                     do {
                         try newState.save(to: AppState.defaultDirectory)

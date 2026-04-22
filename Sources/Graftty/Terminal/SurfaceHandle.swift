@@ -198,15 +198,24 @@ final class SurfaceHandle {
 
     func setFocus(_ focused: Bool) {
         ghostty_surface_set_focus(surface, focused)
-        // Keep AppKit's first-responder in sync with libghostty's focus
-        // state: if the view is already in a window, promote it so keyDown
-        // events route here. `makeFirstResponder` on a detached view is a
-        // silent no-op, so callers that focus a pane before SwiftUI has
-        // mounted the view are covered by `SurfaceNSView.viewDidMoveToWindow`.
-        if focused,
-           let surfaceView = view as? SurfaceNSView,
-           let window = surfaceView.window {
+        // `setFocus(true)` is an authoritative "claim AppKit first
+        // responder now" — claim even if another SurfaceNSView already
+        // holds it, which is exactly the case a split produces. Fresh
+        // surfaces sit outside the view hierarchy until SwiftUI's next
+        // render pass; `SurfaceNSView.viewDidMoveToWindow` can't cover
+        // that case because it deliberately yields to an existing
+        // SurfaceNSView first responder, and the previous pane still
+        // holds it at mount time. Retry on the next main-queue turn
+        // when the view isn't in a window yet. TERM-7.7.
+        guard focused, let surfaceView = view as? SurfaceNSView else { return }
+        if let window = surfaceView.window {
             window.makeFirstResponder(surfaceView)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                guard let surfaceView = self?.view as? SurfaceNSView,
+                      let window = surfaceView.window else { return }
+                window.makeFirstResponder(surfaceView)
+            }
         }
     }
 
