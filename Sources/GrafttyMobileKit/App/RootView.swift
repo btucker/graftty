@@ -7,10 +7,7 @@ public struct RootView: View {
 
     @State private var hostStore = HostStore()
     @State private var gate = BiometricGate()
-    @State private var navigationPath: [HostStep] = []
-    @State private var activeController: HostController?
-    @State private var sessionClients: [UUID: SessionClient] = [:]
-    @State private var activePaneID: UUID?
+    @State private var navigationPath = NavigationPath()
     @Environment(\.scenePhase) private var scenePhase
 
     public init() {}
@@ -20,13 +17,10 @@ public struct RootView: View {
             NavigationStack(path: $navigationPath) {
                 HostPickerView(store: hostStore)
                     .navigationDestination(for: Host.self) { host in
-                        hostDetail(for: host)
+                        HostDetailView(host: host, navigationPath: $navigationPath)
                     }
-                    .navigationDestination(for: HostStep.self) { step in
-                        switch step {
-                        case let .paneGrid(host):
-                            paneDetail(for: host)
-                        }
+                    .navigationDestination(for: PaneStep.self) { step in
+                        PaneGridView(step: step, navigationPath: $navigationPath)
                     }
             }
             if gate.state == .locked {
@@ -38,60 +32,14 @@ public struct RootView: View {
             switch newPhase {
             case .background:
                 gate.applicationDidEnterBackground()
-                activeController?.tearDownForBackground()
-                for c in sessionClients.values { c.stop() }
-                sessionClients.removeAll()
             case .active:
                 gate.applicationWillEnterForeground()
                 if gate.state == .locked {
                     Task { await gate.authenticate() }
-                } else if let controller = activeController {
-                    Task { await resumeSessions(on: controller) }
                 }
             default:
                 break
             }
-        }
-    }
-
-    /// Second-level views on the stack. Host is the first destination;
-    /// `.paneGrid` is the deeper destination after tapping a session.
-    private enum HostStep: Hashable {
-        case paneGrid(Host)
-    }
-
-    @ViewBuilder
-    private func hostDetail(for host: Host) -> some View {
-        let controller = ensureController(for: host)
-        SessionPickerView(controller: controller) { info in
-            openPane(sessionName: info.name, on: controller)
-            navigationPath.append(HostStep.paneGrid(host))
-        }
-    }
-
-    @ViewBuilder
-    private func paneDetail(for host: Host) -> some View {
-        if let controller = activeController, controller.host.id == host.id {
-            VStack(spacing: 0) {
-                SplitContainerView(panes: controller.panes) { id in
-                    sessionClients[id]?.session
-                }
-                SessionSwitcherView(
-                    controller: controller,
-                    activePaneID: $activePaneID
-                )
-            }
-            .navigationTitle(host.label)
-            .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button("Close") {
-                        closeAllPanes(on: controller)
-                        if !navigationPath.isEmpty { navigationPath.removeLast() }
-                    }
-                }
-            }
-        } else {
-            ContentUnavailableView("Session ended", systemImage: "xmark.circle")
         }
     }
 
@@ -105,57 +53,105 @@ public struct RootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.regularMaterial)
     }
+}
 
-    @MainActor
-    private func ensureController(for host: Host) -> HostController {
-        if let existing = activeController, existing.host.id == host.id {
-            return existing
-        }
-        let ctl = HostController(
+/// Identifies the "you opened one of these sessions as a pane" navigation
+/// level. Carries both the host and the initial session so `PaneGridView`
+/// can open it without re-asking the picker.
+struct PaneStep: Hashable {
+    let host: Host
+    let initialSession: String
+}
+
+/// Owns a HostController + session clients scoped to a single host. When
+/// SwiftUI pushes this destination, it is created fresh; when the user
+/// pops it (or navigates to a different host), it is deallocated and its
+/// clients stop. That lifecycle replaces the old "single activeController
+/// at the RootView level" which caused render-time state mutation and an
+/// infinite re-render loop when tapping a host.
+struct HostDetailView: View {
+    let host: Host
+    @Binding var navigationPath: NavigationPath
+    @State private var controller: HostController
+
+    init(host: Host, navigationPath: Binding<NavigationPath>) {
+        self.host = host
+        self._navigationPath = navigationPath
+        self._controller = State(initialValue: HostController(
             host: host,
             fetcher: { [host] in
                 (try? await SessionsFetcher.fetch(baseURL: host.baseURL)) ?? []
             }
-        )
-        activeController = ctl
-        return ctl
+        ))
+    }
+
+    var body: some View {
+        SessionPickerView(controller: controller) { info in
+            navigationPath.append(PaneStep(host: host, initialSession: info.name))
+        }
+    }
+}
+
+/// Owns the pane grid for one (host, initialSession). Pane clients are
+/// created as panes open and torn down when this view goes away.
+struct PaneGridView: View {
+    let step: PaneStep
+    @Binding var navigationPath: NavigationPath
+
+    @State private var controller: HostController
+    @State private var sessionClients: [UUID: SessionClient] = [:]
+    @State private var activePaneID: UUID?
+
+    init(step: PaneStep, navigationPath: Binding<NavigationPath>) {
+        self.step = step
+        self._navigationPath = navigationPath
+        self._controller = State(initialValue: HostController(
+            host: step.host,
+            fetcher: { [host = step.host] in
+                (try? await SessionsFetcher.fetch(baseURL: host.baseURL)) ?? []
+            }
+        ))
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SplitContainerView(panes: controller.panes) { id in
+                sessionClients[id]?.session
+            }
+            SessionSwitcherView(controller: controller, activePaneID: $activePaneID)
+        }
+        .navigationTitle(step.host.label)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button("Close") { navigationPath.removeLast() }
+            }
+        }
+        .task {
+            // Opening the initial pane on `.task` rather than `init` so the
+            // SessionClient's start() and its spawned Task run after the
+            // view is actually on screen.
+            guard controller.panes.isEmpty else { return }
+            openPane(sessionName: step.initialSession)
+        }
+        .onDisappear {
+            for c in sessionClients.values { c.stop() }
+            sessionClients.removeAll()
+        }
     }
 
     @MainActor
-    private func openPane(sessionName: String, on ctl: HostController) {
-        let wsURL = Self.makeWebSocketURL(base: ctl.host.baseURL, session: sessionName)
+    private func openPane(sessionName: String) {
+        let wsURL = RootView.makeWebSocketURL(base: step.host.baseURL, session: sessionName)
         let ws = URLSessionWebSocketClient(url: wsURL)
         let client = SessionClient(sessionName: sessionName, webSocket: ws)
         client.start()
-        ctl.openPane(sessionName: sessionName)
-        if let pane = ctl.panes.last {
-            sessionClients[pane.id] = client
-            activePaneID = pane.id
-        }
+        let pane = controller.openPane(sessionName: sessionName)
+        sessionClients[pane.id] = client
+        activePaneID = pane.id
     }
+}
 
-    @MainActor
-    private func closeAllPanes(on ctl: HostController) {
-        for client in sessionClients.values { client.stop() }
-        sessionClients.removeAll()
-        for pane in ctl.panes { ctl.closePane(pane.id) }
-        activePaneID = nil
-    }
-
-    @MainActor
-    private func resumeSessions(on ctl: HostController) async {
-        let fresh = (try? await SessionsFetcher.fetch(baseURL: ctl.host.baseURL)) ?? []
-        await ctl.resumeForForeground(currentSessions: fresh)
-        sessionClients.removeAll()
-        for pane in ctl.panes {
-            let wsURL = Self.makeWebSocketURL(base: ctl.host.baseURL, session: pane.sessionName)
-            let ws = URLSessionWebSocketClient(url: wsURL)
-            let client = SessionClient(sessionName: pane.sessionName, webSocket: ws)
-            client.start()
-            sessionClients[pane.id] = client
-        }
-    }
-
+extension RootView {
     static func makeWebSocketURL(base: URL, session: String) -> URL {
         var components = URLComponents(url: base, resolvingAgainstBaseURL: false) ?? URLComponents()
         components.scheme = (base.scheme?.lowercased() == "https") ? "wss" : "ws"
