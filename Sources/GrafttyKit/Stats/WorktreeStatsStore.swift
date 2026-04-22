@@ -21,15 +21,24 @@ public final class WorktreeStatsStore {
     @ObservationIgnored
     private var defaultBranchByRepo: [String: String?] = [:]
 
+    /// Per-path timestamp of the most recently dispatched `refresh`.
+    /// Stored as a date rather than a boolean so a hung prior Task
+    /// (e.g., a `git` subprocess blocked on a ref-transaction lock
+    /// during a concurrent `git push`) can be considered abandoned
+    /// after `statsRefreshCadence`, at which point a new refresh is
+    /// allowed through. Bumping the generation on each allowed refresh
+    /// drops the stuck Task's late `apply` when it eventually returns.
     @ObservationIgnored
-    private var inFlight: Set<String> = []
+    private var inFlight: [String: Date] = [:]
 
-    /// Per-path generation counter. Bumped by `clear(worktreePath:)` so
-    /// an in-flight fetch's late `apply` can detect it's been invalidated
-    /// and drop its write — otherwise a fetch that started before a
-    /// user-triggered `clear` (Dismiss, Delete, stale transition) would
-    /// repopulate `stats` with data for a worktree the user just
-    /// dismissed. Mirrors `PRStatusStore`'s pattern. DIVERGE-4.5.
+    /// Per-path generation counter. Bumped by `clear(worktreePath:)`
+    /// and by `refresh(…)` so a superseded in-flight fetch's late
+    /// `apply` can detect it's been invalidated and drop its write —
+    /// otherwise a fetch that started before a user-triggered `clear`
+    /// (Dismiss, Delete, stale transition) or before a stuck-Task
+    /// supersession would repopulate `stats` with data that no longer
+    /// reflects either the user's intent or the current git state.
+    /// Mirrors `PRStatusStore`'s pattern. DIVERGE-4.5.
     @ObservationIgnored
     private var generation: [String: Int] = [:]
 
@@ -146,7 +155,16 @@ public final class WorktreeStatsStore {
     }
 
     func isInFlightForTesting(_ worktreePath: String) -> Bool {
-        inFlight.contains(worktreePath)
+        inFlight[worktreePath] != nil
+    }
+
+    /// Seed the in-flight timestamp so tests can simulate a prior
+    /// refresh Task that's been pending longer than `statsRefreshCadence`
+    /// — i.e., considered abandoned. A subsequent `refresh` call must
+    /// then dispatch a fresh Task rather than silently deferring to the
+    /// stuck one.
+    func seedInFlightSinceForTesting(_ date: Date, forWorktree worktreePath: String) {
+        inFlight[worktreePath] = date
     }
 
     /// Drives `pollTick` from tests so the DIVERGE-4.6 per-worktree
@@ -172,8 +190,23 @@ public final class WorktreeStatsStore {
     }
 
     public func refresh(worktreePath: String, repoPath: String, branch: String) {
-        guard !inFlight.contains(worktreePath) else { return }
-        inFlight.insert(worktreePath)
+        let now = Date()
+        // Defer to an in-flight refresh only while its Task is plausibly
+        // still running. `statsRefreshCadence` is the natural cap: a
+        // normal compute completes in milliseconds, so anything older
+        // than a full refresh window is assumed abandoned (the common
+        // path is a `git` subprocess blocked on a ref-transaction lock
+        // during a concurrent `git push`, which doesn't respond to
+        // Task cancellation). Beyond the cap we fall through and
+        // dispatch a new Task; bumping `generation` ensures the stuck
+        // Task's late `apply` is dropped if it ever returns.
+        let cap = Double(Self.statsRefreshCadence().components.seconds)
+        if let started = inFlight[worktreePath],
+           now.timeIntervalSince(started) < cap {
+            return
+        }
+        inFlight[worktreePath] = now
+        generation[worktreePath, default: 0] += 1
         let cached = defaultBranchByRepo[repoPath] ?? nil
         let fetchGeneration = generation[worktreePath, default: 0]
         let compute = self.compute
@@ -194,7 +227,7 @@ public final class WorktreeStatsStore {
         // Release the in-flight gate so a subsequent `refresh` isn't
         // silently suppressed while the prior Task drains. The Task's
         // late `apply` is handled by the generation check.
-        inFlight.remove(worktreePath)
+        inFlight.removeValue(forKey: worktreePath)
         // Bump the generation so any in-flight fetch's late apply
         // (after its await resumes) detects the invalidation and drops
         // the write instead of repopulating stats for a dismissed
@@ -282,12 +315,16 @@ public final class WorktreeStatsStore {
         result: ComputeResult,
         fetchGeneration: Int
     ) {
-        inFlight.remove(worktreePath)
         // Repo-level cache is path-agnostic; always update it.
         defaultBranchByRepo[repoPath] = result.defaultBranch
-        // DIVERGE-4.5: drop the stats write if the caller's clear()
-        // invalidated us while the git subprocess was running.
+        // DIVERGE-4.5: drop the stats write if the caller's clear() or
+        // a superseding `refresh` invalidated us while the git
+        // subprocess was running. Leave `inFlight` untouched in that
+        // case — the live Task owns its own in-flight slot and will
+        // clear it when its own apply lands. Otherwise release the
+        // in-flight gate so the next cadence tick can dispatch again.
         if generation[worktreePath, default: 0] != fetchGeneration { return }
+        inFlight.removeValue(forKey: worktreePath)
         // Only advance the cadence clock on successful computes — a
         // repeatedly-failing subprocess must retry on the next tick
         // rather than silently pacing itself at the full cadence.
@@ -338,7 +375,6 @@ public final class WorktreeStatsStore {
             // after its fetch resolves.
             if didDispatchRepoFetch { continue }
             for wt in repo.worktrees where wt.state != .stale {
-                if inFlight.contains(wt.path) { continue }
                 if let last = lastStatsRefresh[wt.path],
                    now.timeIntervalSince(last) < Double(statsInterval.components.seconds) {
                     continue
