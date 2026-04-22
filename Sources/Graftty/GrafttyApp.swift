@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import GrafttyKit
+import GrafttyProtocol
 
 /// Holds long-lived non-SwiftUI services for the app. Retained for the lifetime of
 /// `GrafttyApp` so weak delegates (e.g. `WorktreeMonitor.delegate`) stay alive.
@@ -478,14 +479,14 @@ struct GrafttyApp: App {
         // disambiguates same-basename worktrees the same way.
         let appStateBinding = $appState
         webController.setSessionsProvider {
-            await MainActor.run { () -> [WebServer.SessionInfo] in
-                var sessions: [WebServer.SessionInfo] = []
+            await MainActor.run { () -> [SessionInfo] in
+                var sessions: [SessionInfo] = []
                 for repo in appStateBinding.wrappedValue.repos {
                     let siblingPaths = repo.worktrees.map(\.path)
                     for wt in repo.worktrees where wt.state == .running {
                         for leafID in wt.splitTree.allLeaves {
                             let sessionName = ZmxLauncher.sessionName(for: leafID.id)
-                            sessions.append(WebServer.SessionInfo(
+                            sessions.append(SessionInfo(
                                 name: sessionName,
                                 worktreePath: wt.path,
                                 repoDisplayName: repo.displayName,
@@ -495,6 +496,30 @@ struct GrafttyApp: App {
                     }
                 }
                 return sessions
+            }
+        }
+
+        // IOS-4.10: per-worktree pane trees + titles for the mobile
+        // client's worktree→pane drilldown. Only running worktrees
+        // with at least one pane are returned.
+        let terminalManager = tm
+        webController.setWorktreePanesProvider {
+            await MainActor.run { () -> [WorktreePanes] in
+                var out: [WorktreePanes] = []
+                for repo in appStateBinding.wrappedValue.repos {
+                    let siblingPaths = repo.worktrees.map(\.path)
+                    for wt in repo.worktrees where wt.state == .running {
+                        guard let root = wt.splitTree.root else { continue }
+                        let layout = paneLayoutNode(from: root, titles: terminalManager.titles)
+                        out.append(WorktreePanes(
+                            path: wt.path,
+                            displayName: wt.displayName(amongSiblingPaths: siblingPaths),
+                            repoDisplayName: repo.displayName,
+                            layout: layout
+                        ))
+                    }
+                }
+                return out
             }
         }
 
@@ -2087,5 +2112,30 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             store.refresh(worktreePath: worktreePath, repoPath: repoPath, branch: match.branch)
             prStore.branchDidChange(worktreePath: worktreePath, repoPath: repoPath, branch: match.branch)
         }
+    }
+}
+
+/// Convert the Mac-side `SplitTree.Node` into the wire-format
+/// `PaneLayoutNode`. Leaves carry the ZMX session name + the pane's
+/// current title (or an empty string if libghostty hasn't emitted one
+/// yet). Splits preserve direction + ratio + children.
+@MainActor
+private func paneLayoutNode(
+    from node: SplitTree.Node,
+    titles: [TerminalID: String]
+) -> PaneLayoutNode {
+    switch node {
+    case let .leaf(id):
+        return .leaf(
+            sessionName: ZmxLauncher.sessionName(for: id.id),
+            title: titles[id] ?? ""
+        )
+    case let .split(s):
+        return .split(
+            direction: s.direction == .horizontal ? .horizontal : .vertical,
+            ratio: s.ratio,
+            left: paneLayoutNode(from: s.left, titles: titles),
+            right: paneLayoutNode(from: s.right, titles: titles)
+        )
     }
 }

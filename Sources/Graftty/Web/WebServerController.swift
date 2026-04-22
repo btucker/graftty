@@ -1,5 +1,6 @@
 import Foundation
 import GrafttyKit
+import GrafttyProtocol
 import Combine
 
 /// Owns the `WebServer` lifetime at app scope. Subscribes to
@@ -21,7 +22,8 @@ final class WebServerController: ObservableObject {
     /// (`WEB-5.4`). Injected by `GrafttyApp` after `appState` + the
     /// `terminalManager`'s session-name function exist. Nil before
     /// injection (default-empty provider is baked into `WebServer.Config`).
-    private var sessionsProvider: (@Sendable () async -> [WebServer.SessionInfo])?
+    private var sessionsProvider: (@Sendable () async -> [SessionInfo])?
+    private var worktreePanesProvider: (@Sendable () async -> [WorktreePanes])?
     /// Supplies `GET /repos` (`WEB-7.1`). Same injection timing as
     /// `sessionsProvider` — both read from `AppState`.
     private var reposProvider: (@Sendable () async -> [WebServer.RepoInfo])?
@@ -61,7 +63,7 @@ final class WebServerController: ObservableObject {
     /// from `GrafttyApp.startup()` once `appState` is available. Forces
     /// a reconcile so a running server picks up the new provider.
     func setSessionsProvider(
-        _ provider: @escaping @Sendable () async -> [WebServer.SessionInfo]
+        _ provider: @escaping @Sendable () async -> [SessionInfo]
     ) {
         sessionsProvider = provider
         lastApplied = nil  // force reconcile to rebuild the Config
@@ -75,6 +77,16 @@ final class WebServerController: ObservableObject {
         _ provider: @escaping @Sendable () async -> [WebServer.RepoInfo]
     ) {
         reposProvider = provider
+        lastApplied = nil
+        reconcile()
+    }
+
+    /// Install the provider used for `GET /worktrees/panes`. Same
+    /// contract as `setSessionsProvider`.
+    func setWorktreePanesProvider(
+        _ provider: @escaping @Sendable () async -> [WorktreePanes]
+    ) {
+        worktreePanesProvider = provider
         lastApplied = nil
         reconcile()
     }
@@ -163,7 +175,9 @@ final class WebServerController: ObservableObject {
                     zmxDir: zmxDir,
                     sessionsProvider: sessionsProvider,
                     reposProvider: repos,
-                    worktreeCreator: creator
+                    worktreeCreator: creator,
+                    ghosttyConfigProvider: { GhosttyConfigReader.resolvedConfig() },
+                    worktreePanesProvider: worktreePanesProvider ?? { [] }
                 ),
                 auth: auth,
                 bindAddresses: bind,

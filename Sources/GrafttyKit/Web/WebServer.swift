@@ -3,6 +3,7 @@ import NIO
 import NIOHTTP1
 import NIOSSL
 import NIOWebSocket
+import GrafttyProtocol
 
 /// HTTP + WebSocket server for Phase 2 web access. Binds to each
 /// Tailscale IP (plus 127.0.0.1), serves static assets at `/`,
@@ -19,29 +20,6 @@ public final class WebServer {
         case certFetchFailed(String)
         case portUnavailable
         case error(String)
-    }
-
-    /// One entry served by `GET /sessions`. Minimum useful shape for the
-    /// client's session picker (`WEB-5.4`): the `name` is the URL segment
-    /// under `/session/`, and the label hints let the picker disambiguate
-    /// multiple worktrees sharing a directory basename.
-    public struct SessionInfo: Codable, Sendable, Equatable {
-        public let name: String
-        public let worktreePath: String
-        public let repoDisplayName: String
-        public let worktreeDisplayName: String
-
-        public init(
-            name: String,
-            worktreePath: String,
-            repoDisplayName: String,
-            worktreeDisplayName: String
-        ) {
-            self.name = name
-            self.worktreePath = worktreePath
-            self.repoDisplayName = repoDisplayName
-            self.worktreeDisplayName = worktreeDisplayName
-        }
     }
 
     /// One entry served by `GET /repos` — the set of repositories the
@@ -114,6 +92,18 @@ public final class WebServer {
         /// creator; the default exists for tests and early-boot states
         /// where `AppState` isn't wired yet.
         public let worktreeCreator: (@Sendable (CreateWorktreeRequest) async -> CreateWorktreeOutcome)?
+        /// Source for `GET /ghostty-config`. Returns the Mac-resolved
+        /// Ghostty config so a remote client (GrafttyMobile) can render
+        /// terminals with the same fonts, theme, and colors as the
+        /// native Mac app. Default is empty — clients see an empty body
+        /// and fall back to libghostty-spm's defaults.
+        public let ghosttyConfigProvider: @Sendable () async -> String
+        /// Source for `GET /worktrees/panes`. Returns one entry per
+        /// running worktree with the full pane split-tree + titles, so
+        /// a mobile client can render a worktree picker and the
+        /// faithful pane layout inside each. Default returns an empty
+        /// list.
+        public let worktreePanesProvider: @Sendable () async -> [WorktreePanes]
 
         public init(
             port: Int,
@@ -121,7 +111,9 @@ public final class WebServer {
             zmxDir: URL,
             sessionsProvider: @escaping @Sendable () async -> [SessionInfo] = { [] },
             reposProvider: @escaping @Sendable () async -> [RepoInfo] = { [] },
-            worktreeCreator: (@Sendable (CreateWorktreeRequest) async -> CreateWorktreeOutcome)? = nil
+            worktreeCreator: (@Sendable (CreateWorktreeRequest) async -> CreateWorktreeOutcome)? = nil,
+            ghosttyConfigProvider: @escaping @Sendable () async -> String = { "" },
+            worktreePanesProvider: @escaping @Sendable () async -> [WorktreePanes] = { [] }
         ) {
             self.port = port
             self.zmxExecutable = zmxExecutable
@@ -129,6 +121,8 @@ public final class WebServer {
             self.sessionsProvider = sessionsProvider
             self.reposProvider = reposProvider
             self.worktreeCreator = worktreeCreator
+            self.ghosttyConfigProvider = ghosttyConfigProvider
+            self.worktreePanesProvider = worktreePanesProvider
         }
 
         /// Accepts the range NIO's `bootstrap.bind(host:port:)` will accept
@@ -452,6 +446,35 @@ public final class WebServer {
                 }
                 return
             }
+            // IOS-4.10: worktrees + split-faithful pane trees for the
+            // mobile client's worktree → pane drilldown.
+            if path == "/worktrees/panes" {
+                let provider = config.worktreePanesProvider
+                let promise = context.eventLoop.makePromise(of: [WorktreePanes].self)
+                promise.futureResult.whenComplete { result in
+                    let list = (try? result.get()) ?? []
+                    Self.respondEncodable(context: context, items: list)
+                }
+                Task { promise.succeed(await provider()) }
+                return
+            }
+            // IOS-4.7: the Mac's resolved Ghostty config, so a remote
+            // client can render terminals identically to the desktop.
+            if path == "/ghostty-config" {
+                let provider = config.ghosttyConfigProvider
+                let promise = context.eventLoop.makePromise(of: String.self)
+                promise.futureResult.whenComplete { result in
+                    let text = (try? result.get()) ?? ""
+                    Self.respond(
+                        context: context,
+                        status: .ok,
+                        body: Data(text.utf8),
+                        contentType: "text/plain; charset=utf-8"
+                    )
+                }
+                Task { promise.succeed(await provider()) }
+                return
+            }
             // WEB-7.2: create a new worktree. POST-only; other verbs get
             // 405 to keep caching proxies from surprising the client.
             if path == "/worktrees" {
@@ -674,6 +697,16 @@ public final class WebServer {
                     )
                     channel.writeAndFlush(close, promise: nil)
                     channel.close(promise: nil)
+                }
+            }
+            sess.onPTYSize = { [weak self] cols, rows in
+                guard let self, let channel = self.channel else { return }
+                let payload = WebControlEnvelope.grid(cols: cols, rows: rows).encoded()
+                channel.eventLoop.execute {
+                    var buf = channel.allocator.buffer(capacity: payload.utf8.count)
+                    buf.writeString(payload)
+                    let frame = WebSocketFrame(fin: true, opcode: .text, data: buf)
+                    channel.writeAndFlush(frame, promise: nil)
                 }
             }
             do {

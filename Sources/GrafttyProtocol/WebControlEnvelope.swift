@@ -9,7 +9,17 @@ import Foundation
 /// exhaustive handling when new variants arrive in Phase 3
 /// (sessionList, ping, etc.).
 public enum WebControlEnvelope: Equatable {
+    /// Client → server. "I want the terminal at these dimensions."
+    /// Applies via `ioctl(TIOCSWINSZ)` on the server's PTY child.
     case resize(cols: UInt16, rows: UInt16)
+
+    /// Server → client. "The PTY's current dimensions are these." Sent on
+    /// WebSocket open and again whenever the server observes a size
+    /// change (e.g. a sibling client resized via its own `resize` frame).
+    /// Clients use this to size their rendering frame so a wider-than-
+    /// screen server grid can be scrolled horizontally on a phone while
+    /// the Mac pane holds its original width.
+    case grid(cols: UInt16, rows: UInt16)
 
     public enum ParseError: Error, Equatable {
         case notJSON
@@ -35,8 +45,26 @@ public enum WebControlEnvelope: Equatable {
                 throw ParseError.invalidDimension
             }
             return .resize(cols: UInt16(cols), rows: UInt16(rows))
+        case "grid":
+            guard let cols = dict["cols"] as? Int else { throw ParseError.missingField("cols") }
+            guard let rows = dict["rows"] as? Int else { throw ParseError.missingField("rows") }
+            guard cols > 0 && rows > 0 && cols <= 10_000 && rows <= 10_000 else {
+                throw ParseError.invalidDimension
+            }
+            return .grid(cols: UInt16(cols), rows: UInt16(rows))
         default:
             throw ParseError.unknownType(type)
+        }
+    }
+
+    /// Serialize to the JSON text shape a server-side parser expects.
+    /// Kept adjacent to `parse` so renaming a field updates both directions.
+    public func encoded() -> String {
+        switch self {
+        case let .resize(cols, rows):
+            return #"{"type":"resize","cols":\#(cols),"rows":\#(rows)}"#
+        case let .grid(cols, rows):
+            return #"{"type":"grid","cols":\#(cols),"rows":\#(rows)}"#
         }
     }
 }

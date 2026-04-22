@@ -58,3 +58,25 @@ jobs:
         # `script` gives swift test a PTY-like stdout so output streams
         # in real time instead of being block-buffered by the CI log pipe.
         run: /usr/bin/script -q /dev/null swift test --skip-build
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Regenerate GrafttyMobile.xcodeproj
+        working-directory: Apps/GrafttyMobile
+        run: xcodegen generate
+
+      - name: Build GrafttyMobile (iOS Simulator SDK)
+        # Let xcodebuild apply the default simulator ad-hoc signature
+        # (with application-identifier entitlement) — CODE_SIGN_IDENTITY=-
+        # in project.yml handles signing. Without a real signature the
+        # iOS Keychain rejects every SecItemAdd with errSecMissingEntitlement.
+        run: |
+          xcodebuild \
+            -project Apps/GrafttyMobile/GrafttyMobile.xcodeproj \
+            -scheme GrafttyMobile \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            -skipPackagePluginValidation \
+            -destination 'generic/platform=iOS Simulator' \
+            build

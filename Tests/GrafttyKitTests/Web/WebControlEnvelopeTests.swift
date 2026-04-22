@@ -1,6 +1,6 @@
 import Testing
 import Foundation
-@testable import GrafttyKit
+import GrafttyProtocol
 
 @Suite("WebControlEnvelope — parse")
 struct WebControlEnvelopeTests {

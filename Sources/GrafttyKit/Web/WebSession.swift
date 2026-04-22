@@ -40,9 +40,18 @@ public final class WebSession {
     /// or error). The caller should initiate WS close.
     public var onExit: (() -> Void)?
 
+    /// Called whenever a size-poll observes the PTY's winsize has
+    /// changed, plus once on initial start after `zmx attach` has
+    /// applied the session's size. The caller forwards this to the
+    /// client as a `WebControlEnvelope.grid` text frame so it can size
+    /// its rendering surface to match the server.
+    public var onPTYSize: ((_ cols: UInt16, _ rows: UInt16) -> Void)?
+
     private let config: Config
     private var spawned: PtyProcess.Spawned?
     private var readerThread: Thread?
+    private var sizePoller: Thread?
+    private var lastKnownSize: (cols: UInt16, rows: UInt16)?
     private let stateLock = NSLock()
     private var isClosed = false
 
@@ -69,6 +78,7 @@ public final class WebSession {
             throw Error.spawnFailed(error)
         }
         startReaderThread()
+        startSizePoller()
     }
 
     public func write(_ data: Data) {
@@ -95,6 +105,7 @@ public final class WebSession {
         // already handled the close path.
         onPTYData = nil
         onExit = nil
+        onPTYSize = nil
         stateLock.unlock()
 
         if let spawned {
@@ -150,5 +161,51 @@ public final class WebSession {
         let cb = onExit
         stateLock.unlock()
         cb?()
+    }
+
+    /// Polls the PTY winsize on a background thread. Each change is
+    /// forwarded to `onPTYSize` so the WebSocket bridge can push a
+    /// `grid` control envelope to the client. 250 ms cadence is a
+    /// compromise: slow enough to be free CPU-wise, fast enough that a
+    /// Mac-side window drag feels responsive to the iOS viewer.
+    /// kevent-on-winsize would be cleaner but PTY fds don't support it;
+    /// SIGWINCH handling in the parent requires a global signal
+    /// disposition change that conflicts with the rest of Graftty.
+    private func startSizePoller() {
+        guard let fd = spawned?.masterFD else { return }
+        let thread = Thread { [weak self] in
+            while true {
+                guard let self else { break }
+                // Single critical section per iteration: check that the
+                // session hasn't been closed (the `close()` path sets
+                // isClosed=true then Darwin.close(fd)) AND read the last
+                // known size. Doing the ioctl *inside* the lock prevents
+                // the close+fd-reuse race where a freshly-opened fd of
+                // the same integer value would get a spurious TIOCGWINSZ.
+                self.stateLock.lock()
+                let closed = self.isClosed
+                guard !closed else {
+                    self.stateLock.unlock()
+                    break
+                }
+                let size = PtyProcess.currentSize(masterFD: fd)
+                var emit: (UInt16, UInt16)?
+                if let size {
+                    let changed = (self.lastKnownSize?.cols != size.cols)
+                                || (self.lastKnownSize?.rows != size.rows)
+                    if changed {
+                        self.lastKnownSize = size
+                        emit = (size.cols, size.rows)
+                    }
+                }
+                let cb = self.onPTYSize
+                self.stateLock.unlock()
+                if let (cols, rows) = emit { cb?(cols, rows) }
+                Thread.sleep(forTimeInterval: 0.25)
+            }
+        }
+        thread.name = "WebSession.sizePoller(\(config.sessionName))"
+        thread.start()
+        sizePoller = thread
     }
 }

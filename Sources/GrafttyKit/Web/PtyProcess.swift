@@ -199,4 +199,15 @@ public enum PtyProcess {
             throw Error.execFailed(errno: errno)  // repurposing; cleaner to add a dedicated case if this becomes common
         }
     }
+
+    /// Read the PTY's current winsize. Used by the server to announce
+    /// grid changes to attached web/iOS clients so they can size their
+    /// rendering to match. Returns nil when the ioctl fails (typically
+    /// means the fd is closed).
+    public static func currentSize(masterFD: Int32) -> (cols: UInt16, rows: UInt16)? {
+        var ws = winsize()
+        let rc = ioctl(masterFD, UInt(TIOCGWINSZ), &ws)
+        if rc != 0 { return nil }
+        return (cols: ws.ws_col, rows: ws.ws_row)
+    }
 }
