@@ -1,5 +1,6 @@
 import SwiftUI
 import GrafttyKit
+import GrafttyProtocol
 
 /// Sheet for creating a new worktree under a repo. Collects a directory
 /// name (used for the worktree path at `<repo>/.worktrees/<name>`) and a

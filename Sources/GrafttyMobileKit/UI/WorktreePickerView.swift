@@ -9,10 +9,16 @@ public struct WorktreePickerView: View {
     @State private var state: LoadState = .loading
     public let host: Host
     public let onSelect: (WorktreePanes) -> Void
+    public let onAddWorktree: () -> Void
 
-    public init(host: Host, onSelect: @escaping (WorktreePanes) -> Void) {
+    public init(
+        host: Host,
+        onSelect: @escaping (WorktreePanes) -> Void,
+        onAddWorktree: @escaping () -> Void
+    ) {
         self.host = host
         self.onSelect = onSelect
+        self.onAddWorktree = onAddWorktree
     }
 
     private enum LoadState {
@@ -60,6 +66,14 @@ public struct WorktreePickerView: View {
             }
         }
         .navigationTitle(host.label)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: onAddWorktree) {
+                    Image(systemName: "plus")
+                }
+                .accessibilityLabel("Add worktree")
+            }
+        }
         .task { await load() }
     }
 

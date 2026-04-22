@@ -17,9 +17,15 @@ public struct RootView: View {
             NavigationStack(path: $navigationPath) {
                 HostPickerView(store: hostStore)
                     .navigationDestination(for: Host.self) { host in
-                        WorktreePickerView(host: host) { wt in
-                            navigationPath.append(WorktreeStep(host: host, worktree: wt))
-                        }
+                        WorktreePickerView(
+                            host: host,
+                            onSelect: { wt in
+                                navigationPath.append(WorktreeStep(host: host, worktree: wt))
+                            },
+                            onAddWorktree: {
+                                navigationPath.append(AddWorktreeStep(host: host))
+                            }
+                        )
                     }
                     .navigationDestination(for: WorktreeStep.self) { step in
                         WorktreeDetailView(
@@ -30,6 +36,23 @@ public struct RootView: View {
                                 host: step.host,
                                 sessionName: sessionName,
                                 title: step.worktree.layout?.title(for: sessionName) ?? sessionName
+                            ))
+                        }
+                    }
+                    .navigationDestination(for: AddWorktreeStep.self) { step in
+                        AddWorktreeView(host: step.host) { sessionName in
+                            // Pop the AddWorktreeView itself, then push the
+                            // new session onto the stack. The user ends up
+                            // inside the fresh terminal; pressing back
+                            // lands on the picker (now stale until pulled
+                            // to refresh — acceptable MVP, same as the
+                            // post-create state the Mac sheet leaves
+                            // behind when auto-selecting the new worktree).
+                            navigationPath.removeLast()
+                            navigationPath.append(SessionStep(
+                                host: step.host,
+                                sessionName: sessionName,
+                                title: sessionName
                             ))
                         }
                     }
@@ -81,6 +104,12 @@ public struct RootView: View {
 struct WorktreeStep: Hashable {
     let host: Host
     let worktree: WorktreePanes
+}
+
+/// Alternative second-level nav: tapped the `+` toolbar button on the
+/// worktree picker to open the "Add worktree" form.
+struct AddWorktreeStep: Hashable {
+    let host: Host
 }
 
 /// Third-level nav: picked a pane, now show its terminal fullscreen.
@@ -137,6 +166,17 @@ struct SingleSessionView: View {
         // regions outside our `.container` inherit that color.
         .ignoresSafeArea(.container, edges: .all)
         .toolbar(.hidden, for: .navigationBar)
+            .overlay(alignment: .topLeading) {
+                // Translucent back-button overlay — the nav bar is
+                // hidden for the fullscreen terminal layout, and the
+                // system edge-swipe gesture isn't discoverable, so
+                // without this button a user who drilled into a
+                // session has no affordance to return to the picker.
+                // Matches the web client's WEB-5.9 treatment.
+                backButton
+                    .padding(.leading, 12)
+                    .padding(.top, 12)
+            }
             .overlay(alignment: .bottomTrailing) {
                 keyboardButton
                     .padding(.trailing, 12)
@@ -179,6 +219,27 @@ struct SingleSessionView: View {
                 }
             }
             .onDisappear { client.stop() }
+    }
+
+    /// Partially-transparent back button in the top-left. Pops the
+    /// current SessionStep off `navigationPath`, landing on either the
+    /// worktree detail (if the user drilled in from there) or the
+    /// picker (if they came from the AddWorktreeView's auto-navigate).
+    private var backButton: some View {
+        Button {
+            if !navigationPath.isEmpty {
+                navigationPath.removeLast()
+            }
+        } label: {
+            Image(systemName: "chevron.left")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(.primary)
+                .padding(10)
+                .frame(width: 44, height: 44)
+                .background(.ultraThinMaterial, in: Circle())
+                .shadow(radius: 1)
+        }
+        .accessibilityLabel("Back")
     }
 
     /// Tri-state floating button:

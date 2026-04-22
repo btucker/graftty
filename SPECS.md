@@ -1093,7 +1093,7 @@ shall surface an actionable alert rather than silently continue.
 
 **IOS-1.2** All iOS business logic (views, stores, session management, terminal bridging) shall live in the SwiftPM library target `GrafttyMobileKit`. The iOS .app bundle shall live in a separate Xcode project at `Apps/GrafttyMobile/GrafttyMobile.xcodeproj` that depends on `GrafttyMobileKit` by local package reference.
 
-**IOS-1.3** Wire-format types shared between `GrafttyMobile` and the `GrafttyKit` web server — `SessionInfo`, `WebControlEnvelope` — shall live in a shared library target `GrafttyProtocol`, imported by both targets. This ensures a breaking JSON-shape change is a compile-time error on both sides.
+**IOS-1.3** Wire-format types shared between `GrafttyMobile` and the `GrafttyKit` web server — `SessionInfo`, `WebControlEnvelope`, `WorktreePanes`, `RepoInfo`, `CreateWorktreeRequest` / `CreateWorktreeResponse` / `CreateWorktreeErrorBody` — shall live in a shared library target `GrafttyProtocol`, imported by both targets. Input-sanitization logic with the same parity demand (`WorktreeNameSanitizer`) shall also live in `GrafttyProtocol` so Mac and iOS render the same transformed string for the same keystrokes. This ensures a breaking JSON-shape or sanitization change is a compile-time error on both sides.
 
 **IOS-1.4** While the iOS application is installed, it shall appear on the home screen and in the app switcher as "Graftty" (via `CFBundleDisplayName`) and shall use the same app icon as the macOS application, sourced from the shared master `Resources/AppIcon.png`. The Xcode target, `.xcodeproj`, on-disk sources directory, and bundle identifier keep the `GrafttyMobile` name internally so `Bundle.main.bundleIdentifier` checks, keychain service strings, and the `GrafttyMobileKit` SPM target continue to work unchanged — "GrafttyMobile" is the codebase's internal handle, "Graftty" is the user-facing brand on both platforms.
 
@@ -1121,7 +1121,7 @@ shall surface an actionable alert rather than silently continue.
 
 **IOS-4.10** When the user selects a worktree from the picker (`IOS-4.1`), the application shall present a second screen rendering the worktree's pane split tree faithfully to the Mac sidebar's layout: each split respects its `direction` (horizontal/vertical) and `ratio`; each leaf is a tappable tile labelled with the pane's current title (or the session name when no title has been set yet). Tapping a tile pushes the fullscreen terminal for that session.
 
-**IOS-4.11** When the user taps a pane tile, the application shall open a fullscreen terminal view for that session — a single `TerminalPaneView` with the navigation bar hidden and the terminal extending beneath the top safe area (`IOS-4.8`). The WebSocket is opened on view appear and closed on view disappear; system edge-swipe-back returns to the worktree detail.
+**IOS-4.11** When the user taps a pane tile, the application shall open a fullscreen terminal view for that session — a single `TerminalPaneView` with the navigation bar hidden and the terminal extending beneath the top safe area (`IOS-4.8`). The WebSocket is opened on view appear and closed on view disappear; the top-leading translucent back button (`IOS-4.8`) or the system edge-swipe-back gesture returns to the worktree detail.
 
 **IOS-4.2** When `GET /sessions` returns a non-2xx status or a body that fails to decode as `[SessionInfo]`, the application shall render an error banner displaying the status code (or "malformed response") and a manual retry button. A 403 response shall instead render `Not authorized — is this device on your tailnet?` with a link that opens the Tailscale iOS app.
 
@@ -1135,7 +1135,7 @@ shall surface an actionable alert rather than silently continue.
 
 **IOS-4.7** When the user selects a saved host, the application shall issue `GET <baseURL>/ghostty-config` and, if the response is a non-empty 2xx body, pass it to `TerminalController.shared.updateConfigSource(.generated(text))` before mounting any `TerminalPaneView`. A missing or empty response is a non-fatal condition — the client shall fall back to `libghostty-spm`'s default configuration. The endpoint is a concatenation of the user's on-disk Ghostty configs (`$XDG_CONFIG_HOME/ghostty/config`, then `~/Library/Application Support/com.mitchellh.ghostty/config`) in the same priority order the Mac app applies them at launch, so terminals render with the same fonts, theme, and colors as the desktop.
 
-**IOS-4.8** While a pane is mounted, the application shall hide the navigation bar (`.toolbar(.hidden, for: .navigationBar)`) and extend the terminal beneath every safe-area edge (`.ignoresSafeArea()`) — top (under the notch), bottom (under the home indicator), and the left/right safe-area strips in landscape. libghostty renders its configured background color to the full view bounds, so the unsafe regions pick up the terminal's own background rather than the SwiftUI default. The user returns to the worktree detail via the system edge-swipe-back gesture rather than an explicit button.
+**IOS-4.8** While a pane is mounted, the application shall hide the navigation bar (`.toolbar(.hidden, for: .navigationBar)`) and extend the terminal beneath every safe-area edge (`.ignoresSafeArea()`) — top (under the notch), bottom (under the home indicator), and the left/right safe-area strips in landscape. libghostty renders its configured background color to the full view bounds, so the unsafe regions pick up the terminal's own background rather than the SwiftUI default. In addition to the system edge-swipe-back gesture, the application shall render a translucent circular back button in the top-leading corner with an `ultraThinMaterial` background, a 44×44 pt tap target, and a `chevron.left` glyph; tapping it shall pop the current `SessionStep` off `navigationPath`. Rationale: edge-swipe is not discoverable for first-time users, and without an explicit affordance a user who drills in has no visible way back — mirrors the web client's `WEB-5.9` back-button overlay.
 
 **IOS-4.9** The application shall display a floating keyboard button at the bottom-trailing corner of the pane view with three states:
   1. While the software keyboard is visible, the button shall render the `keyboard.chevron.compact.down` SF Symbol with an accessibility label of "Hide keyboard". Tapping it shall resign first-responder on the key window AND set the internal "keyboard allowed" flag to false.
@@ -1176,9 +1176,23 @@ While the "keyboard allowed" flag is false, any stray keyboard-will-show event (
 
 **IOS-8.2** The v1 iOS app shall not forward terminal mouse events, OSC 52 clipboard reads, or Kitty graphics/keyboard-protocol sequences. (Mirrors `WEB-6.2`.)
 
-**IOS-8.3** The v1 iOS app shall not initiate any pane / worktree / session lifecycle operations on the Mac (create, close, split, move, stop). Any such control surface is deferred to a future spec.
+**IOS-8.3** The v1 iOS app shall not initiate any pane or session lifecycle operations on the Mac (close, split, move, stop). Worktree creation is supported per §19.9; all other worktree-lifecycle operations (delete, rename) and every pane/session-level operation are deferred to a future spec.
 
 **IOS-8.4** The v1 iOS app shall not persist terminal scrollback on the device. On reconnect, it renders whatever the zmx daemon's buffer still contains.
+
+### 19.9 Creating worktrees from iOS
+
+**IOS-9.1** The worktree picker (`IOS-4.1`) shall expose a `+` `ToolbarItem` in its `.primaryAction` slot. Tapping it shall push an `AddWorktreeStep` onto the navigation stack, which renders `AddWorktreeView` (the iOS parallel of the Mac `AddWorktreeSheet` and web `/new` route).
+
+**IOS-9.2** `AddWorktreeView` shall fetch `GET <baseURL>/repos` via `ReposFetcher` on appear and render the result as a repository picker when more than one repo is returned. When the response is empty, the form shall render an `ContentUnavailableView` directing the user to open a repository in the Mac app first. The fetcher shall surface `403` as "Not authorized — is this device on your tailnet?", matching the error-discrimination pattern of `SessionsFetcher` and `WorktreePanesFetcher`.
+
+**IOS-9.3** The form shall collect a worktree name and a branch name. Input shall be sanitized live through `WorktreeNameSanitizer` (the same function the Mac sheet and web `/new` route use, shared via `GrafttyProtocol` per `IOS-1.3`), so a paste of `my feature/foo!` becomes `my-feature-foo-` as it lands. The branch field shall auto-mirror the worktree-name field until the user types a differing branch name, at which point it stops auto-syncing — mirrors the Mac sheet.
+
+**IOS-9.4** At submit time, the form shall strip leading/trailing whitespace, `-`, and `.` from both names (the same `submitTrimSet` the Mac sheet uses), then POST the resulting pair plus `repoPath` to `<baseURL>/worktrees` via `WorktreeCreator`. The "Create" button shall be disabled while either trimmed name is empty, while the repos fetch is loading, or while a submit is in flight.
+
+**IOS-9.5** On a 2xx response, the application shall pop the `AddWorktreeView` off the navigation stack and push a new `SessionStep` for the returned `sessionName`, landing the user directly in the fresh terminal. The worktree picker beneath remains stale until the user pulls to refresh (`.refreshable`) or re-enters it from the host picker — acceptable MVP, parallel to the Mac sheet's post-create selection behavior (which auto-focuses the new worktree but doesn't refresh the sidebar list).
+
+**IOS-9.6** On a non-2xx response, the application shall surface the server's `error` field from the JSON body (typically `git worktree add` stderr for 409 Conflict, or a descriptive string for 400 Bad Request) verbatim in a red inline message inside the form. `403` shall be surfaced as the same tailnet message as `IOS-9.2`. A body that fails to decode as `{"error":"<msg>"}` shall fall back to `HTTP <code>`, rather than blocking error display on a malformed body.
 
 **IOS-8.5** The v1 iOS app shall not use push notifications for PR status, build completions, or session events.
 
