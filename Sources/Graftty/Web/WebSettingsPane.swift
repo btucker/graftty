@@ -18,7 +18,7 @@ struct WebSettingsPane: View {
             } header: {
                 Text("Web Access")
             } footer: {
-                Text("Binds only to Tailscale IPs. Allows only your Tailscale identity.")
+                Text("Serves HTTPS only. Binds to Tailscale IPs. Allows only your Tailscale identity.")
                     .foregroundStyle(.secondary)
                     .font(.caption)
             }
@@ -54,7 +54,7 @@ struct WebSettingsPane: View {
     }
 
     @ViewBuilder private var statusRow: some View {
-        HStack {
+        HStack(alignment: .firstTextBaseline) {
             Text("Status:")
             switch controller.status {
             case .stopped:
@@ -71,8 +71,37 @@ struct WebSettingsPane: View {
                     .joined(separator: ", ")
                 Text(verbatim: "Listening on \(joined)")
                     .foregroundStyle(.green)
-            case .disabledNoTailscale:
+            case .tailscaleUnavailable:
                 Text("Tailscale unavailable").foregroundStyle(.orange)
+            case .magicDNSDisabled:
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("MagicDNS must be enabled on your tailnet.")
+                        .foregroundStyle(.orange)
+                    Link(
+                        "Open Tailscale admin",
+                        destination: URL(string: "https://login.tailscale.com/admin/dns")!
+                    )
+                    .font(.caption)
+                }
+            case .httpsCertsNotEnabled:
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("HTTPS certificates must be enabled on your tailnet.")
+                        .foregroundStyle(.orange)
+                    Link(
+                        "Open Tailscale admin",
+                        destination: URL(string: "https://login.tailscale.com/admin/dns")!
+                    )
+                    .font(.caption)
+                }
+            case .certFetchFailed(let msg):
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Could not fetch certificate: \(msg)")
+                        .foregroundStyle(.red)
+                        .lineLimit(2)
+                    Text("Graftty will retry automatically.")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                }
             case .portUnavailable:
                 Text("Port in use").foregroundStyle(.red)
             case .error(let msg):
