@@ -7,12 +7,22 @@
 #     MacOS/
 #       Graftty    (the SwiftUI app)
 #       graftty    (the CLI, renamed from graftty-cli per ATTN-1.1)
+#
+# Usage:
+#   ./scripts/bundle.sh            # build bundle only
+#   ./scripts/bundle.sh install    # build, then ditto into /Applications/
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO"
+
+INSTALL=0
+if [[ "${1:-}" == "install" ]]; then
+  INSTALL=1
+  shift
+fi
 
 CONFIGURATION="${CONFIGURATION:-debug}"
 GRAFTTY_VERSION="${GRAFTTY_VERSION:-0.0.0-dev}"
@@ -117,3 +127,25 @@ codesign --verify --strict "$APP"
 echo "✓ Bundle at $APP"
 echo "  Run:  open '$APP'"
 echo "  CLI:  '$APP/Contents/Helpers/graftty' notify 'hello'"
+
+if [[ "$INSTALL" == "1" ]]; then
+  DEST="/Applications/Graftty.app"
+  echo "→ install to $DEST"
+
+  # Kill any running instance first — mach-o refuses to be replaced while
+  # executing, and silent partial replacement would leave the user with a
+  # half-updated app.
+  if pgrep -x Graftty >/dev/null 2>&1; then
+    echo "  (stopping running Graftty first)"
+    osascript -e 'tell application "Graftty" to quit' 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+      pgrep -x Graftty >/dev/null 2>&1 || break
+      sleep 1
+    done
+    pkill -x Graftty 2>/dev/null || true
+  fi
+
+  rm -rf "$DEST"
+  ditto "$APP" "$DEST"
+  echo "✓ Installed at $DEST"
+fi
