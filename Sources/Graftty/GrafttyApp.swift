@@ -50,6 +50,17 @@ struct GrafttyApp: App {
     @StateObject private var webController: WebServerController
     private let services: AppServices
 
+    // @State on the App struct persists across WindowGroup scene
+    // re-creations. The reopen path (dock-click after cmd+W, or
+    // File → New Window) re-runs the WindowGroup's content closure,
+    // so `.onAppear` fires on every new window — but `startup()`'s
+    // work (ghostty_init, socket listener, pollers, NotificationCenter
+    // observers, reconcileOnLaunch) is all one-time-per-launch.
+    // Without this guard, a dock-click after cmd+W hits
+    // `TerminalManager.initialize()`'s ghosttyApp==nil precondition
+    // and traps the process. LAYOUT-5.3.
+    @State private var didStartup = false
+
     init() {
         // Graftty is single-instance: the state.json, the graftty.sock
         // listener, and (most visibly) the per-pane zmx session names are
@@ -129,7 +140,11 @@ struct GrafttyApp: App {
                 worktreeMonitor: services.worktreeMonitor
             )
                 .environmentObject(webController)
-                .onAppear { startup() }
+                .onAppear {
+                    guard !didStartup else { return }
+                    didStartup = true
+                    startup()
+                }
                 .onChange(of: appState) { _, newState in
                     do {
                         try newState.save(to: AppState.defaultDirectory)
