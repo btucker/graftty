@@ -8,25 +8,15 @@ import GrafttyProtocol
 @MainActor
 struct HostControllerTests {
 
-    final class FakeSessionClient: SessionClientProtocol, @unchecked Sendable {
-        let name: String
-        var startCount = 0
-        var stopCount = 0
-        init(name: String) { self.name = name }
-        func start() { startCount += 1 }
-        func stop() { stopCount += 1 }
-    }
-
     @Test
-    func resumeRedialsPanesWhoseSessionsStillExist() async {
+    func resumeKeepsPanesWhoseSessionsStillExist() async {
         let sessions = [
             SessionInfo(name: "a", worktreePath: "/", repoDisplayName: "r", worktreeDisplayName: "a"),
             SessionInfo(name: "b", worktreePath: "/", repoDisplayName: "r", worktreeDisplayName: "b"),
         ]
         let host = HostController(
             host: Host(label: "m", baseURL: URL(string: "http://m/")!),
-            fetcher: { sessions },
-            makeClient: { name in FakeSessionClient(name: name) }
+            fetcher: { sessions }
         )
         await host.refreshSessions()
         host.openPane(sessionName: "a")

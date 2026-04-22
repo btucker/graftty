@@ -94,11 +94,6 @@ public struct RootView: View {
             host: host,
             fetcher: { [host] in
                 (try? await SessionsFetcher.fetch(baseURL: host.baseURL)) ?? []
-            },
-            makeClient: { [host] name in
-                let wsURL = Self.makeWebSocketURL(base: host.baseURL, session: name)
-                let ws = URLSessionWebSocketClient(url: wsURL)
-                return SessionClient(sessionName: name, webSocket: ws)
             }
         )
         activeController = ctl

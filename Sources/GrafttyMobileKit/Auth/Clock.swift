@@ -1,11 +1,12 @@
 #if canImport(UIKit)
 import Foundation
 
-protocol Clock: Sendable {
+public protocol Clock: Sendable {
     var now: Date { get }
 }
 
-struct SystemClock: Clock {
-    var now: Date { Date() }
+public struct SystemClock: Clock {
+    public init() {}
+    public var now: Date { Date() }
 }
 #endif

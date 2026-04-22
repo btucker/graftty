@@ -20,10 +20,8 @@ public final class SessionClient {
         self.sessionName = sessionName
         self.ws = webSocket
 
-        // We can't reference self inside the closures passed to
-        // InMemoryTerminalSession.init (self isn't fully initialized
-        // yet), so we use indirection: the closures read from mutable
-        // ivars that we assign *after* super-init-equivalent.
+        // Indirection box lets the `write`/`resize` callbacks reach back
+        // into `self` after it is fully initialized.
         final class Box { var onBytes: (@Sendable (Data) -> Void)?
                           var onResize: (@Sendable (InMemoryTerminalViewport) -> Void)? }
         let box = Box()
@@ -49,23 +47,15 @@ public final class SessionClient {
     }
 
     public func start() {
-        receiveTask = Task { [weak self] in
-            guard let self else { return }
-            while true {
-                let stopped = await MainActor.run { self.stopped }
-                if stopped { break }
+        receiveTask = Task { @MainActor [weak self] in
+            while let self, !self.stopped {
                 do {
                     let frame = try await self.ws.receive()
-                    await MainActor.run {
-                        switch frame {
-                        case .binary(let data):
-                            self.session.receive(data)
-                        case .text:
-                            // Server may send sessionEnded/error as text — a
-                            // higher-level HostController will surface it.
-                            // Ignored at this layer for now.
-                            break
-                        }
+                    switch frame {
+                    case .binary(let data):
+                        self.session.receive(data)
+                    case .text:
+                        break
                     }
                 } catch {
                     break
@@ -83,7 +73,7 @@ public final class SessionClient {
     }
 
     public func sendResize(cols: UInt16, rows: UInt16) {
-        let payload = #"{"type":"resize","cols":\#(cols),"rows":\#(rows)}"#
+        let payload = WebControlEnvelope.resize(cols: cols, rows: rows).encoded()
         Task { @MainActor [weak self] in
             guard let self, !self.stopped else { return }
             try? await self.ws.send(.text(payload))

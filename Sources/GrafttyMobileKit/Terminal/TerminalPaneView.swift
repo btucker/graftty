@@ -19,7 +19,7 @@ public struct TerminalPaneView: UIViewRepresentable {
 
     public func makeUIView(context _: Context) -> UITerminalView {
         let view = UITerminalView(frame: .zero)
-        view.controller = TerminalControllerStore.shared
+        view.controller = TerminalController.shared
         view.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
         return view
     }

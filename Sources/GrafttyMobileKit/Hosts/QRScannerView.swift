@@ -40,7 +40,8 @@ public struct QRScannerView: UIViewControllerRepresentable {
             preview.videoGravity = .resizeAspectFill
             preview.frame = view.layer.bounds
             view.layer.addSublayer(preview)
-            Task.detached { [weak self] in self?.session.startRunning() }
+            let captureSession = session
+            Task.detached { captureSession.startRunning() }
         }
 
         override public func viewDidLayoutSubviews() {

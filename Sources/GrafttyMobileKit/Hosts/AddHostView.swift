@@ -16,22 +16,25 @@ public struct AddHostView: View {
 
     public var body: some View {
         NavigationStack {
-            Group {
-                if isScanning {
-                    scanner
-                } else {
-                    manualForm
-                }
+            if isScanning {
+                scanner
+                    .toolbar { toolbarItems(showManualEntry: true) }
+            } else {
+                manualForm
+                    .toolbar { toolbarItems(showManualEntry: false) }
             }
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Manual entry") { isScanning = false }
-                        .opacity(isScanning ? 1 : 0)
-                }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private func toolbarItems(showManualEntry: Bool) -> some ToolbarContent {
+        if showManualEntry {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Manual entry") { isScanning = false }
             }
+        }
+        ToolbarItem(placement: .cancellationAction) {
+            Button("Cancel") { dismiss() }
         }
     }
 

@@ -3,18 +3,6 @@ import Foundation
 import GrafttyProtocol
 import Observation
 
-/// Narrow protocol that SessionClient satisfies; lets HostControllerTests
-/// stub without importing GhosttyTerminal.
-public protocol SessionClientProtocol: AnyObject {
-    var name: String { get }
-    func start()
-    func stop()
-}
-
-extension SessionClient: SessionClientProtocol {
-    public var name: String { sessionName }
-}
-
 @Observable
 @MainActor
 public final class HostController {
@@ -30,52 +18,48 @@ public final class HostController {
     public private(set) var endedPanes: [Pane] = []
 
     private let fetcher: () async -> [SessionInfo]
-    private let makeClient: (String) -> any SessionClientProtocol
-    private var clientsByPaneID: [UUID: any SessionClientProtocol] = [:]
 
     public init(
         host: Host,
-        fetcher: @escaping () async -> [SessionInfo],
-        makeClient: @escaping (String) -> any SessionClientProtocol
+        fetcher: @escaping () async -> [SessionInfo]
     ) {
         self.host = host
         self.fetcher = fetcher
-        self.makeClient = makeClient
     }
 
     public func refreshSessions() async {
-        sessions = await fetcher()
+        let fresh = await fetcher()
+        if fresh != sessions { sessions = fresh }
     }
 
-    public func openPane(sessionName: String) {
+    @discardableResult
+    public func openPane(sessionName: String) -> Pane {
         let pane = Pane(sessionName: sessionName)
-        let client = makeClient(sessionName)
-        client.start()
-        clientsByPaneID[pane.id] = client
         panes.append(pane)
+        return pane
     }
 
     public func closePane(_ id: UUID) {
-        clientsByPaneID[id]?.stop()
-        clientsByPaneID.removeValue(forKey: id)
         panes.removeAll { $0.id == id }
     }
 
-    public func tearDownForBackground() {
-        for (_, c) in clientsByPaneID { c.stop() }
-        clientsByPaneID.removeAll()
-    }
+    /// Called when the app enters the background. RootView tears down the
+    /// live `SessionClient`s; this controller keeps the `panes` list so
+    /// `resumeForForeground` can filter it against the next `/sessions`
+    /// response.
+    public func tearDownForBackground() {}
 
+    /// Called after the app is back in the foreground with a fresh
+    /// `/sessions` response. Panes whose session name is absent from the
+    /// response move to `endedPanes`; survivors stay in `panes` for
+    /// RootView to re-dial.
     public func resumeForForeground(currentSessions: [SessionInfo]) async {
         sessions = currentSessions
         let liveNames = Set(currentSessions.map(\.name))
         var survivors: [Pane] = []
-        var ended: [Pane] = endedPanes
+        var ended = endedPanes
         for pane in panes {
             if liveNames.contains(pane.sessionName) {
-                let client = makeClient(pane.sessionName)
-                client.start()
-                clientsByPaneID[pane.id] = client
                 survivors.append(pane)
             } else {
                 ended.append(pane)

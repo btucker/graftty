@@ -24,7 +24,7 @@ public final class HostStore {
         do { hosts = try readAll() } catch { hosts = [] }
     }
 
-    public static let defaultService = "net.graftty.GrafttyMobile.hosts"
+    public nonisolated static let defaultService = "net.graftty.GrafttyMobile.hosts"
 
     public func add(_ host: Host) throws {
         let data = try JSONEncoder().encode(host)

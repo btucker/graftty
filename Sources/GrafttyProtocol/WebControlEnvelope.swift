@@ -39,4 +39,13 @@ public enum WebControlEnvelope: Equatable {
             throw ParseError.unknownType(type)
         }
     }
+
+    /// Serialize to the JSON text shape a server-side parser expects.
+    /// Kept adjacent to `parse` so renaming a field updates both directions.
+    public func encoded() -> String {
+        switch self {
+        case let .resize(cols, rows):
+            return #"{"type":"resize","cols":\#(cols),"rows":\#(rows)}"#
+        }
+    }
 }
