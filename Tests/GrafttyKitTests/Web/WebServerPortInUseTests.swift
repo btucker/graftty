@@ -17,10 +17,12 @@ struct WebServerPortInUseTests {
         // Bind the first server to an ephemeral port, then capture the
         // port and try to start a second server on the same port. The
         // second start() must throw AND set `status = .portUnavailable`.
+        let tlsProvider = try makeTestTLSProvider()
         let first = WebServer(
             config: WebServer.Config(port: 0, zmxExecutable: URL(fileURLWithPath: "/bin/echo"), zmxDir: URL(fileURLWithPath: "/tmp")),
             auth: WebServer.AuthPolicy(isAllowed: { _ in true }),
-            bindAddresses: ["127.0.0.1"]
+            bindAddresses: ["127.0.0.1"],
+            tlsProvider: tlsProvider
         )
         try first.start()
         defer { first.stop() }
@@ -33,7 +35,8 @@ struct WebServerPortInUseTests {
         let second = WebServer(
             config: WebServer.Config(port: port, zmxExecutable: URL(fileURLWithPath: "/bin/echo"), zmxDir: URL(fileURLWithPath: "/tmp")),
             auth: WebServer.AuthPolicy(isAllowed: { _ in true }),
-            bindAddresses: ["127.0.0.1"]
+            bindAddresses: ["127.0.0.1"],
+            tlsProvider: tlsProvider
         )
 
         #expect(throws: (any Error).self) {

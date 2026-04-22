@@ -48,7 +48,8 @@ struct WebServerWorktreeEndpointTests {
         let server = WebServer(
             config: config,
             auth: WebServer.AuthPolicy(isAllowed: { _ in true }),
-            bindAddresses: ["127.0.0.1"]
+            bindAddresses: ["127.0.0.1"],
+            tlsProvider: try makeTestTLSProvider()
         )
         try server.start()
         guard case let .listening(_, port) = server.status else {
@@ -65,8 +66,8 @@ struct WebServerWorktreeEndpointTests {
         ]))
         defer { server.stop() }
 
-        let (data, response) = try await URLSession.shared.data(
-            from: URL(string: "http://127.0.0.1:\(port)/repos")!
+        let (data, response) = try await trustAllSession().data(
+            from: URL(string: "https://localhost:\(port)/repos")!
         )
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 200)
@@ -90,8 +91,8 @@ struct WebServerWorktreeEndpointTests {
         let (server, port) = try Self.startServer(config: config)
         defer { server.stop() }
 
-        let (data, response) = try await URLSession.shared.data(
-            from: URL(string: "http://127.0.0.1:\(port)/repos")!
+        let (data, response) = try await trustAllSession().data(
+            from: URL(string: "https://localhost:\(port)/repos")!
         )
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 200)
@@ -118,12 +119,12 @@ struct WebServerWorktreeEndpointTests {
             worktreeName: "feature-x",
             branchName: "feature-x"
         ))
-        var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/worktrees")!)
+        var req = URLRequest(url: URL(string: "https://localhost:\(port)/worktrees")!)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = body
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await trustAllSession().data(for: req)
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 200)
         let decoded = try JSONDecoder().decode(WebServer.CreateWorktreeResponse.self, from: data)
@@ -142,11 +143,11 @@ struct WebServerWorktreeEndpointTests {
         let body = try JSONEncoder().encode(WebServer.CreateWorktreeRequest(
             repoPath: "/tmp/repo", worktreeName: "foo", branchName: "foo"
         ))
-        var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/worktrees")!)
+        var req = URLRequest(url: URL(string: "https://localhost:\(port)/worktrees")!)
         req.httpMethod = "POST"
         req.httpBody = body
 
-        let (data, response) = try await URLSession.shared.data(for: req)
+        let (data, response) = try await trustAllSession().data(for: req)
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 409, "git-reported failure should map to 409 Conflict")
         struct ErrEnv: Codable { let error: String }
@@ -163,11 +164,11 @@ struct WebServerWorktreeEndpointTests {
         let (server, port) = try Self.startServer(config: Self.makeConfig(creator: creator))
         defer { server.stop() }
 
-        var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/worktrees")!)
+        var req = URLRequest(url: URL(string: "https://localhost:\(port)/worktrees")!)
         req.httpMethod = "POST"
         req.httpBody = Data("not json at all".utf8)
 
-        let (_, response) = try await URLSession.shared.data(for: req)
+        let (_, response) = try await trustAllSession().data(for: req)
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 400)
     }
@@ -184,11 +185,11 @@ struct WebServerWorktreeEndpointTests {
         let body = try JSONEncoder().encode(WebServer.CreateWorktreeRequest(
             repoPath: "/tmp/repo", worktreeName: "   ", branchName: "feature-x"
         ))
-        var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/worktrees")!)
+        var req = URLRequest(url: URL(string: "https://localhost:\(port)/worktrees")!)
         req.httpMethod = "POST"
         req.httpBody = body
 
-        let (_, response) = try await URLSession.shared.data(for: req)
+        let (_, response) = try await trustAllSession().data(for: req)
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 400)
     }
@@ -200,8 +201,8 @@ struct WebServerWorktreeEndpointTests {
         ))
         defer { server.stop() }
 
-        let (_, response) = try await URLSession.shared.data(
-            from: URL(string: "http://127.0.0.1:\(port)/worktrees")!
+        let (_, response) = try await trustAllSession().data(
+            from: URL(string: "https://localhost:\(port)/worktrees")!
         )
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 405, "GET /worktrees should return Method Not Allowed")
@@ -219,11 +220,11 @@ struct WebServerWorktreeEndpointTests {
         let body = try JSONEncoder().encode(WebServer.CreateWorktreeRequest(
             repoPath: "/tmp/repo", worktreeName: "feature-x", branchName: "feature-x"
         ))
-        var req = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/worktrees")!)
+        var req = URLRequest(url: URL(string: "https://localhost:\(port)/worktrees")!)
         req.httpMethod = "POST"
         req.httpBody = body
 
-        let (_, response) = try await URLSession.shared.data(for: req)
+        let (_, response) = try await trustAllSession().data(for: req)
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 503)
     }

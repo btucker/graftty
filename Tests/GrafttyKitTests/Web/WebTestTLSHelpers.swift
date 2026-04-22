@@ -1,0 +1,43 @@
+import Foundation
+import Testing
+@testable import GrafttyKit
+
+/// Shared test helpers for HTTPS web-server tests.
+/// Used across WebServerAuthTests, WebServerPortInUseTests,
+/// WebServerIntegrationTests, and WebServerWorktreeEndpointTests.
+
+func makeTestTLSProvider() throws -> WebTLSContextProvider {
+    let certURL = try #require(
+        Bundle.module.url(forResource: "test-tls-cert", withExtension: "pem",
+                          subdirectory: "Fixtures")
+    )
+    let keyURL = try #require(
+        Bundle.module.url(forResource: "test-tls-key", withExtension: "pem",
+                          subdirectory: "Fixtures")
+    )
+    let certPEM = try Data(contentsOf: certURL)
+    let keyPEM = try Data(contentsOf: keyURL)
+    let ctx = try WebTLSCertFetcher.buildContext(certPEM: certPEM, keyPEM: keyPEM)
+    return WebTLSContextProvider(initial: ctx)
+}
+
+/// URLSession delegate that trusts any server cert. Used only in
+/// the test suite to exercise the real TLS handshake against our
+/// localhost-fixture cert.
+final class TrustAllDelegate: NSObject, URLSessionDelegate {
+    func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        if let st = challenge.protectionSpace.serverTrust {
+            completionHandler(.useCredential, URLCredential(trust: st))
+        } else {
+            completionHandler(.performDefaultHandling, nil)
+        }
+    }
+}
+
+func trustAllSession() -> URLSession {
+    URLSession(configuration: .ephemeral, delegate: TrustAllDelegate(), delegateQueue: nil)
+}

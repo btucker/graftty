@@ -39,7 +39,8 @@ struct WebServerIntegrationTests {
         let server = WebServer(
             config: WebServer.Config(port: 0, zmxExecutable: zmx, zmxDir: zmxDir),
             auth: WebServer.AuthPolicy(isAllowed: { _ in true }),
-            bindAddresses: ["127.0.0.1"]
+            bindAddresses: ["127.0.0.1"],
+            tlsProvider: try makeTestTLSProvider()
         )
         try server.start()
         defer { server.stop() }
@@ -48,10 +49,11 @@ struct WebServerIntegrationTests {
         }
 
         let sessionName = "graftty-it\(UUID().uuidString.prefix(6).lowercased())"
-        let url = URL(string: "ws://127.0.0.1:\(port)/ws?session=\(sessionName)")!
+        let url = URL(string: "wss://localhost:\(port)/ws?session=\(sessionName)")!
 
         // First attach — creates the daemon session.
-        let first = URLSession.shared.webSocketTask(with: url)
+        let wsSession = trustAllSession()
+        let first = wsSession.webSocketTask(with: url)
         first.resume()
         try await first.send(.string(#"{"type":"resize","cols":80,"rows":24}"#))
         try await first.send(.data(Data("echo ONE\n".utf8)))
@@ -67,7 +69,7 @@ struct WebServerIntegrationTests {
         // re-attach by name.
         try await Task.sleep(nanoseconds: 500_000_000)
 
-        let second = URLSession.shared.webSocketTask(with: url)
+        let second = wsSession.webSocketTask(with: url)
         second.resume()
         try await second.send(.string(#"{"type":"resize","cols":80,"rows":24}"#))
         try await second.send(.data(Data("echo TWO\n".utf8)))
@@ -134,7 +136,8 @@ struct WebServerIntegrationTests {
         let server = WebServer(
             config: WebServer.Config(port: 0, zmxExecutable: zmx, zmxDir: zmxDir),
             auth: WebServer.AuthPolicy(isAllowed: { _ in true }),
-            bindAddresses: ["127.0.0.1"]
+            bindAddresses: ["127.0.0.1"],
+            tlsProvider: try makeTestTLSProvider()
         )
         try server.start()
         defer { server.stop() }
@@ -143,8 +146,8 @@ struct WebServerIntegrationTests {
         }
 
         let sessionName = "graftty-it\(UUID().uuidString.prefix(6).lowercased())"
-        let url = URL(string: "ws://127.0.0.1:\(port)/ws?session=\(sessionName)")!
-        let wsTask = URLSession.shared.webSocketTask(with: url)
+        let url = URL(string: "wss://localhost:\(port)/ws?session=\(sessionName)")!
+        let wsTask = trustAllSession().webSocketTask(with: url)
         wsTask.resume()
 
         try await wsTask.send(.string(#"{"type":"resize","cols":80,"rows":24}"#))
