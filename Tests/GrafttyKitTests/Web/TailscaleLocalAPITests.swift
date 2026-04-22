@@ -211,3 +211,48 @@ struct TailscaleLocalAPIAutoDetectTests {
         }
     }
 }
+
+@Suite("TailscaleLocalAPI — cert pair")
+struct TailscaleLocalAPICertParsingTests {
+
+    private func fixture(_ name: String, ext: String) throws -> Data {
+        let url = try #require(
+            Bundle.module.url(forResource: name, withExtension: ext, subdirectory: "Fixtures")
+        )
+        return try Data(contentsOf: url)
+    }
+
+    @Test func parseCertPair_splitsCertAndKey() throws {
+        let data = try fixture("tailscale-cert-pair", ext: "pem")
+        let pair = try TailscaleLocalAPI.parseCertPair(data)
+        let cert = String(data: pair.cert, encoding: .utf8) ?? ""
+        let key = String(data: pair.key, encoding: .utf8) ?? ""
+        #expect(cert.contains("-----BEGIN CERTIFICATE-----"))
+        #expect(cert.contains("-----END CERTIFICATE-----"))
+        #expect(!cert.contains("PRIVATE KEY"))
+        #expect(key.contains("PRIVATE KEY"))
+        #expect(!key.contains("CERTIFICATE"))
+    }
+
+    @Test func parseCertPair_missingKeyThrows() {
+        let justCert = "-----BEGIN CERTIFICATE-----\nX\n-----END CERTIFICATE-----\n"
+        #expect(throws: TailscaleLocalAPI.Error.malformedResponse) {
+            _ = try TailscaleLocalAPI.parseCertPair(Data(justCert.utf8))
+        }
+    }
+
+    @Test func classifyCertError_recognisesHTTPSDisabled() throws {
+        let body = try fixture("tailscale-cert-disabled", ext: "json")
+        #expect(TailscaleLocalAPI.isHTTPSCertsDisabled(httpStatus: 500, body: body))
+    }
+
+    @Test func classifyCertError_ignoresUnrelatedErrors() {
+        let body = Data("internal server error".utf8)
+        #expect(TailscaleLocalAPI.isHTTPSCertsDisabled(httpStatus: 500, body: body) == false)
+    }
+
+    @Test func classifyCertError_ignoresSuccess() {
+        let body = Data("{}".utf8)
+        #expect(TailscaleLocalAPI.isHTTPSCertsDisabled(httpStatus: 200, body: body) == false)
+    }
+}

@@ -55,6 +55,10 @@ public struct TailscaleLocalAPI {
         case socketUnreachable
         case httpError(Int)
         case malformedResponse
+        /// The tailnet admin has not enabled HTTPS Certificates. The
+        /// caller surfaces a link to the admin console rather than a
+        /// generic HTTP error code.
+        case httpsCertsDisabled
     }
 
     /// Which transport to use for this client. `autoDetected()` picks
@@ -150,6 +154,22 @@ public struct TailscaleLocalAPI {
         return try Self.parseWhois(body)
     }
 
+    /// Fetch the cert + key PEM pair Tailscale has minted for this
+    /// machine's MagicDNS name. Classifies "tailnet HTTPS disabled"
+    /// into `.httpsCertsDisabled` so the Settings pane can render an
+    /// admin-console deep link instead of an opaque 500. WEB-8.2.
+    public func certPair(for fqdn: String) async throws -> (cert: Data, key: Data) {
+        let escaped = fqdn.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? fqdn
+        let (code, body) = try await transportCall(path: "/localapi/v0/cert/\(escaped)?type=pair")
+        if code == 200 {
+            return try Self.parseCertPair(body)
+        }
+        if Self.isHTTPSCertsDisabled(httpStatus: code, body: body) {
+            throw Error.httpsCertsDisabled
+        }
+        throw Error.httpError(code)
+    }
+
     // MARK: - Parsing (testable)
 
     static func parseStatus(_ data: Data) throws -> Status {
@@ -195,9 +215,55 @@ public struct TailscaleLocalAPI {
         return Whois(loginName: raw.UserProfile.LoginName)
     }
 
+    /// Split Tailscale's `application/x-pem-file` response into the
+    /// cert-chain PEM and the private-key PEM. The response is simply
+    /// both blocks concatenated; split on the first "BEGIN .* PRIVATE KEY"
+    /// line. Both halves are returned with their trailing newline intact
+    /// so NIOSSL's PEM parser is happy. WEB-8.2.
+    static func parseCertPair(_ data: Data) throws -> (cert: Data, key: Data) {
+        guard let text = String(data: data, encoding: .utf8) else {
+            throw Error.malformedResponse
+        }
+        // Locate the first PRIVATE KEY boundary. Matches
+        // `-----BEGIN PRIVATE KEY-----`, `-----BEGIN EC PRIVATE KEY-----`, etc.
+        guard let keyRange = text.range(of: "-----BEGIN [A-Z ]*PRIVATE KEY-----",
+                                        options: .regularExpression) else {
+            throw Error.malformedResponse
+        }
+        let certText = String(text[..<keyRange.lowerBound])
+        let keyText = String(text[keyRange.lowerBound...])
+        if !certText.contains("-----BEGIN CERTIFICATE-----") {
+            throw Error.malformedResponse
+        }
+        return (Data(certText.utf8), Data(keyText.utf8))
+    }
+
+    /// Recognise Tailscale's "HTTPS certificates are not enabled for
+    /// this tailnet" response across plausible wordings. Any ≥400
+    /// status whose body mentions both "HTTPS" and "enable" qualifies
+    /// — the exact phrasing is not API-stable so a substring match
+    /// beats parsing the JSON envelope. WEB-8.2.
+    static func isHTTPSCertsDisabled(httpStatus: Int, body: Data) -> Bool {
+        guard httpStatus >= 400 else { return false }
+        guard let text = String(data: body, encoding: .utf8) else { return false }
+        let lower = text.lowercased()
+        return lower.contains("https") && lower.contains("enable")
+    }
+
     // MARK: - HTTP (transport-agnostic framing)
 
     private func request(path: String) async throws -> Data {
+        let (code, body) = try await transportCall(path: path)
+        if code != 200 { throw Error.httpError(code) }
+        return body
+    }
+
+    /// Open the socket, send the HTTP/1.0 request, parse the response
+    /// framing, and return `(statusCode, body)` without throwing on a
+    /// non-200. Callers that want to inspect an error body (e.g., the
+    /// cert endpoint's "HTTPS disabled" response) go through this;
+    /// the simpler `request(path:)` funnels through here too.
+    private func transportCall(path: String) async throws -> (Int, Data) {
         let fd: Int32
         let hostHeader: String
         let authHeader: String
@@ -258,11 +324,10 @@ public struct TailscaleLocalAPI {
         // Parse status line.
         let firstLine = headerText.split(separator: "\r\n").first ?? ""
         let parts = firstLine.split(separator: " ")
-        if parts.count >= 2, let code = Int(parts[1]), code != 200 {
-            throw Error.httpError(code)
+        guard parts.count >= 2, let code = Int(parts[1]) else {
+            throw Error.malformedResponse
         }
-
-        return Data(body)
+        return (code, Data(body))
     }
 
     private static func openUnixSocket(path: String) throws -> Int32 {
