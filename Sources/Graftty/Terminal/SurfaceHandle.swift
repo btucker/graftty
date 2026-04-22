@@ -199,14 +199,31 @@ final class SurfaceHandle {
     func setFocus(_ focused: Bool) {
         ghostty_surface_set_focus(surface, focused)
         // Keep AppKit's first-responder in sync with libghostty's focus
-        // state: if the view is already in a window, promote it so keyDown
-        // events route here. `makeFirstResponder` on a detached view is a
-        // silent no-op, so callers that focus a pane before SwiftUI has
-        // mounted the view are covered by `SurfaceNSView.viewDidMoveToWindow`.
-        if focused,
-           let surfaceView = view as? SurfaceNSView,
-           let window = surfaceView.window {
+        // state. `setFocus(true)` is an authoritative "this pane is now
+        // the active one" signal from the model (split, CLI pane-add,
+        // keybind goto-split, sidebar selection), so we must claim first
+        // responder even if another SurfaceNSView currently holds it —
+        // that's exactly the case a split produces.
+        //
+        // If the view is already in a window, promote synchronously.
+        // If not — fresh surfaces created by `splitPane` / CLI add sit
+        // outside the view hierarchy until SwiftUI's next render pass —
+        // retry on the next main-queue turn. We cannot lean on
+        // `SurfaceNSView.viewDidMoveToWindow` for this: that path
+        // deliberately yields to an existing SurfaceNSView first
+        // responder so an incidentally-remounted view doesn't yank focus
+        // from the user's current pane, but that also blocks the split
+        // case where the previous pane's view is still first responder
+        // at the moment the new view mounts. TERM-7.7.
+        guard focused, let surfaceView = view as? SurfaceNSView else { return }
+        if let window = surfaceView.window {
             window.makeFirstResponder(surfaceView)
+        } else {
+            DispatchQueue.main.async { [weak surfaceView] in
+                guard let surfaceView,
+                      let window = surfaceView.window else { return }
+                window.makeFirstResponder(surfaceView)
+            }
         }
     }
 
