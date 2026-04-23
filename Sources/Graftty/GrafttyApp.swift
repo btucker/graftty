@@ -212,8 +212,8 @@ struct GrafttyApp: App {
                 .disabled(!updaterController.canCheckForUpdates)
 
                 Toggle("Automatically Check for Updates", isOn: Binding(
-                    get: { UserDefaults.standard.object(forKey: "SUEnableAutomaticChecks") as? Bool ?? true },
-                    set: { UserDefaults.standard.set($0, forKey: "SUEnableAutomaticChecks") }
+                    get: { updaterController.automaticallyChecksForUpdates },
+                    set: { updaterController.automaticallyChecksForUpdates = $0 }
                 ))
 
                 Divider()

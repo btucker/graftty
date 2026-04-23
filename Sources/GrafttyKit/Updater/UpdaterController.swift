@@ -15,90 +15,62 @@ import Sparkle
 ///   `updater.checkForUpdates(nil)` — this time Sparkle treats the check
 ///   as user-initiated and the standard driver shows its dialog.
 /// - In test mode (`forTesting()`), the Sparkle machinery is not
-///   instantiated. Tests call the `notify…` hooks directly.
+///   instantiated. Tests drive state via the internal `notify…` hooks.
 @MainActor
 public final class UpdaterController: NSObject, ObservableObject {
 
-    @Published public private(set) var updateAvailable: Bool = false
+    /// Non-nil iff a newer version has been announced by Sparkle and not
+    /// yet acted on. Badge visibility and label both derive from this.
     @Published public private(set) var availableVersion: String?
 
-    /// Nil in test mode; populated in live mode once `start()` succeeds.
-    /// The outer `Wiring` box keeps the live-mode init to a single
-    /// `let`-like assignment after `super.init` so the delegate
-    /// self-reference is safe.
-    private var wiring: Wiring?
+    /// Nil in test mode; populated in live mode after `super.init` so the
+    /// delegate self-reference is legal.
+    private var standardController: SPUStandardUpdaterController?
 
-    struct Wiring {
-        let standardController: SPUStandardUpdaterController
-    }
-
-    /// Production initializer. Wires `SPUStandardUpdaterController` with
-    /// `self` as the `userDriverDelegate`, so
-    /// `SPUStandardUserDriverDelegate` callbacks fire on this object.
-    /// The conformance lives in `UpdaterController+Delegate.swift`.
     public override init() {
         super.init()
-        let controller = SPUStandardUpdaterController(
+        self.standardController = SPUStandardUpdaterController(
             startingUpdater: true,
             updaterDelegate: nil,
             userDriverDelegate: self
         )
-        self.wiring = Wiring(standardController: controller)
     }
 
-    /// Test-only: skips Sparkle wiring. The published state is still
-    /// reachable through the `notify…` hooks.
     public static func forTesting() -> UpdaterController {
         UpdaterController(skipWiring: ())
     }
 
     private init(skipWiring: Void) {
         super.init()
-        self.wiring = nil
     }
 
     public var canCheckForUpdates: Bool {
-        wiring?.standardController.updater.canCheckForUpdates ?? false
+        standardController?.updater.canCheckForUpdates ?? false
     }
 
-    /// User-initiated check via `Graftty → Check for Updates…`. Always
-    /// surfaces Sparkle's standard dialog regardless of whether an
-    /// update exists. When a pending scheduled-check result is waiting
-    /// on us, this also resurfaces that result — `immediateFocus` will
-    /// be `true`, so the delegate returns `true` and Sparkle shows the
-    /// modal.
+    public var automaticallyChecksForUpdates: Bool {
+        get { standardController?.updater.automaticallyChecksForUpdates ?? true }
+        set { standardController?.updater.automaticallyChecksForUpdates = newValue }
+    }
+
     public func checkForUpdatesWithUI() {
-        wiring?.standardController.checkForUpdates(nil)
+        standardController?.checkForUpdates(nil)
     }
 
-    /// Invoked by the titlebar badge click. Triggers a fresh check whose
-    /// `immediateFocus` flag is set — Sparkle re-surfaces the same
-    /// pending update through the standard driver's modal. The appcast
-    /// is re-fetched (one HTTP GET) but that cost is fine at this
-    /// cadence; it also ensures the user sees the freshest version if
-    /// we've raced a new release.
+    /// Invoked by the titlebar badge click. Triggers a user-initiated
+    /// check whose `immediateFocus` flag is set, so the delegate returns
+    /// `true` and Sparkle's standard driver shows its install dialog.
     public func showPendingUpdate() {
-        wiring?.standardController.checkForUpdates(nil)
+        standardController?.checkForUpdates(nil)
     }
 
-    // MARK: - State-transition hooks called from the delegate extension
+    // MARK: - State-transition hooks
 
-    /// Published so tests can drive state directly without faking Sparkle.
-    /// The delegate extension is the only live-mode caller.
-    public func notifyPendingUpdateDiscovered(version: String) {
+    func notifyPendingUpdateDiscovered(version: String) {
         availableVersion = version
-        updateAvailable = true
     }
 
-    public func notifyPendingUpdateCleared() {
+    func notifyPendingUpdateCleared() {
         availableVersion = nil
-        updateAvailable = false
-    }
-
-    /// Access to the underlying updater for the delegate extension only.
-    /// Internal, not public — outside code uses `checkForUpdatesWithUI`
-    /// and `showPendingUpdate`.
-    var underlyingUpdater: SPUUpdater? {
-        wiring?.standardController.updater
     }
 }

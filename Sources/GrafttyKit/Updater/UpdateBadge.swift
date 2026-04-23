@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Pill-shaped titlebar button visible only while `controller.updateAvailable`.
+/// Pill-shaped titlebar button visible only when a pending update exists.
 /// Clicking routes through `UpdaterController.showPendingUpdate()`, which
 /// triggers a user-initiated check — Sparkle's standard driver then shows
 /// its install dialog and owns the UI from there.
@@ -12,7 +12,7 @@ public struct UpdateBadge: View {
     }
 
     public var body: some View {
-        if controller.updateAvailable, let version = controller.availableVersion {
+        if let version = controller.availableVersion {
             Button {
                 controller.showPendingUpdate()
             } label: {
@@ -32,8 +32,6 @@ public struct UpdateBadge: View {
             }
             .buttonStyle(.plain)
             .help("Update to Graftty v\(version) available")
-        } else {
-            EmptyView()
         }
     }
 }

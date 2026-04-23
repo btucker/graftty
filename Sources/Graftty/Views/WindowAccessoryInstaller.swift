@@ -5,6 +5,10 @@ import GrafttyKit
 /// Installs the update-badge titlebar accessory on the host `NSWindow`
 /// once the view is attached. Mirrors the `NSViewRepresentable` +
 /// `viewDidMoveToWindow` pattern used by `WindowBackgroundTint`.
+///
+/// The accessory is cached on the installer view so a window
+/// close→reopen (which fires `viewDidMoveToWindow` again with a new
+/// window) reuses the same accessory instead of stacking duplicates.
 struct WindowAccessoryInstaller: NSViewRepresentable {
     let updaterController: UpdaterController
 
@@ -20,11 +24,13 @@ struct WindowAccessoryInstaller: NSViewRepresentable {
 
     private final class InstallerView: NSView {
         var updaterController: UpdaterController?
+        private var accessory: UpdaterTitlebarAccessory?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             guard let window, let controller = updaterController else { return }
-            let accessory = UpdaterTitlebarAccessory(controller: controller)
+            let accessory = self.accessory ?? UpdaterTitlebarAccessory(controller: controller)
+            self.accessory = accessory
             accessory.install(on: window)
         }
     }
