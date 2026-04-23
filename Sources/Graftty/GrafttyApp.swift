@@ -29,7 +29,7 @@ final class AppServices {
         self.channelRouter = router
         self.channelSettingsObserver = ChannelSettingsObserver(
             router: router,
-            onEnable: { GrafttyApp.installChannelMCPServer() }
+            onEnable: { Task { await GrafttyApp.installChannelMCPServer() } }
         )
 
         self.worktreeMonitor = WorktreeMonitor()
@@ -395,15 +395,17 @@ struct GrafttyApp: App {
         }
 
         // Claude Code Channels — only active when the user has enabled the
-        // feature. On enable, merge the graftty-channel MCP server into
-        // `~/.claude/.mcp.json` (idempotent) and start the router so new
+        // feature. On enable, register the graftty-channel user-scope MCP
+        // server via `claude mcp` (idempotent) and start the router so new
         // Claude sessions launched by the user with
         // `--dangerously-load-development-channels server:graftty-channel`
         // connect successfully. The user is responsible for the launch
         // flag — Graftty no longer auto-injects it, since the injection
-        // only covered sessions started from `defaultCommand`.
+        // only covered sessions started from `defaultCommand`. MCP
+        // registration is fire-and-forget: it does subprocess I/O and the
+        // router does not depend on it completing before start().
         if UserDefaults.standard.bool(forKey: "channelsEnabled") {
-            Self.installChannelMCPServer()
+            Task { await Self.installChannelMCPServer() }
             do {
                 try services.channelRouter.start()
             } catch {
@@ -1779,17 +1781,17 @@ struct GrafttyApp: App {
         }
     }
 
-    /// Merge the graftty-channel MCP server entry into `~/.claude/.mcp.json`,
-    /// and remove any leftover `~/.claude/plugins/graftty-channel/` directory
-    /// from prior versions. Idempotent — safe to call on every launch.
-    /// Logs on failure; does not throw.
+    /// Register the graftty-channel user-scope MCP server via `claude mcp`,
+    /// and remove any leftover config from prior versions (the plugin-
+    /// wrapper directory and the abandoned `~/.claude/.mcp.json`). Logs on
+    /// failure; never throws.
     ///
     /// Static so that both `startup()` and `ChannelSettingsObserver`'s
     /// `onEnable` closure can call it without needing a live `GrafttyApp`
     /// struct instance (the struct is a SwiftUI App value type; capturing
     /// `self` across scenes is awkward).
     @MainActor
-    static func installChannelMCPServer() {
+    static func installChannelMCPServer() async {
         // Absolute path to the CLI binary. When Graftty is bundled, the CLI
         // lives at Graftty.app/Contents/Helpers/graftty per `scripts/bundle.sh`
         // and `installCLI()` below.
@@ -1797,28 +1799,21 @@ struct GrafttyApp: App {
             .appendingPathComponent("Contents/Helpers/graftty")
             .path
 
-        // When running from `swift run` there's no bundled CLI — the path
-        // resolves to a file inside `.build/` or similar that doesn't exist
-        // at the computed location. Installing an entry pointing at a
-        // nonexistent binary would poison the user's real ~/.claude/.mcp.json
-        // and break any Claude session they open outside Graftty. Skip
-        // install in that case.
+        // `swift run` has no bundled CLI — skip to avoid registering an
+        // entry pointing at a nonexistent binary, which would break every
+        // Claude session the user opens outside Graftty.
         guard FileManager.default.fileExists(atPath: cliPath) else {
             NSLog("[Graftty] Channels install skipped: bundled CLI not found at %@", cliPath)
             return
         }
 
-        do {
-            try ChannelMCPInstaller.install(
-                mcpConfigPath: ChannelMCPInstaller.defaultMCPConfigPath(),
-                cliPath: cliPath
-            )
-        } catch {
-            NSLog("[Graftty] Channels install failed: %@", String(describing: error))
-        }
+        await ChannelMCPInstaller.install(executor: CLIRunner(), cliPath: cliPath)
 
         ChannelMCPInstaller.removeLegacyPluginDirectory(
             pluginsRoot: ChannelMCPInstaller.defaultLegacyPluginsRoot()
+        )
+        ChannelMCPInstaller.removeLegacyMCPConfigFile(
+            path: ChannelMCPInstaller.defaultLegacyMCPConfigPath()
         )
     }
 

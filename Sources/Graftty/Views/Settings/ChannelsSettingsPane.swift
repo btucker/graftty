@@ -17,9 +17,9 @@ struct ChannelsSettingsPane: View {
 
     /// The exact flag users need to append when launching Claude for a
     /// channel-subscribing session. `server:graftty-channel` targets the
-    /// manually-configured MCP server that Graftty merges into
-    /// `~/.claude/.mcp.json` on enable; `plugin:<name>@<marketplace>` would
-    /// require a marketplace registration we don't have.
+    /// user-scope MCP server Graftty registers via `claude mcp add` on
+    /// enable; `plugin:<name>@<marketplace>` would require a marketplace
+    /// registration we don't have.
     static let launchFlag = "--dangerously-load-development-channels server:graftty-channel"
 
     var body: some View {
@@ -41,7 +41,7 @@ struct ChannelsSettingsPane: View {
                         .font(.subheadline.bold())
 
                         Text(verbatim:
-                            "Graftty installs an MCP server at ~/.claude/.mcp.json. " +
+                            "Graftty registers a user-scope MCP server with Claude Code. " +
                             "To receive channel events, launch Claude with:"
                         )
                         .font(.caption)

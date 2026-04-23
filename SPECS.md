@@ -1037,7 +1037,7 @@ shall surface an actionable alert rather than silently continue.
 
 ### 18.3 Launch Flag Disclosure
 
-**CHAN-3.1** The canonical launch-flag string the Channels pane shall disclose is `--dangerously-load-development-channels server:graftty-channel`. The `server:<name>` form addresses the MCP server entry Graftty merges into `~/.claude/.mcp.json` per CHAN-4.*. The `plugin:<name>@<marketplace>` form is not used, because local plugins under `~/.claude/plugins/` are not registered under any marketplace by default and the flag rejects bare `plugin:<name>`.
+**CHAN-3.1** The canonical launch-flag string the Channels pane shall disclose is `--dangerously-load-development-channels server:graftty-channel`. The `server:<name>` form addresses the user-scope MCP server entry Graftty registers via `claude mcp add` per CHAN-4.*. The `plugin:<name>@<marketplace>` form is not used, because local plugins under `~/.claude/plugins/` are not registered under any marketplace by default and the flag rejects bare `plugin:<name>`.
 
 **CHAN-3.2** The application shall never modify the user's `defaultCommand` string, nor inject channel flags into any command it types into a terminal. The user is the sole author of the Claude launch line.
 
@@ -1045,15 +1045,15 @@ shall surface an actionable alert rather than silently continue.
 
 ### 18.4 MCP Server Installation
 
-**CHAN-4.1** While `channelsEnabled` is `true`, on app launch the application shall merge an `mcpServers.graftty-channel` entry into `~/.claude/.mcp.json` whose `command` is the absolute path of the bundled Graftty CLI binary and whose `args` are `["mcp-channel"]`. The merge shall preserve every other key at the document root and every other key under `mcpServers`; only the `graftty-channel` key shall be written.
+**CHAN-4.1** While `channelsEnabled` is `true`, on app launch the application shall register an MCP server named `graftty-channel` at user scope via the `claude` CLI, with its command set to the bundled Graftty CLI path and its args set to `["mcp-channel"]`.
 
-**CHAN-4.2** The MCP server install shall be idempotent: repeated invocations with the same CLI path shall produce byte-identical output. A subsequent install with a different CLI path (e.g. after the user reinstalls Graftty to a new location) shall overwrite the `graftty-channel` entry while leaving other `mcpServers` entries untouched.
+**CHAN-4.2** The registration shall be idempotent: when an entry already exists at user scope with the expected command and args, the application shall not re-invoke `claude mcp add`. When the existing entry differs (path change, wrong args, or wrong scope), the application shall remove the old entry and register the new one.
 
-**CHAN-4.3** If `~/.claude/.mcp.json` exists but its contents are not valid JSON, or its `mcpServers` key is present and is not a JSON object, the application shall log the failure via `NSLog` and leave the file byte-for-byte unchanged rather than clobber a user edit that may be mid-flight. Startup shall continue without channels in that case.
+**CHAN-4.3** If the `claude` CLI is not present on PATH (including the augmented PATH that includes `/opt/homebrew/bin`, `/usr/local/bin`, and `~/.local/bin`), the application shall log the absence and skip the install. Channel events simply won't reach a session until Claude Code is installed.
 
-**CHAN-4.4** If the bundled CLI binary is not present at the expected path (e.g. when running from `swift run` in a development build), the application shall log and skip the install, rather than writing an `.mcp.json` entry pointing at a nonexistent binary — a poisoned entry would break any Claude session the user opens outside Graftty.
+**CHAN-4.4** If the bundled Graftty CLI binary is not present at the expected path (e.g. when running from `swift run`), the application shall log and skip the install rather than registering an entry pointing at a nonexistent binary.
 
-**CHAN-4.5** On app launch, the application shall remove any leftover `~/.claude/plugins/graftty-channel/` directory from prior versions that installed the plugin-wrapper shape. The removal shall be a no-op when the directory is absent.
+**CHAN-4.5** On app launch, the application shall remove any leftover `~/.claude/plugins/graftty-channel/` directory from prior versions (plugin-wrapper shape) **and** any leftover `~/.claude/.mcp.json` file written by prior versions that used the hand-rolled-JSON installer shape. Both removals shall be no-ops when the target is absent, and the `.mcp.json` cleanup shall only fire when the file's contents exactly match the old installer's output (to avoid deleting a file the user has repurposed manually).
 
 ### 18.5 Event Emission
 
