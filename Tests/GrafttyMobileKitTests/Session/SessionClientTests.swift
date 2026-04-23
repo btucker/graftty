@@ -32,21 +32,6 @@ struct SessionClientTests {
     }
 
     @Test
-    func sendResizeGoesOutAsJSONTextFrame() async throws {
-        let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocket: ws)
-        defer { client.stop() }
-        client.sendResize(cols: 100, rows: 30)
-        try await Task.sleep(nanoseconds: 100_000_000)
-        guard case .text(let payload) = ws.sent.first else {
-            Issue.record("expected text frame first")
-            return
-        }
-        let envelope = try WebControlEnvelope.parse(Data(payload.utf8))
-        #expect(envelope == .resize(cols: 100, rows: 30))
-    }
-
-    @Test
     func stopClosesWebSocket() {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocket: ws)

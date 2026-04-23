@@ -32,6 +32,21 @@ targets:
       - package: GrafttyMobileKit
         product: GrafttyMobileKit
 
+  GrafttyMobileKitTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: ../../Tests/GrafttyMobileKitTests
+    settings:
+      base:
+        SWIFT_VERSION: "5.10"
+        SUPPORTED_PLATFORMS: "iphonesimulator iphoneos"
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - package: GrafttyMobileKit
+        product: GrafttyMobileKit
+
 schemes:
   GrafttyMobile:
     build:
@@ -41,6 +56,8 @@ schemes:
       config: Debug
     test:
       config: Debug
+      targets:
+        - GrafttyMobileKitTests
     profile:
       config: Release
     analyze:

@@ -10,19 +10,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-and-test:
-    # macos-26 ships Xcode 26 which bundles a current swift-testing.
-    # The older swift-testing (124.4) on macos-latest (→ macos-15) has
-    # an exit-path hang: all tests pass, then the process blocks ~10 min
-    # without emitting the final summary. macos-26 sidesteps it.
-    runs-on: macos-26
+  verify-web:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Show tool versions
-        run: |
-          swift --version
-          xcodebuild -version
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -42,6 +33,20 @@ jobs:
           git diff --exit-code Sources/GrafttyKit/Web/Resources/ \
             || { echo "::error::web-client/ changed but the committed bundle is stale. Run ./scripts/build-web.sh locally and recommit."; exit 1; }
 
+  macos-build-and-test:
+    # macos-26 ships Xcode 26 which bundles a current swift-testing.
+    # The older swift-testing (124.4) on macos-latest (→ macos-15) has
+    # an exit-path hang: all tests pass, then the process blocks ~10 min
+    # without emitting the final summary. macos-26 sidesteps it.
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show tool versions
+        run: |
+          swift --version
+          xcodebuild -version
+
       - name: Cache SwiftPM build
         uses: actions/cache@v4
         with:
@@ -59,6 +64,16 @@ jobs:
         # in real time instead of being block-buffered by the CI log pipe.
         run: /usr/bin/script -q /dev/null swift test --skip-build
 
+  ios-build-and-test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show tool versions
+        run: |
+          swift --version
+          xcodebuild -version
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
@@ -66,7 +81,8 @@ jobs:
         working-directory: Apps/GrafttyMobile
         run: xcodegen generate
 
-      - name: Build GrafttyMobile (iOS Simulator SDK)
+      - name: Build & test GrafttyMobile (iOS Simulator SDK)
+        timeout-minutes: 15
         # Let xcodebuild apply the default simulator ad-hoc signature
         # (with application-identifier entitlement) — CODE_SIGN_IDENTITY=-
         # in project.yml handles signing. Without a real signature the
@@ -78,5 +94,5 @@ jobs:
             -sdk iphonesimulator \
             -configuration Debug \
             -skipPackagePluginValidation \
-            -destination 'generic/platform=iOS Simulator' \
-            build
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            test

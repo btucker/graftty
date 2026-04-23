@@ -39,6 +39,17 @@
          </BuildableReference>
       </MacroExpansion>
       <Testables>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "166B2D45AF993D5EE3956B3E"
+               BuildableName = "GrafttyMobileKitTests.xctest"
+               BlueprintName = "GrafttyMobileKitTests"
+               ReferencedContainer = "container:GrafttyMobile.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
       <CommandLineArguments>
       </CommandLineArguments>
