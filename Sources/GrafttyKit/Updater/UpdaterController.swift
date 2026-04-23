@@ -41,7 +41,7 @@ public final class UpdaterController: NSObject, ObservableObject {
         let controller = SPUStandardUpdaterController(
             startingUpdater: true,
             updaterDelegate: nil,
-            userDriverDelegate: self as? SPUStandardUserDriverDelegate
+            userDriverDelegate: self
         )
         self.wiring = Wiring(standardController: controller)
     }
