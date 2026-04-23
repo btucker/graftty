@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import GrafttyKit
 
 /// Sheet for creating a new worktree under a repo. Collects a directory
@@ -7,13 +8,14 @@ import GrafttyKit
 /// edited independently.
 struct AddWorktreeSheet: View {
     let repoDisplayName: String
+    let initialWorktreeName: String
     /// Called with (worktreeName, branchName) on submit. The caller
     /// performs the git invocation and dismisses the sheet.
     let onSubmit: (String, String) async -> String?
     let onCancel: () -> Void
 
-    @State private var worktreeName: String = ""
-    @State private var branchName: String = ""
+    @State private var worktreeName: String
+    @State private var branchName: String
     /// Tracks whether the branch field is still mirroring the worktree
     /// name. Once the user types something different in the branch field,
     /// we stop auto-syncing so their edit sticks.
@@ -22,6 +24,20 @@ struct AddWorktreeSheet: View {
     @State private var errorMessage: String?
 
     @FocusState private var worktreeFieldFocused: Bool
+
+    init(
+        repoDisplayName: String,
+        initialWorktreeName: String = "",
+        onSubmit: @escaping (String, String) async -> String?,
+        onCancel: @escaping () -> Void
+    ) {
+        self.repoDisplayName = repoDisplayName
+        self.initialWorktreeName = initialWorktreeName
+        self.onSubmit = onSubmit
+        self.onCancel = onCancel
+        _worktreeName = State(initialValue: initialWorktreeName)
+        _branchName = State(initialValue: initialWorktreeName)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -94,7 +110,14 @@ struct AddWorktreeSheet: View {
         }
         .padding(20)
         .frame(width: 420)
-        .onAppear { worktreeFieldFocused = true }
+        .onAppear {
+            worktreeFieldFocused = true
+            if !initialWorktreeName.isEmpty {
+                DispatchQueue.main.async {
+                    NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+                }
+            }
+        }
     }
 
     /// Characters stripped from either end when finalizing submission. We

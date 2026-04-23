@@ -462,6 +462,26 @@ final class TerminalManager: ObservableObject {
         surfaces[terminalID]
     }
 
+    /// Returns the terminal's current text selection as a `String`, or
+    /// `nil` when the surface is unknown or has no selection. Caps the
+    /// UTF-8 copy at 4 KB since the only caller sanitizes+truncates to
+    /// 100 characters — a multi-megabyte `cat` selection would otherwise
+    /// force a full UTF-8 validation and `String` copy.
+    func readSelection(for terminalID: TerminalID) -> String? {
+        guard let handle = handle(for: terminalID) else { return nil }
+        let surface = handle.surface
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_selection(surface, &text) else { return nil }
+        defer { ghostty_surface_free_text(surface, &text) }
+        guard let ptr = text.text, text.text_len > 0 else { return nil }
+        let len = min(Int(text.text_len), 4096)
+        let buffer = UnsafeBufferPointer(
+            start: UnsafeRawPointer(ptr).assumingMemoryBound(to: UInt8.self),
+            count: len
+        )
+        return String(decoding: buffer, as: UTF8.self)
+    }
+
     /// Focus exactly one surface (by ID); unfocus the rest.
     func setFocus(_ terminalID: TerminalID) {
         for (id, handle) in surfaces {

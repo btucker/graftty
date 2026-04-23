@@ -17,6 +17,11 @@ struct MainWindow: View {
     /// `.constant(...)` so the toolbar toggle button actually toggles.
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
+    /// Lifted from SidebarView so the ⌘T command handler (scoped to the
+    /// SwiftUI scene commands block, which can't reach view-local state)
+    /// can present the Add Worktree sheet pre-scoped to the current repo.
+    @State private var pendingAddWorktree: AddWorktreeRequest?
+
     var body: some View {
         NavigationSplitView(
             columnVisibility: $columnVisibility
@@ -35,7 +40,8 @@ struct MainWindow: View {
                 onStopWorktree: stopWorktreeWithConfirmation,
                 onDeleteWorktree: deleteWorktreeWithConfirmation,
                 onMovePane: movePane,
-                onAddWorktree: addWorktree
+                onAddWorktree: addWorktree,
+                pendingAddWorktree: $pendingAddWorktree
             )
             .navigationSplitViewColumnWidth(
                 min: 180,
@@ -126,6 +132,7 @@ struct MainWindow: View {
                 offerDeleteForMergedPR(worktreePath: worktreePath, prNumber: prNumber)
             }
         }
+        .focusedSceneValue(\.addWorktreeAction, addWorktreeAction)
         .onPreferenceChange(SidebarWidthKey.self) { [$appState, $pendingSidebarWidthTask] width in
             // Debounce by 250ms so a drag doesn't write on every layout
             // pass. Only writes if the value actually changed (value-equality
@@ -181,6 +188,22 @@ struct MainWindow: View {
     private var selectedWorktree: WorktreeEntry? {
         guard let path = appState.selectedWorktreePath else { return nil }
         return appState.worktree(forPath: path)
+    }
+
+    /// Computed command handler surfaced to `GrafttyApp.commands` via
+    /// `@FocusedValue`. `nil` means no worktree is selected → menu item
+    /// disabled. Captures `appState` and `terminalManager` so the scene-
+    /// level commands block doesn't need direct access to either.
+    private var addWorktreeAction: (() -> Void)? {
+        guard let repo = selectedRepo else { return nil }
+        return {
+            var prefill = ""
+            if let termID = selectedWorktree?.focusedTerminalID,
+               let selection = terminalManager.readSelection(for: termID) {
+                prefill = WorktreeNameSanitizer.sanitizeForPrefill(selection)
+            }
+            pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: prefill)
+        }
     }
 
     private var selectedWorktreeBinding: Binding<WorktreeEntry>? {

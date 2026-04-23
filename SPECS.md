@@ -893,6 +893,21 @@ application shall log at debug and no-op.
 **KBD-4.1** When `reload_config` fires, the application shall rebuild
 its Ghostty-config-derived menu shortcuts without requiring a restart.
 
+**KEY-3.1** When the user presses `⌘T` while `appState.selectedWorktreePath`
+resolves to a repo, the application shall present the Add Worktree sheet
+pre-scoped to that repo. When no worktree is selected, the menu item
+"Add Worktree..." shall be disabled.
+
+**KEY-3.2** While presenting the Add Worktree sheet via `⌘T`, if the
+focused terminal in the selected worktree has a non-empty selection, the
+application shall pre-fill both the worktree and branch name fields with
+`WorktreeNameSanitizer.sanitizeForPrefill(selection)` (a maximum of 100
+characters, with non-`[A-Za-z0-9._/-]` characters replaced by `-`, dash
+runs collapsed, and leading/trailing `-`/`.`/`_` trimmed). The pre-filled
+value shall be focused and fully selected on appear so typing replaces
+it. If the sanitized result is empty — or if the selected worktree has
+no focused terminal — the fields shall start empty.
+
 **TERM-9.1** When the user activates "Reload Ghostty Config"
 (either via the Graftty menu or via a Ghostty keybinding mapped to
 the `reload_config` action), the application shall construct a fresh

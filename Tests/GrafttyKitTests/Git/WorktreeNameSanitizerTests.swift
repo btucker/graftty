@@ -82,4 +82,45 @@ struct WorktreeNameSanitizerTests {
         // surprises. Be conservative.
         #expect(WorktreeNameSanitizer.sanitize("café") == "caf-")
     }
+
+    @Test func prefillSanitizesJiraStyleTitle() {
+        #expect(
+            WorktreeNameSanitizer.sanitizeForPrefill("PROJ-123: Fix the login race condition")
+                == "PROJ-123-Fix-the-login-race-condition"
+        )
+    }
+
+    @Test func prefillReturnsEmptyForPunctuationOrWhitespaceOnly() {
+        #expect(WorktreeNameSanitizer.sanitizeForPrefill("!!!   ") == "")
+        #expect(WorktreeNameSanitizer.sanitizeForPrefill("") == "")
+    }
+
+    @Test func prefillTrimsLeadingAndTrailingWhitespaceArtifacts() {
+        #expect(WorktreeNameSanitizer.sanitizeForPrefill("\n\t  whitespace-around  \n") == "whitespace-around")
+    }
+
+    @Test func prefillTruncatesToDefault100() {
+        let long = String(repeating: "a", count: 250)
+        let expected = String(repeating: "a", count: 100)
+        #expect(WorktreeNameSanitizer.sanitizeForPrefill(long) == expected)
+    }
+
+    @Test func prefillTrimsTrailingDashAfterTruncation() {
+        // 99 a's + "-..." — truncation lands on '-' (dash collapses the "...").
+        // Expected: trailing '-' removed, leaving the 99 a's.
+        let input = String(repeating: "a", count: 99) + "-..."
+        #expect(WorktreeNameSanitizer.sanitizeForPrefill(input) == String(repeating: "a", count: 99))
+    }
+
+    @Test func prefillCollapsesNewlinesInMultilineSelection() {
+        #expect(WorktreeNameSanitizer.sanitizeForPrefill("multi\nline\nselection") == "multi-line-selection")
+    }
+
+    @Test func prefillDropsUnicodeAndTrimsEdges() {
+        #expect(WorktreeNameSanitizer.sanitizeForPrefill("   -unicode-café-") == "unicode-caf")
+    }
+
+    @Test func prefillPreservesSlashes() {
+        #expect(WorktreeNameSanitizer.sanitizeForPrefill("a/b/c-feature") == "a/b/c-feature")
+    }
 }

@@ -46,6 +46,19 @@ public enum WorktreeNameSanitizer {
         return result
     }
 
+    /// Sanitize `input` like `sanitize(_:)` but for the "full-replacement"
+    /// path (pasted selection → pre-fill) rather than mid-type. Truncates to
+    /// `maxLength` characters and trims leading/trailing `-`, `.`, `_` so no
+    /// dangling separator from truncation or from an edge non-allowed char
+    /// survives to the UI. Returns `""` when the sanitized result is empty.
+    public static func sanitizeForPrefill(_ input: String, maxLength: Int = 100) -> String {
+        let sanitized = sanitize(input)
+        let truncated = String(sanitized.unicodeScalars.prefix(maxLength))
+        return truncated.trimmingCharacters(in: prefillEdgeTrimSet)
+    }
+
+    private static let prefillEdgeTrimSet = CharacterSet(charactersIn: "-._")
+
     private static func isAllowed(_ s: Unicode.Scalar) -> Bool {
         switch s {
         case "A"..."Z", "a"..."z", "0"..."9":

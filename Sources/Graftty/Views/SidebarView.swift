@@ -30,7 +30,7 @@ struct SidebarView: View {
     /// the listening addresses to compose the URL.
     @EnvironmentObject private var webController: WebServerController
 
-    @State private var addingWorktreeTo: RepoEntry?
+    @Binding var pendingAddWorktree: AddWorktreeRequest?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -61,15 +61,16 @@ struct SidebarView: View {
             handleDrop(providers)
         }
         .publishSidebarWidth()
-        .sheet(item: $addingWorktreeTo) { repo in
+        .sheet(item: $pendingAddWorktree) { request in
             AddWorktreeSheet(
-                repoDisplayName: repo.displayName,
+                repoDisplayName: request.repo.displayName,
+                initialWorktreeName: request.prefill,
                 onSubmit: { worktreeName, branchName in
-                    let err = await onAddWorktree(repo, worktreeName, branchName)
-                    if err == nil { addingWorktreeTo = nil }
+                    let err = await onAddWorktree(request.repo, worktreeName, branchName)
+                    if err == nil { pendingAddWorktree = nil }
                     return err
                 },
-                onCancel: { addingWorktreeTo = nil }
+                onCancel: { pendingAddWorktree = nil }
             )
         }
     }
@@ -109,7 +110,7 @@ struct SidebarView: View {
                     .fontWeight(.semibold)
                 Spacer()
                 Button {
-                    addingWorktreeTo = repo
+                    pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: "")
                 } label: {
                     Image(systemName: "plus")
                         .font(.system(size: 11, weight: .semibold))

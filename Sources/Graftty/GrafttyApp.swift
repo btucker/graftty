@@ -176,6 +176,8 @@ struct GrafttyApp: App {
                 }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
 
+                AddWorktreeCommandButton()
+
                 Divider()
 
                 bridgedButton("Split Right", action: .newSplitRight) { handleSplit(.right) }
