@@ -21,6 +21,7 @@ let package = Package(
         // bundled for distribution, this binary is installed as "graftty"
         // at Graftty.app/Contents/MacOS/graftty per ATTN-1.1.
         .executable(name: "graftty-cli", targets: ["GrafttyCLI"]),
+        .executable(name: "appcast-updater", targets: ["appcast-updater"]),
         .library(name: "GrafttyKit", targets: ["GrafttyKit"]),
         .library(name: "GrafttyMobileKit", targets: ["GrafttyMobileKit"]),
     ],
@@ -29,10 +30,15 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.26.0"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
     ],
     targets: [
         .target(
             name: "GrafttyProtocol",
+            swiftSettings: strictWarnings
+        ),
+        .target(
+            name: "AppcastUpdater",
             swiftSettings: strictWarnings
         ),
         .target(
@@ -43,6 +49,7 @@ let package = Package(
                 .product(name: "NIOHTTP1", package: "swift-nio"),
                 .product(name: "NIOWebSocket", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
+                .product(name: "Sparkle", package: "Sparkle"),
             ],
             resources: [
                 .copy("Web/Resources"),
@@ -55,6 +62,7 @@ let package = Package(
                 "GrafttyKit",
                 "GrafttyProtocol",
                 .product(name: "GhosttyKit", package: "libghostty-spm"),
+                .product(name: "Sparkle", package: "Sparkle"),
             ],
             swiftSettings: strictWarnings
         ),
@@ -66,9 +74,22 @@ let package = Package(
             ],
             swiftSettings: strictWarnings
         ),
+        .executableTarget(
+            name: "appcast-updater",
+            dependencies: ["AppcastUpdater"],
+            swiftSettings: strictWarnings
+        ),
         .testTarget(
             name: "GrafttyProtocolTests",
             dependencies: ["GrafttyProtocol"],
+            swiftSettings: strictWarnings
+        ),
+        .testTarget(
+            name: "AppcastUpdaterTests",
+            dependencies: ["AppcastUpdater"],
+            resources: [
+                .copy("Fixtures"),
+            ],
             swiftSettings: strictWarnings
         ),
         .testTarget(
