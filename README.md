@@ -21,6 +21,12 @@ brew install --cask graftty
 
 Installs `Graftty.app` to `/Applications` and symlinks the `graftty` CLI onto `PATH`. On first launch, macOS will block the app with Gatekeeper — approve it under System Settings → Privacy & Security (on Sonoma, right-click → Open). Uninstall with `brew uninstall --cask --zap graftty`.
 
+Graftty updates itself. On first launch, you'll be asked whether
+Graftty may check for updates automatically — if you agree, a small
+indicator appears in the window titlebar when a new version is
+available, and clicking it installs the update. You can also trigger a
+check manually from `Graftty → Check for Updates…`.
+
 ## Building
 
 Requires Xcode 15+ and macOS 14 Sonoma or later.
