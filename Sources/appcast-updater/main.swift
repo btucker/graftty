@@ -60,7 +60,14 @@ func readReleaseNotes(_ path: String?) -> String {
     if path == "-" {
         return String(data: FileHandle.standardInput.readDataToEndOfFile(), encoding: .utf8) ?? ""
     }
-    return (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
+    // Fail loudly on unreadable notes — a silent empty description is the
+    // wrong default for a release workflow where an operator explicitly
+    // asked the tool to include notes.
+    do {
+        return try String(contentsOfFile: path, encoding: .utf8)
+    } catch {
+        fail("cannot read --release-notes \(path): \(error)")
+    }
 }
 
 let args = parse(CommandLine.arguments)
@@ -72,7 +79,20 @@ guard let feed = args.feed,
     fail("required: --feed --version --download-url --length --ed-signature")
 }
 
-let existing = try? String(contentsOfFile: feed, encoding: .utf8)
+// Distinguish "feed doesn't exist yet" (seed a fresh one) from "feed
+// exists but can't be read" (fail — writing back would wipe prior
+// entries). A permissions hiccup in CI should not cause the first
+// release after the failure to silently lose all appcast history.
+let existing: String?
+if FileManager.default.fileExists(atPath: feed) {
+    do {
+        existing = try String(contentsOfFile: feed, encoding: .utf8)
+    } catch {
+        fail("cannot read existing feed \(feed): \(error)")
+    }
+} else {
+    existing = nil
+}
 let item = AppcastItem(
     version: version,
     pubDate: Date(),
