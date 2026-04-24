@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+    <channel>
+        <title>Graftty</title>
+        <link>https://github.com/btucker/graftty</link>
+        <description>Updates for Graftty.</description>
+        <language>en</language>
+        <item>
+            <title>Version 0.1.0</title>
+            <sparkle:version>0.1.0</sparkle:version>
+            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <pubDate>Mon, 01 Apr 2026 12:00:00 +0000</pubDate>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[First release]]></description>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.1.0/Graftty-0.1.0.zip" length="1000000" type="application/octet-stream" sparkle:edSignature="sig01" />
+        </item>
+    </channel>
+</rss>

@@ -51,6 +51,62 @@ git push
 The `version "0.0.0"` and zero-filled `sha256` are placeholders; the
 release workflow rewrites both on the first real release.
 
+### 4. Generate the Sparkle EdDSA keypair
+
+Sparkle verifies every update download against a public key baked into
+the app bundle. The private half signs release zips in CI.
+
+```bash
+brew install --cask sparkle          # one-time; installs generate_keys + sign_update
+generate_keys                        # stores the keypair in the Keychain
+generate_keys -p                     # prints the base64 public key
+generate_keys -x ~/sparkle-private.key  # exports the private key to a file
+```
+
+**Wire the public key into bundle.sh.** Open `scripts/bundle.sh`, find
+the `__SPARKLE_PUBLIC_ED_KEY__` sentinel inside the Info.plist heredoc,
+and replace it with the output of `generate_keys -p`. Commit:
+
+```bash
+git add scripts/bundle.sh
+git commit -m "build: install Sparkle public key"
+```
+
+**Wire the private key into CI.** On GitHub, go to Settings → Secrets
+and variables → Actions → New repository secret. Name it
+`SPARKLE_ED_PRIVATE_KEY`. The value is the contents of
+`~/sparkle-private.key` (one base64 line).
+
+**Guard the private key.** After setting the GitHub secret, back the
+file up somewhere safe (password manager, offline drive) and then shred
+it from the working copy:
+
+```bash
+rm -P ~/sparkle-private.key
+```
+
+Losing both the Keychain copy and the backup means every user has to
+manually re-download a new build — there is no recovery path.
+
+### 5. Flip `auto_updates true` in the tap
+
+The release workflow only rewrites `version` and `sha256` in the tap's
+copy of `Casks/graftty.rb`. Adding the `auto_updates true` stanza is a
+one-time manual sync:
+
+```bash
+cd /tmp/homebrew-graftty   # or wherever your checkout lives
+git pull
+# Edit Casks/graftty.rb to add  `auto_updates true`  after the sha256 line.
+git add Casks/graftty.rb
+git commit -m "cask: declare auto_updates true (Sparkle owns updates)"
+git push
+```
+
+Once this lands, `brew upgrade --cask graftty` on a machine with an
+up-to-date Sparkle-installed build becomes a no-op instead of
+reinstalling a possibly-older cask version.
+
 ### Keeping the cask in sync
 
 The release workflow only rewrites the `version` and `sha256` lines in

@@ -62,6 +62,33 @@ jobs:
           echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
           echo "Zip: $ZIP ($SHA256)"
 
+      - name: Build Sparkle sign_update
+        run: |
+          set -euo pipefail
+          # Clone Sparkle at the same version our SwiftPM package
+          # resolves to. Package.resolved is the source of truth.
+          SPARKLE_VERSION="$(jq -r '.pins[] | select(.identity=="sparkle") | .state.version' Package.resolved)"
+          git clone --depth 1 --branch "$SPARKLE_VERSION" \
+            https://github.com/sparkle-project/Sparkle.git /tmp/sparkle
+          (cd /tmp/sparkle && swift build -c release --product sign_update)
+          cp /tmp/sparkle/.build/release/sign_update ./sign_update
+
+      - name: Sign release zip
+        id: sign
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          ZIP: ${{ steps.zip.outputs.zip }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SPARKLE_ED_PRIVATE_KEY:-}" ]; then
+            echo "SPARKLE_ED_PRIVATE_KEY secret is not set" >&2
+            exit 1
+          fi
+          ED_SIGNATURE="$(printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | ./sign_update --ed-key-file - "$ZIP")"
+          LENGTH="$(stat -f %z "$ZIP")"
+          echo "ed_signature=$ED_SIGNATURE" >> "$GITHUB_OUTPUT"
+          echo "length=$LENGTH" >> "$GITHUB_OUTPUT"
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -82,6 +109,59 @@ jobs:
               --generate-notes
           fi
           gh release upload "v$VERSION" "$ZIP" --clobber
+
+      - name: Fetch release notes for appcast
+        id: notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Runs after `Create GitHub release` so the body (produced by
+          # `--generate-notes`) is guaranteed to exist.
+          NOTES_FILE="$(mktemp)"
+          gh release view "v$VERSION" --json body --jq '.body' > "$NOTES_FILE"
+          echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Update appcast on main
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ZIP: ${{ steps.zip.outputs.zip }}
+          ED_SIGNATURE: ${{ steps.sign.outputs.ed_signature }}
+          LENGTH: ${{ steps.sign.outputs.length }}
+          NOTES_FILE: ${{ steps.notes.outputs.notes_file }}
+        run: |
+          set -euo pipefail
+          # Build the appcast-updater tool from the pinned source tree
+          # that produced the release.
+          swift build -c release --product appcast-updater
+          UPDATER="$(swift build -c release --show-bin-path)/appcast-updater"
+
+          # Work in a checkout of main so the push goes straight to the
+          # default branch. The release workflow triggers on tag push so
+          # HEAD is the tag, not main.
+          git clone "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" main-checkout
+          cd main-checkout
+          git checkout main
+
+          "$UPDATER" \
+            --feed appcast.xml \
+            --version "$VERSION" \
+            --download-url "https://github.com/${{ github.repository }}/releases/download/v$VERSION/$ZIP" \
+            --length "$LENGTH" \
+            --ed-signature "$ED_SIGNATURE" \
+            --minimum-system-version "14.0" \
+            --release-notes "$NOTES_FILE"
+
+          git config user.name  "graftty-release-bot"
+          git config user.email "graftty-release-bot@users.noreply.github.com"
+          git add appcast.xml
+          if git diff --cached --quiet; then
+            echo "Appcast unchanged — idempotent re-run or same-version re-release"
+            exit 0
+          fi
+          git commit -m "appcast: v$VERSION"
+          git push origin main
 
       - name: Update Homebrew tap
         env:

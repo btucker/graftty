@@ -861,6 +861,56 @@ This serves the SPA fallback for client-side-routed URLs such as
 
 The web access path uses Phase 1's session-naming and sandbox requirements unchanged. See §13.2 (session naming), §13.3 (`ZMX_DIR` sandbox), §13.4 (lifecycle mapping), and §13.6 (pass-through guarantees).
 
+## 15A. Self-Update
+
+### 15A.1 Automatic checks
+
+**UPDATE-1.1** While the user has consented to automatic checks (Sparkle
+default: on, toggleable via `Graftty → Automatically Check for Updates`),
+the application shall query `https://raw.githubusercontent.com/btucker/graftty/main/appcast.xml`
+once per 24 hours.
+
+**UPDATE-1.6** If the user has not yet chosen a preference for automatic
+checks, on first launch the application shall prompt once (Sparkle's
+built-in consent dialog) and persist the choice under Sparkle's own
+`SUEnableAutomaticChecks` user-default key.
+
+### 15A.2 Gentle discovery
+
+**UPDATE-1.2** When a scheduled check discovers a newer version, the
+application shall surface a non-modal indicator in the window titlebar
+(immediately right of the traffic lights) rather than presenting a modal
+dialog.
+
+**UPDATE-1.4** While no update is available, the application shall hide
+the titlebar indicator entirely.
+
+### 15A.3 Install flow
+
+**UPDATE-1.3** When the user clicks the titlebar indicator, the
+application shall present Sparkle's standard install dialog with
+Install Now / Install on Quit / Release Notes / Skip This Version
+options.
+
+**UPDATE-1.5** When the user selects `Graftty → Check for Updates…`,
+the application shall perform an immediate check and present Sparkle's
+standard dialog regardless of whether a newer version exists.
+
+**UPDATE-1.7** When an update is installed, the application shall
+relaunch and re-attach to existing zmx-backed terminal sessions so
+shells running inside them are preserved.
+
+### 15A.4 Release pipeline
+
+**UPDATE-2.1** When a new version tag is pushed, the release workflow
+shall generate an EdDSA signature over the release zip, prepend a new
+entry to `appcast.xml` on `main`, and commit that change with the
+`graftty-release-bot` identity.
+
+**UPDATE-2.2** The Homebrew cask shall declare `auto_updates true` so
+`brew upgrade` does not reinstall a version older than the one Sparkle
+has applied in-place.
+
 ## 16. Keyboard Shortcuts
 
 **KBD-1.1** When the user presses a chord bound in their Ghostty config

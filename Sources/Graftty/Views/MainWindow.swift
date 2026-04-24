@@ -9,6 +9,8 @@ struct MainWindow: View {
     let prStatusStore: PRStatusStore
     let worktreeMonitor: WorktreeMonitor
 
+    @EnvironmentObject private var updaterController: UpdaterController
+
     /// Debounces writes of `sidebarWidth` to AppState so a drag doesn't
     /// generate hundreds of save-to-disk events.
     @State private var pendingSidebarWidthTask: Task<Void, Never>?
@@ -99,6 +101,7 @@ struct MainWindow: View {
         // matching the theme's dark/light-ness so system chrome (traffic
         // lights, context menus, alerts) renders with correct contrast.
         .windowBackgroundTint(theme: terminalManager.theme)
+        .installUpdateBadgeAccessory(controller: updaterController)
         // Force the SwiftUI color scheme from the theme so SwiftUI-rendered
         // chrome — the NavigationSplitView sidebar toggle in particular —
         // picks the right icon shade. NSWindow.appearance covers AppKit

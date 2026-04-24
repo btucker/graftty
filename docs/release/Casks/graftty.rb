@@ -5,6 +5,7 @@
 cask "graftty" do
   version "0.0.0"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  auto_updates true
 
   url "https://github.com/btucker/graftty/releases/download/v#{version}/Graftty-#{version}.zip"
   name "Graftty"

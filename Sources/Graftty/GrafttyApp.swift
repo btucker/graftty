@@ -49,6 +49,7 @@ struct GrafttyApp: App {
     @State private var appState: AppState
     @StateObject private var terminalManager: TerminalManager
     @StateObject private var webController: WebServerController
+    @StateObject private var updaterController: UpdaterController
     private let services: AppServices
 
     // SwiftUI re-fires `.onAppear` on dock-reopen and File → New Window
@@ -107,6 +108,7 @@ struct GrafttyApp: App {
             zmxExecutable: zmxExe,
             zmxDir: zmxDir
         ))
+        _updaterController = StateObject(wrappedValue: UpdaterController())
     }
 
     /// If another Graftty process with our `CFBundleIdentifier` is
@@ -135,6 +137,7 @@ struct GrafttyApp: App {
                 worktreeMonitor: services.worktreeMonitor
             )
                 .environmentObject(webController)
+                .environmentObject(updaterController)
                 .onAppear {
                     guard !didStartup else { return }
                     didStartup = true
@@ -203,6 +206,18 @@ struct GrafttyApp: App {
             }
 
             CommandGroup(after: .appInfo) {
+                Button("Check for Updates...") {
+                    updaterController.checkForUpdatesWithUI()
+                }
+                .disabled(!updaterController.canCheckForUpdates)
+
+                Toggle("Automatically Check for Updates", isOn: Binding(
+                    get: { updaterController.automaticallyChecksForUpdates },
+                    set: { updaterController.automaticallyChecksForUpdates = $0 }
+                ))
+
+                Divider()
+
                 Button("Install CLI Tool...") {
                     installCLI()
                 }
