@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import GhosttyTerminal
 import GrafttyProtocol
 import SwiftUI
 
@@ -9,13 +10,19 @@ import SwiftUI
 /// a vertical split divides height. Works recursively for any depth.
 public struct PaneLayoutView: View {
     public let layout: PaneLayoutNode
+    public let controller: TerminalController?
+    public let previewClient: (_ sessionName: String) -> SessionClient?
     public let onSelect: (_ sessionName: String) -> Void
 
     public init(
         layout: PaneLayoutNode,
+        controller: TerminalController? = nil,
+        previewClient: @escaping (_ sessionName: String) -> SessionClient? = { _ in nil },
         onSelect: @escaping (_ sessionName: String) -> Void
     ) {
         self.layout = layout
+        self.controller = controller
+        self.previewClient = previewClient
         self.onSelect = onSelect
     }
 
@@ -31,7 +38,11 @@ public struct PaneLayoutView: View {
     private func render(_ node: PaneLayoutNode, in size: CGSize) -> AnyView {
         switch node {
         case let .leaf(sessionName, title):
-            return AnyView(PaneTile(title: title.isEmpty ? sessionName : title) {
+            return AnyView(PaneTile(
+                title: title.isEmpty ? sessionName : title,
+                controller: controller,
+                client: previewClient(sessionName)
+            ) {
                 onSelect(sessionName)
             })
 
@@ -65,28 +76,70 @@ public struct PaneLayoutView: View {
 /// still render something readable.
 private struct PaneTile: View {
     let title: String
+    let controller: TerminalController?
+    let client: SessionClient?
     let onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
             RoundedRectangle(cornerRadius: 10)
-                .fill(.thinMaterial)
+                .fill(Color.black)
                 .overlay(
                     RoundedRectangle(cornerRadius: 10)
                         .strokeBorder(.secondary.opacity(0.3), lineWidth: 1)
                 )
                 .overlay(
-                    Text(title)
-                        .font(.footnote)
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(3)
-                        .minimumScaleFactor(0.6)
-                        .padding(6)
+                    preview
                 )
                 .contentShape(RoundedRectangle(cornerRadius: 10))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var preview: some View {
+        ZStack(alignment: .bottomLeading) {
+            if let controller, let client {
+                MiniTerminalPreview(controller: controller, client: client)
+            } else {
+                Color.black
+                    .overlay(ProgressView().tint(.white))
+            }
+
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.ultraThinMaterial)
+        }
+    }
+}
+
+private struct MiniTerminalPreview: View {
+    let controller: TerminalController
+    let client: SessionClient
+
+    var body: some View {
+        GeometryReader { geo in
+            let renderWidth = max(
+                geo.size.width,
+                CGFloat(client.serverGrid?.cols ?? 0) * (client.cellWidthPoints ?? 7.0)
+            )
+            let scale = renderWidth > 0 ? min(1, geo.size.width / renderWidth) : 1
+
+            TerminalPaneView(session: client.session, controller: controller)
+                .frame(width: renderWidth, height: geo.size.height / max(scale, 0.01))
+                .scaleEffect(scale, anchor: .topLeading)
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
+                .clipped()
+                .allowsHitTesting(false)
+                .overlay(Color.black.opacity(0.08))
+        }
     }
 }
 #endif
