@@ -142,17 +142,8 @@ struct SingleSessionView: View {
                     .padding(.leading, 12)
                     .padding(.top, 12)
             }
-            .overlay(alignment: .bottomTrailing) {
-                HStack(spacing: 8) {
-                    if isKeyboardVisible {
-                        newlineButton
-                            .transition(.opacity.combined(with: .scale))
-                    }
-                    keyboardButton
-                        .transition(.opacity.combined(with: .scale))
-                }
-                .padding(.trailing, 12)
-                .padding(.bottom, 12)
+            .overlay(alignment: .bottom) {
+                terminalChrome
             }
             .animation(.easeInOut(duration: 0.15), value: isKeyboardVisible)
             .animation(.easeInOut(duration: 0.15), value: keyboardAllowed)
@@ -208,36 +199,27 @@ struct SingleSessionView: View {
         .accessibilityLabel("Back")
     }
 
-    /// IOS-6.4: inserts a literal newline; the keyboard's Return submits.
-    private var newlineButton: some View {
-        Button {
-            client.insertNewline()
-        } label: {
-            keyboardGlyph("arrow.turn.down.left")
+    @ViewBuilder
+    private var terminalChrome: some View {
+        if isKeyboardVisible {
+            terminalControlBar
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else if !keyboardAllowed {
+            HStack {
+                Spacer()
+                keyboardButton
+                    .transition(.opacity.combined(with: .scale))
+            }
+            .padding(.trailing, 12)
+            .padding(.bottom, 12)
         }
-        .accessibilityLabel("Insert newline")
     }
 
-    /// Tri-state floating button:
-    ///   - keyboard visible → chevron-down, "Hide keyboard" (disables + resigns)
-    ///   - keyboard hidden by user → chevron-up, "Show keyboard" (re-enables,
-    ///     TerminalPaneView.updateUIView calls becomeFirstResponder on the
-    ///     off→on edge so the keyboard reappears without requiring a tap)
-    ///   - otherwise → no button
+    /// When the keyboard is hidden by user intent, the only visible
+    /// terminal chrome is a compact show-keyboard affordance.
     @ViewBuilder
     private var keyboardButton: some View {
-        if isKeyboardVisible {
-            Button {
-                keyboardAllowed = false
-                UIApplication.shared.sendAction(
-                    #selector(UIResponder.resignFirstResponder),
-                    to: nil, from: nil, for: nil
-                )
-            } label: {
-                keyboardGlyph("keyboard.chevron.compact.down")
-            }
-            .accessibilityLabel("Hide keyboard")
-        } else if !keyboardAllowed {
+        if !keyboardAllowed {
             Button {
                 keyboardAllowed = true
                 focusRequestCount += 1
@@ -246,6 +228,66 @@ struct SingleSessionView: View {
             }
             .accessibilityLabel("Show keyboard")
         }
+    }
+
+    private var terminalControlBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                terminalTextControl("Esc", accessibilityLabel: "Escape") {
+                    client.sendEscape()
+                }
+                terminalTextControl("Tab", accessibilityLabel: "Tab") {
+                    client.sendTab()
+                }
+                terminalTextControl("^C", accessibilityLabel: "Control C") {
+                    client.sendControl(.c)
+                }
+                terminalTextControl("^D", accessibilityLabel: "Control D") {
+                    client.sendControl(.d)
+                }
+                Divider()
+                    .frame(height: 28)
+                terminalIconControl("arrow.left", accessibilityLabel: "Left arrow") {
+                    client.sendArrow(.left)
+                }
+                terminalIconControl("arrow.down", accessibilityLabel: "Down arrow") {
+                    client.sendArrow(.down)
+                }
+                terminalIconControl("arrow.up", accessibilityLabel: "Up arrow") {
+                    client.sendArrow(.up)
+                }
+                terminalIconControl("arrow.right", accessibilityLabel: "Right arrow") {
+                    client.sendArrow(.right)
+                }
+                Divider()
+                    .frame(height: 28)
+                terminalIconControl("return", accessibilityLabel: "Submit return") {
+                    client.submitReturn()
+                }
+                terminalTextControl("LF", accessibilityLabel: "Insert newline") {
+                    client.insertNewline()
+                }
+                terminalIconControl(
+                    "keyboard.chevron.compact.down",
+                    accessibilityLabel: "Hide keyboard"
+                ) {
+                    keyboardAllowed = false
+                    UIApplication.shared.sendAction(
+                        #selector(UIResponder.resignFirstResponder),
+                        to: nil, from: nil, for: nil
+                    )
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+        }
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(.separator.opacity(0.35), lineWidth: 0.5)
+        )
+        .padding(.horizontal, 8)
+        .padding(.bottom, 8)
     }
 
     /// The terminal body, wrapped in a horizontal ScrollView only when
@@ -260,7 +302,11 @@ struct SingleSessionView: View {
             let pane = TerminalPaneView(
                 session: client.session,
                 controller: controller,
-                focusRequestCount: focusRequestCount
+                focusRequestCount: focusRequestCount,
+                softwareKeyboardInput: .init(
+                    insertText: { text in client.sendSoftwareKeyboardText(text) },
+                    deleteBackward: { client.deleteBackward() }
+                )
             )
             let cellWidth = client.cellWidthPoints ?? fallbackCellWidth
             let decision = TerminalWidthLayout.decide(
@@ -299,6 +345,40 @@ struct SingleSessionView: View {
             .padding(10)
             .background(.ultraThinMaterial, in: Circle())
             .shadow(radius: 1)
+    }
+
+    private func terminalTextControl(
+        _ title: String,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.footnote.monospaced().weight(.semibold))
+                .foregroundStyle(.primary)
+                .frame(minWidth: 44, minHeight: 34)
+                .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private func terminalIconControl(
+        _ systemName: String,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.primary)
+                .frame(width: 38, height: 34)
+                .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityLabel(accessibilityLabel)
     }
 }
 

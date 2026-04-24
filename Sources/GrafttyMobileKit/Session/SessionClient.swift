@@ -64,6 +64,18 @@ public final class SessionClient {
     nonisolated private static let lf = Data([0x0A])
     nonisolated private static let cr = Data([0x0D])
 
+    public enum ArrowDirection: Sendable {
+        case up
+        case down
+        case left
+        case right
+    }
+
+    public enum ControlCharacter: Sendable {
+        case c
+        case d
+    }
+
     public init(sessionName: String, webSocket: WebSocketClient) {
         self.sessionName = sessionName
         self.ws = webSocket
@@ -141,6 +153,71 @@ public final class SessionClient {
     /// IOS-6.4: send literal LF, bypassing the IOS-6.3 translation.
     public func insertNewline() {
         sendBinary(Self.lf)
+        claimLeadershipIfNeeded()
+    }
+
+    /// Send a Return/Enter submit keystroke. PTYs conventionally receive
+    /// CR for Return; this is distinct from inserting a literal LF.
+    public func submitReturn() {
+        sendBinary(Self.cr)
+        claimLeadershipIfNeeded()
+    }
+
+    /// Send text from the iOS software keyboard as ordinary PTY input
+    /// bytes. This deliberately bypasses libghostty's `sendText` path,
+    /// which treats committed text like paste input and can emit
+    /// bracketed-paste wrappers (`ESC [ 200 ~` / `ESC [ 201 ~`) around
+    /// normal typing.
+    public func sendSoftwareKeyboardText(_ text: String) {
+        guard !text.isEmpty else { return }
+        if text == "\n" || text == "\r" {
+            submitReturn()
+            return
+        }
+        sendBinary(Data(text.utf8))
+        claimLeadershipIfNeeded()
+    }
+
+    public func deleteBackward() {
+        sendBinary(Data([0x7F]))
+        claimLeadershipIfNeeded()
+    }
+
+    public func sendEscape() {
+        sendBinary(Data([0x1B]))
+        claimLeadershipIfNeeded()
+    }
+
+    public func sendTab() {
+        sendBinary(Data([0x09]))
+        claimLeadershipIfNeeded()
+    }
+
+    public func sendArrow(_ direction: ArrowDirection) {
+        let sequence: String
+        switch direction {
+        case .up:
+            sequence = "\u{1B}[A"
+        case .down:
+            sequence = "\u{1B}[B"
+        case .left:
+            sequence = "\u{1B}[D"
+        case .right:
+            sequence = "\u{1B}[C"
+        }
+        sendBinary(Data(sequence.utf8))
+        claimLeadershipIfNeeded()
+    }
+
+    public func sendControl(_ character: ControlCharacter) {
+        let byte: UInt8
+        switch character {
+        case .c:
+            byte = 0x03
+        case .d:
+            byte = 0x04
+        }
+        sendBinary(Data([byte]))
         claimLeadershipIfNeeded()
     }
 

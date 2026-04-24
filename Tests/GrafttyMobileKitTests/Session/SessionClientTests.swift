@@ -10,9 +10,15 @@ import GrafttyProtocol
 struct SessionClientTests {
 
     final class FakeWS: WebSocketClient, @unchecked Sendable {
-        var sent: [WebSocketFrame] = []
+        private let lock = NSLock()
+        private var _sent: [WebSocketFrame] = []
+        var sent: [WebSocketFrame] {
+            lock.withLock { _sent }
+        }
         var closed = false
-        func send(_ frame: WebSocketFrame) async throws { sent.append(frame) }
+        func send(_ frame: WebSocketFrame) async throws {
+            lock.withLock { _sent.append(frame) }
+        }
         func receive() async throws -> WebSocketFrame {
             try await Task.sleep(nanoseconds: 10_000_000_000)
             throw CancellationError()
@@ -58,6 +64,83 @@ struct SessionClientTests {
         client.insertNewline()
         try await Task.sleep(nanoseconds: 100_000_000)
         #expect(ws.sent.contains(.binary(Data([0x0A]))))
+    }
+
+    /// The visible return-arrow control in the terminal chrome is used as
+    /// "submit" by prompt-driven TUIs, so it must send CR directly.
+    @Test
+    func submitReturnSendsCR() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocket: ws)
+        defer { client.stop() }
+        client.submitReturn()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(ws.sent.contains(.binary(Data([0x0D]))))
+    }
+
+    @Test
+    func softwareKeyboardTextSendsRawUTF8WithoutPasteWrappers() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocket: ws)
+        defer { client.stop() }
+        client.sendSoftwareKeyboardText("abc")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(ws.sent.contains(.binary(Data("abc".utf8))))
+        #expect(!ws.sent.contains(.binary(Data("\u{1B}[200~".utf8))))
+        #expect(!ws.sent.contains(.binary(Data("\u{1B}[201~".utf8))))
+    }
+
+    @Test
+    func softwareKeyboardNewlineSubmitsAsCR() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocket: ws)
+        defer { client.stop() }
+        client.sendSoftwareKeyboardText("\n")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(ws.sent.contains(.binary(Data([0x0D]))))
+        #expect(!ws.sent.contains(.binary(Data([0x0A]))))
+    }
+
+    @Test
+    func softwareKeyboardDeleteSendsDEL() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocket: ws)
+        defer { client.stop() }
+        client.deleteBackward()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(ws.sent.contains(.binary(Data([0x7F]))))
+    }
+
+    @Test
+    func terminalControlKeysSendExpectedEscapeSequences() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocket: ws)
+        defer { client.stop() }
+        client.sendEscape()
+        client.sendTab()
+        client.sendArrow(.up)
+        client.sendArrow(.down)
+        client.sendArrow(.left)
+        client.sendArrow(.right)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(ws.sent.contains(.binary(Data([0x1B]))))
+        #expect(ws.sent.contains(.binary(Data([0x09]))))
+        #expect(ws.sent.contains(.binary(Data("\u{1B}[A".utf8))))
+        #expect(ws.sent.contains(.binary(Data("\u{1B}[B".utf8))))
+        #expect(ws.sent.contains(.binary(Data("\u{1B}[D".utf8))))
+        #expect(ws.sent.contains(.binary(Data("\u{1B}[C".utf8))))
+    }
+
+    @Test
+    func terminalControlCharactersSendControlBytes() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocket: ws)
+        defer { client.stop() }
+        client.sendControl(.c)
+        client.sendControl(.d)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(ws.sent.contains(.binary(Data([0x03]))))
+        #expect(ws.sent.contains(.binary(Data([0x04]))))
     }
 
     /// Multi-byte paste buffers with embedded LFs must pass through
