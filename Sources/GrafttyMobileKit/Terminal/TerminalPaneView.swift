@@ -122,7 +122,7 @@ final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTr
     var hasText: Bool { true }
 
     override var inputAccessoryView: UIView? {
-        terminalView?.inputAccessoryView
+        nil
     }
 
     func insertText(_ text: String) {

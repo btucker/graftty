@@ -20,6 +20,7 @@
 		9FC5E92497F5755C7182F797 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 2E297959F982E90ED939C39C /* LaunchScreen.storyboard */; };
 		AA14A2ACD895768E8B7A2E2B /* HostControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */; };
 		C0A3025E89B3FB9D1A6C744A /* SessionsFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340D909E38FF8ABE9EA6B38B /* SessionsFetcherTests.swift */; };
+		FD935B889FE139844ADA79E6 /* TerminalPaneViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -31,6 +32,7 @@
 		3DFA9C1F66C7E92D9F0BCE9C /* TerminalWidthLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalWidthLayoutTests.swift; sourceTree = "<group>"; };
 		3E56275CF0FCFE37F85EFC75 /* SessionClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionClientTests.swift; sourceTree = "<group>"; };
 		5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostControllerTests.swift; sourceTree = "<group>"; };
+		5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPaneViewTests.swift; sourceTree = "<group>"; };
 		60476F2F86616EAD082CF370 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		7213F905213229A44DC07D77 /* GrafttyMobileKitTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GrafttyMobileKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		89CA6F3FF97966B7A2455984 /* ReposFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReposFetcherTests.swift; sourceTree = "<group>"; };
@@ -104,6 +106,7 @@
 		5326D4D06134BD55FD5087CF /* Terminal */ = {
 			isa = PBXGroup;
 			children = (
+				5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */,
 				3DFA9C1F66C7E92D9F0BCE9C /* TerminalWidthLayoutTests.swift */,
 			);
 			path = Terminal;
@@ -249,6 +252,7 @@
 				4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */,
 				4FC268572A822F79E5CBF517 /* SessionClientTests.swift in Sources */,
 				C0A3025E89B3FB9D1A6C744A /* SessionsFetcherTests.swift in Sources */,
+				FD935B889FE139844ADA79E6 /* TerminalPaneViewTests.swift in Sources */,
 				5E82901F3ADEA7B4769B7E59 /* TerminalWidthLayoutTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
