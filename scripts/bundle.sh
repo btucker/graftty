@@ -105,7 +105,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <key>SUFeedURL</key>
     <string>https://raw.githubusercontent.com/btucker/graftty/main/appcast.xml</string>
     <key>SUPublicEDKey</key>
-    <string>__SPARKLE_PUBLIC_ED_KEY__</string>
+    <string>CE9gods92d0ACzxxj85iTEaMxeF/kdJNjKRBdoLaOFY=</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSPrincipalClass</key>
