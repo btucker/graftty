@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import Foundation
+import GhosttyTerminal
 import Testing
 @testable import GrafttyMobileKit
 import GrafttyProtocol
@@ -79,6 +80,40 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocket: ws)
         client.stop()
         #expect(ws.closed)
+    }
+
+    @Test
+    func handleViewportCapturesCellSizeInPoints() {
+        let client = SessionClient(sessionName: "s", webSocket: FakeWS())
+        defer { client.stop() }
+        client.displayScale = 3.0
+        client.handleViewport(InMemoryTerminalViewport(
+            columns: 80, rows: 24,
+            widthPixels: 0, heightPixels: 0,
+            cellWidthPixels: 18, cellHeightPixels: 36
+        ))
+        #expect(client.cellWidthPoints == 6.0)
+    }
+
+    @Test
+    func handleViewportIgnoresZeroCellPixelsToAvoidClobberingPriorValue() {
+        // Pre-lifecycle ticks arrive with cellWidthPixels == 0. Keep the
+        // last known non-zero value rather than clobbering it with noise.
+        let client = SessionClient(sessionName: "s", webSocket: FakeWS())
+        defer { client.stop() }
+        client.displayScale = 2.0
+        client.handleViewport(InMemoryTerminalViewport(
+            columns: 80, rows: 24,
+            widthPixels: 0, heightPixels: 0,
+            cellWidthPixels: 14, cellHeightPixels: 28
+        ))
+        #expect(client.cellWidthPoints == 7.0)
+        client.handleViewport(InMemoryTerminalViewport(
+            columns: 80, rows: 24,
+            widthPixels: 0, heightPixels: 0,
+            cellWidthPixels: 0, cellHeightPixels: 0
+        ))
+        #expect(client.cellWidthPoints == 7.0)
     }
 }
 #endif

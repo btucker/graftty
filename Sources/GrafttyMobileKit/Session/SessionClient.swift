@@ -1,8 +1,10 @@
 #if canImport(UIKit)
+import CoreGraphics
 import Foundation
 import GhosttyTerminal
 import GrafttyProtocol
 import Observation
+import UIKit
 
 /// Owns one WebSocket + one libghostty InMemoryTerminalSession. Wires
 /// terminal-input → binary WS out; binary WS in → terminal.receive;
@@ -22,16 +24,35 @@ public final class SessionClient {
     /// horizontal scroll.
     public private(set) var serverGrid: GridSize?
 
+    /// libghostty's current cell width in SwiftUI points, derived from
+    /// the viewport-resize callback's `cellWidthPixels ÷ displayScale`.
+    /// Nil until the first resize tick after the UITerminalView attaches.
+    /// `RootView.terminalContent` reads this to size the ScrollView's
+    /// inner frame so that libghostty's internal VT grid ends up at
+    /// exactly `serverGrid.cols` — otherwise its VT parser wraps lines
+    /// at (frame.width / realCellWidth), which is narrower than the
+    /// server and causes visible line-wrap.
+    public private(set) var cellWidthPoints: CGFloat?
+
     public struct GridSize: Equatable, Hashable, Sendable {
         public let cols: UInt16
         public let rows: UInt16
     }
+
+    /// Display scale used to convert libghostty's pixel-based cell
+    /// metrics into SwiftUI points. Seeded from `UIScreen.main.scale`;
+    /// tests inject a known value.
+    @ObservationIgnored
+    internal var displayScale: CGFloat = UIScreen.main.scale
 
     nonisolated private let ws: WebSocketClient
     private var receiveTask: Task<Void, Never>?
     private var stopped = false
     /// Last (cols, rows) libghostty reported for the iOS-side view.
     /// Resent to the server on first keystroke to claim leadership.
+    /// `@ObservationIgnored` — hot-path bookkeeping written on every
+    /// layout tick; no view reads it, so don't churn observers.
+    @ObservationIgnored
     private var lastIOSViewport: (cols: UInt16, rows: UInt16)?
     /// True once we've sent our first keystroke-triggered resize —
     /// from then on, libghostty's layout-driven resize events are
@@ -75,14 +96,27 @@ public final class SessionClient {
         // scroll view sized to match.
         box.onResize = { [weak self] viewport in
             Task { @MainActor [weak self] in
-                guard let self, !self.stopped else { return }
-                let cols = max(1, viewport.columns)
-                let rows = max(1, viewport.rows)
-                self.lastIOSViewport = (cols, rows)
-                if self.isLeader {
-                    self.sendResizeToServer(cols: cols, rows: rows)
-                }
+                self?.handleViewport(viewport)
             }
+        }
+    }
+
+    @MainActor
+    internal func handleViewport(_ viewport: InMemoryTerminalViewport) {
+        guard !stopped else { return }
+        let cols = max(1, viewport.columns)
+        let rows = max(1, viewport.rows)
+        lastIOSViewport = (cols, rows)
+        // Skip zero values (pre-lifecycle ticks) and same-value writes —
+        // `onResize` fires per layout frame during keyboard/rotation
+        // animations, and an unchanged `cellWidthPoints` write would
+        // still re-fire every `@Observable` observer.
+        if viewport.cellWidthPixels > 0, displayScale > 0 {
+            let next = CGFloat(viewport.cellWidthPixels) / displayScale
+            if cellWidthPoints != next { cellWidthPoints = next }
+        }
+        if isLeader {
+            sendResizeToServer(cols: cols, rows: rows)
         }
     }
 

@@ -137,6 +137,11 @@ struct SingleSessionView: View {
         // regions outside our `.container` inherit that color.
         .ignoresSafeArea(.container, edges: .all)
         .toolbar(.hidden, for: .navigationBar)
+            .overlay(alignment: .topLeading) {
+                backButton
+                    .padding(.leading, 12)
+                    .padding(.top, 12)
+            }
             .overlay(alignment: .bottomTrailing) {
                 HStack(spacing: 8) {
                     if isKeyboardVisible {
@@ -187,6 +192,22 @@ struct SingleSessionView: View {
             .onDisappear { client.stop() }
     }
 
+    /// Partially-transparent back button in the top-left. Pops the
+    /// current SessionStep off `navigationPath`, landing on the worktree
+    /// detail the user drilled in from. The nav bar is hidden while the
+    /// terminal is full-screen, so this is the only in-app affordance
+    /// for going back (edge-swipe is still available but undiscoverable).
+    private var backButton: some View {
+        Button {
+            if !navigationPath.isEmpty {
+                navigationPath.removeLast()
+            }
+        } label: {
+            keyboardGlyph("chevron.left")
+        }
+        .accessibilityLabel("Back")
+    }
+
     /// IOS-6.4: inserts a literal newline; the keyboard's Return submits.
     private var newlineButton: some View {
         Button {
@@ -228,13 +249,11 @@ struct SingleSessionView: View {
     }
 
     /// The terminal body, wrapped in a horizontal ScrollView only when
-    /// the server's grid is wider than the container can render at a
-    /// typical cell width. When the Mac pane is running a 120-col
-    /// window on an iPhone that can comfortably show ~60, the outer
-    /// ScrollView lets the user pan; the inner TerminalPaneView takes
+    /// the server's grid is wider than the container can render at
+    /// libghostty's actual cell width. The inner TerminalPaneView takes
     /// the full server-grid width so libghostty's VT parser renders
-    /// every column faithfully (no line-wrap artifacts from a mismatch
-    /// between our local grid and the server's).
+    /// every column faithfully — a narrower frame would make its VT
+    /// parser wrap lines at `frame.width / realCellWidth < serverCols`.
     @ViewBuilder
     private func terminalContent(containerSize: CGSize) -> some View {
         if let controller {
@@ -243,15 +262,19 @@ struct SingleSessionView: View {
                 controller: controller,
                 focusRequestCount: focusRequestCount
             )
-            let cellWidth = estimatedCellWidth
-            let visibleCols = containerSize.width / cellWidth
-            let serverCols = CGFloat(client.serverGrid?.cols ?? 0)
-            if serverCols > visibleCols + 0.5 {
-                ScrollView(.horizontal, showsIndicators: true) {
-                    pane.frame(width: serverCols * cellWidth, height: containerSize.height)
-                }
-            } else {
+            let cellWidth = client.cellWidthPoints ?? fallbackCellWidth
+            let decision = TerminalWidthLayout.decide(
+                containerWidth: containerSize.width,
+                serverCols: client.serverGrid?.cols,
+                cellWidth: cellWidth
+            )
+            switch decision {
+            case .fits:
                 pane
+            case let .scrollable(frameWidth):
+                ScrollView(.horizontal, showsIndicators: true) {
+                    pane.frame(width: frameWidth, height: containerSize.height)
+                }
             }
         } else {
             // TerminalController not yet constructed (Mac config fetch
@@ -263,17 +286,11 @@ struct SingleSessionView: View {
         }
     }
 
-    /// Best-effort monospace cell width in points. Exact value from
-    /// libghostty isn't available at SwiftUI-layout time (it reports
-    /// after the surface is attached), so we estimate from the iOS
-    /// 20%-reduced default font (~10.4pt). An error of a few pt here
-    /// only affects when we flip into horizontal-scroll mode; the
-    /// actual rendering always matches libghostty's real cell size.
-    private var estimatedCellWidth: CGFloat {
-        // 0.56 is typical monospace aspect for common terminal fonts
-        // at 10pt; close enough for "wider than screen" detection.
-        return 10.4 * 0.56
-    }
+    /// Fallback cell width for the one-frame gap before libghostty's
+    /// first resize callback lands. Chosen to overshoot realistic cell
+    /// widths for iOS-scale fonts — a too-wide frame just scrolls a few
+    /// empty cells, a too-narrow one makes the VT parser wrap.
+    private var fallbackCellWidth: CGFloat { 7.0 }
 
     private func keyboardGlyph(_ systemName: String) -> some View {
         Image(systemName: systemName)

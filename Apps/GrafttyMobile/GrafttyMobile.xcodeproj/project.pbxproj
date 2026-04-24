@@ -12,6 +12,7 @@
 		2E416266017DFF6D47BFED05 /* BiometricGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F8661072B5A91A28C0F46B5 /* BiometricGateTests.swift */; };
 		4FC268572A822F79E5CBF517 /* SessionClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E56275CF0FCFE37F85EFC75 /* SessionClientTests.swift */; };
 		4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89CA6F3FF97966B7A2455984 /* ReposFetcherTests.swift */; };
+		5E82901F3ADEA7B4769B7E59 /* TerminalWidthLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DFA9C1F66C7E92D9F0BCE9C /* TerminalWidthLayoutTests.swift */; };
 		64E9C62E3509B5F9F6CE55D5 /* GrafttyMobileKit in Frameworks */ = {isa = PBXBuildFile; productRef = 961E5DC72693D5319AE8805F /* GrafttyMobileKit */; };
 		69A3E70C24956F734A8B75EE /* GrafttyMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E56F1F52D5AD50167862DB5 /* GrafttyMobileApp.swift */; };
 		6E3698272F39E3D8665B41E7 /* HostStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F512E9DFA7D7EC060D47EAD /* HostStoreTests.swift */; };
@@ -22,11 +23,12 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		189D72A888C3D111EA927E80 /* add-worktree-ios */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "add-worktree-ios"; path = ../..; sourceTree = SOURCE_ROOT; };
 		1B4204CA01B233B9F19E518B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		2E297959F982E90ED939C39C /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		2F8661072B5A91A28C0F46B5 /* BiometricGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricGateTests.swift; sourceTree = "<group>"; };
 		340D909E38FF8ABE9EA6B38B /* SessionsFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsFetcherTests.swift; sourceTree = "<group>"; };
+		3A5A7E597BFA8E550463A1CD /* ios-width */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "ios-width"; path = ../..; sourceTree = SOURCE_ROOT; };
+		3DFA9C1F66C7E92D9F0BCE9C /* TerminalWidthLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalWidthLayoutTests.swift; sourceTree = "<group>"; };
 		3E56275CF0FCFE37F85EFC75 /* SessionClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionClientTests.swift; sourceTree = "<group>"; };
 		5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostControllerTests.swift; sourceTree = "<group>"; };
 		60476F2F86616EAD082CF370 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -99,6 +101,14 @@
 			);
 			sourceTree = "<group>";
 		};
+		5326D4D06134BD55FD5087CF /* Terminal */ = {
+			isa = PBXGroup;
+			children = (
+				3DFA9C1F66C7E92D9F0BCE9C /* TerminalWidthLayoutTests.swift */,
+			);
+			path = Terminal;
+			sourceTree = "<group>";
+		};
 		613F14AB8D46A81479D6B00A /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -114,6 +124,7 @@
 				1B9D91891E2ED0F7FB19D21F /* Auth */,
 				A1A551D7B6750F11488B0E0A /* Hosts */,
 				2E51D47314D16FBA8059B04C /* Session */,
+				5326D4D06134BD55FD5087CF /* Terminal */,
 			);
 			name = GrafttyMobileKitTests;
 			path = ../../Tests/GrafttyMobileKitTests;
@@ -130,7 +141,7 @@
 		EBBD8BB4335B09E0E1E21C3F /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				189D72A888C3D111EA927E80 /* add-worktree-ios */,
+				3A5A7E597BFA8E550463A1CD /* ios-width */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -238,6 +249,7 @@
 				4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */,
 				4FC268572A822F79E5CBF517 /* SessionClientTests.swift in Sources */,
 				C0A3025E89B3FB9D1A6C744A /* SessionsFetcherTests.swift in Sources */,
+				5E82901F3ADEA7B4769B7E59 /* TerminalWidthLayoutTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
