@@ -448,26 +448,17 @@ extension PRStatusStore {
             }
         }
 
-        let maxParallel = 4
-        await withTaskGroup(of: Void.self) { group in
-            var inflight = 0
-            for c in candidates {
-                if inflight >= maxParallel {
-                    await group.next()
-                    inflight -= 1
-                }
-                inFlight[c.path] = Date()
-                generation[c.path, default: 0] += 1
-                let gen = generation[c.path, default: 0]
-                group.addTask { [weak self] in
-                    await self?.performFetch(
-                        worktreePath: c.path,
-                        repoPath: c.repoPath,
-                        branch: c.branch,
-                        fetchGeneration: gen
-                    )
-                }
-                inflight += 1
+        for c in candidates {
+            inFlight[c.path] = Date()
+            generation[c.path, default: 0] += 1
+            let gen = generation[c.path, default: 0]
+            Task { [weak self] in
+                await self?.performFetch(
+                    worktreePath: c.path,
+                    repoPath: c.repoPath,
+                    branch: c.branch,
+                    fetchGeneration: gen
+                )
             }
         }
     }

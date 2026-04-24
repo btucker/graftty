@@ -1066,6 +1066,8 @@ shall surface an actionable alert rather than silently continue.
 
 **PR-7.13** `PRStatusStore` shall time-bound its per-worktree `inFlight` refresh guard so a hung `gh pr list` / `gh pr checks` subprocess cannot permanently lock out subsequent polls and user-triggered refreshes. A dispatch whose start timestamp is within the base refresh cadence (`PR-7.1`, 30 seconds) shall suppress a fresh refresh; beyond that cap, the prior dispatch shall be treated as abandoned and superseded, with the per-path `generation` counter bumped so the abandoned Task's late write is dropped if it ever returns. Without this, a single stuck subprocess (network flake, rate-limit back-off, expired gh auth refresh loop) freezes that worktree's sidebar badge and breadcrumb PR button at their last-cached state until the app is relaunched — the user-observable shape "PR status only updates when I click between worktrees". Mirrors `WorktreeStatsStore`'s `DIVERGE-4.4` recovery pattern for the equivalent stats-store bug.
 
+**PR-7.14** The PR polling tick shall dispatch eligible per-worktree fetches and return without awaiting those fetch Tasks. The ticker loop itself must remain live even if a `gh` / `glab` subprocess hangs, otherwise `PR-7.13`'s abandoned-in-flight recovery never gets a later polling tick on which to supersede the stuck fetch. A hung fetch may occupy that worktree's `inFlight` slot until the 30-second cap elapses, but it must not stop unrelated worktrees from polling or require the user to click the sidebar to trigger the separate on-demand refresh path.
+
 ## 18. Claude Code Channels
 
 ### 18.1 Router and Subscriber Routing
