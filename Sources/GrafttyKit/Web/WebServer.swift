@@ -146,11 +146,20 @@ public final class WebServer {
         public init(isAllowed: @escaping @Sendable (String) async -> Bool) { self.isAllowed = isAllowed }
     }
 
+    public enum TransportSecurity {
+        case tls(WebTLSContextProvider)
+        case plainHTTPLoopbackOnly
+
+        public enum Error: Swift.Error, Equatable {
+            case nonLoopbackPlainHTTPBind(String)
+        }
+    }
+
     public private(set) var status: Status = .stopped
     public let config: Config
     public let auth: AuthPolicy
     public let bindAddresses: [String]
-    public let tlsProvider: WebTLSContextProvider
+    public let transportSecurity: TransportSecurity
 
     /// Test-only hook: when non-nil, applied as `SO_SNDBUF` on every child
     /// (accepted) channel. Exists to simulate buffer-constrained network
@@ -173,7 +182,19 @@ public final class WebServer {
         self.config = config
         self.auth = auth
         self.bindAddresses = bindAddresses
-        self.tlsProvider = tlsProvider
+        self.transportSecurity = .tls(tlsProvider)
+    }
+
+    public init(
+        config: Config,
+        auth: AuthPolicy,
+        bindAddresses: [String],
+        transportSecurity: TransportSecurity
+    ) {
+        self.config = config
+        self.auth = auth
+        self.bindAddresses = bindAddresses
+        self.transportSecurity = transportSecurity
     }
 
     public func start() throws {
@@ -182,13 +203,18 @@ public final class WebServer {
             status = .tailscaleUnavailable
             throw Status.tailscaleUnavailable.asError
         }
+        if case .plainHTTPLoopbackOnly = transportSecurity {
+            for address in bindAddresses where !Self.isLoopbackBindAddress(address) {
+                throw TransportSecurity.Error.nonLoopbackPlainHTTPBind(address)
+            }
+        }
 
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 2)
         self.group = group
 
         let capturedConfig = config
         let capturedAuth = auth
-        let capturedTLS = tlsProvider
+        let capturedTransport = transportSecurity
 
         var bootstrap = ServerBootstrap(group: group)
             .serverChannelOption(ChannelOptions.backlog, value: 16)
@@ -215,23 +241,16 @@ public final class WebServer {
                         context.channel.pipeline.removeHandler(handler, promise: nil)
                     }
                 )
-                // Snapshot the current TLS context at channel-accept time. Any
-                // in-flight handshake uses this exact context even if a renewal
-                // swaps the provider mid-handshake; that's fine — new connections
-                // accepted after the swap pick up the fresh context on their
-                // next initializer call. WEB-8.3.
-                //
-                // `NIOSSLServerHandler` is explicitly not `Sendable`, so we
-                // add it via `pipeline.syncOperations` (which doesn't require
-                // Sendable) rather than the async `pipeline.addHandler`. The
-                // child-channel initializer runs on the accepting channel's
-                // event loop (see `ServerBootstrap.AcceptHandler.channelRead`
-                // in NIOPosix), so `syncOperations` is safe here.
-                do {
-                    let sslHandler = NIOSSLServerHandler(context: capturedTLS.current())
-                    try channel.pipeline.syncOperations.addHandler(sslHandler)
-                } catch {
-                    return channel.eventLoop.makeFailedFuture(error)
+                if case .tls(let provider) = capturedTransport {
+                    // Snapshot the current TLS context at channel-accept time.
+                    // Plain loopback mode skips TLS because SSH is the intended
+                    // encrypted transport and the server never leaves loopback.
+                    do {
+                        let sslHandler = NIOSSLServerHandler(context: provider.current())
+                        try channel.pipeline.syncOperations.addHandler(sslHandler)
+                    } catch {
+                        return channel.eventLoop.makeFailedFuture(error)
+                    }
                 }
                 return channel.pipeline.configureHTTPServerPipeline(
                     withServerUpgrade: upgradeConfig
@@ -277,6 +296,10 @@ public final class WebServer {
         if ns.domain == NSPOSIXErrorDomain && ns.code == Int(EADDRINUSE) { return true }
         let s = "\(error)"
         return s.contains("EADDRINUSE") || s.contains("Address already in use")
+    }
+
+    public static func isLoopbackBindAddress(_ address: String) -> Bool {
+        address == "127.0.0.1" || address == "localhost" || address == "::1"
     }
 
     // MARK: - WS upgrader factory

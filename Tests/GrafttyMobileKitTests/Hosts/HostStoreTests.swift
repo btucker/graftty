@@ -40,6 +40,64 @@ struct HostStoreTests {
     }
 
     @Test
+    func decodesLegacyDirectHTTPHostJSON() throws {
+        let id = UUID()
+        let json = """
+        [{
+          "id": "\(id.uuidString)",
+          "label": "mac",
+          "baseURL": "http://mac.ts.net:8799/",
+          "addedAt": "2026-04-24T14:00:00Z"
+        }]
+        """.data(using: .utf8)!
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let hosts = try decoder.decode([Host].self, from: json)
+
+        #expect(hosts.count == 1)
+        #expect(hosts[0].transport == .directHTTP(baseURL: URL(string: "http://mac.ts.net:8799/")!))
+        #expect(hosts[0].baseURL == URL(string: "http://mac.ts.net:8799/")!)
+    }
+
+    @Test
+    func encodesAndDecodesSSHHostTransport() throws {
+        let config = SSHHostConfig(
+            sshHost: "mac.example.com",
+            sshPort: 22,
+            sshUsername: "btucker",
+            remoteGrafttyHost: "127.0.0.1",
+            remoteGrafttyPort: 8799
+        )
+        let host = Host(label: "mac ssh", transport: .sshTunnel(config))
+
+        let data = try JSONEncoder().encode(host)
+        let decoded = try JSONDecoder().decode(Host.self, from: data)
+
+        #expect(decoded.transport == .sshTunnel(config))
+        #expect(decoded.displayAddress == "btucker@mac.example.com:22")
+    }
+
+    @Test
+    func directURLDedupeDoesNotMergeSSHHosts() throws {
+        let (store, url) = makeStore()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let direct = Host(label: "direct", baseURL: URL(string: "http://mac:8799/")!)
+        let ssh = Host(label: "ssh", transport: .sshTunnel(SSHHostConfig(
+            sshHost: "mac",
+            sshPort: 22,
+            sshUsername: "me",
+            remoteGrafttyHost: "127.0.0.1",
+            remoteGrafttyPort: 8799
+        )))
+
+        try store.add(direct)
+        try store.add(ssh)
+
+        #expect(store.hosts.count == 2)
+    }
+
+    @Test
     func updateReplacesMatchingId() throws {
         let (store, url) = makeStore()
         defer { try? FileManager.default.removeItem(at: url) }

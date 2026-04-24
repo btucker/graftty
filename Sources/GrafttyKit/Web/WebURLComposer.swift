@@ -27,6 +27,12 @@ public enum WebURLComposer {
         return "https://\(host):\(port)/"
     }
 
+    /// Root URL for SSH tunnel mode. The Mac server binds HTTP to loopback
+    /// only; SSH supplies the authenticated encrypted transport.
+    public static func loopbackHTTPBaseURL(port: Int) -> String {
+        return "http://127.0.0.1:\(port)/"
+    }
+
     /// Compose a URI authority (`<host>:<port>`), bracketing IPv6.
     /// Used by the Settings-pane's "Listening on" diagnostic row
     /// (WEB-1.10) where host is still an IP literal.

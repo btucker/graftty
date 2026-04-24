@@ -35,7 +35,7 @@ final class WebServerController: ObservableObject {
     /// Last `(isEnabled, port)` tuple we reconciled against. Used to suppress
     /// no-op reconciles — `objectWillChange` on `@AppStorage` fires on every
     /// property write, including ones that don't affect our server.
-    private var lastApplied: (enabled: Bool, port: Int)?
+    private var lastApplied: (enabled: Bool, port: Int, mode: WebAccessMode)?
 
     init(settings: WebAccessSettings, zmxExecutable: URL, zmxDir: URL) {
         self.settings = settings
@@ -103,7 +103,7 @@ final class WebServerController: ObservableObject {
     }
 
     private func reconcile() {
-        let desired = (enabled: settings.isEnabled, port: settings.port)
+        let desired = (enabled: settings.isEnabled, port: settings.port, mode: settings.mode)
         if let last = lastApplied, last == desired { return }
         lastApplied = desired
 
@@ -123,6 +123,49 @@ final class WebServerController: ObservableObject {
             status = .error("Port must be 0–65535 (got \(desired.port))")
             return
         }
+        if desired.mode == .sshTunnel {
+            startSSHTunnelMode(port: desired.port)
+            return
+        }
+        startTailscaleMode(port: desired.port)
+    }
+
+    private func makeConfig(port: Int) -> WebServer.Config {
+        WebServer.Config(
+            port: port,
+            zmxExecutable: zmxExecutable,
+            zmxDir: zmxDir,
+            sessionsProvider: sessionsProvider ?? { [] },
+            reposProvider: reposProvider ?? { [] },
+            worktreeCreator: worktreeCreator,
+            ghosttyConfigProvider: { GhosttyConfigReader.resolvedConfig() },
+            worktreePanesProvider: worktreePanesProvider ?? { [] }
+        )
+    }
+
+    private func startSSHTunnelMode(port: Int) {
+        do {
+            let s = WebServer(
+                config: makeConfig(port: port),
+                auth: WebServer.AuthPolicy { peerIP in
+                    peerIP == "127.0.0.1" || peerIP == "::1"
+                },
+                bindAddresses: ["127.0.0.1"],
+                transportSecurity: .plainHTTPLoopbackOnly
+            )
+            try s.start()
+            server = s
+            status = s.status
+        } catch {
+            if WebServer.isAddressInUse(error) {
+                status = .portUnavailable
+            } else {
+                status = .error("\(error)")
+            }
+        }
+    }
+
+    private func startTailscaleMode(port: Int) {
         do {
             let api = try TailscaleLocalAPI.autoDetected()
             let tailscaleStatus = try runBlocking { try await api.status() }
@@ -165,20 +208,8 @@ final class WebServerController: ObservableObject {
                 lastApplied = nil
                 return
             }
-            let sessionsProvider = self.sessionsProvider ?? { [] }
-            let repos = reposProvider ?? { [] }
-            let creator = worktreeCreator
             let s = WebServer(
-                config: .init(
-                    port: desired.port,
-                    zmxExecutable: zmxExecutable,
-                    zmxDir: zmxDir,
-                    sessionsProvider: sessionsProvider,
-                    reposProvider: repos,
-                    worktreeCreator: creator,
-                    ghosttyConfigProvider: { GhosttyConfigReader.resolvedConfig() },
-                    worktreePanesProvider: worktreePanesProvider ?? { [] }
-                ),
+                config: makeConfig(port: port),
                 auth: auth,
                 bindAddresses: bind,
                 tlsProvider: provider

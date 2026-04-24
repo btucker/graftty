@@ -16,15 +16,17 @@ public struct HostPickerView: View {
                     Text("No saved hosts yet.").foregroundStyle(.secondary)
                 }
                 ForEach(store.hosts) { host in
-                    // NavigationLink(value:) pushes the host onto the
-                    // NavigationSplitView detail stack; a plain Button
-                    // only mutates state and doesn't navigate on the
-                    // iPhone compact layout where the split collapses.
-                    NavigationLink(value: host) {
-                        VStack(alignment: .leading) {
-                            Text(host.label).font(.body)
-                            Text(host.baseURL.absoluteString).font(.caption).foregroundStyle(.secondary)
+                    switch host.transport {
+                    case .directHTTP:
+                        // NavigationLink(value:) pushes the host onto the
+                        // NavigationSplitView detail stack; a plain Button
+                        // only mutates state and doesn't navigate on the
+                        // iPhone compact layout where the split collapses.
+                        NavigationLink(value: host) {
+                            hostRow(host)
                         }
+                    case .sshTunnel:
+                        hostRow(host, detail: "SSH setup saved; tunnel connection is not enabled yet.")
                     }
                 }
                 .onDelete { offsets in
@@ -42,6 +44,16 @@ public struct HostPickerView: View {
         }
         .sheet(isPresented: $showingAdd) {
             AddHostView { host in try store.add(host) }
+        }
+    }
+
+    private func hostRow(_ host: Host, detail: String? = nil) -> some View {
+        VStack(alignment: .leading) {
+            Text(host.label).font(.body)
+            Text(host.displayAddress).font(.caption).foregroundStyle(.secondary)
+            if let detail {
+                Text(detail).font(.caption2).foregroundStyle(.secondary)
+            }
         }
     }
 }

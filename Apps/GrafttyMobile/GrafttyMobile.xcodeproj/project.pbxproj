@@ -9,7 +9,10 @@
 /* Begin PBXBuildFile section */
 		0C48DC35ED5DCBF20CC0A0A3 /* CreateWorktreeClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9BE28EEA6673202992718AC /* CreateWorktreeClientTests.swift */; };
 		2AE3E873CEBC645A93D9D3EF /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1B4204CA01B233B9F19E518B /* Assets.xcassets */; };
+		2C7D26A5DCEF90670838F8CA /* SSHOnboardingInstructionsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67BBCA2A114F8474E4AAA2B7 /* SSHOnboardingInstructionsTests.swift */; };
 		2E416266017DFF6D47BFED05 /* BiometricGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F8661072B5A91A28C0F46B5 /* BiometricGateTests.swift */; };
+		3E58A2ABC89004EDB029B4F3 /* MobileSSHKeyStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FECC8AFCB18ADAC7A90F1BA /* MobileSSHKeyStoreTests.swift */; };
+		483FFAA6EA930913E3847B04 /* PanePreviewClientPoolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59C241EF3381506F0ED7BEC0 /* PanePreviewClientPoolTests.swift */; };
 		4FC268572A822F79E5CBF517 /* SessionClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E56275CF0FCFE37F85EFC75 /* SessionClientTests.swift */; };
 		4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89CA6F3FF97966B7A2455984 /* ReposFetcherTests.swift */; };
 		5E82901F3ADEA7B4769B7E59 /* TerminalWidthLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DFA9C1F66C7E92D9F0BCE9C /* TerminalWidthLayoutTests.swift */; };
@@ -28,16 +31,19 @@
 		2E297959F982E90ED939C39C /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		2F8661072B5A91A28C0F46B5 /* BiometricGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricGateTests.swift; sourceTree = "<group>"; };
 		340D909E38FF8ABE9EA6B38B /* SessionsFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsFetcherTests.swift; sourceTree = "<group>"; };
-		3A5A7E597BFA8E550463A1CD /* ios-width */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "ios-width"; path = ../..; sourceTree = SOURCE_ROOT; };
 		3DFA9C1F66C7E92D9F0BCE9C /* TerminalWidthLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalWidthLayoutTests.swift; sourceTree = "<group>"; };
 		3E56275CF0FCFE37F85EFC75 /* SessionClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionClientTests.swift; sourceTree = "<group>"; };
 		5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostControllerTests.swift; sourceTree = "<group>"; };
 		5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPaneViewTests.swift; sourceTree = "<group>"; };
+		59C241EF3381506F0ED7BEC0 /* PanePreviewClientPoolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanePreviewClientPoolTests.swift; sourceTree = "<group>"; };
 		60476F2F86616EAD082CF370 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		67BBCA2A114F8474E4AAA2B7 /* SSHOnboardingInstructionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHOnboardingInstructionsTests.swift; sourceTree = "<group>"; };
+		6FECC8AFCB18ADAC7A90F1BA /* MobileSSHKeyStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileSSHKeyStoreTests.swift; sourceTree = "<group>"; };
 		7213F905213229A44DC07D77 /* GrafttyMobileKitTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GrafttyMobileKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		89CA6F3FF97966B7A2455984 /* ReposFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReposFetcherTests.swift; sourceTree = "<group>"; };
 		8E56F1F52D5AD50167862DB5 /* GrafttyMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrafttyMobileApp.swift; sourceTree = "<group>"; };
 		8F512E9DFA7D7EC060D47EAD /* HostStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostStoreTests.swift; sourceTree = "<group>"; };
+		CB247ABBC4A826B94EDC355A /* tailscale-alternative */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "tailscale-alternative"; path = ../..; sourceTree = SOURCE_ROOT; };
 		D0E517DBD6A521AB367A54A6 /* GrafttyMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GrafttyMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F9BE28EEA6673202992718AC /* CreateWorktreeClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateWorktreeClientTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -68,6 +74,15 @@
 				2F8661072B5A91A28C0F46B5 /* BiometricGateTests.swift */,
 			);
 			path = Auth;
+			sourceTree = "<group>";
+		};
+		1EDCBF6FE21FD532D10E6BCA /* SSH */ = {
+			isa = PBXGroup;
+			children = (
+				6FECC8AFCB18ADAC7A90F1BA /* MobileSSHKeyStoreTests.swift */,
+				67BBCA2A114F8474E4AAA2B7 /* SSHOnboardingInstructionsTests.swift */,
+			);
+			path = SSH;
 			sourceTree = "<group>";
 		};
 		2C883EECF2A825471F9DADF9 /* GrafttyMobile */ = {
@@ -121,13 +136,23 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		6369E2047B8A39CA96B1E94C /* UI */ = {
+			isa = PBXGroup;
+			children = (
+				59C241EF3381506F0ED7BEC0 /* PanePreviewClientPoolTests.swift */,
+			);
+			path = UI;
+			sourceTree = "<group>";
+		};
 		958EE75DBB9E04AE95F25F17 /* GrafttyMobileKitTests */ = {
 			isa = PBXGroup;
 			children = (
 				1B9D91891E2ED0F7FB19D21F /* Auth */,
 				A1A551D7B6750F11488B0E0A /* Hosts */,
 				2E51D47314D16FBA8059B04C /* Session */,
+				1EDCBF6FE21FD532D10E6BCA /* SSH */,
 				5326D4D06134BD55FD5087CF /* Terminal */,
+				6369E2047B8A39CA96B1E94C /* UI */,
 			);
 			name = GrafttyMobileKitTests;
 			path = ../../Tests/GrafttyMobileKitTests;
@@ -144,7 +169,7 @@
 		EBBD8BB4335B09E0E1E21C3F /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				3A5A7E597BFA8E550463A1CD /* ios-width */,
+				CB247ABBC4A826B94EDC355A /* tailscale-alternative */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -249,7 +274,10 @@
 				0C48DC35ED5DCBF20CC0A0A3 /* CreateWorktreeClientTests.swift in Sources */,
 				AA14A2ACD895768E8B7A2E2B /* HostControllerTests.swift in Sources */,
 				6E3698272F39E3D8665B41E7 /* HostStoreTests.swift in Sources */,
+				3E58A2ABC89004EDB029B4F3 /* MobileSSHKeyStoreTests.swift in Sources */,
+				483FFAA6EA930913E3847B04 /* PanePreviewClientPoolTests.swift in Sources */,
 				4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */,
+				2C7D26A5DCEF90670838F8CA /* SSHOnboardingInstructionsTests.swift in Sources */,
 				4FC268572A822F79E5CBF517 /* SessionClientTests.swift in Sources */,
 				C0A3025E89B3FB9D1A6C744A /* SessionsFetcherTests.swift in Sources */,
 				FD935B889FE139844ADA79E6 /* TerminalPaneViewTests.swift in Sources */,

@@ -19,6 +19,11 @@ struct WebURLComposerTests {
         #expect(url == "https://macbook.tail-abc12.ts.net:8799/")
     }
 
+    @Test func loopbackHTTPBaseURLUsesLocalhost() {
+        let url = WebURLComposer.loopbackHTTPBaseURL(port: 8799)
+        #expect(url == "http://127.0.0.1:8799/")
+    }
+
     @Test func sessionNameIsPercentEscaped() {
         let url = WebURLComposer.url(session: "name with space",
                                      host: "h.ts.net", port: 1)

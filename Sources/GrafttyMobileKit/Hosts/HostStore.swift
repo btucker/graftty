@@ -3,16 +3,9 @@ import Foundation
 import Observation
 
 /// CRUD store for saved hosts, persisted as a single JSON file in the
-/// app's Application Support directory. File-backed rather than
-/// Keychain-backed because:
-///   1. Hosts don't contain secrets — URL + user label + timestamps;
-///   2. iOS-simulator Keychain access is contingent on a code-sign
-///      context that the simulator refuses to grant to ad-hoc builds
-///      without a DEVELOPMENT_TEAM, making Keychain a dev-workflow
-///      foot-gun here.
-/// If a future field does store a secret (token, cookie), it should be
-/// split into a keyed Keychain item keyed by Host.id and fetched
-/// separately — not mixed into this store.
+/// app's Application Support directory. SSH private keys and host-key
+/// pins do not live here; they belong in Keychain entries keyed separately
+/// from this non-secret host metadata.
 @Observable
 @MainActor
 public final class HostStore {
@@ -54,7 +47,11 @@ public final class HostStore {
         // the scanner firing twice before the Save sheet dismisses). If a
         // host with the same URL exists, refresh its timestamp + label
         // rather than inserting a duplicate under a new UUID.
-        if let idx = next.firstIndex(where: { Self.sameURL($0.baseURL, host.baseURL) }) {
+        if let incomingURL = host.directBaseURL,
+           let idx = next.firstIndex(where: { existing in
+               guard let existingURL = existing.directBaseURL else { return false }
+               return Self.sameURL(existingURL, incomingURL)
+           }) {
             var existing = next[idx]
             existing.label = host.label
             existing.lastUsedAt = Date()
@@ -115,6 +112,13 @@ public final class HostStore {
 
     private func sorted(_ list: [Host]) -> [Host] {
         list.sorted { ($0.lastUsedAt ?? $0.addedAt) > ($1.lastUsedAt ?? $1.addedAt) }
+    }
+}
+
+private extension Host {
+    var directBaseURL: URL? {
+        if case .directHTTP(let baseURL) = transport { return baseURL }
+        return nil
     }
 }
 #endif
