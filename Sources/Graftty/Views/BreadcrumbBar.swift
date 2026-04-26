@@ -14,7 +14,18 @@ struct BreadcrumbBar: View {
     let isHomeCheckout: Bool
     let prInfo: PRInfo?
     let theme: GhosttyTheme
+    let sidebarHidden: Bool
     let onRefreshPR: () -> Void
+
+    /// Leading inset wide enough to clear the three traffic-light buttons
+    /// plus the sidebar-toggle button macOS parks to their right when the
+    /// sidebar is collapsed, plus a hair of breathing room. Used when the
+    /// breadcrumb sits at the window's left edge.
+    private static let collapsedInset: CGFloat = 156
+
+    /// Standard leading padding when the sidebar is visible — the detail
+    /// column already starts past the traffic lights.
+    private static let expandedInset: CGFloat = 12
 
     var body: some View {
         HStack(spacing: 4) {
@@ -43,9 +54,14 @@ struct BreadcrumbBar: View {
             }
         }
         .font(.callout)
-        .padding(.horizontal, 12)
+        .padding(.leading, sidebarHidden ? Self.collapsedInset : Self.expandedInset)
+        .padding(.trailing, 12)
         .padding(.vertical, 8)
         .background(theme.background)
+        // Animate the inset shift in lockstep with NavigationSplitView's
+        // own column slide. Without this the padding flips instantly while
+        // the column animates, so the breadcrumb appears to teleport.
+        .animation(.easeInOut(duration: 0.25), value: sidebarHidden)
     }
 
     private func worktreeLabel(_ name: String) -> some View {
