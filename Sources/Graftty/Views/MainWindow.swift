@@ -66,6 +66,7 @@ struct MainWindow: View {
                     isHomeCheckout: isHomeCheckout,
                     prInfo: prInfo,
                     theme: terminalManager.theme,
+                    sidebarHidden: columnVisibility == .detailOnly,
                     onRefreshPR: refreshPR
                 )
 
