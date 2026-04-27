@@ -1,5 +1,3 @@
-import Foundation
-
 /// Renders the team-aware MCP instructions text described in the agent-teams design doc.
 ///
 /// Implements TEAM-3.1 / TEAM-3.2. Mechanism only — no behavioral prescription;
