@@ -26,6 +26,12 @@ struct ChannelsSettingsPane: View {
         Form {
             Section {
                 Toggle("Enable GitHub/GitLab channel", isOn: $channelsEnabled)
+                    .onChange(of: channelsEnabled) { _, newValue in
+                        AgentTeamsSettingsPane.applyChannelsToggleSideEffects(
+                            newValue: newValue,
+                            defaults: .standard
+                        )
+                    }
                 Text("Claude sessions in tracked worktrees receive events for their PR.")
                     .font(.caption)
                     .foregroundStyle(.secondary)

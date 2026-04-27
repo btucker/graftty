@@ -114,5 +114,10 @@ let package = Package(
             dependencies: ["GrafttyMobileKit"],
             swiftSettings: strictWarnings
         ),
+        .testTarget(
+            name: "GrafttyTests",
+            dependencies: ["Graftty"],
+            swiftSettings: strictWarnings
+        ),
     ]
 )

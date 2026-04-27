@@ -242,6 +242,8 @@ struct GrafttyApp: App {
                     .tabItem { Label("Web Access", systemImage: "network") }
                 ChannelsSettingsPane()
                     .tabItem { Label("Channels", systemImage: "antenna.radiowaves.left.and.right") }
+                AgentTeamsSettingsPane()
+                    .tabItem { Label("Agent Teams", systemImage: "person.2.fill") }
             }
         }
     }
