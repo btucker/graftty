@@ -14,23 +14,41 @@ final class AppServices {
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
     var worktreeMonitorBridge: WorktreeMonitorBridge?
+    /// Provides the current AppState for the team PR-merged dispatch hook.
+    /// Set in GrafttyApp.startup() once @State is accessible (TEAM-5.4).
+    var appStateProvider: (() -> AppState)?
 
     init(socketPath: String) {
         self.socketServer = SocketServer(socketPath: socketPath)
 
         let channelSocketPath = SocketPathResolver.resolveChannels()
+
+        // Two-phase wiring: construct the observer first so the router's
+        // promptProvider closure can delegate to it for per-worktree
+        // team-aware composition (TEAM-3.3). A Box bridges the forward
+        // reference from the router closure back to the observer that
+        // doesn't exist yet at closure-capture time.
+        final class Box<T: AnyObject> { weak var value: T? }
+        let observerBox = Box<ChannelSettingsObserver>()
+
         let router = ChannelRouter(
             socketPath: channelSocketPath,
-            promptProvider: {
-                UserDefaults.standard.string(forKey: "channelPrompt")
-                    ?? ChannelsSettingsPane.defaultPrompt
+            promptProvider: { [observerBox] worktreePath in
+                if let observer = observerBox.value {
+                    return observer.composedPrompt(forWorktree: worktreePath)
+                }
+                // Fallback before observer is wired (should not normally happen).
+                return ""
             }
         )
-        self.channelRouter = router
-        self.channelSettingsObserver = ChannelSettingsObserver(
+        let observer = ChannelSettingsObserver(
             router: router,
             onEnable: { Task { await GrafttyApp.installChannelMCPServer() } }
         )
+        observerBox.value = observer
+
+        self.channelRouter = router
+        self.channelSettingsObserver = observer
 
         self.worktreeMonitor = WorktreeMonitor()
         self.statsStore = WorktreeStatsStore()
@@ -38,8 +56,47 @@ final class AppServices {
 
         // Route PRStatusStore transitions into ChannelRouter. Captured weakly
         // so AppServices can own both without a retain cycle.
-        self.prStatusStore.onTransition = { [weak router] worktreePath, message in
-            router?.dispatch(worktreePath: worktreePath, message: message)
+        //
+        // `appStateProvider` is set later in startup() once @State is live;
+        // before that point the guard below is a no-op.
+        self.prStatusStore.onTransition = { [weak router, weak self] subjectWorktreePath, message in
+            guard let router, let self else { return }
+            guard UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) else { return }
+            guard case let .event(eventType, attrs, _) = message else {
+                // Non-event messages (shouldn't happen for PRStatusStore transitions, but defensive).
+                router.dispatch(worktreePath: subjectWorktreePath, message: message)
+                return
+            }
+
+            guard let routableEvent = RoutableEvent(channelEventType: eventType, attrs: attrs) else {
+                // Non-routable channel events still get dispatched to the originating worktree.
+                router.dispatch(worktreePath: subjectWorktreePath, message: message)
+                return
+            }
+
+            let prefsRaw = UserDefaults.standard.string(forKey: SettingsKeys.channelRoutingPreferences) ?? ""
+            let prefs = ChannelRoutingPreferences(rawValue: prefsRaw) ?? ChannelRoutingPreferences()
+
+            let appState = self.appStateProvider?() ?? AppState()
+            let recipients = ChannelEventRouter.recipients(
+                event: routableEvent,
+                subjectWorktreePath: subjectWorktreePath,
+                repos: appState.repos,
+                preferences: prefs
+            )
+
+            let template = UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
+
+            for recipient in recipients {
+                let renderedMessage = EventBodyRenderer.body(
+                    for: message,
+                    recipientWorktreePath: recipient,
+                    subjectWorktreePath: subjectWorktreePath,
+                    repos: appState.repos,
+                    templateString: template
+                )
+                router.dispatch(worktreePath: recipient, message: renderedMessage)
+            }
         }
     }
 }
@@ -134,7 +191,8 @@ struct GrafttyApp: App {
                 terminalManager: terminalManager,
                 statsStore: services.statsStore,
                 prStatusStore: services.prStatusStore,
-                worktreeMonitor: services.worktreeMonitor
+                worktreeMonitor: services.worktreeMonitor,
+                channelRouter: services.channelRouter
             )
                 .environmentObject(webController)
                 .environmentObject(updaterController)
@@ -228,11 +286,11 @@ struct GrafttyApp: App {
             }
         }
 
-        // Settings scene — existing General pane, the Phase 2 Web Access
-        // pane, and the Channels pane (Claude Code Channels research preview).
-        // WebServerController is injected so WebSettingsPane can read
-        // `.status` / `.currentURL`, and so toggling `WebAccessSettings.isEnabled`
-        // triggers the controller's `reconcile()` via its Combine subscription.
+        // Settings scene — General pane, Web Access pane, and the unified
+        // Agent Teams pane (absorbs Channels). WebServerController is injected
+        // so WebSettingsPane can read `.status` / `.currentURL`, and so
+        // toggling `WebAccessSettings.isEnabled` triggers the controller's
+        // `reconcile()` via its Combine subscription.
         Settings {
             TabView {
                 SettingsView(onRestartZMX: { restartZMXWithConfirmation() })
@@ -240,8 +298,8 @@ struct GrafttyApp: App {
                 WebSettingsPane()
                     .environmentObject(webController)
                     .tabItem { Label("Web Access", systemImage: "network") }
-                ChannelsSettingsPane()
-                    .tabItem { Label("Channels", systemImage: "antenna.radiowaves.left.and.right") }
+                AgentTeamsSettingsPane()
+                    .tabItem { Label("Agent Teams", systemImage: "person.2.fill") }
             }
         }
     }
@@ -411,17 +469,17 @@ struct GrafttyApp: App {
             NSLog("[Graftty] SocketServer.start() failed: %@", String(describing: error))
         }
 
-        // Claude Code Channels — only active when the user has enabled the
-        // feature. On enable, register the graftty-channel user-scope MCP
-        // server via `claude mcp` (idempotent) and start the router so new
-        // Claude sessions launched by the user with
+        // Claude Code Channels — only active when agent teams are enabled.
+        // On enable, register the graftty-channel user-scope MCP server via
+        // `claude mcp` (idempotent) and start the router so new Claude sessions
+        // launched by the user with
         // `--dangerously-load-development-channels server:graftty-channel`
         // connect successfully. The user is responsible for the launch
         // flag — Graftty no longer auto-injects it, since the injection
         // only covered sessions started from `defaultCommand`. MCP
         // registration is fire-and-forget: it does subprocess I/O and the
         // router does not depend on it completing before start().
-        if UserDefaults.standard.bool(forKey: "channelsEnabled") {
+        if UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) {
             Task { await Self.installChannelMCPServer() }
             do {
                 try services.channelRouter.start()
@@ -429,6 +487,19 @@ struct GrafttyApp: App {
                 NSLog("[Graftty] Channels startup failed: %@", String(describing: error))
             }
         }
+
+        // Wire the AppState provider so ChannelSettingsObserver can compose
+        // per-worktree team instructions (TEAM-3.3). This must happen in
+        // startup() rather than AppServices.init() because @State is only
+        // accessible once SwiftUI's body has run. Capturing $appState here
+        // gives a stable Binding whose wrappedValue is always current.
+        let channelAppStateBinding = $appState
+        services.channelSettingsObserver.appStateProvider = { channelAppStateBinding.wrappedValue }
+
+        // Wire the AppState provider for the team PR-merged dispatch hook
+        // (TEAM-5.4). Same timing constraint as above — @State only accessible
+        // after body runs, so we use a Binding-capture here rather than in init().
+        services.appStateProvider = { channelAppStateBinding.wrappedValue }
 
         // SocketServer already dispatches onMessage to the main queue.
         let binding = $appState
@@ -438,9 +509,11 @@ struct GrafttyApp: App {
                 Self.handleNotification(message, appState: binding, terminalManager: tm)
             }
         }
+        let router = services.channelRouter
         services.socketServer.onRequest = { message in
             MainActor.assumeIsolated {
-                Self.handlePaneRequest(message, appState: binding, terminalManager: tm)
+                Self.handlePaneRequest(message, appState: binding, terminalManager: tm,
+                                       channelRouter: router)
             }
         }
 
@@ -561,6 +634,7 @@ struct GrafttyApp: App {
         // isolation as the native sidebar's "+" button.
         let worktreeMonitor = services.worktreeMonitor
         let statsStore = services.statsStore
+        let channelRouterForWeb = services.channelRouter
         webController.setWorktreeCreator { req in
             let result = await AddWorktreeFlow.add(
                 repoPath: req.repoPath,
@@ -569,10 +643,17 @@ struct GrafttyApp: App {
                 appState: appStateBinding,
                 worktreeMonitor: worktreeMonitor,
                 statsStore: statsStore,
-                terminalManager: tm
+                terminalManager: tm,
+                channelDispatch: EventBodyRenderer.dispatchClosure(
+                    repos: appStateBinding.wrappedValue.repos,
+                    inner: { path, msg in channelRouterForWeb.dispatch(worktreePath: path, message: msg) }
+                )
             )
             switch result {
             case .success(let outcome):
+                // TEAM-3.4: refresh instructions for all subscribers so
+                // they see the updated roster after the new member joined.
+                await channelRouterForWeb.broadcastInstructions()
                 return .success(WebServer.CreateWorktreeResponse(
                     sessionName: outcome.sessionName,
                     worktreePath: outcome.worktreePath
@@ -1051,7 +1132,7 @@ struct GrafttyApp: App {
                     }
                 }
             }
-        case .listPanes, .addPane, .closePane:
+        case .listPanes, .addPane, .closePane, .teamMessage, .teamList:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
             // fire-and-forget onMessage path.
@@ -1066,7 +1147,8 @@ struct GrafttyApp: App {
     fileprivate static func handlePaneRequest(
         _ message: NotificationMessage,
         appState: Binding<AppState>,
-        terminalManager: TerminalManager
+        terminalManager: TerminalManager,
+        channelRouter: ChannelRouter
     ) -> ResponseMessage? {
         switch message {
         case .listPanes(let path):
@@ -1077,6 +1159,57 @@ struct GrafttyApp: App {
         case .closePane(let path, let index):
             return closePaneByIndex(path: path, index: index,
                                     appState: appState, terminalManager: terminalManager)
+        case .teamMessage(let callerPath, let recipient, let text):
+            // TEAM-4.2: resolve caller's team, find recipient member, dispatch team_message
+            guard UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) else {
+                return .error("team mode is disabled")
+            }
+            guard let callerWt = appState.wrappedValue.worktree(forPath: callerPath) else {
+                return .error("not inside a tracked worktree")
+            }
+            guard let team = TeamView.team(for: callerWt, in: appState.wrappedValue.repos, teamsEnabled: true) else {
+                return .error("your repo has no other team members yet")
+            }
+            guard let senderMember = team.members.first(where: { $0.worktreePath == callerPath }) else {
+                return .error("internal error: caller not in resolved team")
+            }
+            guard let recipientMember = team.memberNamed(recipient) else {
+                let names = team.members.map { $0.name }.filter { $0 != senderMember.name }
+                return .error("\(recipient) is not a teammate of this worktree; current teammates: \(names.joined(separator: ", "))")
+            }
+            let template = UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
+            let renderedMessage = EventBodyRenderer.body(
+                for: TeamChannelEvents.teamMessage(
+                    team: team.repoDisplayName,
+                    from: senderMember.name,
+                    text: text
+                ),
+                recipientWorktreePath: recipientMember.worktreePath,
+                subjectWorktreePath: nil,
+                repos: appState.wrappedValue.repos,
+                templateString: template
+            )
+            channelRouter.dispatch(
+                worktreePath: recipientMember.worktreePath,
+                message: renderedMessage
+            )
+            return .ok
+        case .teamList(let callerPath):
+            // TEAM-4.3: list members of caller's team
+            guard UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) else {
+                return .error("team mode is disabled")
+            }
+            guard let callerWt = appState.wrappedValue.worktree(forPath: callerPath),
+                  let team = TeamView.team(for: callerWt, in: appState.wrappedValue.repos, teamsEnabled: true) else {
+                return .error("not in a team")
+            }
+            let members = team.members.map { m in
+                TeamListMember(
+                    name: m.name, branch: m.branch, worktreePath: m.worktreePath,
+                    role: m.role.rawValue, isRunning: m.isRunning
+                )
+            }
+            return .teamList(teamName: team.repoDisplayName, members: members)
         case .notify, .clear:
             // Fire-and-forget cases — no response. `onMessage` already handled them.
             return nil
@@ -1637,7 +1770,7 @@ struct GrafttyApp: App {
         terminalID: TerminalID
     ) {
         let defaults = UserDefaults.standard
-        let command = defaults.string(forKey: "defaultCommand") ?? ""
+        let command = defaults.string(forKey: SettingsKeys.defaultCommand) ?? ""
         // `@AppStorage` defaults apply only in the SwiftUI view; when
         // read directly from UserDefaults the key returns nil on
         // first run. Treat nil as `true` to match the SettingsView default.

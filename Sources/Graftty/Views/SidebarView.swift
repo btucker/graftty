@@ -32,6 +32,11 @@ struct SidebarView: View {
 
     @Binding var pendingAddWorktree: AddWorktreeRequest?
 
+    @AppStorage("agentTeamsEnabled") private var agentTeamsEnabled: Bool = false
+
+    /// Worktree path whose "Show Team Members…" popover is currently presented.
+    @State private var teamPopoverWorktreePath: String? = nil
+
     var body: some View {
         VStack(spacing: 0) {
             List {
@@ -108,6 +113,10 @@ struct SidebarView: View {
                 Text(repo.displayName)
                     .foregroundColor(theme.foreground)
                     .fontWeight(.semibold)
+                if agentTeamsEnabled && repo.worktrees.count >= 2 {
+                    TeamRepoBadge(repoPath: repo.path)
+                        .font(.system(size: 11))
+                }
                 Spacer()
                 Button {
                     pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: "")
@@ -195,6 +204,17 @@ struct SidebarView: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(isActive ? theme.foreground.opacity(0.16) : .clear)
         )
+        // TEAM-6.2: "Show Team Members…" popover
+        .popover(isPresented: Binding(
+            get: { teamPopoverWorktreePath == worktree.path },
+            set: { shown in if !shown { teamPopoverWorktreePath = nil } }
+        )) {
+            TeamMembersPopover(
+                worktree: worktree,
+                repos: appState.repos,
+                teamsEnabled: agentTeamsEnabled
+            )
+        }
     }
 
     private func label(for worktree: WorktreeEntry, in repo: RepoEntry) -> String {
@@ -228,6 +248,14 @@ struct SidebarView: View {
         if worktree.path != repo.path && worktree.state != .stale {
             Button("Delete Worktree") {
                 onDeleteWorktree(worktree.path)
+            }
+        }
+        // TEAM-6.2: "Show Team Members…" opens a popover listing team members
+        if agentTeamsEnabled,
+           TeamView.team(for: worktree, in: appState.repos, teamsEnabled: true) != nil {
+            Divider()
+            Button("Show Team Members…") {
+                teamPopoverWorktreePath = worktree.path
             }
         }
     }
@@ -355,5 +383,52 @@ struct SidebarView: View {
             }
         }
         return true
+    }
+}
+
+// MARK: - Team Members Popover (TEAM-6.2)
+
+/// Inline popover listing all members of the team that contains `worktree`.
+/// Presented from the "Show Team Members…" context-menu item.
+private struct TeamMembersPopover: View {
+    let worktree: WorktreeEntry
+    let repos: [RepoEntry]
+    let teamsEnabled: Bool
+
+    var body: some View {
+        let team = TeamView.team(for: worktree, in: repos, teamsEnabled: teamsEnabled)
+        VStack(alignment: .leading, spacing: 0) {
+            if let team {
+                Text("Team — \(team.repoDisplayName)")
+                    .font(.headline)
+                    .padding(.bottom, 8)
+                Divider()
+                ForEach(team.members, id: \.worktreePath) { member in
+                    HStack(spacing: 8) {
+                        Image(systemName: member.role == .lead ? "star.fill" : "person.fill")
+                            .foregroundStyle(member.role == .lead ? Color.yellow : Color.secondary)
+                            .frame(width: 16)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(member.name)
+                                .fontWeight(member.role == .lead ? .semibold : .regular)
+                            Text(member.branch)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Circle()
+                            .fill(member.isRunning ? Color.green : Color.secondary.opacity(0.4))
+                            .frame(width: 8, height: 8)
+                    }
+                    .padding(.vertical, 4)
+                    Divider().opacity(0.4)
+                }
+            } else {
+                Text("No team")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .frame(minWidth: 220, maxWidth: 320)
     }
 }

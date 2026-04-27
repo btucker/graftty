@@ -81,4 +81,5 @@ final class DefaultCommandDecisionTests: XCTestCase {
         )
         XCTAssertEqual(decision, .skip)
     }
+
 }

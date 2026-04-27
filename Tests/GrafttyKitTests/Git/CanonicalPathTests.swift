@@ -14,7 +14,7 @@ import Testing
 /// run from inside a worktree under `/tmp/*` (or any path traversing a
 /// private-root symlink) failed with `"Not inside a tracked worktree"`
 /// even though the worktree was tracked. Caught live in cycle 82 dogfood.
-@Suite("CanonicalPath — macOS private-root handling")
+@Suite("CanonicalPath — macOS private-root handling", .serialized)
 struct CanonicalPathTests {
 
     @Test func canonicalizesPrivateRootSymlink() {

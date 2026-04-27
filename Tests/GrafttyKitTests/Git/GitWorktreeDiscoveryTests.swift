@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-@Suite("GitWorktreeDiscovery Tests")
+@Suite("GitWorktreeDiscovery Tests", .serialized)
 struct GitWorktreeDiscoveryTests {
 
     @Test func parsePorcelainOutput() throws {

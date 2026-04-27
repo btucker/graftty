@@ -9,6 +9,7 @@ struct MainWindow: View {
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
     let worktreeMonitor: WorktreeMonitor
+    let channelRouter: ChannelRouter
 
     @EnvironmentObject private var updaterController: UpdaterController
 
@@ -66,6 +67,7 @@ struct MainWindow: View {
                     isHomeCheckout: isHomeCheckout,
                     prInfo: prInfo,
                     theme: terminalManager.theme,
+                    sidebarHidden: columnVisibility == .detailOnly,
                     onRefreshPR: refreshPR
                 )
 
@@ -381,6 +383,7 @@ struct MainWindow: View {
         worktreeName: String,
         branchName: String
     ) async -> String? {
+        let router = channelRouter
         let result = await AddWorktreeFlow.add(
             repoPath: repo.path,
             worktreeName: worktreeName,
@@ -388,7 +391,8 @@ struct MainWindow: View {
             appState: $appState,
             worktreeMonitor: worktreeMonitor,
             statsStore: statsStore,
-            terminalManager: terminalManager
+            terminalManager: terminalManager,
+            channelDispatch: { path, msg in router.dispatch(worktreePath: path, message: msg) }
         )
         switch result {
         case .failure(let err):
@@ -409,6 +413,9 @@ struct MainWindow: View {
             // remaining work is the UI-local side effects (first
             // responder, PR refresh, `selectedWorktreePath`).
             selectWorktree(outcome.worktreePath)
+            // TEAM-3.4: refresh instructions for all subscribers so
+            // they see the updated roster after the new member joined.
+            router.broadcastInstructions()
             return nil
         }
     }
@@ -559,7 +566,26 @@ struct MainWindow: View {
             // path is a no-op.
             prStatusStore.clear(worktreePath: worktreePath)
             statsStore.clear(worktreePath: worktreePath)
+            // Capture the branch before the entry is removed so
+            // `fireLeft` can build the member name from it.
+            let leaverBranch = wt.branch
             appState.removeWorktree(atPath: worktreePath)
+            // TEAM-5.3: notify the lead that a worktree left. The repo
+            // state is read AFTER removal so the lead-present guard works.
+            if let repo = appState.repo(forWorktreePath: repoPath) {
+                TeamMembershipEvents.fireLeft(
+                    repo: repo,
+                    leaverBranch: leaverBranch,
+                    leaverPath: worktreePath,
+                    reason: .removed,
+                    teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
+                    dispatch: EventBodyRenderer.dispatchClosure(
+                        repos: appState.repos,
+                        inner: { path, msg in channelRouter.dispatch(worktreePath: path, message: msg) }
+                    )
+                )
+                channelRouter.broadcastInstructions()
+            }
         }
     }
 
