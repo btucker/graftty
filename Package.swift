@@ -65,6 +65,7 @@ let package = Package(
                 "GrafttyProtocol",
                 .product(name: "GhosttyKit", package: "libghostty-spm"),
                 .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "Stencil", package: "Stencil"),
             ],
             swiftSettings: strictWarnings
         ),

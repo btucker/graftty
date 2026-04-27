@@ -1,22 +1,22 @@
 import Foundation
 import Combine
+import os
+import Stencil
 import GrafttyKit
 
-/// Observes `teamLeadPrompt`, `teamCoworkerPrompt`, and `agentTeamsEnabled` UserDefaults
+/// Observes `teamSessionPrompt` and `agentTeamsEnabled` UserDefaults
 /// keys and reacts:
-/// - Prompt edits → 500ms debounce → `router.broadcastInstructions()`.
-///   Debouncing coalesces rapid typing into one fanout per settled edit,
-///   so subscribers don't get a flood of instructions events while the
-///   user is mid-sentence.
+/// - Prompt edits → immediate `router.broadcastInstructions()` fanout.
 /// - Enabled toggle flips → start or set `isEnabled` on the router.
 ///   Disabled → router stops routing but keeps subscribers connected,
 ///   so re-enabling is instant. Running sessions' launch flags were
 ///   baked at spawn and don't change mid-session.
 @MainActor
 final class ChannelSettingsObserver {
+    private static let logger = Logger(subsystem: "com.btucker.graftty", category: "ChannelSettingsObserver")
+
     private let router: ChannelRouter
     private let onEnable: @MainActor () -> Void
-    private var promptTimer: Timer?
     private var cancellables: Set<AnyCancellable> = []
 
     /// Provides the current `AppState` for composing per-worktree team
@@ -33,14 +33,10 @@ final class ChannelSettingsObserver {
         // and the user has already changed the toggle once.
         router.isEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
 
-        UserDefaults.standard.publisher(for: \.teamLeadPrompt)
+        UserDefaults.standard.publisher(for: \.teamSessionPrompt)
             .dropFirst()  // skip the initial synchronous emit
-            .sink { [weak self] _ in self?.schedulePromptBroadcast() }
-            .store(in: &cancellables)
-
-        UserDefaults.standard.publisher(for: \.teamCoworkerPrompt)
-            .dropFirst()
-            .sink { [weak self] _ in self?.schedulePromptBroadcast() }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.router.broadcastInstructions() }
             .store(in: &cancellables)
 
         UserDefaults.standard.publisher(for: \.agentTeamsEnabled)
@@ -49,13 +45,6 @@ final class ChannelSettingsObserver {
                 Task { @MainActor [weak self] in self?.apply(enabled: enabled) }
             }
             .store(in: &cancellables)
-    }
-
-    private func schedulePromptBroadcast() {
-        promptTimer?.invalidate()
-        promptTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { [weak self] _ in
-            Task { @MainActor in self?.router.broadcastInstructions() }
-        }
     }
 
     private func apply(enabled: Bool) {
@@ -73,11 +62,10 @@ final class ChannelSettingsObserver {
         }
     }
 
-    /// Composes team MCP instructions + role-specific user prompt for a specific
+    /// Composes team MCP instructions + Stencil-rendered teamSessionPrompt for a specific
     /// worktree (TEAM-3.3). Returns an empty string for non-team contexts.
     func composedPrompt(forWorktree worktreePath: String) -> String {
         let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
-
         guard teamsEnabled,
               let appState = appStateProvider?(),
               let worktree = appState.worktree(forPath: worktreePath),
@@ -88,12 +76,29 @@ final class ChannelSettingsObserver {
         }
 
         let teamInstructions = TeamInstructionsRenderer.render(team: team, viewer: me)
-        let userPrompt = "" // TEMP: Stencil teamSessionPrompt rendering replaces this in Task 12
 
-        if userPrompt.isEmpty {
+        let template = UserDefaults.standard.string(forKey: SettingsKeys.teamSessionPrompt) ?? ""
+        guard !template.isEmpty else { return teamInstructions }
+
+        let context: [String: Any] = [
+            "agent": [
+                "branch": me.branch,
+                "lead": me.role == .lead,
+                "this_worktree": false,
+                "other_worktree": false,
+            ]
+        ]
+
+        let rendered: String
+        do {
+            rendered = try Stencil.Environment().renderTemplate(string: template, context: context)
+        } catch {
+            Self.logger.error("teamSessionPrompt render failed: \(error.localizedDescription, privacy: .public)")
             return teamInstructions
         }
-        return teamInstructions + "\n\n" + userPrompt
+
+        let trimmed = rendered.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? teamInstructions : "\(teamInstructions)\n\n\(trimmed)"
     }
 }
 
@@ -101,17 +106,14 @@ final class ChannelSettingsObserver {
 ///
 /// The Swift property names match the UserDefaults keys exactly, so KVO
 /// (driven by the Objective-C property name) fires whenever anything —
-/// including `@AppStorage("teamLeadPrompt")` / `@AppStorage("teamCoworkerPrompt")`
+/// including `@AppStorage("teamSessionPrompt")`
 /// / `@AppStorage("agentTeamsEnabled")` — writes to those keys via
 /// `UserDefaults.standard.set(_:forKey:)`.
 extension UserDefaults {
-    @objc dynamic var teamLeadPrompt: String {
-        string(forKey: "teamLeadPrompt") ?? ""
-    }
-    @objc dynamic var teamCoworkerPrompt: String {
-        string(forKey: "teamCoworkerPrompt") ?? ""
+    @objc dynamic var teamSessionPrompt: String {
+        string(forKey: SettingsKeys.teamSessionPrompt) ?? ""
     }
     @objc dynamic var agentTeamsEnabled: Bool {
-        bool(forKey: "agentTeamsEnabled")
+        bool(forKey: SettingsKeys.agentTeamsEnabled)
     }
 }
