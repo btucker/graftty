@@ -1,11 +1,10 @@
 import AppKit
-import GrafttyKit
 import SwiftUI
 
 /// Settings pane that exposes the `agentTeamsEnabled` toggle and the
 /// channel prompt editor that was previously in ChannelsSettingsPane.
 ///
-/// Implements TEAM-1.1, TEAM-1.3 from SPECS.md.
+/// Implements TEAM-1.1, TEAM-1.7 from SPECS.md.
 struct AgentTeamsSettingsPane: View {
     @AppStorage("agentTeamsEnabled") private var agentTeamsEnabled: Bool = false
     @AppStorage("teamPRNotificationsEnabled") private var prNotificationsEnabled: Bool = true
@@ -17,27 +16,12 @@ struct AgentTeamsSettingsPane: View {
             Section {
                 Toggle("Enable agent teams", isOn: $agentTeamsEnabled)
             } footer: {
-                Text("Locks the Default Command field and gives each Claude pane in a multi-worktree repo team-aware instructions on connect.")
+                Text("Gives each Claude pane in a multi-worktree repo team-aware instructions on connect.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             if agentTeamsEnabled {
-                Section("Managed default command") {
-                    Text(teamModeManagedCommand)
-                        .font(.system(.body, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-
-                Section {
-                    Toggle("Notify team about GitHub/GitLab PR activity", isOn: $prNotificationsEnabled)
-                } footer: {
-                    Text("When on, Graftty fires pr_state_changed and team_pr_merged channel events as PR state, CI conclusions, and merges are detected. Turn off to suppress all PR channel events without disabling team mode.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
                         Label(
@@ -45,12 +29,6 @@ struct AgentTeamsSettingsPane: View {
                             systemImage: "terminal"
                         )
                         .font(.subheadline.bold())
-
-                        Text(verbatim:
-                            "Graftty registers a user-scope MCP server with Claude Code. " +
-                            "To receive channel events, launch Claude with:"
-                        )
-                        .font(.caption)
 
                         HStack(spacing: 6) {
                             Text(verbatim: Self.launchFlag)
@@ -68,24 +46,22 @@ struct AgentTeamsSettingsPane: View {
                         }
 
                         Text(verbatim:
-                            "Research preview — the --dangerously-load-development-channels " +
-                            "flag bypasses Claude Code's channel allowlist for this server only. " +
-                            "Events originate from Graftty's local polling; no external senders."
+                            "Add this flag to your default command (Settings → General → Default Command), " +
+                            "or to any `claude` invocation, to enable channel events. " +
+                            "Without it, this Claude session won't receive team messages or PR notifications."
                         )
                         .font(.caption)
                         .foregroundStyle(.secondary)
-
-                        if let url = URL(string: "https://docs.claude.com/en/channels") {
-                            Link("Learn more →", destination: url)
-                                .font(.caption)
-                        }
                     }
                     .padding(8)
-                    .background(Color.orange.opacity(0.1))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.orange.opacity(0.4))
-                    )
+                }
+
+                Section {
+                    Toggle("Notify team about GitHub/GitLab PR activity", isOn: $prNotificationsEnabled)
+                } footer: {
+                    Text("When on, Graftty fires pr_state_changed and team_pr_merged channel events as PR state, CI conclusions, and merges are detected. Turn off to suppress all PR channel events without disabling team mode.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Lead prompt") {

@@ -1762,8 +1762,7 @@ struct GrafttyApp: App {
             defaultCommand: command,
             firstPaneOnly: firstPaneOnly,
             isFirstPane: terminalManager.isFirstPane(terminalID),
-            wasRehydrated: terminalManager.wasRehydrated(terminalID),
-            agentTeamsEnabled: defaults.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            wasRehydrated: terminalManager.wasRehydrated(terminalID)
         )
 
         switch decision {
