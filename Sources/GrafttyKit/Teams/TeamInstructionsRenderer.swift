@@ -34,7 +34,7 @@ public enum TeamInstructionsRenderer {
         coordination policy):
           - team_member_joined — a new coworker joined; attrs: team, member, branch, worktree.
           - team_member_left   — a coworker left; attrs: team, member, reason (removed | exited).
-          - team_pr_merged     — a coworker's PR merged; attrs: team, member, pr_number, branch, merge_sha.
+          - team_pr_merged     — a coworker's PR merged; attrs: team, member, pr_number, branch.
 
         You will also receive direct messages from coworkers (or from the user) as:
           <channel source="graftty-channel" type="team_message" from="<sender>">…text…</channel>

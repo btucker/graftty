@@ -412,6 +412,9 @@ struct MainWindow: View {
             // remaining work is the UI-local side effects (first
             // responder, PR refresh, `selectedWorktreePath`).
             selectWorktree(outcome.worktreePath)
+            // TEAM-3.4: refresh instructions for all subscribers so
+            // they see the updated roster after the new member joined.
+            router.broadcastInstructions()
             return nil
         }
     }
@@ -579,6 +582,7 @@ struct MainWindow: View {
                         channelRouter.dispatch(worktreePath: path, message: msg)
                     }
                 )
+                channelRouter.broadcastInstructions()
             }
         }
     }

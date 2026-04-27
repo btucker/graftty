@@ -68,4 +68,15 @@ struct TeamChannelEventsTests {
         #expect(attrs["pr_number"] == "42")
         #expect(attrs["merge_sha"] == "abcd1234")
     }
+
+    @Test func prMergedOmitsEmptyMergeSha() {
+        let event = TeamChannelEvents.prMerged(
+            team: "t", member: "m", prNumber: 1, branch: "b", mergeSha: ""
+        )
+        guard case let .event(_, attrs, _) = event else {
+            Issue.record("expected event")
+            return
+        }
+        #expect(attrs["merge_sha"] == nil)
+    }
 }

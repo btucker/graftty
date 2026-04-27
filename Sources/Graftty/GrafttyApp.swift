@@ -640,6 +640,9 @@ struct GrafttyApp: App {
             )
             switch result {
             case .success(let outcome):
+                // TEAM-3.4: refresh instructions for all subscribers so
+                // they see the updated roster after the new member joined.
+                await channelRouterForWeb.broadcastInstructions()
                 return .success(WebServer.CreateWorktreeResponse(
                     sessionName: outcome.sessionName,
                     worktreePath: outcome.worktreePath

@@ -72,15 +72,18 @@ public enum TeamChannelEvents {
         branch: String,
         mergeSha: String
     ) -> ChannelServerMessage {
-        .event(
+        var attrs: [String: String] = [
+            "team": team,
+            "member": member,
+            "pr_number": String(prNumber),
+            "branch": branch,
+        ]
+        if !mergeSha.isEmpty {
+            attrs["merge_sha"] = mergeSha
+        }
+        return .event(
             type: "team_pr_merged",
-            attrs: [
-                "team": team,
-                "member": member,
-                "pr_number": String(prNumber),
-                "branch": branch,
-                "merge_sha": mergeSha,
-            ],
+            attrs: attrs,
             body: "Coworker \"\(member)\"'s PR #\(prNumber) (\(branch)) merged."
         )
     }
