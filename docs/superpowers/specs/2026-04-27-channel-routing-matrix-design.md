@@ -3,7 +3,7 @@
 Two changes to the Agent Teams Settings pane that ship together:
 
 1. **A user-configurable routing matrix** that decides which agents receive which automated channel events (PR state changes, CI conclusions, mergability transitions). Replaces the current single *Notify team about GitHub/GitLab PR activity* checkbox with explicit per-event-type, per-recipient-class control. Also retires the `team_pr_merged` event in favor of routing the existing `pr_state_changed` (with `to=merged`) through the matrix.
-2. **A single Stencil-templated prompt** replaces the two role-specific prompts (`teamLeadPrompt` + `teamCoworkerPrompt`). The user writes one template that branches on `role` (and any other context variables we expose) using Stencil syntax. More powerful than two static prompts; one field is simpler UX.
+2. **A single Stencil-templated prompt rendered per event delivery** replaces the two role-specific prompts (`teamLeadPrompt` + `teamCoworkerPrompt`). The user writes one template; on every channel-event delivery, the template is rendered against an `agent` struct describing this specific delivery's context (whether the agent is the lead, whether the event is about its own worktree, etc.) and the result is prepended to the event body. The template is *not* part of MCP instructions any longer — those keep only the static team-aware mechanism description. Per-event rendering is what makes the simple `agent` context useful: the user can write rules like "if this event is about my own worktree, drop everything" without the agent having to do that filtering itself.
 
 ## Goal
 
@@ -11,7 +11,7 @@ After this ships, this user story works:
 
 > I'm working on three feature branches with team mode enabled. By default, when a coworker's CI fails, only that coworker hears about it (no spam to the lead or me). When a PR merges, only my lead hears about it (the worktree's about to be cleaned up; my coworker on a different branch doesn't need the noise). I want my lead to also hear about CI failures so it can step in if a coworker is stuck — so I open Settings → Agent Teams, find the Channel Routing section, and tick the *Root agent* checkbox in the *CI conclusion changed* row. Done.
 >
-> I also want my lead to behave differently from my coworkers: my lead should ack commits with a thumbs-up emoji and decide whether merge events need broadcasting; my coworkers should focus on their assigned task and message the lead before they pivot. I open the same Settings pane, scroll to the *Prompt* field, and write one Stencil-templated prompt: `{% if role == "lead" %}Acknowledge teammate commits with 👍 and decide whether to broadcast merge events.{% else %}Focus on your assigned task. Message the lead before pivoting.{% endif %}`. Both my lead and my coworkers see only the relevant slice — and I can change either side by editing one place.
+> I also want my agents to react differently depending on what an event is about. When my own CI fails, I want this agent to investigate immediately. When a *different* worktree's CI fails, this agent should note it but keep working on its current task. I open the Agent Teams Settings, scroll to the *Prompt* field, and write one Stencil template: `{% if agent.this_worktree %}This event is about your own worktree — investigate now.{% elif agent.other_worktree %}Another worktree's event. Note it and keep going.{% endif %}`. Each event delivery re-renders the template with the right `agent` context — my agent sees only the slice relevant to this delivery.
 
 ## Scope
 
@@ -22,7 +22,7 @@ After this ships, this user story works:
 - Default cell values match the user-described "obvious" routing (worktree-only for state/CI/mergability, root-only for merges).
 - The routing layer: a single helper that, given an event type and the subject worktree path, returns the recipient set; the existing `onTransition` closure in `AppServices.init` consults it and dispatches one channel event per recipient.
 - **Retire** the `team_pr_merged` event entirely: drop the `TeamChannelEvents.prMerged` builder, drop the `TeamMembershipEvents.firePRMerged` helper, drop `TEAM-5.4` from SPECS.md, drop the dispatch test, drop the mention from the MCP-instructions renderer. After this change, the lead receives merge notifications via `pr_state_changed` (with `to=merged`) routed by the matrix.
-- **Single Stencil-templated prompt**: replace the two `@AppStorage` keys (`teamLeadPrompt`, `teamCoworkerPrompt`) with one (`teamPrompt`). The MCP-instructions renderer evaluates the template against a context dict containing `role`, `name`, `team_name`, `lead`, `coworkers`, `peers`, etc. (full list under "Prompt template" below). Add `Stencil` as a SwiftPM dependency on the `GrafttyKit` target.
+- **Single Stencil-templated prompt rendered per event**: replace the two `@AppStorage` keys (`teamLeadPrompt`, `teamCoworkerPrompt`) with one (`teamPrompt`). The user prompt is **not** part of MCP instructions; instead, on every channel-event delivery, the template is rendered against an `agent` struct (4 fields: `branch`, `lead`, `this_worktree`, `other_worktree`) and the result is prepended to the event body. Add `Stencil` as a SwiftPM dependency on the `GrafttyKit` target.
 - SPECS.md updates (see "Identifier reservations" below).
 
 **Out of scope (v2+):**
@@ -176,7 +176,7 @@ extension Binding where Value == ChannelRoutingPreferences {
 
 ## Prompt template
 
-Replace the two prompt fields (`teamLeadPrompt` + `teamCoworkerPrompt`) with **one**: `teamPrompt`. The user writes a single Stencil-templated string that's rendered per-pane against a context dict.
+Replace the two prompt fields (`teamLeadPrompt` + `teamCoworkerPrompt`) with **one**: `teamPrompt`. The user writes a single Stencil-templated string that's rendered **per channel-event delivery** against a small `agent` context. The rendered text is prepended to the event body and dispatched together as the channel event.
 
 ### Storage
 
@@ -186,68 +186,92 @@ Replace the two prompt fields (`teamLeadPrompt` + `teamCoworkerPrompt`) with **o
 
 ### UI
 
-A single `Section("Prompt")` containing one `TextEditor` bound to `$teamPrompt`. Below the editor, a small disclosure group ("Available variables in your template") that lists the context keys (see below) with one-line descriptions. Footer text:
+A single `Section("Prompt")` containing one `TextEditor` bound to `$teamPrompt`. Below the editor, a small disclosure group ("Available variables in your template") that lists the four `agent` fields (see below) with one-line descriptions. Footer text:
 
-> Your prompt is a Stencil template. It's rendered for each pane and appended to that agent's instructions. Branch on `role` (`"lead"` or `"coworker"`) to give different guidance to the lead vs. coworkers, or use any of the other available variables.
+> Your prompt is a Stencil template. It is rendered freshly for each channel event delivered to each agent, and the rendered text is prepended to the event the agent receives. The template's `agent` variable describes this specific delivery: who's receiving the event and how it relates to their worktree.
 
 ### Available context variables
 
-| Variable          | Type             | Description                                                                                  |
-| ----------------- | ---------------- | -------------------------------------------------------------------------------------------- |
-| `role`            | `String`         | `"lead"` or `"coworker"`.                                                                    |
-| `name`            | `String`         | The viewer's member name (sanitized branch).                                                 |
-| `branch`          | `String`         | The viewer's branch.                                                                         |
-| `worktree_path`   | `String`         | The viewer's absolute worktree path.                                                         |
-| `team_name`       | `String`         | The team's display name (the repo's `displayName`).                                          |
-| `repo_path`       | `String`         | The repo's absolute path.                                                                    |
-| `lead`            | `Member` dict    | The lead member: `{ name, branch, worktree_path }`.                                          |
-| `coworkers`       | `[Member]`       | Every coworker on the team (excludes lead).                                                  |
-| `members`         | `[Member]`       | Every member (lead + all coworkers).                                                         |
-| `peers`           | `[Member]`       | Every member except the viewer (so for the lead this equals `coworkers`; for a coworker it equals `lead + other coworkers`). |
+The full template context is one struct: `agent`. Four fields:
 
-`Member` is a Stencil-accessible value with three string keys: `name`, `branch`, `worktree_path`.
+| Variable               | Type     | Description                                                                                                                |
+| ---------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `agent.branch`         | `String` | The receiving agent's branch (sanitized).                                                                                  |
+| `agent.lead`           | `Bool`   | `true` iff this agent is the team's lead (the root worktree). Constant per session.                                        |
+| `agent.this_worktree`  | `Bool`   | `true` iff the event being delivered is about this agent's *own* worktree (e.g., this agent's branch's CI just changed). Per-event. |
+| `agent.other_worktree` | `Bool`   | `true` iff the event is about a *different* worktree from this agent's. Per-event.                                         |
+
+For events with a worktree subject (PR/CI/merge events): exactly one of `this_worktree` / `other_worktree` is `true`. `lead` is independent and may be `true` or `false` simultaneously with either.
+
+For events without a worktree subject (`team_message`): both `this_worktree` and `other_worktree` are `false`. The user's template can detect that by `{% if not agent.this_worktree and not agent.other_worktree %}`.
+
+The `Member` / `peers` / `coworkers` / `members` collections discussed in earlier drafts are **not** exposed in v1. If the user wants per-peer logic, they can add it via a v2 expansion. v1's intent is "the simplest possible context that lets the user write event-routing-aware behavior."
 
 ### Rendering
 
-In `ChannelSettingsObserver.composedPrompt(forWorktree:)`, replace the role-keyed dispatch with:
+A new `EventBodyRenderer` helper, called once per event-delivery from the dispatch site:
 
 ```swift
-let template = UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
-guard !template.isEmpty else { return teamInstructions }
+public enum EventBodyRenderer {
+    /// Renders the user's prompt template for this delivery and returns a body
+    /// where the rendered prompt is prepended (separated by a blank line) to
+    /// the event's original body. If the template is empty or fails to render,
+    /// returns the original body unchanged.
+    public static func body(
+        for event: ChannelServerMessage,           // the original event
+        recipientWorktreePath: String,             // who's receiving it
+        subjectWorktreePath: String?,              // what the event is about (nil for team_message etc.)
+        repos: [RepoEntry],
+        templateString: String                     // the user's teamPrompt
+    ) -> ChannelServerMessage
+}
+```
 
-let context: [String: Any] = [
-    "role": me.role.rawValue,
-    "name": me.name,
-    "branch": me.branch,
-    "worktree_path": me.worktreePath,
-    "team_name": team.repoDisplayName,
-    "repo_path": team.repoPath,
-    "lead": memberDict(team.lead),
-    "coworkers": team.members.filter { $0.role == .coworker }.map(memberDict),
-    "members": team.members.map(memberDict),
-    "peers": team.members.filter { $0.worktreePath != me.worktreePath }.map(memberDict),
+Pseudocode of the body computation:
+
+```swift
+guard !templateString.isEmpty else { return event }
+guard case let .event(type, attrs, originalBody) = event else { return event }
+
+let recipient = repos.flatMap(\.worktrees).first { $0.path == recipientWorktreePath }
+let recipientRepo = repos.first { $0.worktrees.contains(where: { $0.path == recipientWorktreePath }) }
+let isLead = (recipientRepo?.path == recipientWorktreePath)
+let isThisWorktree = (subjectWorktreePath == recipientWorktreePath)
+let isOtherWorktree = subjectWorktreePath != nil && !isThisWorktree
+
+let agentContext: [String: Any] = [
+    "agent": [
+        "branch": recipient?.branch ?? "",
+        "lead": isLead,
+        "this_worktree": isThisWorktree,
+        "other_worktree": isOtherWorktree,
+    ]
 ]
 
 let rendered: String
 do {
-    rendered = try Environment().renderTemplate(string: template, context: context)
+    rendered = try Environment().renderTemplate(string: templateString, context: agentContext)
 } catch {
     GrafttyLog.error("teamPrompt render failed: \(error.localizedDescription)")
-    return teamInstructions
+    return event   // fallback: deliver event unchanged
 }
 
-return rendered.isEmpty ? teamInstructions : (teamInstructions + "\n\n" + rendered)
+let trimmed = rendered.trimmingCharacters(in: .whitespacesAndNewlines)
+guard !trimmed.isEmpty else { return event }   // user template produced nothing for this delivery
+
+let combined = "\(trimmed)\n\n\(originalBody)"
+return .event(type: type, attrs: attrs, body: combined)
 ```
 
-`Environment` and `renderTemplate(string:context:)` come from the `Stencil` SwiftPM module.
+The dispatch site (in `AppServices.init`'s `onTransition`, in the `team msg` handler, and in `TeamMembershipEvents`) calls `EventBodyRenderer.body(...)` to compute the recipient-specific body, then calls `router.dispatch(worktreePath:message:)` with the rendered message. The MCP instructions stay static — they're pure mechanism description.
 
 ### Error handling
 
-If the user's template has a syntax error or references a value in a way that can't be resolved (e.g., calling a filter that doesn't exist), Stencil throws. We catch:
+If Stencil throws during rendering (syntax error, type mismatch, missing filter, etc.):
 
 1. Log the error to console (`os_log` via `GrafttyLog`) so it shows in macOS Console.app.
-2. Render falls back to **just the team instructions** (no append) — the agent still works, just without the user's custom guidance.
-3. v1 has no inline error UI in Settings. v2 may add one (see "Out of scope").
+2. Deliver the event with its **original body** unchanged — the agent still gets the event, just without the user's prepended policy guidance.
+3. v1 has no inline error UI in Settings. v2 may add one.
 
 ### Stencil dependency
 
@@ -258,6 +282,16 @@ Add to `Package.swift`:
 ```
 
 Add `Stencil` as a dependency on the `GrafttyKit` target. License: BSD-2-Clause; pure Swift; no transitive Foundation extensions.
+
+### Static MCP instructions stay mechanism-only
+
+`TeamInstructionsRenderer` and `composedPrompt(forWorktree:)` shrink: they no longer append the user's prompt. The static MCP instructions describe only:
+
+- The agent's identity in the team (lead/coworker, peers list)
+- The `graftty team msg` command
+- The channel events the agent may receive
+
+The user's prompt is delivered with each event body as described above — never as part of MCP instructions.
 
 ## Routing layer
 
@@ -306,31 +340,39 @@ self.prStatusStore.onTransition = { [weak router] worktreePath, message in
 }
 ```
 
-Replace with a routing-aware version:
+Replace with a routing-aware version that also runs each delivery through `EventBodyRenderer` so the user's template is rendered for that specific recipient:
 
 ```swift
-self.prStatusStore.onTransition = { [weak router, weak self] worktreePath, message in
+self.prStatusStore.onTransition = { [weak router, weak self] subjectWorktreePath, message in
     guard let router, let self else { return }
     guard UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) else { return }
     guard case let .event(type, _, _) = message,
-          let event = RoutableEvent(channelEventType: type) else { return }
+          let event = RoutableEvent(channelEventType: type, attrs: message.attrs) else { return }
     let prefs = ChannelRoutingPreferences.fromUserDefaults()
     let appState = self.appStateProvider?() ?? AppState()
     let recipients = ChannelEventRouter.recipients(
         event: event,
-        subjectWorktreePath: worktreePath,
+        subjectWorktreePath: subjectWorktreePath,
         repos: appState.repos,
         preferences: prefs
     )
+    let template = UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
     for recipient in recipients {
-        router.dispatch(worktreePath: recipient, message: message)
+        let bodyRendered = EventBodyRenderer.body(
+            for: message,
+            recipientWorktreePath: recipient,
+            subjectWorktreePath: subjectWorktreePath,
+            repos: appState.repos,
+            templateString: template
+        )
+        router.dispatch(worktreePath: recipient, message: bodyRendered)
     }
 }
 ```
 
-A small `RoutableEvent.init(channelEventType:)` failable initializer maps the wire type strings (`"pr_state_changed"`, `"ci_conclusion_changed"`, `"merge_state_changed"`) to the right enum case. For `pr_state_changed`, it inspects the message attrs to choose `.prMerged` (when `attrs["to"] == "merged"`) vs `.prStateChanged` (otherwise).
+A small `RoutableEvent.init(channelEventType:attrs:)` failable initializer maps the wire type strings (`"pr_state_changed"`, `"ci_conclusion_changed"`, `"merge_state_changed"`) to the right enum case. For `pr_state_changed`, it inspects the message attrs to choose `.prMerged` (when `attrs["to"] == "merged"`) vs `.prStateChanged` (otherwise).
 
-The existing `dispatch(worktreePath:message:)` is unchanged; we just call it once per recipient.
+The same `EventBodyRenderer` is also wired into the `team_message`, `team_member_joined`, and `team_member_left` dispatch sites — every channel event that flows to an agent runs through it. For events without a worktree subject (e.g., `team_message`), the dispatch site passes `subjectWorktreePath: nil`, which makes `agent.this_worktree` and `agent.other_worktree` both `false`.
 
 ## What's retired
 
@@ -367,13 +409,14 @@ This is intentional: agents that don't care about the merged-vs-not distinction 
 ### A coworker's CI fails
 
 1. `PRStatusStore` polling observes the CI conclusion transition.
-2. Its `onTransition` callback fires with `(worktreePath: <coworker's wt>, message: ci_conclusion_changed)`.
+2. Its `onTransition` callback fires with `(subjectWorktreePath: <coworker's wt>, message: ci_conclusion_changed)`.
 3. The closure classifies `message` → `RoutableEvent.ciConclusionChanged`.
 4. `ChannelEventRouter.recipients` reads the matrix → finds `ciConclusionChanged = .worktree` (default).
 5. Returns `[<coworker's wt>]`.
-6. `router.dispatch` fires the event into the coworker's pane only.
+6. For each recipient, `EventBodyRenderer.body(...)` renders the user's `teamPrompt` template against the per-delivery `agent` context. For the coworker recipient: `agent.branch = "feature/login"`, `agent.lead = false`, `agent.this_worktree = true`, `agent.other_worktree = false`. The rendered text (if any) is prepended to the original event body.
+7. `router.dispatch` fires the body-rendered event into the coworker's pane only.
 
-If the user has *also* ticked the *Root agent* cell in that row, step 4 returns `.worktree | .root`, and step 5 returns `[<coworker's wt>, <repo's root path>]`. Step 6 dispatches twice — once into each pane.
+If the user has *also* ticked the *Root agent* cell in that row, step 4 returns `.worktree | .root`, step 5 returns `[<coworker's wt>, <repo's root path>]`, and step 6 renders the template *twice* — once with `agent.this_worktree = true / agent.lead = false` (for the coworker), once with `agent.this_worktree = false / agent.other_worktree = true / agent.lead = true` (for the lead). The two recipients see different rendered prompts even though the underlying event is the same.
 
 ### A coworker's PR merges
 
@@ -382,9 +425,10 @@ If the user has *also* ticked the *Root agent* cell in that row, step 4 returns 
 3. The closure inspects `message.attrs["to"]`. It equals `"merged"`. → `RoutableEvent.prMerged`.
 4. `ChannelEventRouter.recipients` reads matrix → finds `prMerged = .root` (default).
 5. Returns `[<repo's root path>]`.
-6. `router.dispatch` fires `pr_state_changed` (the wire type) with `to=merged` into the lead's pane only.
+6. `EventBodyRenderer.body(...)` renders the template against `agent.branch = "main"` (the lead's branch), `agent.lead = true`, `agent.this_worktree = false`, `agent.other_worktree = true`. Rendered text prepended to the body.
+7. `router.dispatch` fires `pr_state_changed` (the wire type) with `to=merged` and the rendered body into the lead's pane only.
 
-The lead's MCP instructions (post-renderer-update) explain that `pr_state_changed` events arrive when PR state changes, including merges.
+The lead's static MCP instructions explain that `pr_state_changed` events arrive when PR state changes, including merges. The user's `teamPrompt` (rendered per-delivery) is what tells the lead *what to do* about it.
 
 ### Single-worktree repo
 
@@ -412,10 +456,12 @@ This preserves the channels feature for single-worktree-repo users (who are stil
 | `Sources/GrafttyKit/Channels/ChannelRoutingPreferences.swift`         | The Codable struct + `RecipientSet` `OptionSet` + `RawRepresentable` adapter. |
 | `Sources/GrafttyKit/Channels/RoutableEvent.swift`                     | Enum + failable initializer that classifies `ChannelServerMessage.event(...)` payloads into matrix rows. |
 | `Sources/GrafttyKit/Channels/ChannelEventRouter.swift`                | The `recipients(event:subjectWorktreePath:repos:preferences:)` helper. |
+| `Sources/GrafttyKit/Channels/EventBodyRenderer.swift`                 | Renders the user's Stencil template against the per-delivery `agent` context and prepends to the event body. Falls back to the original event on render error. |
 | `Sources/Graftty/Views/Settings/ChannelRoutingMatrixView.swift`       | The matrix `Grid` view, used inside `AgentTeamsSettingsPane`.          |
 | `Tests/GrafttyKitTests/Channels/ChannelRoutingPreferencesTests.swift` | Codable round-trip + default values + JSON-via-`RawRepresentable`.     |
 | `Tests/GrafttyKitTests/Channels/ChannelEventRouterTests.swift`        | Unit tests for the recipient-set computation across various matrix configs. |
 | `Tests/GrafttyKitTests/Channels/RoutableEventTests.swift`             | Tests for the wire-type → enum classifier.                             |
+| `Tests/GrafttyKitTests/Channels/EventBodyRendererTests.swift`         | Snapshot/round-trip tests for the per-delivery template rendering: empty template (passthrough), happy-path, render error fallback, all four `agent.*` permutations. |
 
 ### Modified files
 
@@ -424,7 +470,7 @@ This preserves the channels feature for single-worktree-repo users (who are stil
 | `Package.swift`                                                       | Add `Stencil` package dependency; declare it as a target dependency on `GrafttyKit`. |
 | `Sources/Graftty/Views/Settings/AgentTeamsSettingsPane.swift`         | Replace the *Notify team about GitHub/GitLab PR activity* checkbox with `ChannelRoutingMatrixView` rendered inside its own Section. Replace the two prompt fields with a single `TextEditor` bound to `teamPrompt`, plus an "Available variables" disclosure listing the context keys. |
 | `Sources/Graftty/Channels/SettingsKeys.swift`                         | Drop `teamPRNotificationsEnabled`, `teamLeadPrompt`, `teamCoworkerPrompt`. Add `channelRoutingPreferences`, `teamPrompt`. |
-| `Sources/Graftty/Channels/ChannelSettingsObserver.swift`              | Replace the role-keyed prompt dispatch in `composedPrompt(forWorktree:)` with Stencil rendering against a context dict. Update the KVO publishers to observe `teamPrompt` instead of `teamLeadPrompt` + `teamCoworkerPrompt`. |
+| `Sources/Graftty/Channels/ChannelSettingsObserver.swift`              | Drop the role-keyed prompt dispatch from `composedPrompt(forWorktree:)` — MCP instructions no longer include the user prompt, so `composedPrompt` returns just the static team-aware text. Update the KVO publishers: drop `teamLeadPrompt` + `teamCoworkerPrompt`; observe `teamPrompt` and trigger `broadcastInstructions()` only if the *static* MCP-instructions content depends on it (it doesn't anymore — but the existing observer pattern is still useful for the matrix preferences). |
 | `Sources/Graftty/GrafttyApp.swift`                                    | Replace the existing `prStatusStore.onTransition` closure with the matrix-aware version (above). |
 | `Sources/GrafttyKit/Teams/TeamChannelEvents.swift`                    | Drop `prMerged(...)` builder and `EventType.prMerged`.                 |
 | `Sources/GrafttyKit/Teams/TeamMembershipEvents.swift`                 | Drop `firePRMerged(...)` helper.                                       |
@@ -440,10 +486,10 @@ This preserves the channels feature for single-worktree-repo users (who are stil
 Existing TEAM-1.7 (launch-flag panel) is unchanged. The matrix and the prompt change reuse / claim these identifiers:
 
 - **TEAM-1.5** *(rewritten — was the `teamPRNotificationsEnabled` gate)*: `agentTeamsEnabled` plus the new `channelRoutingPreferences` JSON struct (see TEAM-1.8) supersede the previous coupled `teamPRNotificationsEnabled` flag. Channel events fire only when `agentTeamsEnabled` is true; per-event recipient sets are taken from the matrix in `channelRoutingPreferences`.
-- **TEAM-1.6** *(rewritten — was the two-prompts requirement)*: The Agent Teams Settings pane shall expose **one** user-editable text area, persisted as `@AppStorage("teamPrompt")` (String, default empty), interpreted as a Stencil template. The template is rendered per-pane against a context dict containing `role`, `name`, `branch`, `worktree_path`, `team_name`, `repo_path`, `lead`, `coworkers`, `members`, and `peers` (see "Prompt template" in the design doc). The previously-defined `teamLeadPrompt` and `teamCoworkerPrompt` AppStorage keys are removed.
+- **TEAM-1.6** *(rewritten — was the two-prompts requirement)*: The Agent Teams Settings pane shall expose **one** user-editable text area, persisted as `@AppStorage("teamPrompt")` (String, default empty), interpreted as a Stencil template. The template is rendered **per channel-event delivery** against a single `agent` context with four fields: `agent.branch` (String), `agent.lead` (Bool), `agent.this_worktree` (Bool), `agent.other_worktree` (Bool). The rendered text is prepended to the channel event's body before dispatch. The previously-defined `teamLeadPrompt` and `teamCoworkerPrompt` AppStorage keys are removed.
 - **TEAM-1.8** *(new)*: The Agent Teams Settings pane shall render a 4×3 matrix of toggles (rows: PR state changed / PR merged / CI conclusion changed / Mergability changed; columns: Root agent / Worktree agent / Other worktree agents). Each cell binds to one bit of a `RecipientSet` field on the persisted `ChannelRoutingPreferences` `Codable` struct. Defaults: state-changed/CI/mergability → worktree only; merged → root only. The matrix is rendered as its own Section between the main toggle and the prompt.
 - **TEAM-1.9** *(new)*: When `PRStatusStore` fires a transition that produces a routable channel event (`pr_state_changed`, `ci_conclusion_changed`, `merge_state_changed`), the application shall consult `channelRoutingPreferences` for the corresponding row and dispatch the event once per recipient resolved by `ChannelEventRouter.recipients`. The router classifies `pr_state_changed` events with `attrs.to == "merged"` as the *PR merged* row; all other `pr_state_changed` events are the *PR state changed* row. Single-worktree repos (no team) receive the event only when the relevant row's `Worktree agent` cell is set; root and other-worktree cells are no-ops there.
-- **TEAM-3.3** *(rewritten — was the lead/coworker concatenation rule)*: When the `teamPrompt` setting is non-empty, the application shall render it as a Stencil template against the context defined in TEAM-1.6 and concatenate the rendered string after the team-aware MCP-instructions text (separated by a blank line). On render failure (Stencil throws), the application shall log the error and emit only the team-aware instructions, omitting the user's prompt for that pane.
+- **TEAM-3.3** *(rewritten — was the lead/coworker concatenation rule)*: The user's `teamPrompt` template is **not** included in MCP instructions. Instead, on every channel-event delivery (PR/CI/merge events as routed by the matrix; team_message; team_member_joined; team_member_left), the dispatch site shall render the template against the per-delivery `agent` context (TEAM-1.6) and prepend the trimmed rendered text — followed by a blank line — to the event body before passing the event to `ChannelRouter.dispatch`. If the template is empty, contains only whitespace after rendering, or fails to render (Stencil throws), the event body is left unchanged and a render-failure error is logged via `os_log`.
 - **TEAM-5.4** *(removed)*: The dedicated `team_pr_merged` event is retired. PR-merge notifications now flow as `pr_state_changed` with `attrs.to = "merged"`, routed by the matrix per TEAM-1.9.
 
 ## Open questions
