@@ -1077,7 +1077,7 @@ struct GrafttyApp: App {
                     }
                 }
             }
-        case .listPanes, .addPane, .closePane:
+        case .listPanes, .addPane, .closePane, .teamMessage, .teamList:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
             // fire-and-forget onMessage path.
@@ -1103,6 +1103,12 @@ struct GrafttyApp: App {
         case .closePane(let path, let index):
             return closePaneByIndex(path: path, index: index,
                                     appState: appState, terminalManager: terminalManager)
+        case .teamMessage:
+            // Team messaging will be implemented in a future task.
+            return .error("team messaging not yet implemented")
+        case .teamList:
+            // Team list will be implemented in a future task.
+            return .error("team list not yet implemented")
         case .notify, .clear:
             // Fire-and-forget cases — no response. `onMessage` already handled them.
             return nil
