@@ -3,7 +3,10 @@
 Two changes to the Agent Teams Settings pane that ship together:
 
 1. **A user-configurable routing matrix** that decides which agents receive which automated channel events (PR state changes, CI conclusions, mergability transitions). Replaces the current single *Notify team about GitHub/GitLab PR activity* checkbox with explicit per-event-type, per-recipient-class control. Also retires the `team_pr_merged` event in favor of routing the existing `pr_state_changed` (with `to=merged`) through the matrix.
-2. **A single Stencil-templated prompt rendered per event delivery** replaces the two role-specific prompts (`teamLeadPrompt` + `teamCoworkerPrompt`). The user writes one template; on every channel-event delivery, the template is rendered against an `agent` struct describing this specific delivery's context (whether the agent is the lead, whether the event is about its own worktree, etc.) and the result is prepended to the event body. The template is *not* part of MCP instructions any longer — those keep only the static team-aware mechanism description. Per-event rendering is what makes the simple `agent` context useful: the user can write rules like "if this event is about my own worktree, drop everything" without the agent having to do that filtering itself.
+2. **Two user-editable Stencil templates** replace the previous two role-specific prompts (`teamLeadPrompt` + `teamCoworkerPrompt`):
+   - **Session prompt** (`teamSessionPrompt`): rendered **once at session start**, appended to the auto-generated team-aware text in MCP instructions. Persists with the agent for the whole session — appropriate for stable, team-level coordination policy ("when in doubt, ask the lead").
+   - **Per-event prompt** (`teamPrompt`): rendered **fresh on every channel-event delivery**, prepended to each event body. Has access to per-event fields (`agent.this_worktree`, `agent.other_worktree`) so the user can write event-aware reactions ("if this event is about my own worktree, investigate now").
+   Both templates use the same `agent` context shape, but `agent.this_worktree` / `agent.other_worktree` are always `false` in the session-start rendering since there's no event yet.
 
 ## Goal
 
@@ -22,7 +25,7 @@ After this ships, this user story works:
 - Default cell values match the user-described "obvious" routing (worktree-only for state/CI/mergability, root-only for merges).
 - The routing layer: a single helper that, given an event type and the subject worktree path, returns the recipient set; the existing `onTransition` closure in `AppServices.init` consults it and dispatches one channel event per recipient.
 - **Retire** the `team_pr_merged` event entirely: drop the `TeamChannelEvents.prMerged` builder, drop the `TeamMembershipEvents.firePRMerged` helper, drop `TEAM-5.4` from SPECS.md, drop the dispatch test, drop the mention from the MCP-instructions renderer. After this change, the lead receives merge notifications via `pr_state_changed` (with `to=merged`) routed by the matrix.
-- **Single Stencil-templated prompt rendered per event**: replace the two `@AppStorage` keys (`teamLeadPrompt`, `teamCoworkerPrompt`) with one (`teamPrompt`). The user prompt is **not** part of MCP instructions; instead, on every channel-event delivery, the template is rendered against an `agent` struct (4 fields: `branch`, `lead`, `this_worktree`, `other_worktree`) and the result is prepended to the event body. Add `Stencil` as a SwiftPM dependency on the `GrafttyKit` target.
+- **Two user-editable Stencil templates**: replace the two role-specific keys (`teamLeadPrompt`, `teamCoworkerPrompt`) with two new ones — `teamSessionPrompt` (rendered once at session start; appended to MCP instructions) and `teamPrompt` (rendered per channel-event delivery; prepended to each event body). Both use the same `agent` context shape (4 fields: `branch`, `lead`, `this_worktree`, `other_worktree`); `this_worktree` and `other_worktree` are always `false` in the session render. Add `Stencil` as a SwiftPM dependency on the `GrafttyKit` target.
 - SPECS.md updates (see "Identifier reservations" below).
 
 **Out of scope (v2+):**
@@ -174,38 +177,49 @@ extension Binding where Value == ChannelRoutingPreferences {
 
 > Choose which agents receive each automated channel message. "Worktree agent" means the agent in the worktree the event is about (e.g., the branch whose CI just failed); "Other worktree agents" means every other coworker in the same repo. Use the prompt below to define what each agent should do when it receives an event.
 
-## Prompt template
+## Prompt templates
 
-Replace the two prompt fields (`teamLeadPrompt` + `teamCoworkerPrompt`) with **one**: `teamPrompt`. The user writes a single Stencil-templated string that's rendered **per channel-event delivery** against a small `agent` context. The rendered text is prepended to the event body and dispatched together as the channel event.
+Replace the two role-specific prompt fields (`teamLeadPrompt` + `teamCoworkerPrompt`) with two **purpose-specific** Stencil templates:
+
+- **`teamSessionPrompt`**: rendered **once at session start**, appended to MCP instructions. The agent sees it as part of its initial system context for the whole session.
+- **`teamPrompt`**: rendered **per channel-event delivery**, prepended to each event body. The agent sees a fresh rendering each time an event arrives.
+
+Both are user-editable Stencil templates persisted via `@AppStorage`.
 
 ### Storage
 
+- New: `@AppStorage("teamSessionPrompt")` (String, default empty).
 - New: `@AppStorage("teamPrompt")` (String, default empty).
 - Drop: `teamLeadPrompt`, `teamCoworkerPrompt` (both keys, no migration — branch hasn't shipped).
-- The corresponding `SettingsKeys` entries change accordingly: drop two, add one.
+- The corresponding `SettingsKeys` entries change accordingly: drop two, add two.
 
 ### UI
 
-A single `Section("Prompt")` containing one `TextEditor` bound to `$teamPrompt`. Below the editor, a small disclosure group ("Available variables in your template") that lists the four `agent` fields (see below) with one-line descriptions. Footer text:
+Two `Section`s in `AgentTeamsSettingsPane`, each containing a `TextEditor` bound to its corresponding AppStorage:
 
-> Your prompt is a Stencil template. It is rendered freshly for each channel event delivered to each agent, and the rendered text is prepended to the event the agent receives. The template's `agent` variable describes this specific delivery: who's receiving the event and how it relates to their worktree.
+- **Section "Session prompt"** — `TextEditor($teamSessionPrompt)` + an "Available variables in your template" disclosure listing `agent.branch`, `agent.lead`. Footer text:
+  > Rendered once when each Claude session starts. The text is appended to that session's MCP instructions, so it stays in the agent's system context for the whole session. Useful for stable team-level coordination policy that doesn't depend on individual events. Only `agent.branch` and `agent.lead` are meaningful here — there's no event to be about, so `agent.this_worktree` and `agent.other_worktree` are always `false`.
+- **Section "Per-event prompt"** — `TextEditor($teamPrompt)` + a similar disclosure listing all four `agent` fields. Footer text:
+  > Rendered freshly for each channel event delivered to each agent. The rendered text is prepended to the event the agent receives. Useful for event-aware reactions — branch on `agent.this_worktree` to react differently when the event is about the agent's own worktree.
 
 ### Available context variables
 
-The full template context is one struct: `agent`. Four fields:
+Both templates use the same `agent` struct shape — four fields:
 
-| Variable               | Type     | Description                                                                                                                |
-| ---------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `agent.branch`         | `String` | The receiving agent's branch (sanitized).                                                                                  |
-| `agent.lead`           | `Bool`   | `true` iff this agent is the team's lead (the root worktree). Constant per session.                                        |
-| `agent.this_worktree`  | `Bool`   | `true` iff the event being delivered is about this agent's *own* worktree (e.g., this agent's branch's CI just changed). Per-event. |
-| `agent.other_worktree` | `Bool`   | `true` iff the event is about a *different* worktree from this agent's. Per-event.                                         |
+| Variable               | Type     | Available in `teamSessionPrompt` | Available in `teamPrompt` | Description                                                                                                                |
+| ---------------------- | -------- | -------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `agent.branch`         | `String` | yes                              | yes                       | The agent's branch (sanitized).                                                                                            |
+| `agent.lead`           | `Bool`   | yes                              | yes                       | `true` iff this agent is the team's lead (the root worktree). Constant per session.                                        |
+| `agent.this_worktree`  | `Bool`   | always `false`                   | yes                       | `true` iff the event being delivered is about this agent's *own* worktree. Only meaningful in `teamPrompt`.                |
+| `agent.other_worktree` | `Bool`   | always `false`                   | yes                       | `true` iff the event is about a *different* worktree from this agent's. Only meaningful in `teamPrompt`.                   |
 
-For events with a worktree subject (PR/CI/merge events): exactly one of `this_worktree` / `other_worktree` is `true`. `lead` is independent and may be `true` or `false` simultaneously with either.
+In `teamSessionPrompt` (session-start render): `agent.this_worktree` and `agent.other_worktree` are always `false` because there's no event yet. Templates that use those fields in the session prompt will simply produce the "no" branch every time — not an error, just degenerate.
 
-For events without a worktree subject (`team_message`): both `this_worktree` and `other_worktree` are `false`. The user's template can detect that by `{% if not agent.this_worktree and not agent.other_worktree %}`.
+In `teamPrompt` (per-event render):
+- For events **with** a worktree subject (PR/CI/merge events): exactly one of `this_worktree` / `other_worktree` is `true`. `lead` is independent.
+- For events **without** a worktree subject (`team_message`, etc.): both `this_worktree` and `other_worktree` are `false`. Detect with `{% if not agent.this_worktree and not agent.other_worktree %}`.
 
-The `Member` / `peers` / `coworkers` / `members` collections discussed in earlier drafts are **not** exposed in v1. If the user wants per-peer logic, they can add it via a v2 expansion. v1's intent is "the simplest possible context that lets the user write event-routing-aware behavior."
+The `Member` / `peers` / `coworkers` / `members` collections discussed in earlier drafts are **not** exposed in v1. If the user wants per-peer logic they can add it via a v2 expansion. v1's intent is "the simplest possible context that lets the user write event-routing-aware behavior."
 
 ### Rendering
 
@@ -283,15 +297,15 @@ Add to `Package.swift`:
 
 Add `Stencil` as a dependency on the `GrafttyKit` target. License: BSD-2-Clause; pure Swift; no transitive Foundation extensions.
 
-### Static MCP instructions stay mechanism-only
+### MCP instructions composition
 
-`TeamInstructionsRenderer` and `composedPrompt(forWorktree:)` shrink: they no longer append the user's prompt. The static MCP instructions describe only:
+`composedPrompt(forWorktree:)` renders MCP instructions for a session at startup time. After this change:
 
-- The agent's identity in the team (lead/coworker, peers list)
-- The `graftty team msg` command
-- The channel events the agent may receive
+1. Start with the auto-generated team-aware text from `TeamInstructionsRenderer` (lead or coworker variant). Mechanism description only — peers, `graftty team msg`, channel event types.
+2. Render `teamSessionPrompt` (the user's session-start template) against the `agent` context for this worktree at session start. `agent.lead` is set per the worktree; `agent.this_worktree` and `agent.other_worktree` are `false`.
+3. Trim and concatenate the rendered text after the auto-generated portion, separated by a blank line. Skip if empty or render failed (logged via `os_log`).
 
-The user's prompt is delivered with each event body as described above — never as part of MCP instructions.
+`teamPrompt` does **not** participate in MCP instructions — it's exclusively per-event (next section).
 
 ## Routing layer
 
@@ -469,8 +483,8 @@ This preserves the channels feature for single-worktree-repo users (who are stil
 | --------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | `Package.swift`                                                       | Add `Stencil` package dependency; declare it as a target dependency on `GrafttyKit`. |
 | `Sources/Graftty/Views/Settings/AgentTeamsSettingsPane.swift`         | Replace the *Notify team about GitHub/GitLab PR activity* checkbox with `ChannelRoutingMatrixView` rendered inside its own Section. Replace the two prompt fields with a single `TextEditor` bound to `teamPrompt`, plus an "Available variables" disclosure listing the context keys. |
-| `Sources/Graftty/Channels/SettingsKeys.swift`                         | Drop `teamPRNotificationsEnabled`, `teamLeadPrompt`, `teamCoworkerPrompt`. Add `channelRoutingPreferences`, `teamPrompt`. |
-| `Sources/Graftty/Channels/ChannelSettingsObserver.swift`              | Drop the role-keyed prompt dispatch from `composedPrompt(forWorktree:)` — MCP instructions no longer include the user prompt, so `composedPrompt` returns just the static team-aware text. Update the KVO publishers: drop `teamLeadPrompt` + `teamCoworkerPrompt`; observe `teamPrompt` and trigger `broadcastInstructions()` only if the *static* MCP-instructions content depends on it (it doesn't anymore — but the existing observer pattern is still useful for the matrix preferences). |
+| `Sources/Graftty/Channels/SettingsKeys.swift`                         | Drop `teamPRNotificationsEnabled`, `teamLeadPrompt`, `teamCoworkerPrompt`. Add `channelRoutingPreferences`, `teamSessionPrompt`, `teamPrompt`. |
+| `Sources/Graftty/Channels/ChannelSettingsObserver.swift`              | Replace the role-keyed prompt dispatch in `composedPrompt(forWorktree:)` with: render `teamSessionPrompt` against the `agent` context and append to the auto-generated team text. Update KVO publishers: drop `teamLeadPrompt` + `teamCoworkerPrompt`; observe `teamSessionPrompt` (re-broadcasts MCP instructions on change) and `teamPrompt` (no MCP-instructions consequence — only affects per-event rendering, which reads it fresh each time). |
 | `Sources/Graftty/GrafttyApp.swift`                                    | Replace the existing `prStatusStore.onTransition` closure with the matrix-aware version (above). |
 | `Sources/GrafttyKit/Teams/TeamChannelEvents.swift`                    | Drop `prMerged(...)` builder and `EventType.prMerged`.                 |
 | `Sources/GrafttyKit/Teams/TeamMembershipEvents.swift`                 | Drop `firePRMerged(...)` helper.                                       |
@@ -486,10 +500,18 @@ This preserves the channels feature for single-worktree-repo users (who are stil
 Existing TEAM-1.7 (launch-flag panel) is unchanged. The matrix and the prompt change reuse / claim these identifiers:
 
 - **TEAM-1.5** *(rewritten — was the `teamPRNotificationsEnabled` gate)*: `agentTeamsEnabled` plus the new `channelRoutingPreferences` JSON struct (see TEAM-1.8) supersede the previous coupled `teamPRNotificationsEnabled` flag. Channel events fire only when `agentTeamsEnabled` is true; per-event recipient sets are taken from the matrix in `channelRoutingPreferences`.
-- **TEAM-1.6** *(rewritten — was the two-prompts requirement)*: The Agent Teams Settings pane shall expose **one** user-editable text area, persisted as `@AppStorage("teamPrompt")` (String, default empty), interpreted as a Stencil template. The template is rendered **per channel-event delivery** against a single `agent` context with four fields: `agent.branch` (String), `agent.lead` (Bool), `agent.this_worktree` (Bool), `agent.other_worktree` (Bool). The rendered text is prepended to the channel event's body before dispatch. The previously-defined `teamLeadPrompt` and `teamCoworkerPrompt` AppStorage keys are removed.
+- **TEAM-1.6** *(rewritten — was the two-role-prompts requirement)*: The Agent Teams Settings pane shall expose **two** user-editable Stencil-templated text areas:
+  - `teamSessionPrompt` (`@AppStorage("teamSessionPrompt")`, String, default empty): rendered once at session start against the `agent` context (only `agent.branch` and `agent.lead` are meaningful; `agent.this_worktree` and `agent.other_worktree` are always `false`); the rendered text is appended after a blank line to the auto-generated team-aware MCP-instructions text and emitted as the session's MCP instructions.
+  - `teamPrompt` (`@AppStorage("teamPrompt")`, String, default empty): rendered per channel-event delivery against the full four-field `agent` context; the rendered text is prepended after a blank line to the channel event's body before dispatch.
+
+  Both templates use the same `agent` struct shape: `branch` (String), `lead` (Bool), `this_worktree` (Bool), `other_worktree` (Bool). The previously-defined `teamLeadPrompt` and `teamCoworkerPrompt` AppStorage keys are removed.
 - **TEAM-1.8** *(new)*: The Agent Teams Settings pane shall render a 4×3 matrix of toggles (rows: PR state changed / PR merged / CI conclusion changed / Mergability changed; columns: Root agent / Worktree agent / Other worktree agents). Each cell binds to one bit of a `RecipientSet` field on the persisted `ChannelRoutingPreferences` `Codable` struct. Defaults: state-changed/CI/mergability → worktree only; merged → root only. The matrix is rendered as its own Section between the main toggle and the prompt.
 - **TEAM-1.9** *(new)*: When `PRStatusStore` fires a transition that produces a routable channel event (`pr_state_changed`, `ci_conclusion_changed`, `merge_state_changed`), the application shall consult `channelRoutingPreferences` for the corresponding row and dispatch the event once per recipient resolved by `ChannelEventRouter.recipients`. The router classifies `pr_state_changed` events with `attrs.to == "merged"` as the *PR merged* row; all other `pr_state_changed` events are the *PR state changed* row. Single-worktree repos (no team) receive the event only when the relevant row's `Worktree agent` cell is set; root and other-worktree cells are no-ops there.
-- **TEAM-3.3** *(rewritten — was the lead/coworker concatenation rule)*: The user's `teamPrompt` template is **not** included in MCP instructions. Instead, on every channel-event delivery (PR/CI/merge events as routed by the matrix; team_message; team_member_joined; team_member_left), the dispatch site shall render the template against the per-delivery `agent` context (TEAM-1.6) and prepend the trimmed rendered text — followed by a blank line — to the event body before passing the event to `ChannelRouter.dispatch`. If the template is empty, contains only whitespace after rendering, or fails to render (Stencil throws), the event body is left unchanged and a render-failure error is logged via `os_log`.
+- **TEAM-3.3** *(rewritten — was the lead/coworker concatenation rule)*: Two separate user templates contribute to what each agent sees:
+  - **MCP instructions** (session start): the auto-generated team-aware text from `TeamInstructionsRenderer` is followed (after a blank line) by the rendered `teamSessionPrompt` template, evaluated against the agent's session-start context. If the template is empty, whitespace-only after render, or fails to render (Stencil throws), the appended portion is omitted and a render-failure error is logged via `os_log`. Only the auto-generated text is emitted in that case.
+  - **Per channel-event delivery**: the rendered `teamPrompt` template is prepended (followed by a blank line) to the event body before dispatch. The same render/empty/failure rules apply: empty/whitespace/failure leaves the body unchanged.
+
+  This applies to every channel event flowing through `ChannelRouter.dispatch` — PR/CI/merge events as routed by the matrix, plus `team_message`, `team_member_joined`, and `team_member_left`.
 - **TEAM-5.4** *(removed)*: The dedicated `team_pr_merged` event is retired. PR-merge notifications now flow as `pr_state_changed` with `attrs.to = "merged"`, routed by the matrix per TEAM-1.9.
 
 ## Open questions
