@@ -32,8 +32,11 @@ struct TeamInstructionsRendererTests {
         let prompt = TeamInstructionsRenderer.render(team: view, viewer: view.lead)
         #expect(prompt.contains("team_member_joined"))
         #expect(prompt.contains("team_member_left"))
-        #expect(prompt.contains("team_pr_merged"))
         #expect(prompt.contains("team_message"))
+        #expect(prompt.contains("pr_state_changed"))
+        #expect(prompt.contains("ci_conclusion_changed"))
+        #expect(prompt.contains("merge_state_changed"))
+        #expect(!prompt.contains("team_pr_merged"))
     }
 
     @Test func coworkerVariantNamesLead() {
