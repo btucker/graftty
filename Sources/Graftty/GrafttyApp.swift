@@ -464,9 +464,11 @@ struct GrafttyApp: App {
                 Self.handleNotification(message, appState: binding, terminalManager: tm)
             }
         }
+        let router = services.channelRouter
         services.socketServer.onRequest = { message in
             MainActor.assumeIsolated {
-                Self.handlePaneRequest(message, appState: binding, terminalManager: tm)
+                Self.handlePaneRequest(message, appState: binding, terminalManager: tm,
+                                       channelRouter: router)
             }
         }
 
@@ -1092,7 +1094,8 @@ struct GrafttyApp: App {
     fileprivate static func handlePaneRequest(
         _ message: NotificationMessage,
         appState: Binding<AppState>,
-        terminalManager: TerminalManager
+        terminalManager: TerminalManager,
+        channelRouter: ChannelRouter
     ) -> ResponseMessage? {
         switch message {
         case .listPanes(let path):
@@ -1103,12 +1106,49 @@ struct GrafttyApp: App {
         case .closePane(let path, let index):
             return closePaneByIndex(path: path, index: index,
                                     appState: appState, terminalManager: terminalManager)
-        case .teamMessage:
-            // Team messaging will be implemented in a future task.
-            return .error("team messaging not yet implemented")
-        case .teamList:
-            // Team list will be implemented in a future task.
-            return .error("team list not yet implemented")
+        case .teamMessage(let callerPath, let recipient, let text):
+            // TEAM-4.2: resolve caller's team, find recipient member, dispatch team_message
+            guard UserDefaults.standard.bool(forKey: "agentTeamsEnabled") else {
+                return .error("team mode is disabled")
+            }
+            guard let callerWt = appState.wrappedValue.worktree(forPath: callerPath) else {
+                return .error("not inside a tracked worktree")
+            }
+            guard let team = TeamView.team(for: callerWt, in: appState.wrappedValue.repos, teamsEnabled: true) else {
+                return .error("your repo has no other team members yet")
+            }
+            guard let senderMember = team.members.first(where: { $0.worktreePath == callerPath }) else {
+                return .error("internal error: caller not in resolved team")
+            }
+            guard let recipientMember = team.memberNamed(recipient) else {
+                let names = team.members.map { $0.name }.filter { $0 != senderMember.name }
+                return .error("\(recipient) is not a teammate of this worktree; current teammates: \(names.joined(separator: ", "))")
+            }
+            channelRouter.dispatch(
+                worktreePath: recipientMember.worktreePath,
+                message: TeamChannelEvents.teamMessage(
+                    team: team.repoDisplayName,
+                    from: senderMember.name,
+                    text: text
+                )
+            )
+            return .ok
+        case .teamList(let callerPath):
+            // TEAM-4.3: list members of caller's team
+            guard UserDefaults.standard.bool(forKey: "agentTeamsEnabled") else {
+                return .error("team mode is disabled")
+            }
+            guard let callerWt = appState.wrappedValue.worktree(forPath: callerPath),
+                  let team = TeamView.team(for: callerWt, in: appState.wrappedValue.repos, teamsEnabled: true) else {
+                return .error("not in a team")
+            }
+            let members = team.members.map { m in
+                TeamListMember(
+                    name: m.name, branch: m.branch, worktreePath: m.worktreePath,
+                    role: m.role.rawValue, isRunning: m.isRunning
+                )
+            }
+            return .teamList(teamName: team.repoDisplayName, members: members)
         case .notify, .clear:
             // Fire-and-forget cases — no response. `onMessage` already handled them.
             return nil
