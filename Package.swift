@@ -31,6 +31,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.26.0"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
+        .package(url: "https://github.com/stencilproject/Stencil.git", from: "0.15.1"),
     ],
     targets: [
         .target(
@@ -50,6 +51,7 @@ let package = Package(
                 .product(name: "NIOWebSocket", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
                 .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "Stencil", package: "Stencil"),
             ],
             resources: [
                 .copy("Web/Resources"),
