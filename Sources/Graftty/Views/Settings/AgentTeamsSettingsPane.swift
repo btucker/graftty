@@ -1,103 +1,109 @@
 import AppKit
 import SwiftUI
+import GrafttyKit
 
-/// Settings pane that exposes the `agentTeamsEnabled` toggle and the
-/// channel prompt editor that was previously in ChannelsSettingsPane.
-///
-/// Implements TEAM-1.1, TEAM-1.7 from SPECS.md.
+/// Settings pane that exposes the `agentTeamsEnabled` toggle, the channel
+/// routing matrix (TEAM-1.8), the launch-flag disclosure (TEAM-1.7), and the
+/// two user-editable prompts (TEAM-1.6).
 struct AgentTeamsSettingsPane: View {
     @AppStorage("agentTeamsEnabled") private var agentTeamsEnabled: Bool = false
-    @AppStorage("teamPRNotificationsEnabled") private var prNotificationsEnabled: Bool = true
-    @AppStorage("teamLeadPrompt") private var teamLeadPrompt: String = ""
-    @AppStorage("teamCoworkerPrompt") private var teamCoworkerPrompt: String = ""
+    @AppStorage("teamSessionPrompt") private var teamSessionPrompt: String = ""
+    @AppStorage("teamPrompt") private var teamPrompt: String = ""
+    @AppStorage("channelRoutingPreferences") private var channelRoutingPreferences = ChannelRoutingPreferences()
+
+    static let launchFlag = "--dangerously-load-development-channels server:graftty-channel"
 
     var body: some View {
         Form {
             Section {
                 Toggle("Enable agent teams", isOn: $agentTeamsEnabled)
             } footer: {
-                Text("Gives each Claude pane in a multi-worktree repo team-aware instructions on connect.")
+                Text("When on, every Claude pane Graftty launches in a multi-worktree repo participates in a team. Add the launch flag below to your `claude` invocation for channel events to flow.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             if agentTeamsEnabled {
                 Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(
-                            "Launch Claude with this flag",
-                            systemImage: "terminal"
-                        )
-                        .font(.subheadline.bold())
-
-                        HStack(spacing: 6) {
-                            Text(verbatim: Self.launchFlag)
-                                .font(.system(.caption, design: .monospaced))
-                                .textSelection(.enabled)
-                                .padding(6)
-                                .background(Color.secondary.opacity(0.12))
-                                .cornerRadius(4)
-                            Button("Copy") {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(Self.launchFlag, forType: .string)
-                            }
-                            .font(.caption)
-                            .buttonStyle(.borderless)
+                    HStack {
+                        Text(Self.launchFlag)
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                        Spacer()
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(Self.launchFlag, forType: .string)
+                        } label: {
+                            Image(systemName: "doc.on.doc")
                         }
-
-                        Text(verbatim:
-                            "Add this flag to your default command (Settings → General → Default Command), " +
-                            "or to any `claude` invocation, to enable channel events. " +
-                            "Without it, this Claude session won't receive team messages or PR notifications."
-                        )
+                        .buttonStyle(.borderless)
+                        .help("Copy")
+                    }
+                } header: {
+                    Text("Launch Claude with this flag")
+                } footer: {
+                    Text("Add this flag to your `claude` invocation (e.g., the Default Command field on the General Settings pane) for channel events to flow into the session.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    }
-                    .padding(8)
                 }
 
                 Section {
-                    Toggle("Notify team about GitHub/GitLab PR activity", isOn: $prNotificationsEnabled)
+                    ChannelRoutingMatrixView(prefs: $channelRoutingPreferences)
+                } header: {
+                    Text("Channel routing")
                 } footer: {
-                    Text("When on, Graftty fires pr_state_changed and team_pr_merged channel events as PR state, CI conclusions, and merges are detected. Turn off to suppress all PR channel events without disabling team mode.")
+                    Text("Choose which agents receive each automated channel message. \"Worktree agent\" means the agent in the worktree the event is about (e.g., the branch whose CI just failed); \"Other worktree agents\" means every other coworker in the same repo. Use the prompt below to define what each agent should do when it receives an event.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
-                Section("Lead prompt") {
-                    Text("Custom prompt for the lead (root) session. Appended to its MCP instructions.")
+                Section {
+                    TextEditor(text: $teamSessionPrompt)
+                        .frame(minHeight: 100)
+                        .font(.system(.body, design: .monospaced))
+                    DisclosureGroup("Available variables in your template") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("agent.branch (String) — agent's branch.")
+                            Text("agent.lead (Bool) — true iff this agent is the team's lead.")
+                            Text("agent.this_worktree (Bool) — always false (no event yet).")
+                            Text("agent.other_worktree (Bool) — always false (no event yet).")
+                        }
                         .font(.caption)
                         .foregroundStyle(.secondary)
-
-                    TextEditor(text: $teamLeadPrompt)
-                        .font(.system(.caption, design: .monospaced))
-                        .frame(minHeight: 120)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(Color.secondary.opacity(0.3))
-                        )
+                    }
+                } header: {
+                    Text("Session prompt")
+                } footer: {
+                    Text("Stencil template rendered once when each Claude session starts. Appended to that session's MCP instructions, so it stays in the agent's system context for the whole session. Useful for stable team-level coordination policy that doesn't depend on individual events.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
-                Section("Coworker prompt") {
-                    Text("Custom prompt for coworker sessions. Appended to their MCP instructions.")
+                Section {
+                    TextEditor(text: $teamPrompt)
+                        .frame(minHeight: 100)
+                        .font(.system(.body, design: .monospaced))
+                    DisclosureGroup("Available variables in your template") {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("agent.branch (String) — agent's branch.")
+                            Text("agent.lead (Bool) — true iff this agent is the team's lead.")
+                            Text("agent.this_worktree (Bool) — true iff event is about agent's own worktree.")
+                            Text("agent.other_worktree (Bool) — true iff event is about a different worktree.")
+                        }
                         .font(.caption)
                         .foregroundStyle(.secondary)
-
-                    TextEditor(text: $teamCoworkerPrompt)
-                        .font(.system(.caption, design: .monospaced))
-                        .frame(minHeight: 120)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(Color.secondary.opacity(0.3))
-                        )
+                    }
+                } header: {
+                    Text("Per-event prompt")
+                } footer: {
+                    Text("Stencil template rendered freshly for each channel event delivered to each agent. The rendered text is prepended to the event the agent receives. Useful for event-aware reactions — branch on agent.this_worktree to react differently when the event is about the agent's own worktree.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
         .formStyle(.grouped)
-        .frame(minWidth: 480, minHeight: 240)
+        .frame(minWidth: 540, minHeight: 360)
     }
-
-    /// The exact flag users need to append when launching Claude for a
-    /// channel-subscribing session.
-    static let launchFlag = "--dangerously-load-development-channels server:graftty-channel"
 }
