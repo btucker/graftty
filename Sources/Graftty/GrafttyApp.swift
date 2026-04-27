@@ -645,7 +645,19 @@ struct GrafttyApp: App {
                 statsStore: statsStore,
                 terminalManager: tm,
                 channelDispatch: { path, msg in
-                    channelRouterForWeb.dispatch(worktreePath: path, message: msg)
+                    let template = UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
+                    let subjectPath: String? = {
+                        if case let .event(_, attrs, _) = msg { return attrs["worktree"] }
+                        return nil
+                    }()
+                    let rendered = EventBodyRenderer.body(
+                        for: msg,
+                        recipientWorktreePath: path,
+                        subjectWorktreePath: subjectPath,
+                        repos: appStateBinding.wrappedValue.repos,
+                        templateString: template
+                    )
+                    channelRouterForWeb.dispatch(worktreePath: path, message: rendered)
                 }
             )
             switch result {
@@ -1176,13 +1188,21 @@ struct GrafttyApp: App {
                 let names = team.members.map { $0.name }.filter { $0 != senderMember.name }
                 return .error("\(recipient) is not a teammate of this worktree; current teammates: \(names.joined(separator: ", "))")
             }
-            channelRouter.dispatch(
-                worktreePath: recipientMember.worktreePath,
-                message: TeamChannelEvents.teamMessage(
+            let template = UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
+            let renderedMessage = EventBodyRenderer.body(
+                for: TeamChannelEvents.teamMessage(
                     team: team.repoDisplayName,
                     from: senderMember.name,
                     text: text
-                )
+                ),
+                recipientWorktreePath: recipientMember.worktreePath,
+                subjectWorktreePath: nil,
+                repos: appState.wrappedValue.repos,
+                templateString: template
+            )
+            channelRouter.dispatch(
+                worktreePath: recipientMember.worktreePath,
+                message: renderedMessage
             )
             return .ok
         case .teamList(let callerPath):

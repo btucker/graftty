@@ -118,7 +118,21 @@ enum AddWorktreeFlow {
                     repo: appState.wrappedValue.repos[repoIdx],
                     joinerWorktreePath: entry.path,
                     teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
-                    dispatch: dispatch
+                    dispatch: { path, msg in
+                        let template = UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
+                        let subjectPath: String? = {
+                            if case let .event(_, attrs, _) = msg { return attrs["worktree"] }
+                            return nil
+                        }()
+                        let rendered = EventBodyRenderer.body(
+                            for: msg,
+                            recipientWorktreePath: path,
+                            subjectWorktreePath: subjectPath,
+                            repos: appState.wrappedValue.repos,
+                            templateString: template
+                        )
+                        dispatch(path, rendered)
+                    }
                 )
             }
         }
