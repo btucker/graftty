@@ -1,353 +1,374 @@
-# Claude Agent Teams — Design Specification
+# Agent Teams — Design Specification
 
-A new Graftty feature that turns a cluster of worktrees into a **Claude agent team**: one lead session in the user's coordinator worktree, one teammate session per other worktree, with the team's worktrees grouped together in the sidebar. Communication between the lead and its teammates happens through the agent-teams machinery already built into Claude Code (shared `~/.claude/teams/<name>/config.json`, mailbox, `SendMessage`); Graftty's job is to author the team file, launch each pane's `claude --team-name <name> --name <member>`, and notify the lead about membership and PR-merge events through the existing `graftty-channel` MCP path.
+A new Graftty feature that turns every Claude session in a repo into a member of an implicit team, with the **repo's root worktree** (the main checkout, LAYOUT-2.3) acting as the team's **lead**. When the **Enable agent teams** Settings toggle is on, every claude pane Graftty auto-launches connects to the existing `graftty-channel` MCP server (CHAN-*); that server's `initialize` response carries `instructions` naming the agent and its peers, telling it whether it's the lead or a coworker, and teaching it to message teammates via `graftty team msg <member> "<text>"`. Cross-pane delivery rides the same channel as new `team_*` event types. **Status events** (member joined / left / PR merged) route to the **lead only**, which can choose to redistribute to coworkers via direct messages. **Direct messages** between any two members stay point-to-point. There is no team-naming UI, no "start team" flow — the lead is implicit (the root worktree) and team membership is implicit (every worktree of a team-enabled repo).
 
 ## Goal
 
 After this ships, this user story works:
 
-> I have a feature epic spread over three branches. First-time setup: I open **Settings → Agent Teams** and turn on **Enable Claude agent teams** (Graftty also turns on Channels for me, since teams ride on the channel pipeline; my Default Command field becomes read-only). Then I right-click my repository's root worktree in the sidebar and pick **"Start Team…"**. The sheet asks for a team name — I type `epic-x`. Graftty opens a fresh pane in the root worktree running `claude --team-name epic-x --name lead --dangerously-load-development-channels server:graftty-channel`; that's my lead. To add a teammate I click the "+" button under the repository (the existing Add Worktree action), fill in the branch name `feature/x-frontend`, and in the sheet's new **Team** section I pick *"Add to team: epic-x"*. The sheet creates the worktree, opens a pane, launches `claude --team-name epic-x --name <member>` in it, and posts a `team_member_joined` channel event to my lead. (Alternatively, in the same sheet I could have picked *"Start new team…"* and the new worktree would have become the lead instead of an existing one.) I repeat for `feature/x-backend` and `feature/x-tests`. The sidebar now clusters all four worktrees under an `epic-x` team header. From my lead I can `@alice` over `SendMessage` and tell her to start. When carol's PR merges, my lead session gets a `team_pr_merged` channel event so I know to `git pull` in my worktree. When the work's done I right-click the team header → **"End Team"** and the cluster collapses.
+> I open **Settings → Agent Teams** and turn on **Enable agent teams** (Graftty also turns on Channels; my Default Command field becomes read-only). My main checkout's pane is now the **lead**. I click **+** to add a worktree on `feature/login`; the new pane's claude connects to its own `graftty-channel` MCP subprocess, which on init reports: *"you're 'feature-login' (a coworker) on team 'acme-web'; your lead is 'main'; report status to the lead via `graftty team msg main`."* My lead's pane simultaneously gets a `team_member_joined` channel event for `feature-login`. From the lead I say *"@feature-login please build the form"*; the lead's claude runs `graftty team msg feature-login "please build the form"`, delivered as a `team_message` event to the coworker. When alice's PR merges, **only the lead** gets a `team_pr_merged` event — its instructions teach it to `git pull` and (if it judges the team should know) re-broadcast via `team msg` to the relevant coworkers.
 
 ## Scope
 
 **In scope (v1):**
 
-- A new Graftty Settings pane, **Agent Teams**, with one toggle: *Enable Claude agent teams*. The team feature — every UI element, every CLI subcommand, every channel event below — is **gated** on this toggle. While disabled, none of the surfaces in this design are visible or invokable.
-- While enabled, Graftty **manages the default command**: the Default Command field in Settings becomes read-only and Graftty's launcher prepends the team-aware `claude` invocation (including the channel flag) automatically. The user trades default-command flexibility for working team semantics.
-- A new sidebar context-menu action **Start Team…** on any worktree row, opening a sheet that asks for a team name and (on confirm) makes that worktree the lead.
-- An extension to the existing **Add Worktree** sheet (macOS): a **Team** section with three options — *None* (current behavior), *Start new team…* (the new worktree becomes the team's lead), *Add to team: \<name\>* (the new worktree joins as a coworker).
-- A new sidebar context-menu action **End Team** on a team's group header.
-- App-side authoring of `~/.claude/teams/<name>/config.json` (create / append member / remove member / delete directory).
-- Graftty-side launch of `claude --team-name <name> --name <member>` (plus the channel flag from CHAN-3.1) in each pane Graftty itself opens.
-- A `teamName: String?` field on `WorktreeEntry` and a sidebar grouping treatment that visually clusters worktrees with the same `teamName`.
-- New channel events delivered via the existing `graftty-channel` MCP server: `team_member_joined`, `team_member_left`, `team_member_status_changed` (idle/exited), `team_pr_merged`, `team_ended`.
-- A parallel **`graftty team` CLI** subcommand group (`start`, `add`, `remove`, `end`, `list`) that mirrors every UI action — same socket dispatch, same effect. Useful for scripting; not required for daily use.
-- Persistence: team membership survives app restarts via `state.json`.
+- A new Graftty Settings pane, **Agent Teams**, with one global toggle: *Enable agent teams*. Off by default. Every team behavior below is gated on this toggle.
+- While enabled, Graftty **manages the default command** for every auto-launched pane: `claude --dangerously-load-development-channels server:graftty-channel`. (Identical to the channels-only line — no `--append-system-prompt` ever; team awareness is delivered through the MCP server's `instructions` field instead.) The Default Command field in Settings becomes read-only.
+- A team-aware **MCP-instructions template** with two variants — *lead* and *coworker* — that the `graftty mcp-channel` subprocess renders dynamically at MCP `initialize` time. The lead variant names the lead's coworkers and teaches it that status events route through it, with discretion to redistribute. The coworker variant names the coworker's lead (and other peers) and teaches it to address status updates to the lead. The subprocess fetches the data over the existing app socket so it sees the live worktree list.
+- New channel events delivered via the existing `graftty-channel` MCP server: `team_message` (point-to-point, sender → recipient), `team_member_joined` / `team_member_left` / `team_pr_merged` (status events, routed **to the lead only**).
+- A `graftty team` CLI subcommand group with two members: `msg <member> "<text>"` (the agent-to-agent messaging primitive used from inside a session via Bash) and `list` (read-only diagnostic).
+- A sidebar grouping treatment that visually clusters the worktrees of a team-enabled repo with an accent stripe and a small "team" header.
+- Persistence: nothing new beyond the global toggle in `state.json`. Membership is derived from the live worktree list at all times.
 
 **Out of scope (v2+):**
 
-- Adding a worktree to a team from the **iOS** or **web** clients. The `POST /worktrees` request shape (WEB-7.2 / IOS-9.3) is unchanged; team parameters are macOS-only for v1.
-- Multi-machine teams. The team file is local to `~/.claude/teams/`.
-- Plan-approval gating, task-list inspection, or any UI that mirrors Claude Code's internal team-management screens. Graftty surfaces *membership* and *events*; team coordination still happens inside the lead's session.
-- Spawning teammates with custom subagent types. v1 always spawns a generic interactive `claude` session; the lead can adjust behavior via `SendMessage` after the fact.
-- Cross-team coordination. Graftty supports multiple simultaneous teams but treats each independently.
+- Per-repo opt-out (a checkbox to mark a specific repo as not-a-team while team mode is on globally). v1 is all-or-nothing.
+- Per-worktree opt-out (a checkbox in the Add Worktree sheet to make this one worktree non-team). v1 has no Team picker; every worktree of a team-enabled repo is in.
+- Cross-repo teams. A team is implicitly scoped to one repository.
+- Manually choosing a team name. The team's identity is the repo's identity.
+- The agent-teams orchestration features in Claude Code (plan approval, shared task list, agent-spawn-via-Agent-tool, etc.). We do not use Claude's experimental `--team-name` machinery.
+- Iterating with non-Claude agents. The architecture is vendor-neutral at the team layer (it's just shell + MCP channels), but the channel push remains Claude-specific in v1; codex/qwen-code support is a follow-up.
 - A user-customized launch line while team mode is on. v1 takes the simple stance: team mode owns the default command. Power users who need a different invocation should disable team mode.
 
 ## Architecture
 
-The team's coordination plane is **Claude Code's own agent-teams machinery** (file at `~/.claude/teams/<name>/config.json`, inboxes at `<name>/inboxes/`). Graftty's contribution is purely additive: it authors the file, spawns the panes, tags worktrees, and pushes channel events. No daemon. No new long-running service. The existing `ChannelRouter` (CHAN-7) is extended with new event types but otherwise unchanged.
+A team is implicit in a repo's worktree list. Coordination happens via two existing primitives — shell commands (the agent runs `graftty team msg <member> "<text>"` from inside its session) and MCP channels (Graftty pushes a `team_message` event to the recipient's pane). No `~/.claude/teams/` file. No daemon. No new long-running service. No `TeamStore` registry — the data model is the repo's `WorktreeEntry` list, plus a `claudeAgentTeamsEnabled` global flag.
 
 ```
-       ┌── UI ──────────────────┐    ┌── CLI ────────────────────┐
-       │ Sidebar context menu   │    │ $ graftty team start X    │
-       │ Add Worktree sheet     │    │ $ graftty team add A …    │
-       │ Settings → Agent Teams │    │  (parallel surface;       │
-       │   toggle               │    │   same handlers)          │
-       └──────────┬─────────────┘    └────────────┬──────────────┘
-                  │ in-process                    │ unix socket (existing)
-                  ▼                               ▼
-┌── Graftty.app ──────────────────────────────────────────────────┐
-│              (gated on `claudeAgentTeamsEnabled` setting)       │
-│                                                                 │
-│   ┌──────────────┐    ┌────────────────────┐    ┌─────────────┐ │
-│   │ TeamStore    │◀──▶│ TeamConfigWriter   │    │ Sidebar     │ │
-│   │ (in-memory)  │    │ (~/.claude/teams/) │    │ (grouped    │ │
-│   │              │    └─────────┬──────────┘    │  by team)   │ │
-│   │ {name,       │              │               └─────────────┘ │
-│   │  worktrees,  │              │ JSON write                    │
-│   │  leadPath}   │              ▼                               │
-│   └──────┬───────┘    ~/.claude/teams/X/config.json             │
-│          │                                                      │
-│          │  spawn pane (managed default cmd)                    │
-│          ▼                                                      │
-│   ┌──────────────────┐                                          │
-│   │  pane in wt-A    │  (claude --team-name X --name A          │
-│   └──────────────────┘   --dangerously-load-development-…)      │
-│                                                                 │
-│   ┌──────────────┐    ┌────────────────────┐                    │
-│   │ PRStatusStore│───▶│ ChannelRouter      │                    │
-│   │ (existing,   │    │ (existing + new    │                    │
-│   │  per-wt)     │    │  team_* events)    │                    │
-│   └──────────────┘    └─────────┬──────────┘                    │
-│                                 │                               │
-│                                 ▼                               │
-│                        graftty-channel.sock                     │
-└────────────────────────────────┼────────────────────────────────┘
-                                 │
-                                 ▼
-                ┌────────────────────────────────┐
-                │ lead's claude session          │
-                │ (subscribed to channel events) │
-                │ knows: team membership,        │
-                │        teammate idle/exit,     │
-                │        teammate PR merges      │
-                └────────────────────────────────┘
+       ┌── UI ──────────────────┐    ┌── CLI (used by agents) ───┐
+       │ Settings → Agent Teams │    │ $ graftty team msg A "…"  │
+       │   toggle (global)      │    │ $ graftty team list       │
+       │ Add Worktree (existing │    └────────────┬──────────────┘
+       │   sheet, unchanged)    │                 │ unix socket (existing)
+       └──────────┬─────────────┘                 ▼
+                  │                  ┌─────────────────────────────────┐
+                  ▼                  │   GrafttyApp                    │
+            settings flag            │ (gated on agentTeamsEnabled)    │
+                  │                  │                                 │
+                  ▼                  │  ┌────────────────────────┐     │
+        DefaultCommandDecision ◀────▶│  │ ChannelRouter          │     │
+        (when team mode on,          │  │ (existing + new        │     │
+         emit team-aware claude line)│  │  team_* event types)   │     │
+                  │                  │  └────────────┬───────────┘     │
+                  │                  │               │ socket          │
+                  ▼                  │               ▼                 │
+        ┌─────────────────┐          │       graftty-channel.sock      │
+        │ pane in wt-A    │          │               │                 │
+        │ (claude with    │ shell ───┼───────────────┘                 │
+        │ team prompt)    │          │  push event                     │
+        └────────┬────────┘          └───────────────┬─────────────────┘
+                 │                                   │
+                 │ agent runs:                       ▼
+                 │  $ graftty team msg B "..."     ┌─────────────────────┐
+                 └─────────────────────────────────▶│ pane in wt-B        │
+                                                   │ sees <channel       │
+                                                   │  type=team_message  │
+                                                   │  from="A"…> tag     │
+                                                   └─────────────────────┘
 ```
 
 ### Why this shape
 
-- **Claude does the hard part.** The mailbox, `SendMessage`, `team_name`-aware Agent-tool gating, and the per-team task list are all already in Claude Code. We don't reimplement any of that.
-- **Each pane is an independent interactive `claude`.** No headless mode, no daemon shelling out. The pane is exactly what a user would manually type.
-- **The team file is plain JSON.** Schema verified against existing midtown teams under `~/.claude/teams/`: `{members: [{name, agentId, agentType}]}`. Graftty appends/removes members in place; no claude session needs to know Graftty exists.
-- **Channel events use the path that's already wired up.** CHAN-* already gets PR-state events into running claudes. Adding `team_*` event types is a new payload in the same pipeline — no new MCP server, no new socket.
-- **Persistence stays in `state.json`.** The same place repos and worktrees already live; LAYOUT-4.* recovery semantics extend to teams without a separate store.
+- **No new data structure.** The team is a view over the existing `WorktreeEntry` list filtered by repo. Adding/removing a worktree (via the existing sheet, unchanged) implicitly adds/removes a member.
+- **No team-naming UI; no lead-picking UI.** Identity = repo identity. Member name = sanitized branch name. Lead = root worktree (LAYOUT-2.3). The user never names or designates anything.
+- **Lead mediates status, peers exchange messages directly.** Status events (joined / left / pr_merged) route only to the lead, which can choose to redistribute to coworkers via direct `team msg` commands. Direct `team msg` between any two members stays point-to-point. This avoids spamming every coworker with every status change while preserving low-friction cross-pane messaging.
+- **Team awareness is delivered through MCP server instructions, not a system-prompt flag.** The `graftty mcp-channel` subprocess sees its host worktree (existing `WorktreeResolver`) and asks the app for the team context, returning the rendered `instructions` in the MCP `initialize` response. The launch line is plain `claude --dangerously-load-development-channels server:graftty-channel` — identical inside and outside team mode.
+- **No reliance on Claude's experimental agent-teams.** No `--team-name` flag, no `~/.claude/teams/`, no `SendMessage` tool. We use only the stable channels capability.
+- **Vendor-agnostic at the team layer.** Replacing `claude` with another MCP-channel-aware agent requires no changes to the launch line and only the rendered MCP instructions.
+- **Persistence stays in `state.json`.** Worktrees and the global toggle live there; team membership and the lead identity are derived from them at runtime.
 
 ## Data model
 
-### In-memory (`GrafttyKit/Teams/TeamStore.swift`)
+Two changes only.
+
+### `agentTeamsEnabled: Bool` global flag
+
+Stored in the top-level Graftty settings (next to `channelsEnabled` per CHAN-2). Persisted to `state.json`. When toggled on, Graftty also turns on Channels (and refuses to turn Channels off until team mode is turned off again).
+
+### Member identity (and the lead) is derived
+
+A "team member" is just a `WorktreeEntry` whose owning repo is in a team-enabled mode. Member name is `WorktreeNameSanitizer(worktree.branch)` — branch names are already unique within a repo (git enforces it) and already sanitized for use as worktree names per GIT-5.1. The **lead** is the repo's root worktree (the entry whose `path == repo.path`, i.e. the main checkout per LAYOUT-2.3); every other worktree is a **coworker**.
+
+There is no separate `TeamStore`, no separate `TeamEntry`, no separate `TeamMember`. The runtime can compute the team for a worktree from its repo, the peer list of a worktree from its repo's other team-enabled worktrees, and the lead from `repo.path`. A small helper:
 
 ```swift
-struct TeamEntry: Codable, Identifiable {
-    let name: String              // e.g. "epic-x" — also the team-name on disk
-    var leadWorktreePath: String  // absolute path; lead is implicit member 0
-    var memberWorktreePaths: [String]  // ordered; sidebar renders in this order
-    var createdAt: Date
+struct TeamView {
+    let repoPath: String
+    let repoDisplayName: String      // used as the team's display name
+    let members: [TeamMember]        // derived live; not persisted; lead is members[0] by convention
+
+    static func team(for worktree: WorktreeEntry, in app: AppState) -> TeamView?
+    var lead: TeamMember { get }     // members.first(where: { $0.isLead })
+    func memberNamed(_ name: String) -> TeamMember?
+    func peers(of worktree: WorktreeEntry) -> [TeamMember]
 }
 
-@MainActor
-final class TeamStore: ObservableObject {
-    @Published private(set) var teams: [TeamEntry]   // persisted to state.json
-    func teamFor(worktreePath: String) -> TeamEntry?
-    func add(team: TeamEntry)
-    func append(member: String /* worktree path */, to teamName: String) throws
-    func remove(member: String, from teamName: String) throws
-    func remove(team: String) throws
-}
-```
-
-### On `WorktreeEntry`
-
-Add one field: `var teamName: String?`. Set when the worktree joins a team; cleared on `team remove` or `team end`. The sidebar's grouping logic reads this.
-
-### On disk (`~/.claude/teams/<name>/config.json`)
-
-Schema (matches existing midtown convention, verified by inspecting `~/.claude/teams/midtown-ravioli/config.json`):
-
-```json
-{
-  "members": [
-    {"name": "lead",  "agentId": "lead@<team-name>",  "agentType": "lead"},
-    {"name": "alice", "agentId": "alice@<team-name>", "agentType": "coworker"}
-  ]
+struct TeamMember {
+    let name: String                 // sanitized branch name
+    let worktreePath: String
+    let branch: String
+    let isLead: Bool                 // true iff worktreePath == repo.path
+    let isRunning: Bool              // worktree's run state per STATE-1
 }
 ```
 
-The `inboxes/` subdirectory is created empty; Claude Code populates it as `SendMessage` traffic flows. We do not touch its contents.
+`TeamView.team(for:)` returns nil when team mode is off or when the worktree's repo has only one worktree (a team of one is no team). Single-worktree repos do not get team-aware MCP instructions.
+
+### Team-aware MCP-instructions template
+
+Rendered fresh by the `graftty mcp-channel` subprocess at MCP `initialize` time, returned in the `initialize` response's `instructions` field. The subprocess fetches its team context from the app over the existing socket. Two variants — chosen by the subprocess based on `member.isLead`:
+
+#### Lead variant
+
+```
+You are "<your-name>" — the LEAD of Graftty agent team for repo "<repo-display-name>",
+running in worktree <worktree-path> on branch <branch>.
+
+Your role: coordinate the team. You receive every status event the team produces
+(see below). It is your job to decide which of your coworkers needs to know
+about a given event and to forward it via direct messages.
+
+Your coworkers:
+  - "<peer-name>" — branch <peer-branch>, worktree <peer-path>
+  - …
+
+To send a message to any teammate, run this shell command:
+  graftty team msg <teammate-name> "<your message>"
+
+You will receive these channel events that coworkers do NOT receive directly:
+  - team_member_joined  — a new coworker joined; their name/branch is in attrs.
+  - team_member_left    — a coworker left; their name and reason (removed/exited) is in attrs.
+  - team_pr_merged      — a coworker's PR merged; their name, branch, and merge SHA is in attrs.
+                          You should git pull on relevant branches and decide whether
+                          to broadcast the merge to other coworkers.
+
+You will receive direct messages from coworkers as:
+  <channel source="graftty-channel" type="team_message" from="<sender>">…text…</channel>
+
+Coworkers will message you proactively when they commit or face a decision that
+needs your guidance. Treat those as routine touchpoints — coworkers want
+acknowledgment or course-correction, not constant approval. If a commit looks
+fine, a brief "ack" is enough.
+```
+
+#### Coworker variant
+
+```
+You are "<your-name>" — a COWORKER on Graftty agent team for repo "<repo-display-name>",
+running in worktree <worktree-path> on branch <branch>.
+
+Your role: do the work assigned to you and keep the lead informed.
+
+Your lead: "<lead-name>" — worktree <lead-path>, branch <lead-branch>.
+Your peer coworkers (you may message these directly too):
+  - "<peer-name>" — branch <peer-branch>, worktree <peer-path>
+  - …
+
+To send a message to the lead or any peer, run this shell command:
+  graftty team msg <recipient-name> "<your message>"
+
+You MUST proactively message the lead in two situations:
+
+  1. When you make a commit:
+       graftty team msg <lead-name> "committed <short-sha>: <subject>"
+     Send this immediately after `git commit` returns. The lead may ack or
+     send course-correction; it is fine to keep working in the meantime.
+
+  2. When you face a decision that affects scope, architecture, dependencies,
+     or anything outside your assigned task's scope:
+       graftty team msg <lead-name> "decision: <briefly describe the decision and your proposed direction>"
+     Send this BEFORE proceeding. Wait for a reply. The lead may answer
+     within a turn or two; do not block indefinitely if there is unrelated
+     work you can move forward on, but do not commit code that depends on
+     the decision until the lead has responded.
+
+You will receive incoming messages as:
+  <channel source="graftty-channel" type="team_message" from="<sender>">…text…</channel>
+
+You do NOT receive status events about other coworkers — the lead receives those
+and will forward anything you need to know via direct messages. If you need
+information about another coworker's progress, ask the lead.
+```
+
+Re-rendered on each pane spawn so a teammate's roster reflects current membership. Membership changes that happen later are delivered via channel events to the lead.
 
 ## Settings & enablement
 
 A new top-level Settings pane, **Agent Teams**, sits alongside the existing **Channels** pane. It contains:
 
-- A single toggle, **Enable Claude agent teams**. Off by default. Persisted to `state.json` (or wherever Channels' `channelsEnabled` lives, for parity).
-- A read-only display of the **managed default command** that Graftty will use for new team-aware panes. The user cannot edit it while team mode is on.
-- A short explanatory footer noting that this feature requires the Channels feature (CHAN-2.*) and that turning it on auto-enables Channels if not already on.
+- A single toggle, **Enable agent teams**. Off by default.
+- A read-only display of the **managed default command** that Graftty will use for new team-aware panes.
+- A short explanatory footer: "Turning this on auto-enables Channels (required) and locks the Default Command field. Every Claude pane Graftty launches in a multi-worktree repo will connect to graftty-channel, which delivers team-aware instructions on connect."
 
 ### Enablement preconditions and side effects
 
-When the user flips **Enable Claude agent teams** to on:
+When the user flips **Enable agent teams** to on:
 
-1. If Channels is off, Graftty turns it on as well. (The team feature relies on the channel-flag mechanism to deliver `team_*` events; without Channels, the lead never hears about teammates joining or PRs merging.)
-2. The Default Command field on the existing Settings → Default Command pane becomes **read-only**. Any user-customized value is preserved in storage but not applied; while team mode is on, Graftty's launcher emits its managed line instead. Flipping team mode back off restores the user's previous custom default command.
-3. The team UI surfaces (Start Team… context menu, Team section in the Add Worktree sheet, End Team header action) become visible.
-
-When team mode is off, none of those surfaces are visible, the Default Command field is editable, and the existing CHAN-2 / CHAN-3 / DefaultCommand semantics apply unchanged.
+1. If Channels is off, Graftty turns it on as well. (Required: team coordination rides the channel pipeline.)
+2. The Default Command field on the existing Settings → Default Command pane becomes **read-only**. Any user-customized value is preserved in storage but not applied; while team mode is on, Graftty's launcher emits the managed line. Flipping team mode back off restores the user's previous custom default command.
+3. Already-running panes are not relaunched. The toggle takes effect on next pane spawn. (Existing claude sessions are already connected to `graftty-channel` and continue to receive `team_*` events; what they're missing is the team-aware MCP instructions, which were sent only at their initial `initialize` handshake. They'll get the new instructions when their pane is next opened.)
 
 ### Managed default command
 
-While team mode is on, the default command Graftty injects into a new pane depends on whether the pane's worktree has a `teamName`:
+The managed default command is **the same line in and out of team mode** — `claude --dangerously-load-development-channels server:graftty-channel`. The team-awareness mechanism lives entirely inside the MCP subprocess: when the subprocess starts, it asks the app for the calling worktree's team context (or learns there is none) and renders the appropriate `instructions` field for the MCP `initialize` response.
 
-- **Worktree has `teamName`**: `claude --team-name <teamName> --name <memberName> --dangerously-load-development-channels server:graftty-channel`. `<memberName>` is read from `TeamStore` and equals the entry that was added when the worktree joined the team.
-- **Worktree has no `teamName`**: `claude --dangerously-load-development-channels server:graftty-channel` (the existing channels-aware default). The user can later turn this worktree into a team via Start Team… and the next pane will pick up team flags.
+This means `DefaultCommandDecision` is unaffected by team membership at the launch-line level. Team mode being on just means *channels-mode-on plus the MCP subprocess uses the team-instructions renderer*; team mode off means *channels-mode-on with empty instructions*. Either way, the launch line is the same.
 
-This is the only way claude gets launched while team mode is on — the user cannot type a different command into the Default Command field. (They can still type whatever they want into a manually-opened shell prompt; this only governs Graftty's auto-launched panes.)
+While team mode is on, the user cannot type a different command into the Default Command field. (They can still type whatever they want into a manually-opened shell prompt; this only governs Graftty's auto-launched panes.)
 
 ## UI surface
 
-All actions below are gated on the **Enable Claude agent teams** toggle being on.
+Surprisingly small.
 
-### Start Team… (sidebar context menu)
+### Add Worktree sheet — unchanged
 
-Right-clicking any worktree row reveals a new menu item, **Start Team…**, when (a) team mode is on and (b) the worktree is not already part of a team. Selecting it presents a small sheet:
+The existing sheet (`Sources/Graftty/Views/AddWorktreeSheet.swift`, with iOS-9 / WEB-7 endpoints) is **unchanged**. No Team picker. No team-name field. Adding a worktree to a team-enabled repo automatically makes it a team member by virtue of being in the repo. Adding the second worktree to a single-worktree repo makes both worktrees team members on their next pane spawn.
 
-- A **Team Name** field, sanitized by the existing `WorktreeNameSanitizer` (GIT-5.1) for consistency.
-- A **Start Team** button (disabled while the field is empty after trim, per GIT-5.3).
-- A Cancel button.
+### Sidebar grouping (LAYOUT extension)
 
-On submit:
+When team mode is on, every team-enabled repo (≥ 2 worktrees) gets a small visual treatment:
 
-- Errors if the entered name is already in use (file at `~/.claude/teams/<name>/config.json` exists OR `TeamStore` knows about it). The sheet stays open and renders the error inline.
-- Otherwise: Graftty creates the team file with this worktree as member 0 (`agentType: lead`, `name: lead`), creates `inboxes/`, adds a `TeamEntry` to `TeamStore`, and stamps the worktree's `teamName`.
-- Graftty opens **a new pane** in this worktree (split using the existing pane-add machinery — direction `right` by default) and launches `claude --team-name <name> --name lead --dangerously-load-development-channels server:graftty-channel` in it. Pre-existing panes in this worktree are not touched. The freshly launched team-aware pane is the lead.
-- The sidebar regroups the worktree under a new team header (see Sidebar grouping below).
+- A "team" icon next to the repository's name in its header row.
+- An accent stripe along the left edge of all worktrees within the repo, plus their pane sub-rows.
+- An optional dimmed footer label under the repo's worktrees: "agent team — N members." Right-clicking the label or any team member's row exposes one diagnostic action: **Show Team Members…**, which opens a small popover listing each member by name and branch (this is just `graftty team list` rendered as a UI panel).
 
-### Add Worktree sheet — Team section (extends GIT-5.* / IOS-9.* / WEB-7.*)
+Existing LAYOUT-2.x rules continue to apply unchanged within the rows themselves; the team styling is purely additive.
 
-When team mode is on, the macOS Add Worktree sheet (`Sources/Graftty/Views/AddWorktreeSheet.swift`) gets a new **Team** section between the existing Branch field and the Create button. It contains a single picker with three modes:
+There is **no Start Team / End Team / Remove from Team UI**. Team membership is governed by the global toggle and the repo's worktree list. To "remove a teammate," remove the worktree (existing GIT-3.* / GIT-4.* / sidebar context menu).
 
-1. **None (no team)** — current behavior unchanged. The new worktree is created without a `teamName`; the launcher uses the no-team managed default command.
-2. **Add to team: \<existing-name\>** — one option per existing team in `TeamStore`. The new worktree is created with `teamName = <name>` and added as a coworker. Graftty appends `{name: <memberName>, agentId, agentType: "coworker"}` to the team file. `<memberName>` is derived from the worktree name (sanitized; GIT-5.1).
-3. **Start new team…** — reveals an additional **Team Name** field below the picker (same sanitization rules as Start Team…). The new worktree becomes the lead of the freshly created team.
+## CLI surface
 
-When the picker is anything other than *None*, the new pane Graftty opens for the worktree on submit launches `claude --team-name <name> --name <memberName> --dangerously-load-development-channels server:graftty-channel`. A `team_member_joined` channel event is pushed to the lead's worktree afterward.
+A `graftty team` subcommand group, registered alongside `Notify`, `Pane`, `MCPChannel` in `Sources/GrafttyCLI/CLI.swift`. The CLI **respects the same enablement gate**: every team subcommand errors with `team mode is disabled — enable it in Graftty Settings → Agent Teams` when the toggle is off.
 
-The picker is **only present in the macOS sheet**. The iOS and web sheets (IOS-9, WEB-7) keep their current shape; their `POST /worktrees` requests still take only `{repoPath, worktreeName, branchName}`.
+| Subcommand                                          | Purpose                                                                                              |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `graftty team msg <member-name> "<text>"`           | Send a message to another member of this worktree's team. Resolves the current worktree to its repo, finds `<member-name>` among the other worktrees, sends a `team_message` channel event to that worktree. Errors if `<member-name>` is not a peer or if the current worktree is not in a team-enabled repo. |
+| `graftty team list`                                 | Read-only diagnostic. Prints `<member-name>  branch=<branch>  worktree=<path>  running=<bool>` per peer of the calling worktree, plus a header line with the repo name. |
 
-### End Team (team-header context menu)
+Both commands are intentionally **read-only at the team-membership layer**: they don't add or remove anyone. Membership is governed by the worktree list, which is mutated through existing GIT-5 / GIT-3 / sidebar surfaces.
 
-Right-clicking the team's group header in the sidebar reveals **End Team**. Selecting it shows a confirmation alert (`"This closes all teammate panes and removes the team. Worktrees remain on disk."`). On confirm:
-
-- Closes all panes in every member worktree (lead's worktree is **not** touched — the user's interactive session there is preserved).
-- Clears `WorktreeEntry.teamName` from lead and members.
-- Removes the `TeamEntry` from `TeamStore`.
-- Deletes `~/.claude/teams/<name>/`.
-- Pushes a `team_ended` channel event to the lead's worktree (delivered before the lead's pane is left ungrouped).
-
-### Remove member from team (per-worktree context menu)
-
-Right-clicking a non-lead member worktree row, while it's in a team, reveals **Remove from Team**. Selecting it (no confirmation alert — non-destructive) closes the worktree's panes, removes the member from the team file, clears its `teamName`, and pushes `team_member_left` to the lead. The worktree itself remains on disk and in the sidebar (now ungrouped); the user can `git worktree remove` later via the existing context menu (GIT-4.4).
-
-## Parallel CLI surface
-
-A `graftty team` subcommand group, registered alongside `Notify`, `Pane`, `MCPChannel` in `Sources/GrafttyCLI/CLI.swift`. Every CLI action is a 1:1 mirror of a UI action — same socket dispatch, same handler, same effect — so power users can script team operations without clicking. The CLI **respects the same enablement gate**: every team subcommand errors with `team mode is disabled — enable it in Graftty Settings → Agent Teams` when the toggle is off.
-
-| Subcommand                                                          | UI equivalent                                                                                                |
-| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `graftty team start <name>`                                         | Right-click worktree → Start Team… (run from inside the worktree to be the lead).                            |
-| `graftty team add <member> --branch <branch> [--from <ref>] [--prompt <text>]` | Add Worktree sheet with Team section set to "Add to team: \<current-team\>" (run from a team's worktree).    |
-| `graftty team remove <member>`                                      | Right-click member worktree → Remove from Team.                                                              |
-| `graftty team end <name>`                                           | Right-click team header → End Team.                                                                          |
-| `graftty team list`                                                 | (no UI equivalent; read-only diagnostic). Prints `<name>  lead=<path>  members=<count>` per line.            |
-
-`--prompt <text>` (on `team add`) is passed through `--append-system-prompt` when the new teammate's pane is launched; the UI sheet does **not** expose this in v1 (room for a future "Initial assignment" text area).
-
-## Sidebar grouping (LAYOUT extension)
-
-A new visual treatment applied **inside** the existing repository → worktree hierarchy. Worktrees in the same team get a colored left-edge stripe (one accent color per active team, consistent across the worktree's row and its pane sub-rows) and a sticky team header label rendered immediately above the group.
-
-- A worktree without a `teamName` renders unchanged.
-- A team's worktrees are reordered to be contiguous within the repository, with the lead first and members in `TeamStore` order. Other worktrees in the repo retain their alphabetical position around the team block.
-- The header label is the team name, dimmed, with a tiny "team" icon. Right-clicking the header reveals a context menu: "End Team" (`graftty team end`) and "Copy Team Name."
-- The accent color is deterministically derived from the team name (hash → color palette index). Stable across restarts.
-
-Existing LAYOUT-2.x rules continue to apply unchanged within a team's worktree rows.
+The agent inside a pane learns about `graftty team msg` from the team-aware system prompt and runs it via Bash. There is no scenario in which a human user would normally type these commands themselves; they're an internal API for the agents. (`team list` is the exception — useful for human debugging.)
 
 ## Channel events (extends CHAN-* / `notifications/claude/channel`)
 
-Five new event types are introduced into the existing `graftty-channel` MCP path. Each follows the same wrapper as the existing CHAN events; only `type` and `attrs` differ.
+Four new event types on the existing `graftty-channel` MCP path. Each follows the same wrapper as the existing CHAN events; only `type`, `attrs`, and routing differ. Routing is documented per event.
+
+### `team_message` *(the agent-to-agent messaging primitive)*
+
+Fired by `graftty team msg <member> "<text>"`. Delivered to the recipient's worktree only — strict point-to-point.
+
+| Attribute | Example  |
+| --------- | -------- |
+| `team`    | `acme-web` (repo name) |
+| `from`    | `main`   |
+
+Body: the message text passed to the CLI.
 
 ### `team_member_joined`
 
-Fired when `graftty team add` succeeds. Delivered to the lead's worktree only.
+Fired when a worktree is added to a team-enabled repo and its team-aware pane spawns (or when team mode is toggled on with multiple worktrees already present — each existing worktree's first relaunch counts as joining for purposes of telling the lead). Delivered to **the lead only**.
 
-| Attribute       | Example                                       |
-| --------------- | --------------------------------------------- |
-| `team`          | `epic-x`                                      |
-| `member`        | `alice`                                       |
-| `worktree`      | `/repos/acme/.worktrees/feature-x-frontend`   |
-| `branch`        | `feature/x-frontend`                          |
-| `assignment`    | (the `--prompt` text, if provided)            |
+| Attribute  | Example                                  |
+| ---------- | ---------------------------------------- |
+| `team`     | `acme-web`                               |
+| `member`   | `feature-login` (sanitized branch name)  |
+| `branch`   | `feature/login`                          |
+| `worktree` | `/repos/acme-web/.worktrees/feature-login` |
 
-Body: `Teammate "alice" joined team "epic-x" working on feature/x-frontend.`
+Body: `Coworker "feature-login" joined.`
 
 ### `team_member_left`
 
-Fired by `graftty team remove` *and* by abnormal pane exit (the pane's terminal process closes for any reason while the worktree is part of a team).
+Fired when a team-enabled worktree is removed from the repo (sidebar Remove Worktree, GIT-4.*, etc.) **or** when the team-aware pane in that worktree exits abnormally. Delivered to **the lead only**. The lead may notify other coworkers via direct messages if it judges they need to know.
 
-| Attribute     | Example                                       |
-| ------------- | --------------------------------------------- |
-| `team`        | `epic-x`                                      |
-| `member`      | `alice`                                       |
-| `reason`      | `removed`, `exited`                           |
-
-### `team_member_status_changed`
-
-Fired when a teammate's pane goes quiet (no shell-integration activity for >30s) or comes back active. Mirrors the agent-teams "idle notification" model but at the Graftty pane level — it tells the lead what's *happening in the terminal*, not what the claude inside it claims.
-
-| Attribute    | Example          |
-| ------------ | ---------------- |
-| `team`       | `epic-x`         |
-| `member`     | `alice`          |
-| `status`     | `idle`, `active` |
+| Attribute | Example                                  |
+| --------- | ---------------------------------------- |
+| `team`    | `acme-web`                               |
+| `member`  | `feature-login`                          |
+| `reason`  | `removed`, `exited`                      |
 
 ### `team_pr_merged`
 
-Fired when `PRStatusStore` observes a transition to `.merged` for a worktree whose `teamName` is set. Delivered to the **lead's** worktree (not the merged branch's worktree, which is about to disappear anyway). This is the event that fulfills the user's stated goal of "lead knows when to pull."
+Fired when `PRStatusStore` observes a transition to `.merged` for a worktree in a team-enabled repo. Delivered to **the lead only**. The lead's MCP instructions teach it to `git pull` on the relevant branch and decide whether to broadcast the news to coworkers via `team msg`.
 
-| Attribute    | Example                                       |
-| ------------ | --------------------------------------------- |
-| `team`       | `epic-x`                                      |
-| `member`     | `alice`                                       |
-| `pr_number`  | `42`                                          |
-| `branch`     | `feature/x-frontend`                          |
-| `merge_sha`  | `abc1234…`                                    |
+| Attribute   | Example                                   |
+| ----------- | ----------------------------------------- |
+| `team`      | `acme-web`                                |
+| `member`    | `feature-login`                           |
+| `pr_number` | `42`                                      |
+| `branch`    | `feature/login`                           |
+| `merge_sha` | `abc1234…`                                |
 
-Body: `Teammate "alice"'s PR #42 (feature/x-frontend) merged. You may want to git pull in your worktree.`
-
-### `team_ended`
-
-Fired by `graftty team end`. Delivered to the lead's worktree only. The lead's session can use this to wrap up its own bookkeeping.
-
-| Attribute   | Example       |
-| ----------- | ------------- |
-| `team`      | `epic-x`      |
-| `members`   | `["alice","bob","carol"]` |
+Body: `Coworker "feature-login"'s PR #42 (feature/login) merged. You may want to git pull in your worktree and decide whether to broadcast.`
 
 ## Data flows
 
-### Adding a teammate
+### Adding a coworker (just adding a worktree)
 
-Both the UI sheet and the CLI converge on the same app-side handler.
+1. User clicks **+** under a team-enabled repo and fills in the Add Worktree sheet (unchanged from GIT-5).
+2. Existing flow: `git worktree add` runs; `WorktreeEntry` appended; sheet closes.
+3. Graftty opens a pane in the new worktree and launches `claude --dangerously-load-development-channels server:graftty-channel` (same line as channels-only mode).
+4. claude spawns the `graftty mcp-channel` subprocess. The subprocess resolves its host worktree, queries the app for its team context, sees that the worktree's repo has ≥ 2 worktrees, identifies itself as a coworker (worktree path ≠ repo root), and renders the **coworker** MCP-instructions variant in its `initialize` response. claude reads the `instructions` field and the agent now knows its name, lead, peers, and the report-on-commit / report-on-decision rules.
+5. Graftty also pushes a `team_member_joined` channel event addressed to **the lead's worktree only** (CHAN-7 fan-out by path). The lead's claude sees the new coworker on its next turn and may welcome it via `team msg`.
 
-**Origin (UI):** user opens the Add Worktree sheet, fills in branch `feature/x-frontend`, picks **Add to team: epic-x**, hits Create. The view sends `addTeamMember(teamName: "epic-x", memberName: <derived from worktree name>, branch: "feature/x-frontend", fromRef: nil, prompt: nil)` to `AddWorktreeFlow`.
+### Sending a team message
 
-**Origin (CLI):** user runs `graftty team add alice --branch feature/x-frontend --prompt "Build the login form, see issue #112"` from inside any worktree currently in `epic-x`. The CLI resolves the worktree via `WorktreeResolver.resolve()` and sends the same `addTeamMember(...)` socket message.
+1. Some claude (lead or coworker) wants to deliver a message. Following its MCP instructions, it runs `graftty team msg feature-login "build the login form"` via Bash.
+2. The CLI resolves the current worktree to its repo, finds `feature-login` among the other worktrees, and sends a `teamMessage(from: <self>, to: feature-login, text: "build the login form")` socket message to the app.
+3. The app pushes a `team_message` channel event addressed to `feature-login`'s worktree only.
+4. The recipient's claude sees `<channel source="graftty-channel" type="team_message" from="<self>">build the login form</channel>` on its next turn and acts on it.
 
-**App-side handler (shared):**
+### A coworker commits
 
-1. Looks up the team from the caller's `WorktreeEntry.teamName` (CLI) or the picker selection (UI).
-2. Runs `git worktree add -b feature/x-frontend <repo>/.worktrees/feature-x-frontend HEAD`. On failure, returns the captured stderr to the originator (parity with `WEB-7.4`); the UI sheet renders it inline, the CLI prints it on stderr and exits non-zero.
-3. Appends `{name: "alice", agentId: "alice@epic-x", agentType: "coworker"}` to `~/.claude/teams/epic-x/config.json` atomically (write-temp + rename).
-4. Adds the new `WorktreeEntry` to the repo's worktree list, with `teamName: "epic-x"`. Persists `state.json`.
-5. Opens a pane in the new worktree. The launcher reads `claudeAgentTeamsEnabled = true` and `teamName = "epic-x"`, so the managed default command is `claude --team-name epic-x --name alice --dangerously-load-development-channels server:graftty-channel`. Appends `--append-system-prompt "<prompt>"` if a prompt was provided (CLI only in v1).
-6. Pushes `team_member_joined` to the lead's worktree via `ChannelRouter`.
+1. Following its coworker MCP instructions, the agent runs `git commit -m "<msg>"` in its worktree.
+2. Immediately after the commit returns successfully, the agent runs `graftty team msg <lead-name> "committed <short-sha>: <subject>"` (a normal team-message flow).
+3. The lead's claude sees the commit notification on its next turn. Per the lead MCP instructions it acks (or course-corrects) and continues.
 
-### A teammate's PR merges
+### A coworker hits a decision point
 
-1. Existing `PRStatusStore` polling observes the transition to `.merged` for `feature/x-frontend`.
-2. The new `onTransition` callback (see CHAN data flow §) fires with `pr_state_changed`. The existing logic handles the worktree-cleanup dialog.
-3. **New code**: a sibling check runs — if the worktree has a `teamName`, also enqueue a `team_pr_merged` event addressed to the **lead's** worktree (not the merged worktree).
-4. `ChannelRouter` fans out to the lead's subscriber.
-5. Lead's `claude` session sees the channel tag on its next turn and behaves per the user's prompt — typically running `git pull` and reporting what changed.
+1. The agent recognizes a decision that affects scope/architecture/dependencies — e.g., a missing util it could either add or pull from npm.
+2. Per coworker MCP instructions, before proceeding, it runs `graftty team msg <lead-name> "decision: util for X is missing — propose adding util/x.ts vs npm install lodash. Leaning add."`.
+3. The agent waits for a reply from the lead (or moves on to unrelated work). When the lead replies via `team msg`, the agent receives a `team_message` channel event and resumes the deferred path.
 
-### Team end during an in-flight PR
+### A coworker's PR merges
 
-1. User right-clicks the team's group header in the sidebar and selects **End Team** (or runs `graftty team end epic-x`) while alice's PR is still under review.
-2. The confirmation alert is shown (UI path only); user confirms.
-3. App closes panes in alice's, bob's, and carol's worktrees. Panes in the lead's worktree are not touched.
-4. Team file deleted. `TeamStore` updated. `WorktreeEntry.teamName` cleared everywhere.
-5. `team_ended` event delivered to lead's worktree.
-6. Worktrees themselves remain on disk and remain in Graftty's sidebar (now ungrouped). User can `git worktree remove` later via the existing context menu (`GIT-4.4`), or just leave them alone.
+1. Existing `PRStatusStore` polling observes the transition to `.merged` for `feature/login`.
+2. The new `onTransition` callback fires with `pr_state_changed`. The existing logic handles the worktree-cleanup dialog.
+3. **New code**: if the worktree is part of a team-enabled repo, also enqueue a `team_pr_merged` event addressed to **the lead's worktree only**.
+4. `ChannelRouter` delivers to the lead's subscriber.
+5. The lead's claude sees the channel tag on its next turn and behaves per its lead MCP instructions — typically `git pull`, then deciding whether to broadcast (e.g., `team msg <coworker> "alice's PR merged on main; pull when convenient"`).
+
+### Toggling team mode on while panes are already running
+
+1. User flips Settings → Agent Teams → on.
+2. Graftty also enables Channels if it wasn't (CHAN-2 cascades).
+3. Settings sheet shows a non-blocking footer: "Already-running Claude sessions won't have team-aware MCP instructions until you relaunch them. Newly opened panes will."
+4. New panes opened from this point use the managed default command and the MCP subprocess renders team instructions on connect. Existing panes keep running; they're already connected to `graftty-channel` via CHAN, so they continue to *receive* team events — but the agent doesn't know what those events mean (the instructions field was empty when it connected). They learn either by being relaunched or by being told via a regular user message.
+
+### Toggling team mode off
+
+1. User flips Settings → Agent Teams → off.
+2. The Default Command field becomes editable again; the user's previously-stored custom value is restored.
+3. Already-running panes keep the team instructions they were given on connect (the field was already in their context) and continue to send/receive `team_*` events as long as channels remains on. (Toggling team mode off does NOT turn Channels off — that has to be done explicitly.)
+4. Newly opened panes use the user's custom default command (or the channels-aware fallback) and the MCP subprocess returns empty `instructions`.
 
 ## Persistence (extends PERSIST-*)
 
-`TeamStore.teams` is appended to `state.json`. On restore (LAYOUT-4.*-style):
+Only the global `agentTeamsEnabled` flag is added to `state.json`. No team registry, no membership records — those are all derived from the live worktree list.
 
-1. For each persisted team, verify `~/.claude/teams/<name>/config.json` still exists. If not, the team is dropped (orphaned because the user manually deleted the file or copied state.json across machines).
-2. For each member worktree, verify the `WorktreeEntry` resolves on disk (existing GIT-3.* and bookmark cascades apply). If a member worktree is now missing, drop just that member from `TeamStore` and append a `team_member_left` event with `reason: stale` for the next session start.
-3. The lead worktree must resolve. If it doesn't, the entire team is dropped.
-
-Teams are not auto-relaunched on app startup (the panes inside are; the team metadata just survives).
+LAYOUT-4.* recovery semantics (worktree relocation, bookmark refresh) require no changes. A relocated repo's team is automatically the relocated repo's team because membership tracks the worktree entries.
 
 ## Edge cases
 
-- **User runs `graftty team start` with `<name>` matching a team that's already on disk but unknown to `TeamStore`** (e.g., an orphaned midtown team or stale state). CLI errors with the conflicting path; the user can rename or `rm -rf` manually.
-- **User manually edits `~/.claude/teams/<name>/config.json`** to add a member Graftty doesn't know about. Graftty does not poll the file; the next `graftty team add` will *append* and may reintroduce duplicate names. v1 accepts this footgun; v2 may add a verify-then-merge step.
-- **Lead pane is closed by the user** (Cmd+W on the pane, or shell `exit`). The team is **not** auto-disbanded. A team without a live lead pane still exists; the user can re-`claude --team-name <name> --name lead` to rejoin. The sidebar grouping continues to render.
-- **Member pane crashes.** Graftty fires `team_member_left` with `reason: exited`. The team file is *not* updated — the member entry stays so the lead can `SendMessage` to a future restart with the same name. v1 leaves cleanup to the user; the sidebar shows the worktree as `closed` per STATE-1.2, still grouped under the team.
-- **Two teams in the same repository.** Supported. Each team gets its own accent stripe and header. The repository's worktree ordering interleaves teams' contiguous blocks alphabetically by team name; non-team worktrees keep their existing alphabetical positions.
-- **`graftty team add` invoked from a worktree that isn't part of any team.** Errors with `not part of a team — run 'graftty team start' first`.
-- **Team name conflicts with existing midtown team prefix.** Graftty refuses any name starting with `midtown-` to avoid stomping the user's existing midtown teams. (Defensive — there's no functional collision since the file paths would differ, but the namespace pollution is bad UX.)
-- **Channel feature disabled** (CHAN-2.x). The team CLI still works; the configuration page surfaces the channel-flag reminder more loudly. Without channels, the lead doesn't get notified of PR merges or member status changes — the user has to look at the sidebar. v1 does not block team usage on channels being on.
+- **Branch-name collisions across repos.** Two different repos can each have a `feature/login` worktree. They're in different teams (different repos), so member-name uniqueness is only required *within* a team, not globally. `graftty team msg` resolves through the caller's repo — there's no ambiguity.
+- **The lead's pane crashes or is closed.** The team continues; coworkers' messages to the lead are still routed (they'll be delivered when the lead's pane is reopened — CHAN's per-pane subscriber map handles re-subscribe). The lead's MCP instructions are re-rendered on relaunch; if the lead has been gone for a while it will see queued team_member_joined / pr_merged events on reconnect (or, if the channel mechanism doesn't queue, the lead can run `graftty team list` and `git fetch && gh pr list` to catch up).
+- **The root worktree itself doesn't exist** (truly headless repo: no main checkout, only linked worktrees). v1 does not support this configuration. The Settings pane disables the toggle for any repo without a root worktree and surfaces an explanation. (In practice, `git` always creates a main worktree when you initialize a repo, so this is rare.)
+- **A coworker's pane crashes.** Existing STATE-1 / GIT-3 semantics apply. Graftty fires `team_member_left` with `reason: exited` to the lead. The worktree itself remains in the repo (still listed in the sidebar as `closed`), so when the user reopens its pane the agent rejoins. A `team_member_joined` fires to the lead on rejoin.
+- **A coworker's branch is renamed.** The agent's member name (sanitized branch name) changes too. Graftty fires `team_member_left` with the old name and `team_member_joined` with the new name to the lead, both on the next pane spawn. The coworker's MCP instructions update with its new name on relaunch.
+- **All worktrees but the root are removed.** The team naturally collapses to a one-member team. The single-worktree-no-team rule kicks in: the root's MCP subprocess returns empty instructions on its next launch. The lead's previously-rendered instructions are stale until relaunch.
+- **`graftty team msg` to a non-existent member.** CLI errors with `<member> is not a teammate of this worktree; current teammates: <list>`. The error helps the agent self-correct on its next turn.
+- **`graftty team msg` from outside a team-enabled context.** CLI errors with one of: `team mode is disabled` (toggle off), `not inside a tracked worktree` (outside a known repo), `your repo has no other team members yet` (only one worktree).
+- **A repo with hundreds of worktrees.** The lead's MCP instructions grow linearly with coworker count (each coworker is named in the lead variant). At ~50 it's fine; at 500+ it'd be a noticeable chunk of the lead's context budget. v1 doesn't truncate; the user is expected to disable team mode for such repos. v2 could paginate or omit non-running coworkers.
 
 ## Components
 
@@ -355,47 +376,38 @@ Teams are not auto-relaunched on app startup (the panes inside are; the team met
 
 | File                                                          | Purpose                                                                          |
 | ------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `Sources/GrafttyKit/Teams/TeamStore.swift`                    | In-memory team registry + state.json codability.                                 |
-| `Sources/GrafttyKit/Teams/TeamConfigWriter.swift`             | Writes/mutates `~/.claude/teams/<name>/config.json` atomically.                  |
-| `Sources/GrafttyKit/Teams/TeamPaneLauncher.swift`             | Builds the `claude --team-name … --name … …` argv and hands off to existing pane-spawn machinery. |
-| `Sources/GrafttyKit/Teams/TeamChannelEvents.swift`            | `Codable` types for the five new `team_*` events.                                |
-| `Sources/Graftty/Views/Settings/AgentTeamsSettingsPane.swift` | SwiftUI view for the new Settings pane (toggle + managed-default-command preview + footer). |
-| `Sources/Graftty/Views/StartTeamSheet.swift`                  | The "Start Team…" sheet (team-name field + sanitization + create button).        |
-| `Sources/Graftty/Views/AddWorktreeSheet+Team.swift`           | Extension to the Add Worktree sheet adding the Team-section picker.              |
-| `Sources/Graftty/Sidebar/TeamGroupHeaderView.swift`           | SwiftUI view for the sticky team header label + accent stripe + End Team menu.   |
-| `Sources/GrafttyCLI/Team.swift`                               | `graftty team` subcommand (`start`, `add`, `remove`, `end`, `list`).             |
-| `Tests/GrafttyKitTests/Teams/TeamStoreTests.swift`            | Add/append/remove/persistence-restore tests.                                     |
-| `Tests/GrafttyKitTests/Teams/TeamConfigWriterTests.swift`     | JSON round-trip + atomic-rename tests; conflict-detection tests.                 |
-| `Tests/GrafttyKitTests/Teams/TeamPaneLauncherTests.swift`     | Argv-construction tests for both team-aware and non-team default commands.       |
+| `Sources/GrafttyKit/Teams/TeamView.swift`                     | Read-only helpers (`TeamView`, `TeamMember`) computed from `AppState`. Includes `lead` computation (root worktree). |
+| `Sources/GrafttyKit/Teams/TeamInstructionsRenderer.swift`     | Renders the lead and coworker MCP-instructions variants from a `TeamView`.       |
+| `Sources/GrafttyKit/Teams/TeamChannelEvents.swift`            | `Codable` types for the four `team_*` events.                                    |
+| `Sources/Graftty/Views/Settings/AgentTeamsSettingsPane.swift` | SwiftUI view for the Settings pane (toggle + managed-default-command preview + footer). |
+| `Sources/Graftty/Sidebar/TeamRepoBadge.swift`                 | The "team" icon next to a repo header + the "agent team — N members" footer + Show Team Members… popover. |
+| `Sources/GrafttyCLI/Team.swift`                               | `graftty team` subcommand (`msg`, `list`).                                       |
+| `Tests/GrafttyKitTests/Teams/TeamViewTests.swift`             | Membership-derivation tests across various AppState shapes; lead identification. |
+| `Tests/GrafttyKitTests/Teams/TeamInstructionsRendererTests.swift` | Snapshot tests for both lead and coworker variants across team sizes.         |
 | `Tests/GrafttyCLITests/TeamCLITests.swift`                    | End-to-end CLI tests with a stub socket; gating-when-disabled tests.             |
 
 ### Modified files
 
 | File                                                          | Change                                                                           |
 | ------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `Sources/GrafttyKit/Models/WorktreeEntry.swift`               | Add `var teamName: String?`. Codable migration: nil for pre-`TEAM` state files.  |
-| `Sources/GrafttyKit/Persistence/StateStore.swift`             | Encode/decode `TeamStore.teams` and `claudeAgentTeamsEnabled` alongside repos.   |
-| `Sources/GrafttyKit/PRStatus/PRStatusStore.swift`             | When firing `pr_state_changed` for a worktree whose `teamName != nil`, also enqueue a `team_pr_merged` event addressed to that team's lead. |
-| `Sources/GrafttyKit/Channels/ChannelRouter.swift`             | Add the five `team_*` event types to the routing table.                          |
-| `Sources/GrafttyKit/DefaultCommandDecision.swift`             | When `claudeAgentTeamsEnabled` is on, ignore the user-stored default command and emit the managed line. Picks the team-aware variant when the worktree's `teamName != nil`, else the no-team channels-aware variant. |
-| `Sources/GrafttyKit/Notification/NotificationMessage.swift`   | Add `startTeam`, `addTeamMember`, `removeTeamMember`, `endTeam`, `listTeams` cases. |
-| `Sources/Graftty/AddWorktreeFlow.swift`                       | Carry the sheet's Team-picker selection through `git worktree add` → pane spawn → team file mutation → channel event. |
-| `Sources/Graftty/Views/AddWorktreeSheet.swift`                | Render the new Team section when team mode is on; pass the selection into `AddWorktreeFlow`. |
+| `Sources/GrafttyKit/Settings/Settings.swift`                  | Add `agentTeamsEnabled: Bool` (default false).                                   |
+| `Sources/GrafttyKit/Persistence/StateStore.swift`             | Encode/decode `agentTeamsEnabled` alongside the existing global flags.           |
+| `Sources/GrafttyKit/PRStatus/PRStatusStore.swift`             | When firing `pr_state_changed` for a worktree in a team-enabled repo with peers, also enqueue a `team_pr_merged` event addressed to the team's lead. |
+| `Sources/GrafttyKit/Channels/ChannelRouter.swift`             | Add the four `team_*` event types to the routing table; helper to "address to the lead of <repo>". |
+| `Sources/GrafttyKit/DefaultCommandDecision.swift`             | When `agentTeamsEnabled` is on, ignore the user-stored default command and emit the managed line — same line whether the repo has peers or not. (The MCP subprocess decides whether to render team instructions; the launcher does not.) |
+| `Sources/GrafttyCLI/MCPChannel.swift`                         | On `initialize`, query the app for the calling worktree's team context (or absence thereof) and render `instructions` from `TeamInstructionsRenderer` (lead or coworker variant). Existing event-routing logic is unchanged. |
+| `Sources/GrafttyKit/Notification/NotificationMessage.swift`   | Add `teamContextRequest(callerWorktree)` (used by the MCP subprocess on init), `teamMessage(from, to, text)`, `teamList(callerWorktree)` cases. |
 | `Sources/Graftty/Views/Settings/DefaultCommandSettingsPane.swift` | Lock the field (read-only + footnote) while team mode is on; show the managed line in dimmed text. |
 | `Sources/Graftty/Views/SettingsView.swift`                    | Register `AgentTeamsSettingsPane` alongside Channels and Default Command tabs.   |
-| `Sources/Graftty/Sidebar/SidebarView.swift`                   | Apply team grouping (when team mode is on); add Start Team… / Remove from Team / End Team context-menu items. |
-| `Sources/Graftty/GrafttyApp.swift`                            | Instantiate `TeamStore` at the same lifecycle point as `RepositoryStore`.        |
+| `Sources/Graftty/Sidebar/SidebarView.swift`                   | Apply team styling (when team mode is on and the repo has ≥ 2 worktrees); add the Show Team Members… context-menu item. |
+| `Sources/Graftty/AppState.swift`                              | On worktree add/remove, fire the corresponding `team_member_joined` / `team_member_left` channel events when the surrounding repo is in a team-enabled state. |
 | `Sources/GrafttyCLI/CLI.swift`                                | Register `Team` subcommand alongside the existing three.                         |
-| `SPECS.md`                                                    | Add the `TEAM-*` section. New requirements `TEAM-1.x` through `TEAM-8.x` (see SPECS reservations below). |
+| `SPECS.md`                                                    | Add the `TEAM-*` section. New requirements `TEAM-1.x` through `TEAM-5.x` (see SPECS reservations below). |
 
 ## Open questions
 
-These are flagged for verification during implementation but are not blocking the design.
-
-- **Q1.** Does an interactive `claude --team-name <name>` running in the lead pane automatically pick up *new* members appended to `~/.claude/teams/<name>/config.json` after launch, or does it cache the roster at startup? **Mitigation regardless:** the `team_member_joined` channel event is delivered to the lead's session via the same path that already feeds it PR-state events, so even if the file isn't auto-reloaded, the lead's claude knows about the new member. If the file *is* auto-reloaded, the channel event is just confirmation — harmless.
-- **Q2.** Does `--teammate-mode in-process` mean anything for a teammate that's launched standalone (not as a child of a lead's terminal)? Reading the binary suggests it controls *display takeover* of the launching terminal. v1 omits the flag entirely; the teammate's claude will pick its display mode from the session's settings/`teammateMode` default. If this turns out to cause weird behavior in Graftty panes, a follow-up is to set `--teammate-mode in-process` (which should be a no-op when the parent is a Graftty pane host) or a future Graftty-specific value.
-- **Q3.** Does `claude --team-name <name>` error or warn if `<name>`'s config file lists this `--name` as `agentType: lead` but a lead already has the file open? Worth verifying — could affect the "user closed lead pane and wants to rejoin" flow.
+There are no significant open questions remaining for v1. The previously-flagged uncertainties (Claude's `~/.claude/teams/` config-file refresh behavior, `--teammate-mode` semantics, lead-rejoin behavior) are all moot — we don't depend on Claude's experimental agent-teams machinery at all. Implementation can proceed.
 
 ## SPECS.md identifier reservations
 
-This work introduces a new top-level section `## N. Claude Agent Teams` with subsections covering: settings & enablement (`TEAM-1.*`), data model and persistence (`TEAM-2.*`), UI surfaces — Start Team sheet, Add Worktree sheet Team section, sidebar context menus (`TEAM-3.*`), `graftty team` CLI (`TEAM-4.*`), team config file authoring (`TEAM-5.*`), pane launching with managed default command (`TEAM-6.*`), sidebar grouping visual treatment (`TEAM-7.*`), and team channel events + edge-case behaviors (`TEAM-8.*`). The exact requirement text is added by the implementation PR per the project's CLAUDE.md convention, not by this design doc.
+This work introduces a new top-level section `## N. Agent Teams` with subsections covering: settings & enablement (`TEAM-1.*`), managed default command + MCP-instructions delivery (`TEAM-2.*`), the lead/coworker role split and routing semantics (`TEAM-3.*`), `graftty team msg` / `graftty team list` CLI (`TEAM-4.*`), team channel events (`TEAM-5.*`), sidebar visual treatment and edge-case behaviors (`TEAM-6.*`). The exact requirement text is added by the implementation PR per the project's CLAUDE.md convention, not by this design doc.
