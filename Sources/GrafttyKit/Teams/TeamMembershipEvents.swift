@@ -68,4 +68,33 @@ public enum TeamMembershipEvents {
         )
         dispatch(repo.path, event)
     }
+
+    /// Fire `team_pr_merged` to the lead when a team member's PR is merged.
+    ///
+    /// Conditions that suppress the event:
+    /// - `teamsEnabled` is false.
+    /// - The repo has fewer than 2 worktrees (no team formed).
+    /// - The merger's worktree path is not found in `repo.worktrees`.
+    /// - The lead (root worktree) is not present in `repo.worktrees` (nobody to notify).
+    public static func firePRMerged(
+        repo: RepoEntry,
+        mergerWorktreePath: String,
+        prNumber: Int,
+        mergeSha: String,
+        teamsEnabled: Bool,
+        dispatch: (String, ChannelServerMessage) -> Void
+    ) {
+        guard teamsEnabled, repo.worktrees.count >= 2 else { return }
+        guard let merger = repo.worktrees.first(where: { $0.path == mergerWorktreePath }) else { return }
+        guard repo.worktrees.contains(where: { $0.path == repo.path }) else { return }   // lead present
+
+        let event = TeamChannelEvents.prMerged(
+            team: repo.displayName,
+            member: WorktreeNameSanitizer.sanitize(merger.branch),
+            prNumber: prNumber,
+            branch: merger.branch,
+            mergeSha: mergeSha
+        )
+        dispatch(repo.path, event)
+    }
 }

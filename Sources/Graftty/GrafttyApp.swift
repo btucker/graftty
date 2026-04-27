@@ -14,6 +14,9 @@ final class AppServices {
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
     var worktreeMonitorBridge: WorktreeMonitorBridge?
+    /// Provides the current AppState for the team PR-merged dispatch hook.
+    /// Set in GrafttyApp.startup() once @State is accessible (TEAM-5.4).
+    var appStateProvider: (() -> AppState)?
 
     init(socketPath: String) {
         self.socketServer = SocketServer(socketPath: socketPath)
@@ -54,8 +57,34 @@ final class AppServices {
 
         // Route PRStatusStore transitions into ChannelRouter. Captured weakly
         // so AppServices can own both without a retain cycle.
-        self.prStatusStore.onTransition = { [weak router] worktreePath, message in
+        //
+        // Team extension (TEAM-5.4): when a team-enabled repo's PR merges,
+        // additionally dispatch `team_pr_merged` to the lead's worktree.
+        // `appStateProvider` is set later in startup() once @State is live;
+        // before that point the guard below is a no-op.
+        self.prStatusStore.onTransition = { [weak router, weak self] worktreePath, message in
             router?.dispatch(worktreePath: worktreePath, message: message)
+
+            if UserDefaults.standard.bool(forKey: "agentTeamsEnabled"),
+               case let .event(type, attrs, _) = message,
+               type == ChannelEventType.prStateChanged,
+               attrs["to"] == PRInfo.State.merged.rawValue,
+               let prNumberStr = attrs["pr_number"],
+               let prNumber = Int(prNumberStr),
+               let appState = self?.appStateProvider?(),
+               let repo = appState.repos.first(where: {
+                   $0.worktrees.contains(where: { $0.path == worktreePath })
+               })
+            {
+                TeamMembershipEvents.firePRMerged(
+                    repo: repo,
+                    mergerWorktreePath: worktreePath,
+                    prNumber: prNumber,
+                    mergeSha: attrs["merge_sha"] ?? "",
+                    teamsEnabled: true,
+                    dispatch: { path, msg in router?.dispatch(worktreePath: path, message: msg) }
+                )
+            }
         }
     }
 }
@@ -456,6 +485,11 @@ struct GrafttyApp: App {
         // gives a stable Binding whose wrappedValue is always current.
         let channelAppStateBinding = $appState
         services.channelSettingsObserver.appStateProvider = { channelAppStateBinding.wrappedValue }
+
+        // Wire the AppState provider for the team PR-merged dispatch hook
+        // (TEAM-5.4). Same timing constraint as above — @State only accessible
+        // after body runs, so we use a Binding-capture here rather than in init().
+        services.appStateProvider = { channelAppStateBinding.wrappedValue }
 
         // SocketServer already dispatches onMessage to the main queue.
         let binding = $appState
