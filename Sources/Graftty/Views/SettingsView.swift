@@ -1,3 +1,4 @@
+import GrafttyKit
 import SwiftUI
 
 /// Preferences pane for Graftty — the "General" tab inside the SwiftUI
@@ -5,6 +6,7 @@ import SwiftUI
 /// so this view renders its form directly; wrapping another `TabView` here
 /// would nest a second "General" tab strip under the first.
 struct SettingsView: View {
+    @AppStorage("agentTeamsEnabled") private var agentTeamsEnabled: Bool = false
     @AppStorage("defaultCommand") private var defaultCommand: String = ""
     @AppStorage("defaultCommandFirstPaneOnly") private var firstPaneOnly: Bool = true
 
@@ -16,9 +18,19 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            TextField("Default command:", text: $defaultCommand, prompt: Text("e.g., claude"))
-                .textFieldStyle(.roundedBorder)
-                .multilineTextAlignment(.leading)
+            if agentTeamsEnabled {
+                Text(teamModeManagedCommand)
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                Text("Locked: Agent Teams manages this. Disable it in Settings → Agent Teams to edit your custom command.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                TextField("Default command:", text: $defaultCommand, prompt: Text("e.g., claude"))
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.leading)
+            }
 
             Toggle("Run in first pane only", isOn: $firstPaneOnly)
 

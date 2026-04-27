@@ -1,3 +1,4 @@
+import GrafttyKit
 import SwiftUI
 
 /// Settings pane that exposes the `agentTeamsEnabled` toggle.
@@ -28,7 +29,7 @@ struct AgentTeamsSettingsPane: View {
 
             if agentTeamsEnabled {
                 Section("Managed default command") {
-                    Text("claude --dangerously-load-development-channels server:graftty-channel")
+                    Text(teamModeManagedCommand)
                         .font(.system(.body, design: .monospaced))
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)

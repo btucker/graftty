@@ -81,4 +81,40 @@ final class DefaultCommandDecisionTests: XCTestCase {
         )
         XCTAssertEqual(decision, .skip)
     }
+
+    func testTeamModeOverridesUserCommand() {
+        let decision = defaultCommandDecision(
+            defaultCommand: "zsh",                       // user's stored value
+            firstPaneOnly: false,
+            isFirstPane: true,
+            wasRehydrated: false,
+            agentTeamsEnabled: true                      // new parameter
+        )
+        XCTAssertEqual(
+            decision,
+            .type("claude --dangerously-load-development-channels server:graftty-channel")
+        )
+    }
+
+    func testTeamModeOffPreservesUserCommand() {
+        let decision = defaultCommandDecision(
+            defaultCommand: "zsh",
+            firstPaneOnly: false,
+            isFirstPane: true,
+            wasRehydrated: false,
+            agentTeamsEnabled: false
+        )
+        XCTAssertEqual(decision, .type("zsh"))
+    }
+
+    func testTeamModeStillSkipsRehydratedPanes() {
+        let decision = defaultCommandDecision(
+            defaultCommand: "zsh",
+            firstPaneOnly: false,
+            isFirstPane: true,
+            wasRehydrated: true,                         // already running under zmx
+            agentTeamsEnabled: true
+        )
+        XCTAssertEqual(decision, .skip)
+    }
 }
