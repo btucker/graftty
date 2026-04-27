@@ -165,7 +165,7 @@ struct SidebarView: View {
                         repoPath: repo.path
                     ),
                     prBadge: prStatusStore.infos[worktree.path].map {
-                        PRBadge(number: $0.number, state: $0.state, url: $0.url)
+                        PRBadge(number: $0.number, state: $0.state, checks: $0.checks, url: $0.url)
                     },
                     attentionText: attention.worktreeCapsule
                 )

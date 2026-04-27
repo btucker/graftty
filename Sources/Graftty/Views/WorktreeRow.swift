@@ -182,26 +182,43 @@ struct WorktreeRow: View {
 
     @ViewBuilder
     private func prBadgeLabel(_ badge: PRBadge) -> some View {
+        let tone = PRBadgeStyle.tone(state: badge.state, checks: badge.checks)
         Button {
             NSWorkspace.shared.open(badge.url)
         } label: {
             Text("#\(badge.number)")
                 .font(.caption)
                 .fontWeight(.medium)
-                .foregroundColor(badge.state.statusColor)
+                .foregroundColor(color(for: tone))
+                .modifier(PulseIfPending(isPending: tone.pulses))
         }
         .buttonStyle(.plain)
         .help("Open #\(badge.number) on \(badge.url.host ?? "")")
-        .accessibilityLabel(badgeAccessibilityLabel(badge))
+        .accessibilityLabel(badgeAccessibilityLabel(badge, tone: tone))
     }
 
-    private func badgeAccessibilityLabel(_ badge: PRBadge) -> String {
+    private func color(for tone: PRBadgeStyle.Tone) -> Color {
+        switch tone {
+        case .open:      return PRInfo.State.open.statusColor
+        case .merged:    return PRInfo.State.merged.statusColor
+        case .ciFailure: return PRInfo.Checks.failure.statusColor
+        case .ciPending: return PRInfo.Checks.pending.statusColor
+        }
+    }
+
+    private func badgeAccessibilityLabel(_ badge: PRBadge, tone: PRBadgeStyle.Tone) -> String {
         let stateWord: String
         switch badge.state {
         case .open:   stateWord = "open"
         case .merged: stateWord = "merged"
         }
-        return "Pull request \(badge.number), \(stateWord). Click to open in browser."
+        let ciSuffix: String
+        switch tone {
+        case .ciFailure: ciSuffix = ", CI failing"
+        case .ciPending: ciSuffix = ", CI running"
+        case .open, .merged: ciSuffix = ""
+        }
+        return "Pull request \(badge.number), \(stateWord)\(ciSuffix). Click to open in browser."
     }
 
     @ViewBuilder
