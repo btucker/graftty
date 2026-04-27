@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-@Suite("WorktreeMonitor Tests")
+@Suite("WorktreeMonitor Tests", .serialized)
 struct WorktreeMonitorTests {
 
     @Test func originRefChangeFiresWhenRemoteTrackingRefsMove() async throws {

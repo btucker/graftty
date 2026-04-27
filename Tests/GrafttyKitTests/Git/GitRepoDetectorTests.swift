@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-@Suite("GitRepoDetector Tests")
+@Suite("GitRepoDetector Tests", .serialized)
 struct GitRepoDetectorTests {
 
     func makeTempDir() throws -> URL {

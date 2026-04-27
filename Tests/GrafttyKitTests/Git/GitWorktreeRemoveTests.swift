@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-@Suite("GitWorktreeRemove Tests")
+@Suite("GitWorktreeRemove Tests", .serialized)
 struct GitWorktreeRemoveTests {
 
     /// The happy path: add a linked worktree, remove it, and confirm both

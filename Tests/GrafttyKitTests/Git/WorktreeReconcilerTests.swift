@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-@Suite("WorktreeReconciler")
+@Suite("WorktreeReconciler", .serialized)
 struct WorktreeReconcilerTests {
 
     func wt(_ path: String, _ branch: String, state: WorktreeState = .closed) -> WorktreeEntry {

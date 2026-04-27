@@ -6,11 +6,15 @@ public enum NotificationMessage: Sendable {
     case listPanes(path: String)
     case addPane(path: String, direction: PaneSplit, command: String?)
     case closePane(path: String, index: Int)
+    case teamMessage(callerWorktree: String, recipient: String, text: String)
+    case teamList(callerWorktree: String)
 }
 
 extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, path, text, clearAfter, direction, command, index
+        case callerWorktree = "caller_worktree"
+        case recipient
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -36,6 +40,14 @@ extension NotificationMessage: Codable {
             try container.encode("close_pane", forKey: .type)
             try container.encode(path, forKey: .path)
             try container.encode(index, forKey: .index)
+        case .teamMessage(let path, let recipient, let text):
+            try container.encode("team_message", forKey: .type)
+            try container.encode(path, forKey: .callerWorktree)
+            try container.encode(recipient, forKey: .recipient)
+            try container.encode(text, forKey: .text)
+        case .teamList(let path):
+            try container.encode("team_list", forKey: .type)
+            try container.encode(path, forKey: .callerWorktree)
         }
     }
 
@@ -63,6 +75,14 @@ extension NotificationMessage: Codable {
             let path = try container.decode(String.self, forKey: .path)
             let index = try container.decode(Int.self, forKey: .index)
             self = .closePane(path: path, index: index)
+        case "team_message":
+            let path = try container.decode(String.self, forKey: .callerWorktree)
+            let recipient = try container.decode(String.self, forKey: .recipient)
+            let text = try container.decode(String.self, forKey: .text)
+            self = .teamMessage(callerWorktree: path, recipient: recipient, text: text)
+        case "team_list":
+            let path = try container.decode(String.self, forKey: .callerWorktree)
+            self = .teamList(callerWorktree: path)
         default:
             throw DecodingError.dataCorrupted(.init(codingPath: [CodingKeys.type], debugDescription: "Unknown message type: \(type)"))
         }
@@ -111,19 +131,45 @@ public struct PaneInfo: Codable, Sendable, Equatable {
     }
 }
 
+public struct TeamListMember: Codable, Sendable, Equatable {
+    public let name: String
+    public let branch: String
+    public let worktreePath: String
+    public let role: String   // "lead" | "coworker"
+    public let isRunning: Bool
+
+    public init(name: String, branch: String, worktreePath: String, role: String, isRunning: Bool) {
+        self.name = name
+        self.branch = branch
+        self.worktreePath = worktreePath
+        self.role = role
+        self.isRunning = isRunning
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name, branch
+        case worktreePath = "worktree_path"
+        case role
+        case isRunning = "is_running"
+    }
+}
+
 /// Reply sent from the app back to the CLI after a request-style
 /// `NotificationMessage`. `ok` covers successful fire-and-forget commands;
 /// `error` carries a human-readable message printed to the CLI's stderr;
-/// `paneList` is the response to `listPanes`.
+/// `paneList` is the response to `listPanes`; `teamList` is the response to `teamList`.
 public enum ResponseMessage: Sendable, Equatable {
     case ok
     case error(String)
     case paneList([PaneInfo])
+    case teamList(teamName: String, members: [TeamListMember])
 }
 
 extension ResponseMessage: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, message, panes
+        case teamName = "team_name"
+        case members
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -137,6 +183,10 @@ extension ResponseMessage: Codable {
         case .paneList(let panes):
             try container.encode("pane_list", forKey: .type)
             try container.encode(panes, forKey: .panes)
+        case .teamList(let teamName, let members):
+            try container.encode("team_list", forKey: .type)
+            try container.encode(teamName, forKey: .teamName)
+            try container.encode(members, forKey: .members)
         }
     }
 
@@ -152,6 +202,10 @@ extension ResponseMessage: Codable {
         case "pane_list":
             let panes = try container.decode([PaneInfo].self, forKey: .panes)
             self = .paneList(panes)
+        case "team_list":
+            let teamName = try container.decode(String.self, forKey: .teamName)
+            let members = try container.decode([TeamListMember].self, forKey: .members)
+            self = .teamList(teamName: teamName, members: members)
         default:
             throw DecodingError.dataCorrupted(.init(codingPath: [CodingKeys.type], debugDescription: "Unknown response type: \(type)"))
         }

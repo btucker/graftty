@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-@Suite("GitOriginDefaultBranch")
+@Suite("GitOriginDefaultBranch", .serialized)
 struct GitOriginDefaultBranchTests {
 
     func makeTempDir() throws -> URL {

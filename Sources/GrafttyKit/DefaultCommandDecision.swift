@@ -27,9 +27,10 @@ public func defaultCommandDecision(
     isFirstPane: Bool,
     wasRehydrated: Bool
 ) -> DefaultCommandDecision {
-    let trimmed = defaultCommand.trimmingCharacters(in: .whitespacesAndNewlines)
-    if trimmed.isEmpty { return .skip }
     if wasRehydrated { return .skip }
     if firstPaneOnly && !isFirstPane { return .skip }
+
+    let trimmed = defaultCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty { return .skip }
     return .type(trimmed)
 }

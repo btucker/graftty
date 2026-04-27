@@ -4,8 +4,11 @@
 # Output: .build/Graftty.app/
 #   Contents/
 #     Info.plist
+#     Frameworks/
+#       Sparkle.framework
 #     MacOS/
 #       Graftty    (the SwiftUI app)
+#     Helpers/
 #       graftty    (the CLI, renamed from graftty-cli per ATTN-1.1)
 #
 # Usage:
@@ -26,9 +29,33 @@ fi
 
 CONFIGURATION="${CONFIGURATION:-debug}"
 GRAFTTY_VERSION="${GRAFTTY_VERSION:-0.0.0-dev}"
+SPARKLE_PUBLIC_ED_KEY="${SPARKLE_PUBLIC_ED_KEY:-}"
+SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-}"
 if [[ ! "$GRAFTTY_VERSION" =~ ^[A-Za-z0-9._+-]+$ ]]; then
   echo "GRAFTTY_VERSION must match [A-Za-z0-9._+-]+ (got '$GRAFTTY_VERSION')" >&2
   exit 1
+fi
+if [[ "$SPARKLE_PUBLIC_ED_KEY" == "__SPARKLE_PUBLIC_ED_KEY__" ]]; then
+  echo "SPARKLE_PUBLIC_ED_KEY is still the placeholder sentinel" >&2
+  exit 1
+fi
+if [[ -n "$SPARKLE_PUBLIC_ED_KEY" && ! "$SPARKLE_PUBLIC_ED_KEY" =~ ^[A-Za-z0-9+/=]+$ ]]; then
+  echo "SPARKLE_PUBLIC_ED_KEY must be a base64 EdDSA public key" >&2
+  exit 1
+fi
+if [[ -n "$SPARKLE_PUBLIC_ED_KEY" ]]; then
+  SPARKLE_PUBLIC_ED_KEY_BYTES="$(printf '%s' "$SPARKLE_PUBLIC_ED_KEY" | base64 -D 2>/dev/null | wc -c | tr -d '[:space:]')"
+  if [[ "$SPARKLE_PUBLIC_ED_KEY_BYTES" != "32" ]]; then
+    echo "SPARKLE_PUBLIC_ED_KEY must decode to a 32-byte EdDSA public key" >&2
+    exit 1
+  fi
+fi
+if [[ "$CONFIGURATION" == "release" && -z "$SPARKLE_PUBLIC_ED_KEY" ]]; then
+  echo "SPARKLE_PUBLIC_ED_KEY must be set for release builds" >&2
+  exit 1
+fi
+if [[ "$CONFIGURATION" == "release" && -z "$SPARKLE_FEED_URL" ]]; then
+  SPARKLE_FEED_URL="https://raw.githubusercontent.com/btucker/graftty/main/appcast.xml"
 fi
 
 echo "→ GRAFTTY_VERSION=$GRAFTTY_VERSION"
@@ -40,7 +67,7 @@ APP="$REPO/.build/Graftty.app"
 
 echo "→ rm -rf $APP && mkdir bundle dirs"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Resources"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Helpers" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
 
 echo "→ copy binaries"
 # The main app binary goes in Contents/MacOS/ per Apple convention.
@@ -49,6 +76,16 @@ echo "→ copy binaries"
 # directory (APFS treats them as the same filename).
 cp "$BIN_DIR/Graftty" "$APP/Contents/MacOS/Graftty"
 cp "$BIN_DIR/graftty-cli" "$APP/Contents/Helpers/graftty"
+
+echo "→ copy dynamic frameworks"
+ditto "$BIN_DIR/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
+
+FRAMEWORK_RPATH="@executable_path/../Frameworks"
+for executable in "$APP/Contents/MacOS/Graftty" "$APP/Contents/Helpers/graftty"; do
+  if ! otool -l "$executable" | grep -q "$FRAMEWORK_RPATH"; then
+    install_name_tool -add_rpath "$FRAMEWORK_RPATH" "$executable"
+  fi
+done
 
 # Copy SwiftPM resource bundles. `Bundle.module` resolves relative to
 # Bundle.main.resourceURL first, which maps to Contents/Resources/ for an
@@ -69,10 +106,21 @@ chmod +x "$APP/Contents/Helpers/zmx"
 echo "→ build + copy app icon"
 "$SCRIPT_DIR/build-icon.sh" "$APP/Contents/Resources/AppIcon.icns"
 
+SPARKLE_PUBLIC_ED_KEY_PLIST=""
+if [[ -n "$SPARKLE_PUBLIC_ED_KEY" ]]; then
+  SPARKLE_PUBLIC_ED_KEY_PLIST="    <key>SUPublicEDKey</key>
+    <string>$SPARKLE_PUBLIC_ED_KEY</string>"
+fi
+SPARKLE_FEED_URL_PLIST=""
+if [[ -n "$SPARKLE_FEED_URL" ]]; then
+  SPARKLE_FEED_URL_PLIST="    <key>SUFeedURL</key>
+    <string>$SPARKLE_FEED_URL</string>"
+fi
+
 echo "→ write Info.plist"
 # NOTE: heredoc is unquoted so $GRAFTTY_VERSION expands.
 # Any other $ or backticks added below will also expand — keep
-# this body to literal XML plus that single substitution.
+# this body to literal XML plus the substitutions above.
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -102,10 +150,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <string>14.0</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.developer-tools</string>
-    <key>SUFeedURL</key>
-    <string>https://raw.githubusercontent.com/btucker/graftty/main/appcast.xml</string>
-    <key>SUPublicEDKey</key>
-    <string>__SPARKLE_PUBLIC_ED_KEY__</string>
+$SPARKLE_FEED_URL_PLIST
+$SPARKLE_PUBLIC_ED_KEY_PLIST
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSPrincipalClass</key>
@@ -122,11 +168,22 @@ echo "→ ad-hoc codesign (inner → outer)"
 # Developer ID + notarization, this block grows: real identity,
 # --options runtime, --timestamp, --entitlements, and a separate
 # notarytool/stapler pass after.
+codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc"
+codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc"
+codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app"
+codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
+codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework"
 codesign --force --sign - "$APP/Contents/Helpers/zmx"
 codesign --force --sign - "$APP/Contents/Helpers/graftty"
 codesign --force --sign - "$APP/Contents/MacOS/Graftty"
 codesign --force --sign - "$APP"
 codesign --verify --strict "$APP"
+
+echo "→ verify dynamic framework linkage"
+test -e "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle"
+for executable in "$APP/Contents/MacOS/Graftty" "$APP/Contents/Helpers/graftty"; do
+  otool -l "$executable" | grep -q "$FRAMEWORK_RPATH"
+done
 
 echo "✓ Bundle at $APP"
 echo "  Run:  open '$APP'"

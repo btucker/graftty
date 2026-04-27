@@ -42,6 +42,7 @@ jobs:
         env:
           CONFIGURATION: release
           GRAFTTY_VERSION: ${{ steps.version.outputs.version }}
+          SPARKLE_PUBLIC_ED_KEY: ${{ secrets.SPARKLE_PUBLIC_ED_KEY }}
         run: scripts/bundle.sh
 
       - name: Verify codesign
