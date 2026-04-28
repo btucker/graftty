@@ -347,13 +347,14 @@ extension PRStatusStore {
         return !branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Base refresh cadence — also the time-bound cap on the `inFlight`
-    /// guard (`PR-7.13`). A normal `gh pr list` + `gh pr checks` pair
-    /// resolves in under a few seconds; anything in-flight longer than a
-    /// full refresh window is assumed abandoned (stuck subprocess, rate-
-    /// limit back-off, auth retry loop) and superseded by the next
-    /// dispatch. Kept in sync with `PR-7.1`'s 30-second base — both the
-    /// poll cadence and the stuck-guard cap are the same clock.
+    /// Time-bound cap on the `inFlight` guard (`PR-7.13`). A normal
+    /// `gh pr list` + `gh pr checks` pair resolves in under a few seconds;
+    /// anything in-flight longer than this is assumed abandoned (stuck
+    /// subprocess, rate-limit back-off, auth retry loop) and superseded by
+    /// the next dispatch. Independent of `cadenceFor` — the poll cadence
+    /// can be tighter (e.g. 10s while CI is pending) without shrinking
+    /// this stuck-guard window, which would otherwise kill legitimately
+    /// slow `gh` calls.
     nonisolated static func refreshCadence() -> Duration {
         .seconds(30)
     }
@@ -363,24 +364,33 @@ extension PRStatusStore {
         isAbsent: Bool,
         failureStreak: Int
     ) -> Duration {
-        // PR-7.1: 30s across all non-unknown buckets. Prior tiered cadences
-        // (5min open / 15min merged / 15min absent) let a PR that was opened
-        // and merged on GitHub go unnoticed for up to 15 min — `watchOriginRefs`
-        // catches local push/fetch but is blind to a remote-only merge, so
-        // polling is the only channel for that signal.
+        // PR-7.1: 10s while CI is pending (so green/red transitions land in
+        // the breadcrumb within one polling window); 30s for any other
+        // known state — open/merged with non-pending checks, or absent.
+        // Polling is the only detection channel for an open→merged
+        // transition that lands on the hosting provider without a local
+        // `git fetch`, so cadence directly governs user-visible staleness.
         let base: Duration
-        if info != nil || isAbsent {
+        if info?.checks == .pending {
+            base = .seconds(10)
+        } else if info != nil || isAbsent {
             base = .seconds(30)
         } else {
             base = .zero
         }
-        // Floor the unknown-state base at 60s so a failing fetch has
-        // something to multiply — otherwise the poller retries every tick
-        // against a broken CLI (e.g. `gh` not installed).
+        // PR-7.2: cap at 60s. Higher caps (the prior 30-minute ceiling)
+        // produce silent staleness — `PR-7.10` preserves last-known
+        // `PRInfo` on failure, so the breadcrumb sits confidently on data
+        // that's drifted up to half an hour out of date with no visual
+        // cue. Cap and floor happen to coincide at 60s; they serve
+        // distinct purposes — the floor only kicks in when `base ==
+        // .zero` (unknown-state guard, prevents hammering a broken CLI
+        // every tick), the cap clamps the backoff multiplier for every
+        // tier. They're not a single value masquerading as two.
         return ExponentialBackoff.scale(
             base: base,
             streak: failureStreak,
-            cap: .seconds(30 * 60),
+            cap: .seconds(60),
             floor: .seconds(60)
         )
     }
