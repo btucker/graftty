@@ -185,22 +185,22 @@ jobs:
 
       - name: Update Homebrew tap
         env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
           SHA256: ${{ steps.zip.outputs.sha256 }}
         run: |
           set -euo pipefail
-          # Open a PR against the tap's main rather than push direct, so
-          # any branch protection there is respected and the cask change
-          # has an audit trail. Auto-merge is requested so the PR lands
-          # on its own when checks pass.
+          # Direct push: the tap is unprotected so a PR-based flow would
+          # add ceremony without review value (the cask is generated
+          # content). The appcast step on graftty/main has to PR
+          # because main is protected; that asymmetry is intentional.
           git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/btucker/homebrew-graftty.git" tap
           cd tap
-
-          BRANCH="release/cask-v$VERSION"
-          git checkout -b "$BRANCH"
-
+          # Pull-rebase before editing in case a manual cask edit landed
+          # between our clone and our push (e.g., a maintainer syncing
+          # caveats from docs/release/Casks/graftty.rb in the source repo).
+          # No-op when there's nothing new.
+          git pull --rebase origin main
           # Rewrite version + sha256 in place. Two seds (not one) so the
           # failure mode is obvious if either field's literal text drifts
           # in the cask.
@@ -214,12 +214,4 @@ jobs:
             exit 0
           fi
           git commit -m "graftty $VERSION"
-          git push -u origin "$BRANCH"
-          PR_URL="$(gh pr create \
-            --base main \
-            --head "$BRANCH" \
-            --title "graftty $VERSION" \
-            --body "Automated cask bump for graftty v$VERSION.")"
-          echo "Opened: $PR_URL"
-          gh pr merge "$PR_URL" --auto --squash --delete-branch \
-            || echo "Auto-merge unavailable; PR awaits manual merge"
+          git push
