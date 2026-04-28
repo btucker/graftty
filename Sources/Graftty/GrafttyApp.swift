@@ -340,6 +340,33 @@ struct GrafttyApp: App {
             }
         }
 
+        // TERM-8.10 / PWD-1.4: terminal surface menu and sidebar drag
+        // both route through this callback to share the existing
+        // PWD-2.x reassignment pipeline.
+        terminalManager.onMovePane = { [appState = $appState, tm = terminalManager] terminalID, destinationPath in
+            MainActor.assumeIsolated {
+                Self.reassignPaneByPWD(
+                    appState: appState,
+                    terminalManager: tm,
+                    terminalID: terminalID,
+                    newPWD: destinationPath
+                )
+            }
+        }
+
+        // Surface menu (`SurfaceContextMenu`) calls this at right-click
+        // time so the snapshot is fresh; nil makes it skip the Move
+        // section (e.g. mid-reassignment race window).
+        terminalManager.currentPaneMoveContext = { [appState = $appState, tm = terminalManager] terminalID in
+            MainActor.assumeIsolated {
+                PaneMoveMenuContext.resolve(
+                    terminalID: terminalID,
+                    appState: appState.wrappedValue,
+                    shellCwd: tm.shellCwd(for: terminalID)
+                )
+            }
+        }
+
         // Shell-exit (or libghostty-initiated close) → remove the pane from
         // the tree and free the surface. Same logic Cmd+W uses, but keyed
         // on an arbitrary terminalID rather than the currently-focused one.

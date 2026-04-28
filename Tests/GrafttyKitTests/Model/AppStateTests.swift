@@ -430,6 +430,35 @@ struct AppStateTests {
         #expect(state.worktreeIndicesMatching(path: "/r/feature") != nil)
     }
 
+    // MARK: indicesOfWorktreeContaining — pane-to-worktree reverse lookup
+    // used by the Move-to-worktree menu builders (PWD-1.4 / TERM-8.10).
+
+    @Test func indicesOfWorktreeContaining_findsHostingWorktree() {
+        let pane = TerminalID()
+        let state = AppState(repos: [
+            RepoEntry(path: "/r", displayName: "r", worktrees: [
+                WorktreeEntry(path: "/r", branch: "main"),
+                WorktreeEntry(
+                    path: "/r/wt/feature",
+                    branch: "feature",
+                    splitTree: SplitTree(root: .leaf(pane))
+                ),
+            ]),
+        ])
+        let match = state.indicesOfWorktreeContaining(terminalID: pane)
+        #expect(match?.repo == 0)
+        #expect(match?.worktree == 1)
+    }
+
+    @Test func indicesOfWorktreeContaining_returnsNilForUnknownPane() {
+        let state = AppState(repos: [
+            RepoEntry(path: "/r", displayName: "r", worktrees: [
+                WorktreeEntry(path: "/r", branch: "main"),
+            ]),
+        ])
+        #expect(state.indicesOfWorktreeContaining(terminalID: TerminalID()) == nil)
+    }
+
     @Test func worktreeIndicesMatching_searchesAcrossRepos() {
         let state = AppState(repos: [
             RepoEntry(path: "/a", displayName: "a", worktrees: [

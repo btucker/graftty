@@ -79,6 +79,26 @@ extension SurfaceNSView {
         add("Split Down", #selector(splitDown(_:)), "rectangle.bottomhalf.inset.filled")
         add("Split Up", #selector(splitUp(_:)), "rectangle.tophalf.inset.filled")
 
+        // TERM-8.10: surface the same Move-to-worktree section the
+        // sidebar pane row offers (PWD-1.1 / PWD-1.2 / PWD-1.3),
+        // sandwiched between the Splits block and Reset. Both context
+        // and onMove are wired through TerminalManager by GrafttyApp;
+        // either being nil collapses to no items rather than a no-op
+        // separator.
+        if let id = terminalID,
+           let tm = terminalManager,
+           let ctx = tm.currentPaneMoveContext?(id),
+           let onMove = tm.onMovePane {
+            menu.addItem(.separator())
+            for item in PaneMoveMenuBuilder.items(
+                terminalID: id,
+                context: ctx,
+                onMove: onMove
+            ) {
+                menu.addItem(item)
+            }
+        }
+
         menu.addItem(.separator())
         add("Reset Terminal", #selector(resetTerminal(_:)), "arrow.trianglehead.2.clockwise")
         add("Toggle Terminal Inspector", #selector(toggleTerminalInspector(_:)), "scope")

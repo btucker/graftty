@@ -37,6 +37,9 @@ struct SidebarView: View {
     /// Worktree path whose "Show Team Members…" popover is currently presented.
     @State private var teamPopoverWorktreePath: String? = nil
 
+    /// Hovered drop-target row during a pane drag (PWD-1.5). Nil otherwise.
+    @State private var dropTargetWorktreeID: WorktreeEntry.ID?
+
     var body: some View {
         VStack(spacing: 0) {
             List {
@@ -149,6 +152,7 @@ struct SidebarView: View {
     private func worktreeBlock(_ worktree: WorktreeEntry, repo: RepoEntry) -> some View {
         let isActive = appState.selectedWorktreePath == worktree.path
         let attention = SidebarAttentionLayout.layout(for: worktree)
+        let isDropTarget = dropTargetWorktreeID == worktree.id
         VStack(spacing: 0) {
             Button {
                 onSelect(worktree.path)
@@ -171,8 +175,31 @@ struct SidebarView: View {
                 )
             }
             .buttonStyle(.plain)
-            .contextMenu {
-                worktreeContextMenu(worktree, repo: repo)
+            // PWD-1.4: same-repo drop target. Sources are sidebar pane
+            // rows wrapped in `TransferableTerminalID`. Cross-repo drops
+            // are rejected so a user can't accidentally hop a pane
+            // across repos (out of scope, matches PWD-1.3).
+            .dropDestination(for: TransferableTerminalID.self) { items, _ in
+                guard let item = items.first else { return false }
+                let sourceID = TerminalID(id: item.id)
+                guard let indices =
+                        appState.indicesOfWorktreeContaining(terminalID: sourceID),
+                      appState.repos[indices.repo].id == repo.id
+                else { return false }
+                onMovePane(sourceID, worktree.path)
+                return true
+            } isTargeted: { targeted in
+                // PWD-1.5: `isTargeted` can't see the payload, so cross-
+                // repo rejection happens at drop time and every hovered
+                // row highlights optimistically.
+                if targeted {
+                    dropTargetWorktreeID = worktree.id
+                } else if dropTargetWorktreeID == worktree.id {
+                    dropTargetWorktreeID = nil
+                }
+            }
+            .rightClickMenu {
+                buildWorktreeMenu(worktree, repo: repo)
             }
 
             if worktree.state == .running {
@@ -190,12 +217,13 @@ struct SidebarView: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    .contextMenu {
-                        paneContextMenu(
-                            terminalID: terminalID,
-                            currentWorktree: worktree,
-                            currentRepo: repo
-                        )
+                    // PWD-1.4: pane rows are drag sources. The payload
+                    // is a typed wrapper around the pane's UUID so
+                    // SwiftUI's Transferable matching keeps unrelated
+                    // drops from being mis-decoded as panes.
+                    .draggable(TransferableTerminalID(id: terminalID.id))
+                    .rightClickMenu {
+                        buildPaneMenu(terminalID: terminalID)
                     }
                 }
             }
@@ -215,6 +243,13 @@ struct SidebarView: View {
                 teamsEnabled: agentTeamsEnabled
             )
         }
+        // PWD-1.5: drop-target highlight. Stroked so it composes with
+        // the active-worktree background fill above when the dragged-
+        // onto row is also the active one.
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(theme.foreground.opacity(isDropTarget ? 0.5 : 0), lineWidth: 1.5)
+        )
     }
 
     private func label(for worktree: WorktreeEntry, in repo: RepoEntry) -> String {
@@ -225,114 +260,77 @@ struct SidebarView: View {
         )
     }
 
-    @ViewBuilder
-    private func worktreeContextMenu(_ worktree: WorktreeEntry, repo: RepoEntry) -> some View {
+    /// Worktree row's right-click menu. Built as `NSMenu` (not a
+    /// SwiftUI `.contextMenu`) for the List-row hoisting reason
+    /// `.rightClickMenu` documents.
+    private func buildWorktreeMenu(_ worktree: WorktreeEntry, repo: RepoEntry) -> NSMenu {
+        let menu = NSMenu()
         if worktree.state != .stale {
-            Button("Open Worktree in Finder...") {
+            menu.addItem(ClosureMenuItem(title: "Open Worktree in Finder...") {
                 NSWorkspace.shared.open(URL(fileURLWithPath: worktree.path))
-            }
-            Divider()
+            })
+            menu.addItem(.separator())
         }
         if worktree.state == .running {
-            Button("Stop") {
-                stopWorktree(worktree, in: repo)
-            }
+            menu.addItem(ClosureMenuItem(title: "Stop") { [self] in
+                onStopWorktree(worktree.path)
+            })
         }
         if worktree.state == .stale {
-            Button("Dismiss") {
+            menu.addItem(ClosureMenuItem(title: "Dismiss") {
                 dismissWorktree(worktree, in: repo)
-            }
+            })
         }
         // git refuses to remove the main checkout, so hiding the item
         // there avoids a guaranteed error path.
         if worktree.path != repo.path && worktree.state != .stale {
-            Button("Delete Worktree") {
+            menu.addItem(ClosureMenuItem(title: "Delete Worktree") { [self] in
                 onDeleteWorktree(worktree.path)
-            }
+            })
         }
-        // TEAM-6.2: "Show Team Members…" opens a popover listing team members
+        // TEAM-6.2: "Show Team Members…" opens a popover listing team members.
         if agentTeamsEnabled,
            TeamView.team(for: worktree, in: appState.repos, teamsEnabled: true) != nil {
-            Divider()
-            Button("Show Team Members…") {
+            menu.addItem(.separator())
+            menu.addItem(ClosureMenuItem(title: "Show Team Members…") {
                 teamPopoverWorktreePath = worktree.path
-            }
+            })
         }
+        return menu
     }
 
-    /// Per-pane right-click menu (PWD-1.1 / 1.3, LAYOUT-2.7).
-    @ViewBuilder
-    private func paneContextMenu(
-        terminalID: TerminalID,
-        currentWorktree: WorktreeEntry,
-        currentRepo: RepoEntry
-    ) -> some View {
-        moveToCurrentWorktreeButton(
+    /// AppKit-side pane right-click menu (PWD-1.1 / PWD-1.3 / LAYOUT-2.7
+    /// / TERM-8.10). The Move section is shared with the terminal-surface
+    /// menu via `PaneMoveMenuBuilder`; the Copy-web-URL item is sidebar-
+    /// only because the surface has no worktree-context-free way to know
+    /// its session name without going through this same view tree.
+    private func buildPaneMenu(terminalID: TerminalID) -> NSMenu {
+        let menu = NSMenu()
+        if let context = PaneMoveMenuContext.resolve(
             terminalID: terminalID,
-            currentWorktree: currentWorktree
-        )
-        moveToWorktreeMenu(
-            terminalID: terminalID,
-            currentWorktree: currentWorktree,
-            currentRepo: currentRepo
-        )
+            appState: appState,
+            shellCwd: terminalManager.shellCwd(for: terminalID)
+        ) {
+            for item in PaneMoveMenuBuilder.items(
+                terminalID: terminalID,
+                context: context,
+                onMove: onMovePane
+            ) {
+                menu.addItem(item)
+            }
+        }
         if case let .listening(_, port) = webController.status,
            let host = webController.serverHostname {
-            Divider()
-            Button("Copy web URL") {
+            menu.addItem(.separator())
+            menu.addItem(ClosureMenuItem(title: "Copy web URL") {
                 Pasteboard.copy(WebURLComposer.url(
                     session: ZmxLauncher.sessionName(for: terminalID.id),
                     host: host,
                     port: port
                 ))
-            }
+            })
         }
-    }
-
-    @ViewBuilder
-    private func moveToCurrentWorktreeButton(
-        terminalID: TerminalID,
-        currentWorktree: WorktreeEntry
-    ) -> some View {
-        let cwd = terminalManager.shellCwd(for: terminalID)
-        let indices = cwd.flatMap { appState.worktreeIndicesMatching(path: $0) }
-        if let indices,
-           appState.repos[indices.repo].worktrees[indices.worktree].id != currentWorktree.id {
-            let matchedRepo = appState.repos[indices.repo]
-            let matchedWt = matchedRepo.worktrees[indices.worktree]
-            Button("Move to \(label(for: matchedWt, in: matchedRepo))") {
-                onMovePane(terminalID, matchedWt.path)
-            }
-        } else {
-            Button("Move to current worktree") {}
-                .disabled(true)
-                .help("Shell cwd is not under another known worktree")
-        }
-    }
-
-    /// Same-repo only; cross-repo moves would surprise the user. Stale
-    /// worktrees are kept in the list because moving a pane there
-    /// reactivates the worktree (same effect as opening it manually).
-    @ViewBuilder
-    private func moveToWorktreeMenu(
-        terminalID: TerminalID,
-        currentWorktree: WorktreeEntry,
-        currentRepo: RepoEntry
-    ) -> some View {
-        let siblings = currentRepo.worktrees.filter { $0.id != currentWorktree.id }
-        if !siblings.isEmpty {
-            Menu("Move to worktree") {
-                ForEach(siblings) { sibling in
-                    Button(label(for: sibling, in: currentRepo)) {
-                        onMovePane(terminalID, sibling.path)
-                    }
-                }
-            }
-        }
-    }
-
-    private func stopWorktree(_ worktree: WorktreeEntry, in repo: RepoEntry) {
-        onStopWorktree(worktree.path)
+        return menu
     }
 
     private func dismissWorktree(_ worktree: WorktreeEntry, in repo: RepoEntry) {
