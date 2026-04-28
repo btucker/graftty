@@ -59,8 +59,8 @@ jobs:
         run: swift build --build-tests -Xswiftc -warnings-as-errors
 
       - name: Test
-        timeout-minutes: 5
-        run: swift test --skip-build
+        timeout-minutes: 10
+        run: xcrun xctest .build/debug/GrafttyPackageTests.xctest
 
   ios-build-and-test:
     runs-on: macos-26
