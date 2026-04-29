@@ -1,4 +1,5 @@
-# zmx 0.5.0 — fetched from https://zmx.sh/a/
-2b8a47d8d8f41881ac86291d45ffbdcde145b7710ec4b455315e66a456a22422  zmx-aarch64
-0ee25d7a7c214008119e1139337cfe58d572db0787686b2d569030b2e55acd85  zmx-x86_64
-bef045373eb623f88f06f4bea1b2e144b40d061536c48216d1592bc9f78e08e9  zmx (universal)
+# zmx 0.5.0-gc1c7f7b-graftty1 — built from https://github.com/neurosnap/zmx commit c1c7f7b
+# plus Graftty patch: unblock SIGWINCH in zmx attach before installing the wake handler.
+bd3346dd40830d709124fd9a1fc13f5472581efa58200a79b8153b194afa6488  zmx-aarch64
+ce62d2de4fc45820b62eae29ab6857f6bb233525742bdee2d6c1e85730f71d5d  zmx-x86_64
+fa6075f268d21b615d6e90e072264a6185f309a2375dcb6d3b252786870147c3  zmx (universal)
