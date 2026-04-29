@@ -6,17 +6,32 @@
         <description>Updates for Graftty.</description>
         <language>en</language>
         <item>
+            <title>Version 0.0.12</title>
+            <sparkle:version>0.0.12</sparkle:version>
+            <sparkle:shortVersionString>0.0.12</sparkle:shortVersionString>
+            <pubDate>Wed, 29 Apr 2026 20:29:54 +0000</pubDate>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
+<ul dir="auto">
+<li>appcast: v0.0.11 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4350940279" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/100" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/100/hovercard" href="https://github.com/btucker/graftty/pull/100">#100</a></li>
+<li>fix(panes): redraw on show and resize idle zmx attaches by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4351618165" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/101" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/101/hovercard" href="https://github.com/btucker/graftty/pull/101">#101</a></li>
+<li>Gate PR polling on local remote branches by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4352966172" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/102" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/102/hovercard" href="https://github.com/btucker/graftty/pull/102">#102</a></li>
+</ul>
+<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.0.11...v0.0.12"><tt>v0.0.11...v0.0.12</tt></a></p>]]></description>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.0.12/Graftty-0.0.12.zip" length="15014338" type="application/octet-stream" sparkle:edSignature="UcDgCYcyn38ySokgNyYv0CWiAR2y7m6ncagc+OTXLBy8xkZJjKyaFehjin3FgVFOmsXwo4Er43OMVtvN4I1DCA=="/>
+        </item>
+        <item>
             <title>Version 0.0.11</title>
             <sparkle:version>0.0.11</sparkle:version>
             <sparkle:shortVersionString>0.0.11</sparkle:shortVersionString>
             <pubDate>Wed, 29 Apr 2026 13:33:05 +0000</pubDate>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
-<ul dir="auto">
-<li>appcast: v0.0.10 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4347563620" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/98" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/98/hovercard" href="https://github.com/btucker/graftty/pull/98">#98</a></li>
-<li>fix(appcast): correct signature extraction + HTML release notes (UPDATE-2.3..2.5) by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4350597287" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/99" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/99/hovercard" href="https://github.com/btucker/graftty/pull/99">#99</a></li>
-</ul>
-<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.0.10...v0.0.11"><tt>v0.0.10...v0.0.11</tt></a></p>]]></description>
+            <description>&lt;h2 dir="auto"&gt;What's Changed&lt;/h2&gt;
+&lt;ul dir="auto"&gt;
+&lt;li&gt;appcast: v0.0.10 by @github-actions[bot] in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4347563620" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/98" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/98/hovercard" href="https://github.com/btucker/graftty/pull/98"&gt;#98&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;fix(appcast): correct signature extraction + HTML release notes (UPDATE-2.3..2.5) by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4350597287" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/99" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/99/hovercard" href="https://github.com/btucker/graftty/pull/99"&gt;#99&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.0.10...v0.0.11"&gt;&lt;tt&gt;v0.0.10...v0.0.11&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
             <enclosure url="https://github.com/btucker/graftty/releases/download/v0.0.11/Graftty-0.0.11.zip" length="14891285" type="application/octet-stream" sparkle:edSignature="6slIkV4VqqrubYTC7yXSU2l8luTYvbPUzy1PZiHZsj2zizioQUmh41Ur0TK4n/ndSHWFjkz98p7ptws9ylVzDw=="/>
         </item>
         <item>
