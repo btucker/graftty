@@ -91,7 +91,18 @@ jobs:
             echo "SPARKLE_ED_PRIVATE_KEY secret is not set" >&2
             exit 1
           fi
-          ED_SIGNATURE="$(printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | ./sign_update --ed-key-file - "$ZIP")"
+          # `sign_update` prints a full XML attribute fragment to stdout —
+          # `sparkle:edSignature="<base64>" length="<bytes>"` — so we have to
+          # extract just the base64 signature. Embedding the whole fragment
+          # as the attribute value produced the v0.0.9 "improperly signed"
+          # install failure (the appcast-updater Swift tool now rejects
+          # non-base64 input as defense-in-depth).
+          SIGN_OUTPUT="$(printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | ./sign_update --ed-key-file - "$ZIP")"
+          ED_SIGNATURE="$(printf '%s' "$SIGN_OUTPUT" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')"
+          if [ -z "$ED_SIGNATURE" ]; then
+            echo "Could not parse signature from sign_update output: $SIGN_OUTPUT" >&2
+            exit 1
+          fi
           LENGTH="$(stat -f %z "$ZIP")"
           echo "ed_signature=$ED_SIGNATURE" >> "$GITHUB_OUTPUT"
           echo "length=$LENGTH" >> "$GITHUB_OUTPUT"
@@ -126,8 +137,19 @@ jobs:
           set -euo pipefail
           # Runs after `Create GitHub release` so the body (produced by
           # `--generate-notes`) is guaranteed to exist.
+          # Sparkle renders the appcast `<description>` as HTML, not
+          # markdown — raw markdown shows up as literal `## …` and `* …`
+          # in the install dialog. Render to HTML via GitHub's /markdown
+          # API (mode=gfm) so headers, lists, links, and PR/@-mentions
+          # display correctly while staying authored as markdown in the
+          # release body.
           NOTES_FILE="$(mktemp)"
-          gh release view "v$VERSION" --json body --jq '.body' > "$NOTES_FILE"
+          MARKDOWN="$(gh release view "v$VERSION" --json body --jq '.body')"
+          gh api -X POST /markdown \
+            -f mode=gfm \
+            -f context="${{ github.repository }}" \
+            -f text="$MARKDOWN" \
+            > "$NOTES_FILE"
           echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Update appcast on main

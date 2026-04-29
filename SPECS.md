@@ -936,6 +936,26 @@ entry to `appcast.xml` on `main`, and commit that change with the
 `brew upgrade` does not reinstall a version older than the one Sparkle
 has applied in-place.
 
+**UPDATE-2.3** The release workflow shall extract only the base64
+signature value from `sign_update`'s stdout (which prints a full XML
+attribute fragment, `sparkle:edSignature="<sig>" length="<bytes>"`)
+before passing it to the appcast updater. Embedding the full fragment
+as the attribute value yields a Sparkle "improperly signed" error at
+install time.
+
+**UPDATE-2.4** The `appcast-updater` tool shall reject `--ed-signature`
+inputs that contain any character outside the base64 alphabet
+(`[A-Za-z0-9+/=]`), failing with a non-zero exit before the feed is
+written. This is defense-in-depth against the workflow regression
+described by `UPDATE-2.3`.
+
+**UPDATE-2.5** The release workflow shall render the GitHub release
+body (markdown) to HTML via the GitHub `/markdown` API (mode `gfm`,
+`context` set to the repository) before passing it to the appcast
+updater as the `<description>` body. Sparkle's release-notes view
+renders the description as HTML; passing raw markdown leaves users
+seeing literal `##` and `*` characters.
+
 ## 16. Keyboard Shortcuts
 
 **KBD-1.1** When the user presses a chord bound in their Ghostty config

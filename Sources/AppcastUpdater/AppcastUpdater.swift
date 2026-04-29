@@ -4,6 +4,30 @@ public enum AppcastUpdater {
 
     public enum Error: Swift.Error {
         case malformedXML(String)
+        case malformedSignature(String)
+    }
+
+    /// Sparkle's `sign_update` tool prints a full XML attribute fragment to
+    /// stdout (`sparkle:edSignature="<base64>" length="<bytes>"`). A naive
+    /// `signature=$(./sign_update ...)` capture in CI ends up embedding that
+    /// whole fragment as the attribute *value*, which Sparkle then rejects
+    /// at install time as "improperly signed". Real ed25519 signatures are
+    /// pure base64 — alphabet `[A-Za-z0-9+/=]`, no whitespace, no quotes —
+    /// so a strict alphabet check catches the mistake at the boundary
+    /// instead of silently corrupting the feed.
+    private static let base64Alphabet = CharacterSet(charactersIn:
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=")
+
+    public static func validate(edSignature: String) throws {
+        guard !edSignature.isEmpty else {
+            throw Error.malformedSignature("empty")
+        }
+        if let bad = edSignature.unicodeScalars.first(where: { !base64Alphabet.contains($0) }) {
+            throw Error.malformedSignature(
+                "contains non-base64 character \(String(reflecting: Character(bad))) — "
+                + "did you pass `sign_update`'s full stdout instead of just the signature?"
+            )
+        }
     }
 
     /// Prepend a new `<item>` for `item` to the given feed XML, or seed a

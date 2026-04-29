@@ -11,20 +11,22 @@
             <sparkle:shortVersionString>0.0.10</sparkle:shortVersionString>
             <pubDate>Wed, 29 Apr 2026 03:02:02 +0000</pubDate>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description><![CDATA[## What's Changed
-* appcast: v0.0.9 by @github-actions[bot] in https://github.com/btucker/graftty/pull/92
-* release: revert cask step to direct push (tap repo isn't protected) by @btucker in https://github.com/btucker/graftty/pull/93
-* fix(panes): override PATH so `graftty` resolves to the CLI (ATTN-4.2) by @btucker in https://github.com/btucker/graftty/pull/94
-* fix(pr-status): tighten poll cadence + cap backoff at 60s (PR-7.1, PR-7.2) by @btucker in https://github.com/btucker/graftty/pull/95
-* fix(sidebar): restore right-click menu on worktree rows (LAYOUT-2.7) by @btucker in https://github.com/btucker/graftty/pull/97
-* feat(worktree): non-blocking creation with placeholder + spinner (GIT-5.4..5.9) by @btucker in https://github.com/btucker/graftty/pull/96
-
-## New Contributors
-* @github-actions[bot] made their first contribution in https://github.com/btucker/graftty/pull/92
-
-**Full Changelog**: https://github.com/btucker/graftty/compare/v0.0.9...v0.0.10
+            <description><![CDATA[<h2>What's Changed</h2>
+<ul>
+<li>appcast: v0.0.9 by <a href="https://github.com/apps/github-actions">@github-actions[bot]</a> in <a href="https://github.com/btucker/graftty/pull/92">#92</a></li>
+<li>release: revert cask step to direct push (tap repo isn't protected) by <a href="https://github.com/btucker">@btucker</a> in <a href="https://github.com/btucker/graftty/pull/93">#93</a></li>
+<li>fix(panes): override PATH so <code>graftty</code> resolves to the CLI (ATTN-4.2) by <a href="https://github.com/btucker">@btucker</a> in <a href="https://github.com/btucker/graftty/pull/94">#94</a></li>
+<li>fix(pr-status): tighten poll cadence + cap backoff at 60s (PR-7.1, PR-7.2) by <a href="https://github.com/btucker">@btucker</a> in <a href="https://github.com/btucker/graftty/pull/95">#95</a></li>
+<li>fix(sidebar): restore right-click menu on worktree rows (LAYOUT-2.7) by <a href="https://github.com/btucker">@btucker</a> in <a href="https://github.com/btucker/graftty/pull/97">#97</a></li>
+<li>feat(worktree): non-blocking creation with placeholder + spinner (GIT-5.4..5.9) by <a href="https://github.com/btucker">@btucker</a> in <a href="https://github.com/btucker/graftty/pull/96">#96</a></li>
+</ul>
+<h2>New Contributors</h2>
+<ul>
+<li><a href="https://github.com/apps/github-actions">@github-actions[bot]</a> made their first contribution in <a href="https://github.com/btucker/graftty/pull/92">#92</a></li>
+</ul>
+<p><strong>Full Changelog</strong>: <a href="https://github.com/btucker/graftty/compare/v0.0.9...v0.0.10">v0.0.9...v0.0.10</a></p>
 ]]></description>
-            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.0.10/Graftty-0.0.10.zip" length="14891258" type="application/octet-stream" sparkle:edSignature="sparkle:edSignature=&quot;qYn9ipM5g/KhSRAuYoTNdOKSBd13wcUg4sEVPMjE+2zmdp0jTbjz3r/7EAq9IPm3Cb60Zin7wrKLEyRVdIIrCg==&quot; length=&quot;14891258&quot;"/>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.0.10/Graftty-0.0.10.zip" length="14891258" type="application/octet-stream" sparkle:edSignature="qYn9ipM5g/KhSRAuYoTNdOKSBd13wcUg4sEVPMjE+2zmdp0jTbjz3r/7EAq9IPm3Cb60Zin7wrKLEyRVdIIrCg=="/>
         </item>
         <item>
             <title>Version 0.0.9</title>
@@ -32,13 +34,13 @@
             <sparkle:shortVersionString>0.0.9</sparkle:shortVersionString>
             <pubDate>Tue, 28 Apr 2026 15:12:25 +0000</pubDate>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description>## What's Changed
-* release: open PR for appcast + cask bumps instead of direct push by @btucker in https://github.com/btucker/graftty/pull/91
-
-
-**Full Changelog**: https://github.com/btucker/graftty/compare/v0.0.8...v0.0.9
-</description>
-            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.0.9/Graftty-0.0.9.zip" length="14879347" type="application/octet-stream" sparkle:edSignature="sparkle:edSignature=&quot;7DgUHj/u+fzL1mECUwbOFSAkRfO9TxiYktFge4JASjiLOH65jw9idozqIBmzRe9EtoQwrFRMd5mCYa/HzY2UCQ==&quot; length=&quot;14879347&quot;"/>
+            <description><![CDATA[<h2>What's Changed</h2>
+<ul>
+<li>release: open PR for appcast + cask bumps instead of direct push by <a href="https://github.com/btucker">@btucker</a> in <a href="https://github.com/btucker/graftty/pull/91">#91</a></li>
+</ul>
+<p><strong>Full Changelog</strong>: <a href="https://github.com/btucker/graftty/compare/v0.0.8...v0.0.9">v0.0.8...v0.0.9</a></p>
+]]></description>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.0.9/Graftty-0.0.9.zip" length="14879347" type="application/octet-stream" sparkle:edSignature="7DgUHj/u+fzL1mECUwbOFSAkRfO9TxiYktFge4JASjiLOH65jw9idozqIBmzRe9EtoQwrFRMd5mCYa/HzY2UCQ=="/>
         </item>
     </channel>
 </rss>
