@@ -477,6 +477,17 @@ final class TerminalManager: ObservableObject {
         surfaces[terminalID]
     }
 
+    /// Update libghostty's occlusion flag for a surface. On un-occlude,
+    /// also force a full repaint — libghostty otherwise paints only the
+    /// dirty regions accumulated while hidden, which surfaces as a
+    /// partial-frame composite under TUI apps that re-render on every
+    /// event. TERM-2.5.
+    func setOccluded(_ occluded: Bool, for terminalID: TerminalID) {
+        guard let handle = surfaces[terminalID] else { return }
+        handle.setOccluded(occluded)
+        if !occluded { handle.refresh() }
+    }
+
     /// Returns the terminal's current text selection as a `String`, or
     /// `nil` when the surface is unknown or has no selection. Caps the
     /// UTF-8 copy at 4 KB since the only caller sanitizes+truncates to

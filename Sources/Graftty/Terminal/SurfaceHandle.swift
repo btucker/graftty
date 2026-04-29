@@ -229,23 +229,12 @@ final class SurfaceHandle {
         ghostty_surface_set_size(surface, width, height)
     }
 
-    /// Tell libghostty whether this surface is currently occluded
-    /// (offscreen or hidden by another tab/worktree). When occluded,
-    /// libghostty suspends the render loop so we don't burn CPU/GPU
-    /// painting frames the user can't see; when un-occluded, the
-    /// caller should follow up with `refresh()` to force a clean
-    /// repaint of current state.
+    /// Suspend libghostty's render loop while the surface is offscreen.
     func setOccluded(_ occluded: Bool) {
         ghostty_surface_set_occlusion(surface, occluded)
     }
 
-    /// Force libghostty to repaint the entire surface from scratch on
-    /// its next draw cycle. Used when we restore visibility to a
-    /// previously-occluded surface — without it, libghostty paints
-    /// only the dirty regions accumulated while hidden, which under
-    /// a TUI app like Claude Code (re-rendering on every event) shows
-    /// up as a jumbled composite of partial frames until something
-    /// else dirties the whole surface (a keystroke, a layout change).
+    /// Force a full repaint on libghostty's next draw cycle.
     func refresh() {
         ghostty_surface_refresh(surface)
     }

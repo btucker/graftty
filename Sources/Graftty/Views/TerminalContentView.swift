@@ -38,7 +38,7 @@ struct TerminalContentView: View {
 
     private func leafView(_ terminalID: TerminalID) -> AnyView {
         if let nsView = terminalManager.view(for: terminalID) {
-            let manager = terminalManager
+            let tm = terminalManager
             return AnyView(
                 SurfaceViewWrapper(nsView: nsView)
                     // Force a distinct SwiftUI identity per terminal. Without
@@ -55,24 +55,8 @@ struct TerminalContentView: View {
                     .onTapGesture {
                         onFocusTerminal(terminalID)
                     }
-                    // Toggle libghostty's occlusion flag on SwiftUI lifecycle:
-                    // worktree switches mount/unmount these wrappers (the
-                    // underlying SurfaceHandle persists in TerminalManager).
-                    // Pre-fix, libghostty kept dirty-region updates queued
-                    // while hidden and on re-show painted only those — under
-                    // TUI apps re-rendering constantly (Claude Code), this
-                    // showed as a jumbled composite of partial frames until
-                    // a keystroke marked the surface fully dirty. Refreshing
-                    // on appear forces a clean full repaint of current state.
-                    .onAppear {
-                        if let handle = manager.handle(for: terminalID) {
-                            handle.setOccluded(false)
-                            handle.refresh()
-                        }
-                    }
-                    .onDisappear {
-                        manager.handle(for: terminalID)?.setOccluded(true)
-                    }
+                    .onAppear { tm.setOccluded(false, for: terminalID) }
+                    .onDisappear { tm.setOccluded(true, for: terminalID) }
             )
         } else {
             return AnyView(
