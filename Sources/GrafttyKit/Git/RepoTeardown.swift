@@ -15,7 +15,8 @@ public enum RepoTeardown {
         repo: RepoEntry,
         worktreeMonitor: WorktreeMonitor,
         statsStore: WorktreeStatsStore,
-        prStatusStore: PRStatusStore
+        prStatusStore: PRStatusStore,
+        remoteBranchStore: RemoteBranchStore? = nil
     ) {
         worktreeMonitor.stopWatching(repoPath: repo.path)
         for wt in repo.worktrees {
@@ -23,5 +24,6 @@ public enum RepoTeardown {
             prStatusStore.clear(worktreePath: wt.path)
             statsStore.clear(worktreePath: wt.path)
         }
+        remoteBranchStore?.clear(repoPath: repo.path)
     }
 }

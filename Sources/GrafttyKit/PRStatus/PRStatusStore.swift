@@ -12,6 +12,7 @@ public final class PRStatusStore {
     @ObservationIgnored private let executor: CLIExecutor
     @ObservationIgnored private let fetcherFor: (HostingProvider) -> PRFetcher?
     @ObservationIgnored private let detectHost: @Sendable (String) async throws -> HostingOrigin?
+    @ObservationIgnored private let remoteBranchStore: RemoteBranchStore?
     @ObservationIgnored private var hostByRepo: [String: HostingOrigin?] = [:]
     /// Per-path timestamp of the most recently dispatched fetch. Stored
     /// as a date rather than a bare Set so a hung prior Task (a `gh pr
@@ -55,9 +56,11 @@ public final class PRStatusStore {
     public init(
         executor: CLIExecutor = CLIRunner(),
         fetcherFor: ((HostingProvider) -> PRFetcher?)? = nil,
-        detectHost: (@Sendable (String) async throws -> HostingOrigin?)? = nil
+        detectHost: (@Sendable (String) async throws -> HostingOrigin?)? = nil,
+        remoteBranchStore: RemoteBranchStore? = nil
     ) {
         self.executor = executor
+        self.remoteBranchStore = remoteBranchStore
         if let fetcherFor {
             self.fetcherFor = fetcherFor
         } else {
@@ -90,6 +93,10 @@ public final class PRStatusStore {
     /// late write is dropped if it ever returns.
     public func refresh(worktreePath: String, repoPath: String, branch: String) {
         guard Self.isFetchableBranch(branch) else { return }
+        guard hasRemoteBranch(repoPath: repoPath, branch: branch) else {
+            markLocallyUnpushed(worktreePath)
+            return
+        }
         let now = Date()
         let cap = Double(Self.refreshCadence().components.seconds)
         if let started = inFlight[worktreePath],
@@ -270,6 +277,34 @@ public final class PRStatusStore {
         }
     }
 
+    private func markLocallyUnpushed(_ worktreePath: String) {
+        var invalidatedInFlight = false
+
+        if infos[worktreePath] != nil {
+            infos.removeValue(forKey: worktreePath)
+        }
+        if absent.contains(worktreePath) {
+            absent.remove(worktreePath)
+        }
+        lastFetch.removeValue(forKey: worktreePath)
+        failureStreak.removeValue(forKey: worktreePath)
+        if inFlight.removeValue(forKey: worktreePath) != nil {
+            invalidatedInFlight = true
+        }
+        if invalidatedInFlight {
+            generation[worktreePath, default: 0] += 1
+        }
+    }
+
+    private func hasRemoteBranch(repoPath: String, branch: String) -> Bool {
+        guard let remoteBranchStore else { return true }
+        return remoteBranchStore.hasRemote(repoPath: repoPath, branch: branch)
+    }
+
+    private func hasRemoteBranch(for worktree: WorktreeEntry, repoPath: String) -> Bool {
+        hasRemoteBranch(repoPath: repoPath, branch: worktree.branch)
+    }
+
     private func detectAndFireTransitions(
         worktreePath: String,
         previous: PRInfo?,
@@ -440,6 +475,11 @@ extension PRStatusStore {
                 continue
             }
             for wt in repo.worktrees where wt.state.hasOnDiskWorktree {
+                if !Self.isFetchableBranch(wt.branch) { continue }
+                guard hasRemoteBranch(for: wt, repoPath: repo.path) else {
+                    markLocallyUnpushed(wt.path)
+                    continue
+                }
                 // `PR-7.13` time-bounded in-flight check: defer to a
                 // prior dispatch only while it's plausibly still
                 // running. Past the cap it's treated as abandoned and
@@ -448,7 +488,6 @@ extension PRStatusStore {
                    now.timeIntervalSince(started) < inFlightCap {
                     continue
                 }
-                if !Self.isFetchableBranch(wt.branch) { continue }
                 let interval = cadence(for: wt.path)
                 let last = lastFetch[wt.path]
                 if let last, now.timeIntervalSince(last) < Double(interval.components.seconds) {
