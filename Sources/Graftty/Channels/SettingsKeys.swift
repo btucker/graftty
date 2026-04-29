@@ -8,4 +8,7 @@ enum SettingsKeys {
     static let teamSessionPrompt         = "teamSessionPrompt"
     static let teamPrompt                = "teamPrompt"
     static let defaultCommand            = "defaultCommand"
+    static let editorKind                = "editorKind"          // "" | "app" | "cli"
+    static let editorAppBundleID         = "editorAppBundleID"
+    static let editorCliCommand          = "editorCliCommand"
 }
