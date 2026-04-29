@@ -12,6 +12,7 @@ final class AppServices {
     let channelSettingsObserver: ChannelSettingsObserver
     let worktreeMonitor: WorktreeMonitor
     let statsStore: WorktreeStatsStore
+    let remoteBranchStore: RemoteBranchStore
     let prStatusStore: PRStatusStore
     var worktreeMonitorBridge: WorktreeMonitorBridge?
     /// Provides the current AppState for the team PR-merged dispatch hook.
@@ -52,7 +53,9 @@ final class AppServices {
 
         self.worktreeMonitor = WorktreeMonitor()
         self.statsStore = WorktreeStatsStore()
-        self.prStatusStore = PRStatusStore()
+        let remoteBranchStore = RemoteBranchStore()
+        self.remoteBranchStore = remoteBranchStore
+        self.prStatusStore = PRStatusStore(remoteBranchStore: remoteBranchStore)
 
         // Route PRStatusStore transitions into ChannelRouter. Captured weakly
         // so AppServices can own both without a retain cycle.
@@ -548,6 +551,22 @@ struct GrafttyApp: App {
             }
         }
 
+        let remoteBranchStore = services.remoteBranchStore
+        let prStatusStore = services.prStatusStore
+        remoteBranchStore.onChange = { repoPath, old, new in
+            guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }) else { return }
+
+            for wt in repo.worktrees where wt.state.hasOnDiskWorktree {
+                if old.contains(wt.branch) && !new.contains(wt.branch) {
+                    prStatusStore.clear(worktreePath: wt.path)
+                }
+            }
+
+            if !new.subtracting(old).isEmpty {
+                prStatusStore.pulse()
+            }
+        }
+
         let bridge = WorktreeMonitorBridge(
             appState: $appState,
             statsStore: services.statsStore,
@@ -577,6 +596,22 @@ struct GrafttyApp: App {
             ticker: statsTicker,
             getRepos: { [appState] in appState.repos }
         )
+
+        // Local remote-ref scans are cheap (`git for-each-ref`) and seed
+        // PR polling's pushed-branch gate. The immediate refresh plus
+        // onChange pulse above prevents an empty startup cache from
+        // suppressing initial PR checks until the next normal PR cadence.
+        let remoteBranchTicker = PollingTicker(
+            interval: .seconds(10),
+            pauseWhenInactive: { false }
+        )
+        services.remoteBranchStore.start(
+            ticker: remoteBranchTicker,
+            getRepos: { binding.wrappedValue.repos }
+        )
+        for repo in binding.wrappedValue.repos {
+            services.remoteBranchStore.refresh(repoPath: repo.path)
+        }
 
         // Same reasoning for the PR poller: open→merged transitions
         // happen on GitHub while Graftty is backgrounded, and the only
@@ -708,12 +743,18 @@ struct GrafttyApp: App {
         // gets a chance to reap cleanly before NSApplication pulls the
         // rug out.
         let controller = webController
+        let appServices = services
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
             queue: .main
         ) { _ in
-            MainActor.assumeIsolated { controller.stop() }
+            MainActor.assumeIsolated {
+                appServices.remoteBranchStore.stop()
+                appServices.prStatusStore.stop()
+                appServices.statsStore.stop()
+                controller.stop()
+            }
         }
     }
 
