@@ -6,10 +6,10 @@ import Foundation
 struct PRStatusStoreCadenceTests {
     let url = URL(string: "https://github.com/x/y/pull/1")!
 
-    @Test func pendingOpenIs30s() {
+    @Test func pendingOpenIs10s() {
         let info = PRInfo(number: 1, title: "x", url: url, state: .open, checks: .pending, fetchedAt: Date())
         let d = PRStatusStore.cadenceFor(info: info, isAbsent: false, failureStreak: 0)
-        #expect(d == .seconds(30))
+        #expect(d == .seconds(10))
     }
 
     @Test func stableOpenIs30s() {
@@ -34,25 +34,31 @@ struct PRStatusStoreCadenceTests {
         #expect(d == .zero)
     }
 
-    @Test func backoffDoublesCadence() {
-        let info = PRInfo(number: 1, title: "x", url: url, state: .open, checks: .success, fetchedAt: Date())
-        // base=30s, 30 * 2^streak, capped at 30min.
-        let d1 = PRStatusStore.cadenceFor(info: info, isAbsent: false, failureStreak: 1)
-        #expect(d1 == .seconds(60))
-        let d2 = PRStatusStore.cadenceFor(info: info, isAbsent: false, failureStreak: 2)
-        #expect(d2 == .seconds(120))
-        let d5 = PRStatusStore.cadenceFor(info: info, isAbsent: false, failureStreak: 5)
-        #expect(d5 == .seconds(30 * 32))
+    /// Pending CI is the cadence-tightening tier — every 10s so a green/red
+    /// transition lands in the breadcrumb within one polling window. Backoff
+    /// still doubles on failure, but it doubles from the 10s base, not 30s.
+    @Test func pendingChecksBackoffStartsAtTenSeconds() {
+        let info = PRInfo(number: 1, title: "x", url: url, state: .open, checks: .pending, fetchedAt: Date())
+        #expect(PRStatusStore.cadenceFor(info: info, isAbsent: false, failureStreak: 1) == .seconds(20))
+        #expect(PRStatusStore.cadenceFor(info: info, isAbsent: false, failureStreak: 2) == .seconds(40))
     }
 
-    @Test func backoffMaxesOutAtShift5() {
-        // With a 30s base and maxShift=5 (2^5 = 32), failure cadence tops
-        // out at 960s, below the 30-min cap — so the cap is only reachable
-        // via the unknown-state fallback (covered in
-        // `unknownWithFailureStreakBacksOff`).
+    /// `PR-7.2`: the cap is 60s — a run of transient `gh` failures cannot
+    /// push the next poll beyond a minute. Prior cap was 30 minutes, which
+    /// produced silent staleness because `PR-7.10` preserves the cached
+    /// info on failure and the user can't see that the schedule has
+    /// drifted out.
+    @Test func backoffCapsAtOneMinute() {
         let info = PRInfo(number: 1, title: "x", url: url, state: .open, checks: .success, fetchedAt: Date())
-        let d = PRStatusStore.cadenceFor(info: info, isAbsent: false, failureStreak: 20)
-        #expect(d == .seconds(30 * 32))
+        // 30s × 2 = 60s (already at cap).
+        #expect(PRStatusStore.cadenceFor(info: info, isAbsent: false, failureStreak: 1) == .seconds(60))
+        // Higher streaks stay clamped.
+        #expect(PRStatusStore.cadenceFor(info: info, isAbsent: false, failureStreak: 5) == .seconds(60))
+        #expect(PRStatusStore.cadenceFor(info: info, isAbsent: false, failureStreak: 20) == .seconds(60))
+        // Pending tier hits the cap at streak ≥ 3 (10 × 8 = 80 > 60).
+        let pending = PRInfo(number: 1, title: "x", url: url, state: .open, checks: .pending, fetchedAt: Date())
+        #expect(PRStatusStore.cadenceFor(info: pending, isAbsent: false, failureStreak: 3) == .seconds(60))
+        #expect(PRStatusStore.cadenceFor(info: pending, isAbsent: false, failureStreak: 20) == .seconds(60))
     }
 
     /// When a fetch fails before the store knows whether a PR exists (e.g.
@@ -64,8 +70,8 @@ struct PRStatusStoreCadenceTests {
         #expect(d1 >= .seconds(60))
         let d3 = PRStatusStore.cadenceFor(info: nil, isAbsent: false, failureStreak: 3)
         #expect(d3 >= .seconds(60))
-        // And eventually caps like any other back-off path.
+        // And caps at 60s like every other failure path.
         let dMany = PRStatusStore.cadenceFor(info: nil, isAbsent: false, failureStreak: 20)
-        #expect(dMany == .seconds(30 * 60))
+        #expect(dMany == .seconds(60))
     }
 }

@@ -693,6 +693,7 @@ struct GrafttyApp: App {
                 switch err {
                 case .gitFailed(let msg): return .gitFailed(msg)
                 case .repoNotFound: return .invalid("repository not tracked")
+                case .pathCollision: return .invalid("a worktree at that name already exists")
                 case .discoveryFailed(let msg): return .internalFailure(msg)
                 }
             }
@@ -1008,7 +1009,7 @@ struct GrafttyApp: App {
                 // Kick initial stats refresh for non-stale worktrees after
                 // reconciliation. Preserves the pre-migration "reconcile,
                 // then refresh" ordering without blocking startup.
-                for wt in binding.wrappedValue.repos[repoIdx].worktrees where wt.state != .stale {
+                for wt in binding.wrappedValue.repos[repoIdx].worktrees where wt.state.hasOnDiskWorktree {
                     statsStore.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
                 }
             }
@@ -1016,6 +1017,7 @@ struct GrafttyApp: App {
     }
 
     private func restoreRunningWorktrees() {
+        let selectedPath = appState.selectedWorktreePath
         for repoIdx in appState.repos.indices {
             for wtIdx in appState.repos[repoIdx].worktrees.indices {
                 let wt = appState.repos[repoIdx].worktrees[wtIdx]
@@ -1034,6 +1036,7 @@ struct GrafttyApp: App {
                     for leafID in appState.repos[repoIdx].worktrees[wtIdx].splitTree.allLeaves {
                         terminalManager.markRehydrated(leafID)
                     }
+                    guard wt.path == selectedPath else { continue }
                     _ = terminalManager.createSurfaces(
                         for: appState.repos[repoIdx].worktrees[wtIdx].splitTree,
                         worktreePath: wt.path
@@ -2137,7 +2140,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             // is how newly-discovered worktrees (external `git worktree
             // add`) start getting HEAD + working-tree tracking without an
             // app restart. Includes resurrected entries.
-            for wt in binding.wrappedValue.repos[repoIdx].worktrees where wt.state != .stale {
+            for wt in binding.wrappedValue.repos[repoIdx].worktrees where wt.state.hasOnDiskWorktree {
                 monitor.watchWorktreePath(wt.path)
                 monitor.watchHeadRef(worktreePath: wt.path, repoPath: repoPath)
                 monitor.watchWorktreeContents(worktreePath: wt.path)
@@ -2227,7 +2230,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         let statsStore = statsStore
         Task { @MainActor in
             guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }) else { return }
-            for wt in repo.worktrees where wt.state != .stale {
+            for wt in repo.worktrees where wt.state.hasOnDiskWorktree {
                 // Origin-ref movement can shift every worktree's ahead /
                 // behind counts vs. origin/<default>, not just the PR
                 // state — e.g. a local `git fetch` in another terminal

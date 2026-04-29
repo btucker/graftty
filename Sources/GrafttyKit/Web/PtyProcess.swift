@@ -52,7 +52,8 @@ public enum PtyProcess {
     public static func spawn(
         argv: [String],
         env: [String: String],
-        initialSize: (cols: UInt16, rows: UInt16)? = nil
+        initialSize: (cols: UInt16, rows: UInt16)? = nil,
+        resetSignalMask: Bool = true
     ) throws -> Spawned {
         precondition(!argv.isEmpty, "argv must not be empty")
 
@@ -160,13 +161,14 @@ public enum PtyProcess {
             var spawnAttrs: posix_spawnattr_t?
             guard posix_spawnattr_init(&spawnAttrs) == 0 else { _exit(127) }
 
-            var emptyMask = sigset_t()
-            sigemptyset(&emptyMask)
-            _ = posix_spawnattr_setsigmask(&spawnAttrs, &emptyMask)
-            _ = posix_spawnattr_setflags(
-                &spawnAttrs,
-                Int16(POSIX_SPAWN_SETEXEC | POSIX_SPAWN_SETSIGMASK)
-            )
+            var flags = POSIX_SPAWN_SETEXEC
+            if resetSignalMask {
+                var emptyMask = sigset_t()
+                sigemptyset(&emptyMask)
+                _ = posix_spawnattr_setsigmask(&spawnAttrs, &emptyMask)
+                flags |= POSIX_SPAWN_SETSIGMASK
+            }
+            _ = posix_spawnattr_setflags(&spawnAttrs, Int16(flags))
 
             var spawnedPid: pid_t = 0
             _ = argvPointers.withUnsafeMutableBufferPointer { argvBuf in

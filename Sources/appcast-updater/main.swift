@@ -79,6 +79,14 @@ guard let feed = args.feed,
     fail("required: --feed --version --download-url --length --ed-signature")
 }
 
+do {
+    try AppcastUpdater.validate(edSignature: signature)
+} catch AppcastUpdater.Error.malformedSignature(let why) {
+    fail("--ed-signature: \(why)")
+} catch {
+    fail("--ed-signature: \(error)")
+}
+
 // Distinguish "feed doesn't exist yet" (seed a fresh one) from "feed
 // exists but can't be read" (fail — writing back would wipe prior
 // entries). A permissions hiccup in CI should not cause the first

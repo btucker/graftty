@@ -145,7 +145,7 @@ struct WorktreeRow: View {
             }
             Spacer()
             WorktreeRowGutter(
-                stats: entry.state == .stale ? nil : stats,
+                stats: entry.state.hasOnDiskWorktree ? stats : nil,
                 baseRef: baseRef,
                 theme: theme
             )
@@ -160,21 +160,31 @@ struct WorktreeRow: View {
     /// linked worktrees, and `arrow.triangle.pull` once a PR/MR is
     /// associated with the worktree. The icon's color encodes the
     /// worktree's running state: dim foreground when closed, green when
-    /// running, yellow when stale.
+    /// running, yellow when stale. While the entry is in `.creating` —
+    /// the optimistic placeholder shown between the user's submit and
+    /// `git worktree add` returning — a small `ProgressView` replaces the
+    /// icon so the user sees that work is in flight rather than a static
+    /// row that looks identical to a finished one.
     @ViewBuilder
     private var typeIcon: some View {
-        Image(systemName: WorktreeRowIcon.symbolName(
-            isMainCheckout: isMainCheckout,
-            hasPR: prBadge != nil
-        ))
-            .font(.system(size: 10))
-            .foregroundColor(typeIconColor)
-            .frame(width: 12)
+        if entry.state == .creating {
+            ProgressView()
+                .controlSize(.mini)
+                .frame(width: 12)
+        } else {
+            Image(systemName: WorktreeRowIcon.symbolName(
+                isMainCheckout: isMainCheckout,
+                hasPR: prBadge != nil
+            ))
+                .font(.system(size: 10))
+                .foregroundColor(typeIconColor)
+                .frame(width: 12)
+        }
     }
 
     private var typeIconColor: Color {
         switch entry.state {
-        case .closed: return theme.foreground.opacity(0.6)
+        case .closed, .creating: return theme.foreground.opacity(0.6)
         case .running: return .green
         case .stale: return .yellow
         }

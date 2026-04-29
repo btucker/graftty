@@ -477,6 +477,21 @@ final class TerminalManager: ObservableObject {
         surfaces[terminalID]
     }
 
+    /// Tell libghostty whether a surface is currently visible. On visible,
+    /// force a repaint so a re-shown pane presents a clean full frame.
+    func setVisible(_ visible: Bool, for terminalID: TerminalID) {
+        guard let handle = surfaces[terminalID] else { return }
+        handle.setVisible(visible)
+        if visible {
+            handle.refresh()
+        }
+    }
+
+    /// Force a full repaint for a visible or soon-to-be-visible surface.
+    func refreshSurface(for terminalID: TerminalID) {
+        surfaces[terminalID]?.refresh()
+    }
+
     /// Returns the terminal's current text selection as a `String`, or
     /// `nil` when the surface is unknown or has no selection. Caps the
     /// UTF-8 copy at 4 KB since the only caller sanitizes+truncates to
@@ -500,6 +515,10 @@ final class TerminalManager: ObservableObject {
     /// Focus exactly one surface (by ID); unfocus the rest.
     func setFocus(_ terminalID: TerminalID) {
         for (id, handle) in surfaces {
+            if id == terminalID {
+                handle.setVisible(true)
+                handle.refresh()
+            }
             handle.setFocus(id == terminalID)
         }
     }

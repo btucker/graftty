@@ -37,7 +37,18 @@ public enum WorktreeReconciler {
         for wt in existing {
             var copy = wt
             if !discoveredPaths.contains(wt.path) {
-                if wt.state != .stale {
+                // `.creating` placeholders inserted by `AddWorktreeFlow`
+                // can race with this reconcile when FSEvents on
+                // `.git/worktrees/` fires *before* git finishes writing
+                // the admin dir (or hasn't even gotten there yet — git's
+                // pre-commit/post-checkout hooks may take seconds). The
+                // placeholder isn't on disk yet, so a naive transition
+                // would briefly flip our spinning row to `.stale`.
+                // `AddWorktreeFlow` owns the placeholder's lifecycle —
+                // skip the stale transition for those entries and let
+                // the flow promote them to `.running` (or remove them
+                // outright on git failure).
+                if wt.state != .stale && wt.state != .creating {
                     copy.state = .stale
                     newlyStale.append(copy)
                 }

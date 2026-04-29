@@ -156,6 +156,10 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **TERM-2.4** When the user clicks directly on a terminal pane's view (independent of the sidebar pane-row), the application shall persist that pane as the worktree's last-focused pane in the same model field that `TERM-2.3` reads on return. A visual-only focus change (libghostty / NSView side) without a matching model update would let focus snap back to the first leaf on the next return visit.
 
+**TERM-2.5** When the selected worktree changes, the application shall call `ghostty_surface_set_occlusion(surface, false)` for surfaces in the old selected worktree and `ghostty_surface_set_occlusion(surface, true)` followed by `ghostty_surface_refresh(surface)` for surfaces in the newly selected worktree. The boolean passed to `ghostty_surface_set_occlusion` is Ghostty's `visible` flag, not an `occluded` flag. When a terminal pane's `SurfaceViewWrapper` is mounted, focused, resized, or receives keyboard input, the application shall also mark the surface visible and refresh it so libghostty performs a full clean repaint of the current state. The application shall not derive hidden state directly from SwiftUI `.onDisappear`, because transient unmount/remount callbacks can race with focus and attach.
+
+**TERM-2.6** On application restart, persisted `.running` worktrees shall be marked as rehydrated but only the currently-selected worktree shall immediately recreate libghostty surfaces and run `zmx attach`. Other running worktrees shall attach lazily when selected. This keeps hidden panes from rendering or reattaching while they are not displayed, and prevents a large saved workspace from delaying input in the pane the user is actually returning to.
+
 ### 3.3 Splitting
 
 **TERM-3.1** When the user triggers a horizontal split, the application shall insert a new terminal pane to the right of the focused pane with a 50/50 ratio.
@@ -345,6 +349,18 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 **GIT-5.2** While the branch field is still mirroring the worktree name (i.e. the user has not manually diverged the branch field), the sanitized worktree name shall be propagated into the branch field on each edit so both fields stay in sync.
 
 **GIT-5.3** When the user submits the Add Worktree sheet, the application shall additionally strip leading and trailing `-`, `.`, and whitespace from both values before invoking `git worktree add`. Live editing intentionally preserves those characters (trimming them as-you-type would swallow the separator between words); the final submit trim ensures no request ever asks git to create `-foo` or `foo.` as a branch.
+
+**GIT-5.4** When the user submits the Add Worktree sheet and validation passes (the target repository is still tracked and no entry already exists at `<repoPath>/.worktrees/<name>`), the application shall (a) insert a placeholder `WorktreeEntry` for the target path in the `.creating` state, (b) dismiss the sheet immediately, and (c) run `git worktree add` in a detached `Task` so a slow git invocation — typically blocked on `pre-commit` / `post-checkout` hooks that can take seconds — does not hold the sheet open. Without this, the sheet's `ProgressView` would block all sidebar interaction for the duration of the hook chain.
+
+**GIT-5.5** While a worktree entry is in the `.creating` state, the sidebar row shall render a `ProgressView` in place of its type icon (`house` / `arrow.triangle.branch` / `arrow.triangle.pull`), shall suppress the divergence-stats gutter (no on-disk repo to diff against), shall hide pane title rows beneath it (no surfaces exist yet), and shall present an empty right-click context menu (Stop, Delete Worktree, Open in Finder would all either error or race the in-flight create). A click on the row shall be a no-op for selection purposes — the user keeps their previous worktree focused — until the placeholder transitions out of `.creating`.
+
+**GIT-5.6** When `git worktree add` started by `GIT-5.4` succeeds, the application shall (a) adopt git's resolved branch label onto the placeholder, (b) arm the path / HEAD-reflog / content watchers and seed divergence stats for the new path, (c) spawn the first terminal surface, (d) transition the entry from `.creating` to `.running`, and (e) flip `selectedWorktreePath` to the new worktree so the user ends up focused on it (matching the pre-optimistic flow's "submit → ends up on new worktree" outcome).
+
+**GIT-5.7** When `git worktree add` started by `GIT-5.4` fails, the application shall (a) remove the `.creating` placeholder from the sidebar and (b) present an `NSAlert` titled "Could not create worktree" whose informative text shows git's stderr (or "git worktree add failed" when stderr is empty). Inline error display in the sheet is no longer reachable since `GIT-5.4` already dismissed the sheet on submit. Mirrors `GIT-1.2` / `GIT-4.4` / `GIT-4.11`'s alert-not-silent-return policy on the symmetric create path.
+
+**GIT-5.8** While a worktree entry is in the `.creating` state, the reconciler (`WorktreeReconciler.reconcile`) shall not transition the entry to `.stale` even when the path is absent from `git worktree list --porcelain` output. The placeholder is in flight by definition — git hasn't finished writing its admin entry yet — and only `AddWorktreeFlow` is permitted to clear the placeholder (success → `.running`, failure → remove). Without this guard, an FSEvents tick on `.git/worktrees/` that fires before git's admin write completes (or one driven by an unrelated change in another worktree) would briefly flash the spinning placeholder to `.stale`.
+
+**GIT-5.9** When persisting `WorktreeEntry` to `state.json`, the application shall encode `.creating` as `.closed`. The `.creating` state is in-memory-only; if the app crashes mid-creation, the next launch's reconciler classifies the entry from `git worktree list --porcelain` rather than restoring a phantom spinner that would never resolve.
 
 ## 5. Attention Notification System
 
@@ -710,6 +726,10 @@ The sweep runs once at `GrafttyApp.init()`. `ZmxLauncher.subprocessEnv` addition
 
 **ZMX-8.1** The Settings → General pane shall expose a "Restart ZMX…" button that, after user confirmation, tears down every running pane across every worktree — invoking the same `destroySurface` / `zmx kill --force` path as per-worktree Stop (`TERM-1.2` / `ZMX-4.3`) — and then marks each affected worktree `.closed` via `prepareForStop` (`STATE-2.11`), preserving each worktree's `splitTree` and `focusedTerminalID` so re-opening recreates the same layout at the same leaf IDs under freshly-spawned zmx daemons. The confirmation alert (`NSAlert` with `.warning` style) shall name the destructive consequence explicitly — how many sessions across how many worktrees will end, with a "Any unsaved work in those sessions will be lost" warning (pluralization per `ZmxRestartConfirmation.informativeText`) — and shall offer "Restart ZMX" and "Cancel" buttons with Cancel as the default dismissal. If no worktrees are running at click time, the alert shall state that the action will have no effect rather than silently no-op.
 
+### 13.9 Idle Resize
+
+**ZMX-9.1** The bundled `zmx attach` client shall forward PTY resize events while idle, without requiring a later keystroke or daemon output to wake its poll loop. This protects restored or lazily reattached panes: when Graftty resizes the outer PTY as a pane comes into view, the daemon's inner PTY must receive the new grid immediately so full-screen programs such as Claude Code, vim, and htop repaint at the visible pane size before user input.
+
 ## 14. Distribution
 
 ### 14.1 Build Bundle
@@ -924,6 +944,26 @@ entry to `appcast.xml` on `main`, and commit that change with the
 `brew upgrade` does not reinstall a version older than the one Sparkle
 has applied in-place.
 
+**UPDATE-2.3** The release workflow shall extract only the base64
+signature value from `sign_update`'s stdout (which prints a full XML
+attribute fragment, `sparkle:edSignature="<sig>" length="<bytes>"`)
+before passing it to the appcast updater. Embedding the full fragment
+as the attribute value yields a Sparkle "improperly signed" error at
+install time.
+
+**UPDATE-2.4** The `appcast-updater` tool shall reject `--ed-signature`
+inputs that contain any character outside the base64 alphabet
+(`[A-Za-z0-9+/=]`), failing with a non-zero exit before the feed is
+written. This is defense-in-depth against the workflow regression
+described by `UPDATE-2.3`.
+
+**UPDATE-2.5** The release workflow shall render the GitHub release
+body (markdown) to HTML via the GitHub `/markdown` API (mode `gfm`,
+`context` set to the repository) before passing it to the appcast
+updater as the `<description>` body. Sparkle's release-notes view
+renders the description as HTML; passing raw markdown leaves users
+seeing literal `##` and `*` characters.
+
 ## 16. Keyboard Shortcuts
 
 **KBD-1.1** When the user presses a chord bound in their Ghostty config
@@ -1059,9 +1099,9 @@ shall surface an actionable alert rather than silently continue.
 
 ### 17.7 Polling Cadence and Backoff
 
-**PR-7.1** The application shall poll a worktree's PR status on a base cadence of 30 seconds whenever a PR is known (open or merged) or the worktree has been observed to have no associated PR (absent). A faster or tiered cadence is not applied, because `watchOriginRefs` (per GIT-2.5) catches local push/fetch but is blind to a merge landing on the hosting provider without a local `git fetch` — polling is therefore the sole detection channel for that event, and a slower cadence directly surfaces as user-visible staleness in the sidebar badge and breadcrumb PR button.
+**PR-7.1** The application shall poll a worktree's PR status on a tiered cadence: 10 seconds while the PR's checks are `.pending`, and 30 seconds otherwise — a known PR with non-pending checks (open passing/failing, or merged), or a worktree observed to have no associated PR (absent). The pending-tier tightening exists because users are actively watching CI for the green/red transition and the 30-second baseline produces visible "I just pushed, why hasn't it gone green yet" staleness during a CI run. The 30-second baseline applies elsewhere because polling is the sole detection channel for an open→merged transition that lands on the hosting provider without a local `git fetch` (`watchOriginRefs` per GIT-2.5 catches local push/fetch but is blind to remote-only events), and a slower cadence directly surfaces as user-visible staleness in the sidebar badge and breadcrumb PR button.
 
-**PR-7.2** When a fetch for a worktree fails, the application shall apply exponential backoff to its cadence: the base interval (or 60s if the base is zero) shall be doubled for each consecutive failure up to a shift of 5 (32×), capped at 30 minutes.
+**PR-7.2** When a fetch for a worktree fails, the application shall apply exponential backoff to its cadence: the base interval (or 60s if the base is zero) shall be doubled for each consecutive failure up to a shift of 5, capped at 60 seconds. The cap is intentionally tight because `PR-7.10` preserves the last-known `PRInfo` on failure — without a tight cap, a run of transient `gh` failures would silently freeze the breadcrumb on data that has drifted minutes-to-hours out of date with no visual cue, since the cached info looks settled and confident even though its scheduled refresh has been pushed far into the future.
 
 **PR-7.3** The application shall not poll worktrees whose branch is a git sentinel value (`(detached)`, `(bare)`, `(unknown)`, any other parenthesized value, or empty / whitespace-only), since none of these correspond to a real ref that a hosting provider can associate with a PR.
 
@@ -1069,9 +1109,9 @@ shall surface an actionable alert rather than silently continue.
 
 **PR-7.5** `PRStatusStore.refresh` and `PRStatusStore.branchDidChange` shall also apply the `PR-7.3` sentinel-branch gate, not just the background polling loop. Otherwise an on-demand refresh (sidebar selection, HEAD-change event) against a detached / bare / unknown worktree still fires two wasted `gh pr list --head <sentinel>` invocations per event — the gate belongs at the fetch entry point, not duplicated at every caller.
 
-**PR-7.12** When the user selects a worktree in the sidebar, the application shall call `PRStatusStore.refresh` for that worktree, bypassing the `PR-7.2` cadence backoff. Rationale: a run of transient `gh` failures can push the next scheduled poll out to the 30-minute cap, during which a real state change (e.g., the PR getting merged) stays invisible in the breadcrumb. Sidebar selection is a strong "user cares about this worktree now" signal, and the existing `refresh` path already short-circuits cadence and resets `failureStreak` on success — wiring it to selection closes the stale-UI escape hatch without any new mechanism.
+**PR-7.12** When the user selects a worktree in the sidebar, the application shall call `PRStatusStore.refresh` for that worktree, bypassing the `PR-7.2` cadence backoff. Rationale: even with the `PR-7.2` 60-second cap, a worst-case 60-second wait for a freshly-merged PR to appear in the breadcrumb is longer than the click-to-feedback loop a user expects on selection. Sidebar selection is a strong "user cares about this worktree now" signal, and the existing `refresh` path already short-circuits cadence and resets `failureStreak` on success — wiring it to selection closes the stale-UI escape hatch without any new mechanism.
 
-**PR-7.6** The PR polling ticker shall continue to fire while Graftty is not the frontmost application. `gh pr list` is the only detection channel for an open→merged transition that happens on GitHub without a local `git fetch`; pausing while the app is backgrounded leaves the sidebar's PR badge stuck on "open" until the user clicks back into Graftty, even though the merge may have happened many minutes earlier. The cost (one `gh pr list` per worktree every 30s) is negligible compared to the staleness it would otherwise produce.
+**PR-7.6** The PR polling ticker shall continue to fire while Graftty is not the frontmost application. `gh pr list` is the only detection channel for an open→merged transition that happens on GitHub without a local `git fetch`; pausing while the app is backgrounded leaves the sidebar's PR badge stuck on "open" until the user clicks back into Graftty, even though the merge may have happened many minutes earlier. The cost (one `gh pr list` per worktree every 10–30 seconds depending on the `PR-7.1` tier) is negligible compared to the staleness it would otherwise produce.
 
 **PR-7.9** When `PRStatusStore.refresh` schedules a fetch, it shall snapshot the worktree's per-path generation counter synchronously at scheduling time (not inside the spawned Task). A subsequent `branchDidChange` between the original `refresh` and when its spawned Task actually starts running would otherwise let the stale Task snapshot the post-bump generation and pass its post-await check — allowing the prior branch's still-in-flight fetch to write over the new branch's freshly-landed result when the network returns them out of order.
 
@@ -1079,9 +1119,9 @@ shall surface an actionable alert rather than silently continue.
 
 **PR-7.11** When host detection (`GitOriginHost.detect` or equivalent) throws for a repository — process launch failure, git binary missing from PATH, etc. — the application shall not cache the failure in the `hostByRepo` map. Only successful detections (whether returning a resolved `HostingOrigin` or a legitimate "no origin remote" nil) shall be cached. Otherwise a transient environment glitch at first fetch poisons the repo's PR tracking for the whole session, since the poll tick skips cached-nil repos and no code path re-attempts detection.
 
-**PR-7.13** `PRStatusStore` shall time-bound its per-worktree `inFlight` refresh guard so a hung `gh pr list` / `gh pr checks` subprocess cannot permanently lock out subsequent polls and user-triggered refreshes. A dispatch whose start timestamp is within the base refresh cadence (`PR-7.1`, 30 seconds) shall suppress a fresh refresh; beyond that cap, the prior dispatch shall be treated as abandoned and superseded, with the per-path `generation` counter bumped so the abandoned Task's late write is dropped if it ever returns. Without this, a single stuck subprocess (network flake, rate-limit back-off, expired gh auth refresh loop) freezes that worktree's sidebar badge and breadcrumb PR button at their last-cached state until the app is relaunched — the user-observable shape "PR status only updates when I click between worktrees". Mirrors `WorktreeStatsStore`'s `DIVERGE-4.4` recovery pattern for the equivalent stats-store bug.
+**PR-7.13** `PRStatusStore` shall time-bound its per-worktree `inFlight` refresh guard so a hung `gh pr list` / `gh pr checks` subprocess cannot permanently lock out subsequent polls and user-triggered refreshes. A dispatch whose start timestamp is within the inFlight cap (30 seconds, intentionally independent of the `PR-7.1` poll cadence which can be tighter for pending CI — shrinking the inFlight cap alongside the poll cadence would kill legitimately slow `gh` calls before they finish) shall suppress a fresh refresh; beyond that cap, the prior dispatch shall be treated as abandoned and superseded, with the per-path `generation` counter bumped so the abandoned Task's late write is dropped if it ever returns. Without this, a single stuck subprocess (network flake, rate-limit back-off, expired gh auth refresh loop) freezes that worktree's sidebar badge and breadcrumb PR button at their last-cached state until the app is relaunched — the user-observable shape "PR status only updates when I click between worktrees". Mirrors `WorktreeStatsStore`'s `DIVERGE-4.4` recovery pattern for the equivalent stats-store bug.
 
-**PR-7.14** The PR polling tick shall dispatch eligible per-worktree fetches and return without awaiting those fetch Tasks. The ticker loop itself must remain live even if a `gh` / `glab` subprocess hangs, otherwise `PR-7.13`'s abandoned-in-flight recovery never gets a later polling tick on which to supersede the stuck fetch. A hung fetch may occupy that worktree's `inFlight` slot until the 30-second cap elapses, but it must not stop unrelated worktrees from polling or require the user to click the sidebar to trigger the separate on-demand refresh path.
+**PR-7.14** The PR polling tick shall dispatch eligible per-worktree fetches and return without awaiting those fetch Tasks. The ticker loop itself must remain live even if a `gh` / `glab` subprocess hangs, otherwise `PR-7.13`'s abandoned-in-flight recovery never gets a later polling tick on which to supersede the stuck fetch. A hung fetch may occupy that worktree's `inFlight` slot until the `PR-7.13` 30-second inFlight cap elapses, but it must not stop unrelated worktrees from polling or require the user to click the sidebar to trigger the separate on-demand refresh path.
 
 ## 18. Claude Code Channels
 
