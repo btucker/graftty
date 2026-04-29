@@ -8,24 +8,26 @@ import SwiftUI
 /// so this view renders its form directly; wrapping another `TabView` here
 /// would nest a second "General" tab strip under the first.
 struct SettingsView: View {
+    private enum EditorKind: String {
+        case shell = ""
+        case app
+        case cli
+    }
+
     @AppStorage(SettingsKeys.defaultCommand) private var defaultCommand: String = ""
     @AppStorage("defaultCommandFirstPaneOnly") private var firstPaneOnly: Bool = true
     @AppStorage(SettingsKeys.editorKind) private var editorKind: String = ""
     @AppStorage(SettingsKeys.editorAppBundleID) private var editorAppBundleID: String = ""
     @AppStorage(SettingsKeys.editorCliCommand) private var editorCliCommand: String = ""
 
-    /// Resolved editor for the "currently using $EDITOR from shell" caption.
-    /// Recomputed on view body re-evaluation; cheap enough since the
-    /// shell-env probe is itself cached inside EditorPreference.
-    @State private var resolvedEditorCaption: String = ""
-
-    /// Cached list of installed text-editor apps; populated lazily on
-    /// first selection of the "App" radio.
+    @State private var resolvedShellEditor: String = ""
     @State private var availableApps: [TextEditorApp] = []
 
-    /// Owner shows the "Restart ZMX…" confirmation alert. Injected as a
-    /// closure so SettingsView stays decoupled from TerminalManager.
     let onRestartZMX: () -> Void
+
+    /// Shared with `TerminalManager`; the `shellEditorValue()` probe-cache lives
+    /// here so the Settings caption doesn't fire a second `$SHELL -ilc` probe.
+    let editorPreference: EditorPreference?
 
     var body: some View {
         Form {
@@ -41,23 +43,19 @@ struct SettingsView: View {
 
             Divider().padding(.vertical, 4)
 
-            // Editor section — EDITOR-1.x.
             Text("Editor")
                 .font(.headline)
 
             Picker(selection: $editorKind) {
-                Text(shellEditorRowLabel)
-                    .tag("")
-                Text("App")
-                    .tag("app")
-                Text("CLI Editor")
-                    .tag("cli")
+                Text(shellEditorRowLabel).tag(EditorKind.shell.rawValue)
+                Text("App").tag(EditorKind.app.rawValue)
+                Text("CLI Editor").tag(EditorKind.cli.rawValue)
             } label: {
                 Text("Editor:")
             }
             .pickerStyle(.radioGroup)
 
-            if editorKind == "app" {
+            if editorKind == EditorKind.app.rawValue {
                 Picker(selection: $editorAppBundleID) {
                     Text("Choose…").tag("")
                     ForEach(availableApps) { app in
@@ -66,10 +64,10 @@ struct SettingsView: View {
                 } label: {
                     Text("Application:")
                 }
-                .onAppear { loadAvailableApps() }
+                .onAppear { loadAvailableAppsIfNeeded() }
             }
 
-            if editorKind == "cli" {
+            if editorKind == EditorKind.cli.rawValue {
                 TextField("CLI command:", text: $editorCliCommand, prompt: Text("e.g., nvim"))
                     .textFieldStyle(.roundedBorder)
             }
@@ -91,32 +89,32 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .frame(minWidth: 420, minHeight: 360)
-        .onAppear { recomputeShellEditorCaption() }
+        .onAppear { loadResolvedShellEditor() }
     }
 
     private var shellEditorRowLabel: String {
-        if resolvedEditorCaption.isEmpty {
+        if resolvedShellEditor.isEmpty {
             return "Use $EDITOR from shell"
         }
-        return "Use $EDITOR from shell  (current: \(resolvedEditorCaption))"
+        return "Use $EDITOR from shell  (current: \(resolvedShellEditor))"
     }
 
-    /// Fire-and-forget probe for the caption; matches what
-    /// EditorPreference.resolve() would return when the user has nothing
-    /// set. Runs on a background queue to avoid blocking the UI.
-    private func recomputeShellEditorCaption() {
+    /// Read the (already-cached) shell `$EDITOR` from the shared preference
+    /// so this row's caption matches what cmd-click would actually fall back
+    /// to. Hops to a background queue in case the cache is cold and the
+    /// underlying probe still has to spawn the shell.
+    private func loadResolvedShellEditor() {
+        guard let pref = editorPreference else { return }
         DispatchQueue.global(qos: .userInitiated).async {
-            let probe = LoginShellEnvProbe()
-            let value = probe.value(forName: "EDITOR") ?? "vi"
+            let value = pref.shellEditorValue() ?? "vi"
             DispatchQueue.main.async {
-                self.resolvedEditorCaption = value
+                self.resolvedShellEditor = value
             }
         }
     }
 
-    private func loadAvailableApps() {
-        // Use a sample text file so LaunchServices reports every editor
-        // registered for plain text.
+    private func loadAvailableAppsIfNeeded() {
+        guard availableApps.isEmpty else { return }
         let sampleURL = URL(fileURLWithPath: "/tmp/x.txt")
         let urls = NSWorkspace.shared.urlsForApplications(toOpen: sampleURL)
 
@@ -136,7 +134,7 @@ struct SettingsView: View {
     }
 }
 
-private struct TextEditorApp: Identifiable, Hashable {
+private struct TextEditorApp: Identifiable {
     let bundleID: String
     let displayName: String
     let url: URL

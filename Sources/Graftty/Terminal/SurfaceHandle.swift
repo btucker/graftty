@@ -94,14 +94,12 @@ final class SurfaceHandle {
         // overlay. For Graftty we want the opposite — exit should
         // close the pane — so we leave `command` nil and use
         // `initial_input` instead. See `ZmxLauncher.attachInitialInput`.
-        // Concatenate zmx-attach input (always first, so the inner shell is
-        // attached to its zmx session before any extra command runs) with any
-        // caller-supplied extra input (e.g. an editor command for cmd-click).
-        let combinedInput: String? = {
-            let parts = [zmxInitialInput, extraInitialInput].compactMap { $0 }
-            return parts.isEmpty ? nil : parts.joined()
-        }()
-        let initialInputCStr: UnsafeMutablePointer<CChar>? = combinedInput.flatMap { strdup($0) }
+        // zmx-attach must run first so the inner shell is attached before any
+        // caller-supplied command (e.g. an editor invocation) executes.
+        let combinedInput = [zmxInitialInput, extraInitialInput].compactMap { $0 }.joined()
+        let initialInputCStr: UnsafeMutablePointer<CChar>? = combinedInput.isEmpty
+            ? nil
+            : strdup(combinedInput)
 
         // PATH is overridden to dodge the case-insensitive `Graftty` /
         // `graftty` collision — libghostty's bundle-self-locating logic

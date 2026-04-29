@@ -297,7 +297,10 @@ struct GrafttyApp: App {
         // `reconcile()` via its Combine subscription.
         Settings {
             TabView {
-                SettingsView(onRestartZMX: { restartZMXWithConfirmation() })
+                SettingsView(
+                    onRestartZMX: { restartZMXWithConfirmation() },
+                    editorPreference: terminalManager.editorPreference
+                )
                     .tabItem { Label("General", systemImage: "gear") }
                 WebSettingsPane()
                     .environmentObject(webController)
@@ -329,10 +332,6 @@ struct GrafttyApp: App {
 
         terminalManager.initialize()
 
-        // EDITOR-1.7 / EDITOR-1.8: capture shell $EDITOR once at startup so
-        // cmd-click can fall back to it when the user hasn't picked a Settings
-        // override. The probe runs $SHELL -ilc 'echo "$EDITOR"' on a background
-        // thread; the cache is populated lazily on first cmd-click.
         terminalManager.editorPreference = EditorPreference(
             defaults: .standard,
             shellEnvProbe: LoginShellEnvProbe()

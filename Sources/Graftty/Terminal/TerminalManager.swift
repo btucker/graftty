@@ -203,13 +203,12 @@ final class TerminalManager: ObservableObject {
     var onOpenConfig: (() -> Void)?
 
     /// Resolves the user's configured editor (Settings → shell $EDITOR → vi).
-    /// Injected by `GrafttyApp` at startup. Optional so tests instantiate
-    /// `TerminalManager` without setting up a probe; production always sets it.
+    /// Optional so tests can construct without a real probe; production always
+    /// sets it via `GrafttyApp`.
     var editorPreference: EditorPreference?
 
-    /// Called when cmd-clicking a file path resolves to a CLI editor —
-    /// owner spawns a new pane split-right of the source pane with
-    /// `initialInput` as the editor invocation. Wired in `GrafttyApp`.
+    /// Fired when cmd-click resolves to a CLI editor; owner spawns a new
+    /// pane split-right of the source with `initialInput` as the command.
     var onOpenInEditorPane: ((TerminalID, String) -> Void)?
 
     /// Swift-native mirror of `ghostty_action_progress_report_s` so
@@ -228,12 +227,6 @@ final class TerminalManager: ObservableObject {
 
     init(socketPath: String) {
         self.socketPath = socketPath
-    }
-
-    /// PWD for `terminalID` as last reported via OSC 7. Nil if no shell
-    /// integration message has fired yet.
-    func paneCwd(for terminalID: TerminalID) -> String? {
-        pwds[terminalID]
     }
 
     deinit {
@@ -738,19 +731,15 @@ final class TerminalManager: ObservableObject {
 
             let classified = EditorOpenRouter.classify(urlString: urlString, paneCwd: cwd)
 
-            // If we don't have an editor preference plumbed yet (only happens
-            // in tests), fall back to the original NSWorkspace dispatch for
-            // browser URLs and beep on file targets so we don't reintroduce
-            // the schemeless-URL "-50 dialog" bug.
-            let editor = editorPreference?.resolve()
+            // No editor preference (test-only) → only browser URLs are safe to
+            // dispatch; file targets beep rather than reopen the "-50 dialog" bug.
             let editorAction: EditorOpenRouter.EditorAction
-            if let editor {
+            if let editor = editorPreference?.resolve() {
                 editorAction = EditorOpenRouter.resolve(target: classified, editor: editor)
+            } else if case .browser(let u) = classified {
+                editorAction = .openInBrowser(u)
             } else {
-                switch classified {
-                case .browser(let u): editorAction = .openInBrowser(u)
-                default:              editorAction = .noOp
-                }
+                editorAction = .noOp
             }
 
             switch editorAction {

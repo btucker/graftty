@@ -2,17 +2,10 @@
 import Foundation
 
 /// Pure logic that decides what to do with a URL string handed to us by
-/// libghostty's `GHOSTTY_ACTION_OPEN_URL` event. Has no AppKit / no
-/// `TerminalManager` knowledge — call sites supply the source pane's
-/// CWD and an existence-check closure.
-///
-/// Two-stage API:
-///   1. `classify(...)` decides whether the URL is a file path (and if
-///      so, the absolute path + optional line/col), a non-file URL to
-///      hand to the system browser, or invalid garbage.
-///   2. `resolve(...)` (added in a later task) takes a `ClassifiedTarget`
-///      and the configured editor and emits an `EditorAction` for the
-///      caller to execute.
+/// libghostty's `GHOSTTY_ACTION_OPEN_URL` event. `classify` produces a
+/// `ClassifiedTarget`, `resolve` combines it with a `ResolvedEditor` to
+/// emit an `EditorAction` the caller dispatches. No AppKit, no
+/// `TerminalManager` — caller supplies pane CWD and existence check.
 public enum EditorOpenRouter {
 
     public enum ClassifiedTarget: Equatable {
@@ -42,85 +35,73 @@ public enum EditorOpenRouter {
         paneCwd: String?,
         fileExists: (URL) -> Bool = { FileManager.default.fileExists(atPath: $0.path) }
     ) -> ClassifiedTarget {
-        // Step 1: parse as URL. If a non-file scheme is present, route to browser.
-        if let url = URL(string: urlString),
-           let scheme = url.scheme,
-           !scheme.isEmpty,
-           scheme != "file" {
-            return .browser(url)
+        let parsed = URL(string: urlString)
+
+        if let scheme = parsed?.scheme, !scheme.isEmpty, scheme != "file" {
+            return .browser(parsed!)
         }
 
-        // Step 2: file:// scheme → unwrap to filesystem path.
         let candidate: String
-        if let url = URL(string: urlString),
-           url.scheme == "file",
-           !url.path.isEmpty {
-            candidate = url.path
+        if let parsed, parsed.scheme == "file", !parsed.path.isEmpty {
+            candidate = parsed.path
         } else {
-            // Step 3: no scheme — treat the whole string as a path candidate.
             candidate = urlString
         }
 
-        // Step 4: try the raw candidate first (handles literal `:NN` in filenames).
+        // Try raw candidate first so a real filename containing `:NN` wins
+        // over the same string interpreted as `path:line`.
         if let resolved = resolvePath(candidate, paneCwd: paneCwd),
            fileExists(resolved) {
             return .editorOpen(absolutePath: resolved, line: nil, column: nil)
         }
 
-        // Step 5: try stripping `:line(:col)` and re-checking existence.
         if let (stripped, line, col) = stripLineColSuffix(candidate),
            let resolved = resolvePath(stripped, paneCwd: paneCwd),
            fileExists(resolved) {
             return .editorOpen(absolutePath: resolved, line: line, column: col)
         }
 
-        // Step 6: nothing resolved — invalid.
         return .invalid
     }
 
     /// Expand `~` and resolve relative paths against `paneCwd`. Returns
     /// nil if the path is relative and `paneCwd` is unset.
     private static func resolvePath(_ path: String, paneCwd: String?) -> URL? {
-        if path.hasPrefix("~/") || path == "~" {
-            let home = NSHomeDirectory()
-            let rest = String(path.dropFirst(1))
-            return URL(fileURLWithPath: home + rest).standardizedFileURL
+        if path.hasPrefix("~") {
+            let expanded = (path as NSString).expandingTildeInPath
+            return URL(fileURLWithPath: expanded).standardizedFileURL
         }
         if path.hasPrefix("/") {
             return URL(fileURLWithPath: path).standardizedFileURL
         }
         guard let cwd = paneCwd else { return nil }
-        let cwdURL = URL(fileURLWithPath: cwd, isDirectory: true)
-        return cwdURL.appendingPathComponent(path).standardizedFileURL
+        return URL(fileURLWithPath: cwd, isDirectory: true)
+            .appendingPathComponent(path)
+            .standardizedFileURL
     }
 
-    /// Match an optional trailing `:line(:col)`. Non-greedy on the path
-    /// so a short suffix is captured when present. Returns nil if no
-    /// suffix is present (in which case the caller already tried the raw
-    /// candidate at step 4).
+    private static let lineColRegex: NSRegularExpression = {
+        // Force-try: the pattern is a compile-time constant.
+        try! NSRegularExpression(pattern: #"^(.+?)(?::(\d+)(?::(\d+))?)?$"#)
+    }()
+
+    /// Match an optional trailing `:line(:col)`. Returns nil if no suffix
+    /// matched — the caller already tried the raw candidate.
     private static func stripLineColSuffix(_ s: String) -> (String, Int?, Int?)? {
-        // Use NSRegularExpression — simpler than re-parsing manually,
-        // and the regex is constant so no perf concern.
-        let pattern = #"^(.+?)(?::(\d+)(?::(\d+))?)?$"#
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
         let range = NSRange(s.startIndex..., in: s)
-        guard let match = regex.firstMatch(in: s, range: range),
+        guard let match = lineColRegex.firstMatch(in: s, range: range),
               match.numberOfRanges >= 2 else { return nil }
 
-        let pathRange = Range(match.range(at: 1), in: s)!
-        let pathPart = String(s[pathRange])
+        let pathPart = String(s[Range(match.range(at: 1), in: s)!])
 
         let lineRange = match.range(at: 2)
-        let colRange = match.numberOfRanges > 3 ? match.range(at: 3) : NSRange(location: NSNotFound, length: 0)
-
         guard lineRange.location != NSNotFound,
               let lineSwiftRange = Range(lineRange, in: s),
               let line = Int(s[lineSwiftRange]) else {
-            // No suffix matched. The whole input was treated as the path
-            // already at step 4 — nothing more to try.
             return nil
         }
 
+        let colRange = match.numberOfRanges > 3 ? match.range(at: 3) : NSRange(location: NSNotFound, length: 0)
         var col: Int?
         if colRange.location != NSNotFound,
            let colSwiftRange = Range(colRange, in: s),

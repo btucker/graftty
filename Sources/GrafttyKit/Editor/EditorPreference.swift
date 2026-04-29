@@ -67,15 +67,12 @@ public final class EditorPreference {
     }
 
     public func resolve() -> ResolvedEditor {
-        // Layer 1: UserDefaults.
-        let kind = defaults.string(forKey: Keys.kind) ?? ""
-        switch kind {
+        switch defaults.string(forKey: Keys.kind) ?? "" {
         case "cli":
             if let cmd = defaults.string(forKey: Keys.cliCommand),
                !cmd.trimmingCharacters(in: .whitespaces).isEmpty {
                 return ResolvedEditor(kind: .cli(command: cmd), source: .userPreference)
             }
-            // empty cli command → fall through
 
         case "app":
             if let bundleID = defaults.string(forKey: Keys.appBundleID),
@@ -83,26 +80,25 @@ public final class EditorPreference {
                let url = bundleIDResolver(bundleID) {
                 return ResolvedEditor(kind: .app(bundleURL: url), source: .userPreference)
             }
-            // missing/stale bundle → fall through
 
         default:
-            break  // empty kind → fall through
+            break
         }
 
-        // Layer 2: shell env.
-        let shellEditor: String?
-        if let cached = cachedShellEditor {
-            shellEditor = cached
-        } else {
-            let probed = shellEnvProbe.value(forName: "EDITOR")
-            cachedShellEditor = probed
-            shellEditor = probed
-        }
-        if let env = shellEditor, !env.isEmpty {
+        if let env = shellEditorValue(), !env.isEmpty {
             return ResolvedEditor(kind: .cli(command: env), source: .shellEnv)
         }
 
-        // Layer 3: hardcoded fallback.
         return ResolvedEditor(kind: .cli(command: "vi"), source: .defaultFallback)
+    }
+
+    /// Cached value of the shell's `$EDITOR`. Exposed so the Settings UI
+    /// can show the fallback value alongside the "Use $EDITOR from shell"
+    /// radio row without spawning a second probe.
+    public func shellEditorValue() -> String? {
+        if let cached = cachedShellEditor { return cached }
+        let probed = shellEnvProbe.value(forName: "EDITOR")
+        cachedShellEditor = probed
+        return probed
     }
 }
