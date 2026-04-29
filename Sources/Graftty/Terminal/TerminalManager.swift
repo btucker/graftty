@@ -202,6 +202,16 @@ final class TerminalManager: ObservableObject {
     /// hands it to the user's default editor via `NSWorkspace`. `TERM-9.2`.
     var onOpenConfig: (() -> Void)?
 
+    /// Resolves the user's configured editor (Settings → shell $EDITOR → vi).
+    /// Injected by `GrafttyApp` at startup. Optional so tests instantiate
+    /// `TerminalManager` without setting up a probe; production always sets it.
+    var editorPreference: EditorPreference?
+
+    /// Called when cmd-clicking a file path resolves to a CLI editor —
+    /// owner spawns a new pane split-right of the source pane with
+    /// `initialInput` as the editor invocation. Wired in `GrafttyApp`.
+    var onOpenInEditorPane: ((TerminalID, String) -> Void)?
+
     /// Swift-native mirror of `ghostty_action_progress_report_s` so
     /// callers outside the Terminal module don't need to import
     /// GhosttyKit just to pattern-match on progress state.
@@ -218,6 +228,12 @@ final class TerminalManager: ObservableObject {
 
     init(socketPath: String) {
         self.socketPath = socketPath
+    }
+
+    /// PWD for `terminalID` as last reported via OSC 7. Nil if no shell
+    /// integration message has fired yet.
+    func paneCwd(for terminalID: TerminalID) -> String? {
+        pwds[terminalID]
     }
 
     deinit {
@@ -402,7 +418,8 @@ final class TerminalManager: ObservableObject {
     /// Create a single surface, or return the existing one for this `TerminalID`.
     func createSurface(
         terminalID: TerminalID,
-        worktreePath: String
+        worktreePath: String,
+        extraInitialInput: String? = nil
     ) -> SurfaceHandle? {
         guard let app = ghosttyApp?.app else { return nil }
         if let existing = surfaces[terminalID] {
@@ -420,6 +437,7 @@ final class TerminalManager: ObservableObject {
             worktreePath: worktreePath,
             socketPath: socketPath,
             zmxInitialInput: zmxInitialInput,
+            extraInitialInput: extraInitialInput,
             zmxDir: zmxDir,
             terminalManager: self
         ) else { return nil }
@@ -710,10 +728,48 @@ final class TerminalManager: ObservableObject {
             let url = action.action.open_url
             guard let urlPtr = url.url else { return }
             let bytes = UnsafeBufferPointer(start: urlPtr, count: Int(url.len))
-            guard let urlString = String(bytes: bytes.map { UInt8(bitPattern: $0) }, encoding: .utf8),
-                  let parsed = URL(string: urlString)
-            else { return }
-            NSWorkspace.shared.open(parsed)
+            guard let urlString = String(
+                bytes: bytes.map { UInt8(bitPattern: $0) },
+                encoding: .utf8
+            ) else { return }
+
+            let sourceID = terminalID(from: target)
+            let cwd = sourceID.flatMap { pwds[$0] }
+
+            let classified = EditorOpenRouter.classify(urlString: urlString, paneCwd: cwd)
+
+            // If we don't have an editor preference plumbed yet (only happens
+            // in tests), fall back to the original NSWorkspace dispatch for
+            // browser URLs and beep on file targets so we don't reintroduce
+            // the schemeless-URL "-50 dialog" bug.
+            let editor = editorPreference?.resolve()
+            let editorAction: EditorOpenRouter.EditorAction
+            if let editor {
+                editorAction = EditorOpenRouter.resolve(target: classified, editor: editor)
+            } else {
+                switch classified {
+                case .browser(let u): editorAction = .openInBrowser(u)
+                default:              editorAction = .noOp
+                }
+            }
+
+            switch editorAction {
+            case .openInBrowser(let url):
+                NSWorkspace.shared.open(url)
+
+            case .openWithApp(let file, let app):
+                let config = NSWorkspace.OpenConfiguration()
+                config.promptsUserIfNeeded = false
+                NSWorkspace.shared.open([file], withApplicationAt: app, configuration: config)
+                    { _, _ in }
+
+            case .openInPane(let initialInput):
+                guard let sourceID else { NSSound.beep(); break }
+                onOpenInEditorPane?(sourceID, initialInput)
+
+            case .noOp:
+                NSSound.beep()
+            }
 
         case GHOSTTY_ACTION_MOUSE_SHAPE:
             guard let view = surfaceView(from: target) else { return }
