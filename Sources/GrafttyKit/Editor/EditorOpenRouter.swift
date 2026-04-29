@@ -130,4 +130,40 @@ public enum EditorOpenRouter {
 
         return (pathPart, line, col)
     }
+
+    /// Editors known to support `+<line>` for cursor positioning. Lookup
+    /// is by the *first whitespace token* of the editor command, lowercased.
+    private static let knownLineFlagEditors: Set<String> = [
+        "vi", "vim", "nvim", "nano", "helix", "hx", "emacs", "micro", "kak",
+    ]
+
+    /// Build the shell command string to execute in a freshly-spawned
+    /// pane's PTY. Trailing `\n` triggers immediate execution.
+    ///
+    /// - Parameters:
+    ///   - editor: Raw editor command from `ResolvedEditor` (may include
+    ///     args, e.g. `"emacs -nw"`).
+    ///   - path: Absolute filesystem path. Will be single-quoted with
+    ///     `'\''` escaping to handle spaces and quotes safely.
+    ///   - line: Optional 1-based line number. Appended as `+<N>` only
+    ///     when the editor's first token is in `knownLineFlagEditors`.
+    public static func buildCliCommand(
+        editor: String,
+        path: String,
+        line: Int?
+    ) -> String {
+        let firstToken = editor
+            .split(separator: " ", maxSplits: 1, omittingEmptySubsequences: true)
+            .first
+            .map { String($0).lowercased() } ?? ""
+
+        let quoted = "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+
+        var command = "\(editor) \(quoted)"
+        if let line, knownLineFlagEditors.contains(firstToken) {
+            command += " +\(line)"
+        }
+        command += "\n"
+        return command
+    }
 }

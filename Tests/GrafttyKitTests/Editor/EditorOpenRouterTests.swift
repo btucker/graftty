@@ -152,3 +152,81 @@ final class EditorOpenRouterClassifyTests: XCTestCase {
         XCTFail("Relative path with no paneCwd must classify as invalid")
     }
 }
+
+final class EditorOpenRouterCliCommandTests: XCTestCase {
+
+    func test_nvim_simplePath() {
+        let cmd = EditorOpenRouter.buildCliCommand(
+            editor: "nvim",
+            path: "/tmp/foo.swift",
+            line: nil
+        )
+        XCTAssertEqual(cmd, "nvim '/tmp/foo.swift'\n")
+    }
+
+    func test_nvim_withLine_appendsPlusFlag() {
+        let cmd = EditorOpenRouter.buildCliCommand(
+            editor: "nvim",
+            path: "/tmp/foo.swift",
+            line: 42
+        )
+        XCTAssertEqual(cmd, "nvim '/tmp/foo.swift' +42\n")
+    }
+
+    func test_pathWithSpaces_isQuoted() {
+        let cmd = EditorOpenRouter.buildCliCommand(
+            editor: "vim",
+            path: "/tmp/has space/file.txt",
+            line: nil
+        )
+        XCTAssertEqual(cmd, "vim '/tmp/has space/file.txt'\n")
+    }
+
+    func test_pathWithSingleQuote_isEscaped() {
+        let cmd = EditorOpenRouter.buildCliCommand(
+            editor: "nvim",
+            path: "/tmp/it's mine.txt",
+            line: nil
+        )
+        XCTAssertEqual(cmd, "nvim '/tmp/it'\\''s mine.txt'\n")
+    }
+
+    func test_emacsNoWindow_preservesArgs_andUsesPlusLine() {
+        let cmd = EditorOpenRouter.buildCliCommand(
+            editor: "emacs -nw",
+            path: "/tmp/foo.txt",
+            line: 7
+        )
+        XCTAssertEqual(cmd, "emacs -nw '/tmp/foo.txt' +7\n")
+    }
+
+    func test_unknownCli_omitsLineFlag() {
+        let cmd = EditorOpenRouter.buildCliCommand(
+            editor: "exotic-editor --foo",
+            path: "/tmp/foo.txt",
+            line: 42
+        )
+        XCTAssertEqual(cmd, "exotic-editor --foo '/tmp/foo.txt'\n",
+                       "Unknown editors should not get +<line> appended (might mean something else)")
+    }
+
+    func test_helix_aliasHx_recognized() {
+        let cmd = EditorOpenRouter.buildCliCommand(
+            editor: "hx",
+            path: "/tmp/foo.txt",
+            line: 12
+        )
+        XCTAssertEqual(cmd, "hx '/tmp/foo.txt' +12\n")
+    }
+
+    func test_columnArgument_isDropped() {
+        // Column is captured but intentionally not used in v1.
+        // The function signature takes only `line` to make this explicit.
+        let cmd = EditorOpenRouter.buildCliCommand(
+            editor: "nvim",
+            path: "/tmp/foo.txt",
+            line: 5
+        )
+        XCTAssertFalse(cmd.contains(":"), "Column should not appear in CLI command")
+    }
+}
