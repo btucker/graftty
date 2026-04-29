@@ -146,11 +146,86 @@ struct RemoteBranchStoreTests {
             lister.invocationCount(for: "/repo") == 1
         }
         lister.resumeAll()
+        try await waitUntil(timeout: 1.0) {
+            lister.invocationCount(for: "/repo") == 2
+        }
+        lister.resumeAll()
 
         try await waitUntil(timeout: 1.0) {
             completions.count == 2
         }
         #expect(completions == ["first", "second"])
+    }
+
+    @MainActor
+    @Test func refreshDuringInFlightRerunsBeforeLaterCompletion() async throws {
+        let lister = RecordingRemoteBranchLister(
+            results: ["/repo": .success(["old"])],
+            suspendUntilResumed: true
+        )
+        let store = RemoteBranchStore(list: lister.list)
+        var secondCompletionSnapshot: Set<String>?
+
+        store.refresh(repoPath: "/repo")
+        try await waitUntil(timeout: 1.0) {
+            lister.invocationCount(for: "/repo") == 1
+        }
+
+        lister.set(result: .success(["new"]), for: "/repo")
+        store.refresh(repoPath: "/repo") {
+            secondCompletionSnapshot = store.branchesByRepo["/repo"]
+        }
+
+        #expect(lister.invocationCount(for: "/repo") == 1)
+        lister.resumeAll()
+
+        try await waitUntil(timeout: 1.0) {
+            lister.invocationCount(for: "/repo") == 2
+        }
+        #expect(secondCompletionSnapshot == nil)
+        #expect(store.hasRemote(repoPath: "/repo", branch: "old"))
+        #expect(!store.hasRemote(repoPath: "/repo", branch: "new"))
+
+        lister.resumeAll()
+
+        try await waitUntil(timeout: 1.0) {
+            secondCompletionSnapshot == ["new"]
+        }
+        #expect(lister.invocationCount(for: "/repo") == 2)
+        #expect(!store.hasRemote(repoPath: "/repo", branch: "old"))
+        #expect(store.hasRemote(repoPath: "/repo", branch: "new"))
+    }
+
+    @MainActor
+    @Test func clearReleasesPendingRerunCompletion() async throws {
+        let lister = RecordingRemoteBranchLister(
+            results: ["/repo": .success(["main"])],
+            suspendUntilResumed: true
+        )
+        let store = RemoteBranchStore(list: lister.list)
+        var completionRan = false
+
+        store.refresh(repoPath: "/repo")
+        try await waitUntil(timeout: 1.0) {
+            lister.invocationCount(for: "/repo") == 1
+        }
+
+        var token: CompletionToken? = CompletionToken()
+        weak let weakToken = token
+        store.refresh(repoPath: "/repo") { [token] in
+            completionRan = true
+            _ = token
+        }
+        token = nil
+        #expect(weakToken != nil)
+
+        store.clear(repoPath: "/repo")
+        lister.resumeAll()
+
+        try await waitUntil(timeout: 1.0) {
+            lister.invocationCount(for: "/repo") == 1 && !completionRan
+        }
+        #expect(weakToken == nil)
     }
 
     @MainActor
@@ -279,11 +354,13 @@ private enum TestError: Error {
     case boom
 }
 
+private final class CompletionToken {}
+
 private final class RecordingRemoteBranchLister: @unchecked Sendable {
     private let lock = NSLock()
     private var results: [String: Result<Set<String>, Error>]
     private var invocations: [String: Int] = [:]
-    private var continuations: [CheckedContinuation<Set<String>, Error>] = []
+    private var continuations: [(Result<Set<String>, Error>, CheckedContinuation<Set<String>, Error>)] = []
     private let suspendUntilResumed: Bool
 
     init(
@@ -320,8 +397,13 @@ private final class RecordingRemoteBranchLister: @unchecked Sendable {
             return pending
         }
 
-        for continuation in pending {
-            continuation.resume(returning: ["main"])
+        for (result, continuation) in pending {
+            switch result {
+            case .success(let branches):
+                continuation.resume(returning: branches)
+            case .failure(let error):
+                continuation.resume(throwing: error)
+            }
         }
     }
 
@@ -334,7 +416,7 @@ private final class RecordingRemoteBranchLister: @unchecked Sendable {
         if suspendUntilResumed {
             return try await withCheckedThrowingContinuation { continuation in
                 lock.withLock {
-                    continuations.append(continuation)
+                    continuations.append((result, continuation))
                 }
             }
         }

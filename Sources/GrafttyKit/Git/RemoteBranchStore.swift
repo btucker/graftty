@@ -13,6 +13,7 @@ public final class RemoteBranchStore {
     @ObservationIgnored private let list: ListFunction
     @ObservationIgnored private var inFlight: [String: Int] = [:]
     @ObservationIgnored private var generation: [String: Int] = [:]
+    @ObservationIgnored private var pendingRerun: [String: Int] = [:]
     @ObservationIgnored private var completions: [String: [Int: [@MainActor () -> Void]]] = [:]
     @ObservationIgnored private var ticker: PollingTickerLike?
     @ObservationIgnored private var getRepos: @MainActor () -> [RepoEntry] = { [] }
@@ -30,6 +31,12 @@ public final class RemoteBranchStore {
     public func clear(repoPath: String) {
         branchesByRepo.removeValue(forKey: repoPath)
         inFlight.removeValue(forKey: repoPath)
+        if let pendingGeneration = pendingRerun.removeValue(forKey: repoPath) {
+            completions[repoPath]?[pendingGeneration] = nil
+            if completions[repoPath]?.isEmpty == true {
+                completions.removeValue(forKey: repoPath)
+            }
+        }
         generation[repoPath, default: 0] += 1
     }
 
@@ -59,7 +66,14 @@ public final class RemoteBranchStore {
     }
 
     public func refresh(repoPath: String, completion: (@MainActor () -> Void)? = nil) {
-        if let refreshGeneration = inFlight[repoPath] {
+        if inFlight[repoPath] != nil {
+            let refreshGeneration: Int
+            if let pendingGeneration = pendingRerun[repoPath] {
+                refreshGeneration = pendingGeneration
+            } else {
+                refreshGeneration = generation[repoPath, default: 0] + 1
+                pendingRerun[repoPath] = refreshGeneration
+            }
             if let completion {
                 completions[repoPath, default: [:]][refreshGeneration, default: []].append(completion)
             }
@@ -68,6 +82,15 @@ public final class RemoteBranchStore {
 
         generation[repoPath, default: 0] += 1
         let refreshGeneration = generation[repoPath, default: 0]
+        beginRefresh(repoPath: repoPath, refreshGeneration: refreshGeneration, completion: completion)
+    }
+
+    private func beginRefresh(
+        repoPath: String,
+        refreshGeneration: Int,
+        completion: (@MainActor () -> Void)? = nil
+    ) {
+        generation[repoPath] = refreshGeneration
         inFlight[repoPath] = refreshGeneration
         if let completion {
             completions[repoPath, default: [:]][refreshGeneration, default: []].append(completion)
@@ -96,6 +119,7 @@ public final class RemoteBranchStore {
     }
 
     private func finish(repoPath: String, refreshGeneration: Int) {
+        let shouldStartPending = inFlight[repoPath] == refreshGeneration
         if inFlight[repoPath] == refreshGeneration {
             inFlight.removeValue(forKey: repoPath)
         }
@@ -104,6 +128,10 @@ public final class RemoteBranchStore {
         completions[repoPath]?[refreshGeneration] = nil
         if completions[repoPath]?.isEmpty == true {
             completions.removeValue(forKey: repoPath)
+        }
+
+        if shouldStartPending, let pendingGeneration = pendingRerun.removeValue(forKey: repoPath) {
+            beginRefresh(repoPath: repoPath, refreshGeneration: pendingGeneration)
         }
 
         for callback in callbacks {

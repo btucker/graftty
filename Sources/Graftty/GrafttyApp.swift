@@ -570,7 +570,8 @@ struct GrafttyApp: App {
         let bridge = WorktreeMonitorBridge(
             appState: $appState,
             statsStore: services.statsStore,
-            prStatusStore: services.prStatusStore
+            prStatusStore: services.prStatusStore,
+            remoteBranchStore: services.remoteBranchStore
         )
         services.worktreeMonitorBridge = bridge
         services.worktreeMonitor.delegate = bridge
@@ -2121,15 +2122,21 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
     let appState: Binding<AppState>
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
+    let remoteBranchStore: RemoteBranchStore
+    private let originRefPRFollowUpDelays: [Duration]
 
     init(
         appState: Binding<AppState>,
         statsStore: WorktreeStatsStore,
-        prStatusStore: PRStatusStore
+        prStatusStore: PRStatusStore,
+        remoteBranchStore: RemoteBranchStore,
+        originRefPRFollowUpDelays: [Duration] = [.seconds(1), .seconds(5)]
     ) {
         self.appState = appState
         self.statsStore = statsStore
         self.prStatusStore = prStatusStore
+        self.remoteBranchStore = remoteBranchStore
+        self.originRefPRFollowUpDelays = originRefPRFollowUpDelays
     }
 
     /// Called when `.git/worktrees/` changes (new worktree added, existing
@@ -2265,8 +2272,8 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
     /// gate.
     nonisolated func worktreeMonitorDidDetectOriginRefChange(_ monitor: WorktreeMonitor, repoPath: String) {
         let binding = appState
-        let prStore = prStatusStore
         let statsStore = statsStore
+        let remoteBranchStore = remoteBranchStore
         Task { @MainActor in
             guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }) else { return }
             for wt in repo.worktrees where wt.state.hasOnDiskWorktree {
@@ -2278,8 +2285,28 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
                 // symmetrically with PR so the sidebar doesn't need a
                 // full poll cycle to catch up.
                 statsStore.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
-                guard PRStatusStore.isFetchableBranch(wt.branch) else { continue }
-                prStore.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
+            }
+            remoteBranchStore.refresh(repoPath: repoPath) { [weak self] in
+                self?.refreshPushedPRs(repoPath: repoPath)
+                self?.scheduleOriginRefPRFollowUps(repoPath: repoPath)
+            }
+        }
+    }
+
+    private func refreshPushedPRs(repoPath: String) {
+        guard let repo = appState.wrappedValue.repos.first(where: { $0.path == repoPath }) else { return }
+        for wt in repo.worktrees where wt.state.hasOnDiskWorktree {
+            guard remoteBranchStore.hasRemote(repoPath: repoPath, branch: wt.branch) else { continue }
+            prStatusStore.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
+        }
+    }
+
+    private func scheduleOriginRefPRFollowUps(repoPath: String) {
+        for delay in originRefPRFollowUpDelays {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: delay)
+                if Task.isCancelled { return }
+                self?.refreshPushedPRs(repoPath: repoPath)
             }
         }
     }
@@ -2307,6 +2334,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         let binding = appState
         let store = statsStore
         let prStore = prStatusStore
+        let remoteBranchStore = remoteBranchStore
         // Branch changes fire in bursts (rebase, interactive checkout), so
         // `GitWorktreeDiscovery.discover`'s subprocess wait must yield the
         // main actor — the async version does that naturally. Scope the
@@ -2328,7 +2356,15 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
                   let wtIdx = binding.wrappedValue.repos[repoIdx].worktrees.firstIndex(where: { $0.path == worktreePath }) else { return }
             binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].branch = match.branch
             store.refresh(worktreePath: worktreePath, repoPath: repoPath, branch: match.branch)
-            prStore.branchDidChange(worktreePath: worktreePath, repoPath: repoPath, branch: match.branch)
+            prStore.clear(worktreePath: worktreePath)
+            remoteBranchStore.refresh(repoPath: repoPath) {
+                guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }),
+                      let wt = repo.worktrees.first(where: {
+                          $0.path == worktreePath && $0.state.hasOnDiskWorktree
+                      })
+                else { return }
+                prStore.refresh(worktreePath: worktreePath, repoPath: repoPath, branch: wt.branch)
+            }
         }
     }
 }
