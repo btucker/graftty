@@ -187,6 +187,18 @@ public struct AppState: Codable, Sendable, Equatable {
             .appendingPathComponent("Graftty")
     }
 
+    /// Reverse lookup from a leaf to its hosting worktree's `(repo, worktree)`
+    /// indices. Returns nil when no worktree owns the pane (mid-reassignment).
+    public func indicesOfWorktreeContaining(terminalID: TerminalID) -> (repo: Int, worktree: Int)? {
+        for (ri, repo) in repos.enumerated() {
+            for (wi, wt) in repo.worktrees.enumerated()
+                where wt.splitTree.containsLeaf(terminalID) {
+                return (ri, wi)
+            }
+        }
+        return nil
+    }
+
     /// Longest-prefix match of `path` against every worktree across every
     /// repo. Returns the matching `(repo, worktree)` indices or nil when
     /// no worktree path is a prefix of `path`. Used by both the menu's

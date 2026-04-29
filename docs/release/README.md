@@ -63,16 +63,14 @@ generate_keys -p                     # prints the base64 public key
 generate_keys -x ~/sparkle-private.key  # exports the private key to a file
 ```
 
-**Wire the public key into bundle.sh.** Open `scripts/bundle.sh`, find
-the `__SPARKLE_PUBLIC_ED_KEY__` sentinel inside the Info.plist heredoc,
-and replace it with the output of `generate_keys -p`. Commit:
+**Wire the public key into CI.** On GitHub, go to Settings → Secrets
+and variables → Actions → New repository secret. Name it
+`SPARKLE_PUBLIC_ED_KEY`. The value is the output of `generate_keys -p`.
+`scripts/bundle.sh` requires this value for release builds. Local debug
+builds omit both `SUPublicEDKey` and the production `SUFeedURL` unless
+those values are explicitly set in the environment.
 
-```bash
-git add scripts/bundle.sh
-git commit -m "build: install Sparkle public key"
-```
-
-**Wire the private key into CI.** On GitHub, go to Settings → Secrets
+**Wire the private key into CI.** On GitHub, add another Actions secret
 and variables → Actions → New repository secret. Name it
 `SPARKLE_ED_PRIVATE_KEY`. The value is the contents of
 `~/sparkle-private.key` (one base64 line).

@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-@Suite("WorktreeEntry Tests")
+@Suite("WorktreeEntry Tests", .serialized)
 struct WorktreeEntryTests {
 
     @Test func newEntryIsClosedState() {

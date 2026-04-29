@@ -83,7 +83,7 @@ struct GitWorktreeStatsParserTests {
     }
 }
 
-@Suite("GitWorktreeStats — compute (integration)")
+@Suite("GitWorktreeStats — compute (integration)", .serialized)
 struct GitWorktreeStatsComputeTests {
 
     @Test func returnsZerosAtParity() async throws {
@@ -213,7 +213,7 @@ struct GitWorktreeStatsComputeTests {
 /// `origin/<defaultBranch>` is always included so a PR merge surfaces on
 /// every worktree; `origin/<branch>` is additionally included when that
 /// tracking ref exists so collaborator pushes also surface.
-@Suite("GitWorktreeStats.resolveUpstreamRefs — union-of-upstreams")
+@Suite("GitWorktreeStats.resolveUpstreamRefs — union-of-upstreams", .serialized)
 struct GitWorktreeStatsResolveUpstreamRefsTests {
 
     @Test func homeWorktreeOnDefaultResolvesToSingleRef() async throws {

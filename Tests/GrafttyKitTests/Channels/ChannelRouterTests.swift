@@ -11,7 +11,7 @@ final class ChannelRouterTests: XCTestCase {
     override func tearDown() async throws { unlink(socketPath) }
 
     func testSubscriberReceivesInitialInstructions() async throws {
-        let router = ChannelRouter(socketPath: socketPath, promptProvider: { "hello prompt" })
+        let router = ChannelRouter(socketPath: socketPath, promptProvider: { _ in "hello prompt" })
         try router.start()
         defer { router.stop() }
 
@@ -24,7 +24,7 @@ final class ChannelRouterTests: XCTestCase {
     }
 
     func testEventIsRoutedOnlyToMatchingWorktree() async throws {
-        let router = ChannelRouter(socketPath: socketPath, promptProvider: { "P" })
+        let router = ChannelRouter(socketPath: socketPath, promptProvider: { _ in "P" })
         try router.start()
         defer { router.stop() }
 
@@ -52,7 +52,7 @@ final class ChannelRouterTests: XCTestCase {
 
     func testPromptBroadcastReachesAllSubscribers() async throws {
         var currentPrompt = "P1"
-        let router = ChannelRouter(socketPath: socketPath, promptProvider: { currentPrompt })
+        let router = ChannelRouter(socketPath: socketPath, promptProvider: { _ in currentPrompt })
         try router.start()
         defer { router.stop() }
 
@@ -76,7 +76,7 @@ final class ChannelRouterTests: XCTestCase {
     }
 
     func testIsEnabledFalseSuppressesDispatch() async throws {
-        let router = ChannelRouter(socketPath: socketPath, promptProvider: { "P" })
+        let router = ChannelRouter(socketPath: socketPath, promptProvider: { _ in "P" })
         try router.start()
         defer { router.stop() }
 

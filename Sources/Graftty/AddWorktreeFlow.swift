@@ -63,7 +63,8 @@ enum AddWorktreeFlow {
         appState: Binding<AppState>,
         worktreeMonitor: WorktreeMonitor,
         statsStore: WorktreeStatsStore,
-        terminalManager: TerminalManager
+        terminalManager: TerminalManager,
+        channelDispatch: (@MainActor (String, ChannelServerMessage) -> Void)? = nil
     ) async -> Swift.Result<Result, FlowError> {
         guard appState.wrappedValue.repos.contains(where: { $0.path == repoPath }) else {
             return .failure(.repoNotFound)
@@ -112,6 +113,17 @@ enum AddWorktreeFlow {
             worktreeMonitor.watchHeadRef(worktreePath: entry.path, repoPath: repoPath)
             worktreeMonitor.watchWorktreeContents(worktreePath: entry.path)
             statsStore.refresh(worktreePath: entry.path, repoPath: repoPath, branch: entry.branch)
+            if let dispatch = channelDispatch {
+                TeamMembershipEvents.fireJoined(
+                    repo: appState.wrappedValue.repos[repoIdx],
+                    joinerWorktreePath: entry.path,
+                    teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
+                    dispatch: EventBodyRenderer.dispatchClosure(
+                        repos: appState.wrappedValue.repos,
+                        inner: { path, msg in dispatch(path, msg) }
+                    )
+                )
+            }
         }
 
         // Start the first terminal for the new entry. Mirrors the

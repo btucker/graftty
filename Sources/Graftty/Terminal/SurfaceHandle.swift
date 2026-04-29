@@ -80,8 +80,6 @@ final class SurfaceHandle {
 
         // Allocate C strings up front so we can free them deterministically.
         let cwdCStr = strdup(worktreePath)
-        let sockKey = strdup("GRAFTTY_SOCK")
-        let sockVal = strdup(socketPath)
 
         // Optional: when ZmxLauncher is available, these are the bytes
         // libghostty will write into the PTY as soon as the user's
@@ -97,17 +95,31 @@ final class SurfaceHandle {
         // `initial_input` instead. See `ZmxLauncher.attachInitialInput`.
         let initialInputCStr: UnsafeMutablePointer<CChar>? = zmxInitialInput.flatMap { strdup($0) }
 
-        let zmxDirKey: UnsafeMutablePointer<CChar>? = zmxDir.flatMap { _ in strdup("ZMX_DIR") }
-        let zmxDirVal: UnsafeMutablePointer<CChar>? = zmxDir.flatMap { strdup($0) }
-        let envCount = zmxDir == nil ? 1 : 2
+        // PATH is overridden to dodge the case-insensitive `Graftty` /
+        // `graftty` collision — libghostty's bundle-self-locating logic
+        // puts `Contents/MacOS` (where the GUI binary lives) on PATH; on
+        // macOS APFS that hijacks `which graftty` to the GUI binary, which
+        // silently exits 0. `BundlePathSanitizer` strips it and prepends
+        // `Contents/Helpers` (where the CLI actually lives).
+        var envPairs: [(key: String, value: String)] = [
+            ("GRAFTTY_SOCK", socketPath),
+            ("PATH", BundlePathSanitizer.sanitized(
+                currentPath: ProcessInfo.processInfo.environment["PATH"] ?? "",
+                bundleURL: Bundle.main.bundleURL
+            )),
+        ]
+        if let zmxDir {
+            envPairs.append(("ZMX_DIR", zmxDir))
+        }
+        let envCStrings = envPairs.map { (strdup($0.key), strdup($0.value)) }
+        let envCount = envCStrings.count
 
         // env_vars needs a stable pointer during ghostty_surface_new; libghostty
         // copies the contents before returning.
         let envVarsPtr = UnsafeMutablePointer<ghostty_env_var_s>.allocate(capacity: envCount)
-        envVarsPtr.initialize(to: ghostty_env_var_s(key: sockKey, value: sockVal))
-        if let zmxDirKey, let zmxDirVal {
-            envVarsPtr.advanced(by: 1).initialize(
-                to: ghostty_env_var_s(key: zmxDirKey, value: zmxDirVal)
+        for (i, (key, value)) in envCStrings.enumerated() {
+            envVarsPtr.advanced(by: i).initialize(
+                to: ghostty_env_var_s(key: key, value: value)
             )
         }
 
@@ -134,11 +146,8 @@ final class SurfaceHandle {
             envVarsPtr.deinitialize(count: envCount)
             envVarsPtr.deallocate()
             free(cwdCStr)
-            free(sockKey)
-            free(sockVal)
+            for (k, v) in envCStrings { free(k); free(v) }
             if let initialInputCStr { free(initialInputCStr) }
-            if let zmxDirKey { free(zmxDirKey) }
-            if let zmxDirVal { free(zmxDirVal) }
             Unmanaged<SurfaceUserdataBox>.fromOpaque(userdataPtr).release()
             return nil
         }
@@ -166,11 +175,8 @@ final class SurfaceHandle {
         envVarsPtr.deinitialize(count: envCount)
         envVarsPtr.deallocate()
         free(cwdCStr)
-        free(sockKey)
-        free(sockVal)
+        for (k, v) in envCStrings { free(k); free(v) }
         if let initialInputCStr { free(initialInputCStr) }
-        if let zmxDirKey { free(zmxDirKey) }
-        if let zmxDirVal { free(zmxDirVal) }
     }
 
     deinit {

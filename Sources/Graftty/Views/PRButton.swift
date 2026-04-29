@@ -56,14 +56,7 @@ struct PRButton: View {
             : theme.foreground.opacity(0.08)
     }
 
-    private var dotColor: Color {
-        switch info.checks {
-        case .success: return Color(red: 0.25, green: 0.73, blue: 0.31)
-        case .failure: return Color(red: 0.97, green: 0.32, blue: 0.29)
-        case .pending: return Color(red: 0.82, green: 0.60, blue: 0.13)
-        case .none:    return Color(red: 0.43, green: 0.46, blue: 0.51)
-        }
-    }
+    private var dotColor: Color { info.checks.statusColor }
 
     private var accessibilityChecks: String {
         switch info.checks {
@@ -88,8 +81,23 @@ extension PRInfo.State {
     }
 }
 
-/// Subtle pulsing opacity for the pending dot.
-private struct PulseIfPending: ViewModifier {
+extension PRInfo.Checks {
+    /// Color encoding the CI verdict. Reused by the breadcrumb PR
+    /// button's dot and, per `PR-3.5`, the sidebar `#<number>` badge.
+    /// The `.success` green intentionally matches `PRInfo.State.open`
+    /// so an open PR with passing CI reads as a single signal.
+    var statusColor: Color {
+        switch self {
+        case .success: return PRInfo.State.open.statusColor
+        case .failure: return Color(red: 0.97, green: 0.32, blue: 0.29)
+        case .pending: return Color(red: 0.82, green: 0.60, blue: 0.13)
+        case .none:    return Color(red: 0.43, green: 0.46, blue: 0.51)
+        }
+    }
+}
+
+/// Subtle pulsing opacity for a pending CI indicator.
+struct PulseIfPending: ViewModifier {
     let isPending: Bool
     @State private var phase = 0.0
 

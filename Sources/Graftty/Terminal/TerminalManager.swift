@@ -127,6 +127,21 @@ final class TerminalManager: ObservableObject {
     /// spawn a new surface; without it, split requests no-op.
     var onSplitRequest: ((TerminalID, PaneSplit) -> Void)?
 
+    /// Called when a terminal surface's right-click menu requests a
+    /// move-to-worktree (PWD-1.1 / PWD-1.3). The host (GrafttyApp) wires
+    /// this up to mutate AppState through the same `reassignPaneByPWD`
+    /// path that the sidebar's pane-row menu uses. Without this wired,
+    /// the menu items are no-ops.
+    var onMovePane: ((TerminalID, String) -> Void)?
+
+    /// Resolves the snapshot of model state needed to build the
+    /// Move-to-worktree menu items for `terminalID`. Returns nil when
+    /// the pane isn't currently parked in any worktree (e.g. mid-move
+    /// race window). The host (GrafttyApp) wires this against
+    /// `AppState`; the surface menu (`SurfaceContextMenu`) calls it at
+    /// menu-open time so the sampled state is fresh.
+    var currentPaneMoveContext: ((TerminalID) -> PaneMoveMenuContext?)?
+
     /// Called when libghostty asks the host to close a surface (shell exited,
     /// or user-initiated request-close that's been confirmed). The host
     /// removes the pane from the split tree and calls `destroySurface`.
