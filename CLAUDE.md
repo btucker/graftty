@@ -14,6 +14,10 @@ Each requirement gets a scoped identifier (e.g., `GIT-4.3`, `LAYOUT-2.12`) so it
 
 If a change removes or modifies behavior, update or delete the matching requirements in the same commit — the goal is that SPECS.md never lags behind the code.
 
+## Always run /simplify before opening a PR
+
+Before opening a PR, run `/simplify` to review the changed code for reuse, quality, and efficiency, and apply any improvements it surfaces. This catches dead code, duplicated helpers, and over-complicated branches that are easier to clean up before review than after.
+
 ## Cutting a release
 
 Releases are tag-driven — no source changes needed to bump the version.

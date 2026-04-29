@@ -4,6 +4,41 @@ public enum WorktreeState: String, Codable, Sendable {
     case closed
     case running
     case stale
+    /// Placeholder shown in the sidebar between the user submitting the
+    /// Add Worktree sheet and `git worktree add` returning. Only ever
+    /// produced by `AddWorktreeFlow`; the row renders a spinner in place
+    /// of its type icon and suppresses pane rows / context-menu actions
+    /// while the git invocation (and any pre-commit / post-checkout
+    /// hooks) is running. Transient by design — see custom `encode` for
+    /// the persistence policy.
+    case creating
+
+    /// `.creating` is in-memory only. If the app crashes mid-creation,
+    /// the on-disk worktree may or may not exist — the next launch's
+    /// reconciler will resolve it (see `GIT-2.2`). Persisting `.creating`
+    /// would otherwise leave a phantom row spinning forever after
+    /// restart, so we coerce it to `.closed` on encode and let the
+    /// reconciler classify based on `git worktree list --porcelain`.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .creating: try container.encode(WorktreeState.closed.rawValue)
+        case .closed, .running, .stale: try container.encode(self.rawValue)
+        }
+    }
+
+    /// True iff the entry's path corresponds to an actual on-disk
+    /// worktree git can inspect. Polling stores (stats, PR), per-
+    /// worktree subprocess scans, and FSEvents watcher arming should
+    /// gate on this — `.creating` placeholders have no directory yet,
+    /// `.stale` placeholders have lost theirs, and either case fires
+    /// failed subprocesses for no benefit.
+    public var hasOnDiskWorktree: Bool {
+        switch self {
+        case .closed, .running: return true
+        case .stale, .creating: return false
+        }
+    }
 }
 
 public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {

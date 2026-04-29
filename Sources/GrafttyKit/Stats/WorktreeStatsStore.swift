@@ -374,7 +374,7 @@ public final class WorktreeStatsStore {
             // `performRepoFetch` calls `refresh` for each non-stale worktree
             // after its fetch resolves.
             if didDispatchRepoFetch { continue }
-            for wt in repo.worktrees where wt.state != .stale {
+            for wt in repo.worktrees where wt.state.hasOnDiskWorktree {
                 if let last = lastStatsRefresh[wt.path],
                    now.timeIntervalSince(last) < Double(statsInterval.components.seconds) {
                     continue

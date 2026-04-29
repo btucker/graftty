@@ -269,6 +269,36 @@ struct WorktreeEntryTests {
         #expect(entry.splitTree.root == nil)
     }
 
+    /// GIT-5.9: `.creating` is the in-memory placeholder state used
+    /// while `git worktree add` runs. If the app crashes mid-creation,
+    /// the next launch's reconciler classifies the entry from `git
+    /// worktree list --porcelain` rather than restoring a phantom
+    /// spinner that would never resolve. Encode coerces `.creating`
+    /// to `.closed` so the persisted shape never carries the transient
+    /// state.
+    @Test func creatingStateIsEncodedAsClosed() throws {
+        var entry = WorktreeEntry(path: "/tmp/in-flight", branch: "feat")
+        entry.state = .creating
+
+        let data = try JSONEncoder().encode(entry)
+        let decoded = try JSONDecoder().decode(WorktreeEntry.self, from: data)
+
+        #expect(decoded.state == .closed,
+                "creating must not survive a round-trip through state.json")
+    }
+
+    @Test func creatingStateRendersAsClosedRawValueInJSON() throws {
+        var entry = WorktreeEntry(path: "/tmp/in-flight", branch: "feat")
+        entry.state = .creating
+
+        let data = try JSONEncoder().encode(entry)
+        let json = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        #expect(json["state"] as? String == "closed",
+                "encoded state field must be the closed raw value")
+    }
+
     @Test func codableRoundTrip() throws {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "feature/bar")
         entry.state = .running

@@ -70,6 +70,34 @@ struct WorktreeReconcilerTests {
         #expect(r.newlyStale.isEmpty)
     }
 
+    /// GIT-5.8: a `.creating` placeholder is in flight by definition —
+    /// `git worktree add` hasn't finished writing the admin entry yet,
+    /// so an FSEvents-driven reconcile must NOT flip it to `.stale`.
+    /// Only `AddWorktreeFlow` is allowed to clear placeholders.
+    @Test func creatingPlaceholderIsPreservedWhenAbsentFromDiscovery() {
+        let existing = [wt("/r/in-flight", "feat", state: .creating)]
+        let r = WorktreeReconciler.reconcile(existing: existing, discovered: [])
+        #expect(r.merged[0].state == .creating,
+                "placeholder must not be transitioned to .stale by the reconciler")
+        #expect(r.newlyStale.isEmpty)
+    }
+
+    /// Once git finishes and the path appears in porcelain, the
+    /// reconciler should NOT promote the placeholder to `.closed` —
+    /// `AddWorktreeFlow.finishCreate` owns the `.creating → .running`
+    /// transition. Branch label adoption is fine (the `else` arm of
+    /// the existing reconcile loop already handles that for any
+    /// non-stale state).
+    @Test func creatingPlaceholderRetainsStateWhenDiscovered() {
+        let existing = [wt("/r/in-flight", "old-name", state: .creating)]
+        let discovered = [DiscoveredWorktree(path: "/r/in-flight", branch: "real-name")]
+        let r = WorktreeReconciler.reconcile(existing: existing, discovered: discovered)
+        #expect(r.merged[0].state == .creating)
+        #expect(r.merged[0].branch == "real-name", "branch label adoption still applies")
+        #expect(r.resurrected.isEmpty, ".creating is not a stale-resurrect")
+        #expect(r.newlyAdded.isEmpty, "placeholder is not double-added")
+    }
+
     @Test func mixedSet() {
         let existing = [
             wt("/r/a", "main", state: .running), // stays

@@ -53,7 +53,7 @@ public final class WorktreeMonitor: @unchecked Sendable {
     public func installRepoWatchers(repo: RepoEntry) {
         watchWorktreeDirectory(repoPath: repo.path)
         watchOriginRefs(repoPath: repo.path)
-        for wt in repo.worktrees where wt.state != .stale {
+        for wt in repo.worktrees where wt.state.hasOnDiskWorktree {
             watchWorktreePath(wt.path)
             watchHeadRef(worktreePath: wt.path, repoPath: repo.path)
             watchWorktreeContents(worktreePath: wt.path)

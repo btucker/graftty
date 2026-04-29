@@ -439,7 +439,7 @@ extension PRStatusStore {
                cached == nil || cached?.provider == .unsupported {
                 continue
             }
-            for wt in repo.worktrees where wt.state != .stale {
+            for wt in repo.worktrees where wt.state.hasOnDiskWorktree {
                 // `PR-7.13` time-bounded in-flight check: defer to a
                 // prior dispatch only while it's plausibly still
                 // running. Past the cap it's treated as abandoned and

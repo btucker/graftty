@@ -261,6 +261,15 @@ struct MainWindow: View {
     }
 
     private func selectWorktree(_ path: String) {
+        // `.creating` placeholders have no on-disk worktree yet — there
+        // are no surfaces to focus, no PR / stats to refresh, and the
+        // detail pane would render an empty terminal. Ignore selection
+        // attempts on placeholders and let the user keep working in
+        // their current worktree until `AddWorktreeFlow` promotes the
+        // entry to `.running` (which auto-selects on its own).
+        if let wt = appState.worktree(forPath: path), wt.state == .creating {
+            return
+        }
         appState.selectedWorktreePath = path
 
         // Resurrect stale entries whose directory is actually still on
@@ -372,52 +381,62 @@ struct MainWindow: View {
         }
     }
 
-    /// Delegates to `AddWorktreeFlow.add` for the git + discover + spawn
-    /// pipeline (shared with the web client's `POST /worktrees`), then
-    /// flips `selectedWorktreePath` and routes keyboard focus — the
-    /// parts of "select" that only apply to the local Mac window. The
-    /// web entry point deliberately skips those so remote-creating a
-    /// worktree doesn't yank local focus away.
+    /// Two-phase create: `beginCreate` (sync) inserts a placeholder so
+    /// the sheet dismisses immediately, then a detached `Task` runs
+    /// `finishCreate` which spawns git's hooks in the background and
+    /// promotes the placeholder to `.running` (or removes it + alerts
+    /// on failure — the sheet is gone, so an inline error isn't an
+    /// option). `discoveryFailed` from finishCreate is logged not
+    /// alerted because the worktree IS on disk by that point.
     private func addWorktree(
         repo: RepoEntry,
         worktreeName: String,
         branchName: String
     ) async -> String? {
-        let router = channelRouter
-        let result = await AddWorktreeFlow.add(
+        let beginResult = AddWorktreeFlow.beginCreate(
             repoPath: repo.path,
             worktreeName: worktreeName,
             branchName: branchName,
-            appState: $appState,
-            worktreeMonitor: worktreeMonitor,
-            statsStore: statsStore,
-            terminalManager: terminalManager,
-            channelDispatch: { path, msg in router.dispatch(worktreePath: path, message: msg) }
+            appState: $appState
         )
-        switch result {
-        case .failure(let err):
-            switch err {
-            case .gitFailed(let msg): return msg
-            case .repoNotFound: return "repository no longer tracked"
-            case .discoveryFailed(let msg):
-                // The worktree creation itself succeeded; we just can't
-                // confirm it. Log and mirror the GIT-3.12 pattern of
-                // letting FSEvents eventually catch up.
-                NSLog("[Graftty] addWorktree: post-success discover failed for %@: %@",
-                      repo.path, msg)
-                return nil
-            }
-        case .success(let outcome):
-            // `selectWorktree` is idempotent on the `.closed → .running`
-            // transition `AddWorktreeFlow.add` already performed; its
-            // remaining work is the UI-local side effects (first
-            // responder, PR refresh, `selectedWorktreePath`).
-            selectWorktree(outcome.worktreePath)
-            // TEAM-3.4: refresh instructions for all subscribers so
-            // they see the updated roster after the new member joined.
-            router.broadcastInstructions()
-            return nil
+        let worktreePath: String
+        switch beginResult {
+        case .failure(let err): return err.userMessage
+        case .success(let path): worktreePath = path
         }
+
+        let router = channelRouter
+        Task { @MainActor in
+            let result = await AddWorktreeFlow.finishCreate(
+                repoPath: repo.path,
+                worktreePath: worktreePath,
+                branchName: branchName,
+                appState: $appState,
+                worktreeMonitor: worktreeMonitor,
+                statsStore: statsStore,
+                terminalManager: terminalManager,
+                channelDispatch: { path, msg in router.dispatch(worktreePath: path, message: msg) }
+            )
+            switch result {
+            case .failure(let err):
+                if let msg = err.userMessage {
+                    let alert = NSAlert()
+                    alert.messageText = "Could not create worktree"
+                    alert.informativeText = msg
+                    alert.alertStyle = .warning
+                    alert.runModal()
+                } else if case .discoveryFailed(let m) = err {
+                    NSLog("[Graftty] addWorktree: post-success discover failed for %@: %@",
+                          repo.path, m)
+                }
+            case .success(let outcome):
+                selectWorktree(outcome.worktreePath)
+                // TEAM-3.4: refresh instructions for all subscribers so
+                // they see the updated roster after the new member joined.
+                router.broadcastInstructions()
+            }
+        }
+        return nil
     }
 
     private func addRepository() {
