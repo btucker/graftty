@@ -14,6 +14,8 @@ public final class RemoteBranchStore {
     @ObservationIgnored private var inFlight: [String: Int] = [:]
     @ObservationIgnored private var generation: [String: Int] = [:]
     @ObservationIgnored private var completions: [String: [Int: [@MainActor () -> Void]]] = [:]
+    @ObservationIgnored private var ticker: PollingTickerLike?
+    @ObservationIgnored private var getRepos: @MainActor () -> [RepoEntry] = { [] }
     @ObservationIgnored private let logger = Logger(subsystem: "com.btucker.graftty", category: "RemoteBranchStore")
 
     public init(list: @escaping ListFunction = RemoteBranchStore.defaultList) {
@@ -29,6 +31,31 @@ public final class RemoteBranchStore {
         branchesByRepo.removeValue(forKey: repoPath)
         inFlight.removeValue(forKey: repoPath)
         generation[repoPath, default: 0] += 1
+    }
+
+    public func start(
+        ticker: PollingTickerLike,
+        getRepos: @escaping @MainActor () -> [RepoEntry]
+    ) {
+        stop()
+        self.ticker = ticker
+        self.getRepos = getRepos
+        ticker.start { [weak self] in
+            guard let self else { return }
+            for repo in self.getRepos() {
+                self.refresh(repoPath: repo.path)
+            }
+        }
+    }
+
+    public func stop() {
+        ticker?.stop()
+        ticker = nil
+        getRepos = { [] }
+    }
+
+    public func pulse() {
+        ticker?.pulse()
     }
 
     public func refresh(repoPath: String, completion: (@MainActor () -> Void)? = nil) {

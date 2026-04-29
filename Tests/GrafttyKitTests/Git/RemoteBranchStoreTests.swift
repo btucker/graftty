@@ -153,6 +153,92 @@ struct RemoteBranchStoreTests {
         #expect(completions == ["first", "second"])
     }
 
+    @MainActor
+    @Test func startRefreshesEachTrackedRepoOnTickerFire() async throws {
+        let lister = RecordingRemoteBranchLister(results: [
+            "/a": .success(["main"]),
+            "/b": .success(["feature"]),
+        ])
+        let ticker = CapturingTicker()
+        let store = RemoteBranchStore(list: lister.list)
+        let repos = [
+            RepoEntry(path: "/a", displayName: "a", worktrees: []),
+            RepoEntry(path: "/b", displayName: "b", worktrees: []),
+        ]
+
+        store.start(ticker: ticker, getRepos: { repos })
+        await ticker.fire()
+
+        try await waitUntil(timeout: 1.0) {
+            store.hasRemote(repoPath: "/a", branch: "main")
+                && store.hasRemote(repoPath: "/b", branch: "feature")
+        }
+    }
+
+    @MainActor
+    @Test func stopPreventsOldTickerFireFromRefreshingRepos() async throws {
+        let lister = RecordingRemoteBranchLister(results: [
+            "/repo": .success(["main"]),
+        ])
+        let ticker = CapturingTicker()
+        let store = RemoteBranchStore(list: lister.list)
+
+        store.start(
+            ticker: ticker,
+            getRepos: { [RepoEntry(path: "/repo", displayName: "repo", worktrees: [])] }
+        )
+        store.stop()
+        await ticker.fire()
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(lister.invocationCount(for: "/repo") == 0)
+        #expect(ticker.stopCallCount == 1)
+    }
+
+    @MainActor
+    @Test func secondStartStopsFirstTickerAndUsesSecondRepoSupplier() async throws {
+        let lister = RecordingRemoteBranchLister(results: [
+            "/old": .success(["old"]),
+            "/new": .success(["new"]),
+        ])
+        let firstTicker = CapturingTicker()
+        let secondTicker = CapturingTicker()
+        let store = RemoteBranchStore(list: lister.list)
+
+        store.start(
+            ticker: firstTicker,
+            getRepos: { [RepoEntry(path: "/old", displayName: "old", worktrees: [])] }
+        )
+        store.start(
+            ticker: secondTicker,
+            getRepos: { [RepoEntry(path: "/new", displayName: "new", worktrees: [])] }
+        )
+
+        await firstTicker.fire()
+        await secondTicker.fire()
+
+        try await waitUntil(timeout: 1.0) {
+            store.hasRemote(repoPath: "/new", branch: "new")
+        }
+        #expect(!store.hasRemote(repoPath: "/old", branch: "old"))
+        #expect(lister.invocationCount(for: "/old") == 0)
+        #expect(firstTicker.stopCallCount == 1)
+    }
+
+    @MainActor
+    @Test func pulseForwardsToActiveTickerAndDoesNothingAfterStop() {
+        let ticker = CapturingTicker()
+        let store = RemoteBranchStore(list: { _ in [] })
+
+        store.start(ticker: ticker, getRepos: { [] })
+        store.pulse()
+        #expect(ticker.pulseCallCount == 1)
+
+        store.stop()
+        store.pulse()
+        #expect(ticker.pulseCallCount == 1)
+    }
+
     private func waitUntil(
         timeout: TimeInterval,
         condition: @escaping @MainActor @Sendable () -> Bool
@@ -163,6 +249,29 @@ struct RemoteBranchStoreTests {
             try await Task.sleep(nanoseconds: 25_000_000)
         }
         await #expect(condition(), "waitUntil timed out")
+    }
+}
+
+@MainActor
+private final class CapturingTicker: PollingTickerLike {
+    private var onTick: (@MainActor () async -> Void)?
+    private(set) var stopCallCount = 0
+    private(set) var pulseCallCount = 0
+
+    func start(onTick: @MainActor @escaping () async -> Void) {
+        self.onTick = onTick
+    }
+
+    func stop() {
+        stopCallCount += 1
+    }
+
+    func pulse() {
+        pulseCallCount += 1
+    }
+
+    func fire() async {
+        await onTick?()
     }
 }
 
