@@ -1405,3 +1405,23 @@ While the "keyboard allowed" flag is false, any stray keyboard-will-show event (
 **TEAM-6.1** While `agentTeamsEnabled` is true and a `RepoEntry` has two or more worktrees, the sidebar shall render that repo with a small "team" icon (SF Symbol `person.2.fill`) adjacent to its disclosure header. No per-worktree accent stripe is applied; the header icon is sufficient to indicate team membership.
 
 **TEAM-6.2** Right-clicking any team-enabled worktree's row shall include a *Show Team Members…* context-menu item. Selecting it shall display a popover listing each team member by name, branch, and role (lead / coworker), populated from the same source as `graftty team list`.
+
+## 21. Editor Integration
+
+Cmd-clicking a file path in a terminal pane opens the file in the user's configured editor — CLI editors in a new pane, GUI apps via NSWorkspace.
+
+**EDITOR-1.1** When the user cmd-clicks a file path in a terminal pane, the application shall open the file via the configured editor.
+
+**EDITOR-1.2** If the configured editor is a known CLI editor, the application shall split the source pane to the right and run the editor in the new pane.
+
+**EDITOR-1.3** If the configured editor is a GUI app, the application shall dispatch the file to the app via NSWorkspace, without creating a new pane.
+
+**EDITOR-1.4** If the cmd-clicked target carries a `:line(:col)` suffix, the application shall strip the suffix before resolving the path, and shall pass the line number to known CLI editors using `+<line>`.
+
+**EDITOR-1.5** If the cmd-clicked target is not a file path, the application shall open it via NSWorkspace (preserving existing handling for `http(s)`, `mailto:`, `ssh:`, and other URL schemes).
+
+**EDITOR-1.6** If the cmd-clicked target resolves to a path that does not exist on disk, the application shall emit a system beep and not open anything.
+
+**EDITOR-1.7** When no editor is explicitly configured in Settings, the application shall use the value of `$EDITOR` as defined by the user's login shell.
+
+**EDITOR-1.8** If `$EDITOR` is unset, the application shall fall back to `vi`.
