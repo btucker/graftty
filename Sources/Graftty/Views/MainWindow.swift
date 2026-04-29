@@ -270,6 +270,7 @@ struct MainWindow: View {
         if let wt = appState.worktree(forPath: path), wt.state == .creating {
             return
         }
+        let previousPath = appState.selectedWorktreePath
         appState.selectedWorktreePath = path
 
         // Resurrect stale entries whose directory is actually still on
@@ -307,8 +308,11 @@ struct MainWindow: View {
 
         for repoIdx in appState.repos.indices {
             for wtIdx in appState.repos[repoIdx].worktrees.indices {
-                if appState.repos[repoIdx].worktrees[wtIdx].path == path
-                    && appState.repos[repoIdx].worktrees[wtIdx].state == .closed {
+                if appState.repos[repoIdx].worktrees[wtIdx].path != path {
+                    continue
+                }
+
+                if appState.repos[repoIdx].worktrees[wtIdx].state == .closed {
 
                     if appState.repos[repoIdx].worktrees[wtIdx].splitTree.root == nil {
                         let id = TerminalID()
@@ -329,6 +333,12 @@ struct MainWindow: View {
                     _ = terminalManager.createSurfaces(for: splitTree, worktreePath: path)
 
                     appState.repos[repoIdx].worktrees[wtIdx].state = .running
+                } else if appState.repos[repoIdx].worktrees[wtIdx].state == .running {
+                    let splitTree = appState.repos[repoIdx].worktrees[wtIdx].splitTree
+                    let missingSurface = splitTree.allLeaves.contains { terminalManager.handle(for: $0) == nil }
+                    if missingSurface {
+                        _ = terminalManager.createSurfaces(for: splitTree, worktreePath: path)
+                    }
                 }
             }
         }
@@ -346,6 +356,11 @@ struct MainWindow: View {
                 }
             }
         }
+
+        if previousPath != path, let previousPath {
+            setWorktreeSurfacesVisible(false, worktreePath: previousPath)
+        }
+        setWorktreeSurfacesVisible(true, worktreePath: path)
 
         // Route keyboard to the worktree's currently-focused pane (or the
         // first leaf if nothing was focused yet) so the user can start
@@ -367,6 +382,13 @@ struct MainWindow: View {
         refreshPR()
     }
 
+    private func setWorktreeSurfacesVisible(_ visible: Bool, worktreePath: String) {
+        guard let wt = appState.worktree(forPath: worktreePath), wt.state == .running else { return }
+        for terminalID in wt.splitTree.allLeaves {
+            terminalManager.setVisible(visible, for: terminalID)
+        }
+    }
+
     /// Promote the terminal's backing `NSView` to the window's first
     /// responder so keyDown events route to libghostty. Dispatched async
     /// because the view may have just been created by `createSurfaces` and
@@ -377,6 +399,7 @@ struct MainWindow: View {
         DispatchQueue.main.async {
             guard let view = tm.view(for: terminalID),
                   let window = view.window else { return }
+            tm.setVisible(true, for: terminalID)
             window.makeFirstResponder(view)
         }
     }

@@ -1017,6 +1017,7 @@ struct GrafttyApp: App {
     }
 
     private func restoreRunningWorktrees() {
+        let selectedPath = appState.selectedWorktreePath
         for repoIdx in appState.repos.indices {
             for wtIdx in appState.repos[repoIdx].worktrees.indices {
                 let wt = appState.repos[repoIdx].worktrees[wtIdx]
@@ -1035,6 +1036,7 @@ struct GrafttyApp: App {
                     for leafID in appState.repos[repoIdx].worktrees[wtIdx].splitTree.allLeaves {
                         terminalManager.markRehydrated(leafID)
                     }
+                    guard wt.path == selectedPath else { continue }
                     _ = terminalManager.createSurfaces(
                         for: appState.repos[repoIdx].worktrees[wtIdx].splitTree,
                         worktreePath: wt.path

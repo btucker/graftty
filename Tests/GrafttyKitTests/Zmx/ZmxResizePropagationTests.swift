@@ -87,14 +87,16 @@ struct ZmxResizePropagationTests {
         launcher: ZmxLauncher,
         sessionName: String,
         cols: UInt16,
-        rows: UInt16
+        rows: UInt16,
+        resetSignalMask: Bool = true
     ) throws -> PtyAttach {
         let env = launcher.subprocessEnv(from: ProcessInfo.processInfo.environment)
             .merging(["SHELL": "/bin/sh"]) { _, new in new }
         let spawned = try PtyProcess.spawn(
             argv: launcher.attachArgv(sessionName: sessionName, userShell: "/bin/sh"),
             env: env,
-            initialSize: (cols: cols, rows: rows)
+            initialSize: (cols: cols, rows: rows),
+            resetSignalMask: resetSignalMask
         )
 
         // Non-blocking master so test reads don't hang if we ever decide
@@ -105,6 +107,15 @@ struct ZmxResizePropagationTests {
         _ = fcntl(spawned.masterFD, F_SETFL, flags | O_NONBLOCK)
 
         return PtyAttach(pid: spawned.pid, masterFd: spawned.masterFD)
+    }
+
+    private static func withSIGWINCHBlocked<T>(_ body: () throws -> T) rethrows -> T {
+        var set = sigset_t()
+        sigemptyset(&set)
+        sigaddset(&set, SIGWINCH)
+        pthread_sigmask(SIG_BLOCK, &set, nil)
+        defer { pthread_sigmask(SIG_UNBLOCK, &set, nil) }
+        return try body()
     }
 
     /// Read the session's zmx daemon log file and return its full contents.
@@ -179,26 +190,14 @@ struct ZmxResizePropagationTests {
 
     // MARK: - Tests
 
-    /// Disabled: depends on an upstream zmx fix. `zmx attach`'s client
-    /// loop has a SIGWINCH → `poll(-1)` race — if SIGWINCH arrives
-    /// between the flag check at loop-top and the `poll` syscall entry,
-    /// the kernel has already delivered the signal and `poll` blocks
-    /// anyway. Without any subsequent fd activity, the flag stays set
-    /// but never drains into a Resize IPC, so the daemon's inner PTY
-    /// keeps its old size.
-    ///
-    /// This matches the user-visible symptom where `vim` in a just-
-    /// rehydrated pane paints at the pre-resize dimensions until the
-    /// user types. The Graftty-side signal-mask fix in `PtyProcess.spawn`
-    /// gets SIGWINCH to zmx's handler; draining the flag without any
-    /// other wake-up still requires zmx to use `ppoll` or self-pipe.
-    ///
-    /// Enable this test once the vendored zmx includes a fix (the
-    /// remaining red asserts exactly the end-to-end invariant).
-    @Test(
-        .disabled("awaiting upstream zmx fix for the swap→poll signal race; see comment above"),
-        .timeLimit(.minutes(1))
-    )
+    /// `zmx attach` must forward a PTY resize to the daemon even when
+    /// the attached session is idle. zmx 0.5.0 had a SIGWINCH → `poll(-1)`
+    /// race: if SIGWINCH arrived just before the client entered `poll`,
+    /// the resize flag stayed stranded until a later keystroke or daemon
+    /// output woke the loop. That matched the user-visible symptom where
+    /// a just-reattached Claude Code pane kept the old dimensions until
+    /// the user typed.
+    @Test(.timeLimit(.minutes(1)))
     func resizeIsPropagatedWithoutUserInput() throws {
         try Self.withScopedZmxDir { launcher in
             let session = launcher.sessionName(for: UUID())
@@ -245,6 +244,57 @@ struct ZmxResizePropagationTests {
                 daemon session log never showed `\(needle)` within 2s \
                 of TIOCSWINSZ — SIGWINCH appears to have been lost in \
                 zmx's poll-race window. Full log:
+                \(log)
+                """
+            )
+        }
+    }
+
+    /// Mirrors the Ghostty-launched shell path: the intermediate shell can
+    /// exec `zmx attach` with the parent's SIGWINCH mask intact. zmx itself
+    /// must unblock SIGWINCH before installing its wake handler, otherwise
+    /// resize remains pending until unrelated input changes the session.
+    @Test(.timeLimit(.minutes(1)))
+    func resizeIsPropagatedWhenSIGWINCHStartsBlocked() throws {
+        try Self.withScopedZmxDir { launcher in
+            let session = launcher.sessionName(for: UUID())
+            let attach = try Self.withSIGWINCHBlocked {
+                try Self.spawnAttachWithInitialSize(
+                    launcher: launcher,
+                    sessionName: session,
+                    cols: Self.initialCols,
+                    rows: Self.initialRows,
+                    resetSignalMask: false
+                )
+            }
+            defer { attach.terminate() }
+
+            try Self.waitForSteadyState(
+                launcher: launcher,
+                sessionName: session,
+                initialCols: Self.initialCols,
+                initialRows: Self.initialRows
+            )
+
+            try PtyProcess.resize(
+                masterFD: attach.masterFd,
+                cols: Self.targetCols,
+                rows: Self.targetRows
+            )
+
+            let needle = Self.resizeNeedle(rows: Self.targetRows, cols: Self.targetCols)
+            let log = Self.waitForLogContains(
+                launcher: launcher,
+                sessionName: session,
+                needle: needle,
+                timeout: 2.0
+            )
+
+            #expect(
+                log.contains(needle),
+                """
+                daemon session log never showed `\(needle)` within 2s \
+                when zmx attach inherited a blocked SIGWINCH mask. Full log:
                 \(log)
                 """
             )

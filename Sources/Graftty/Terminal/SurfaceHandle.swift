@@ -229,9 +229,10 @@ final class SurfaceHandle {
         ghostty_surface_set_size(surface, width, height)
     }
 
-    /// Suspend libghostty's render loop while the surface is offscreen.
-    func setOccluded(_ occluded: Bool) {
-        ghostty_surface_set_occlusion(surface, occluded)
+    /// Tell libghostty whether this surface is currently visible. Despite
+    /// the C symbol's name, the boolean is `visible`, not `occluded`.
+    func setVisible(_ visible: Bool) {
+        ghostty_surface_set_occlusion(surface, visible)
     }
 
     /// Force a full repaint on libghostty's next draw cycle.
@@ -322,6 +323,7 @@ final class SurfaceNSView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard let window, surface != nil else { return }
+        markVisibleForInput()
         if !(window.firstResponder is SurfaceNSView) {
             window.makeFirstResponder(self)
         }
@@ -390,6 +392,7 @@ final class SurfaceNSView: NSView {
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         guard let surface else { return }
+        markVisibleForInput()
         let pixels = convertToBacking(newSize)
         // Naive `UInt32(max(1, Int(pixels.width)))` traps on NaN /
         // ±Infinity — observed transiently from SwiftUI GeometryReader
@@ -400,6 +403,7 @@ final class SurfaceNSView: NSView {
             SurfacePixelDimension.clamp(pixels.width),
             SurfacePixelDimension.clamp(pixels.height)
         )
+        ghostty_surface_refresh(surface)
     }
 
     @available(*, unavailable)
@@ -409,6 +413,7 @@ final class SurfaceNSView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         // Grab keyboard focus so subsequent keystrokes route to this view.
+        markVisibleForInput()
         window?.makeFirstResponder(self)
         guard let surface else { return }
         // Tell libghostty where the cursor is (so selection anchor is
@@ -420,6 +425,11 @@ final class SurfaceNSView: NSView {
             GHOSTTY_MOUSE_LEFT,
             Self.ghosttyMods(from: event.modifierFlags)
         )
+    }
+
+    private func markVisibleForInput() {
+        guard let terminalID else { return }
+        terminalManager?.setVisible(true, for: terminalID)
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -528,6 +538,7 @@ final class SurfaceNSView: NSView {
             super.keyDown(with: event)
             return
         }
+        markVisibleForInput()
         // Forward ALL keys to libghostty — including Cmd-modified ones —
         // so its default keybinds (Cmd+C → copy, Cmd+V → paste, Cmd+A →
         // select all, etc.) fire. App-level menu shortcuts (Cmd+D split,

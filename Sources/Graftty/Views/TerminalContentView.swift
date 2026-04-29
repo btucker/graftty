@@ -55,8 +55,7 @@ struct TerminalContentView: View {
                     .onTapGesture {
                         onFocusTerminal(terminalID)
                     }
-                    .onAppear { tm.setOccluded(false, for: terminalID) }
-                    .onDisappear { tm.setOccluded(true, for: terminalID) }
+                    .onAppear { tm.setVisible(true, for: terminalID) }
             )
         } else {
             return AnyView(
