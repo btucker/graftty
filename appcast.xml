@@ -11,13 +11,13 @@
             <sparkle:shortVersionString>0.0.9</sparkle:shortVersionString>
             <pubDate>Tue, 28 Apr 2026 15:12:25 +0000</pubDate>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description><![CDATA[## What's Changed
-* release: open PR for appcast + cask bumps instead of direct push by @btucker in https://github.com/btucker/graftty/pull/91
-
-
-**Full Changelog**: https://github.com/btucker/graftty/compare/v0.0.8...v0.0.9
+            <description><![CDATA[<h2>What's Changed</h2>
+<ul>
+<li>release: open PR for appcast + cask bumps instead of direct push by <a href="https://github.com/btucker">@btucker</a> in <a href="https://github.com/btucker/graftty/pull/91">#91</a></li>
+</ul>
+<p><strong>Full Changelog</strong>: <a href="https://github.com/btucker/graftty/compare/v0.0.8...v0.0.9">v0.0.8...v0.0.9</a></p>
 ]]></description>
-            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.0.9/Graftty-0.0.9.zip" length="14879347" type="application/octet-stream" sparkle:edSignature="sparkle:edSignature=&quot;7DgUHj/u+fzL1mECUwbOFSAkRfO9TxiYktFge4JASjiLOH65jw9idozqIBmzRe9EtoQwrFRMd5mCYa/HzY2UCQ==&quot; length=&quot;14879347&quot;"/>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.0.9/Graftty-0.0.9.zip" length="14879347" type="application/octet-stream" sparkle:edSignature="7DgUHj/u+fzL1mECUwbOFSAkRfO9TxiYktFge4JASjiLOH65jw9idozqIBmzRe9EtoQwrFRMd5mCYa/HzY2UCQ=="/>
         </item>
     </channel>
 </rss>

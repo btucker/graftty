@@ -74,6 +74,30 @@ struct AppcastUpdaterTests {
         #expect(out.contains("type=\"application/octet-stream\""))
     }
 
+    @Test func rejectsSignatureWithEmbeddedAttributeFragment() {
+        // Reproducer for the v0.0.9 release bug: `sign_update`'s stdout is
+        // a full XML attribute fragment (`sparkle:edSignature="ABC..." length="123"`),
+        // and the workflow captured the whole thing into the signature
+        // input. The result was an attribute-in-attribute appcast that
+        // Sparkle could not validate.
+        #expect(throws: AppcastUpdater.Error.self) {
+            try AppcastUpdater.validate(edSignature:
+                #"sparkle:edSignature="ABCDEF==" length="14879347""#)
+        }
+    }
+
+    @Test func rejectsSignatureWithWhitespace() {
+        #expect(throws: AppcastUpdater.Error.self) {
+            try AppcastUpdater.validate(edSignature: "AB CD==")
+        }
+    }
+
+    @Test func acceptsBase64Signature() throws {
+        // Real ed25519 base64 (88 chars + `==` padding) shape.
+        try AppcastUpdater.validate(edSignature:
+            "7DgUHj/u+fzL1mECUwbOFSAkRfO9TxiYktFge4JASjiLOH65jw9idozqIBmzRe9EtoQwrFRMd5mCYa/HzY2UCQ==")
+    }
+
     @Test func minimumSystemVersionFromItem() throws {
         let item = AppcastItem(
             version: "0.5.0",
