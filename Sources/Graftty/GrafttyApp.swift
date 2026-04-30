@@ -1193,40 +1193,56 @@ struct GrafttyApp: App {
             return closePaneByIndex(path: path, index: index,
                                     appState: appState, terminalManager: terminalManager)
         case .teamMessage(let callerPath, let recipient, let text):
-            // TEAM-4.2: resolve caller's team, find recipient member, dispatch team_message
-            guard UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) else {
-                return .error("team mode is disabled")
-            }
-            guard let callerWt = appState.wrappedValue.worktree(forPath: callerPath) else {
-                return .error("not inside a tracked worktree")
-            }
-            guard let team = TeamView.team(for: callerWt, in: appState.wrappedValue.repos, teamsEnabled: true) else {
-                return .error("your repo has no other team members yet")
-            }
-            guard let senderMember = team.members.first(where: { $0.worktreePath == callerPath }) else {
-                return .error("internal error: caller not in resolved team")
-            }
-            guard let recipientMember = team.memberNamed(recipient) else {
-                let names = team.members.map { $0.name }.filter { $0 != senderMember.name }
-                return .error("\(recipient) is not a teammate of this worktree; current teammates: \(names.joined(separator: ", "))")
-            }
-            let template = UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
-            let renderedMessage = EventBodyRenderer.body(
-                for: TeamChannelEvents.teamMessage(
-                    team: team.repoDisplayName,
-                    from: senderMember.name,
-                    text: text
-                ),
-                recipientWorktreePath: recipientMember.worktreePath,
-                subjectWorktreePath: nil,
-                repos: appState.wrappedValue.repos,
-                templateString: template
+            return handleTeamSend(
+                callerPath: callerPath,
+                recipient: recipient,
+                text: text,
+                priority: .normal,
+                appState: appState,
+                channelRouter: channelRouter
             )
-            channelRouter.dispatch(
-                worktreePath: recipientMember.worktreePath,
-                message: renderedMessage
+        case .teamSend(let callerPath, let recipient, let text, let priority):
+            return handleTeamSend(
+                callerPath: callerPath,
+                recipient: recipient,
+                text: text,
+                priority: priority,
+                appState: appState,
+                channelRouter: channelRouter
             )
-            return .ok
+        case .teamBroadcast(let callerPath, let text, let priority):
+            return handleTeamBroadcast(
+                callerPath: callerPath,
+                text: text,
+                priority: priority,
+                appState: appState,
+                channelRouter: channelRouter
+            )
+        case .teamHook(let callerPath, let runtime, let event, let sessionID):
+            return handleTeamHook(
+                callerPath: callerPath,
+                runtime: runtime,
+                event: event,
+                sessionID: sessionID,
+                appState: appState
+            )
+        case .teamInbox(let callerPath, let worktree, let repo, let member, let unread, let all):
+            return handleTeamInbox(
+                callerPath: callerPath,
+                worktree: worktree,
+                repo: repo,
+                member: member,
+                unread: unread,
+                all: all,
+                appState: appState
+            )
+        case .teamMembers(let callerPath, let worktree, let repo):
+            return handleTeamMembers(
+                callerPath: callerPath,
+                worktree: worktree,
+                repo: repo,
+                appState: appState
+            )
         case .teamList(let callerPath):
             // TEAM-4.3: list members of caller's team
             guard UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) else {
@@ -1243,12 +1259,175 @@ struct GrafttyApp: App {
                 )
             }
             return .teamList(teamName: team.repoDisplayName, members: members)
-        case .teamSend, .teamBroadcast, .teamHook, .teamInbox, .teamMembers:
-            return .error("team inbox hooks are not implemented yet")
         case .notify, .clear:
             // Fire-and-forget cases — no response. `onMessage` already handled them.
             return nil
         }
+    }
+
+    @MainActor
+    private static func handleTeamSend(
+        callerPath: String,
+        recipient: String,
+        text: String,
+        priority: TeamInboxPriority,
+        appState: Binding<AppState>,
+        channelRouter: ChannelRouter
+    ) -> ResponseMessage {
+        do {
+            let handler = teamInboxRequestHandler()
+            let delivery = try handler.send(
+                callerWorktree: callerPath,
+                recipient: recipient,
+                text: text,
+                priority: priority,
+                repos: appState.wrappedValue.repos,
+                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            )
+            dispatchTeamChannel(delivery, repos: appState.wrappedValue.repos, channelRouter: channelRouter)
+            return .ok
+        } catch let error as TeamInboxRequestError {
+            return .error(error.description)
+        } catch {
+            return .error("failed to write team inbox message: \(error)")
+        }
+    }
+
+    @MainActor
+    private static func handleTeamBroadcast(
+        callerPath: String,
+        text: String,
+        priority: TeamInboxPriority,
+        appState: Binding<AppState>,
+        channelRouter: ChannelRouter
+    ) -> ResponseMessage {
+        do {
+            let handler = teamInboxRequestHandler()
+            let deliveries = try handler.broadcast(
+                callerWorktree: callerPath,
+                text: text,
+                priority: priority,
+                repos: appState.wrappedValue.repos,
+                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            )
+            for delivery in deliveries {
+                dispatchTeamChannel(delivery, repos: appState.wrappedValue.repos, channelRouter: channelRouter)
+            }
+            return .ok
+        } catch let error as TeamInboxRequestError {
+            return .error(error.description)
+        } catch {
+            return .error("failed to write team inbox broadcast: \(error)")
+        }
+    }
+
+    @MainActor
+    private static func handleTeamHook(
+        callerPath: String,
+        runtime: TeamHookRuntime,
+        event: TeamHookEvent,
+        sessionID: String?,
+        appState: Binding<AppState>
+    ) -> ResponseMessage {
+        do {
+            let output = try teamInboxRequestHandler().hook(
+                callerWorktree: callerPath,
+                runtime: runtime,
+                event: event,
+                sessionID: sessionID,
+                repos: appState.wrappedValue.repos,
+                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            )
+            return .teamHookOutput(output)
+        } catch let error as TeamInboxRequestError {
+            return .error(error.description)
+        } catch {
+            return .error("failed to render team hook context: \(error)")
+        }
+    }
+
+    @MainActor
+    private static func handleTeamInbox(
+        callerPath: String?,
+        worktree: String?,
+        repo: String?,
+        member: String?,
+        unread: Bool,
+        all: Bool,
+        appState: Binding<AppState>
+    ) -> ResponseMessage {
+        do {
+            let messages = try teamInboxRequestHandler().diagnosticMessages(
+                callerWorktree: callerPath,
+                worktree: worktree,
+                repo: repo,
+                member: member,
+                unread: unread,
+                all: all,
+                repos: appState.wrappedValue.repos,
+                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            )
+            return .teamInbox(messages)
+        } catch let error as TeamInboxRequestError {
+            return .error(error.description)
+        } catch {
+            return .error("failed to read team inbox: \(error)")
+        }
+    }
+
+    @MainActor
+    private static func handleTeamMembers(
+        callerPath: String?,
+        worktree: String?,
+        repo: String?,
+        appState: Binding<AppState>
+    ) -> ResponseMessage {
+        do {
+            let result = try teamInboxRequestHandler().members(
+                callerWorktree: callerPath,
+                worktree: worktree,
+                repo: repo,
+                repos: appState.wrappedValue.repos,
+                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            )
+            return .teamList(teamName: result.teamName, members: result.members)
+        } catch let error as TeamInboxRequestError {
+            return .error(error.description)
+        } catch {
+            return .error("failed to list team members: \(error)")
+        }
+    }
+
+    private static func dispatchTeamChannel(
+        _ delivery: TeamInboxDelivery,
+        repos: [RepoEntry],
+        channelRouter: ChannelRouter
+    ) {
+        let template = UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
+        let renderedMessage = EventBodyRenderer.body(
+            for: TeamChannelEvents.teamMessage(
+                team: delivery.message.team,
+                from: delivery.message.from.member,
+                text: delivery.message.body
+            ),
+            recipientWorktreePath: delivery.recipient.worktreePath,
+            subjectWorktreePath: nil,
+            repos: repos,
+            templateString: template
+        )
+        channelRouter.dispatch(
+            worktreePath: delivery.recipient.worktreePath,
+            message: renderedMessage
+        )
+    }
+
+    private static func teamInboxRequestHandler() -> TeamInboxRequestHandler {
+        TeamInboxRequestHandler(
+            inbox: TeamInbox(
+                rootDirectory: AppState.defaultDirectory
+                    .appendingPathComponent("team-inbox", isDirectory: true)
+            )
+        )
     }
 
     @MainActor
