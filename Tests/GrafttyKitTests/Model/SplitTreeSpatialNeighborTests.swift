@@ -7,7 +7,11 @@ import Testing
 /// `.down` to `.right`, so in a `[A | [B / C]]` layout pressing "down"
 /// from A jumped to B instead of staying in A (or going nowhere — A has
 /// no pane below it). These tests pin the spatial contract.
-@Suite("SplitTree spatial navigation (TERM-7.3)")
+@Suite("""
+SplitTree spatial navigation
+
+@spec TERM-7.3: When the user navigates between panes via directional keyboard (Cmd+Opt+Arrow, or libghostty's `goto_split` left/right/up/down actions), the application shall move focus to the leaf that is spatially adjacent in the requested direction — determined by walking the split tree from the focused leaf up to the nearest ancestor whose split orientation matches the motion axis and whose source-side subtree contains the current leaf, then descending into the opposite subtree's near-edge leaf. If no such ancestor exists, the application shall leave focus unchanged rather than wrapping around the tree in DFS order.
+""")
 struct SplitTreeSpatialNeighborTests {
 
     @Test func rightInSimpleHorizontalSplit() {

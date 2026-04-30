@@ -107,7 +107,10 @@ struct GitHubPRFetcherTests {
         #expect(!headValue.contains(":"))
     }
 
-    @Test func filtersOutForkPRsViaHeadRepositoryOwner() async throws {
+    @Test("""
+    @spec PR-1.1: When the application resolves the PR for a worktree's branch on a GitHub origin, it shall scope the lookup to PRs whose head ref lives in the same repository as the base so that PRs from forks which happen to share the branch name are not associated with the worktree. Because `gh pr list --head` does not support the `<owner>:<branch>` syntax (it silently returns an empty result), the filter shall be implemented by passing the bare branch name to `gh`, requesting `headRepositoryOwner` in the JSON output, and discarding results whose `headRepositoryOwner.login` does not match the origin owner (compared case-insensitively).
+    """)
+    func filtersOutForkPRsViaHeadRepositoryOwner() async throws {
         // Another user's fork can have a PR open against this repo with
         // the same branch name; `gh pr list --head <branch>` happily
         // returns it alongside ours. The fetcher must filter to PRs whose
@@ -195,7 +198,10 @@ struct GitHubPRFetcherTests {
     // breadcrumb PR button disappeared even though the PR itself was
     // still cached-discoverable. Fix: treat the second call as best-effort;
     // fall back to `.none` checks so the PR identity still surfaces.
-    @Test func openPRSurfacesEvenWhenChecksFetchFails() async throws {
+    @Test("""
+    @spec PR-5.4: When `gh pr list` succeeds but the subsequent `gh pr checks` call for the resolved PR fails (auth hiccup, rate limit, subcommand regression, network blip), the application shall still surface the PR's identity with `.none` check status rather than propagating the checks error out of the fetch. The `#<number>` sidebar badge (`PR-3.2`) and the breadcrumb PR button shall remain visible — losing them because checks couldn't be resolved produces worse UX than displaying them with neutral check state.
+    """)
+    func openPRSurfacesEvenWhenChecksFetchFails() async throws {
         let fake = FakeCLIExecutor()
         fake.stub(
             command: "gh",
@@ -231,7 +237,10 @@ struct GitHubPRFetcherTests {
     /// entirely and worsen UX. Stripped title still conveys the human-
     /// readable gist of the PR; if the user wants to see the raw title
     /// they can click through to the hosting provider.
-    @Test func stripsBidiOverrideScalarsFromTitle() async throws {
+    @Test("""
+    @spec PR-5.5: When the application stores a PR/MR title into a `PRInfo` for display (breadcrumb `PRButton`, accessibility label, tooltip), it shall first strip every Unicode bidirectional-override scalar (the embedding, override, and isolate families — the same ranges as `ATTN-1.14`). PR titles are author-controlled, including authors who submit from malicious forks; a poisoned title like `"Fix \\u{202E}redli\\u{202C} helper"` would otherwise render RTL-reversed in the breadcrumb as `"Fix ildeeper helper"`-style text — the same Trojan Source visual deception (CVE-2021-42574) `ATTN-1.14` and `LAYOUT-2.18` block on self-owned surfaces. Unlike those surfaces, the PR-title path STRIPS rather than REJECTS: a poisoned title shouldn't hide the PR entirely from the user (they still need to see "a PR exists"); stripping yields a legible-ish version and the user can click through to the hosting provider for the raw text. Applies to both `GitHubPRFetcher` and `GitLabPRFetcher`.
+    """)
+    func stripsBidiOverrideScalarsFromTitle() async throws {
         // Inline stub with a title containing U+202E RIGHT-TO-LEFT
         // OVERRIDE and U+202C POP DIRECTIONAL FORMATTING.
         let rawJSON = #"""

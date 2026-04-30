@@ -112,7 +112,11 @@ struct AttentionTextValidationTests {
 // the CLI rejects out-of-range values at the front door (ATTN-1.8);
 // the server clamps them silently as a backstop (STATE-2.9) so a raw
 // socket client can't park a multi-year timer on the main queue.
-@Suite("Attention.effectiveClearAfter")
+@Suite("""
+Attention.effectiveClearAfter
+
+@spec STATE-2.9: If a notify request specifies an auto-clear duration greater than 86400 seconds (24 hours), then the application shall clamp the duration to 86400 seconds rather than schedule a timer that could leak onto the main queue for days or years. This backs up the CLI's `ATTN-1.8` validation for non-CLI socket clients.
+""")
 struct AttentionClearAfterTests {
     @Test func nilPassesThrough() {
         #expect(Attention.effectiveClearAfter(nil) == nil)

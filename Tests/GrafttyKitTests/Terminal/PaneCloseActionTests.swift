@@ -12,7 +12,10 @@ struct PaneCloseActionTests {
     /// `.closePane` — rebuilding the surface would leave a ghost pane.
     /// See the file-level doc on `paneCloseAction()` for why there is no
     /// distinguishing signal today.
-    @Test func closeSurfaceCallbackRoutesToClosePane() {
+    @Test("""
+    @spec TERM-5.3: When a terminal pane's child process exits, the application shall automatically remove the pane from the split tree and free its surface without requiring user action.
+    """)
+    func closeSurfaceCallbackRoutesToClosePane() {
         #expect(paneCloseAction() == .closePane)
     }
 }

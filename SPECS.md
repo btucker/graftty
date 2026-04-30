@@ -2,9 +2,11 @@
 
 Requirements for a macOS worktree-aware terminal multiplexer built on libghostty.
 
-## 1. App Layout
+This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do not edit manually — run `scripts/generate-specs.py` to regenerate.
 
-### 1.1 Window Structure
+## LAYOUT — App Layout
+
+### LAYOUT-1.x — Window Structure
 
 **LAYOUT-1.1** The application shall display a single main window with a resizable sidebar on the left and a terminal content area on the right.
 
@@ -14,7 +16,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **LAYOUT-1.4** While the sidebar is hidden (`NavigationSplitViewVisibility.detailOnly`), the breadcrumb bar shall apply a leading inset wide enough to clear the window's traffic-light buttons and the sidebar-toggle button so its text remains legible at the window's left edge. While the sidebar is visible, the breadcrumb shall use its standard 12pt leading padding because the sidebar column already offsets the detail content past the traffic lights.
 
-### 1.2 Sidebar — Repository List
+### LAYOUT-2.x — Sidebar — Repository List
 
 **LAYOUT-2.1** The sidebar shall display an ordered list of repositories, each expandable to show its worktrees.
 
@@ -34,11 +36,17 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **LAYOUT-2.9** If a terminal pane has no program-set title, then the pane's row shall display its last-known working directory's basename as the label. If the working directory is also unknown (root `/`, empty, or never reported), then the pane's row shall display the fallback label "shell".
 
+**LAYOUT-2.10** When the user clicks a pane row, the application shall select that pane's worktree and focus that specific pane.
+
+**LAYOUT-2.11** The sidebar shall display the active worktree row and all its pane rows inside a single unified highlighted block; within that block, the focused pane's row shall additionally be emphasized via text weight and color (no secondary background).
+
+**LAYOUT-2.12** While a worktree entry is not in the stale state, its context menu shall include an "Open Worktree in Finder..." action that opens the worktree's filesystem path in the system file browser via `NSWorkspace.shared.open`.
+
+**LAYOUT-2.13** The application shall reject incoming OSC 2 titles that match either of two shapes: (a) trimmed value matching `^[A-Z_][A-Z0-9_]*=` (an uppercase identifier followed by `=`), or (b) containing the literal substring `GHOSTTY_ZSH_ZDOTDIR` anywhere in the title. Both shapes are command-echo leaks produced by ghostty's shell-integration `preexec` hook when the outer shell runs Graftty's injected `exec zmx attach …` bootstrap line; propagating them to the sidebar would display a 200+ character shell-command string as the pane's title until the inner shell's first prompt overwrites it. Shape (a) catches the pre-`ZMX-6.4` naked-env-assignment form; shape (b) catches the post-`ZMX-6.4` conditional form (`if [ -n "$ZDOTDIR" ]; then export GHOSTTY_ZSH_ZDOTDIR=…; fi; ZDOTDIR=… exec zmx attach …`) and guards against any future bootstrap reshape that preserves the `GHOSTTY_ZSH_ZDOTDIR` marker. The previously stored title (if any) is retained; if none, the pane falls back to the LAYOUT-2.9 chain.
+
 **LAYOUT-2.14** When `PaneTitle.display` is asked to render a stored title consisting of only whitespace (spaces, tabs), the application shall fall through to the PWD basename (or the "shell" view-level fallback) rather than rendering visible blank space as the pane label. Real content with surrounding whitespace (e.g., `" claude "`) is preserved verbatim — the check is whitespace-only-vs-content, not a trimming operation.
 
 **LAYOUT-2.15** `WorktreeEntry.displayName(amongSiblingPaths:)` shall grow its disambiguation suffix one path component at a time until the candidate is unique amongst siblings, rather than stopping at a single `<parent>/<leaf>` level. Previous behavior: two siblings like `/repo/.worktrees/deep/ns/feature` and `/repo/.worktrees/other/ns/feature` both rendered as `ns/feature` because the algorithm didn't grow past one parent. With `WorktreeNameSanitizer` now permitting `/` in worktree names (`GIT-5.1`), deeply nested worktrees that share both leaf and immediate parent are plausible. The new algorithm returns `deep/ns/feature` vs `other/ns/feature`; if a sibling's path is a strict suffix of another's (pathological), falls back to the full path so something still distinguishes them.
-
-**LAYOUT-2.13** The application shall reject incoming OSC 2 titles that match either of two shapes: (a) trimmed value matching `^[A-Z_][A-Z0-9_]*=` (an uppercase identifier followed by `=`), or (b) containing the literal substring `GHOSTTY_ZSH_ZDOTDIR` anywhere in the title. Both shapes are command-echo leaks produced by ghostty's shell-integration `preexec` hook when the outer shell runs Graftty's injected `exec zmx attach …` bootstrap line; propagating them to the sidebar would display a 200+ character shell-command string as the pane's title until the inner shell's first prompt overwrites it. Shape (a) catches the pre-`ZMX-6.4` naked-env-assignment form; shape (b) catches the post-`ZMX-6.4` conditional form (`if [ -n "$ZDOTDIR" ]; then export GHOSTTY_ZSH_ZDOTDIR=…; fi; ZDOTDIR=… exec zmx attach …`) and guards against any future bootstrap reshape that preserves the `GHOSTTY_ZSH_ZDOTDIR` marker. The previously stored title (if any) is retained; if none, the pane falls back to the LAYOUT-2.9 chain.
 
 **LAYOUT-2.16** The application shall also reject incoming OSC 2 titles whose grapheme-cluster length exceeds `PaneTitle.maxStoredLength` (200), bounding the transient heap cost of the `titles[TerminalID: String]` dict against a misbehaving program that pushes a multi-kilobyte payload. The cap matches `Attention.textMaxLength` so the pane-title and notify-text surfaces share the same limit. Rejection semantics match `LAYOUT-2.13`: the previously stored title (if any) is retained; if none, the pane falls back to the `LAYOUT-2.9` chain.
 
@@ -46,13 +54,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **LAYOUT-2.18** The application shall also reject incoming OSC 2 titles containing any Unicode bidirectional-override scalar — the embedding family (`U+202A`–`U+202C`), the override family (`U+202D`–`U+202E`), or the isolate family (`U+2066`–`U+2069`). These are Cf-category so `LAYOUT-2.17`'s Cc gate misses them, but they reverse surrounding text at render time — a rogue inner-shell program can push `printf '\e]0;\u202Edecoy\u202C\a'` and have the title display RTL-reversed in the pane row, the same "Trojan Source" visual deception (CVE-2021-42574) that `ATTN-1.14` blocks on the notify surface. Natural RTL text (Arabic, Hebrew, Persian) uses character-intrinsic directionality rather than these override scalars and still passes. Rejection semantics match `LAYOUT-2.13` / `LAYOUT-2.16` / `LAYOUT-2.17`.
 
-**LAYOUT-2.10** When the user clicks a pane row, the application shall select that pane's worktree and focus that specific pane.
-
-**LAYOUT-2.11** The sidebar shall display the active worktree row and all its pane rows inside a single unified highlighted block; within that block, the focused pane's row shall additionally be emphasized via text weight and color (no secondary background).
-
-**LAYOUT-2.12** While a worktree entry is not in the stale state, its context menu shall include an "Open Worktree in Finder..." action that opens the worktree's filesystem path in the system file browser via `NSWorkspace.shared.open`.
-
-### 1.3 Adding Repositories
+### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
 
@@ -64,9 +66,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **LAYOUT-3.5** If the user adds a repository that is already in the sidebar, then the application shall not create a duplicate and shall select the existing entry.
 
-### 1.4 Removing & Relocating Repositories
-
-#### Removing
+### LAYOUT-4.x — Removing & Relocating Repositories
 
 **LAYOUT-4.1** When the user right-clicks a repository header row in the sidebar, the application shall display a context menu containing a "Remove Repository" action.
 
@@ -75,8 +75,6 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 **LAYOUT-4.3** When the user confirms "Remove Repository", the application shall (a) tear down all terminal surfaces in every worktree of the repository whose `state == .running`, (b) stop the repository-level FSEvents watchers (`.git/worktrees/` and origin refs) and each worktree's per-path, HEAD-reflog, and content watchers, (c) clear the cached PR status and divergence stats for every worktree of the repository, (d) clear `selectedWorktreePath` if it pointed to any worktree in the repository, and (e) remove the repository entry from `AppState`. Steps (a)–(d) must precede (e) for the same orphan-surfaces / orphan-caches reasons as GIT-3.10 / GIT-4.10 / GIT-3.13 and the watcher-fd-lifetime reason as GIT-3.11.
 
 **LAYOUT-4.4** The "Remove Repository" action shall not invoke `git` and shall not modify any files on disk. Worktree directories, branches, and git metadata remain untouched; the operation affects only Graftty's in-memory model and persisted `state.json`.
-
-#### Relocating (Rename / Move recovery)
 
 **LAYOUT-4.5** When the user adds a repository, the application shall record a `URL` bookmark (`URL.bookmarkData(options: [], includingResourceValuesForKeys: nil, relativeTo: nil)`) for the repository folder and persist it on the `RepoEntry` alongside the path. Bookmark minting failures shall be non-fatal — the repository entry shall be created with a nil bookmark and forgo auto-recovery.
 
@@ -90,7 +88,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **LAYOUT-4.10** The application shall use regular (not security-scoped) bookmarks. Security-scoped bookmarks are unnecessary because Graftty is not sandboxed and `NSOpenPanel` already grants the app arbitrary-path URLs.
 
-### 1.5 Window Lifecycle
+### LAYOUT-5.x — Window Lifecycle
 
 **LAYOUT-5.1** When the user closes the main window (Cmd+W, red traffic-light button, or `File → Close`), the application shall keep running as a foreground app — the Dock icon remains visible, background services (socket listener, channel router, stats/PR pollers, filesystem watchers, web access server) keep running, and any running terminal panes stay attached to their underlying zmx sessions. Closing the window is not a quit; the user explicitly issues `Cmd+Q` or `File → Quit` to terminate the app.
 
@@ -98,9 +96,9 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **LAYOUT-5.3** The application's one-time startup path (`ghostty_init` and the `ghostty_app_t` construction inside `TerminalManager.initialize()`, the `SocketServer.start()`, the `ChannelRouter.start()`, `reconcileOnLaunch()`, the stats/PR poller `start()` calls, the `restoreRunningWorktrees()` pass, and the `NSApplication.willTerminateNotification` observer registration) shall run exactly once per app-process lifetime, regardless of how many times the root `WindowGroup` scene is instantiated. The SwiftUI reopen flow (`applicationShouldHandleReopen` → `applicationOpenUntitledFile:`) and any future multi-window entry points (`File → New Window`) re-invoke the `WindowGroup` content closure and therefore fire `.onAppear` again; the implementation seam is a `@State` boolean on `GrafttyApp` whose storage persists across scene re-creations. Without this guard, `TerminalManager.initialize()`'s `ghosttyApp == nil` precondition traps the process on the second invocation.
 
-## 2. Worktree Entry States
+## STATE — Worktree Entry States
 
-### 2.1 State Definitions
+### STATE-1.x — State Definitions
 
 **STATE-1.1** Each worktree entry shall have one of three states: closed, running, or stale.
 
@@ -110,7 +108,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **STATE-1.4** While a worktree entry is in the stale state, the sidebar shall display its type icon tinted yellow, with strikethrough text and grayed-out appearance on the label.
 
-### 2.2 Attention Overlay
+### STATE-2.x — Attention Overlay
 
 **STATE-2.1** A worktree entry in any state may additionally have a worktree-scoped attention overlay, and each of its panes may additionally have a pane-scoped attention overlay keyed by pane. Worktree-scoped overlays are driven by the CLI (`ATTN-1.x`); pane-scoped overlays are driven by per-pane shell-integration events (`NOTIF-2.x`).
 
@@ -136,9 +134,9 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **STATE-2.12** When the application launches and loads persisted `Attention` entries (worktree-level `wt.attention` or pane-level `wt.paneAttention[terminalID]`), for each one that carries a non-nil `clearAfter`, the application shall reschedule the auto-clear timer against the remaining time derived from `attention.timestamp + clearAfter` relative to the current clock. If the deadline has already passed, the timer shall fire on the next main-queue turn (zero-delay `asyncAfter`) and clear the stale entry immediately. Without this resume, a force-quit during a `--clear-after` window leaves the attention stuck in state.json forever because the original `DispatchQueue.main.asyncAfter` is in-memory only. For defensive handling of a persisted timestamp in the future (clock skew, hand-edit), the remaining window shall be clamped to the full `clearAfter` duration measured from now rather than a negative elapsed value.
 
-## 3. Terminal Lifecycle
+## TERM — Terminal Lifecycle
 
-### 3.1 Starting Terminals
+### TERM-1.x — Starting Terminals
 
 **TERM-1.1** When the user clicks a worktree entry in the closed state that has no saved split tree, the application shall create a single terminal pane with its working directory set to the worktree path and transition the entry to the running state.
 
@@ -146,7 +144,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **TERM-1.3** When the user triggers Stop on a running worktree that has processes which need quit-confirmation, the application shall present a confirmation dialog whose informative text identifies the worktree by its sidebar display name (per `WorktreeEntry.displayName(amongSiblingPaths:)` / `LAYOUT-2.15`), not its raw `branch` value. For worktrees on a detached HEAD or other git sentinel (`(detached)`, `(bare)`, `(unknown)` — see `PR-7.3`), the display name resolves to the directory basename, which reads naturally ("running processes in my-feature") whereas the raw branch would render as "running processes in (detached)".
 
-### 3.2 Switching Between Worktrees
+### TERM-2.x — Switching Between Worktrees
 
 **TERM-2.1** When the user switches from one running worktree to another, the application shall hide the previous worktree's terminal views without destroying the terminal surfaces or their running processes.
 
@@ -160,7 +158,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **TERM-2.6** On application restart, persisted `.running` worktrees shall be marked as rehydrated but only the currently-selected worktree shall immediately recreate libghostty surfaces and run `zmx attach`. Other running worktrees shall attach lazily when selected. This keeps hidden panes from rendering or reattaching while they are not displayed, and prevents a large saved workspace from delaying input in the pane the user is actually returning to.
 
-### 3.3 Splitting
+### TERM-3.x — Splitting
 
 **TERM-3.1** When the user triggers a horizontal split, the application shall insert a new terminal pane to the right of the focused pane with a 50/50 ratio.
 
@@ -168,7 +166,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **TERM-3.3** The new terminal pane created by a split shall have its working directory set to the worktree root path.
 
-### 3.4 Resizing Splits
+### TERM-4.x — Resizing Splits
 
 **TERM-4.1** The application shall display a draggable divider between split panes.
 
@@ -178,7 +176,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **TERM-4.4** When a pane is removed from the split tree, the application shall forward the new layout size to libghostty so remaining panes reflow to fill the vacated space.
 
-### 3.5 Closing a Pane
+### TERM-5.x — Closing a Pane
 
 **TERM-5.1** When the user closes a terminal pane, the application shall remove it from the split tree and allow the sibling pane to fill the vacated space.
 
@@ -198,13 +196,13 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **TERM-5.9** When `SurfaceHandle.setFrameSize` forwards a backing-pixel dimension to `ghostty_surface_set_size`, the conversion from `CGFloat` to `UInt32` shall be performed via a defensive clamp that maps `NaN` and values `≤ 1` to `1`, `+∞` and values `≥ UInt32.max` to `UInt32.max`, and all other finite values to their truncated `UInt32` representation. Naive `UInt32(max(1, Int(dim)))` traps on `NaN` and on out-of-`Int`-range values; SwiftUI `GeometryReader` has been observed to emit `.infinity` transiently during certain rebinding flows, and a trap on the view's layout pass crashes the whole process (every open pane dies). The helper is `SurfacePixelDimension.clamp(_:)` in GrafttyKit so the rule is unit-testable without an NSView host.
 
-### 3.6 Stopping a Worktree
+### TERM-6.x — Stopping a Worktree
 
 **TERM-6.1** When the user triggers "Stop" on a running worktree, if any terminal surface has a running process, then the application shall display a confirmation dialog before proceeding.
 
 **TERM-6.2** When the user confirms stopping a worktree, the application shall close and free all terminal surfaces in the worktree's split tree, preserve the split tree topology, and transition the entry to the closed state.
 
-### 3.7 Focus Management
+### TERM-7.x — Focus Management
 
 **TERM-7.1** When the user clicks a terminal pane, the application shall set keyboard focus to that pane.
 
@@ -212,33 +210,19 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **TERM-7.3** When the user navigates between panes via directional keyboard (Cmd+Opt+Arrow, or libghostty's `goto_split` left/right/up/down actions), the application shall move focus to the leaf that is spatially adjacent in the requested direction — determined by walking the split tree from the focused leaf up to the nearest ancestor whose split orientation matches the motion axis and whose source-side subtree contains the current leaf, then descending into the opposite subtree's near-edge leaf. If no such ancestor exists, the application shall leave focus unchanged rather than wrapping around the tree in DFS order.
 
-**TERM-7.6** When the user invokes `Previous Pane` / `Next Pane` (libghostty's `goto_split:previous` / `goto_split:next`), the application shall cycle focus through the worktree's leaves in DFS (reading) order regardless of spatial layout. This is distinct from the directional arrow-key navigation in `TERM-7.3` — round-robin cycling is an intentional second mode, not a fallback.
-
 **TERM-7.4** When the application launches with a selected running worktree, the application shall automatically promote that worktree's focused pane to the window's first responder so the user can begin typing without first clicking inside a terminal.
 
 **TERM-7.5** When the user selects a worktree or pane row in the sidebar, the application shall promote the target pane's `NSView` to the window's first responder so subsequent keystrokes route to that pane without an intermediate click.
 
+**TERM-7.6** When the user invokes `Previous Pane` / `Next Pane` (libghostty's `goto_split:previous` / `goto_split:next`), the application shall cycle focus through the worktree's leaves in DFS (reading) order regardless of spatial layout. This is distinct from the directional arrow-key navigation in `TERM-7.3` — round-robin cycling is an intentional second mode, not a fallback.
+
 **TERM-7.7** When a pane is created via a split (`splitPane`), a CLI-triggered add (`pane add`), or any other path that mints a fresh `SurfaceHandle` before SwiftUI has had a chance to insert the view into the window hierarchy, the application shall still promote the new pane's `NSView` to the window's first responder — overriding the previously-focused pane whose view is still the current first responder. The implementation seam is `SurfaceHandle.setFocus(true)`: if the target view is already attached to a window, first responder is claimed synchronously; if not, the claim is re-enqueued on the main queue so it runs after SwiftUI mounts the view. Pre-fix behavior: after `Cmd+D`, the model's `focusedTerminalID`, the sidebar's focus highlight, and libghostty's focused-cursor rendering all pointed at the new pane, yet AppKit's first responder remained the previously-focused pane — so keystrokes kept landing in the old pane. `SurfaceNSView.viewDidMoveToWindow` cannot fix this on its own because its first-responder grab deliberately yields to an existing `SurfaceNSView` first responder (so an incidentally-remounted view doesn't yank focus from the user); an authoritative `setFocus(true)` call is the signal that distinguishes the two cases.
 
-### 3.8 Context Menu
+### TERM-8.x — Context Menu
 
 **TERM-8.1** When the user right-clicks a terminal pane, the application shall display a context menu. When the user Control-clicks with the left mouse button on a terminal pane, the application shall display the same context menu, unless the terminal has enabled mouse capturing in which case the click shall be delivered to the terminal as a right-mouse-press instead.
 
 **TERM-8.2** The context menu shall contain the following items, in this order, separated by dividers as shown:
-  - Copy (only when the terminal has a non-empty text selection)
-  - Paste
-  - ---
-  - Split Right
-  - Split Left
-  - Split Down
-  - Split Up
-  - ---
-  - Move to <worktree-name> / Move to current worktree (per `TERM-8.10`, `PWD-1.1`, `PWD-1.2`)
-  - Move to worktree (submenu, per `TERM-8.10`, `PWD-1.3`; suppressed when no same-repo siblings exist)
-  - ---
-  - Reset Terminal
-  - Toggle Terminal Inspector
-  - Terminal Read-only
 
 **TERM-8.3** When the user selects "Copy", the application shall copy the current terminal selection to the system clipboard.
 
@@ -254,11 +238,17 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **TERM-8.9** When the user selects "Terminal Read-only", the application shall toggle the terminal's read-only state — in read-only mode the terminal renders updates but drops keyboard input from the user.
 
-**TERM-8.10** When the user opens the right-click context menu on a pane via `TERM-8.1`, the application shall include the Move-to-worktree items defined by `PWD-1.1`, `PWD-1.2`, and `PWD-1.3` in the position specified by `TERM-8.2`. The semantics — cwd-matching, disabled-when-no-match, same-repo-only submenu, sanitized display labels per `GIT-2.6` — are inherited from those requirements; this requirement only fixes the menu position and the surface (Ghostty terminal pane) where the items appear, mirroring what's already required on the sidebar pane row.
+**TERM-8.10** When the user opens the right-click context menu on a pane via `TERM-8.1`, the application shall include the Move-to-worktree items defined by `PWD-1.1`, `PWD-1.2`, and `PWD-1.3` in the position specified by `TERM-8.2`. The semantics — cwd-matching, disabled-when-no-match, same-repo-only submenu, sanitized display labels per `GIT-2.10` — are inherited from those requirements; this requirement only fixes the menu position and the surface (Ghostty terminal pane) where the items appear, mirroring what's already required on the sidebar pane row.
 
-## 4. Worktree Discovery & Monitoring
+### TERM-9.x
 
-### 4.1 Initial Discovery
+**TERM-9.1** When the user activates "Reload Ghostty Config"
+
+**TERM-9.2** When the user activates "Open Ghostty Settings"
+
+## GIT — Worktree Discovery & Monitoring
+
+### GIT-1.x — Initial Discovery
 
 **GIT-1.1** When a repository is added, the application shall run `git worktree list --porcelain` and populate the sidebar with all discovered worktrees in the closed state.
 
@@ -268,7 +258,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **GIT-1.4** When `GitRepoDetector.detect(path:)` reads a linked worktree's `.git` file and finds a `gitdir: <path>` entry, it shall resolve a relative `<path>` against the worktree directory (the directory containing the `.git` file) rather than feeding it verbatim to `realpath(3)`. Git ≥ 2.52 with `worktree.useRelativePaths=true` writes entries like `gitdir: ../repo/.git/worktrees/name`; passing that to `realpath` resolves against the process cwd — usually unrelated to the worktree dir — so the returned `repoPath` was wrong and the "Add Repository" flow attached a dragged worktree to the wrong repo (or none at all). The absolute-gitdir case (older git and the default config) is unaffected. Mirrors `GIT-3.14`'s same-class fix in `WorktreeMonitor.resolveHeadLogPath`.
 
-### 4.2 Filesystem Monitoring
+### GIT-2.x — Filesystem Monitoring
 
 **GIT-2.1** While a repository is in the sidebar, the application shall watch the repository's `.git/worktrees/` directory for changes using FSEvents.
 
@@ -288,7 +278,9 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **GIT-2.9** When the origin-ref watcher from `GIT-2.5` observes a remote-tracking ref movement, the application shall refresh the repo's local remote-branch set before deciding which worktrees should receive PR/MR polling.
 
-### 4.3 Change Handling
+**GIT-2.10** When the application renders a worktree's branch name in the UI (the breadcrumb bar per `LAYOUT-1.3`, the secondary label in the sidebar row, and the main-checkout label in right-click "Move to <name>" menu entries — both in the sidebar pane row's menu and the terminal surface menu, per `PWD-1.1` / `PWD-1.3` / `TERM-8.10`), it shall read `WorktreeEntry.displayBranch` rather than `WorktreeEntry.branch`. `displayBranch` strips every Unicode bidirectional-override scalar (same ranges as `PR-5.5`) so a collaborator-controlled branch name like `"feat\u{202E}lanigiro"` — which git accepts and which propagates into `state.json` via `git worktree list --porcelain` — can't render RTL-reversed in the breadcrumb, row, or menu items. `branch` itself is preserved unchanged so downstream `git` subprocess calls, `gh pr list --head <branch>`, and the `PRStatusStore.isFetchableBranch` gate keep operating on the real ref. This is the same strip-not-reject policy `PR-5.5` uses for externally-sourced text. The shared `SidebarWorktreeLabel.text(for:inRepoAtPath:siblingPaths:)` helper is the single call site for sidebar-adjacent labels so menu items and the row can't drift on the main-checkout path.
+
+### GIT-3.x — Change Handling
 
 **GIT-3.1** When a new worktree is detected, the application shall add a new entry in the closed state and briefly flash its background highlight.
 
@@ -328,7 +320,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **GIT-3.19** When a local `origin/<branch>` ref disappears for a non-stale worktree's current branch, the application shall clear cached PR/MR status for that worktree so stale PR badges do not remain attached to an unpushed or deleted remote branch.
 
-### 4.4 Deleting a Worktree
+### GIT-4.x — Deleting a Worktree
 
 **GIT-4.1** While a worktree entry is not in the stale state and is not the repository's main checkout, the context menu shall include a "Delete Worktree" action.
 
@@ -352,7 +344,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **GIT-4.11** When `performDeleteWorktree` fails with a non-`gitFailed` error (git binary missing, subprocess launch failure, timeout), the application shall surface the error in an `NSAlert` analogous to `GIT-4.4`, not silently return. Without this, the user clicks Delete Worktree and nothing happens — matches the shape of the cycle 101 `addRepoFromPath` (GIT-1.2) silent-failure fix, on the symmetric delete path.
 
-### 4.5 Creating a Worktree
+### GIT-5.x — Creating a Worktree
 
 **GIT-5.1** When the user types or pastes into the "Worktree name" or "Branch" field of the Add Worktree sheet, the application shall replace any character outside the set `A-Z a-z 0-9 . _ - /` with `-`, and shall collapse any run of consecutive `-` (including dashes the user typed directly) into a single `-`. `/` is permitted so branch names can use the conventional namespace separator (`feature/foo`); the resulting worktree path becomes a nested `.worktrees/<ns>/<leaf>` directory that `git worktree add` creates. Ref-format rules git already enforces (`//`, leading/trailing `/`, components beginning with `.`) are not duplicated here — git reports them at submit time. The replacement shall apply live on every edit so the field shows only sanitized content.
 
@@ -372,9 +364,9 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **GIT-5.9** When persisting `WorktreeEntry` to `state.json`, the application shall encode `.creating` as `.closed`. The `.creating` state is in-memory-only; if the app crashes mid-creation, the next launch's reconciler classifies the entry from `git worktree list --porcelain` rather than restoring a phantom spinner that would never resolve.
 
-## 5. Attention Notification System
+## ATTN — Attention Notification System
 
-### 5.1 CLI Tool
+### ATTN-1.x — CLI Tool
 
 **ATTN-1.1** The application shall include a CLI binary (`graftty`) in the app bundle at `Graftty.app/Contents/Helpers/graftty`. The CLI is placed in `Contents/Helpers/` (not `Contents/MacOS/`) because on macOS's default case-insensitive APFS, the binary name `graftty` collides with the app's main executable `Graftty` if both are in the same directory. The Swift Package Manager product that builds this binary is named `graftty-cli` for the same reason; it is renamed to `graftty` when installed into the app bundle. When the user invokes "Install CLI Tool…" and the bundled CLI is missing at this path (typical for a raw `swift run`-built Graftty that hasn't been put through `scripts/bundle.sh`), the application shall surface an actionable "CLI Binary Not Found" alert rather than create a dangling symlink at `/usr/local/bin/graftty`. `CLIInstaller.plan` returns `.sourceMissing(source:)` in this case.
 
@@ -404,16 +396,13 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **ATTN-1.14** If `graftty notify` is invoked with text containing any Unicode bidirectional-override scalar — the embedding family (`U+202A`–`U+202C`), the override family (`U+202D`–`U+202E`), or the isolate family (`U+2066`–`U+2069`) — then the CLI shall reject the message as `bidiControlInText` with the user-visible error "Notification text cannot contain bidirectional-override characters (U+202A-U+202E, U+2066-U+2069) — they visually reverse the text in the sidebar". These scalars are Unicode Format (Cf) so they slip past both `ATTN-1.12`'s Cc-control check and `ATTN-1.13`'s all-Cf-invisible check when mixed with visible content; a notify like `"\u{202E}evil"` renders RTL-reversed in the sidebar capsule (the "Trojan Source" class of visual deception, CVE-2021-42574). RTL-natural text (Arabic, Hebrew) uses character-intrinsic directionality and does not use these override scalars, so it still validates cleanly. `Attention.isValidText` applies the same rejection server-side for raw socket clients that bypass the CLI.
 
-### 5.2 Communication Protocol
+### ATTN-2.x — Communication Protocol
 
 **ATTN-2.1** The application shall listen on a Unix domain socket at `~/Library/Application Support/Graftty/graftty.sock`.
 
 **ATTN-2.2** The CLI shall communicate with the application by sending JSON messages over the Unix domain socket.
 
 **ATTN-2.3** The application shall support the following message types over the socket:
-- Notify: `{"type": "notify", "path": "<worktree-path>", "text": "<text>"}`
-- Notify with auto-clear: `{"type": "notify", "path": "<worktree-path>", "text": "<text>", "clearAfter": <seconds>}`
-- Clear: `{"type": "clear", "path": "<worktree-path>"}`
 
 **ATTN-2.4** The application shall set the environment variable `GRAFTTY_SOCK` in each terminal surface's environment, pointing to the socket path.
 
@@ -431,7 +420,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **ATTN-2.11** Each accepted client connection's read loop shall cap total accumulated bytes at `SocketServer.maxPerClientBytes` (1 MB in production) before giving up and closing the fd. Without this, a local writer that keeps the pipe continuously full (`cat /dev/urandom | nc -U graftty.sock`) never trips `SO_RCVTIMEO` (which fires only when data STOPS flowing) — the historical unbounded read loop would grow the per-connection buffer until process memory was exhausted. 1 MB is 1000× the ≤~1 KB typical JSON notify/pane message size, so well-behaved clients never hit it. Tests can shrink the cap to bound per-test runtime.
 
-### 5.3 Error Handling
+### ATTN-3.x — Error Handling
 
 **ATTN-3.1** If the application is not running, then the CLI shall print "Graftty is not running" and exit with code 1.
 
@@ -445,27 +434,27 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **ATTN-3.6** The CLI's response-read path shall cap total accumulated bytes at 1 MB via `SocketIO.readAll(fd:cap:)`. Mirrors the server-side `ATTN-2.11`: `SO_RCVTIMEO` only fires on idle pipes, so a misbehaving or compromised server that keeps the pipe continuously full would otherwise grow the CLI's per-response buffer without bound. 1 MB is 1000× the typical ≤1 KB response size; a legit server never hits it.
 
-### 5.4 CLI Distribution
+### ATTN-4.x — CLI Distribution
 
 **ATTN-4.1** The application shall provide a menu item (Graftty -> Install CLI Tool...) to create or update a symlink at `/usr/local/bin/graftty` pointing to the CLI binary in the app bundle. CLI installation is opt-in via this menu item; the application shall not auto-prompt for installation on launch.
 
 **ATTN-4.2** When the application creates a terminal pane surface, the application shall override the spawned shell's `PATH` to a sanitized form that removes any entry equal to the bundle's `Contents/MacOS` directory and prepends the bundle's `Contents/Helpers` directory. Without this, the embedded libghostty's bundle-self-locating logic puts `Graftty.app/Contents/MacOS` on PATH, and on macOS's case-insensitive APFS volume `which graftty` resolves the lowercase lookup to the GUI binary `Graftty` (which silently exits `0` on unknown args, so `graftty --help` prints nothing). The override is exact-path equality — unrelated `Contents/MacOS` directories from other apps in the user's PATH are left alone.
 
-## 6. Persistence
+## PERSIST — Persistence
 
-### 6.1 Storage
+### PERSIST-1.x — Storage
 
 **PERSIST-1.1** The application shall store all persistent state in `~/Library/Application Support/Graftty/`.
 
 **PERSIST-1.2** The application shall persist state to a `state.json` file containing: the ordered list of repositories and their worktrees, per-worktree split tree topology and `state` enum (`.closed`, `.running`, `.stale`), selected worktree, window frame, and sidebar width.
 
-### 6.2 Save Triggers
+### PERSIST-2.x — Save Triggers
 
 **PERSIST-2.1** The application shall save state when any of the following occur: split tree changes, worktree state changes, repository added or removed, selection changes, window resize or move (debounced), app moving to background, or app quit.
 
 **PERSIST-2.2** When a state save fails (full disk, read-only `$HOME`, permissions clash, or any other `FileManager` / `Data.write` throw), the application shall log the error via `NSLog` so it surfaces in Console.app, rather than silently discarding every subsequent persisted mutation. Analogue of `ATTN-2.7` for the `AppState.save(to:)` path. `AppState.save(to:)` shall continue to throw so the caller can surface or recover; the spec pins only that the app-level caller stops using `try?` to mask it.
 
-### 6.3 Restore on Launch
+### PERSIST-3.x — Restore on Launch
 
 **PERSIST-3.1** When the application launches with an existing `state.json`, it shall restore the sidebar with all saved repositories and worktrees.
 
@@ -481,13 +470,13 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **PERSIST-3.7** If `state.json` exists but fails to decode at launch (corruption from a crashed mid-write, hand-edit typo, or schema mismatch across app versions), then the application shall move the file aside to a timestamped backup at `state.json.corrupt.<milliseconds-since-epoch>` and proceed with a fresh `AppState`. The corrupt file shall remain on disk so the user can recover the prior data manually; the application shall not silently overwrite it on the next save.
 
-### 6.4 Non-Persisted State
+### PERSIST-4.x — Non-Persisted State
 
 **PERSIST-4.1** The application shall not persist shell scrollback, terminal screen buffer content, or the specific processes that were running.
 
-## 7. Manual Pane Routing
+## PWD — Manual Pane Routing
 
-### 7.1 User-Initiated Move
+### PWD-1.x — User-Initiated Move
 
 **PWD-1.1** When the user opens the right-click context menu on a pane in the sidebar, the application shall offer a "Move to <worktree-name>" entry that targets the worktree whose filesystem path is the longest prefix of the pane's inner-shell working directory across all repos. The shell's working directory is resolved by reading the inner-shell PID from the zmx session log at `<ZMX_DIR>/logs/<session>.log` (falling back to the rotated sibling `<ZMX_DIR>/logs/<session>.log.old` when the spawn line is no longer in the current file) and querying its current working directory via `proc_pidinfo(PROC_PIDVNODEPATHINFO)`.
 
@@ -499,7 +488,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **PWD-1.5** While a drag from a pane row is in flight and the user hovers over a worktree row, the application shall render a visual highlight on that worktree row distinct from the active-worktree highlight defined by `LAYOUT-2.11` so the user can see the row is a possible drop target. The highlight is rendered for any hovered worktree row regardless of repo membership; the cross-repo refusal from `PWD-1.4` happens at drop time so the in-flight visual signal isn't required to peek into the payload's source repo.
 
-### 7.2 Reassignment
+### PWD-2.x — Reassignment
 
 **PWD-2.1** When the destination worktree differs from the current worktree, the application shall remove the pane from the source worktree's split tree and insert it into the destination worktree's split tree.
 
@@ -509,7 +498,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **PWD-2.4** When the destination worktree was previously in the closed state, the application shall transition it to the running state as part of the reassignment.
 
-### 7.3 Position Memory
+### PWD-3.x — Position Memory
 
 **PWD-3.1** Before removing a pane from a source worktree, the application shall record its split-tree position — an anchor leaf, split direction, and before/after placement — keyed by `(terminalID, worktreePath)`.
 
@@ -519,9 +508,9 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **PWD-3.4** Position memory shall be maintained in-process only and not persisted across app restarts.
 
-## 8. Keyboard, Clipboard, and Mouse Integration
+## KEY — Keyboard, Clipboard, and Mouse Integration
 
-### 8.1 Keyboard Forwarding
+### KEY-1.x — Keyboard Forwarding
 
 **KEY-1.1** The application shall forward all keyboard input, including Command-modified keys, to libghostty so that libghostty's default keybindings (Cmd+C copy, Cmd+V paste, Cmd+A select-all, Cmd+K clear, etc.) take effect.
 
@@ -529,7 +518,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **KEY-1.3** Application-level menu keyboard shortcuts (Cmd+D split, Cmd+W close pane, Cmd+O add repository, and pane navigation shortcuts) shall be matched by AppKit's menu `keyEquivalent` interception before the keyDown event reaches the terminal, so menu shortcuts override any conflicting libghostty keybinding.
 
-### 8.2 Clipboard
+### KEY-2.x — Clipboard
 
 **KEY-2.1** When libghostty requests a clipboard write (e.g., from `Cmd+C` or the context menu Copy), the application shall write the provided content to `NSPasteboard.general`.
 
@@ -539,7 +528,15 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **KEY-2.4** OSC 52 read-confirmation prompts shall be declined by default for security; terminal programs requesting OSC 52 reads shall fail silently rather than succeeding without user consent.
 
-### 8.3 Mouse
+### KEY-3.x
+
+**KEY-3.1** When the user presses `⌘T` while `appState.selectedWorktreePath`
+
+**KEY-3.2** While presenting the Add Worktree sheet via `⌘T`, if the
+
+## MOUSE — Keyboard, Clipboard, and Mouse Integration
+
+### MOUSE-1.x — Mouse
 
 **MOUSE-1.1** When libghostty requests a new mouse cursor shape via `MOUSE_SHAPE`, the application shall map the shape to the closest `NSCursor` and apply it to the targeted surface view.
 
@@ -549,13 +546,15 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **MOUSE-1.4** When libghostty fires `OPEN_URL` in response to a user gesture on a detected URL (e.g., Cmd-click), the application shall open the URL using `NSWorkspace.shared.open`.
 
-### 8.4 Bell
+## BELL — Keyboard, Clipboard, and Mouse Integration
+
+### BELL-1.x — Bell
 
 **BELL-1.1** When libghostty fires `RING_BELL`, the application shall play the system beep sound.
 
-## 9. Desktop Notifications and Shell Integration Signals
+## NOTIF — Desktop Notifications and Shell Integration Signals
 
-### 9.1 Desktop Notifications
+### NOTIF-1.x — Desktop Notifications
 
 **NOTIF-1.1** When libghostty fires `DESKTOP_NOTIFICATION` (OSC 9), the application shall post a banner notification via `UNUserNotificationCenter` using the title and body provided.
 
@@ -563,7 +562,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **NOTIF-1.3** If the user has denied notification authorization, the application shall silently skip the notification rather than surfacing an error.
 
-### 9.2 Attention Badge Auto-Population
+### NOTIF-2.x — Attention Badge Auto-Population
 
 **NOTIF-2.1** When libghostty fires `COMMAND_FINISHED` with a zero exit code on a pane, the application shall set *that pane's* pane-scoped attention overlay to a checkmark indicator that auto-clears after 3 seconds. Sibling panes in the same worktree are unaffected.
 
@@ -571,9 +570,9 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **NOTIF-2.3** Auto-populated attention overlays from shell-integration events shall share the clearing semantics defined in STATE-2.x; a subsequent event on the same pane replaces that pane's previous overlay without affecting sibling panes' overlays.
 
-## 10. Shell Integration Configuration
+## CONFIG — Shell Integration Configuration
 
-### 10.1 Config Loading
+### CONFIG-1.x — Config Loading
 
 **CONFIG-1.1** At startup, the application shall call `ghostty_config_load_default_files` to load the XDG-standard ghostty config paths.
 
@@ -581,7 +580,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **CONFIG-1.3** After loading config files, the application shall call `ghostty_config_load_recursive_files` to resolve any `config-file = …` include directives.
 
-### 10.2 Shell Integration Script Discovery
+### CONFIG-2.x — Shell Integration Script Discovery
 
 **CONFIG-2.1** Before calling `ghostty_init`, the application shall set the `GHOSTTY_RESOURCES_DIR` environment variable so libghostty can locate its per-shell integration scripts.
 
@@ -591,15 +590,13 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **CONFIG-2.4** If no Ghostty.app installation is found, shell integration features (OSC 7 auto-reporting, OSC 133 prompt marks, `COMMAND_FINISHED`, and `PROGRESS_REPORT`) shall silently be unavailable rather than surfacing an error; spawned shells shall still function.
 
-## 11. Worktree Divergence Indicator
+## DIVERGE — Worktree Divergence Indicator
 
-### 11.1 Display
+### DIVERGE-1.x — Display
 
 **DIVERGE-1.1** Each worktree entry in the sidebar shall display a trailing-aligned divergence indicator, placed to the left of the attention badge (or at the trailing edge when no attention badge is present).
 
 **DIVERGE-1.2** The indicator shall display zero, one, or both of the following on a single line, separated by a single space when both are present:
-- `↑<N>` when the worktree's HEAD has N commits not reachable from the base ref (ahead). Additionally, when the worktree has uncommitted changes, a `+` shall be appended, yielding `↑<N>+`. When N is zero, the ahead segment shall be rendered (as `↑0+`) only if uncommitted changes exist; otherwise the ahead segment shall be omitted. The ahead segment shall be rendered in the sidebar's muted ambient color.
-- `↓<N>` when the base ref has N commits not reachable from the worktree's HEAD (behind). Omitted when N is zero. The behind segment shall be rendered in red so incoming origin commits draw the eye in contrast to the muted `↑` segment.
 
 **DIVERGE-1.3** On hover, the indicator shall surface a system tooltip containing the insertion/deletion line counts in the form `+<I> -<D> lines` (with zero sides omitted), optionally suffixed with `, uncommitted changes` when the worktree has uncommitted changes. When there are neither line changes nor uncommitted changes, no tooltip is shown.
 
@@ -609,7 +606,7 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **DIVERGE-1.6** While a worktree is in the stale state, the indicator shall render no text.
 
-### 11.2 Origin Default Branch Resolution
+### DIVERGE-2.x — Origin Default Branch Resolution
 
 **DIVERGE-2.1** The application shall resolve each repository's default branch name by running `git symbolic-ref --short refs/remotes/origin/HEAD` and stripping the `origin/` prefix from the result.
 
@@ -619,13 +616,9 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **DIVERGE-2.4** The application shall cache the resolved default branch name per repository for the duration of the session.
 
-### 11.3 Computation
+### DIVERGE-3.x — Computation
 
 **DIVERGE-3.0** Divergence shall be measured against the union of a worktree's upstream refs:
-- `origin/<defaultBranch>` — always included. Catches PR merges on the default branch, which advance this ref regardless of which worktree is in focus.
-- `origin/<worktree-branch>` — additionally included when `git show-ref --verify refs/remotes/origin/<branch>` succeeds. Catches collaborator pushes to the worktree's own branch.
-
-When `branch == defaultBranch` or no tracking ref exists for the worktree's branch, the union collapses to the single default ref. The default branch name shall be the one `GitOriginDefaultBranch.resolve` returns per `DIVERGE-2.x` — the compute path shall contain no hardcoded branch names.
 
 **DIVERGE-3.1** The application shall compute the behind count by running `git rev-list --count <refs> ^HEAD` and the ahead count by running `git rev-list --count HEAD ^<refs>` (each `<ref>` from `DIVERGE-3.0` prefixed with `^` for the ahead command). `rev-list` natively dedupes, so a commit reachable from both upstream refs is counted once.
 
@@ -637,7 +630,7 @@ When `branch == defaultBranch` or no tracking ref exists for the worktree's bran
 
 **DIVERGE-3.5** Divergence counts and the uncommitted-changes flag shall be held in memory only and shall not be written to `state.json`.
 
-### 11.4 Refresh Triggers
+### DIVERGE-4.x — Refresh Triggers
 
 **DIVERGE-4.1** When a repository is added to the sidebar, the application shall compute divergence counts for each of its worktrees.
 
@@ -657,21 +650,31 @@ When `branch == defaultBranch` or no tracking ref exists for the worktree's bran
 
 **DIVERGE-4.9** When a compute attempt fails transiently (the default branch was resolvable but `git rev-list`/`diff-tree`/etc. threw), the application shall preserve the worktree's last-known `WorktreeStats` rather than clearing the sidebar gutter. Only when the repo has no resolvable default branch at all (origin removed, clone converted to non-origin setup) shall the stats be wiped. Without this, the ↑N ↓M badge flickers off for the polling window whenever git is briefly unhealthy — same UX concern as `PR-7.10`.
 
-## 12. Technology Constraints
+## TECH — Technology Constraints
+
+### TECH-1.x
 
 **TECH-1** The application shall be built in Swift using SwiftUI for app chrome and AppKit for terminal view hosting.
 
+### TECH-2.x
+
 **TECH-2** The application shall use libghostty (via the libghostty-spm Swift Package) as its terminal engine.
+
+### TECH-3.x
 
 **TECH-3** The application shall target macOS 14 Sonoma as its minimum supported version.
 
+### TECH-4.x
+
 **TECH-4** The application shall reuse the following components from the Ghostty project (MIT-licensed): `SplitTree`, `SplitView`, `Ghostty.Surface`, `Ghostty.App`, `Ghostty.Config`, and `SurfaceView_AppKit`.
+
+### TECH-5.x
 
 **TECH-5** The application shall invoke every external tool (`git`, `gh`, `glab`, `zmx`) with `LC_ALL=C` in the child environment so output parsers written against English strings (e.g. `git diff --shortstat` "insertion"/"deletion" markers, `gh pr checks` bucket names) keep working when the user's shell locale is non-English. This is a forcing function — the alternative (locale-robust parsers across multiple tools) is fragile and brittle.
 
-## 13. zmx Session Backing
+## ZMX — zmx Session Backing
 
-### 13.1 Bundling
+### ZMX-1.x — Bundling
 
 **ZMX-1.1** The application shall include a `zmx` binary in the app bundle at `Graftty.app/Contents/Helpers/zmx`, mirroring the placement of the `graftty` CLI.
 
@@ -679,19 +682,19 @@ When `branch == defaultBranch` or no tracking ref exists for the worktree's bran
 
 **ZMX-1.3** The application shall pin the vendored `zmx` version in `Resources/zmx-binary/VERSION` and record its SHA256 in `Resources/zmx-binary/CHECKSUMS`.
 
-### 13.2 Session Naming
+### ZMX-2.x — Session Naming
 
 **ZMX-2.1** The application shall derive the zmx session name for each pane as the literal string `"graftty-"` followed by the first 8 lowercase hex characters (i.e., the leading 4 bytes, yielding 32 bits of namespace uniqueness) of the pane's UUID with dashes stripped.
 
 **ZMX-2.2** The session-naming function shall be deterministic and shall not change across releases without an explicit migration step, since changing it orphans every existing user's daemons.
 
-### 13.3 Sandboxing
+### ZMX-3.x — Sandboxing
 
 **ZMX-3.1** The application shall pass `ZMX_DIR=~/Library/Application Support/Graftty/zmx/` in the environment of every spawned `zmx` invocation, so Graftty-owned daemons live in a private socket directory distinct from any user-personal `zmx` usage.
 
 **ZMX-3.2** The application shall create the `ZMX_DIR` path if it does not exist at launch.
 
-### 13.4 Lifecycle Mapping
+### ZMX-4.x — Lifecycle Mapping
 
 **ZMX-4.1** When the application creates a new terminal pane, it shall leave the libghostty surface configuration's `command` field unset and instead write `exec '<bundled-zmx-path>' attach graftty-<short-id> '<user-shell>'\n` into the surface's `initial_input` field, with each substituted path single-quoted to defend against spaces. The leading `exec` replaces the default shell with `zmx attach` so that when the inner shell ends, the PTY child dies and libghostty's `close_surface_cb` fires. Setting `command` instead would trigger libghostty's automatic `wait-after-command` enablement (see upstream `src/apprt/embedded.zig`), which would keep panes open after `exit` and show a "Press any key to close" overlay.
 
@@ -701,13 +704,13 @@ When `branch == defaultBranch` or no tracking ref exists for the worktree's bran
 
 **ZMX-4.4** When the application quits, it shall not invoke `zmx kill` — pending PTY teardown by the OS is the desired detach signal that lets daemons survive.
 
-### 13.5 Fallback
+### ZMX-5.x — Fallback
 
 **ZMX-5.1** If the bundled `zmx` binary is missing or not executable, the application shall fall back to libghostty's default `$SHELL` spawn behavior on a per-pane basis.
 
 **ZMX-5.2** If the bundled `zmx` binary is unavailable at launch, the application shall present a single non-blocking informational alert explaining that terminals will not survive app quit. The alert shall not be re-presented within the same process lifetime.
 
-### 13.6 Pass-through Guarantees
+### ZMX-6.x — Pass-through Guarantees
 
 **ZMX-6.1** Shell-integration OSC sequences (OSC 7 working directory, OSC 9 desktop notification, OSC 133 prompt marks, OSC 9;4 progress reports) shall continue to flow from the inner shell through `zmx` to libghostty unchanged. The `PWD-x.x`, `NOTIF-x.x`, and `KEY-x.x` requirements remain in force regardless of whether `zmx` is mediating the PTY.
 
@@ -717,7 +720,7 @@ When `branch == defaultBranch` or no tracking ref exists for the worktree's bran
 
 **ZMX-6.4** If the outer shell's `ZDOTDIR` is unset or empty, the `GHOSTTY_ZSH_ZDOTDIR` assignment in `ZMX-6.3` shall not execute. Ghostty's integration `.zshenv` gates its restore branch on `${GHOSTTY_ZSH_ZDOTDIR+X}` (which matches empty-string-set), and zsh's dotfile lookup uses `${ZDOTDIR-$HOME}` (falls back to `$HOME` only when *unset*, not when empty) — so an unguarded assignment would export `ZDOTDIR=""` into the inner shell and cause it to silently skip the user's `.zshenv`/`.zprofile`/`.zshrc`/`.zlogin`. Guarding keeps `GHOSTTY_ZSH_ZDOTDIR` unset so the integration's `else: unset ZDOTDIR` branch fires and dotfile lookup defaults to `$HOME`.
 
-### 13.7 Session-Loss Recovery
+### ZMX-7.x — Session-Loss Recovery
 
 **ZMX-7.1** When the application restores a worktree's split tree on launch (per `PERSIST-3.x` and `ZMX-4.2`), it shall, before creating each pane's surface, query the live zmx session set and clear the pane's rehydration label if the expected session name is absent. This ensures a freshly-created daemon (the result of `zmx attach`'s create-on-miss semantics) is not mistaken for a surviving session by `defaultCommandDecision`.
 
@@ -727,22 +730,17 @@ When `branch == defaultBranch` or no tracking ref exists for the worktree's bran
 
 **ZMX-7.4** At application launch, before any terminal surface is spawned, the application shall `unsetenv(...)` a known list of "leaky" environment variables from its own process so every downstream spawn (libghostty surface shells, CLIRunner subprocesses, zmx attach) sees a clean env regardless of the shell Graftty was launched from. The list shall include at minimum:
 
-- `ZMX_SESSION` — zmx's `attach <positional>` silently prefers `$ZMX_SESSION` over its positional argument. A parent shell that itself lived inside a zmx session would otherwise hijack every new pane's attach to the parent's session. User-visible as "created a new worktree, its Claude swapped out for an older worktree's Claude".
-- `GIT_DIR` and `GIT_WORK_TREE` — git's env-var-wins rule trumps `currentDirectoryURL`. A parent shell with either set would redirect every `GitRunner.run(at: repoPath)` invocation (worktree discovery, stats, PR resolution) to the parent shell's `.git` dir instead of the target repo.
-
-The sweep runs once at `GrafttyApp.init()`. `ZmxLauncher.subprocessEnv` additionally strips `ZMX_SESSION` from inline subprocess envs as belt-and-suspenders, but the process-level sweep is the primary defense — it also covers libghostty's surface env overlay, which cannot be routed through `subprocessEnv` before the spawn.
-
-### 13.8 Manual Restart
+### ZMX-8.x — Manual Restart
 
 **ZMX-8.1** The Settings → General pane shall expose a "Restart ZMX…" button that, after user confirmation, tears down every running pane across every worktree — invoking the same `destroySurface` / `zmx kill --force` path as per-worktree Stop (`TERM-1.2` / `ZMX-4.3`) — and then marks each affected worktree `.closed` via `prepareForStop` (`STATE-2.11`), preserving each worktree's `splitTree` and `focusedTerminalID` so re-opening recreates the same layout at the same leaf IDs under freshly-spawned zmx daemons. The confirmation alert (`NSAlert` with `.warning` style) shall name the destructive consequence explicitly — how many sessions across how many worktrees will end, with a "Any unsaved work in those sessions will be lost" warning (pluralization per `ZmxRestartConfirmation.informativeText`) — and shall offer "Restart ZMX" and "Cancel" buttons with Cancel as the default dismissal. If no worktrees are running at click time, the alert shall state that the action will have no effect rather than silently no-op.
 
-### 13.9 Idle Resize
+### ZMX-9.x — Idle Resize
 
 **ZMX-9.1** The bundled `zmx attach` client shall forward PTY resize events while idle, without requiring a later keystroke or daemon output to wake its poll loop. This protects restored or lazily reattached panes: when Graftty resizes the outer PTY as a pane comes into view, the daemon's inner PTY must receive the new grid immediately so full-screen programs such as Claude Code, vim, and htop repaint at the visible pane size before user input.
 
-## 14. Distribution
+## DIST — Distribution
 
-### 14.1 Build Bundle
+### DIST-1.x — Build Bundle
 
 **DIST-1.1** The build script (`scripts/bundle.sh`) shall produce a self-contained `Graftty.app` bundle in `.build/` containing the SwiftUI application binary at `Contents/MacOS/Graftty`, the CLI helper at `Contents/Helpers/graftty`, and the bundled `zmx` binary at `Contents/Helpers/zmx`.
 
@@ -752,7 +750,7 @@ The sweep runs once at `GrafttyApp.init()`. `ZmxLauncher.subprocessEnv` addition
 
 **DIST-1.4** The build script shall ad-hoc codesign every Mach-O in the bundle in inner-to-outer order: `Contents/Helpers/zmx`, `Contents/Helpers/graftty`, `Contents/MacOS/Graftty`, then the bundle itself, and shall verify the resulting signature with `codesign --verify --strict`.
 
-### 14.2 Release Automation
+### DIST-2.x — Release Automation
 
 **DIST-2.1** When a git tag matching `v*` is pushed to origin, the GitHub Actions workflow `.github/workflows/release.yml` shall build the app bundle in release configuration, verify codesigning, zip the bundle as `Graftty-<version>.zip`, ensure a GitHub release tagged `v<version>` has the zip attached, and ensure the `btucker/homebrew-graftty` cask reflects the new version and sha256.
 
@@ -762,7 +760,7 @@ The sweep runs once at `GrafttyApp.init()`. `ZmxLauncher.subprocessEnv` addition
 
 **DIST-2.4** The release zip shall be produced with `ditto -c -k --keepParent` (not `zip`) so that codesign-relevant extended attributes survive — `zip` strips them and installs fail with opaque "damaged" errors after reboot.
 
-### 14.3 Homebrew Cask
+### DIST-3.x — Homebrew Cask
 
 **DIST-3.1** The Homebrew tap `btucker/homebrew-graftty` shall expose a cask `graftty` that downloads the release zip, installs `Graftty.app` to `/Applications`, and symlinks `Graftty.app/Contents/Helpers/graftty` onto the user's PATH as `graftty`.
 
@@ -770,9 +768,9 @@ The sweep runs once at `GrafttyApp.init()`. `ZmxLauncher.subprocessEnv` addition
 
 **DIST-3.3** When the user runs `brew uninstall --cask --zap graftty`, the cask shall remove `~/Library/Application Support/Graftty`, `~/Library/Preferences/com.graftty.app.plist`, and `~/Library/Caches/com.graftty.app`.
 
-## 15. Web Access
+## WEB — Web Access
 
-### 15.1 Binding
+### WEB-1.x — Binding
 
 **WEB-1.1** When web access is enabled, the application shall bind a local HTTPS server to each Tailscale IPv4 and IPv6 address reported by the Tailscale LocalAPI, on the user-configured port (default 8799). The application shall not bind to `127.0.0.1`.
 
@@ -800,7 +798,7 @@ The sweep runs once at `GrafttyApp.init()`. `ZmxLauncher.subprocessEnv` addition
 
 **WEB-1.13** While the server is listening, the Settings pane shall render a 160 pt QR code inline beneath the Base URL row, encoding the Base URL so that an iOS client can scan it on first run to add a saved host. Alongside the QR, the pane shall render a one-sentence usage hint ("Scan with Graftty") so a reader who has never onboarded a phone before knows what the code is for. Hiding it behind a disclosure is rejected on discoverability grounds: a user who has Web Access on has almost certainly enabled it to onboard a phone, and the QR is the payoff for that action. When the server is not listening, the Base URL row (and therefore the QR) is not rendered at all, per the existing status-gated layout.
 
-### 15.2 Authorization
+### WEB-2.x — Authorization
 
 **WEB-2.1** The application shall resolve each incoming peer IP via Tailscale LocalAPI `whois` before serving any content at any path.
 
@@ -812,15 +810,11 @@ The sweep runs once at `GrafttyApp.init()`. `ZmxLauncher.subprocessEnv` addition
 
 **WEB-2.5** _(Removed; superseded by WEB-1.1.)_ The prior loopback-bypass carve-out existed because `WEB-1.1` bound `127.0.0.1`; with that bind gone, local connections now arrive as Tailscale peers via the MagicDNS hostname (WEB-8.1) and are accepted under the normal `WEB-2.2` same-user check.
 
-### 15.3 Protocol
+### WEB-3.x — Protocol
 
 **WEB-3.1** The application shall serve a single static page at `/` (and `/index.html`) that bootstraps the bundled web client.
 
 **WEB-3.2** When a client requests any path that does not match a bundled
-static asset and does not begin with `/ws`, the application shall respond
-with the bundled `index.html` body and `Content-Type: text/html; charset=utf-8`.
-This serves the SPA fallback for client-side-routed URLs such as
-`/session/<name>`.
 
 **WEB-3.3** The application shall upgrade `/ws?session=<name>` to WebSocket after the authorization check passes.
 
@@ -830,9 +824,7 @@ This serves the SPA fallback for client-side-routed URLs such as
 
 **WEB-3.6** When the application responds to an HTTP request with `Connection: close`, it shall transmit exactly the number of body bytes declared in its `Content-Length` header to the client before closing the TCP connection, so clients never observe a truncated response (`ERR_CONTENT_LENGTH_MISMATCH`). This requirement applies even on links (e.g., Tailscale `utun`, MTU ~1280) whose kernel TCP send buffer cannot absorb the full response in a single non-blocking write.
 
-> **Test coverage note (2026-04-22):** the raw-socket Content-Length verifier (`appJSRawReadMatchesContentLength`) was gated behind `#if false` during the HTTPS migration because URLSession hides short reads and `rawHTTPGet` was HTTP-only. A follow-up should implement the equivalent probe over HTTPS via `NWConnection` + `NWProtocolTLS` to restore the regression guard.
-
-### 15.4 Lifecycle
+### WEB-4.x — Lifecycle
 
 **WEB-4.1** When the user enables web access in Settings, the application shall probe Tailscale, bind, and transition status to `.listening(...)` or an error status.
 
@@ -848,15 +840,15 @@ This serves the SPA fallback for client-side-routed URLs such as
 
 **WEB-4.7** When the application transitions the forked child into `zmx attach`, the final `execve` shall be performed via `posix_spawn` with `POSIX_SPAWN_SETEXEC | POSIX_SPAWN_SETSIGMASK` and an empty initial signal mask. `fork(2)` preserves the parent's sigmask and plain `execve(2)` carries it across — and the Swift runtime (GCD/Dispatch) blocks a family of signals on its service threads, so a child inheriting that mask starts with SIGWINCH blocked. `zmx attach` installs a SIGWINCH handler to forward PTY resize events to the daemon; if SIGWINCH is blocked the handler never fires, the kernel sets the signal pending, and WebSocket-sent resize events silently vanish until an unrelated signal or explicit unblock drains them. The spawn-level mask reset is the kernel-boundary fix that guarantees the exec'd image starts with every signal unblocked.
 
-### 15.5 Client
+### WEB-5.x — Client
 
 **WEB-5.1** The bundled client shall render a single terminal (ghostty-web, a WASM build of libghostty — the same VT parser as the native app pane) that attaches to the session indicated by the `/session/<name>` URL path. If a client arrives at the root path `/` with a `?session=<name>` query parameter, the client shall redirect to `/session/<name>` (backward compatibility). Sharing a parser with the native pane is what keeps escape-sequence behavior (cursor movement, SGR state, OSC 8 hyperlinks, scrollback) identical across clients.
-
-**WEB-5.4** When a client requests `GET /sessions`, the application shall respond with a JSON array of the currently-running sessions, one entry per live pane across all running worktrees, with fields `name` (the zmx session name derived per `ZMX-2.1`), `worktreePath`, `repoDisplayName`, and `worktreeDisplayName`. The bundled client's root page (`/`) shall fetch this endpoint and render a clickable picker grouped by `repoDisplayName`, so a user who visits the server's root URL without a session query gets a functional entry point rather than a bare "no session" placeholder. Access to `/sessions` shall be gated by the same Tailscale-whois authorization as every other path (`WEB-2.1` / `WEB-2.2`).
 
 **WEB-5.2** The client shall send terminal data events as binary WebSocket frames.
 
 **WEB-5.3** The client shall send resize events as JSON control envelopes in text frames, including an initial resize sent on WebSocket open so the server-side PTY is sized to the client's actual viewport rather than the `zmx attach` default.
+
+**WEB-5.4** When a client requests `GET /sessions`, the application shall respond with a JSON array of the currently-running sessions, one entry per live pane across all running worktrees, with fields `name` (the zmx session name derived per `ZMX-2.1`), `worktreePath`, `repoDisplayName`, and `worktreeDisplayName`. The bundled client's root page (`/`) shall fetch this endpoint and render a clickable picker grouped by `repoDisplayName`, so a user who visits the server's root URL without a session query gets a functional entry point rather than a bare "no session" placeholder. Access to `/sessions` shall be gated by the same Tailscale-whois authorization as every other path (`WEB-2.1` / `WEB-2.2`).
 
 **WEB-5.5** The client shall size the terminal grid to fill the host element using the renderer's font metrics (`cols = floor(host.clientWidth / metrics.width)`, `rows = floor(host.clientHeight / metrics.height)`) and shall not reserve any horizontal pixels for a native scrollbar, so the canvas occupies the full viewport width and the PTY column count matches the visible grid. Rationale: ghostty-web's bundled `FitAddon` unconditionally subtracts 15 px from available width for a DOM scrollbar (`proposeDimensions()` in `ghostty-web.js`), but Ghostty renders its scrollback scrollbar as a canvas overlay — using `FitAddon` leaves a ~15 px gap on the right edge and narrows wrapping (e.g., 148 cols instead of 150 on a 1200 px viewport with 8 px cells).
 
@@ -866,7 +858,7 @@ This serves the SPA fallback for client-side-routed URLs such as
 
 **WEB-5.8** While the user is viewing scrollback on the normal screen (i.e., `term.viewportY > 0`), incoming PTY output shall not move the viewport: the client shall capture `viewportY` and scrollback length immediately before each `term.write()` call and, after the write, re-apply `viewportY` shifted by the number of lines that scrolled into scrollback so the viewport stays pinned to the same absolute content rather than the same offset-from-bottom. While the alternate screen is active on either side of the write, the viewport shall be left at the library-default bottom position. Rationale: ghostty-web's `Terminal.writeInternal` unconditionally calls `scrollToBottom()` whenever `viewportY !== 0` at write time, so without this wrapper the viewport snaps to the newest output on every WebSocket data frame — making wheel/touch scrollback unusable on any session that is actively producing output. Pinning to absolute content (not offset) is what lets the user read older lines while the shell continues to print.
 
-### 15.6 Security and non-goals
+### WEB-6.x — Security and non-goals
 
 **WEB-6.1** The web server shall bind HTTPS only, using a cert+key pair fetched from Tailscale LocalAPI for the machine's MagicDNS name (WEB-8.2). The application shall not bind any HTTP listener; clients with old `http://` bookmarks will fail to connect until they update the URL.
 
@@ -874,7 +866,7 @@ This serves the SPA fallback for client-side-routed URLs such as
 
 **WEB-6.3** Phase 2 shall not implement rate limiting, URL tokens, or cookies; authorization shall be via Tailscale WhoIs only.
 
-### 15.7 Adding worktrees from the web client
+### WEB-7.x — Adding worktrees from the web client
 
 **WEB-7.1** When a client requests `GET /repos`, the application shall respond with a JSON array of the currently-tracked repositories (one entry per top-level `RepoEntry` in `AppState.repos`) with fields `path` (opaque absolute path round-tripped on `POST /worktrees`) and `displayName` (matching the native sidebar's top-level label). Access is gated by the same Tailscale-whois authorization (`WEB-2.1` / `WEB-2.2`).
 
@@ -890,7 +882,7 @@ This serves the SPA fallback for client-side-routed URLs such as
 
 **WEB-7.7** When `AppState.repos` is empty (no repositories tracked yet), the `/new` route shall render an empty-state message directing the user to open a repository in the native Graftty app first, with a back-link to `/`. The web client shall not implement repository-adding (the Mac-side file dialog + security-scoped bookmark mint has no web equivalent in Phase 2).
 
-### 15.8 Web TLS (HTTPS)
+### WEB-8.x — Web TLS (HTTPS)
 
 **WEB-8.1** When binding the HTTPS server, the application shall read `Self.DNSName` from Tailscale LocalAPI `/status`, strip the trailing dot, and use the resulting FQDN as the TLS SNI name and as the hostname in every composed Base URL / session URL. If `DNSName` is absent or empty, the application shall enter `.magicDNSDisabled` status and not bind. Settings shall render a "MagicDNS must be enabled on your tailnet" message plus a link to `https://login.tailscale.com/admin/dns`.
 
@@ -900,170 +892,77 @@ This serves the SPA fallback for client-side-routed URLs such as
 
 **WEB-8.4** For `.magicDNSDisabled` and `.httpsCertsNotEnabled`, the Settings pane shall render a human-readable explanation plus a SwiftUI `Link` to the relevant Tailscale admin page (`https://login.tailscale.com/admin/dns`). For `.certFetchFailed`, it shall render the underlying message plus a note that Graftty retries automatically.
 
-### 15.9 Cross-references to §13
+## UPDATE — Self-Update
 
-The web access path uses Phase 1's session-naming and sandbox requirements unchanged. See §13.2 (session naming), §13.3 (`ZMX_DIR` sandbox), §13.4 (lifecycle mapping), and §13.6 (pass-through guarantees).
-
-## 15A. Self-Update
-
-### 15A.1 Automatic checks
+### UPDATE-1.x — Install flow
 
 **UPDATE-1.1** While the user has consented to automatic checks (Sparkle
-default: on, toggleable via `Graftty → Automatically Check for Updates`),
-the application shall query `https://raw.githubusercontent.com/btucker/graftty/main/appcast.xml`
-once per 24 hours.
-
-**UPDATE-1.6** If the user has not yet chosen a preference for automatic
-checks, on first launch the application shall prompt once (Sparkle's
-built-in consent dialog) and persist the choice under Sparkle's own
-`SUEnableAutomaticChecks` user-default key.
-
-### 15A.2 Gentle discovery
 
 **UPDATE-1.2** When a scheduled check discovers a newer version, the
-application shall surface a non-modal indicator in the window titlebar
-(immediately right of the traffic lights) rather than presenting a modal
-dialog.
-
-**UPDATE-1.4** While no update is available, the application shall hide
-the titlebar indicator entirely.
-
-### 15A.3 Install flow
 
 **UPDATE-1.3** When the user clicks the titlebar indicator, the
-application shall present Sparkle's standard install dialog with
-Install Now / Install on Quit / Release Notes / Skip This Version
-options.
+
+**UPDATE-1.4** While no update is available, the application shall hide
 
 **UPDATE-1.5** When the user selects `Graftty → Check for Updates…`,
-the application shall perform an immediate check and present Sparkle's
-standard dialog regardless of whether a newer version exists.
+
+**UPDATE-1.6** If the user has not yet chosen a preference for automatic
 
 **UPDATE-1.7** When an update is installed, the application shall
-relaunch and re-attach to existing zmx-backed terminal sessions so
-shells running inside them are preserved.
 
-### 15A.4 Release pipeline
+### UPDATE-2.x — Release pipeline
 
 **UPDATE-2.1** When a new version tag is pushed, the release workflow
-shall generate an EdDSA signature over the release zip, prepend a new
-entry to `appcast.xml` on `main`, and commit that change with the
-`graftty-release-bot` identity.
 
 **UPDATE-2.2** The Homebrew cask shall declare `auto_updates true` so
-`brew upgrade` does not reinstall a version older than the one Sparkle
-has applied in-place.
 
 **UPDATE-2.3** The release workflow shall extract only the base64
-signature value from `sign_update`'s stdout (which prints a full XML
-attribute fragment, `sparkle:edSignature="<sig>" length="<bytes>"`)
-before passing it to the appcast updater. Embedding the full fragment
-as the attribute value yields a Sparkle "improperly signed" error at
-install time.
 
 **UPDATE-2.4** The `appcast-updater` tool shall reject `--ed-signature`
-inputs that contain any character outside the base64 alphabet
-(`[A-Za-z0-9+/=]`), failing with a non-zero exit before the feed is
-written. This is defense-in-depth against the workflow regression
-described by `UPDATE-2.3`.
 
 **UPDATE-2.5** The release workflow shall render the GitHub release
-body (markdown) to HTML via the GitHub `/markdown` API (mode `gfm`,
-`context` set to the repository) before passing it to the appcast
-updater as the `<description>` body. Sparkle's release-notes view
-renders the description as HTML; passing raw markdown leaves users
-seeing literal `##` and `*` characters.
 
-## 16. Keyboard Shortcuts
+## KBD — Keyboard Shortcuts
+
+### KBD-1.x
 
 **KBD-1.1** When the user presses a chord bound in their Ghostty config
-to an apprt action Graftty supports, the application shall dispatch
-that action.
 
 **KBD-1.2** When the user's Ghostty config omits a binding for an action,
-the corresponding Graftty menu item shall render without a shortcut hint
-but remain clickable.
+
+### KBD-2.x
 
 **KBD-2.1** When the user presses `toggle_split_zoom` on a focused pane
-inside a split tree, the application shall render only that pane and
-keep all surfaces alive at their current size.
 
 **KBD-2.2** When the user presses `toggle_split_zoom` on a lone pane
-(tree has no siblings), the application shall no-op.
 
 **KBD-2.3** When the user presses a `goto_split:*` chord while a pane is
-zoomed and `split-preserve-zoom` does not include `navigation`, the
-application shall unzoom before navigating.
+
+### KBD-3.x
 
 **KBD-3.1** When the user presses a `resize_split:<direction>` chord,
-the application shall walk up from the focused leaf to the nearest
-split ancestor with matching orientation and adjust its ratio by
-`amount` pixels, clamped to [0.1, 0.9].
 
 **KBD-3.2** When no matching-orientation ancestor exists, the
-application shall log at debug and no-op.
+
+### KBD-4.x
 
 **KBD-4.1** When `reload_config` fires, the application shall rebuild
-its Ghostty-config-derived menu shortcuts without requiring a restart.
 
-**KEY-3.1** When the user presses `⌘T` while `appState.selectedWorktreePath`
-resolves to a repo, the application shall present the Add Worktree sheet
-pre-scoped to that repo. When no worktree is selected, the menu item
-"Add Worktree..." shall be disabled.
+## PR — PR/MR Status Display
 
-**KEY-3.2** While presenting the Add Worktree sheet via `⌘T`, if the
-focused terminal in the selected worktree has a non-empty selection, the
-application shall pre-fill both the worktree and branch name fields with
-`WorktreeNameSanitizer.sanitizeForPrefill(selection)` (a maximum of 100
-characters, with non-`[A-Za-z0-9._/-]` characters replaced by `-`, dash
-runs collapsed, and leading/trailing `-`/`.`/`_` trimmed). The pre-filled
-value shall be focused and fully selected on appear so typing replaces
-it. If the sanitized result is empty — or if the selected worktree has
-no focused terminal — the fields shall start empty.
-
-**TERM-9.1** When the user activates "Reload Ghostty Config"
-(either via the Graftty menu or via a Ghostty keybinding mapped to
-the `reload_config` action), the application shall construct a fresh
-`GhosttyConfig` — re-walking the XDG default paths, `com.mitchellh.ghostty/config`,
-and recursive `config-file =` includes — and push it into the live
-`ghostty_app_t` via `ghostty_app_update_config`, so subsequent key
-presses and theme reads reflect edits to the on-disk config without
-a restart. A stale earlier comment claimed libghostty-spm lacked a
-reload C API; `ghostty_app_update_config` has been available on the
-vendored surface and is what this spec pins.
-
-**TERM-9.2** When the user activates "Open Ghostty Settings"
-(either via the Graftty menu under the app-info group or via a
-Ghostty keybinding mapped to the `open_config` action), the
-application shall resolve the on-disk Ghostty config file and open
-it via `NSWorkspace.shared.open`, which hands the file to the user's
-default editor for that file type — mirroring Ghostty.app's own
-"Open Configuration" behavior. Resolution priority matches Ghostty's
-load order: (1) `$XDG_CONFIG_HOME/ghostty/config` if `XDG_CONFIG_HOME`
-is set and non-empty, (2) `~/.config/ghostty/config`, (3)
-`~/Library/Application Support/com.mitchellh.ghostty/config`; the
-highest-priority existing file wins. If none of the candidate files
-exist, the application shall create an empty file at location (3)
-(and any missing parent directories) before opening, so the user
-always receives an editable file rather than a failed-to-open no-op
-on first run. If directory or file creation fails, the application
-shall surface an actionable alert rather than silently continue.
-
-## 17. PR/MR Status Display
-
-### 17.1 Branch-to-PR Association
+### PR-1.x — Branch-to-PR Association
 
 **PR-1.1** When the application resolves the PR for a worktree's branch on a GitHub origin, it shall scope the lookup to PRs whose head ref lives in the same repository as the base so that PRs from forks which happen to share the branch name are not associated with the worktree. Because `gh pr list --head` does not support the `<owner>:<branch>` syntax (it silently returns an empty result), the filter shall be implemented by passing the bare branch name to `gh`, requesting `headRepositoryOwner` in the JSON output, and discarding results whose `headRepositoryOwner.login` does not match the origin owner (compared case-insensitively).
 
 **PR-1.2** If more than one PR in the same repository matches the worktree's branch and state, the application shall associate the worktree with the most recently created one.
 
-### 17.2 Refresh Triggers
+### PR-2.x — Refresh Triggers
 
 **PR-2.1** When a worktree's HEAD reference changes (per GIT-2.4), the application shall drop the worktree's previously cached PR display synchronously and shall trigger a fresh PR resolution for the new branch — rather than waiting for the next polling tick to discover the change. This prevents the previous branch's PR from continuing to display through the polling cadence window after a `git checkout`, rebase, or other HEAD-rewriting operation.
 
 **PR-2.2** When the application observes an origin-ref change for a repository (per GIT-2.5), the application shall trigger a fresh PR resolution for every non-stale worktree in that repository whose branch is fetchable. This catches the `gh pr create` / `git push` flow — neither moves local HEAD, so PR-2.1 doesn't fire, and without this trigger the user would wait up to the full `absent` polling cadence before a newly-opened PR appears in the sidebar.
 
-### 17.3 Sidebar Indicator
+### PR-3.x — Sidebar Indicator
 
 **PR-3.1** While a worktree has a resolved PR/MR (open or merged), its sidebar row shall use the SF Symbol `arrow.triangle.pull` as its leading icon in place of the default `arrow.triangle.branch` (linked worktree) or `house` (main checkout) glyph. The icon's color shall continue to encode the worktree's running state (closed / running / stale) per existing behavior; the leading-icon change communicates only the PR's existence, while detailed PR state (number, title, check status) remains in the breadcrumb's PR button.
 
@@ -1075,7 +974,7 @@ shall surface an actionable alert rather than silently continue.
 
 **PR-3.5** While a worktree's PR/MR is open, the `#<number>` sidebar badge text shall be colored to reflect CI state, overriding the open-state green: red (matching the breadcrumb PR-button failure dot, RGB ~0.97/0.32/0.29) when the latest checks verdict is `failure`, orange (matching the pending dot, RGB ~0.82/0.60/0.13) and pulsing in opacity when the verdict is `pending`. A `success` or absent (`none`) verdict shall keep the open-state green so repos without CI do not lose the open-vs-merged signal. While the PR is merged, the badge shall remain purple regardless of the CI verdict, since CI status on a merged PR is stale and would distract from the actionable signal on still-open PRs.
 
-### 17.4 Host Detection
+### PR-4.x — Host Detection
 
 **PR-4.1** The application shall resolve the hosting origin for a repository by running `git remote get-url origin` in the repository's path and parsing the returned URL. Both scp-style (`git@<host>:<owner>/<repo>`) and HTTP(S)/SSH URLs (`https://<host>/<owner>/<repo>`, `ssh://<host>/<owner>/<repo>`) shall be accepted; `file://`, `git://`, and bare local paths shall resolve to no origin.
 
@@ -1085,29 +984,27 @@ shall surface an actionable alert rather than silently continue.
 
 **PR-4.4** `GitOriginHost.detect` shall treat a `git remote get-url origin` nonZeroExit as a legitimate "no origin remote" answer (returning nil, cacheable per `PR-7.11`) only when stderr contains "no such remote" (case-insensitive). Every other nonZeroExit shall rethrow so the store's caller-side don't-cache-on-throw safeguard prevents a transient failure — e.g. `.git/config` being rewritten during a concurrent `git worktree add`, brief lock contention under load, an FSEvents-driven re-read mid-pack-operation — from poisoning `hostByRepo` with nil for the remainder of the session. Without this discrimination, a single transient git error at first-poll turns a repo's PR status off until Espalier is relaunched; the symptom is silent (no logs, no badge) because `tick()` skips cached-nil repos and `performFetch` treats the cache as authoritative. `LC_ALL=C` (`TECH-5`) keeps the stderr match locale-stable.
 
-### 17.5 PR Fetching
+### PR-5.x — PR Fetching
 
 **PR-5.1** For GitHub origins, the application shall fetch open PRs via `gh pr list --repo <owner>/<repo> --head <branch> --state open --limit 5 --json number,title,url,state,headRefName,headRepositoryOwner` and take the first result whose `headRepositoryOwner.login` matches the origin owner. Merged PRs shall use the same shape with `--state merged` and the additional `mergedAt` JSON field. The limit is 5 (rather than 1) so a fork PR returned first by `gh`'s default sort cannot crowd out a same-repo PR that the owner filter would otherwise accept.
 
 **PR-5.2** For GitHub origins, the application shall fetch per-check status via `gh pr checks <number> --repo <owner>/<repo> --json name,state,bucket`. The `bucket` field (values `pass`/`fail`/`pending`/`skipping`/`cancel`) is the canonical verdict; `conclusion` is not a field `gh` emits from this command.
 
-**PR-5.4** When `gh pr list` succeeds but the subsequent `gh pr checks` call for the resolved PR fails (auth hiccup, rate limit, subcommand regression, network blip), the application shall still surface the PR's identity with `.none` check status rather than propagating the checks error out of the fetch. The `#<number>` sidebar badge (`PR-3.2`) and the breadcrumb PR button shall remain visible — losing them because checks couldn't be resolved produces worse UX than displaying them with neutral check state.
-
 **PR-5.3** For GitLab origins, the application shall fetch merge requests via `glab mr list --repo <path> --source-branch <branch> --per-page 5 -F json` (appending `--merged` for the merged-state sweep; the default list is opened-only) and take the first result whose `source_project_id` equals its `target_project_id`. Pipeline status for an opened MR comes from a separate `glab mr view <iid> --repo <path> -F json` call and is derived from the returned `head_pipeline.status` — the MR list endpoint (backing `glab mr list`) does not populate `head_pipeline`, only the single-MR view does. glab's earlier string-valued `--state <opened|merged>` flag was removed upstream; invocations that still carry it fail with "Unknown flag: --state" and yield no MR at all, which is why the flag-based spelling above is load-bearing. The per-page bound is 5 (rather than 1) so a fork MR returned first by glab's default sort cannot crowd out a same-repo MR that the source/target project-id filter would otherwise accept — parity with the GitHub-side fork defense in `PR-5.1`. An MR whose project IDs cannot be verified (both fields absent in the response) is excluded rather than accepted, for the same reason the GitHub filter excludes PRs with a missing `headRepositoryOwner`. If the `mr view` pipeline-status call fails after `mr list` succeeded, the MR is still surfaced with `.none` checks rather than dropping the whole `PRInfo` — parity with `PR-5.4`.
+
+**PR-5.4** When `gh pr list` succeeds but the subsequent `gh pr checks` call for the resolved PR fails (auth hiccup, rate limit, subcommand regression, network blip), the application shall still surface the PR's identity with `.none` check status rather than propagating the checks error out of the fetch. The `#<number>` sidebar badge (`PR-3.2`) and the breadcrumb PR button shall remain visible — losing them because checks couldn't be resolved produces worse UX than displaying them with neutral check state.
 
 **PR-5.5** When the application stores a PR/MR title into a `PRInfo` for display (breadcrumb `PRButton`, accessibility label, tooltip), it shall first strip every Unicode bidirectional-override scalar (the embedding, override, and isolate families — the same ranges as `ATTN-1.14`). PR titles are author-controlled, including authors who submit from malicious forks; a poisoned title like `"Fix \u{202E}redli\u{202C} helper"` would otherwise render RTL-reversed in the breadcrumb as `"Fix ildeeper helper"`-style text — the same Trojan Source visual deception (CVE-2021-42574) `ATTN-1.14` and `LAYOUT-2.18` block on self-owned surfaces. Unlike those surfaces, the PR-title path STRIPS rather than REJECTS: a poisoned title shouldn't hide the PR entirely from the user (they still need to see "a PR exists"); stripping yields a legible-ish version and the user can click through to the hosting provider for the raw text. Applies to both `GitHubPRFetcher` and `GitLabPRFetcher`.
 
 **PR-5.6** When `GitOriginHost.parse` normalises a remote URL, it shall strip trailing `/` characters from the repo path segment before stripping the `.git` suffix. Scp-style URLs (`git@host:owner/repo.git/`) don't go through `URL`'s path normalisation, so a configured remote with a stray trailing slash — common on copy-paste from a browser address bar into `git remote set-url` — would otherwise retain `repo.git` as the repo slug. The downstream `gh pr list --repo <owner>/<repo.git>` returns no results and the sidebar silently shows no PR badge for the whole session.
 
-**GIT-2.6** When the application renders a worktree's branch name in the UI (the breadcrumb bar per `LAYOUT-1.3`, the secondary label in the sidebar row, and the main-checkout label in right-click "Move to <name>" menu entries — both in the sidebar pane row's menu and the terminal surface menu, per `PWD-1.1` / `PWD-1.3` / `TERM-8.10`), it shall read `WorktreeEntry.displayBranch` rather than `WorktreeEntry.branch`. `displayBranch` strips every Unicode bidirectional-override scalar (same ranges as `PR-5.5`) so a collaborator-controlled branch name like `"feat\u{202E}lanigiro"` — which git accepts and which propagates into `state.json` via `git worktree list --porcelain` — can't render RTL-reversed in the breadcrumb, row, or menu items. `branch` itself is preserved unchanged so downstream `git` subprocess calls, `gh pr list --head <branch>`, and the `PRStatusStore.isFetchableBranch` gate keep operating on the real ref. This is the same strip-not-reject policy `PR-5.5` uses for externally-sourced text. The shared `SidebarWorktreeLabel.text(for:inRepoAtPath:siblingPaths:)` helper is the single call site for sidebar-adjacent labels so menu items and the row can't drift on the main-checkout path.
-
-### 17.6 Check Rollup
+### PR-6.x — Check Rollup
 
 **PR-6.1** A PR's overall check status shall roll up its individual check buckets as follows: any `fail` → `.failure`; any `pending` bucket or any in-flight state (`IN_PROGRESS`, `QUEUED`, `PENDING`) → `.pending`; all-`pass` → `.success`; anything else (including `skipping`, `cancel`, or unclassified) → `.none` (neutral).
 
 **PR-6.2** When a PR has no checks, its overall status shall be `.none`.
 
-### 17.7 Polling Cadence and Backoff
+### PR-7.x — Polling Cadence and Backoff
 
 **PR-7.1** The application shall poll a worktree's PR status on a tiered cadence: 10 seconds while the PR's checks are `.pending`, and 30 seconds otherwise — a known PR with non-pending checks (open passing/failing, or merged), or a worktree observed to have no associated PR (absent). The pending-tier tightening exists because users are actively watching CI for the green/red transition and the 30-second baseline produces visible "I just pushed, why hasn't it gone green yet" staleness during a CI run. The 30-second baseline applies elsewhere because polling is the sole detection channel for an open→merged transition that lands on the hosting provider without a local `git fetch` (`watchOriginRefs` per GIT-2.5 catches local push/fetch but is blind to remote-only events), and a slower cadence directly surfaces as user-visible staleness in the sidebar badge and breadcrumb PR button.
 
@@ -1119,8 +1016,6 @@ shall surface an actionable alert rather than silently continue.
 
 **PR-7.5** `PRStatusStore.refresh` and `PRStatusStore.branchDidChange` shall also apply the `PR-7.3` sentinel-branch gate, not just the background polling loop. Otherwise an on-demand refresh (sidebar selection, HEAD-change event) against a detached / bare / unknown worktree still fires two wasted `gh pr list --head <sentinel>` invocations per event — the gate belongs at the fetch entry point, not duplicated at every caller.
 
-**PR-7.12** When the user selects a worktree in the sidebar, the application shall call `PRStatusStore.refresh` for that worktree, bypassing the `PR-7.2` cadence backoff. Rationale: even with the `PR-7.2` 60-second cap, a worst-case 60-second wait for a freshly-merged PR to appear in the breadcrumb is longer than the click-to-feedback loop a user expects on selection. Sidebar selection is a strong "user cares about this worktree now" signal, and the existing `refresh` path already short-circuits cadence and resets `failureStreak` on success — wiring it to selection closes the stale-UI escape hatch without any new mechanism.
-
 **PR-7.6** The PR polling ticker shall continue to fire while Graftty is not the frontmost application. `gh pr list` is the only detection channel for an open→merged transition that happens on GitHub without a local `git fetch`; pausing while the app is backgrounded leaves the sidebar's PR badge stuck on "open" until the user clicks back into Graftty, even though the merge may have happened many minutes earlier. The cost (one `gh pr list` per worktree every 10–30 seconds depending on the `PR-7.1` tier) is negligible compared to the staleness it would otherwise produce.
 
 **PR-7.9** When `PRStatusStore.refresh` schedules a fetch, it shall snapshot the worktree's per-path generation counter synchronously at scheduling time (not inside the spawned Task). A subsequent `branchDidChange` between the original `refresh` and when its spawned Task actually starts running would otherwise let the stale Task snapshot the post-bump generation and pass its post-await check — allowing the prior branch's still-in-flight fetch to write over the new branch's freshly-landed result when the network returns them out of order.
@@ -1129,13 +1024,15 @@ shall surface an actionable alert rather than silently continue.
 
 **PR-7.11** When host detection (`GitOriginHost.detect` or equivalent) throws for a repository — process launch failure, git binary missing from PATH, etc. — the application shall not cache the failure in the `hostByRepo` map. Only successful detections (whether returning a resolved `HostingOrigin` or a legitimate "no origin remote" nil) shall be cached. Otherwise a transient environment glitch at first fetch poisons the repo's PR tracking for the whole session, since the poll tick skips cached-nil repos and no code path re-attempts detection.
 
+**PR-7.12** When the user selects a worktree in the sidebar, the application shall call `PRStatusStore.refresh` for that worktree, bypassing the `PR-7.2` cadence backoff. Rationale: even with the `PR-7.2` 60-second cap, a worst-case 60-second wait for a freshly-merged PR to appear in the breadcrumb is longer than the click-to-feedback loop a user expects on selection. Sidebar selection is a strong "user cares about this worktree now" signal, and the existing `refresh` path already short-circuits cadence and resets `failureStreak` on success — wiring it to selection closes the stale-UI escape hatch without any new mechanism.
+
 **PR-7.13** `PRStatusStore` shall time-bound its per-worktree `inFlight` refresh guard so a hung `gh pr list` / `gh pr checks` subprocess cannot permanently lock out subsequent polls and user-triggered refreshes. A dispatch whose start timestamp is within the inFlight cap (30 seconds, intentionally independent of the `PR-7.1` poll cadence which can be tighter for pending CI — shrinking the inFlight cap alongside the poll cadence would kill legitimately slow `gh` calls before they finish) shall suppress a fresh refresh; beyond that cap, the prior dispatch shall be treated as abandoned and superseded, with the per-path `generation` counter bumped so the abandoned Task's late write is dropped if it ever returns. Without this, a single stuck subprocess (network flake, rate-limit back-off, expired gh auth refresh loop) freezes that worktree's sidebar badge and breadcrumb PR button at their last-cached state until the app is relaunched — the user-observable shape "PR status only updates when I click between worktrees". Mirrors `WorktreeStatsStore`'s `DIVERGE-4.4` recovery pattern for the equivalent stats-store bug.
 
 **PR-7.14** The PR polling tick shall dispatch eligible per-worktree fetches and return without awaiting those fetch Tasks. The ticker loop itself must remain live even if a `gh` / `glab` subprocess hangs, otherwise `PR-7.13`'s abandoned-in-flight recovery never gets a later polling tick on which to supersede the stuck fetch. A hung fetch may occupy that worktree's `inFlight` slot until the `PR-7.13` 30-second inFlight cap elapses, but it must not stop unrelated worktrees from polling or require the user to click the sidebar to trigger the separate on-demand refresh path.
 
-## 18. Claude Code Channels
+## CHAN — Claude Code Channels
 
-### 18.1 Router and Subscriber Routing
+### CHAN-1.x — Router and Subscriber Routing
 
 **CHAN-1.1** The application shall host a single `ChannelRouter` that owns the `ChannelSocketServer` and maintains a `[worktreePath: ChannelSocketServer.Connection]` map keyed by the subscriber's `worktree` field.
 
@@ -1153,11 +1050,9 @@ shall surface an actionable alert rather than silently continue.
 
 **CHAN-1.8** While `ChannelRouter.isEnabled` is `false`, both `dispatch` and `broadcastInstructions` shall become no-ops, but existing subscriber connections shall remain connected — mirroring the Settings enable toggle without forcing every subscriber to reconnect on re-enable.
 
-### 18.2 Channel Settings (Agent Teams pane)
+### CHAN-2.x — Channel Settings (Agent Teams pane)
 
 **CHAN-2.1** The channel settings are part of the **Agent Teams** Settings tab; there is no separate "Channels" tab. `channelsEnabled` is no longer used; the channel infrastructure is gated entirely by `agentTeamsEnabled` (see TEAM-1.2).
-
-**CHAN-2.2** ~~Removed — superseded by TEAM-1.2.~~
 
 **CHAN-2.3** While `agentTeamsEnabled` is `false`, the Agent Teams pane shall hide the research-preview disclosure banner, the PR-notifications sub-checkbox, and the prompt editor, showing only the main toggle and its footer.
 
@@ -1167,7 +1062,7 @@ shall surface an actionable alert rather than silently continue.
 
 **CHAN-2.6** When the user clicks "Restore default" in the prompt section, the application shall overwrite `channelPrompt` with the built-in default prompt template.
 
-### 18.3 Launch Flag Disclosure
+### CHAN-3.x — Launch Flag Disclosure
 
 **CHAN-3.1** The canonical launch-flag string the Channels pane shall disclose is `--dangerously-load-development-channels server:graftty-channel`. The `server:<name>` form addresses the user-scope MCP server entry Graftty registers via `claude mcp add` per CHAN-4.*. The `plugin:<name>@<marketplace>` form is not used, because local plugins under `~/.claude/plugins/` are not registered under any marketplace by default and the flag rejects bare `plugin:<name>`.
 
@@ -1175,7 +1070,7 @@ shall surface an actionable alert rather than silently continue.
 
 **CHAN-3.3** Existing `claude` sessions shall continue with their original launch flags when `agentTeamsEnabled` is toggled mid-session; only sessions started by the user after toggling shall see the change. Retroactively attaching channels to a running `claude` requires the user to restart it with the launch flag appended.
 
-### 18.4 MCP Server Installation
+### CHAN-4.x — MCP Server Installation
 
 **CHAN-4.1** While `agentTeamsEnabled` is `true`, on app launch the application shall register an MCP server named `graftty-channel` at user scope via the `claude` CLI, with its command set to the bundled Graftty CLI path and its args set to `["mcp-channel"]`.
 
@@ -1187,7 +1082,7 @@ shall surface an actionable alert rather than silently continue.
 
 **CHAN-4.5** On app launch, the application shall remove any leftover `~/.claude/plugins/graftty-channel/` directory from prior versions (plugin-wrapper shape) **and** any leftover `~/.claude/.mcp.json` file written by prior versions that used the hand-rolled-JSON installer shape. Both removals shall be no-ops when the target is absent, and the `.mcp.json` cleanup shall only fire when the file's contents exactly match the old installer's output (to avoid deleting a file the user has repurposed manually).
 
-### 18.5 Event Emission
+### CHAN-5.x — Event Emission
 
 **CHAN-5.1** When `PRStatusStore` detects a PR state transition (`open` ↔ `merged`), the application shall fire a `type=pr_state_changed` channel event for that worktree carrying `from`, `to`, `pr_number`, `pr_url`, `provider`, `repo`, `worktree`, and `pr_title` attributes.
 
@@ -1199,13 +1094,13 @@ shall surface an actionable alert rather than silently continue.
 
 **CHAN-5.5** The `provider` attribute shall be the lowercase raw string of the hosting provider (`github` or `gitlab`), and the `repo` attribute shall be the `owner/name` slug of the repository.
 
-### 18.6 Prompt Update Lifecycle
+### CHAN-6.x — Prompt Update Lifecycle
 
 **CHAN-6.1** When the user edits the channels prompt in the Settings pane, the application shall observe the change via KVO on `UserDefaults.channelPrompt` and, after a 500ms debounce, invoke `ChannelRouter.broadcastInstructions()` to fan the current prompt out to every connected subscriber.
 
 **CHAN-6.2** The debounce shall coalesce rapid edits into a single broadcast per settled edit — successive keystrokes within the 500ms window shall reset the timer rather than each scheduling their own broadcast.
 
-### 18.7 Error Handling
+### CHAN-7.x — Error Handling
 
 **CHAN-7.1** If the `graftty mcp-channel` subprocess fails to resolve the worktree at startup (CWD is not inside a tracked Graftty worktree), the subprocess shall emit exactly one `notifications/claude/channel` event with `meta.type = "channel_error"` on stdout, then exit with status 1.
 
@@ -1215,13 +1110,13 @@ shall surface an actionable alert rather than silently continue.
 
 **CHAN-7.4** When a `PRStatusStore` fetch fails (network error, rate limit, expired auth), no channel event shall be sent to any subscriber for that polling cycle. Failure is silent from the channel's perspective; only successful state-change detections fire events.
 
-### 18.8 Socket Infrastructure
+### CHAN-8.x — Socket Infrastructure
 
 **CHAN-8.1** The channels socket shall be located at `<ApplicationSupport>/Graftty/graftty-channels.sock` by default, overridable via the `GRAFTTY_CHANNELS_SOCK` environment variable (empty-string values shall fall back to the default, matching the control socket's semantics).
 
-## 19. iOS App
+## IOS — iOS App
 
-### 19.1 Target and platform
+### IOS-1.x — Target and platform
 
 **IOS-1.1** The application shall provide a universal iOS app, `GrafttyMobile`, targeting iOS 17 or later, running on both iPhone and iPad form factors with layouts forked on `horizontalSizeClass`. (iOS 17 is the minimum because the app uses Swift's `@Observable` macro, which requires iOS 17 at runtime.)
 
@@ -1231,7 +1126,7 @@ shall surface an actionable alert rather than silently continue.
 
 **IOS-1.4** While the iOS application is installed, it shall appear on the home screen and in the app switcher as "Graftty" (via `CFBundleDisplayName`) and shall use the same app icon as the macOS application, sourced from the shared master `Resources/AppIcon.png`. The Xcode target, `.xcodeproj`, on-disk sources directory, and bundle identifier keep the `GrafttyMobile` name internally so `Bundle.main.bundleIdentifier` checks, keychain service strings, and the `GrafttyMobileKit` SPM target continue to work unchanged — "GrafttyMobile" is the codebase's internal handle, "Graftty" is the user-facing brand on both platforms.
 
-### 19.2 Discovery and host storage
+### IOS-2.x — Discovery and host storage
 
 **IOS-2.1** The application shall provide a QR-code scanner (`AVFoundation`) that accepts any URL matching `^(http|https)://<host>(:\d+)?/?$` as a new saved host. A QR payload failing this parse shall keep the scanner open and present a non-dismissing toast `QR did not contain a Graftty URL`.
 
@@ -1241,7 +1136,7 @@ shall surface an actionable alert rather than silently continue.
 
 **IOS-2.4** The macOS application's Settings pane shall render the current Base URL (as already composed by `WebURLComposer.baseURL(host:port:)`) as a scannable QR code alongside the existing copy/open actions (`WEB-1.12`). When the server status is not `.listening`, the QR-code area shall render a placeholder explaining why (e.g., "Tailscale unavailable").
 
-### 19.3 Authentication
+### IOS-3.x — Authentication
 
 **IOS-3.1** On cold launch, the application shall display a full-screen lock overlay until `LAContext.evaluatePolicy(.deviceOwnerAuthentication, …)` resolves successfully. While locked, no saved hostnames, session names, or terminal contents shall be visible.
 
@@ -1249,13 +1144,9 @@ shall surface an actionable alert rather than silently continue.
 
 **IOS-3.3** On authentication denial or cancellation, the application shall remain locked with a retry button; no UI behind the lock shall become interactive.
 
-### 19.4 Session fetching and rendering
+### IOS-4.x — Session fetching and rendering
 
 **IOS-4.1** When the user selects a saved host, the application shall issue `GET <baseURL>/worktrees/panes` and render the response as a **worktree** picker grouped by `WorktreePanes.repoDisplayName` (one row per running worktree, not one row per pane). This differs from the web client's flat session list (`WEB-5.4`) because the mobile flow is drill-down — worktree → pane tree → single pane — rather than flat selection.
-
-**IOS-4.10** When the user selects a worktree from the picker (`IOS-4.1`), the application shall present a second screen rendering the worktree's pane split tree faithfully to the Mac sidebar's layout: each split respects its `direction` (horizontal/vertical) and `ratio`; each leaf is a tappable tile labelled with the pane's current title (or the session name when no title has been set yet). Tapping a tile pushes the fullscreen terminal for that session.
-
-**IOS-4.11** When the user taps a pane tile, the application shall open a fullscreen terminal view for that session — a single `TerminalPaneView` with the navigation bar hidden and the terminal extending beneath the top safe area (`IOS-4.8`). The WebSocket is opened on view appear and closed on view disappear; system edge-swipe-back returns to the worktree detail.
 
 **IOS-4.2** When `GET /sessions` returns a non-2xx status or a body that fails to decode as `[SessionInfo]`, the application shall render an error banner displaying the status code (or "malformed response") and a manual retry button. A 403 response shall instead render `Not authorized — is this device on your tailnet?` with a link that opens the Tailscale iOS app.
 
@@ -1272,13 +1163,12 @@ shall surface an actionable alert rather than silently continue.
 **IOS-4.8** While a pane is mounted, the application shall hide the navigation bar (`.toolbar(.hidden, for: .navigationBar)`) and extend the terminal beneath every safe-area edge (`.ignoresSafeArea()`) — top (under the notch), bottom (under the home indicator), and the left/right safe-area strips in landscape. libghostty renders its configured background color to the full view bounds, so the unsafe regions pick up the terminal's own background rather than the SwiftUI default. The user returns to the worktree detail via the system edge-swipe-back gesture rather than an explicit button.
 
 **IOS-4.9** The application shall display a floating keyboard button at the bottom-trailing corner of the pane view with three states:
-  1. While the software keyboard is visible, the button shall render the `keyboard.chevron.compact.down` SF Symbol with an accessibility label of "Hide keyboard". Tapping it shall resign first-responder on the key window AND set the internal "keyboard allowed" flag to false.
-  2. While the keyboard is hidden and the user has explicitly dismissed it (flag is false), the button shall render the `keyboard` SF Symbol with an accessibility label of "Show keyboard". Tapping it shall set the flag to true and programmatically call `becomeFirstResponder()` on the underlying `UITerminalView` (via a monotonic focus-request counter threaded through `TerminalPaneView.updateUIView`).
-  3. When the keyboard is hidden and the flag is true (the default on first pane entry), no button shall render; the user can summon the keyboard by tapping the terminal.
 
-While the "keyboard allowed" flag is false, any stray keyboard-will-show event (e.g. triggered by a mistaken tap that lets `UITerminalView` become first responder internally) shall be dismissed immediately by posting `resignFirstResponder` to the responder chain. This produces a one-frame flicker at worst but guarantees the user's dismissal intent is honoured until they explicitly reopen the keyboard.
+**IOS-4.10** When the user selects a worktree from the picker (`IOS-4.1`), the application shall present a second screen rendering the worktree's pane split tree faithfully to the Mac sidebar's layout: each split respects its `direction` (horizontal/vertical) and `ratio`; each leaf is a tappable tile labelled with the pane's current title (or the session name when no title has been set yet). Tapping a tile pushes the fullscreen terminal for that session.
 
-### 19.5 Multi-pane layout
+**IOS-4.11** When the user taps a pane tile, the application shall open a fullscreen terminal view for that session — a single `TerminalPaneView` with the navigation bar hidden and the terminal extending beneath the top safe area (`IOS-4.8`). The WebSocket is opened on view appear and closed on view disappear; system edge-swipe-back returns to the worktree detail.
+
+### IOS-5.x — Multi-pane layout
 
 **IOS-5.1** On iPad (regular `horizontalSizeClass`), the application shall render a `NavigationSplitView` sidebar + detail layout. The sidebar shall show saved hosts; tapping a host reveals the session picker; tapping a session renders the detail as a terminal pane.
 
@@ -1292,21 +1182,21 @@ While the "keyboard allowed" flag is false, any stray keyboard-will-show event (
 
 **IOS-5.6** While the iOS client is not the size-leader (before the first keystroke on this session per `IOS-6.5`) and the server-announced grid's column count exceeds what fits in the device's container at libghostty's current cell width, the application shall wrap the terminal pane in a horizontal `ScrollView` whose inner frame width equals `serverCols × cellWidthPoints`. `cellWidthPoints` shall be taken from the `cellWidthPixels` field of libghostty's resize-callback viewport (divided by the display scale) — not a static font-aspect estimate — so libghostty's VT parser runs at exactly `serverCols` columns and server output flows through without internal line-wrap. Before the first viewport callback delivers a non-zero cell width, an overshooting fallback shall be used so the scroll frame errs toward too-wide (extra blank cells) rather than too-narrow (wrapped lines).
 
-**IOS-6.5** On the first user keystroke within a session, the iOS client shall claim size-leadership by sending its last-measured viewport `(cols, rows)` to the server via a `WebControlEnvelope.resize` frame. Subsequent libghostty-reported layout changes shall be forwarded to the server. Before this moment, layout-driven resize callbacks shall be memoized but not sent, so the Mac pane's `TIOCGWINSZ` dictates the PTY's dimensions and `IOS-5.6`'s scroll-view path governs rendering.
-
-### 19.6 Input
+### IOS-6.x — Input
 
 **IOS-6.1** While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard. The v1 bar shall expose, at minimum: Esc, Tab, Ctrl-C, Ctrl-D, ↑, ↓, ←, →, submit Return, insert literal LF, and Hide Keyboard. These controls shall send explicit PTY bytes through `SessionClient` rather than relying on UIKit text entry: Esc=`0x1B`, Tab=`0x09`, Ctrl-C=`0x03`, Ctrl-D=`0x04`, arrows=`ESC [ A/B/D/C`, submit Return=`0x0D`, and literal LF=`0x0A`.
 
-**IOS-6.2** libghostty-spm's `TerminalView` shall remain the primary owner of terminal rendering and hardware-keyboard key-event translation for every pane. Ordinary software-keyboard text shall use the app-owned `UIKeyInput` path in `IOS-6.5` so committed text is sent as raw PTY input instead of paste text. The application shall additionally publish a `UIKeyCommand` table solely for **application-level** shortcuts that must be intercepted before the terminal sees them (e.g., Cmd-\\ to split on iPad, Cmd-1…9 to switch visible sessions). `UIKeyCommand` shall not be used to re-implement general terminal chord translation.
+**IOS-6.2** libghostty-spm's `TerminalView` shall remain the primary owner of terminal rendering and hardware-keyboard key-event translation for every pane. Ordinary software-keyboard text shall use the app-owned `UIKeyInput` path in `IOS-6.6` so committed text is sent as raw PTY input instead of paste text. The application shall additionally publish a `UIKeyCommand` table solely for **application-level** shortcuts that must be intercepted before the terminal sees them (e.g., Cmd-\\ to split on iPad, Cmd-1…9 to switch visible sessions). `UIKeyCommand` shall not be used to re-implement general terminal chord translation.
 
 **IOS-6.3** When the outbound keystroke pipe (`SessionClient.box.onBytes`) receives a payload consisting of exactly one LF byte (`0x0A`), the application shall translate it to a single CR byte (`0x0D`) before sending it to the server. This reconciles iOS's soft-keyboard Return — which UIKit delivers as LF via `UIKeyInput.insertText("\n")` — with the CR convention that physical terminals send on Return and that TUIs (Claude Code, readline, etc.) interpret as "submit." Without this translation, tapping Return on the iOS keyboard inserts a literal newline into the TUI's input buffer instead of submitting the current line, and there is no way to produce a submit keystroke from the soft keyboard. The rule is narrowed to a *standalone* single-byte LF so that multi-byte payloads with embedded newlines (pastes from the clipboard, programmatic text insertion) pass through unchanged and preserve their own line structure.
 
 **IOS-6.4** When the user taps the terminal control bar's "Insert newline" control, the application shall send a single literal LF byte (`0x0A`) to the remote session, bypassing the `IOS-6.3` LF→CR rule via `SessionClient.insertNewline()`. This is the only way to insert a multi-line boundary into a TUI prompt from the iOS soft keyboard after Return has been reserved for submission.
 
-**IOS-6.5** While a terminal pane is focused on iOS, ordinary software-keyboard text shall be captured by GrafttyMobile's own `UIKeyInput` responder and forwarded to the remote PTY as raw UTF-8 bytes via `SessionClient.sendSoftwareKeyboardText(_:)`, rather than through libghostty's `TerminalSurface.sendText(_:)` path. A single software-keyboard newline shall be translated to CR (`0x0D`) per `IOS-6.3`, and software-keyboard delete shall send DEL (`0x7F`). This prevents normal typing from being wrapped in bracketed-paste delimiters (`ESC [ 200 ~` / `ESC [ 201 ~`) that prompt-driven TUIs can display as stray `[200~` text.
+**IOS-6.5** On the first user keystroke within a session, the iOS client shall claim size-leadership by sending its last-measured viewport `(cols, rows)` to the server via a `WebControlEnvelope.resize` frame. Subsequent libghostty-reported layout changes shall be forwarded to the server. Before this moment, layout-driven resize callbacks shall be memoized but not sent, so the Mac pane's `TIOCGWINSZ` dictates the PTY's dimensions and `IOS-5.6`'s scroll-view path governs rendering.
 
-### 19.7 Lifecycle
+**IOS-6.6** While a terminal pane is focused on iOS, ordinary software-keyboard text shall be captured by GrafttyMobile's own `UIKeyInput` responder and forwarded to the remote PTY as raw UTF-8 bytes via `SessionClient.sendSoftwareKeyboardText(_:)`, rather than through libghostty's `TerminalSurface.sendText(_:)` path. A single software-keyboard newline shall be translated to CR (`0x0D`) per `IOS-6.3`, and software-keyboard delete shall send DEL (`0x7F`). This prevents normal typing from being wrapped in bracketed-paste delimiters (`ESC [ 200 ~` / `ESC [ 201 ~`) that prompt-driven TUIs can display as stray `[200~` text.
+
+### IOS-7.x — Lifecycle
 
 **IOS-7.1** When the application enters the background, it shall close every active `URLSessionWebSocketTask` with WebSocket close code 1000 (normal closure) and tear down every `InMemoryTerminalSession`. The server's response (SIGTERM to each `zmx attach` child per `WEB-4.5`) leaves the zmx daemon alive per `ZMX-4.4`, so reconnect picks up the same session.
 
@@ -1316,7 +1206,7 @@ While the "keyboard allowed" flag is false, any stray keyboard-will-show event (
 
 **IOS-7.4** On WebSocket failure (upgrade failure, read/write error, or close frame not initiated by the app) for a pane whose session name is still listed in `/sessions`, the application shall display a per-pane "disconnected" banner with "Reconnect" and "Back to sessions" buttons. While the host view is visible, the application shall retry automatically with exponential backoff: the delay starts at 1 second, doubles after each successive failure, and is capped at 30 seconds. Each successful connect resets the delay to 1 second. When the host view is not visible, no automatic retry shall occur.
 
-### 19.8 Non-goals (recorded for future specs)
+### IOS-8.x — Non-goals (recorded for future specs)
 
 **IOS-8.1** The v1 iOS app shall not support connecting to non-Graftty SSH/mosh hosts.
 
@@ -1328,25 +1218,21 @@ While the "keyboard allowed" flag is false, any stray keyboard-will-show event (
 
 **IOS-8.5** The v1 iOS app shall not use push notifications for PR status, build completions, or session events.
 
-### 19.9 Creating worktrees from the iOS client
+### IOS-9.x — Creating worktrees from the iOS client
 
 **IOS-9.1** The worktree-picker screen (`IOS-4.1`) shall display an "Add Worktree" action as a primary toolbar item. Tapping it shall present a modal sheet collecting the fields required by `POST /worktrees` (`WEB-7.2`): a repository picker populated from `GET /repos` (hidden when only one repo is tracked), a worktree-name field, and a branch-name field.
 
 **IOS-9.2** Both the worktree-name and branch-name fields shall sanitize input live with `WorktreeNameSanitizer` (same allowed set as the Mac sheet and the web client: `A-Z a-z 0-9 . _ - /`, consecutive disallowed chars collapsing to a single `-`). The branch field shall auto-mirror the worktree-name field until the user types a branch that differs, at which point the mirror breaks and further edits to the worktree field stop overwriting the branch. On submit, both fields shall be trimmed of leading/trailing whitespace plus `-` and `.` (matching the macOS sheet's `submitTrimSet` and the web client's `trimForSubmit`). The sheet's Create button shall be disabled while either field is empty after trim.
 
 **IOS-9.3** On submit, the application shall issue `POST <baseURL>/worktrees` with `{repoPath, worktreeName, branchName}` and handle the response per the server's status-code contract (`WEB-7.3` / `WEB-7.4`):
-  - `200`: decode `{sessionName, worktreePath}`, dismiss the sheet, refresh the worktree picker via `GET /worktrees/panes`, and push the newly created worktree's detail view onto the navigation stack so the user lands on the new entry — parity with the Mac sidebar auto-selecting the freshly added worktree.
-  - `400` / `409` / `500` / `503`: keep the sheet open and render the server's `{error}` body verbatim inline beneath the form. For git failures (`409`) this surfaces the captured stderr so the user sees messages like `fatal: A branch named 'foo' already exists.` unchanged.
-  - `403`: render "Not authorized — is this device on your tailnet?" (parallels `IOS-4.2`).
-  - transport/decode failures: render a stable fallback string ("Couldn't reach the server.", "The server sent a response this version can't read.") rather than raw bytes.
 
 **IOS-9.4** When `GET /repos` returns an empty list, the sheet shall render an empty-state "No repositories tracked — open a repository in Graftty on the Mac first." and shall not show the input fields. The iOS app shall not implement repository-adding (the Mac-side file-picker + security-scoped bookmark mint has no iOS equivalent, same stance as `WEB-7.7`).
 
 **IOS-9.5** While a `POST /worktrees` call is in flight, the Create button shall be replaced by an in-flight indicator, the Cancel button and both input fields shall be disabled, and the repository picker shall be disabled. Once the call resolves (success or failure) all controls shall re-enable.
 
-## 20. Agent Teams
+## TEAM — Agent Teams
 
-### 20.1 Settings & Enablement
+### TEAM-1.x — Settings & Enablement
 
 **TEAM-1.1** The application shall provide a Settings tab named "Agent Teams" containing one boolean toggle, *Enable agent teams*, persisted via `@AppStorage("agentTeamsEnabled")` (Bool, default false).
 
@@ -1354,15 +1240,15 @@ While the "keyboard allowed" flag is false, any stray keyboard-will-show event (
 
 **TEAM-1.5** `agentTeamsEnabled` plus the `channelRoutingPreferences` JSON struct (see TEAM-1.8) supersede the previous coupled `teamPRNotificationsEnabled` flag. Channel events fire only when `agentTeamsEnabled` is true; per-event recipient sets are taken from the matrix in `channelRoutingPreferences`.
 
+**TEAM-1.6** The Agent Teams Settings pane shall expose **two** user-editable Stencil-templated text areas, each pre-populated with a non-empty default (`DefaultPrompts.sessionPrompt` and `DefaultPrompts.eventPrompt`) registered into `UserDefaults.standard` at app startup so non-binding readers see the same default until the user overrides. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt` (`@AppStorage("teamSessionPrompt")`, String) — rendered once at session start against the `agent` context; only `agent.branch` and `agent.lead` are meaningful at session start (`agent.this_worktree` and `agent.other_worktree` are always `false`), and the pane's variable-list disclosure deliberately omits the latter two. The rendered text is appended after a blank line to the auto-generated team-aware MCP-instructions text. The second, `teamPrompt` (`@AppStorage("teamPrompt")`, String) — rendered per channel-event delivery against the full four-field `agent` context; the rendered text is prepended after a blank line to the channel event's body before dispatch. Both templates use the same `agent` struct shape: `branch` (String), `lead` (Bool), `this_worktree` (Bool), `other_worktree` (Bool). The previously-defined `teamLeadPrompt` and `teamCoworkerPrompt` AppStorage keys are removed.
+
 **TEAM-1.7** While `agentTeamsEnabled` is true, the Agent Teams Settings pane shall display the canonical channel launch flag `--dangerously-load-development-channels server:graftty-channel` in a monospaced selectable text view alongside a "Copy" button that writes the flag to the system clipboard, and a footer note explaining that the user must add the flag to their `claude` invocation (e.g., the Default Command field on the General Settings pane) for channel events to flow into the session.
 
 **TEAM-1.8** The Agent Teams Settings pane shall render a 4×3 matrix of toggles (rows: PR state changed / PR merged / CI conclusion changed / Mergability changed; columns: Root agent / Worktree agent / Other worktree agents). Each cell binds to one bit of a `RecipientSet` field on the persisted `ChannelRoutingPreferences` `Codable` struct. Defaults: state-changed/CI/mergability → worktree only; merged → root only. The matrix is rendered as its own Section between the main toggle and the prompt sections.
 
 **TEAM-1.9** When `PRStatusStore` fires a transition that produces a routable channel event (`pr_state_changed`, `ci_conclusion_changed`, `merge_state_changed`), the application shall consult `channelRoutingPreferences` for the corresponding row and dispatch the event once per recipient resolved by `ChannelEventRouter.recipients`. The router classifies `pr_state_changed` events with `attrs.to == "merged"` as the *PR merged* row; all other `pr_state_changed` events are the *PR state changed* row. Single-worktree repos (no team) receive the event only when the relevant row's `Worktree agent` cell is set; root and other-worktree cells are no-ops there.
 
-**TEAM-1.6** The Agent Teams Settings pane shall expose **two** user-editable Stencil-templated text areas, each pre-populated with a non-empty default (`DefaultPrompts.sessionPrompt` and `DefaultPrompts.eventPrompt`) registered into `UserDefaults.standard` at app startup so non-binding readers see the same default until the user overrides. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt` (`@AppStorage("teamSessionPrompt")`, String) — rendered once at session start against the `agent` context; only `agent.branch` and `agent.lead` are meaningful at session start (`agent.this_worktree` and `agent.other_worktree` are always `false`), and the pane's variable-list disclosure deliberately omits the latter two. The rendered text is appended after a blank line to the auto-generated team-aware MCP-instructions text. The second, `teamPrompt` (`@AppStorage("teamPrompt")`, String) — rendered per channel-event delivery against the full four-field `agent` context; the rendered text is prepended after a blank line to the channel event's body before dispatch. Both templates use the same `agent` struct shape: `branch` (String), `lead` (Bool), `this_worktree` (Bool), `other_worktree` (Bool). The previously-defined `teamLeadPrompt` and `teamCoworkerPrompt` AppStorage keys are removed.
-
-### 20.2 Team Identity & Membership
+### TEAM-2.x — Team Identity & Membership
 
 **TEAM-2.1** A *team* is implicit in any `RepoEntry` with two or more `WorktreeEntry` children, while `agentTeamsEnabled` is true. A repo with one worktree (or with team mode off) has no team and no team-aware behavior.
 
@@ -1372,7 +1258,7 @@ While the "keyboard allowed" flag is false, any stray keyboard-will-show event (
 
 **TEAM-2.4** Team identity, membership, and lead designation are derived live from `AppState`. The application shall not persist any team-specific data beyond `agentTeamsEnabled` itself.
 
-### 20.3 Team-Aware MCP Instructions
+### TEAM-3.x — Team-Aware MCP Instructions
 
 **TEAM-3.1** When a `graftty mcp-channel` subscriber connects on behalf of a worktree whose repo has team status (per TEAM-2.1), the application shall include the rendered team-aware instructions text in the initial `instructions` channel event sent to that subscriber. The instructions text describes only mechanism — peers, the `graftty team msg` command, the `team_*` channel event types — and contains no behavioral prescription.
 
@@ -1382,7 +1268,7 @@ While the "keyboard allowed" flag is false, any stray keyboard-will-show event (
 
 **TEAM-3.4** When the team membership of a worktree's repo changes (a worktree is added or removed, or `agentTeamsEnabled` toggles), the application shall re-render and re-broadcast the `instructions` event to every active subscriber whose worktree's team is affected. (This reuses the existing `broadcastInstructions` pipeline.)
 
-### 20.4 `graftty team` CLI
+### TEAM-4.x — `graftty team` CLI
 
 **TEAM-4.1** The application shall provide a CLI subcommand group `graftty team` with two subcommands: `msg <member-name> "<text>"` and `list`.
 
@@ -1390,7 +1276,7 @@ While the "keyboard allowed" flag is false, any stray keyboard-will-show event (
 
 **TEAM-4.3** `graftty team list` shall print one line per team member of the caller's team to stdout: `<member-name>  branch=<branch>  worktree=<path>  role=<lead|coworker>  running=<true|false>`. The first printed line shall be a header `team=<repo-display-name>  members=<count>`. The CLI shall exit non-zero with a stderr message if team mode is disabled or the calling worktree has no team.
 
-### 20.5 `team_*` Channel Events
+### TEAM-5.x — `team_*` Channel Events
 
 **TEAM-5.1** The application shall emit a `team_message` channel event when `graftty team msg` is invoked successfully. Routing: addressed to the recipient's worktree only. Attributes: `team` (repo display name), `from` (sender's member name). Body: the message text.
 
@@ -1398,17 +1284,15 @@ While the "keyboard allowed" flag is false, any stray keyboard-will-show event (
 
 **TEAM-5.3** The application shall emit a `team_member_left` channel event when a worktree is removed from a team (the worktree is deleted, or the team-enabled repo collapses to one worktree). Routing: addressed to the team's lead's worktree only. Attributes: `team`, `member` (departing member's name), `reason` (`removed` or `exited`).
 
-**TEAM-5.4** ~~Removed — the dedicated `team_pr_merged` event is retired. PR-merge notifications now flow as `pr_state_changed` with `attrs.to = "merged"`, routed by the matrix per TEAM-1.9.~~
-
-### 20.6 Sidebar Visualization
+### TEAM-6.x — Sidebar Visualization
 
 **TEAM-6.1** While `agentTeamsEnabled` is true and a `RepoEntry` has two or more worktrees, the sidebar shall render that repo with a small "team" icon (SF Symbol `person.2.fill`) adjacent to its disclosure header. No per-worktree accent stripe is applied; the header icon is sufficient to indicate team membership.
 
 **TEAM-6.2** Right-clicking any team-enabled worktree's row shall include a *Show Team Members…* context-menu item. Selecting it shall display a popover listing each team member by name, branch, and role (lead / coworker), populated from the same source as `graftty team list`.
 
-## 21. Editor Integration
+## EDITOR — Editor Integration
 
-Cmd-clicking a file path in a terminal pane opens the file in the user's configured editor — CLI editors in a new pane, GUI apps via NSWorkspace.
+### EDITOR-1.x
 
 **EDITOR-1.1** When the user cmd-clicks a file path in a terminal pane, the application shall open the file via the configured editor.
 

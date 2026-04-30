@@ -16,7 +16,11 @@ import Testing
 // through before trusting it. Port 0 is allowed (kernel assigns
 // ephemeral — integration tests rely on this), 1–65535 are user-
 // reachable; everything else is rejected.
-@Suite("WebServer — port validation (WEB-1.5)")
+@Suite("""
+WebServer — port validation
+
+@spec WEB-1.5: If the user-configured port is outside the 0–65535 range NIO will accept (e.g., the Settings TextField lets the user type any integer, including "99999" or a negative number), the application shall surface a readable "Port must be 0–65535 (got N)" error in the Settings status row rather than attempting to bind and surfacing an opaque `NIOBindError`, and shall not start the server until the value is corrected.
+""")
 struct WebServerPortValidationTests {
 
     @Test func acceptsEphemeralAutoPort() {

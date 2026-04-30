@@ -7,7 +7,11 @@ import Foundation
 /// Without this, a refactor can silently change the fetch cadence and
 /// surface either as a hammer on `git fetch` (too fast) or stale
 /// divergence stats (too slow).
-@Suite("WorktreeStatsStore.repoFetchCadence")
+@Suite("""
+WorktreeStatsStore.repoFetchCadence
+
+@spec DIVERGE-4.3: The application shall run `git fetch --no-tags --prune origin` (with no refspec, so the remote's configured fetch rules advance every tracked branch) and recompute divergence counts per repository on a 30-second base cadence, doubling the interval for each consecutive fetch failure (capped by `ExponentialBackoff`'s 32× max shift and a 30-minute hard cap, whichever binds first). A fast 5-second polling ticker drives the eligibility check; actual fetches are gated by the per-repo cadence so tracked repositories are not hammered.
+""")
 struct WorktreeStatsStoreCadenceTests {
 
     @Test func baseCadenceIsThirtySeconds() {

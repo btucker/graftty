@@ -7,7 +7,11 @@ import Foundation
 /// only fires when data STOPS flowing — a writer that keeps the pipe
 /// continuously full never triggers it, so the historical read loop
 /// would accumulate every byte the attacker sent until OOM.
-@Suite("SocketServer — per-client buffer cap", .serialized)
+@Suite("""
+SocketServer — per-client buffer cap
+
+@spec ATTN-2.11: Each accepted client connection's read loop shall cap total accumulated bytes at `SocketServer.maxPerClientBytes` (1 MB in production) before giving up and closing the fd. Without this, a local writer that keeps the pipe continuously full (`cat /dev/urandom | nc -U graftty.sock`) never trips `SO_RCVTIMEO` (which fires only when data STOPS flowing) — the historical unbounded read loop would grow the per-connection buffer until process memory was exhausted. 1 MB is 1000× the ≤~1 KB typical JSON notify/pane message size, so well-behaved clients never hit it. Tests can shrink the cap to bound per-test runtime.
+""", .serialized)
 struct SocketServerBufferCapTests {
 
     private static func makeSocketPath() throws -> (dir: URL, path: String) {

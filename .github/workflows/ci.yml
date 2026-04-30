@@ -33,6 +33,21 @@ jobs:
           git diff --exit-code Sources/GrafttyKit/Web/Resources/ \
             || { echo "::error::web-client/ changed but the committed bundle is stale. Run ./scripts/build-web.sh locally and recommit."; exit 1; }
 
+  verify-specs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify SPECS.md is up to date
+        run: |
+          python3 scripts/generate-specs.py --check \
+            || { echo "::error::SPECS.md is stale relative to @spec annotations. Run scripts/generate-specs.py locally and recommit."; exit 1; }
+
   macos-build-and-test:
     # macos-26 ships Xcode 26 which bundles a current swift-testing.
     # The older swift-testing (124.4) on macos-latest (→ macos-15) has

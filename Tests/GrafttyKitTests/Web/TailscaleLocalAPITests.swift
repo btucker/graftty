@@ -247,7 +247,10 @@ struct TailscaleLocalAPICertParsingTests {
     /// and assigned everything _before_ it to `certText`, which was
     /// empty under real Tailscale responses and surfaced as a spurious
     /// `.malformedResponse` at "Enable web access". WEB-8.2.
-    @Test func parseCertPair_handlesKeyBeforeCertOrdering() throws {
+    @Test("""
+    @spec WEB-8.2: The application shall fetch the TLS cert+key pair for the MagicDNS FQDN from Tailscale LocalAPI `/localapi/v0/cert/<fqdn>?type=pair`. If the response is classified (HTTP status ≥ 400 + body mentioning "HTTPS" and "enable") as "HTTPS disabled for this tailnet", the application shall enter `.httpsCertsNotEnabled` status and render an admin-console link without attempting to bind. Any other fetch failure shall enter `.certFetchFailed(<message>)` status.
+    """)
+    func parseCertPair_handlesKeyBeforeCertOrdering() throws {
         let keyFirst = """
         -----BEGIN EC PRIVATE KEY-----
         MHcCAQEEICqs/E2oiX3QSpUN+F2Vmv3yQLxCpYGIfchcp7W2I+Bn

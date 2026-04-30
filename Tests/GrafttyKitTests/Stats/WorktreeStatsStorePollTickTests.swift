@@ -10,7 +10,11 @@ import Foundation
 /// changes (a `git add` in an external shell, a commit made by a tool
 /// other than Graftty) stale in the sidebar for up to the full fetch
 /// window.
-@Suite("WorktreeStatsStore.pollTick DIVERGE-4.6")
+@Suite("""
+WorktreeStatsStore.pollTick
+
+@spec DIVERGE-4.6: The polling loop shall also recompute divergence counts for every non-stale worktree on a 30-second per-worktree cadence, independent of the network `git fetch` cadence in DIVERGE-4.3. Local-only recomputation uses no network — `git rev-list`, `git diff --shortstat`, and `git status --porcelain` all run against the local object store — so it catches local changes (a `git add` in an external shell, a commit made by a tool other than Graftty) even when the repo's fetch cooldown is still active. When a tick finds a per-repo fetch is due in the same cycle, the per-worktree cadence is skipped for that repo because the fetch handler itself recomputes every worktree on success.
+""")
 struct WorktreeStatsStorePollTickTests {
 
     @MainActor

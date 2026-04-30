@@ -27,7 +27,10 @@ struct WebServerIntegrationTests {
     /// don't have JS test infrastructure to exercise the client loop
     /// directly, but this test covers the server-side contract the
     /// client relies on.
-    @Test func wsReconnectToSameSessionSucceeds() async throws {
+    @Test("""
+    @spec WEB-5.6: When the client's WebSocket closes for any reason other than a deliberate page unmount (mobile tab suspension, laptop sleep, transient network wobble, Tailscale peer rotation), the client shall automatically attempt to reconnect to the same `/ws?session=<name>` URL with exponential backoff starting at 500 ms and capped at 8 s, with ±25 % jitter per attempt, keeping the `Terminal` instance and its scrollback alive across reconnects; on `visibilitychange` to `visible`, if the socket is not `OPEN` the client shall reset backoff and reconnect immediately rather than wait out any pending timeout. On each successful `open`, the client shall resend the current `(cols, rows)` as a resize envelope so the freshly-spawned `zmx attach` child's PTY matches the terminal grid. Rationale: without this, every transient drop required a full page refresh — a refresh loses the URL-bound session-picker state and visually blanks the terminal for the ~300 ms of wasm re-init. The daemon session surviving per `WEB-4.5` makes reconnection a safe retry rather than a "recreate from scratch" cost.
+    """)
+    func wsReconnectToSameSessionSucceeds() async throws {
         if ProcessInfo.processInfo.environment["CI"] != nil { return }
         let zmx = try #require(
             ZmxSurvivalIntegrationTests.vendoredZmx(),

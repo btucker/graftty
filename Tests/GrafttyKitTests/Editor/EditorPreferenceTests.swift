@@ -46,6 +46,7 @@ final class EditorPreferenceTests: XCTestCase {
         XCTAssertEqual(resolved.source, .userPreference)
     }
 
+    /// @spec EDITOR-1.7: When no editor is explicitly configured in Settings, the application shall use the value of `$EDITOR` as defined by the user's login shell.
     func test_emptyKind_fallsThroughToShellEnv() {
         let defaults = makeDefaults()
         // editorKind unset
@@ -89,6 +90,7 @@ final class EditorPreferenceTests: XCTestCase {
         XCTAssertEqual(resolved.source, .shellEnv)
     }
 
+    /// @spec EDITOR-1.8: If `$EDITOR` is unset, the application shall fall back to `vi`.
     func test_shellEnvUnset_fallsThroughToVi() {
         let defaults = makeDefaults()
 

@@ -8,7 +8,11 @@ import Foundation
 /// (`watchHeadRef`, `watchOriginRefs`, `watchWorktreePath`) can't see
 /// these events because they're gated on specific inodes inside
 /// `.git/`, not the working tree itself.
-@Suite("WorktreeMonitor content watcher")
+@Suite("""
+WorktreeMonitor content watcher
+
+@spec GIT-2.6: While a worktree is in the sidebar and non-stale, the application shall recursively watch the worktree's directory with `FSEventStreamCreate` (coalescing latency 0.5s) so that working-tree edits, stages / unstages via `.git/index`, and untracked-file creation surface as content-change events. Events for the worktree root, the bare `.git` directory, and the `.git/objects/` subtree shall be filtered out: the root and `.git` are coarse parent-mtime bumps that fire alongside more specific descendant events and carry no additional signal, and `.git/objects/` is pure pack-churn noise from `git gc` / pack writes. The watched path shall be resolved via `realpath(3)` before use because FSEvents always reports canonical paths (e.g. `/private/var/...` rather than `/var/...`) and an unresolved root makes the filter's `hasPrefix` comparison miss every event. The other watchers in GIT-2.1–GIT-2.5 use kqueue vnode sources (`DispatchSourceFileSystemObject`), which cannot watch a subtree recursively; the real FSEvents API is used here because the working tree is inherently recursive.
+""")
 struct WorktreeMonitorContentTests {
 
     @Test func contentChangeFiresOnWorkingTreeFileWrite() async throws {

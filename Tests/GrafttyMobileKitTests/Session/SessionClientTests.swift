@@ -42,7 +42,9 @@ struct SessionClientTests {
     /// but TUIs expect CR (what a physical terminal Return sends). Without
     /// translation, Enter inserts a literal newline in the prompt rather than
     /// submitting. IOS-6.3.
-    @Test
+    @Test("""
+    @spec IOS-6.3: When the outbound keystroke pipe (`SessionClient.box.onBytes`) receives a payload consisting of exactly one LF byte (`0x0A`), the application shall translate it to a single CR byte (`0x0D`) before sending it to the server. This reconciles iOS's soft-keyboard Return — which UIKit delivers as LF via `UIKeyInput.insertText("\\n")` — with the CR convention that physical terminals send on Return and that TUIs (Claude Code, readline, etc.) interpret as "submit." Without this translation, tapping Return on the iOS keyboard inserts a literal newline into the TUI's input buffer instead of submitting the current line, and there is no way to produce a submit keystroke from the soft keyboard. The rule is narrowed to a *standalone* single-byte LF so that multi-byte payloads with embedded newlines (pastes from the clipboard, programmatic text insertion) pass through unchanged and preserve their own line structure.
+    """)
     func softKeyboardReturnLFIsTranslatedToCR() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocket: ws)
@@ -56,7 +58,9 @@ struct SessionClientTests {
     /// The in-app "Newline" button has to send a literal LF — it exists
     /// precisely to reach the newline code that the keyboard's Return
     /// can no longer emit after IOS-6.3. IOS-6.4.
-    @Test
+    @Test("""
+    @spec IOS-6.4: When the user taps the terminal control bar's "Insert newline" control, the application shall send a single literal LF byte (`0x0A`) to the remote session, bypassing the `IOS-6.3` LF→CR rule via `SessionClient.insertNewline()`. This is the only way to insert a multi-line boundary into a TUI prompt from the iOS soft keyboard after Return has been reserved for submission.
+    """)
     func insertNewlineSendsLiteralLF() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocket: ws)

@@ -3,7 +3,11 @@ import Testing
 
 /// ATTN-1.11: `graftty pane list` output format. Extracted from the
 /// CLI's print loop so it's testable without a running server.
-@Suite("PaneInfo.formattedLine")
+@Suite("""
+PaneInfo.formattedLine
+
+@spec ATTN-1.11: Each row of `graftty pane list` output shall be formatted as `<marker> <id><padding> <title?>` where `marker` is `*` for the focused pane or a space otherwise, `id` is right-padded to at least width 3 for typical layouts (so ids 1–99 align their titles at the same column), and exactly one space separates the id from the title regardless of id width — so ids ≥ 100 don't collide visually with their title. Panes with no title render without trailing whitespace. A whitespace-only title is treated the same as nil / empty (same blank-vs-content rule as `LAYOUT-2.14`) so the row clips cleanly rather than rendering `*  3      ` with trailing spaces where a label should be.
+""")
 struct PaneInfoFormatTests {
 
     @Test func unfocusedSingleDigitIdAlignsWithFocus() {

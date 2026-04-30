@@ -10,7 +10,11 @@ import Foundation
 /// the backoff (`PR-7.2`) waits to retry. The right behaviour is to
 /// keep the last-known state and let the next successful fetch either
 /// confirm or update it.
-@Suite("PRStatusStore — fetch-failure cache preservation")
+@Suite("""
+PRStatusStore — fetch-failure cache preservation
+
+@spec PR-7.10: When a PR fetch fails (network error, rate limit, expired `gh` auth), the application shall preserve the worktree's last-known `PRInfo` cache entry rather than removing it. A transient failure is not evidence that the PR stopped existing, and dropping cached info on every failed poll makes the sidebar badge and breadcrumb PR button flicker in and out while the `PR-7.2` backoff waits to retry. The next successful fetch either confirms the cached state or updates it.
+""")
 struct PRStatusStoreFetchFailureTests {
 
     enum StubError: Error { case failed }

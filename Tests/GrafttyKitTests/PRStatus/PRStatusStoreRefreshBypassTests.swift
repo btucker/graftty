@@ -8,7 +8,11 @@ import Foundation
 /// check inside `refresh` to "save gh calls", selection no longer
 /// self-heals a stale badge — the exact user-visible regression that
 /// motivated PR-7.12 in the first place. Pin the invariant here.
-@Suite("PRStatusStore — refresh bypasses cadence (PR-7.12)")
+@Suite("""
+PRStatusStore — refresh bypasses cadence
+
+@spec PR-7.12: When the user selects a worktree in the sidebar, the application shall call `PRStatusStore.refresh` for that worktree, bypassing the `PR-7.2` cadence backoff. Rationale: even with the `PR-7.2` 60-second cap, a worst-case 60-second wait for a freshly-merged PR to appear in the breadcrumb is longer than the click-to-feedback loop a user expects on selection. Sidebar selection is a strong "user cares about this worktree now" signal, and the existing `refresh` path already short-circuits cadence and resets `failureStreak` on success — wiring it to selection closes the stale-UI escape hatch without any new mechanism.
+""")
 struct PRStatusStoreRefreshBypassTests {
 
     actor CountingFetcher: PRFetcher {

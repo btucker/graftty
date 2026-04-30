@@ -7,7 +7,11 @@ import Foundation
 /// synchronous payload that fits in the kernel send buffer, then
 /// close the write side — no threads, no deadlock on kernel
 /// backpressure.
-@Suite("SocketIO.readAll — per-peer byte cap")
+@Suite("""
+SocketIO.readAll — per-peer byte cap
+
+@spec ATTN-3.6: The CLI's response-read path shall cap total accumulated bytes at 1 MB via `SocketIO.readAll(fd:cap:)`. Mirrors the server-side `ATTN-2.11`: `SO_RCVTIMEO` only fires on idle pipes, so a misbehaving or compromised server that keeps the pipe continuously full would otherwise grow the CLI's per-response buffer without bound. 1 MB is 1000× the typical ≤1 KB response size; a legit server never hits it.
+""")
 struct SocketIOReadAllTests {
 
     private static func makePair() -> (Int32, Int32) {

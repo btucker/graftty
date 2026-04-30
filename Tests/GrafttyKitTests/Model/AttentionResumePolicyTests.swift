@@ -10,7 +10,11 @@ import Testing
 /// until the user manually clicked the worktree (STATE-2.4). Andy's
 /// "rage-quits if the attention badge doesn't clear when he focuses the
 /// worktree" pain point, but with a force-quit in the way.
-@Suite("AttentionResumePolicy — restart-time timer scheduling")
+@Suite("""
+AttentionResumePolicy — restart-time timer scheduling
+
+@spec STATE-2.12: When the application launches and loads persisted `Attention` entries (worktree-level `wt.attention` or pane-level `wt.paneAttention[terminalID]`), for each one that carries a non-nil `clearAfter`, the application shall reschedule the auto-clear timer against the remaining time derived from `attention.timestamp + clearAfter` relative to the current clock. If the deadline has already passed, the timer shall fire on the next main-queue turn (zero-delay `asyncAfter`) and clear the stale entry immediately. Without this resume, a force-quit during a `--clear-after` window leaves the attention stuck in state.json forever because the original `DispatchQueue.main.asyncAfter` is in-memory only. For defensive handling of a persisted timestamp in the future (clock skew, hand-edit), the remaining window shall be clamped to the full `clearAfter` duration measured from now rather than a negative elapsed value.
+""")
 struct AttentionResumePolicyTests {
 
     @Test func noTimerForAttentionWithoutClearAfter() {

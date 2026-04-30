@@ -15,7 +15,11 @@ import Foundation
 /// contract under test: a hung fetch Task must not permanently lock out
 /// future refreshes. A later refresh invocation must still be able to
 /// land fresh PRInfo even if the prior Task never resumes. `PR-7.13`.
-@Suite("PRStatusStore — in-flight stuck-refresh recovery (PR-7.13)")
+@Suite("""
+PRStatusStore — in-flight stuck-refresh recovery
+
+@spec PR-7.13: `PRStatusStore` shall time-bound its per-worktree `inFlight` refresh guard so a hung `gh pr list` / `gh pr checks` subprocess cannot permanently lock out subsequent polls and user-triggered refreshes. A dispatch whose start timestamp is within the inFlight cap (30 seconds, intentionally independent of the `PR-7.1` poll cadence which can be tighter for pending CI — shrinking the inFlight cap alongside the poll cadence would kill legitimately slow `gh` calls before they finish) shall suppress a fresh refresh; beyond that cap, the prior dispatch shall be treated as abandoned and superseded, with the per-path `generation` counter bumped so the abandoned Task's late write is dropped if it ever returns. Without this, a single stuck subprocess (network flake, rate-limit back-off, expired gh auth refresh loop) freezes that worktree's sidebar badge and breadcrumb PR button at their last-cached state until the app is relaunched — the user-observable shape "PR status only updates when I click between worktrees". Mirrors `WorktreeStatsStore`'s `DIVERGE-4.4` recovery pattern for the equivalent stats-store bug.
+""")
 struct PRStatusStoreInFlightRecoveryTests {
 
     @MainActor

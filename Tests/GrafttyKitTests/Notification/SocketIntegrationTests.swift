@@ -172,7 +172,10 @@ struct SocketIntegrationTests {
     /// `try?` and discarded the error) have a diagnostic trail the UI
     /// or log path can read back, instead of silently running without
     /// a notify surface.
-    @Test func lastStartErrorCapturesFailure() {
+    @Test("""
+    @spec ATTN-2.7: When `SocketServer.start()` fails during application startup, the application shall (a) log the error via `NSLog` (surfacing it in Console.app), (b) retain the error in `SocketServer.lastStartError` for in-process introspection, and (c) present a one-time `NotifySocketBanner` alert describing what broke and suggesting recovery steps (quit+relaunch, clear `GRAFTTY_SOCK`). The banner mirrors the `ZmxFallbackBanner` pattern from `ZMX-5.2`. The app shell historically wrapped `start()` in `try?`, producing a running Graftty with a dead control socket and no diagnostic trail — ATTN-3.4 recovers this case at the CLI side, ATTN-2.7 surfaces the root cause at the app side upfront rather than waiting for the user to trip over the CLI.
+    """)
+    func lastStartErrorCapturesFailure() {
         let overLongPath = "/tmp/" + String(repeating: "a", count: 100)
         let server = SocketServer(socketPath: overLongPath)
         #expect(server.lastStartError == nil, "fresh server should have no error")
@@ -317,7 +320,10 @@ struct SocketIntegrationTests {
     /// `socketTimeout` to the user. Observable: client's `read()` sees
     /// EOF within the server's timeout window + small margin, not after
     /// onRequest's full duration.
-    @Test func slowOnRequestClosesClientFDAtTimeout() async throws {
+    @Test("""
+    @spec ATTN-2.10: When a request-style socket message (`list_panes`, `add_pane`, `close_pane`) hands its handler to the main queue via `DispatchQueue.main.async`, the server shall wait at most `SocketServer.onRequestTimeout` (5 seconds in production) for the handler to return. If the handler has not completed within that window — main queue stalled by a modal dialog, heavy synchronous work, or a main-actor reentrancy bug — the server shall close the client fd without writing a response rather than pin its serial worker on `semaphore.wait()` indefinitely. The CLI's 2s client-side timeout (`ATTN-3.3`) then surfaces the event as a clean `socketTimeout`. The main-queue closure may still complete and write into the retained response box after the worker has returned; its `signal()` lands on a no-longer-awaited semaphore harmlessly.
+    """)
+    func slowOnRequestClosesClientFDAtTimeout() async throws {
         let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("graftty-slow-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
@@ -388,7 +394,10 @@ struct SocketIntegrationTests {
     /// until the peer closed. Exactly Andy's "furious when any tool
     /// kills a long-running shell unexpectedly" pain point in the
     /// server-accept-queue dimension.
-    @Test func silentClientDoesNotBlockOtherClients() async throws {
+    @Test("""
+    @spec ATTN-2.9: Each accepted client connection shall have `SO_RCVTIMEO` set to 2 seconds before the server enters its read loop. Without this, a silent peer (a `nc -U` that connects but never writes, a crashed CLI client whose kernel-level connection lingers, etc.) pins the server's serial dispatch queue on a blocking `read(2)` indefinitely — and since `acceptConnection` shares that queue, every subsequent `graftty notify` hangs for the duration. 2 seconds mirrors the CLI's client-side timeout (`ATTN-3.3`); JSON notify/pane messages are ≤~1 KB over a local socket, so any well-behaved client finishes in milliseconds.
+    """)
+    func silentClientDoesNotBlockOtherClients() async throws {
         let dir = URL(fileURLWithPath: "/tmp").appendingPathComponent("graftty-hang-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }

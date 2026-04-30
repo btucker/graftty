@@ -20,6 +20,7 @@ final class EditorOpenRouterClassifyTests: XCTestCase {
         }
     }
 
+    /// @spec EDITOR-1.5: If the cmd-clicked target is not a file path, the application shall open it via NSWorkspace (preserving existing handling for `http(s)`, `mailto:`, `ssh:`, and other URL schemes).
     func test_httpsURL_classifiesAsBrowser() {
         let result = EditorOpenRouter.classify(
             urlString: "https://example.com",
@@ -120,6 +121,7 @@ final class EditorOpenRouterClassifyTests: XCTestCase {
         XCTAssertEqual(line, 42)
     }
 
+    /// @spec EDITOR-1.6: If the cmd-clicked target resolves to a path that does not exist on disk, the application shall emit a system beep and not open anything.
     func test_nonExistentPath_classifiesAsInvalid() {
         let result = EditorOpenRouter.classify(
             urlString: "/no/such/file.txt",
@@ -153,6 +155,7 @@ final class EditorOpenRouterClassifyTests: XCTestCase {
     }
 }
 
+/// @spec EDITOR-1.4: If the cmd-clicked target carries a `:line(:col)` suffix, the application shall strip the suffix before resolving the path, and shall pass the line number to known CLI editors using `+<line>`.
 final class EditorOpenRouterCliCommandTests: XCTestCase {
 
     func test_nvim_simplePath() {
@@ -231,6 +234,7 @@ final class EditorOpenRouterCliCommandTests: XCTestCase {
     }
 }
 
+/// @spec EDITOR-1.1: When the user cmd-clicks a file path in a terminal pane, the application shall open the file via the configured editor.
 final class EditorOpenRouterResolveTests: XCTestCase {
 
     private let dummyURL = URL(fileURLWithPath: "/tmp/foo.swift")
@@ -257,6 +261,7 @@ final class EditorOpenRouterResolveTests: XCTestCase {
         XCTFail("expected .noOp, got \(action)")
     }
 
+    /// @spec EDITOR-1.2: If the configured editor is a known CLI editor, the application shall split the source pane to the right and run the editor in the new pane.
     func test_editorOpen_withCliEditor_buildsPaneCommand() {
         let action = EditorOpenRouter.resolve(
             target: .editorOpen(absolutePath: dummyURL, line: 42, column: nil),
@@ -268,6 +273,7 @@ final class EditorOpenRouterResolveTests: XCTestCase {
         XCTAssertEqual(initialInput, "nvim '/tmp/foo.swift' +42\n")
     }
 
+    /// @spec EDITOR-1.3: If the configured editor is a GUI app, the application shall dispatch the file to the app via NSWorkspace, without creating a new pane.
     func test_editorOpen_withGuiApp_emitsOpenWithApp() {
         let action = EditorOpenRouter.resolve(
             target: .editorOpen(absolutePath: dummyURL, line: nil, column: nil),

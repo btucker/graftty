@@ -8,7 +8,11 @@ import Foundation
 /// must stay in place. Wiping the ↑N ↓M badge on every failed poll
 /// makes the sidebar divergence gutter flicker whenever the repo's
 /// git state is briefly unhealthy.
-@Suite("WorktreeStatsStore — compute-failure cache preservation")
+@Suite("""
+WorktreeStatsStore — compute-failure cache preservation
+
+@spec DIVERGE-4.9: When a compute attempt fails transiently (the default branch was resolvable but `git rev-list`/`diff-tree`/etc. threw), the application shall preserve the worktree's last-known `WorktreeStats` rather than clearing the sidebar gutter. Only when the repo has no resolvable default branch at all (origin removed, clone converted to non-origin setup) shall the stats be wiped. Without this, the ↑N ↓M badge flickers off for the polling window whenever git is briefly unhealthy — same UX concern as `PR-7.10`.
+""")
 struct WorktreeStatsStoreComputeFailureTests {
 
     @MainActor

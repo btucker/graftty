@@ -16,7 +16,11 @@ import Testing
 ///   that's exactly the case the user wants to fix.
 /// - **libghostty-initiated close** (async `close_surface_cb`): keep the
 ///   TERM-5.7 guard so Stop cascades don't strip the preserved tree.
-@Suite("TERM-5.8 — phantom-pane close policy")
+@Suite("""
+phantom-pane close policy
+
+@spec TERM-5.8: When the user explicitly invokes a pane close (`Cmd+W`, CLI `graftty pane close <id>`, or a context-menu Close action) against a leaf whose `SurfaceHandle` is absent — i.e. a phantom pane whose surface never created successfully because libghostty refused (OOM / resource pressure, `TERM-5.5`) — the application shall still remove the leaf from the worktree's `splitTree`. Without this, a phantom leaf is uncloseable: the sidebar renders a black / progress placeholder, `pane list` reports it, but every close path silently no-ops via `TERM-5.7`'s guard. The implementation seam is a `userInitiated` parameter on `closePane`: user paths pass `true` to bypass the handle guard; libghostty's async `close_surface_cb` passes `false` (default) so Stop cascades continue to preserve the tree.
+""")
 struct PhantomPaneClosePolicyTests {
     @Test func userClosesLivePane() {
         #expect(PhantomPaneClosePolicy.shouldRemoveFromTree(

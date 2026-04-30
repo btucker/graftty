@@ -54,7 +54,10 @@ struct WorktreeMonitorTests {
     // process's open-fd count returns to baseline rather than growing
     // monotonically. Uses `/dev/fd/` — the macOS-visible enumeration of
     // a process's open file descriptors.
-    @Test func watchersCloseTheirFdsWhenCancelled() async throws {
+    @Test("""
+    @spec GIT-3.11: `WorktreeMonitor`'s `DispatchSource` watchers (one per watched worktree-directory, worktree-path, HEAD reflog, and origin-refs directory) shall release their underlying file descriptors on cancel. Specifically: `createFileWatcher` installs `source.setCancelHandler { close(fd) }`, and no `watch*` method shall override that handler — DispatchSource allows only one cancel handler per source, and an override silently leaks the fd. A long-running session that churns repos (add/remove, stale/resurrect) would otherwise monotonically grow its open-fd count and eventually hit macOS's 256-fd ulimit, failing every subsequent `open` (including socket accepts, terminal PTYs, and config reloads).
+    """)
+    func watchersCloseTheirFdsWhenCancelled() async throws {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-fdleak-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
@@ -209,7 +212,10 @@ struct WorktreeMonitorTests {
     /// `GIT-3.15` gives the app a way out: `stopWatchingWorktree`
     /// drops the three worktree-scoped entries for a single path so
     /// the next `watch*` cleanly re-arms against the new inode.
-    @Test func stopWatchingWorktreeDropsPathAndHeadAndContentWatchers() async throws {
+    @Test("""
+    @spec GIT-3.15: When a worktree transitions to the `.stale` state — regardless of which channel observed it (`worktreeMonitorDidDetectDeletion` for the FSEvents path, or `reconcileOnLaunch` / `worktreeMonitorDidDetectChange` when `git worktree list --porcelain` stops listing an entry) — the application shall call `WorktreeMonitor.stopWatchingWorktree(_:)` to drop the path / HEAD-reflog / content watchers for that worktree. Otherwise the watchers stay registered with fds bound to the reaped inode. A subsequent `git worktree add` at the same path (resurrection) would hit the reconciler's "idempotent" re-register (`guard sources[key] == nil else { return }`) and leave the new inode uncovered — the next `rm -rf` would go undetected, and `git commit` would not refresh PR / divergence state until the 30s / 5m polling safety nets catch up. The three stale-transition paths must be symmetric on this, matching `GIT-3.13`'s rule for the stats / PR cache clear.
+    """)
+    func stopWatchingWorktreeDropsPathAndHeadAndContentWatchers() async throws {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-rearm-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)

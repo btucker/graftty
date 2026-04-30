@@ -7,7 +7,11 @@ import Foundation
 /// work, but that only helps if the ticker can keep ticking; awaiting the
 /// whole tick batch means one stuck `gh`/`glab` subprocess freezes the
 /// background poller until a separate user-triggered `refresh()` happens.
-@Suite("PRStatusStore polling tick liveness")
+@Suite("""
+PRStatusStore polling tick liveness
+
+@spec PR-7.14: The PR polling tick shall dispatch eligible per-worktree fetches and return without awaiting those fetch Tasks. The ticker loop itself must remain live even if a `gh` / `glab` subprocess hangs, otherwise `PR-7.13`'s abandoned-in-flight recovery never gets a later polling tick on which to supersede the stuck fetch. A hung fetch may occupy that worktree's `inFlight` slot until the `PR-7.13` 30-second inFlight cap elapses, but it must not stop unrelated worktrees from polling or require the user to click the sidebar to trigger the separate on-demand refresh path.
+""")
 struct PRStatusStorePollTickHangTests {
 
     @MainActor

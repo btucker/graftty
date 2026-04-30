@@ -7,7 +7,11 @@ import Foundation
 /// `apply` fires after the clear discards its result instead of
 /// repopulating `stats`. Mirrors the matching PRStatusStore tests from
 /// the test suite of the same name.
-@Suite("WorktreeStatsStore.clear")
+@Suite("""
+WorktreeStatsStore.clear
+
+@spec DIVERGE-4.5: When `WorktreeStatsStore.clear(worktreePath:)` is called — whether from a stale transition (GIT-3.13), a Dismiss (GIT-3.6), or a Delete (GIT-4.10) — a fetch that was already in flight at that moment shall not repopulate `stats` after the clear. Each `clear` bumps a per-path generation counter; `apply` captures the generation at refresh time and drops the write if the counter changed during the await. Without this, a `git worktree remove` that fires shortly after the 5s-polling refresh leaves the divergence indicator flashing back onto a cleared row for the duration of the git subprocess (~50–200ms). Mirrors `PRStatusStore`'s pattern (PR status gained this protection earlier; stats store was lagging).
+""")
 struct WorktreeStatsStoreClearTests {
 
     @MainActor

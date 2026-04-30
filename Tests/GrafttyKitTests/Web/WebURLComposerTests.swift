@@ -38,7 +38,10 @@ struct WebURLComposerTests {
     // `authority(host:port:)` remains for the diagnostic bind-list
     // ("Listening on …"). Its IPv6-bracketing behavior (WEB-1.10) is
     // preserved even though baseURL/url no longer exercise it.
-    @Test func authorityBracketsIPv6() {
+    @Test("""
+    @spec WEB-1.10: The Settings pane status row ("Listening on …") shall render each listening address with its port individually (via `WebURLComposer.authority(host:port:)`), bracketing IPv6 hosts. Example: `Listening on [fd7a:115c::5]:49161, 100.64.0.5:49161`. (127.0.0.1 is no longer bound per WEB-1.1.)
+    """)
+    func authorityBracketsIPv6() {
         #expect(WebURLComposer.authority(host: "fd7a:115c::5", port: 8799)
                 == "[fd7a:115c::5]:8799")
     }

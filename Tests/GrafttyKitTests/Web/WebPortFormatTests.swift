@@ -9,7 +9,11 @@ import Foundation
 // trips through `Int`'s parser as 12345 but looks broken to the user.
 // `WebPortFormat.noGrouping` is the shared formatter every UI surface
 // that prints a port into a `TextField` or label uses.
-@Suite("WebPortFormat — no locale grouping (WEB-1.7)")
+@Suite("""
+WebPortFormat — no locale grouping
+
+@spec WEB-1.7: Every UI surface that renders a TCP port — the Settings pane's Port input `TextField`, the status row, any future port label — shall suppress the locale grouping separator (e.g., `Listening on 100.64.0.5:49161`, never `49,161`; Port field value `8799`, never `8,799`). Input and display formatters go through `WebPortFormat.noGrouping` (an `IntegerFormatStyle<Int>` with `.grouping(.never)`) so every surface is identical.
+""")
 struct WebPortFormatTests {
 
     @Test func formatsPortWithoutCommaForFiveDigitValue() {

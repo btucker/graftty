@@ -88,7 +88,10 @@ struct GitRepoDetectorTests {
     /// alerts on throw per GIT-1.3). This test pins that the
     /// throw-on-unreadable path stays present so future refactors
     /// don't accidentally convert it into a silent `.notARepo` return.
-    @Test func throwsWhenGitFileIsUnreadable() throws {
+    @Test("""
+    @spec GIT-1.3: When the pre-`discover` step `GitRepoDetector.detect(path:)` throws while resolving the user-picked folder (e.g. the `.git` file exists but is unreadable due to permissions or a truncated write), the application shall present an `NSAlert` mirroring `GIT-1.2` rather than swallowing the throw via `try?`. Pre-fix the sync-detect path was the one remaining silent-return in the Add Repository flow — the async discover path (`GIT-1.2`) and the Delete Worktree path (`GIT-4.11`) already alert on throws, so the sync-detect throw stood out as the odd silent failure.
+    """)
+    func throwsWhenGitFileIsUnreadable() throws {
         let dir = try makeTempDir()
         defer {
             // Make sure we restore permissions before cleanup, otherwise
@@ -119,7 +122,10 @@ struct GitRepoDetectorTests {
     /// paths against the process cwd — not the worktree dir — so
     /// the returned repoPath was wrong (or the lookup fell back
     /// through to `/`).
-    @Test func detectsWorktreeWithRelativeGitdir() throws {
+    @Test("""
+    @spec GIT-1.4: When `GitRepoDetector.detect(path:)` reads a linked worktree's `.git` file and finds a `gitdir: <path>` entry, it shall resolve a relative `<path>` against the worktree directory (the directory containing the `.git` file) rather than feeding it verbatim to `realpath(3)`. Git ≥ 2.52 with `worktree.useRelativePaths=true` writes entries like `gitdir: ../repo/.git/worktrees/name`; passing that to `realpath` resolves against the process cwd — usually unrelated to the worktree dir — so the returned `repoPath` was wrong and the "Add Repository" flow attached a dragged worktree to the wrong repo (or none at all). The absolute-gitdir case (older git and the default config) is unaffected. Mirrors `GIT-3.14`'s same-class fix in `WorktreeMonitor.resolveHeadLogPath`.
+    """)
+    func detectsWorktreeWithRelativeGitdir() throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
 

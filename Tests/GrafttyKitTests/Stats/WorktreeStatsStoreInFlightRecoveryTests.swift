@@ -14,7 +14,11 @@ import Foundation
 /// The contract under test: a hung refresh Task must not permanently
 /// lock out future refreshes. A later refresh invocation must still be
 /// able to land fresh stats even if the prior Task never resumes.
-@Suite("WorktreeStatsStore — in-flight stuck-refresh recovery")
+@Suite("""
+WorktreeStatsStore — in-flight stuck-refresh recovery
+
+@spec DIVERGE-4.4: While a divergence computation is in flight for a particular worktree, duplicate refresh requests for the same worktree shall be dropped — but only while the in-flight Task is plausibly still running. After a period equal to DIVERGE-4.6's 30-second per-worktree cadence, a subsequent refresh shall supersede the prior Task: the generation counter is bumped so the stuck Task's late `apply` is discarded, and a fresh compute is dispatched. Without the staleness cap, a `git` subprocess blocked on a ref-transaction lock (e.g., during a concurrent `git push`) permanently locks the worktree's divergence gutter at whatever value was observed in the lock window.
+""")
 struct WorktreeStatsStoreInFlightRecoveryTests {
 
     @MainActor
