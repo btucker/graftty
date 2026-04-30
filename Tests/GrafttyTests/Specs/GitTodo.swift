@@ -159,11 +159,6 @@ struct GitTodo {
     func git_4_3() async throws { }
 
     @Test("""
-@spec GIT-4.4: If `git worktree remove` fails (e.g., the worktree contains uncommitted changes), then the application shall surface git's stderr in an error alert and shall leave the worktree entry and any running terminal surfaces intact.
-""", .disabled("not yet implemented"))
-    func git_4_4() async throws { }
-
-    @Test("""
 @spec GIT-4.5: When `git worktree remove` succeeds on a worktree in the running state, the application shall tear down all terminal surfaces in the worktree's split tree.
 """, .disabled("not yet implemented"))
     func git_4_5() async throws { }

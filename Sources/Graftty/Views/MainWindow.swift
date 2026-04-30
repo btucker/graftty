@@ -564,8 +564,9 @@ struct MainWindow: View {
     /// user-initiated "Delete Worktree" menu action and the PR-merged
     /// offer dialog. Callers own the confirmation UX — this helper runs
     /// git unconditionally and surfaces failures via the same error
-    /// alert as the menu path.
-    private func performDeleteWorktree(_ worktreePath: String) {
+    /// alert as the menu path. `force` is set internally on retry from
+    /// the GIT-4.4 dialog; see GIT-4.12.
+    private func performDeleteWorktree(_ worktreePath: String, force: Bool = false) {
         guard let (repoIdx, wtIdx) = appState.indices(forWorktreePath: worktreePath) else { return }
         let wt = appState.repos[repoIdx].worktrees[wtIdx]
         let repoPath = appState.repos[repoIdx].path
@@ -576,13 +577,33 @@ struct MainWindow: View {
         // visible worktree and dead panes.
         Task { @MainActor in
             do {
-                try await GitWorktreeRemove.remove(repoPath: repoPath, worktreePath: worktreePath)
+                try await GitWorktreeRemove.remove(
+                    repoPath: repoPath,
+                    worktreePath: worktreePath,
+                    force: force
+                )
             } catch GitWorktreeRemove.Error.gitFailed(_, let stderr) {
+                if force {
+                    // Already attempted with --force; nothing left to
+                    // offer. Match the original GIT-4.4 single-button
+                    // shape so we don't trap the user in retry loops.
+                    let errorAlert = NSAlert()
+                    errorAlert.messageText = "Could not delete worktree"
+                    errorAlert.informativeText = stderr.isEmpty ? "git worktree remove --force failed" : stderr
+                    errorAlert.alertStyle = .warning
+                    errorAlert.runModal()
+                    return
+                }
+                // GIT-4.4.
+                let status = await GitStatusCapture.shortStatus(at: worktreePath)
                 let errorAlert = NSAlert()
                 errorAlert.messageText = "Could not delete worktree"
-                errorAlert.informativeText = stderr.isEmpty ? "git worktree remove failed" : stderr
+                errorAlert.informativeText = ForceDeleteAlert.informativeText(stderr: stderr, status: status)
                 errorAlert.alertStyle = .warning
-                errorAlert.runModal()
+                errorAlert.addButton(withTitle: "Cancel")
+                errorAlert.addButton(withTitle: "Force Delete")
+                guard errorAlert.runModal() == .alertSecondButtonReturn else { return }
+                performDeleteWorktree(worktreePath, force: true)
                 return
             } catch {
                 // Non-git-exit errors (git binary missing, subprocess launch

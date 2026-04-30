@@ -47,6 +47,45 @@ struct GitWorktreeRemoveTests {
         #expect(refs.contains("feature"))
     }
 
+    @Test("""
+@spec GIT-4.12: If the user clicks "Force Delete" on the GIT-4.4 failure alert, the application shall re-run `git worktree remove --force <path>` and, on success, proceed through the same teardown path as GIT-4.5 / GIT-4.6 / GIT-4.10. If the forced remove also fails, the application shall surface git's stderr in a single-button error alert without offering Force Delete a second time, so the user is not trapped in a retry loop.
+""")
+    func removeWithForceDeletesDirtyWorktree() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-remove-force-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let repoDir = dir.appendingPathComponent("repo")
+        try FileManager.default.createDirectory(at: repoDir, withIntermediateDirectories: true)
+        let worktreeDir = dir.appendingPathComponent("wt-feature")
+
+        try runShell("""
+            git init && \
+            git commit --allow-empty -m 'init' && \
+            git worktree add \(worktreeDir.path) -b feature && \
+            echo "scratch" > \(worktreeDir.path)/untracked.txt
+            """, at: repoDir)
+
+        // Sanity: a non-force remove refuses (untracked file present).
+        do {
+            try await GitWorktreeRemove.remove(repoPath: repoDir.path, worktreePath: worktreeDir.path)
+            Issue.record("expected gitFailed for dirty worktree under non-force remove")
+        } catch GitWorktreeRemove.Error.gitFailed { }
+
+        // The force path succeeds.
+        try await GitWorktreeRemove.remove(
+            repoPath: repoDir.path,
+            worktreePath: worktreeDir.path,
+            force: true
+        )
+
+        #expect(!FileManager.default.fileExists(atPath: worktreeDir.path))
+        #expect(!FileManager.default.fileExists(
+            atPath: repoDir.appendingPathComponent(".git/worktrees/wt-feature").path
+        ))
+    }
+
     /// Git refuses to delete the main checkout. Ensure our wrapper surfaces
     /// that as a structured `gitFailed` error with stderr populated, so
     /// the UI can show a helpful message.
