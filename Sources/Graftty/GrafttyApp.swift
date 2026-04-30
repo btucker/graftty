@@ -1164,7 +1164,8 @@ struct GrafttyApp: App {
                     }
                 }
             }
-        case .listPanes, .addPane, .closePane, .teamMessage, .teamList:
+        case .listPanes, .addPane, .closePane, .teamMessage, .teamSend,
+             .teamBroadcast, .teamHook, .teamInbox, .teamMembers, .teamList:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
             // fire-and-forget onMessage path.
@@ -1242,6 +1243,8 @@ struct GrafttyApp: App {
                 )
             }
             return .teamList(teamName: team.repoDisplayName, members: members)
+        case .teamSend, .teamBroadcast, .teamHook, .teamInbox, .teamMembers:
+            return .error("team inbox hooks are not implemented yet")
         case .notify, .clear:
             // Fire-and-forget cases — no response. `onMessage` already handled them.
             return nil
