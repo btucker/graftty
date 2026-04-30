@@ -81,9 +81,7 @@ public struct WorktreeDetailView: View {
         guard let layout = worktree.layout else { return }
         if previews == nil {
             previews = PanePreviewClientPool { sessionName in
-                let wsURL = RootView.makeWebSocketURL(base: host.baseURL, session: sessionName)
-                let ws = URLSessionWebSocketClient(url: wsURL)
-                return SessionClient(sessionName: sessionName, webSocket: ws)
+                SessionClient.live(baseURL: host.baseURL, sessionName: sessionName)
             }
         }
         previews?.update(layout: layout)

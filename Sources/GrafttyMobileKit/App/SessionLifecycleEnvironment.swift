@@ -22,6 +22,18 @@ extension Optional where Wrapped == BiometricGate {
         (self?.state ?? .unlocked) == .unlocked
     }
 }
+
+extension SessionClient {
+    /// One-stop factory for the `URLSessionWebSocketClient` + `SessionClient`
+    /// pair. Both `SingleSessionView` (initial / re-dial) and
+    /// `WorktreeDetailView` (preview pool) need the same triplet — URL
+    /// composition + WS construction + SessionClient binding.
+    static func live(baseURL: URL, sessionName: String) -> SessionClient {
+        let wsURL = RootView.makeWebSocketURL(base: baseURL, session: sessionName)
+        let ws = URLSessionWebSocketClient(url: wsURL)
+        return SessionClient(sessionName: sessionName, webSocket: ws)
+    }
+}
 #endif
 
 /// Re-dialing while locked would open WSes behind the lock overlay,

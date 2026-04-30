@@ -258,9 +258,7 @@ struct SingleSessionView: View {
     }
 
     private func openWebSocket() async {
-        let wsURL = RootView.makeWebSocketURL(base: step.host.baseURL, session: step.sessionName)
-        let ws = URLSessionWebSocketClient(url: wsURL)
-        let new = SessionClient(sessionName: step.sessionName, webSocket: ws)
+        let new = SessionClient.live(baseURL: step.host.baseURL, sessionName: step.sessionName)
         if Task.isCancelled || connection == .ended {
             // Re-backgrounded (or ended) between WS construction and
             // assignment. Stop the orphan so the WS task doesn't leak.
@@ -282,30 +280,27 @@ struct SingleSessionView: View {
         } description: {
             Text("This pane was stopped while the app was in the background.")
         } actions: {
-            Button("Back to sessions") {
-                if !navigationPath.isEmpty {
-                    navigationPath.removeLast()
-                }
-            }
-            .buttonStyle(.borderedProminent)
+            Button("Back to sessions", action: popToParent)
+                .buttonStyle(.borderedProminent)
         }
         .background(.regularMaterial)
     }
 
-    /// Partially-transparent back button in the top-left. Pops the
-    /// current SessionStep off `navigationPath`, landing on the worktree
-    /// detail the user drilled in from. The nav bar is hidden while the
-    /// terminal is full-screen, so this is the only in-app affordance
-    /// for going back (edge-swipe is still available but undiscoverable).
+    /// Partially-transparent back button in the top-left. The nav bar is
+    /// hidden while the terminal is full-screen, so this is the only
+    /// in-app affordance for going back (edge-swipe is still available
+    /// but undiscoverable).
     private var backButton: some View {
-        Button {
-            if !navigationPath.isEmpty {
-                navigationPath.removeLast()
-            }
-        } label: {
+        Button(action: popToParent) {
             keyboardGlyph("chevron.left")
         }
         .accessibilityLabel("Back")
+    }
+
+    private func popToParent() {
+        if !navigationPath.isEmpty {
+            navigationPath.removeLast()
+        }
     }
 
     @ViewBuilder
