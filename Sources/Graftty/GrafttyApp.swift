@@ -43,7 +43,10 @@ final class AppServices {
         )
         let observer = ChannelSettingsObserver(
             router: router,
-            onEnable: { Task { await GrafttyApp.installChannelMCPServer() } }
+            onEnable: {
+                GrafttyApp.installAgentHookAssets()
+                Task { await GrafttyApp.installChannelMCPServer() }
+            }
         )
         observerBox.value = observer
 
@@ -511,6 +514,7 @@ struct GrafttyApp: App {
         // registration is fire-and-forget: it does subprocess I/O and the
         // router does not depend on it completing before start().
         if UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) {
+            Self.installAgentHookAssets()
             Task { await Self.installChannelMCPServer() }
             do {
                 try services.channelRouter.start()
@@ -2179,6 +2183,29 @@ struct GrafttyApp: App {
         ChannelMCPInstaller.removeLegacyMCPConfigFile(
             path: ChannelMCPInstaller.defaultLegacyMCPConfigPath()
         )
+    }
+
+    static func installAgentHookAssets() {
+        let root = AppState.defaultDirectory
+            .appendingPathComponent("agent-hooks", isDirectory: true)
+        do {
+            _ = try AgentHookInstaller(
+                rootDirectory: root,
+                grafttyCLIPath: agentHookCLIPath()
+            ).install()
+        } catch {
+            NSLog("[Graftty] Agent hook asset install failed: %@", String(describing: error))
+        }
+    }
+
+    private static func agentHookCLIPath() -> String {
+        let bundled = Bundle.main.bundleURL
+            .appendingPathComponent("Contents/Helpers/graftty")
+            .path
+        if FileManager.default.fileExists(atPath: bundled) {
+            return bundled
+        }
+        return "graftty"
     }
 
     private func installCLI() {
