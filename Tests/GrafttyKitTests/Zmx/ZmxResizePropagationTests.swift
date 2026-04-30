@@ -52,13 +52,9 @@ struct ZmxResizePropagationTests {
         }
     }
 
-    /// Scope an ephemeral ZMX_DIR for a single test. Unlike
-    /// `ZmxSurvivalIntegrationTests.withScopedZmxDir`, this does NOT
-    /// enumerate + `launcher.kill(sessionName:)` on teardown — that path
-    /// spawns `zmx kill --force`, which hangs when the daemon is in the
-    /// degraded state this test creates. Removes the temp dir
-    /// best-effort; any surviving daemon gets reaped by launchd at
-    /// session end.
+    /// Scope an ephemeral ZMX_DIR for a single test. Tests kill their
+    /// known session directly; teardown only removes filesystem state so
+    /// degraded daemon paths do not stack extra subprocess waits.
     private static func withScopedZmxDir<T>(_ body: (ZmxLauncher) throws -> T) throws -> T {
         let zmx = try #require(
             ZmxSurvivalIntegrationTests.vendoredZmx(),
@@ -71,9 +67,6 @@ struct ZmxResizePropagationTests {
         try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
         let launcher = ZmxLauncher(executable: zmx, zmxDir: tmpDir)
         defer {
-            // Best-effort: remove the tmp dir. If a daemon still has
-            // files open here we may leave breadcrumbs, but we don't
-            // block on subprocess cleanup.
             try? FileManager.default.removeItem(at: tmpDir)
         }
         return try body(launcher)
@@ -201,6 +194,7 @@ struct ZmxResizePropagationTests {
     func resizeIsPropagatedWithoutUserInput() throws {
         try Self.withScopedZmxDir { launcher in
             let session = launcher.sessionName(for: UUID())
+            defer { launcher.kill(sessionName: session) }
             let attach = try Self.spawnAttachWithInitialSize(
                 launcher: launcher,
                 sessionName: session,
@@ -258,6 +252,7 @@ struct ZmxResizePropagationTests {
     func resizeIsPropagatedWhenSIGWINCHStartsBlocked() throws {
         try Self.withScopedZmxDir { launcher in
             let session = launcher.sessionName(for: UUID())
+            defer { launcher.kill(sessionName: session) }
             let attach = try Self.withSIGWINCHBlocked {
                 try Self.spawnAttachWithInitialSize(
                     launcher: launcher,
@@ -318,6 +313,7 @@ struct ZmxResizePropagationTests {
     func resizeIsPropagatedAfterUserInput() throws {
         try Self.withScopedZmxDir { launcher in
             let session = launcher.sessionName(for: UUID())
+            defer { launcher.kill(sessionName: session) }
             let attach = try Self.spawnAttachWithInitialSize(
                 launcher: launcher,
                 sessionName: session,

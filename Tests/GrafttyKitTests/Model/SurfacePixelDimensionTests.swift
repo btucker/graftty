@@ -64,4 +64,58 @@ struct SurfacePixelDimensionTests {
     @Test func aboveUInt32MaxClampsToMax() {
         #expect(SurfacePixelDimension.clamp(CGFloat(UInt64.max)) == UInt32.max)
     }
+
+    @Test func resizeProposalForwardsUsableSize() {
+        let proposed = SurfacePixelDimension.resizeProposal(
+            width: 1600,
+            height: 900
+        )
+
+        #expect(proposed == SurfacePixelDimension.Size(width: 1600, height: 900))
+    }
+
+    @Test func resizeProposalIgnoresCollapsedSize() {
+        let proposed = SurfacePixelDimension.resizeProposal(
+            width: 0,
+            height: 0
+        )
+
+        #expect(proposed == nil)
+    }
+
+    @Test func resizeProposalIgnoresCollapsedWidth() {
+        let proposed = SurfacePixelDimension.resizeProposal(
+            width: 0,
+            height: 900
+        )
+
+        #expect(proposed == nil)
+    }
+
+    @Test func resizeProposalIgnoresSubUnitWidth() {
+        let proposed = SurfacePixelDimension.resizeProposal(
+            width: 0.5,
+            height: 900
+        )
+
+        #expect(proposed == nil)
+    }
+
+    @Test func resizeProposalIgnoresCollapsedHeight() {
+        let proposed = SurfacePixelDimension.resizeProposal(
+            width: 1600,
+            height: 0
+        )
+
+        #expect(proposed == nil)
+    }
+
+    @Test func resizeProposalForwardsUsableSizeAfterCollapsedProposal() {
+        let proposed = SurfacePixelDimension.resizeProposal(
+            width: 1400,
+            height: 800
+        )
+
+        #expect(proposed == SurfacePixelDimension.Size(width: 1400, height: 800))
+    }
 }
