@@ -38,6 +38,7 @@ struct TerminalContentView: View {
 
     private func leafView(_ terminalID: TerminalID) -> AnyView {
         if let nsView = terminalManager.view(for: terminalID) {
+            let tm = terminalManager
             return AnyView(
                 SurfaceViewWrapper(nsView: nsView)
                     // Force a distinct SwiftUI identity per terminal. Without
@@ -54,6 +55,7 @@ struct TerminalContentView: View {
                     .onTapGesture {
                         onFocusTerminal(terminalID)
                     }
+                    .onAppear { tm.setVisible(true, for: terminalID) }
             )
         } else {
             return AnyView(

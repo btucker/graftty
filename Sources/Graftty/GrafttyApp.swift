@@ -68,6 +68,7 @@ final class AppServices {
     let channelSettingsObserver: ChannelSettingsObserver
     let worktreeMonitor: WorktreeMonitor
     let statsStore: WorktreeStatsStore
+    let remoteBranchStore: RemoteBranchStore
     let prStatusStore: PRStatusStore
     var worktreeMonitorBridge: WorktreeMonitorBridge?
     /// Provides the current AppState for the team PR-merged dispatch hook.
@@ -111,7 +112,9 @@ final class AppServices {
 
         self.worktreeMonitor = WorktreeMonitor()
         self.statsStore = WorktreeStatsStore()
-        self.prStatusStore = PRStatusStore()
+        let remoteBranchStore = RemoteBranchStore()
+        self.remoteBranchStore = remoteBranchStore
+        self.prStatusStore = PRStatusStore(remoteBranchStore: remoteBranchStore)
 
         // Route PRStatusStore transitions into ChannelRouter. Captured weakly
         // so AppServices can own both without a retain cycle.
@@ -254,6 +257,7 @@ struct GrafttyApp: App {
                 terminalManager: terminalManager,
                 statsStore: services.statsStore,
                 prStatusStore: services.prStatusStore,
+                remoteBranchStore: services.remoteBranchStore,
                 worktreeMonitor: services.worktreeMonitor,
                 channelRouter: services.channelRouter
             )
@@ -356,7 +360,10 @@ struct GrafttyApp: App {
         // `reconcile()` via its Combine subscription.
         Settings {
             TabView {
-                SettingsView(onRestartZMX: { restartZMXWithConfirmation() })
+                SettingsView(
+                    onRestartZMX: { restartZMXWithConfirmation() },
+                    editorPreference: terminalManager.editorPreference
+                )
                     .tabItem { Label("General", systemImage: "gear") }
                 WebSettingsPane()
                     .environmentObject(webController)
@@ -396,6 +403,11 @@ struct GrafttyApp: App {
             )
         }
 
+        terminalManager.editorPreference = EditorPreference(
+            defaults: .standard,
+            shellEnvProbe: LoginShellEnvProbe()
+        )
+
         // Route context-menu split requests through the same insertion code
         // path that Cmd+D uses, but targeting the *menu's* surface rather
         // than the currently-focused one — the two can differ if the user
@@ -407,6 +419,18 @@ struct GrafttyApp: App {
                     terminalManager: tm,
                     targetID: terminalID,
                     split: direction
+                )
+            }
+        }
+
+        terminalManager.onOpenInEditorPane = { [appState = $appState, tm = terminalManager] terminalID, initialInput in
+            Task { @MainActor in
+                _ = Self.splitPane(
+                    appState: appState,
+                    terminalManager: tm,
+                    targetID: terminalID,
+                    split: .right,
+                    extraInitialInput: initialInput
                 )
             }
         }
@@ -616,10 +640,27 @@ struct GrafttyApp: App {
             }
         }
 
+        let remoteBranchStore = services.remoteBranchStore
+        let prStatusStore = services.prStatusStore
+        remoteBranchStore.onChange = { repoPath, old, new in
+            guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }) else { return }
+
+            for wt in repo.worktrees where wt.state.hasOnDiskWorktree {
+                if old.contains(wt.branch) && !new.contains(wt.branch) {
+                    prStatusStore.clear(worktreePath: wt.path)
+                }
+            }
+
+            if !new.subtracting(old).isEmpty {
+                prStatusStore.pulse()
+            }
+        }
+
         let bridge = WorktreeMonitorBridge(
             appState: $appState,
             statsStore: services.statsStore,
-            prStatusStore: services.prStatusStore
+            prStatusStore: services.prStatusStore,
+            remoteBranchStore: services.remoteBranchStore
         )
         services.worktreeMonitorBridge = bridge
         services.worktreeMonitor.delegate = bridge
@@ -645,6 +686,22 @@ struct GrafttyApp: App {
             ticker: statsTicker,
             getRepos: { [appState] in appState.repos }
         )
+
+        // Local remote-ref scans are cheap (`git for-each-ref`) and seed
+        // PR polling's pushed-branch gate. The immediate refresh plus
+        // onChange pulse above prevents an empty startup cache from
+        // suppressing initial PR checks until the next normal PR cadence.
+        let remoteBranchTicker = PollingTicker(
+            interval: .seconds(10),
+            pauseWhenInactive: { false }
+        )
+        services.remoteBranchStore.start(
+            ticker: remoteBranchTicker,
+            getRepos: { binding.wrappedValue.repos }
+        )
+        for repo in binding.wrappedValue.repos {
+            services.remoteBranchStore.refresh(repoPath: repo.path)
+        }
 
         // Same reasoning for the PR poller: open→merged transitions
         // happen on GitHub while Graftty is backgrounded, and the only
@@ -776,12 +833,18 @@ struct GrafttyApp: App {
         // gets a chance to reap cleanly before NSApplication pulls the
         // rug out.
         let controller = webController
+        let appServices = services
         NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
             queue: .main
         ) { _ in
-            MainActor.assumeIsolated { controller.stop() }
+            MainActor.assumeIsolated {
+                appServices.remoteBranchStore.stop()
+                appServices.prStatusStore.stop()
+                appServices.statsStore.stop()
+                controller.stop()
+            }
         }
     }
 
@@ -809,7 +872,8 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         worktreeMonitor: WorktreeMonitor,
         statsStore: WorktreeStatsStore,
-        prStatusStore: PRStatusStore
+        prStatusStore: PRStatusStore,
+        remoteBranchStore: RemoteBranchStore
     ) async {
         for repoIdx in appState.wrappedValue.repos.indices {
             let repo = appState.wrappedValue.repos[repoIdx]
@@ -822,6 +886,7 @@ struct GrafttyApp: App {
                             worktreeMonitor: worktreeMonitor,
                             statsStore: statsStore,
                             prStatusStore: prStatusStore,
+                            remoteBranchStore: remoteBranchStore,
                             repoIdx: repoIdx,
                             newURL: resolved.url,
                             isStale: resolved.isStale
@@ -871,6 +936,7 @@ struct GrafttyApp: App {
         worktreeMonitor: WorktreeMonitor,
         statsStore: WorktreeStatsStore,
         prStatusStore: PRStatusStore,
+        remoteBranchStore: RemoteBranchStore,
         repoIdx: Int,
         newURL: URL,
         isStale: Bool
@@ -920,7 +986,8 @@ struct GrafttyApp: App {
             repo: appState.wrappedValue.repos[repoIdx],
             worktreeMonitor: worktreeMonitor,
             statsStore: statsStore,
-            prStatusStore: prStatusStore
+            prStatusStore: prStatusStore,
+            remoteBranchStore: remoteBranchStore
         )
 
         // (e) Snapshot the pre-relocate repo for the pure decision
@@ -1022,6 +1089,7 @@ struct GrafttyApp: App {
         // post-relocate watcher graph is indistinguishable from a
         // from-scratch launch at the new location.
         worktreeMonitor.installRepoWatchers(repo: appState.wrappedValue.repos[repoIdx])
+        remoteBranchStore.refresh(repoPath: newRepoPath)
 
         NSLog("[Graftty] relocateRepo: %@ → %@", oldRepoPath, newRepoPath)
     }
@@ -1030,6 +1098,7 @@ struct GrafttyApp: App {
         let binding = $appState
         let statsStore = services.statsStore
         let prStatusStore = services.prStatusStore
+        let remoteBranchStore = services.remoteBranchStore
         let worktreeMonitor = services.worktreeMonitor
         Task { @MainActor in
             // LAYOUT-4.6 / LAYOUT-4.9: resolve bookmarks and run any
@@ -1042,7 +1111,8 @@ struct GrafttyApp: App {
                 appState: binding,
                 worktreeMonitor: worktreeMonitor,
                 statsStore: statsStore,
-                prStatusStore: prStatusStore
+                prStatusStore: prStatusStore,
+                remoteBranchStore: remoteBranchStore
             )
 
             for repoIdx in binding.wrappedValue.repos.indices {
@@ -1085,6 +1155,7 @@ struct GrafttyApp: App {
     }
 
     private func restoreRunningWorktrees() {
+        let selectedPath = appState.selectedWorktreePath
         for repoIdx in appState.repos.indices {
             for wtIdx in appState.repos[repoIdx].worktrees.indices {
                 let wt = appState.repos[repoIdx].worktrees[wtIdx]
@@ -1103,6 +1174,7 @@ struct GrafttyApp: App {
                     for leafID in appState.repos[repoIdx].worktrees[wtIdx].splitTree.allLeaves {
                         terminalManager.markRehydrated(leafID)
                     }
+                    guard wt.path == selectedPath else { continue }
                     _ = terminalManager.createSurfaces(
                         for: appState.repos[repoIdx].worktrees[wtIdx].splitTree,
                         worktreePath: wt.path
@@ -1681,7 +1753,8 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         targetID: TerminalID,
-        split: PaneSplit
+        split: PaneSplit,
+        extraInitialInput: String? = nil
     ) -> TerminalID? {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
@@ -1704,7 +1777,11 @@ struct GrafttyApp: App {
                 // forever as `Color.black + ProgressView`. Returning nil
                 // propagates to callers like `addPane` which emit a
                 // readable socket `.error`.
-                guard terminalManager.createSurface(terminalID: newID, worktreePath: wt.path) != nil else {
+                guard terminalManager.createSurface(
+                    terminalID: newID,
+                    worktreePath: wt.path,
+                    extraInitialInput: extraInitialInput
+                ) != nil else {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = wt.splitTree
                     return nil
                 }
@@ -2411,15 +2488,21 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
     let appState: Binding<AppState>
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
+    let remoteBranchStore: RemoteBranchStore
+    private let originRefPRFollowUpDelays: [Duration]
 
     init(
         appState: Binding<AppState>,
         statsStore: WorktreeStatsStore,
-        prStatusStore: PRStatusStore
+        prStatusStore: PRStatusStore,
+        remoteBranchStore: RemoteBranchStore,
+        originRefPRFollowUpDelays: [Duration] = [.seconds(1), .seconds(5)]
     ) {
         self.appState = appState
         self.statsStore = statsStore
         self.prStatusStore = prStatusStore
+        self.remoteBranchStore = remoteBranchStore
+        self.originRefPRFollowUpDelays = originRefPRFollowUpDelays
     }
 
     /// Called when `.git/worktrees/` changes (new worktree added, existing
@@ -2488,6 +2571,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         let binding = appState
         let store = statsStore
         let prStore = prStatusStore
+        let remoteBranchStore = remoteBranchStore
         Task { @MainActor in
             // LAYOUT-4.7: before marking the worktree stale, see if the
             // owning repo has a bookmark and whether it now resolves to
@@ -2507,6 +2591,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
                             worktreeMonitor: monitor,
                             statsStore: store,
                             prStatusStore: prStore,
+                            remoteBranchStore: remoteBranchStore,
                             repoIdx: repoIdx,
                             newURL: resolved.url,
                             isStale: resolved.isStale
@@ -2555,8 +2640,8 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
     /// gate.
     nonisolated func worktreeMonitorDidDetectOriginRefChange(_ monitor: WorktreeMonitor, repoPath: String) {
         let binding = appState
-        let prStore = prStatusStore
         let statsStore = statsStore
+        let remoteBranchStore = remoteBranchStore
         Task { @MainActor in
             guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }) else { return }
             for wt in repo.worktrees where wt.state.hasOnDiskWorktree {
@@ -2568,8 +2653,28 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
                 // symmetrically with PR so the sidebar doesn't need a
                 // full poll cycle to catch up.
                 statsStore.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
-                guard PRStatusStore.isFetchableBranch(wt.branch) else { continue }
-                prStore.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
+            }
+            remoteBranchStore.refresh(repoPath: repoPath) { [weak self] in
+                self?.refreshPushedPRs(repoPath: repoPath)
+                self?.scheduleOriginRefPRFollowUps(repoPath: repoPath)
+            }
+        }
+    }
+
+    private func refreshPushedPRs(repoPath: String) {
+        guard let repo = appState.wrappedValue.repos.first(where: { $0.path == repoPath }) else { return }
+        for wt in repo.worktrees where wt.state.hasOnDiskWorktree {
+            guard remoteBranchStore.hasRemote(repoPath: repoPath, branch: wt.branch) else { continue }
+            prStatusStore.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
+        }
+    }
+
+    private func scheduleOriginRefPRFollowUps(repoPath: String) {
+        for delay in originRefPRFollowUpDelays {
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: delay)
+                if Task.isCancelled { return }
+                self?.refreshPushedPRs(repoPath: repoPath)
             }
         }
     }
@@ -2597,6 +2702,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         let binding = appState
         let store = statsStore
         let prStore = prStatusStore
+        let remoteBranchStore = remoteBranchStore
         // Branch changes fire in bursts (rebase, interactive checkout), so
         // `GitWorktreeDiscovery.discover`'s subprocess wait must yield the
         // main actor — the async version does that naturally. Scope the
@@ -2618,7 +2724,15 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
                   let wtIdx = binding.wrappedValue.repos[repoIdx].worktrees.firstIndex(where: { $0.path == worktreePath }) else { return }
             binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].branch = match.branch
             store.refresh(worktreePath: worktreePath, repoPath: repoPath, branch: match.branch)
-            prStore.branchDidChange(worktreePath: worktreePath, repoPath: repoPath, branch: match.branch)
+            prStore.clear(worktreePath: worktreePath)
+            remoteBranchStore.refresh(repoPath: repoPath) {
+                guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }),
+                      let wt = repo.worktrees.first(where: {
+                          $0.path == worktreePath && $0.state.hasOnDiskWorktree
+                      })
+                else { return }
+                prStore.refresh(worktreePath: worktreePath, repoPath: repoPath, branch: wt.branch)
+            }
         }
     }
 }

@@ -156,6 +156,10 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **TERM-2.4** When the user clicks directly on a terminal pane's view (independent of the sidebar pane-row), the application shall persist that pane as the worktree's last-focused pane in the same model field that `TERM-2.3` reads on return. A visual-only focus change (libghostty / NSView side) without a matching model update would let focus snap back to the first leaf on the next return visit.
 
+**TERM-2.5** When the selected worktree changes, the application shall call `ghostty_surface_set_occlusion(surface, false)` for surfaces in the old selected worktree and `ghostty_surface_set_occlusion(surface, true)` followed by `ghostty_surface_refresh(surface)` for surfaces in the newly selected worktree. The boolean passed to `ghostty_surface_set_occlusion` is Ghostty's `visible` flag, not an `occluded` flag. When a terminal pane's `SurfaceViewWrapper` is mounted, focused, resized, or receives keyboard input, the application shall also mark the surface visible and refresh it so libghostty performs a full clean repaint of the current state. The application shall not derive hidden state directly from SwiftUI `.onDisappear`, because transient unmount/remount callbacks can race with focus and attach.
+
+**TERM-2.6** On application restart, persisted `.running` worktrees shall be marked as rehydrated but only the currently-selected worktree shall immediately recreate libghostty surfaces and run `zmx attach`. Other running worktrees shall attach lazily when selected. This keeps hidden panes from rendering or reattaching while they are not displayed, and prevents a large saved workspace from delaying input in the pane the user is actually returning to.
+
 ### 3.3 Splitting
 
 **TERM-3.1** When the user triggers a horizontal split, the application shall insert a new terminal pane to the right of the focused pane with a 50/50 ratio.
@@ -280,6 +284,10 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 
 **GIT-2.7** When a content-change event fires for a worktree, the application shall trigger a divergence-stats recompute for that worktree. The recompute is idempotent via `WorktreeStatsStore.inFlight` deduplication, so a burst of file events coalesces to at most one in-flight git subprocess pipeline.
 
+**GIT-2.8** While a repository is in the sidebar, the application shall scan local `refs/remotes/origin/*` every 10 seconds without contacting the network, maintaining a repo-scoped set of locally-known remote branch names. The scan shall use local git ref metadata only; it shall not replace the repo-level fetch cadence that discovers branches created from another clone.
+
+**GIT-2.9** When the origin-ref watcher from `GIT-2.5` observes a remote-tracking ref movement, the application shall refresh the repo's local remote-branch set before deciding which worktrees should receive PR/MR polling.
+
 ### 4.3 Change Handling
 
 **GIT-3.1** When a new worktree is detected, the application shall add a new entry in the closed state and briefly flash its background highlight.
@@ -313,6 +321,12 @@ Requirements for a macOS worktree-aware terminal multiplexer built on libghostty
 **GIT-3.15** When a worktree transitions to the `.stale` state — regardless of which channel observed it (`worktreeMonitorDidDetectDeletion` for the FSEvents path, or `reconcileOnLaunch` / `worktreeMonitorDidDetectChange` when `git worktree list --porcelain` stops listing an entry) — the application shall call `WorktreeMonitor.stopWatchingWorktree(_:)` to drop the path / HEAD-reflog / content watchers for that worktree. Otherwise the watchers stay registered with fds bound to the reaped inode. A subsequent `git worktree add` at the same path (resurrection) would hit the reconciler's "idempotent" re-register (`guard sources[key] == nil else { return }`) and leave the new inode uncovered — the next `rm -rf` would go undetected, and `git commit` would not refresh PR / divergence state until the 30s / 5m polling safety nets catch up. The three stale-transition paths must be symmetric on this, matching `GIT-3.13`'s rule for the stats / PR cache clear.
 
 **GIT-3.16** When a stale worktree is resurrected via user click (`selectWorktree` per `GIT-3.8`) rather than via the reconciler, the application shall re-arm the path / HEAD-reflog / content watchers for the worktree on the new inode. A user-click resurrection does not fire a `.git/worktrees/` FSEvents tick (no git subprocess ran), so the reconciler's re-register loop in `worktreeMonitorDidDetectChange` never runs — without this, the resurrected worktree has no real-time stats / PR refresh until the 30s / 5m polling safety nets catch up or the user triggers a git operation that bumps the `.git/worktrees/` dir.
+
+**GIT-3.17** When a worktree's current branch lacks a local `origin/<branch>` ref, the application shall skip GitHub/GitLab PR/MR host polling for that worktree and shall not mark the worktree as "absent PR" merely because the branch has not been pushed.
+
+**GIT-3.18** When a local `origin/<branch>` ref appears for a non-stale worktree's current branch, the application shall begin PR/MR polling for that worktree on the pushed-branch cadence without requiring the user to select the worktree.
+
+**GIT-3.19** When a local `origin/<branch>` ref disappears for a non-stale worktree's current branch, the application shall clear cached PR/MR status for that worktree so stale PR badges do not remain attached to an unpushed or deleted remote branch.
 
 ### 4.4 Deleting a Worktree
 
@@ -721,6 +735,10 @@ The sweep runs once at `GrafttyApp.init()`. `ZmxLauncher.subprocessEnv` addition
 ### 13.8 Manual Restart
 
 **ZMX-8.1** The Settings → General pane shall expose a "Restart ZMX…" button that, after user confirmation, tears down every running pane across every worktree — invoking the same `destroySurface` / `zmx kill --force` path as per-worktree Stop (`TERM-1.2` / `ZMX-4.3`) — and then marks each affected worktree `.closed` via `prepareForStop` (`STATE-2.11`), preserving each worktree's `splitTree` and `focusedTerminalID` so re-opening recreates the same layout at the same leaf IDs under freshly-spawned zmx daemons. The confirmation alert (`NSAlert` with `.warning` style) shall name the destructive consequence explicitly — how many sessions across how many worktrees will end, with a "Any unsaved work in those sessions will be lost" warning (pluralization per `ZmxRestartConfirmation.informativeText`) — and shall offer "Restart ZMX" and "Cancel" buttons with Cancel as the default dismissal. If no worktrees are running at click time, the alert shall state that the action will have no effect rather than silently no-op.
+
+### 13.9 Idle Resize
+
+**ZMX-9.1** The bundled `zmx attach` client shall forward PTY resize events while idle, without requiring a later keystroke or daemon output to wake its poll loop. This protects restored or lazily reattached panes: when Graftty resizes the outer PTY as a pane comes into view, the daemon's inner PTY must receive the new grid immediately so full-screen programs such as Claude Code, vim, and htop repaint at the visible pane size before user input.
 
 ## 14. Distribution
 
@@ -1387,3 +1405,23 @@ While the "keyboard allowed" flag is false, any stray keyboard-will-show event (
 **TEAM-6.1** While `agentTeamsEnabled` is true and a `RepoEntry` has two or more worktrees, the sidebar shall render that repo with a small "team" icon (SF Symbol `person.2.fill`) adjacent to its disclosure header. No per-worktree accent stripe is applied; the header icon is sufficient to indicate team membership.
 
 **TEAM-6.2** Right-clicking any team-enabled worktree's row shall include a *Show Team Members…* context-menu item. Selecting it shall display a popover listing each team member by name, branch, and role (lead / coworker), populated from the same source as `graftty team list`.
+
+## 21. Editor Integration
+
+Cmd-clicking a file path in a terminal pane opens the file in the user's configured editor — CLI editors in a new pane, GUI apps via NSWorkspace.
+
+**EDITOR-1.1** When the user cmd-clicks a file path in a terminal pane, the application shall open the file via the configured editor.
+
+**EDITOR-1.2** If the configured editor is a known CLI editor, the application shall split the source pane to the right and run the editor in the new pane.
+
+**EDITOR-1.3** If the configured editor is a GUI app, the application shall dispatch the file to the app via NSWorkspace, without creating a new pane.
+
+**EDITOR-1.4** If the cmd-clicked target carries a `:line(:col)` suffix, the application shall strip the suffix before resolving the path, and shall pass the line number to known CLI editors using `+<line>`.
+
+**EDITOR-1.5** If the cmd-clicked target is not a file path, the application shall open it via NSWorkspace (preserving existing handling for `http(s)`, `mailto:`, `ssh:`, and other URL schemes).
+
+**EDITOR-1.6** If the cmd-clicked target resolves to a path that does not exist on disk, the application shall emit a system beep and not open anything.
+
+**EDITOR-1.7** When no editor is explicitly configured in Settings, the application shall use the value of `$EDITOR` as defined by the user's login shell.
+
+**EDITOR-1.8** If `$EDITOR` is unset, the application shall fall back to `vi`.
