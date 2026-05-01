@@ -54,11 +54,6 @@ struct AttnTodo {
     func attn_2_6() async throws { }
 
     @Test("""
-@spec ATTN-2.8: The application's Unix-domain socket server shall call `listen(2)` with a backlog of 64, not the historical default of 5. A user scripting parallel `graftty notify` invocations (e.g. from a hook that fans out across a monorepo) can easily exceed 5 pending connections, and the extra backlog entries cost negligible kernel resources while preventing spurious `ECONNREFUSED` for the later clients.
-""", .disabled("not yet implemented"))
-    func attn_2_8() async throws { }
-
-    @Test("""
 @spec ATTN-3.1: If the application is not running, then the CLI shall print "Graftty is not running" and exit with code 1.
 """, .disabled("not yet implemented"))
     func attn_3_1() async throws { }
