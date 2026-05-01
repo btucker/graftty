@@ -22,6 +22,17 @@ public struct TeamInboxEndpoint: Codable, Sendable, Equatable, Hashable {
     }
 }
 
+extension TeamInboxEndpoint {
+    /// @spec TEAM-5.4
+    /// Synthetic sender used by automated team events (PR/CI/membership)
+    /// where there is no human author. The activity window and hook
+    /// renderers detect `member == "system"` and present these rows
+    /// differently from chat messages.
+    public static func system(repoPath: String) -> TeamInboxEndpoint {
+        TeamInboxEndpoint(member: "system", worktree: repoPath, runtime: nil)
+    }
+}
+
 public struct TeamInboxMessage: Codable, Sendable, Equatable {
     public let id: String
     public let batchID: String?

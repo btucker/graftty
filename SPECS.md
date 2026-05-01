@@ -1292,6 +1292,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-5.3** The application shall emit a `team_member_left` channel event when a worktree is removed from a team (the worktree is deleted, or the team-enabled repo collapses to one worktree). Routing: addressed to the team's lead's worktree only. Attributes: `team`, `member` (departing member's name), `reason` (`removed` or `exited`).
 
+**TEAM-5.4** When constructing a system endpoint, the application shall produce an endpoint with member='system', worktree=<repoPath>, and runtime=nil.
+
 ### TEAM-6.x — Sidebar Visualization
 
 **TEAM-6.1** While `agentTeamsEnabled` is true and a `RepoEntry` has two or more worktrees, the sidebar shall render that repo with a small "team" icon (SF Symbol `person.2.fill`) adjacent to its disclosure header. No per-worktree accent stripe is applied; the header icon is sufficient to indicate team membership.
