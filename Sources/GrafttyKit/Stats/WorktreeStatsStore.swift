@@ -25,9 +25,10 @@ public final class WorktreeStatsStore {
     /// Stored as a date rather than a boolean so a hung prior Task
     /// (e.g., a `git` subprocess blocked on a ref-transaction lock
     /// during a concurrent `git push`) can be considered abandoned
-    /// after `statsRefreshCadence`, at which point a new refresh is
-    /// allowed through. Bumping the generation on each allowed refresh
-    /// drops the stuck Task's late `apply` when it eventually returns.
+    /// after `inFlightAbandonmentThreshold`, at which point a new
+    /// refresh is allowed through. Bumping the generation on each
+    /// allowed refresh drops the stuck Task's late `apply` when it
+    /// eventually returns.
     @ObservationIgnored
     private var inFlight: [String: Date] = [:]
 
@@ -50,15 +51,6 @@ public final class WorktreeStatsStore {
 
     @ObservationIgnored
     private var inFlightRepos: Set<String> = []
-
-    /// Last successful stats compute per worktree. Used to gate the
-    /// per-running-worktree recompute cadence (DIVERGE-4.6), which runs
-    /// at 30s independent of the `git fetch` cadence. FSEvents on the
-    /// worktree contents (GIT-2.6) drives the common case; this poll is a
-    /// safety net for bursts the FSEvents coalescer ate and for changes
-    /// that happened while the app was backgrounded.
-    @ObservationIgnored
-    private var lastStatsRefresh: [String: Date] = [:]
 
     @ObservationIgnored
     private var ticker: PollingTickerLike?
@@ -159,17 +151,17 @@ public final class WorktreeStatsStore {
     }
 
     /// Seed the in-flight timestamp so tests can simulate a prior
-    /// refresh Task that's been pending longer than `statsRefreshCadence`
-    /// — i.e., considered abandoned. A subsequent `refresh` call must
-    /// then dispatch a fresh Task rather than silently deferring to the
-    /// stuck one.
+    /// refresh Task that's been pending longer than
+    /// `inFlightAbandonmentThreshold` — i.e., considered abandoned. A
+    /// subsequent `refresh` call must then dispatch a fresh Task rather
+    /// than silently deferring to the stuck one.
     func seedInFlightSinceForTesting(_ date: Date, forWorktree worktreePath: String) {
         inFlight[worktreePath] = date
     }
 
-    /// Drives `pollTick` from tests so the DIVERGE-4.6 per-worktree
-    /// cadence gate can be exercised end-to-end. `pollTick` remains
-    /// private so production callers go through `start(ticker:)`, but a
+    /// Drives `pollTick` from tests so the per-tick refresh behavior
+    /// can be exercised end-to-end. `pollTick` remains private so
+    /// production callers go through `start(ticker:)`, but a
     /// controllable entry point is required to test that the per-repo
     /// fetch cooldown does not gate the per-worktree stats recompute.
     func pollTickForTesting(repos: [RepoEntry]) async {
@@ -178,29 +170,23 @@ public final class WorktreeStatsStore {
 
     /// Seed the per-repo fetch timestamp so `pollTick`'s fetch gate
     /// treats the repo as "already fetched recently" and falls through
-    /// to the per-worktree stats cadence branch.
+    /// to the per-worktree refresh branch.
     func seedLastRepoFetchForTesting(_ date: Date, forRepo repoPath: String) {
         lastRepoFetch[repoPath] = date
-    }
-
-    /// Seed the per-worktree stats timestamp so `pollTick`'s stats
-    /// cadence gate treats the worktree as "recently recomputed".
-    func seedLastStatsRefreshForTesting(_ date: Date, forWorktree worktreePath: String) {
-        lastStatsRefresh[worktreePath] = date
     }
 
     public func refresh(worktreePath: String, repoPath: String, branch: String) {
         let now = Date()
         // Defer to an in-flight refresh only while its Task is plausibly
-        // still running. `statsRefreshCadence` is the natural cap: a
-        // normal compute completes in milliseconds, so anything older
-        // than a full refresh window is assumed abandoned (the common
-        // path is a `git` subprocess blocked on a ref-transaction lock
-        // during a concurrent `git push`, which doesn't respond to
-        // Task cancellation). Beyond the cap we fall through and
-        // dispatch a new Task; bumping `generation` ensures the stuck
-        // Task's late `apply` is dropped if it ever returns.
-        let cap = Double(Self.statsRefreshCadence().components.seconds)
+        // still running. A normal compute completes in milliseconds, so
+        // anything older than `inFlightAbandonmentThreshold` is assumed
+        // abandoned (the common path is a `git` subprocess blocked on a
+        // ref-transaction lock during a concurrent `git push`, which
+        // doesn't respond to Task cancellation). Beyond the threshold
+        // we fall through and dispatch a new Task; bumping `generation`
+        // ensures the stuck Task's late `apply` is dropped if it ever
+        // returns.
+        let cap = Double(Self.inFlightAbandonmentThreshold().components.seconds)
         if let started = inFlight[worktreePath],
            now.timeIntervalSince(started) < cap {
             return
@@ -325,12 +311,6 @@ public final class WorktreeStatsStore {
         // in-flight gate so the next cadence tick can dispatch again.
         if generation[worktreePath, default: 0] != fetchGeneration { return }
         inFlight.removeValue(forKey: worktreePath)
-        // Only advance the cadence clock on successful computes — a
-        // repeatedly-failing subprocess must retry on the next tick
-        // rather than silently pacing itself at the full cadence.
-        if result.stats != nil || result.defaultBranch == nil {
-            lastStatsRefresh[worktreePath] = Date()
-        }
         if let s = result.stats {
             if stats[worktreePath] != s {
                 stats[worktreePath] = s
@@ -350,18 +330,21 @@ public final class WorktreeStatsStore {
         )
     }
 
-    /// DIVERGE-4.6: per-worktree local stats recompute cadence. Runs
-    /// against the local git working tree, so it's cheap (no network)
-    /// and gated independently of `repoFetchCadence`'s 5-minute network
-    /// fetch cadence. 30s base matches `PRStatusStore.cadenceFor` so
-    /// both rows of the sidebar refresh on the same tempo.
-    nonisolated static func statsRefreshCadence() -> Duration {
+    /// Threshold past which a still-`inFlight` refresh Task is treated
+    /// as abandoned (DIVERGE-4.4) and superseded by a new dispatch. A
+    /// normal compute completes in milliseconds; the typical hung path
+    /// is a `git` subprocess blocked on a ref-transaction lock during a
+    /// concurrent `git push`, which doesn't respond to Task cancellation
+    /// — without this threshold the worktree's gutter would lock at
+    /// whatever value was observed during the lock window. 30s mirrors
+    /// `PRStatusStore.cadenceFor`'s base for symmetry across the two
+    /// per-worktree stores.
+    nonisolated static func inFlightAbandonmentThreshold() -> Duration {
         .seconds(30)
     }
 
     private func pollTick(repos: [RepoEntry]) async {
         let now = Date()
-        let statsInterval = Self.statsRefreshCadence()
         for repo in repos {
             // Gate A: network `git fetch` on the repo-level cadence
             // (DIVERGE-4.3). On success, performRepoFetch also kicks
@@ -369,17 +352,15 @@ public final class WorktreeStatsStore {
             // Gate B below for the same tick.
             let didDispatchRepoFetch = maybeDispatchRepoFetch(repo: repo, now: now)
 
-            // Gate B: cheap local stats recompute per running worktree
-            // (DIVERGE-4.6 / PERF-1.3).
-            // Skips any worktree the repo-fetch dispatch already scheduled —
-            // `performRepoFetch` calls `refresh` for each non-stale worktree
-            // after its fetch resolves.
+            // Gate B: refresh every running worktree on every tick
+            // (DIVERGE-4.6 / PERF-1.3). The compute pipeline is local
+            // and cheap; `inFlight` (DIVERGE-4.4) is the only dedup.
+            // Skipped when the repo-fetch dispatch already scheduled
+            // a refresh for these worktrees — `performRepoFetch` calls
+            // `refresh` for each non-stale worktree after its fetch
+            // resolves.
             if didDispatchRepoFetch { continue }
             for wt in repo.worktrees where shouldPollStats(for: wt) {
-                if let last = lastStatsRefresh[wt.path],
-                   now.timeIntervalSince(last) < Double(statsInterval.components.seconds) {
-                    continue
-                }
                 refresh(worktreePath: wt.path, repoPath: repo.path, branch: wt.branch)
             }
         }

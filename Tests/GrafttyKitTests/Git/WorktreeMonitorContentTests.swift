@@ -2,7 +2,7 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-/// Covers GIT-2.6 / GIT-2.7: the recursive FSEventStream-backed watcher
+/// Covers GIT-2.6: the recursive FSEventStream-backed watcher
 /// that surfaces working-tree edits, stages (`.git/index`), and
 /// untracked-file creation. The existing vnode-based watchers
 /// (`watchHeadRef`, `watchOriginRefs`, `watchWorktreePath`) can't see

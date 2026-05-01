@@ -8,15 +8,17 @@ public protocol WorktreeMonitorDelegate: AnyObject {
     func worktreeMonitorDidDetectOriginRefChange(_ monitor: WorktreeMonitor, repoPath: String)
     /// Fires when any non-`.git/objects` path inside the worktree changes
     /// (working tree edit, stage/unstage via `.git/index`, untracked file
-    /// added). Lets the stats store recompute `hasUncommittedChanges` and
-    /// `git diff --shortstat` counts without waiting for the 30s local
-    /// poll tick.
+    /// added). Currently unused by production consumers — stats refresh
+    /// is driven exclusively by the polling tick — but the FSEvents
+    /// stream itself remains armed so future consumers (e.g., in-pane
+    /// previews of working-tree status) can subscribe without
+    /// re-introducing the watcher.
     func worktreeMonitorDidDetectContentChange(_ monitor: WorktreeMonitor, worktreePath: String)
 }
 
 public extension WorktreeMonitorDelegate {
-    // Default no-op so existing test recorders don't need to implement the
-    // new callback. Production delegate in GrafttyApp implements it.
+    // Default no-op: no production delegate currently consumes this
+    // signal. Tests opt in via their own recorder.
     func worktreeMonitorDidDetectContentChange(_ monitor: WorktreeMonitor, worktreePath: String) {}
 }
 
