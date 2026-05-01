@@ -1,12 +1,11 @@
 import Foundation
 import GrafttyProtocol
 
-/// Phase 1 of the channels-to-inbox migration: writes routable team events
-/// (`team_message`, PR/CI matrix events, membership join/leave) directly to
-/// `TeamInbox` instead of going through the legacy channel router.
-///
-/// The dispatcher is purely additive in Phase 1 — no producer is wired to
-/// it yet. Phase 2 wires producers; Phase 4 retires the channel router.
+/// Single producer-side fan-out for every team event. `PRStatusStore`,
+/// `TeamMembershipEvents`, and the `graftty team msg`/`team broadcast`
+/// CLI handlers all flow through here, writing one `TeamInbox` row per
+/// matrix-resolved (or addressed) recipient. The legacy channel router
+/// is still constructed for now but receives no events; Phase 4 retires it.
 public final class TeamEventDispatcher {
     private let inbox: TeamInbox
     private let preferencesProvider: () -> TeamEventRoutingPreferences

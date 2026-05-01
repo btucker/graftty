@@ -69,19 +69,17 @@ public final class TeamInboxRequestHandler {
             throw TeamInboxRequestError.recipientNotFound(name: recipient, available: available)
         }
 
-        guard let message = try dispatcher.dispatchTeamMessage(
+        // Validated above (teamContext + memberNamed), so the dispatcher
+        // cannot return nil here. Force-unwrap rather than re-throwing a
+        // misleading `notInTeam`.
+        let message = try dispatcher.dispatchTeamMessage(
             fromWorktree: callerWorktree,
             to: recipient,
             text: text,
             priority: priority,
             repos: repos,
             teamsEnabled: teamsEnabled
-        ) else {
-            // Validated above; the dispatcher only returns nil if the
-            // sender's worktree isn't in a team — which `teamContext`
-            // already rejected. Defensive guard.
-            throw TeamInboxRequestError.notInTeam
-        }
+        )!
         return TeamInboxDelivery(recipient: recipientMember, message: message)
     }
 

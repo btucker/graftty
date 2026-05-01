@@ -68,6 +68,9 @@ public enum RoutableEvent: Sendable, Equatable {
         case .ciConclusionChanged:
             return "CI on PR #\(prNum): \(from) → \(to)"
         case .mergabilityChanged:
+            // No producer fires `mergabilityChanged` yet; merge-state polling
+            // lands as a follow-up. Format is speculative; revisit when the
+            // first producer is wired.
             return "PR #\(prNum) mergability: \(from) → \(to)"
         }
     }
