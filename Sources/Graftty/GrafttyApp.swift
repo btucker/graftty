@@ -84,12 +84,9 @@ final class AppServices {
         self.remoteBranchStore = remoteBranchStore
         self.prStatusStore = PRStatusStore(remoteBranchStore: remoteBranchStore)
 
-        // Phase 2 of channels-to-inbox: PR/CI/membership events flow
-        // through `TeamEventDispatcher` which writes to a per-team
-        // `TeamInbox` directory rather than into the live channel
-        // socket. Lift the inbox up here so the request handler
-        // (`teamInboxRequestHandler()`) and dispatcher share one disk
-        // root rather than each constructing its own.
+        // Lift the team inbox up here so the request handler
+        // (`teamInboxRequestHandler()`) and the dispatcher share one
+        // disk root rather than each constructing its own.
         let teamInbox = TeamInbox(
             rootDirectory: AppState.defaultDirectory
                 .appendingPathComponent("team-inbox", isDirectory: true)

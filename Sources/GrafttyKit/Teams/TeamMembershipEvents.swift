@@ -3,11 +3,8 @@ import GrafttyProtocol
 
 /// Helpers for firing `team_member_joined` and `team_member_left` events
 /// (TEAM-5.2 and TEAM-5.3) when worktrees are added to or removed from a
-/// team-enabled repo.
-///
-/// Phase 2 of the channels-to-inbox migration: routes through
-/// `TeamEventDispatcher` so the event lands as an inbox row addressed to
-/// the team lead rather than a live channel-socket dispatch.
+/// team-enabled repo. Routes through `TeamEventDispatcher` so the event
+/// lands as an inbox row addressed to the team lead.
 public enum TeamMembershipEvents {
 
     /// Fire `team_member_joined` to the lead when a new worktree joins.

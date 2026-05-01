@@ -100,8 +100,7 @@ extension EventBodyRenderer {
 
     /// Convenience: renders the user's `teamSessionPrompt` against a session-
     /// start agent context (only `branch` and `lead` are meaningful before any
-    /// event has fired). Used by both the legacy channel path and the new
-    /// team-hook path so both sites share the same template + context shape.
+    /// event has fired).
     public static func renderSessionPrompt(
         template: String,
         branch: String,

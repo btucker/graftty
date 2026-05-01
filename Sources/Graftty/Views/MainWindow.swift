@@ -655,8 +655,6 @@ struct MainWindow: View {
             appState.removeWorktree(atPath: worktreePath)
             // TEAM-5.3: notify the lead that a worktree left. The repo
             // state is read AFTER removal so the lead-present guard works.
-            // Phase 2: live-channel roster broadcast is dropped; the
-            // team_member_left inbox row is the new signal.
             if let repo = appState.repo(forWorktreePath: repoPath) {
                 TeamMembershipEvents.fireLeft(
                     repo: repo,
