@@ -14,7 +14,7 @@ public struct RecipientSet: OptionSet, Codable, Equatable, Sendable {
     public static let otherWorktrees = RecipientSet(rawValue: 1 << 2)
 }
 
-/// User-configurable routing matrix for the four routable channel events
+/// User-configurable routing matrix for the routable team events
 /// (TEAM-1.8). Each field is a `RecipientSet` controlling which recipient
 /// classes the corresponding event type fans out to.
 ///

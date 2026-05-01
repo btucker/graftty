@@ -1,12 +1,12 @@
 import Foundation
 
-/// Builders for the four `team_*` channel event types described in TEAM-5.* of SPECS.md.
+/// Builders for the `team_*` event types described in TEAM-5.* of SPECS.md.
 ///
 /// These are thin constructors over `ChannelServerMessage.event(...)` so callers don't
 /// duplicate the `type` string and attribute-key conventions.
 public enum TeamChannelEvents {
 
-    /// Wire-format type names for the three `team_*` channel events (TEAM-5.*).
+    /// Wire-format type names for the `team_*` events (TEAM-5.*).
     public enum EventType {
         public static let message       = "team_message"
         public static let memberJoined  = "team_member_joined"

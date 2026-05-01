@@ -188,9 +188,7 @@ final class SurfaceHandle {
     }
 
     private static func agentHookPathPrefix() -> String? {
-        guard UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
-              ProcessInfo.processInfo.environment["GRAFTTY_DISABLE_AGENT_HOOKS"] != "1"
-        else {
+        guard ProcessInfo.processInfo.environment["GRAFTTY_DISABLE_AGENT_HOOKS"] != "1" else {
             return nil
         }
         return AgentHookInstaller

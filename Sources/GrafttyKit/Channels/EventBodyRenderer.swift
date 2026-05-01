@@ -97,6 +97,18 @@ extension EventBodyRenderer {
         return trimmed.isEmpty ? nil : trimmed
     }
 
+    /// Convenience: renders the user's `teamSessionPrompt` against a session-
+    /// start agent context (only `branch` and `lead` are meaningful before any
+    /// event has fired). Used by both the legacy channel path and the new
+    /// team-hook path so both sites share the same template + context shape.
+    public static func renderSessionPrompt(
+        template: String,
+        branch: String,
+        lead: Bool
+    ) -> String? {
+        renderAgentTemplate(template, agent: makeAgentContext(branch: branch, lead: lead))
+    }
+
     /// Convenience: returns a `@MainActor (path, message) -> Void` closure that renders
     /// the user's `teamPrompt` template against each delivery before passing
     /// the rendered message to `inner`. Use at every dispatch call site so the

@@ -8,8 +8,8 @@ import GrafttyKit
 /// - Prompt edits → immediate `router.broadcastInstructions()` fanout.
 /// - Enabled toggle flips → start or set `isEnabled` on the router.
 ///   Disabled → router stops routing but keeps subscribers connected,
-///   so re-enabling is instant. Running sessions' launch flags were
-///   baked at spawn and don't change mid-session.
+///   so re-enabling is instant. Wrappers stay installed and on PATH;
+///   disabled hooks return no-op payloads.
 @MainActor
 final class ChannelSettingsObserver {
     private static let logger = Logger(subsystem: "com.btucker.graftty", category: "ChannelSettingsObserver")
@@ -49,9 +49,6 @@ final class ChannelSettingsObserver {
     private func apply(enabled: Bool) {
         router.isEnabled = enabled
         if enabled {
-            // Install plugin config before starting — the user may have
-            // toggled channels on mid-session, before ~/.claude/plugins/
-            // has been populated.
             onEnable()
             do {
                 try router.start()
@@ -61,7 +58,7 @@ final class ChannelSettingsObserver {
         }
     }
 
-    /// Composes team MCP instructions + Stencil-rendered teamSessionPrompt for a specific
+    /// Composes team hook instructions + Stencil-rendered teamSessionPrompt for a specific
     /// worktree (TEAM-3.3). Returns an empty string for non-team contexts.
     func composedPrompt(forWorktree worktreePath: String) -> String {
         let teamsEnabled = UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
@@ -75,13 +72,12 @@ final class ChannelSettingsObserver {
         }
 
         let teamInstructions = TeamInstructionsRenderer.render(team: team, viewer: me)
-
         let template = UserDefaults.standard.string(forKey: SettingsKeys.teamSessionPrompt) ?? ""
-        let agentDict = EventBodyRenderer.makeAgentContext(
+        guard let rendered = EventBodyRenderer.renderSessionPrompt(
+            template: template,
             branch: me.branch,
             lead: me.role == .lead
-        )
-        guard let rendered = EventBodyRenderer.renderAgentTemplate(template, agent: agentDict) else {
+        ) else {
             return teamInstructions
         }
         return "\(teamInstructions)\n\n\(rendered)"
