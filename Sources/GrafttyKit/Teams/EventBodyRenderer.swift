@@ -2,10 +2,11 @@ import Foundation
 import os
 import Stencil
 
-/// Renders the user's `teamPrompt` Stencil template against the per-delivery
-/// `agent` context and returns a `ChannelServerMessage` with the rendered text
-/// prepended to the body. On empty template, empty render, or render failure,
-/// returns the original event unchanged. Implements TEAM-3.3.
+/// Team-inbox renderer. Renders the user's `teamPrompt` Stencil template
+/// against the per-delivery `agent` context and returns a
+/// `ChannelServerMessage` with the rendered text prepended to the body.
+/// On empty template, empty render, or render failure, returns the
+/// original event unchanged. Implements TEAM-3.3.
 public enum EventBodyRenderer {
 
     private static let logger = Logger(subsystem: "com.btucker.graftty", category: "EventBodyRenderer")
@@ -109,28 +110,4 @@ extension EventBodyRenderer {
         renderAgentTemplate(template, agent: makeAgentContext(branch: branch, lead: lead))
     }
 
-    /// Convenience: returns a `@MainActor (path, message) -> Void` closure that renders
-    /// the user's `teamPrompt` template against each delivery before passing
-    /// the rendered message to `inner`. Use at every dispatch call site so the
-    /// matrix-routed events and team-internal events share rendering behavior.
-    public static func dispatchClosure(
-        repos: [RepoEntry],
-        inner: @escaping @MainActor (String, ChannelServerMessage) -> Void
-    ) -> @MainActor (String, ChannelServerMessage) -> Void {
-        return { path, msg in
-            let template = UserDefaults.standard.string(forKey: "teamPrompt") ?? ""
-            let subjectPath: String? = {
-                if case let .event(_, attrs, _) = msg { return attrs["worktree"] }
-                return nil
-            }()
-            let rendered = EventBodyRenderer.body(
-                for: msg,
-                recipientWorktreePath: path,
-                subjectWorktreePath: subjectPath,
-                repos: repos,
-                templateString: template
-            )
-            inner(path, rendered)
-        }
-    }
 }
