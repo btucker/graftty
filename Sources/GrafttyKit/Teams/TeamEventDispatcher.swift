@@ -29,22 +29,26 @@ public final class TeamEventDispatcher {
     /// not in a team, or the recipient is not a teammate.
     @discardableResult
     public func dispatchTeamMessage(
-        from sender: String,
-        to recipient: String,
+        fromWorktree senderWorktreePath: String,
+        to recipientName: String,
         text: String,
         priority: TeamInboxPriority,
         repos: [RepoEntry],
         teamsEnabled: Bool
     ) throws -> TeamInboxMessage? {
         guard teamsEnabled else { return nil }
-        guard let senderMember = TeamLookup.member(named: sender, in: repos) else { return nil }
-        guard let team = TeamLookup.team(for: senderMember.worktreePath, in: repos) else { return nil }
-        guard let recipientMember = team.memberNamed(recipient) else { return nil }
+        guard let team = TeamLookup.team(for: senderWorktreePath, in: repos),
+              let senderMember = team.members.first(where: { $0.worktreePath == senderWorktreePath }),
+              let recipientMember = team.memberNamed(recipientName)
+        else { return nil }
 
-        let body = renderBody(
+        let event = ChannelServerMessage.event(
             type: TeamChannelEvents.EventType.message,
-            attrs: ["team": team.repoDisplayName, "from": sender],
-            originalBody: text,
+            attrs: ["team": team.repoDisplayName, "from": senderMember.name],
+            body: text
+        )
+        let body = renderBody(
+            event: event,
             recipientWorktreePath: recipientMember.worktreePath,
             subjectWorktreePath: senderMember.worktreePath,
             repos: repos
@@ -75,15 +79,21 @@ public final class TeamEventDispatcher {
     /// Fans a routable `ChannelServerMessage.event(...)` out to one inbox row
     /// per recipient resolved by `TeamEventRouter`. No-ops for events outside
     /// the matrix (`team_message`, `team_member_*`, etc.) and for subject
-    /// worktrees that aren't part of a team.
+    /// worktrees not contained in any tracked repo. For single-worktree repos
+    /// `TeamEventRouter` (via `ChannelEventRouter`) still delivers to the
+    /// subject worktree iff `.worktree` is in the matrix row, so we resolve
+    /// the repo directly rather than going through `TeamLookup.team(for:)`
+    /// which requires a real (>=2 worktree) team.
     public func dispatchRoutableEvent(
         _ event: ChannelServerMessage,
         subjectWorktreePath: String,
         repos: [RepoEntry]
     ) throws {
-        guard case let .event(type, attrs, originalBody) = event else { return }
+        guard case let .event(type, attrs, _) = event else { return }
         guard let routable = RoutableEvent(channelEventType: type, attrs: attrs) else { return }
-        guard let team = TeamLookup.team(for: subjectWorktreePath, in: repos) else { return }
+        guard let repo = repos.first(where: { repo in
+            repo.worktrees.contains(where: { $0.path == subjectWorktreePath })
+        }) else { return }
 
         let recipients = TeamEventRouter.recipients(
             event: routable,
@@ -95,21 +105,19 @@ public final class TeamEventDispatcher {
 
         for recipientPath in recipients {
             let body = renderBody(
-                type: type,
-                attrs: attrs,
-                originalBody: originalBody,
+                event: event,
                 recipientWorktreePath: recipientPath,
                 subjectWorktreePath: subjectWorktreePath,
                 repos: repos
             )
-            let recipientMember = team.members.first(where: { $0.worktreePath == recipientPath })
+            let recipientBranch = repo.worktrees.first(where: { $0.path == recipientPath })?.branch ?? ""
             try inbox.appendMessage(
-                teamID: TeamLookup.id(of: team),
-                teamName: team.repoDisplayName,
-                repoPath: team.repoPath,
-                from: .system(repoPath: team.repoPath),
+                teamID: TeamLookup.id(forRepoPath: repo.path),
+                teamName: repo.displayName,
+                repoPath: repo.path,
+                from: .system(repoPath: repo.path),
                 to: TeamInboxEndpoint(
-                    member: recipientMember?.name ?? "",
+                    member: WorktreeNameSanitizer.sanitize(recipientBranch),
                     worktree: recipientPath,
                     runtime: nil
                 ),
@@ -141,13 +149,11 @@ public final class TeamEventDispatcher {
             branch: joiner.branch,
             worktree: joiner.worktreePath
         )
-        guard case let .event(type, attrs, originalBody) = event else { return }
+        guard case let .event(type, _, _) = event else { return }
 
         let lead = team.lead
         let body = renderBody(
-            type: type,
-            attrs: attrs,
-            originalBody: originalBody,
+            event: event,
             recipientWorktreePath: lead.worktreePath,
             subjectWorktreePath: joiner.worktreePath,
             repos: repos
@@ -199,12 +205,10 @@ public final class TeamEventDispatcher {
             member: leaverName,
             reason: reason
         )
-        guard case let .event(type, attrs, originalBody) = event else { return }
+        guard case let .event(type, _, _) = event else { return }
 
         let body = renderBody(
-            type: type,
-            attrs: attrs,
-            originalBody: originalBody,
+            event: event,
             recipientWorktreePath: repo.path,
             subjectWorktreePath: leaverWorktreePath,
             repos: repos
@@ -230,21 +234,19 @@ public final class TeamEventDispatcher {
     // MARK: - Body rendering
 
     /// Renders the user's `teamPrompt` template against the per-recipient
-    /// agent context. When the template is empty the original body is
-    /// returned unchanged, matching the legacy channel-path behavior.
+    /// agent context. When the template is empty the original event body
+    /// is returned unchanged, matching the legacy channel-path behavior.
     private func renderBody(
-        type: String,
-        attrs: [String: String],
-        originalBody: String,
+        event: ChannelServerMessage,
         recipientWorktreePath: String,
         subjectWorktreePath: String?,
         repos: [RepoEntry]
     ) -> String {
+        guard case let .event(_, _, originalBody) = event else { return "" }
         let template = templateProvider()
         guard !template.isEmpty else { return originalBody }
-        let synthetic = ChannelServerMessage.event(type: type, attrs: attrs, body: originalBody)
         let rendered = EventBodyRenderer.body(
-            for: synthetic,
+            for: event,
             recipientWorktreePath: recipientWorktreePath,
             subjectWorktreePath: subjectWorktreePath,
             repos: repos,

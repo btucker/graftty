@@ -23,7 +23,7 @@ struct TeamEventDispatcherTests {
         )
 
         try dispatcher.dispatchTeamMessage(
-            from: "alice",
+            fromWorktree: "/repo/.worktrees/alice",
             to: "main",
             text: "ping",
             priority: .normal,
@@ -76,6 +76,36 @@ struct TeamEventDispatcherTests {
         #expect(recipientPaths == ["/repo/.worktrees/alice", "/repo/.worktrees/bob"])
         #expect(messages.allSatisfy { $0.kind == "pr_state_changed" })
         #expect(messages.allSatisfy { $0.from.member == "system" })
+    }
+
+    @Test("@spec TEAM-5.9: When pr_state_changed fires in a single-worktree repo, the dispatcher shall write the row to the subject worktree iff .worktree is in the matrix row.")
+    func prStateChangedSingleWorktreeRepo() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main"])
+        let inbox = TeamInbox(rootDirectory: root)
+        let prefs = TeamEventRoutingPreferences(
+            prStateChanged: [.worktree],
+            prMerged: [.root],
+            ciConclusionChanged: [.worktree],
+            mergabilityChanged: [.worktree]
+        )
+        let dispatcher = TeamEventDispatcher(
+            inbox: inbox,
+            preferencesProvider: { prefs },
+            templateProvider: { "" }
+        )
+
+        let event = ChannelServerMessage.event(
+            type: ChannelEventType.prStateChanged,
+            attrs: ["worktree": "/repo", "to": "open", "from": "draft", "pr_number": "42", "pr_url": "https://x", "provider": "github", "repo": "x/y"],
+            body: "PR #42"
+        )
+
+        try dispatcher.dispatchRoutableEvent(event, subjectWorktreePath: "/repo", repos: [repo])
+
+        let messages = try inbox.messages(teamID: TeamLookup.id(forRepoPath: "/repo"))
+        #expect(messages.count == 1)
+        #expect(messages.first?.to.worktree == "/repo")
     }
 
     @Test("@spec TEAM-5.6: When pr_state_changed has attrs.to == 'merged', the dispatcher shall use the prMerged matrix row.")
