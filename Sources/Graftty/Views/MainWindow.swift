@@ -448,7 +448,6 @@ struct MainWindow: View {
         case .success(let path): worktreePath = path
         }
 
-        let router = channelRouter
         let dispatcher = teamEventDispatcher
         Task { @MainActor in
             let result = await AddWorktreeFlow.finishCreate(
@@ -475,9 +474,9 @@ struct MainWindow: View {
                 }
             case .success(let outcome):
                 selectWorktree(outcome.worktreePath)
-                // TEAM-3.4: refresh instructions for all subscribers so
-                // they see the updated roster after the new member joined.
-                router.broadcastInstructions()
+                // Phase 2: live-channel roster broadcast is dropped; the
+                // team_member_joined inbox row addressed to the lead is
+                // the new signal (Phase 4 deletes ChannelRouter entirely).
             }
         }
         return nil
@@ -657,6 +656,8 @@ struct MainWindow: View {
             appState.removeWorktree(atPath: worktreePath)
             // TEAM-5.3: notify the lead that a worktree left. The repo
             // state is read AFTER removal so the lead-present guard works.
+            // Phase 2: live-channel roster broadcast is dropped; the
+            // team_member_left inbox row is the new signal.
             if let repo = appState.repo(forWorktreePath: repoPath) {
                 TeamMembershipEvents.fireLeft(
                     repo: repo,
@@ -666,7 +667,6 @@ struct MainWindow: View {
                     teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
                     dispatcher: teamEventDispatcher
                 )
-                channelRouter.broadcastInstructions()
             }
         }
     }
