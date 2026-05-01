@@ -1336,6 +1336,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-7.7** When the inbox row's `kind` is not one of the known team-event kinds, the application shall render it as a generic system entry with the `info.circle` SF Symbol and the raw `kind` string as the headline so a forward-compatible client still surfaces unknown rows readably.
 
+### TEAM-8.x
+
+**TEAM-8.1** When the application starts, the application shall best-effort run `claude mcp remove graftty-channel`, ignoring non-zero exit and logging failure.
+
 ## EDITOR — Editor Integration
 
 ### EDITOR-1.x
