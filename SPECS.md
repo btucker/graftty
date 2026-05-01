@@ -1322,6 +1322,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-7.4** When the messages.jsonl file appended-to is the team's inbox, the application shall emit the parsed message list to the registered observer callback within one second of the append, including when the file is created after the observer started watching.
 
+**TEAM-7.5** When the inbox row is rendered in the activity log, the application shall render `team_message` rows from a non-system sender as a chat bubble (sender → recipient, timestamp, urgent badge if `priority == .urgent`) and every other row (system sender, or a non-`team_message` kind) as a system entry with a kind-specific SF Symbol and headline.
+
+**TEAM-7.7** When the inbox row's `kind` is not one of the known team-event kinds, the application shall render it as a generic system entry with the `info.circle` SF Symbol and the raw `kind` string as the headline so a forward-compatible client still surfaces unknown rows readably.
+
 ## EDITOR — Editor Integration
 
 ### EDITOR-1.x
