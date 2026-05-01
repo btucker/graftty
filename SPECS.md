@@ -814,7 +814,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-3.1** The application shall serve a single static page at `/` (and `/index.html`) that bootstraps the bundled web client.
 
-**WEB-3.2** When a client requests any path that does not match a bundled
+**WEB-3.2** When a client requests any path that does not match a bundled static asset and does not begin with `/ws`, the application shall respond with the bundled `index.html` body and `Content-Type: text/html; charset=utf-8`. This serves the SPA fallback for client-side-routed URLs such as `/session/<name>`.
 
 **WEB-3.3** The application shall upgrade `/ws?session=<name>` to WebSocket after the authorization check passes.
 

@@ -30,7 +30,10 @@ struct WebServerAuthTests {
         #expect(http.statusCode == 403)
     }
 
-    @Test func allowedRequestServesHTML() async throws {
+    @Test("""
+    @spec WEB-3.1: The application shall serve a single static page at `/` (and `/index.html`) that bootstraps the bundled web client.
+    """)
+    func staticIndexRoutesServeHTML() async throws {
         let server = WebServer(
             config: Self.makeConfig(),
             auth: WebServer.AuthPolicy(isAllowed: { _ in true }),
@@ -48,9 +51,21 @@ struct WebServerAuthTests {
         #expect(http.value(forHTTPHeaderField: "Content-Type")?.hasPrefix("text/html") == true)
         let html = String(data: data, encoding: .utf8) ?? ""
         #expect(html.contains("<div id=\"root\">"))
+
+        let (explicitData, explicitResponse) = try await trustAllSession().data(
+            from: URL(string: "https://localhost:\(port)/index.html")!
+        )
+        let explicitHTTP = explicitResponse as! HTTPURLResponse
+        #expect(explicitHTTP.statusCode == 200)
+        #expect(explicitHTTP.value(forHTTPHeaderField: "Content-Type")?.hasPrefix("text/html") == true)
+        let explicitHTML = String(data: explicitData, encoding: .utf8) ?? ""
+        #expect(explicitHTML.contains("<div id=\"root\">"))
     }
 
-    @Test func spaFallbackServesIndexForUnknownPath() async throws {
+    @Test("""
+    @spec WEB-3.2: When a client requests any path that does not match a bundled static asset and does not begin with `/ws`, the application shall respond with the bundled `index.html` body and `Content-Type: text/html; charset=utf-8`. This serves the SPA fallback for client-side-routed URLs such as `/session/<name>`.
+    """)
+    func spaFallbackServesIndexForUnknownPath() async throws {
         let server = WebServer(
             config: Self.makeConfig(),
             auth: WebServer.AuthPolicy(isAllowed: { _ in true }),

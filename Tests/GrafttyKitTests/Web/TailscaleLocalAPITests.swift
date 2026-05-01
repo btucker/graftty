@@ -56,7 +56,9 @@ struct TailscaleLocalAPIParsingTests {
     }
 }
 
-@Suite("TailscaleLocalAPI — autoDetected transport selection")
+@Suite("""
+@spec WEB-1.6: When resolving the Tailscale LocalAPI, the application shall try Unix domain socket endpoints first (OSS / sandboxed App Store installs) and, if none are reachable, shall fall back to the macsys DMG's TCP endpoint by reading the port from `/Library/Tailscale/ipnport` (file or symlink) and the auth token from `/Library/Tailscale/sameuserproof-<port>`.
+""")
 struct TailscaleLocalAPIAutoDetectTests {
 
     private func makeTempDir() throws -> String {

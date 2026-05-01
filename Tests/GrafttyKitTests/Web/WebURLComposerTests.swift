@@ -25,9 +25,14 @@ struct WebURLComposerTests {
         #expect(url.contains("/session/name%20with%20space"))
     }
 
-    @Test func sessionNameWithPathSeparatorIsEscaped() {
+    @Test("""
+    @spec WEB-1.9: When `WebURLComposer.url(session:host:port:)` percent-encodes the session name for interpolation into the URL path, it shall use `CharacterSet.urlPathAllowed` rather than `urlQueryAllowed`. The latter leaves reserved path/query/fragment separators (`?`, `#`) unescaped, so a session name containing `?` would cause the browser to parse the URL as path-and-query and the client router would see only the prefix. Graftty's own session names per `ZMX-2.1` never include such characters, but socket clients producing custom session names would otherwise silently break.
+    """)
+    func sessionNameWithPathSeparatorIsEscaped() {
         let url = WebURLComposer.url(session: "a?b", host: "h.ts.net", port: 1)
         #expect(url == "https://h.ts.net:1/session/a%3Fb")
+        let fragmentURL = WebURLComposer.url(session: "a#b", host: "h.ts.net", port: 1)
+        #expect(fragmentURL == "https://h.ts.net:1/session/a%23b")
     }
 
     @Test func sessionNameWithFragmentSeparatorIsEscaped() {

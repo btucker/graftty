@@ -29,19 +29,9 @@ struct WebTodo {
     func web_1_4() async throws { }
 
     @Test("""
-@spec WEB-1.6: When resolving the Tailscale LocalAPI, the application shall try Unix domain socket endpoints first (OSS / sandboxed App Store installs) and, if none are reachable, shall fall back to the macsys DMG's TCP endpoint by reading the port from `/Library/Tailscale/ipnport` (file or symlink) and the auth token from `/Library/Tailscale/sameuserproof-<port>`.
-""", .disabled("not yet implemented"))
-    func web_1_6() async throws { }
-
-    @Test("""
 @spec WEB-1.8: The diagnostic "Listening on …" row in the Settings pane shall bracket IPv6 hosts per RFC 3986 authority syntax (e.g., `[fd7a:115c::5]:8799`). Copyable URLs (Settings Base URL, sidebar "Copy web URL") no longer contain IP literals — they use the MagicDNS FQDN (WEB-8.1) — so this bracketing rule applies only to the diagnostic list. `WebURLComposer.authority(host:port:)` owns the bracket logic.
 """, .disabled("not yet implemented"))
     func web_1_8() async throws { }
-
-    @Test("""
-@spec WEB-1.9: When `WebURLComposer.url(session:host:port:)` percent-encodes the session name for interpolation into the URL path, it shall use `CharacterSet.urlPathAllowed` rather than `urlQueryAllowed`. The latter leaves reserved path/query/fragment separators (`?`, `#`) unescaped, so a session name containing `?` would cause the browser to parse the URL as path-and-query and the client router would see only the prefix. Graftty's own session names per `ZMX-2.1` never include such characters, but socket clients producing custom session names would otherwise silently break.
-""", .disabled("not yet implemented"))
-    func web_1_9() async throws { }
 
     @Test("""
 @spec WEB-1.11: When the server fails to bind because the configured port is already in use (EADDRINUSE), the application shall surface the status as `.portUnavailable` — rendered as "Port in use" in the Settings pane — rather than the raw NIO error string (`"bind(descriptor:ptr:bytes:): Address already in use) (errno: 48)"`). Recognition is locale-stable: classify by the bridged `NSPOSIXErrorDomain` + `EADDRINUSE` errno code, with the NIO string-match kept as a secondary path. Both `WebServer.start` and `WebServerController` use a single shared `WebServer.isAddressInUse(_:)` classifier so they cannot drift on recognising the same error.
@@ -82,16 +72,6 @@ struct WebTodo {
 @spec WEB-2.5: _(Removed; superseded by WEB-1.1.)_ The prior loopback-bypass carve-out existed because `WEB-1.1` bound `127.0.0.1`; with that bind gone, local connections now arrive as Tailscale peers via the MagicDNS hostname (WEB-8.1) and are accepted under the normal `WEB-2.2` same-user check.
 """, .disabled("not yet implemented"))
     func web_2_5() async throws { }
-
-    @Test("""
-@spec WEB-3.1: The application shall serve a single static page at `/` (and `/index.html`) that bootstraps the bundled web client.
-""", .disabled("not yet implemented"))
-    func web_3_1() async throws { }
-
-    @Test("""
-@spec WEB-3.2: When a client requests any path that does not match a bundled
-""", .disabled("not yet implemented"))
-    func web_3_2() async throws { }
 
     @Test("""
 @spec WEB-3.3: The application shall upgrade `/ws?session=<name>` to WebSocket after the authorization check passes.
