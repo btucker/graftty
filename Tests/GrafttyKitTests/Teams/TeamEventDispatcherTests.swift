@@ -167,6 +167,58 @@ struct TeamEventDispatcherTests {
         #expect(messages.first?.from.member == "system")
     }
 
+    @Test("@spec TEAM-5.10: When team_message is dispatched and the user's teamPrompt template is non-empty, the dispatcher shall prepend the rendered prompt (followed by a blank line) to the body before the inbox write so the recipient sees the same per-recipient prompt the legacy channel path produced.")
+    func teamMessageRespectsTeamPromptTemplate() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let inbox = TeamInbox(rootDirectory: root)
+        let dispatcher = TeamEventDispatcher(
+            inbox: inbox,
+            preferencesProvider: { TeamEventRoutingPreferences() },
+            templateProvider: { "From {{ agent.branch }}:" }
+        )
+
+        let message = try dispatcher.dispatchTeamMessage(
+            fromWorktree: "/repo",
+            to: "alice",
+            text: "ping",
+            priority: .normal,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        let resolved = try #require(message)
+        // Recipient is alice, so `agent.branch == "alice"`.
+        #expect(resolved.body == "From alice:\n\nping")
+    }
+
+    @Test("@spec TEAM-5.11: When team_broadcast is dispatched, the dispatcher shall write one team_message inbox row per non-sender team member, each rendered against that recipient's agent context.")
+    func teamBroadcastFansOutPerRecipient() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice", "bob"])
+        let inbox = TeamInbox(rootDirectory: root)
+        let dispatcher = TeamEventDispatcher(
+            inbox: inbox,
+            preferencesProvider: { TeamEventRoutingPreferences() },
+            templateProvider: { "" }
+        )
+
+        let messages = try dispatcher.dispatchTeamBroadcast(
+            fromWorktree: "/repo/.worktrees/alice",
+            text: "heads up",
+            priority: .urgent,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        #expect(messages.count == 2)
+        let recipients = Set(messages.map(\.to.member))
+        #expect(recipients == ["main", "bob"])
+        #expect(messages.allSatisfy { $0.from.member == "alice" })
+        #expect(messages.allSatisfy { $0.kind == "team_message" })
+        #expect(messages.allSatisfy { $0.body == "heads up" })
+    }
+
     @Test("@spec TEAM-5.8: When a worktree is removed from a team-enabled repo (collapsing to one worktree), the dispatcher shall still append one team_member_left inbox row addressed to the lead.")
     func memberLeftAddressesLeadEvenWhenTeamShrinks() throws {
         let root = try Self.temporaryDirectory()

@@ -4,10 +4,26 @@ import Testing
 
 @Suite("Team Inbox Request Handler")
 struct TeamInboxRequestHandlerTests {
+    private static func makeHandler(
+        inbox: TeamInbox,
+        templateProvider: @escaping () -> String = { "" },
+        sessionPromptRenderer: ((TeamView, TeamMember) -> String?)? = nil
+    ) -> TeamInboxRequestHandler {
+        TeamInboxRequestHandler(
+            inbox: inbox,
+            dispatcher: TeamEventDispatcher(
+                inbox: inbox,
+                preferencesProvider: { TeamEventRoutingPreferences() },
+                templateProvider: templateProvider
+            ),
+            sessionPromptRenderer: sessionPromptRenderer
+        )
+    }
+
     @Test func sendAppendsAddressedMessage() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
-        let handler = TeamInboxRequestHandler(
+        let handler = Self.makeHandler(
             inbox: TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
         )
 
@@ -26,11 +42,11 @@ struct TeamInboxRequestHandlerTests {
         #expect(delivery.message.body == "please review")
     }
 
-    @Test func broadcastExcludesSenderAndSharesBatchID() throws {
+    @Test func broadcastExcludesSenderAndDeliversToAllOthers() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice", "bob"])
-        let handler = TeamInboxRequestHandler(
-            inbox: TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["batch", "0001", "0002"]), now: { Self.fixedDate })
+        let handler = Self.makeHandler(
+            inbox: TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001", "0002"]), now: { Self.fixedDate })
         )
 
         let deliveries = try handler.broadcast(
@@ -42,14 +58,15 @@ struct TeamInboxRequestHandlerTests {
         )
 
         #expect(deliveries.map { $0.recipient.name }.sorted() == ["bob", "main"])
-        #expect(Set(deliveries.map { $0.message.batchID }) == ["batch"])
         #expect(deliveries.allSatisfy { $0.message.from.member == "alice" })
+        // Phase 2 dispatches per-recipient so each row has a fresh ID; the
+        // legacy `batchID` shared marker is no longer guaranteed.
     }
 
     @Test func sendRejectsUnknownRecipient() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
-        let handler = TeamInboxRequestHandler(inbox: TeamInbox(rootDirectory: root))
+        let handler = Self.makeHandler(inbox: TeamInbox(rootDirectory: root))
 
         #expect(throws: TeamInboxRequestError.self) {
             try handler.send(
@@ -63,12 +80,35 @@ struct TeamInboxRequestHandlerTests {
         }
     }
 
+    @Test func sessionStartIncludesRenderedConfiguredPrompt() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let handler = Self.makeHandler(
+            inbox: TeamInbox(rootDirectory: root),
+            sessionPromptRenderer: { _, viewer in
+                "Configured policy for \(viewer.name)"
+            }
+        )
+
+        let output = try handler.hook(
+            callerWorktree: "/repo/.worktrees/alice",
+            runtime: .codex,
+            event: .sessionStart,
+            sessionID: "session-1",
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        #expect(output.contains("Configured policy for alice"))
+        #expect(output.contains("Graftty Agent Team session context"))
+    }
+
     @Test func postToolUseDoesNotAdvanceCursorPastUndeliveredNormalMessage() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let ids = Self.fixedIDs(["0001", "0002"])
         let inbox = TeamInbox(rootDirectory: root, idGenerator: ids, now: { Self.fixedDate })
-        let handler = TeamInboxRequestHandler(inbox: inbox)
+        let handler = Self.makeHandler(inbox: inbox)
 
         _ = try handler.send(
             callerWorktree: "/repo",

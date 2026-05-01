@@ -36,9 +36,17 @@ public struct TeamInboxDelivery: Sendable, Equatable {
 
 public final class TeamInboxRequestHandler {
     private let inbox: TeamInbox
+    private let dispatcher: TeamEventDispatcher
+    private let sessionPromptRenderer: ((TeamView, TeamMember) -> String?)?
 
-    public init(inbox: TeamInbox) {
+    public init(
+        inbox: TeamInbox,
+        dispatcher: TeamEventDispatcher,
+        sessionPromptRenderer: ((TeamView, TeamMember) -> String?)? = nil
+    ) {
         self.inbox = inbox
+        self.dispatcher = dispatcher
+        self.sessionPromptRenderer = sessionPromptRenderer
     }
 
     @discardableResult
@@ -50,6 +58,9 @@ public final class TeamInboxRequestHandler {
         repos: [RepoEntry],
         teamsEnabled: Bool
     ) throws -> TeamInboxDelivery {
+        // Validate recipient exists up front so the CLI error message
+        // stays helpful (the dispatcher would silently no-op on an unknown
+        // recipient, returning nil — not a useful error for `team msg`).
         let context = try teamContext(callerWorktree: callerWorktree, repos: repos, teamsEnabled: teamsEnabled)
         guard let recipientMember = context.team.memberNamed(recipient) else {
             let available = context.team.members
@@ -57,15 +68,20 @@ public final class TeamInboxRequestHandler {
                 .filter { $0 != context.sender.name }
             throw TeamInboxRequestError.recipientNotFound(name: recipient, available: available)
         }
-        let message = try inbox.appendMessage(
-            teamID: teamID(context.team),
-            teamName: context.team.repoDisplayName,
-            repoPath: context.team.repoPath,
-            from: endpoint(context.sender, runtime: nil),
-            to: endpoint(recipientMember, runtime: nil),
+
+        guard let message = try dispatcher.dispatchTeamMessage(
+            fromWorktree: callerWorktree,
+            to: recipient,
+            text: text,
             priority: priority,
-            body: text
-        )
+            repos: repos,
+            teamsEnabled: teamsEnabled
+        ) else {
+            // Validated above; the dispatcher only returns nil if the
+            // sender's worktree isn't in a team — which `teamContext`
+            // already rejected. Defensive guard.
+            throw TeamInboxRequestError.notInTeam
+        }
         return TeamInboxDelivery(recipient: recipientMember, message: message)
     }
 
@@ -79,15 +95,16 @@ public final class TeamInboxRequestHandler {
     ) throws -> [TeamInboxDelivery] {
         let context = try teamContext(callerWorktree: callerWorktree, repos: repos, teamsEnabled: teamsEnabled)
         let recipients = context.team.members.filter { $0.worktreePath != context.sender.worktreePath }
-        let messages = try inbox.appendBroadcast(
-            teamID: teamID(context.team),
-            teamName: context.team.repoDisplayName,
-            repoPath: context.team.repoPath,
-            from: endpoint(context.sender, runtime: nil),
-            recipients: recipients.map { endpoint($0, runtime: nil) },
+        let messages = try dispatcher.dispatchTeamBroadcast(
+            fromWorktree: callerWorktree,
+            text: text,
             priority: priority,
-            body: text
+            repos: repos,
+            teamsEnabled: teamsEnabled
         )
+        // The dispatcher iterates `team.members.filter { $0.worktreePath != sender }` —
+        // same order this method computes. Pair them up so the returned
+        // `TeamInboxDelivery` carries the matching `TeamMember`.
         return zip(recipients, messages).map { TeamInboxDelivery(recipient: $0.0, message: $0.1) }
     }
 
@@ -163,7 +180,10 @@ public final class TeamInboxRequestHandler {
 
         switch event {
         case .sessionStart:
-            let text = TeamInstructionsRenderer.render(team: context.team, viewer: context.sender)
+            var text = TeamInstructionsRenderer.render(team: context.team, viewer: context.sender)
+            if let renderedPrompt = sessionPromptRenderer?(context.team, context.sender) {
+                text += "\n\n\(renderedPrompt)"
+            }
             return try TeamHookRenderer.sessionStart(runtime: runtime, teamContext: text)
         case .postToolUse:
             let allUnread = try inbox.unreadMessages(

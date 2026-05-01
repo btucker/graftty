@@ -1308,6 +1308,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-5.9** When pr_state_changed fires in a single-worktree repo, the dispatcher shall write the row to the subject worktree iff .worktree is in the matrix row.
 
+**TEAM-5.10** When team_message is dispatched and the user's teamPrompt template is non-empty, the dispatcher shall prepend the rendered prompt (followed by a blank line) to the body before the inbox write so the recipient sees the same per-recipient prompt the legacy channel path produced.
+
+**TEAM-5.11** When team_broadcast is dispatched, the dispatcher shall write one team_message inbox row per non-sender team member, each rendered against that recipient's agent context.
+
 ### TEAM-6.x — Sidebar Visualization
 
 **TEAM-6.1** While `agentTeamsEnabled` is true and a `RepoEntry` has two or more worktrees, the sidebar shall render that repo with a small "team" icon (SF Symbol `person.2.fill`) adjacent to its disclosure header. No per-worktree accent stripe is applied; the header icon is sufficient to indicate team membership.

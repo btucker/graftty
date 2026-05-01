@@ -627,7 +627,6 @@ struct GrafttyApp: App {
                 Self.handleNotification(message, appState: binding, terminalManager: tm)
             }
         }
-        let router = services.channelRouter
         let teamInbox = services.teamInbox
         let teamEventDispatcher = services.teamEventDispatcher
         services.socketServer.onRequest = { message in
@@ -636,7 +635,6 @@ struct GrafttyApp: App {
                     message,
                     appState: binding,
                     terminalManager: tm,
-                    channelRouter: router,
                     teamInbox: teamInbox,
                     teamEventDispatcher: teamEventDispatcher
                 )
@@ -1318,7 +1316,6 @@ struct GrafttyApp: App {
         _ message: NotificationMessage,
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
-        channelRouter: ChannelRouter,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher
     ) -> ResponseMessage? {
@@ -1338,7 +1335,6 @@ struct GrafttyApp: App {
                 text: text,
                 priority: .normal,
                 appState: appState,
-                channelRouter: channelRouter,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
             )
@@ -1349,7 +1345,6 @@ struct GrafttyApp: App {
                 text: text,
                 priority: priority,
                 appState: appState,
-                channelRouter: channelRouter,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
             )
@@ -1359,7 +1354,6 @@ struct GrafttyApp: App {
                 text: text,
                 priority: priority,
                 appState: appState,
-                channelRouter: channelRouter,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
             )
@@ -1370,7 +1364,8 @@ struct GrafttyApp: App {
                 event: event,
                 sessionID: sessionID,
                 appState: appState,
-                teamInbox: teamInbox
+                teamInbox: teamInbox,
+                teamEventDispatcher: teamEventDispatcher
             )
         case .teamInbox(let callerPath, let worktree, let repo, let member, let unread, let all):
             return handleTeamInbox(
@@ -1381,7 +1376,8 @@ struct GrafttyApp: App {
                 unread: unread,
                 all: all,
                 appState: appState,
-                teamInbox: teamInbox
+                teamInbox: teamInbox,
+                teamEventDispatcher: teamEventDispatcher
             )
         case .teamMembers(let callerPath, let worktree, let repo):
             return handleTeamMembers(
@@ -1389,7 +1385,8 @@ struct GrafttyApp: App {
                 worktree: worktree,
                 repo: repo,
                 appState: appState,
-                teamInbox: teamInbox
+                teamInbox: teamInbox,
+                teamEventDispatcher: teamEventDispatcher
             )
         case .teamList(let callerPath):
             return handleTeamMembers(
@@ -1397,7 +1394,8 @@ struct GrafttyApp: App {
                 worktree: nil,
                 repo: nil,
                 appState: appState,
-                teamInbox: teamInbox
+                teamInbox: teamInbox,
+                teamEventDispatcher: teamEventDispatcher
             )
         case .notify, .clear:
             // Fire-and-forget cases — no response. `onMessage` already handled them.
@@ -1412,13 +1410,12 @@ struct GrafttyApp: App {
         text: String,
         priority: TeamInboxPriority,
         appState: Binding<AppState>,
-        channelRouter: ChannelRouter,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher
     ) -> ResponseMessage {
         do {
-            let handler = teamInboxRequestHandler(inbox: teamInbox)
-            let delivery = try handler.send(
+            let handler = teamInboxRequestHandler(inbox: teamInbox, dispatcher: teamEventDispatcher)
+            _ = try handler.send(
                 callerWorktree: callerPath,
                 recipient: recipient,
                 text: text,
@@ -1426,7 +1423,6 @@ struct GrafttyApp: App {
                 repos: appState.wrappedValue.repos,
                 teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
             )
-            dispatchTeamChannel(delivery, repos: appState.wrappedValue.repos, channelRouter: channelRouter)
             return .ok
         } catch let error as TeamInboxRequestError {
             return .error(error.description)
@@ -1441,22 +1437,18 @@ struct GrafttyApp: App {
         text: String,
         priority: TeamInboxPriority,
         appState: Binding<AppState>,
-        channelRouter: ChannelRouter,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher
     ) -> ResponseMessage {
         do {
-            let handler = teamInboxRequestHandler(inbox: teamInbox)
-            let deliveries = try handler.broadcast(
+            let handler = teamInboxRequestHandler(inbox: teamInbox, dispatcher: teamEventDispatcher)
+            _ = try handler.broadcast(
                 callerWorktree: callerPath,
                 text: text,
                 priority: priority,
                 repos: appState.wrappedValue.repos,
                 teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
             )
-            for delivery in deliveries {
-                dispatchTeamChannel(delivery, repos: appState.wrappedValue.repos, channelRouter: channelRouter)
-            }
             return .ok
         } catch let error as TeamInboxRequestError {
             return .error(error.description)
@@ -1472,10 +1464,11 @@ struct GrafttyApp: App {
         event: TeamHookEvent,
         sessionID: String?,
         appState: Binding<AppState>,
-        teamInbox: TeamInbox
+        teamInbox: TeamInbox,
+        teamEventDispatcher: TeamEventDispatcher
     ) -> ResponseMessage {
         do {
-            let output = try teamInboxRequestHandler(inbox: teamInbox).hook(
+            let output = try teamInboxRequestHandler(inbox: teamInbox, dispatcher: teamEventDispatcher).hook(
                 callerWorktree: callerPath,
                 runtime: runtime,
                 event: event,
@@ -1558,10 +1551,11 @@ struct GrafttyApp: App {
         unread: Bool,
         all: Bool,
         appState: Binding<AppState>,
-        teamInbox: TeamInbox
+        teamInbox: TeamInbox,
+        teamEventDispatcher: TeamEventDispatcher
     ) -> ResponseMessage {
         do {
-            let messages = try teamInboxRequestHandler(inbox: teamInbox).diagnosticMessages(
+            let messages = try teamInboxRequestHandler(inbox: teamInbox, dispatcher: teamEventDispatcher).diagnosticMessages(
                 callerWorktree: callerPath,
                 worktree: worktree,
                 repo: repo,
@@ -1585,10 +1579,11 @@ struct GrafttyApp: App {
         worktree: String?,
         repo: String?,
         appState: Binding<AppState>,
-        teamInbox: TeamInbox
+        teamInbox: TeamInbox,
+        teamEventDispatcher: TeamEventDispatcher
     ) -> ResponseMessage {
         do {
-            let result = try teamInboxRequestHandler(inbox: teamInbox).members(
+            let result = try teamInboxRequestHandler(inbox: teamInbox, dispatcher: teamEventDispatcher).members(
                 callerWorktree: callerPath,
                 worktree: worktree,
                 repo: repo,
@@ -1603,34 +1598,13 @@ struct GrafttyApp: App {
         }
     }
 
-    private static func dispatchTeamChannel(
-        _ delivery: TeamInboxDelivery,
-        repos: [RepoEntry],
-        channelRouter: ChannelRouter
-    ) {
-        let template = UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
-        let renderedMessage = EventBodyRenderer.body(
-            for: TeamChannelEvents.teamMessage(
-                team: delivery.message.team,
-                from: delivery.message.from.member,
-                text: delivery.message.body
-            ),
-            recipientWorktreePath: delivery.recipient.worktreePath,
-            subjectWorktreePath: nil,
-            repos: repos,
-            templateString: template
-        )
-        channelRouter.dispatch(
-            worktreePath: delivery.recipient.worktreePath,
-            message: renderedMessage
-        )
-    }
-
     private static func teamInboxRequestHandler(
-        inbox: TeamInbox
+        inbox: TeamInbox,
+        dispatcher: TeamEventDispatcher
     ) -> TeamInboxRequestHandler {
         TeamInboxRequestHandler(
             inbox: inbox,
+            dispatcher: dispatcher,
             sessionPromptRenderer: renderTeamSessionPrompt(team:viewer:)
         )
     }

@@ -74,6 +74,71 @@ public final class TeamEventDispatcher {
         )
     }
 
+    // MARK: - team broadcast (TEAM-5.10)
+
+    /// Writes one `team_message` row per recipient (every team member
+    /// other than the sender). Each row is rendered through the user's
+    /// `teamPrompt` template against the recipient's agent context, so
+    /// `{{ agent.branch }}` / `{{ agent.lead }}` resolve per-recipient
+    /// like every other event the dispatcher fans out.
+    ///
+    /// Note: `appendBroadcast` (which shares a `batchID` across rows) is
+    /// not used because each row carries a recipient-specific rendered
+    /// body. The trade-off is that downstream consumers can't recover
+    /// "these all came from one broadcast" without a heuristic — but the
+    /// unread-fanout cursor logic doesn't rely on `batchID`, so the loss
+    /// is cosmetic.
+    @discardableResult
+    public func dispatchTeamBroadcast(
+        fromWorktree senderWorktreePath: String,
+        text: String,
+        priority: TeamInboxPriority,
+        repos: [RepoEntry],
+        teamsEnabled: Bool
+    ) throws -> [TeamInboxMessage] {
+        guard teamsEnabled else { return [] }
+        guard let team = TeamLookup.team(for: senderWorktreePath, in: repos),
+              let senderMember = team.members.first(where: { $0.worktreePath == senderWorktreePath })
+        else { return [] }
+
+        let recipients = team.members.filter { $0.worktreePath != senderWorktreePath }
+
+        var messages: [TeamInboxMessage] = []
+        for recipient in recipients {
+            let event = TeamChannelEvents.teamMessage(
+                team: team.repoDisplayName,
+                from: senderMember.name,
+                text: text
+            )
+            let body = renderBody(
+                event: event,
+                recipientWorktreePath: recipient.worktreePath,
+                subjectWorktreePath: senderMember.worktreePath,
+                repos: repos
+            )
+            let msg = try inbox.appendMessage(
+                teamID: TeamLookup.id(of: team),
+                teamName: team.repoDisplayName,
+                repoPath: team.repoPath,
+                from: TeamInboxEndpoint(
+                    member: senderMember.name,
+                    worktree: senderMember.worktreePath,
+                    runtime: nil
+                ),
+                to: TeamInboxEndpoint(
+                    member: recipient.name,
+                    worktree: recipient.worktreePath,
+                    runtime: nil
+                ),
+                priority: priority,
+                kind: TeamChannelEvents.EventType.message,
+                body: body
+            )
+            messages.append(msg)
+        }
+        return messages
+    }
+
     // MARK: - Routable matrix events (TEAM-5.5, TEAM-5.6)
 
     /// Fans a routable `ChannelServerMessage.event(...)` out to one inbox row
