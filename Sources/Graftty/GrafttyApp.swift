@@ -400,6 +400,26 @@ struct GrafttyApp: App {
         // the wrapper at request time.
         Self.installAgentHookAssets()
 
+        // One-shot cleanup of the retired graftty-channel MCP integration
+        // (TEAM-8.1 / TEAM-8.2 / TEAM-8.3). Runs idempotently every launch
+        // until we drop it in a few releases.
+        Task { await LegacyChannelCleanup.run() }
+
+        // Strip the legacy `--dangerously-load-development-channels
+        // server:graftty-channel` substring from `defaultCommand` and
+        // disclose the change once via NSAlert. Runs on the main actor
+        // so the modal alert can sit on the run loop after `startup()`
+        // returns (TEAM-8.4).
+        Task { @MainActor in
+            if LegacyChannelCleanup.scrubDefaultCommandLaunchFlag() {
+                let alert = NSAlert()
+                alert.messageText = "Legacy launch flag removed"
+                alert.informativeText = "Removed --dangerously-load-development-channels server:graftty-channel from your default command. Agent teams now run via the unified hook adapter."
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
+        }
+
         if !zmxLauncher.isAvailable {
             DispatchQueue.main.async {
                 ZmxFallbackBanner.presentIfNeeded()
