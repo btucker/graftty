@@ -17,7 +17,7 @@ public enum EventBodyRenderer {
 
     /// Builds the `[String: Any]` agent dict consumed by every Stencil render
     /// in `Graftty`. Centralizes the four key strings so the wire shape can't
-    /// drift between call sites (`body(...)`, `ChannelSettingsObserver`,
+    /// drift between call sites (`body(...)`, team-instructions composition,
     /// tests). Worktree-scoped flags default to `false` for the session-start
     /// path where no event exists yet.
     public static func makeAgentContext(
