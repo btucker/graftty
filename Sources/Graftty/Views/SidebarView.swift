@@ -31,6 +31,12 @@ struct SidebarView: View {
     /// the listening addresses to compose the URL.
     @EnvironmentObject private var webController: WebServerController
 
+    /// SwiftUI's environment-provided window-opener. Used by the
+    /// worktree-row context menu's *Show Team Activity…* item
+    /// (TEAM-7.2) to route to the `TeamActivityLogWindowID`-keyed
+    /// `WindowGroup` declared in `GrafttyApp`.
+    @Environment(\.openWindow) private var openWindow
+
     @Binding var pendingAddWorktree: AddWorktreeRequest?
 
     @AppStorage("agentTeamsEnabled") private var agentTeamsEnabled: Bool = false
@@ -305,12 +311,23 @@ struct SidebarView: View {
                 onDeleteWorktree(worktree.path)
             })
         }
-        // TEAM-6.2: "Show Team Members…" opens a popover listing team members.
+        // TEAM-6.2 / TEAM-7.2: team-aware items appear together when
+        // the worktree is in a team-enabled repo with ≥2 worktrees.
         if agentTeamsEnabled,
-           TeamView.team(for: worktree, in: appState.repos, teamsEnabled: true) != nil {
+           let team = TeamView.team(for: worktree, in: appState.repos, teamsEnabled: true) {
             menu.addItem(.separator())
             menu.addItem(ClosureMenuItem(title: "Show Team Members…") {
                 teamPopoverWorktreePath = worktree.path
+            })
+            // TEAM-7.2: opens the activity-log window for this team.
+            let teamID = TeamLookup.id(of: team)
+            let teamName = team.repoDisplayName
+            let openWindow = self.openWindow
+            menu.addItem(ClosureMenuItem(title: "Show Team Activity…") {
+                openWindow(
+                    id: TeamActivityLogWindowID.windowGroupID,
+                    value: TeamActivityLogWindowID(teamID: teamID, teamName: teamName)
+                )
             })
         }
         return menu

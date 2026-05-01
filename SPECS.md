@@ -96,11 +96,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### LAYOUT-5.x — Window Lifecycle
 
-**LAYOUT-5.1** When the user closes the main window (Cmd+W, red traffic-light button, or `File → Close`), the application shall keep running as a foreground app — the Dock icon remains visible, background services (socket listener, channel router, stats/PR pollers, filesystem watchers, web access server) keep running, and any running terminal panes stay attached to their underlying zmx sessions. Closing the window is not a quit; the user explicitly issues `Cmd+Q` or `File → Quit` to terminate the app.
+**LAYOUT-5.1** When the user closes the main window (Cmd+W, red traffic-light button, or `File → Close`), the application shall keep running as a foreground app — the Dock icon remains visible, background services (socket listener, stats/PR pollers, filesystem watchers, web access server) keep running, and any running terminal panes stay attached to their underlying zmx sessions. Closing the window is not a quit; the user explicitly issues `Cmd+Q` or `File → Quit` to terminate the app.
 
 **LAYOUT-5.2** When the user activates the app from the Dock (click, `Cmd+Tab`, or Spotlight) while no windows are visible, the application shall display the main window again, populated from the already-in-memory `AppState` (repositories, worktrees, selection, and split trees) and with the `WindowFrameTracker` frame-restoration of `PERSIST-3.4` applied to the recreated `NSWindow`. Existing running terminal panes are re-rendered from the persisted `TerminalManager`'s surface map without recreating their underlying libghostty surfaces or zmx sessions.
 
-**LAYOUT-5.3** The application's one-time startup path (`ghostty_init` and the `ghostty_app_t` construction inside `TerminalManager.initialize()`, the `SocketServer.start()`, the `ChannelRouter.start()`, `reconcileOnLaunch()`, the stats/PR poller `start()` calls, the `restoreRunningWorktrees()` pass, and the `NSApplication.willTerminateNotification` observer registration) shall run exactly once per app-process lifetime, regardless of how many times the root `WindowGroup` scene is instantiated. The SwiftUI reopen flow (`applicationShouldHandleReopen` → `applicationOpenUntitledFile:`) and any future multi-window entry points (`File → New Window`) re-invoke the `WindowGroup` content closure and therefore fire `.onAppear` again; the implementation seam is a `@State` boolean on `GrafttyApp` whose storage persists across scene re-creations. Without this guard, `TerminalManager.initialize()`'s `ghosttyApp == nil` precondition traps the process on the second invocation.
+**LAYOUT-5.3** The application's one-time startup path (`ghostty_init` and the `ghostty_app_t` construction inside `TerminalManager.initialize()`, the `SocketServer.start()`, `reconcileOnLaunch()`, the stats/PR poller `start()` calls, the `restoreRunningWorktrees()` pass, and the `NSApplication.willTerminateNotification` observer registration) shall run exactly once per app-process lifetime, regardless of how many times the root `WindowGroup` scene is instantiated. The SwiftUI reopen flow (`applicationShouldHandleReopen` → `applicationOpenUntitledFile:`) and any future multi-window entry points (`File → New Window`) re-invoke the `WindowGroup` content closure and therefore fire `.onAppear` again; the implementation seam is a `@State` boolean on `GrafttyApp` whose storage persists across scene re-creations. Without this guard, `TerminalManager.initialize()`'s `ghosttyApp == nil` precondition traps the process on the second invocation.
 
 ## STATE — Worktree Entry States
 
@@ -1038,89 +1038,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PR-7.14** The PR polling tick shall dispatch eligible per-worktree fetches and return without awaiting those fetch Tasks. The ticker loop itself must remain live even if a `gh` / `glab` subprocess hangs, otherwise `PR-7.13`'s abandoned-in-flight recovery never gets a later polling tick on which to supersede the stuck fetch. A hung fetch may occupy that worktree's `inFlight` slot until the `PR-7.13` 30-second inFlight cap elapses, but it must not stop unrelated worktrees from polling or require the user to click the sidebar to trigger the separate on-demand refresh path.
 
-## CHAN — Claude Code Channels
-
-### CHAN-1.x — Router and Subscriber Routing
-
-**CHAN-1.1** The application shall host a single `ChannelRouter` that owns the `ChannelSocketServer` and maintains a `[worktreePath: ChannelSocketServer.Connection]` map keyed by the subscriber's `worktree` field.
-
-**CHAN-1.2** When a subscriber sends a `subscribe` message, the router shall record the connection under the subscribed worktree path (replacing any prior connection for that path) and update its observable `subscriberCount`.
-
-**CHAN-1.3** When a subscriber disconnects, the router shall remove that connection from the subscriber map and update `subscriberCount` accordingly, regardless of which worktree path the connection had subscribed under.
-
-**CHAN-1.4** When a subscriber first subscribes, the router shall immediately send it a `type=instructions` event whose `body` is the current prompt from the injected `promptProvider`. This initial event shall be written synchronously from the server's connection-handling thread so it reaches the subscriber even when the main actor is briefly occupied; the map mutation and `subscriberCount` update still hop to the main actor where the router's state lives.
-
-**CHAN-1.5** When `ChannelRouter.dispatch(worktreePath:message:)` is called, the router shall forward the message only to the single connection registered under the matching worktree path, if any, and shall not broadcast it to subscribers of other worktree paths.
-
-**CHAN-1.6** When `ChannelRouter.broadcastInstructions()` is called, the router shall build a `type=instructions` event from the current `promptProvider()` and send it to every currently-registered subscriber exactly once.
-
-**CHAN-1.7** If a write to a subscriber's connection throws (peer gone, socket closed), the router shall remove that subscriber from its map and update `subscriberCount`, so a dead peer does not leak a stale entry and subsequent dispatches to the same worktree path do not fail against the same dead fd.
-
-**CHAN-1.8** While `ChannelRouter.isEnabled` is `false`, both `dispatch` and `broadcastInstructions` shall become no-ops, but existing subscriber connections shall remain connected — mirroring the Settings enable toggle without forcing every subscriber to reconnect on re-enable.
-
-### CHAN-2.x — Channel Settings (Agent Teams pane)
-
-**CHAN-2.1** The channel settings are part of the **Agent Teams** Settings tab; there is no separate "Channels" tab. `channelsEnabled` is no longer used; the channel infrastructure is gated entirely by `agentTeamsEnabled` (see TEAM-1.2).
-
-**CHAN-2.3** While `agentTeamsEnabled` is `false`, the Agent Teams pane shall hide the research-preview disclosure banner, the PR-notifications sub-checkbox, and the prompt editor, showing only the main toggle and its footer.
-
-**CHAN-2.4** When `agentTeamsEnabled` is `true`, the Agent Teams pane shall display a highlighted instructional panel containing the verbatim launch flag string `--dangerously-load-development-channels server:graftty-channel`, a one-click "Copy" button that writes that string to the system pasteboard, a note that the `--dangerously-load-development-channels` flag bypasses Claude Code's channel allowlist only for this server, and a note that events originate from Graftty's local polling. The application shall not auto-inject the flag into `defaultCommand` or any other launched command — the user is responsible for adding it to their own `claude` launch.
-
-**CHAN-2.5** When `agentTeamsEnabled` is `true`, the Agent Teams pane shall render an editable prompt textarea bound to `@AppStorage("channelPrompt")`, seeded on first read with the default prompt template that documents the event tag format and how Claude should respond to `pr_state_changed` and `ci_conclusion_changed` events.
-
-**CHAN-2.6** When the user clicks "Restore default" in the prompt section, the application shall overwrite `channelPrompt` with the built-in default prompt template.
-
-### CHAN-3.x — Launch Flag Disclosure
-
-**CHAN-3.1** The canonical launch-flag string the Channels pane shall disclose is `--dangerously-load-development-channels server:graftty-channel`. The `server:<name>` form addresses the user-scope MCP server entry Graftty registers via `claude mcp add` per CHAN-4.*. The `plugin:<name>@<marketplace>` form is not used, because local plugins under `~/.claude/plugins/` are not registered under any marketplace by default and the flag rejects bare `plugin:<name>`.
-
-**CHAN-3.2** The application shall never modify the user's `defaultCommand` string, nor inject channel flags into any command it types into a terminal. The user is the sole author of the Claude launch line.
-
-**CHAN-3.3** Existing `claude` sessions shall continue with their original launch flags when `agentTeamsEnabled` is toggled mid-session; only sessions started by the user after toggling shall see the change. Retroactively attaching channels to a running `claude` requires the user to restart it with the launch flag appended.
-
-### CHAN-4.x — MCP Server Installation
-
-**CHAN-4.1** While `agentTeamsEnabled` is `true`, on app launch the application shall register an MCP server named `graftty-channel` at user scope via the `claude` CLI, with its command set to the bundled Graftty CLI path and its args set to `["mcp-channel"]`.
-
-**CHAN-4.2** The registration shall be idempotent: when an entry already exists at user scope with the expected command and args, the application shall not re-invoke `claude mcp add`. When the existing entry differs (path change, wrong args, or wrong scope), the application shall remove the old entry and register the new one.
-
-**CHAN-4.3** If the `claude` CLI is not present on PATH (including the augmented PATH that includes `/opt/homebrew/bin`, `/usr/local/bin`, and `~/.local/bin`), the application shall log the absence and skip the install. Channel events simply won't reach a session until Claude Code is installed.
-
-**CHAN-4.4** If the bundled Graftty CLI binary is not present at the expected path (e.g. when running from `swift run`), the application shall log and skip the install rather than registering an entry pointing at a nonexistent binary.
-
-**CHAN-4.5** On app launch, the application shall remove any leftover `~/.claude/plugins/graftty-channel/` directory from prior versions (plugin-wrapper shape) **and** any leftover `~/.claude/.mcp.json` file written by prior versions that used the hand-rolled-JSON installer shape. Both removals shall be no-ops when the target is absent, and the `.mcp.json` cleanup shall only fire when the file's contents exactly match the old installer's output (to avoid deleting a file the user has repurposed manually).
-
-### CHAN-5.x — Event Emission
-
-**CHAN-5.1** When `PRStatusStore` detects a PR state transition (`open` ↔ `merged`), the application shall fire a `type=pr_state_changed` channel event for that worktree carrying `from`, `to`, `pr_number`, `pr_url`, `provider`, `repo`, `worktree`, and `pr_title` attributes.
-
-**CHAN-5.2** When `PRStatusStore` detects a CI conclusion change for a tracked PR, the application shall fire a `type=ci_conclusion_changed` channel event for that worktree carrying `from`, `to`, `pr_number`, `pr_url`, `provider`, `repo`, and `worktree` attributes.
-
-**CHAN-5.3** Events shall not be fired for idempotent polls where `previous == current` (same `PRInfo` seen twice).
-
-**CHAN-5.4** Events shall not be fired on initial discovery of a PR for a worktree (when `previous == nil`) — a transition requires a previous state to transition FROM.
-
-**CHAN-5.5** The `provider` attribute shall be the lowercase raw string of the hosting provider (`github` or `gitlab`), and the `repo` attribute shall be the `owner/name` slug of the repository.
-
-### CHAN-6.x — Prompt Update Lifecycle
-
-**CHAN-6.1** When the user edits the channels prompt in the Settings pane, the application shall observe the change via KVO on `UserDefaults.channelPrompt` and, after a 500ms debounce, invoke `ChannelRouter.broadcastInstructions()` to fan the current prompt out to every connected subscriber.
-
-**CHAN-6.2** The debounce shall coalesce rapid edits into a single broadcast per settled edit — successive keystrokes within the 500ms window shall reset the timer rather than each scheduling their own broadcast.
-
-### CHAN-7.x — Error Handling
-
-**CHAN-7.1** If the `graftty mcp-channel` subprocess fails to resolve the worktree at startup (CWD is not inside a tracked Graftty worktree), the subprocess shall emit exactly one `notifications/claude/channel` event with `meta.type = "channel_error"` on stdout, then exit with status 1.
-
-**CHAN-7.2** If the `graftty mcp-channel` subprocess cannot connect to the channels socket at startup, the subprocess shall emit exactly one `channel_error` event and exit with status 1.
-
-**CHAN-7.3** If the channels socket closes after a `graftty mcp-channel` subprocess has subscribed (Graftty quit, socket torn down), the subprocess shall emit one final `channel_error` event and exit cleanly.
-
-**CHAN-7.4** When a `PRStatusStore` fetch fails (network error, rate limit, expired auth), no channel event shall be sent to any subscriber for that polling cycle. Failure is silent from the channel's perspective; only successful state-change detections fire events.
-
-### CHAN-8.x — Socket Infrastructure
-
-**CHAN-8.1** The channels socket shall be located at `<ApplicationSupport>/Graftty/graftty-channels.sock` by default, overridable via the `GRAFTTY_CHANNELS_SOCK` environment variable (empty-string values shall fall back to the default, matching the control socket's semantics).
+**PR-7.15** PRStatusStore.onTransition shall deliver a (RoutableEvent, worktreePath, attrs) tuple on every PR state or CI conclusion transition, so consumers can re-route via TeamEventDispatcher without parsing wire-format event types.
 
 ## IOS — iOS App
 
@@ -1244,17 +1162,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-1.1** The application shall provide a Settings tab named "Agent Teams" containing one boolean toggle, *Enable agent teams*, persisted via `@AppStorage("agentTeamsEnabled")` (Bool, default false).
 
-**TEAM-1.2** `agentTeamsEnabled` is the single feature toggle governing both team mode and channel-event delivery. There is no separate `channelsEnabled` flag; the channel infrastructure is gated entirely by `agentTeamsEnabled`. When `agentTeamsEnabled` is false, no channel router, no MCP server registration, and no PR channel events fire.
+**TEAM-1.2** While `agentTeamsEnabled` is false, the application shall not write any team event rows to the inbox and `graftty team hook` shall return no-op responses; the agent team feature is fully gated by this flag.
 
-**TEAM-1.5** `agentTeamsEnabled` plus the `channelRoutingPreferences` JSON struct (see TEAM-1.8) supersede the previous coupled `teamPRNotificationsEnabled` flag. Channel events fire only when `agentTeamsEnabled` is true; per-event recipient sets are taken from the matrix in `channelRoutingPreferences`.
+**TEAM-1.5** `agentTeamsEnabled` plus the `teamEventRoutingPreferences` JSON struct (see TEAM-1.8) supersede the previous coupled `teamPRNotificationsEnabled` flag. Inbox events are written only when `agentTeamsEnabled` is true; per-event recipient sets are taken from the matrix in `teamEventRoutingPreferences`.
 
-**TEAM-1.6** The Agent Teams Settings pane shall expose **two** user-editable Stencil-templated text areas, each pre-populated with a non-empty default (`DefaultPrompts.sessionPrompt` and `DefaultPrompts.eventPrompt`) registered into `UserDefaults.standard` at app startup so non-binding readers see the same default until the user overrides. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt` (`@AppStorage("teamSessionPrompt")`, String) — rendered once at session start against the `agent` context; only `agent.branch` and `agent.lead` are meaningful at session start (`agent.this_worktree` and `agent.other_worktree` are always `false`), and the pane's variable-list disclosure deliberately omits the latter two. The rendered text is appended after a blank line to the auto-generated team-aware MCP-instructions text. The second, `teamPrompt` (`@AppStorage("teamPrompt")`, String) — rendered per channel-event delivery against the full four-field `agent` context; the rendered text is prepended after a blank line to the channel event's body before dispatch. Both templates use the same `agent` struct shape: `branch` (String), `lead` (Bool), `this_worktree` (Bool), `other_worktree` (Bool). The previously-defined `teamLeadPrompt` and `teamCoworkerPrompt` AppStorage keys are removed.
+**TEAM-1.6** The Agent Teams Settings pane shall expose **two** user-editable Stencil-templated text areas, each pre-populated with a non-empty default (`DefaultPrompts.sessionPrompt` and `DefaultPrompts.eventPrompt`) registered into `UserDefaults.standard` at app startup so non-binding readers see the same default until the user overrides. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt` (`@AppStorage("teamSessionPrompt")`, String) — rendered once at session start against the `agent` context; only `agent.branch` and `agent.lead` are meaningful at session start (`agent.this_worktree` and `agent.other_worktree` are always `false`), and the pane's variable-list disclosure deliberately omits the latter two. The rendered text is appended after a blank line to the auto-generated team-aware instructions text returned by `graftty team hook`. The second, `teamPrompt` (`@AppStorage("teamPrompt")`, String) — rendered per inbox-row write against the full four-field `agent` context evaluated against the recipient agent; the rendered text is prepended after a blank line to the inbox row's body before the row is appended to the recipient's `messages.jsonl`. Both templates use the same `agent` struct shape: `branch` (String), `lead` (Bool), `this_worktree` (Bool), `other_worktree` (Bool). The previously-defined `teamLeadPrompt` and `teamCoworkerPrompt` AppStorage keys are removed.
 
-**TEAM-1.7** While `agentTeamsEnabled` is true, the Agent Teams Settings pane shall display the canonical channel launch flag `--dangerously-load-development-channels server:graftty-channel` in a monospaced selectable text view alongside a "Copy" button that writes the flag to the system clipboard, and a footer note explaining that the user must add the flag to their `claude` invocation (e.g., the Default Command field on the General Settings pane) for channel events to flow into the session.
+**TEAM-1.8** The Agent Teams Settings pane shall render a 4×3 matrix of toggles (rows: PR state changed / PR merged / CI conclusion changed / Mergability changed; columns: Root agent / Worktree agent / Other worktree agents). Each cell binds to one bit of a `RecipientSet` field on the persisted `TeamEventRoutingPreferences` `Codable` struct. Defaults: state-changed/CI/mergability → worktree only; merged → root only. The matrix is rendered as its own Section between the main toggle and the prompt sections.
 
-**TEAM-1.8** The Agent Teams Settings pane shall render a 4×3 matrix of toggles (rows: PR state changed / PR merged / CI conclusion changed / Mergability changed; columns: Root agent / Worktree agent / Other worktree agents). Each cell binds to one bit of a `RecipientSet` field on the persisted `ChannelRoutingPreferences` `Codable` struct. Defaults: state-changed/CI/mergability → worktree only; merged → root only. The matrix is rendered as its own Section between the main toggle and the prompt sections.
+**TEAM-1.9** When `PRStatusStore` fires a transition that produces a routable team event (`pr_state_changed`, `ci_conclusion_changed`, `merge_state_changed`), the application shall consult `teamEventRoutingPreferences` for the corresponding row and write one inbox row per recipient resolved by `TeamEventRouter.recipients`. The router classifies `pr_state_changed` events with `attrs.to == "merged"` as the *PR merged* row; all other `pr_state_changed` events are the *PR state changed* row. Single-worktree repos (no team) receive the event only when the relevant row's `Worktree agent` cell is set; root and other-worktree cells are no-ops there.
 
-**TEAM-1.9** When `PRStatusStore` fires a transition that produces a routable channel event (`pr_state_changed`, `ci_conclusion_changed`, `merge_state_changed`), the application shall consult `channelRoutingPreferences` for the corresponding row and dispatch the event once per recipient resolved by `ChannelEventRouter.recipients`. The router classifies `pr_state_changed` events with `attrs.to == "merged"` as the *PR merged* row; all other `pr_state_changed` events are the *PR state changed* row. Single-worktree repos (no team) receive the event only when the relevant row's `Worktree agent` cell is set; root and other-worktree cells are no-ops there.
+**TEAM-1.10** When the application starts, the application shall migrate any legacy `channelRoutingPreferences` UserDefaults string into `teamEventRoutingPreferences` and clear the old key. The migration is idempotent: if `teamEventRoutingPreferences` is already populated, the migration leaves the new value alone and only clears the old key. If neither key is present the migration is a no-op.
 
 ### TEAM-2.x — Team Identity & Membership
 
@@ -1266,37 +1184,77 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-2.4** Team identity, membership, and lead designation are derived live from `AppState`. The application shall not persist any team-specific data beyond `agentTeamsEnabled` itself.
 
-### TEAM-3.x — Team-Aware MCP Instructions
+**TEAM-2.5** TeamMembershipEvents.fireJoined writes a team_member_joined inbox row through the dispatcher.
 
-**TEAM-3.1** When a `graftty mcp-channel` subscriber connects on behalf of a worktree whose repo has team status (per TEAM-2.1), the application shall include the rendered team-aware instructions text in the initial `instructions` channel event sent to that subscriber. The instructions text describes only mechanism — peers, the `graftty team msg` command, the `team_*` channel event types — and contains no behavioral prescription.
+### TEAM-3.x — Team-Aware Hook Instructions
 
-**TEAM-3.2** The application shall render the *lead variant* of the team-aware instructions when the subscriber's worktree is the team's lead (per TEAM-2.3), and the *coworker variant* otherwise. Both variants name the team (by repo display name), the agent (by member name), and list the team's other members by name and worktree.
+**TEAM-3.2** The application shall render the *lead variant* of the team-aware instructions when the viewer's worktree is the team's lead (per TEAM-2.3), and the *coworker variant* otherwise. Both variants name the team (by repo display name), the agent (by member name), and list the team's other members by name and worktree.
 
-**TEAM-3.3** Two separate user templates contribute to what each agent sees. **MCP instructions** (session start): the auto-generated team-aware text from `TeamInstructionsRenderer` is followed (after a blank line) by the rendered `teamSessionPrompt` template, evaluated against the agent's session-start context. If the template is empty, whitespace-only after render, or fails to render (Stencil throws), the appended portion is omitted and a render-failure error is logged via `os_log`. **Per channel-event delivery**: the rendered `teamPrompt` template is prepended (followed by a blank line) to the event body before dispatch. The same render/empty/failure rules apply. This applies to every channel event flowing through `ChannelRouter.dispatch` — PR/CI/merge events as routed by the matrix, plus `team_message`, `team_member_joined`, and `team_member_left`.
-
-**TEAM-3.4** When the team membership of a worktree's repo changes (a worktree is added or removed, or `agentTeamsEnabled` toggles), the application shall re-render and re-broadcast the `instructions` event to every active subscriber whose worktree's team is affected. (This reuses the existing `broadcastInstructions` pipeline.)
+**TEAM-3.3** Two separate user templates contribute to what each agent sees. **Hook session-start instructions**: the auto-generated team-aware text from `TeamInstructionsRenderer` is followed (after a blank line) by the rendered `teamSessionPrompt` template, evaluated against the agent's session-start context. If the template is empty, whitespace-only after render, or fails to render (Stencil throws), the appended portion is omitted and a render-failure error is logged via `os_log`. **Per inbox-row delivery**: the rendered `teamPrompt` template is rendered into each inbox row's body at write time per recipient (followed by a blank line, prepended to the event body). The same render/empty/failure rules apply. This covers every team event written via `TeamEventDispatcher.dispatchRoutableEvent` — PR/CI/merge events as routed by the matrix, plus `team_message`, `team_member_joined`, and `team_member_left`.
 
 ### TEAM-4.x — `graftty team` CLI
 
 **TEAM-4.1** The application shall provide a CLI subcommand group `graftty team` with two subcommands: `msg <member-name> "<text>"` and `list`.
 
-**TEAM-4.2** `graftty team msg <member-name> "<text>"` shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, look up the team for that worktree, find a teammate matching `<member-name>`, and send a `team_message` channel event addressed to that teammate's worktree with `attrs.from = <calling-worktree's member name>` and body `<text>`. The CLI shall exit non-zero with a stderr message if (a) team mode is disabled, (b) the calling worktree has no team, or (c) `<member-name>` is not a teammate of the caller. In case (c) the error shall list the current teammates' member names.
+**TEAM-4.2** `graftty team msg <member-name> "<text>"` shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, look up the team for that worktree, find a teammate matching `<member-name>`, and write a `team_message` inbox row addressed to that teammate's worktree with `from.member = <calling-worktree's member name>` and body `<text>`. The CLI shall exit non-zero with a stderr message if (a) team mode is disabled, (b) the calling worktree has no team, or (c) `<member-name>` is not a teammate of the caller. In case (c) the error shall list the current teammates' member names.
 
 **TEAM-4.3** `graftty team list` shall print one line per team member of the caller's team to stdout: `<member-name>  branch=<branch>  worktree=<path>  role=<lead|coworker>  running=<true|false>`. The first printed line shall be a header `team=<repo-display-name>  members=<count>`. The CLI shall exit non-zero with a stderr message if team mode is disabled or the calling worktree has no team.
 
-### TEAM-5.x — `team_*` Channel Events
+### TEAM-5.x — `team_*` Inbox Events
 
-**TEAM-5.1** The application shall emit a `team_message` channel event when `graftty team msg` is invoked successfully. Routing: addressed to the recipient's worktree only. Attributes: `team` (repo display name), `from` (sender's member name). Body: the message text.
+**TEAM-5.1** When team_message is dispatched, the application shall append exactly one inbox row addressed to the named recipient.
 
-**TEAM-5.2** The application shall emit a `team_member_joined` channel event when a worktree is added to a team (a new worktree appears in a team-enabled repo, or a single-worktree repo gains a second worktree). Routing: addressed to the team's lead's worktree only. Attributes: `team`, `member` (joiner's member name), `branch`, `worktree` (joiner's path).
+**TEAM-5.2** The application shall write a `team_member_joined` inbox row when a worktree is added to a team (a new worktree appears in a team-enabled repo, or a single-worktree repo gains a second worktree). Routing: addressed to the team's lead's worktree only. Attributes: `team`, `member` (joiner's member name), `branch`, `worktree` (joiner's path).
 
-**TEAM-5.3** The application shall emit a `team_member_left` channel event when a worktree is removed from a team (the worktree is deleted, or the team-enabled repo collapses to one worktree). Routing: addressed to the team's lead's worktree only. Attributes: `team`, `member` (departing member's name), `reason` (`removed` or `exited`).
+**TEAM-5.3** The application shall write a `team_member_left` inbox row when a worktree is removed from a team (the worktree is deleted, or the team-enabled repo collapses to one worktree). Routing: addressed to the team's lead's worktree only. Attributes: `team`, `member` (departing member's name), `reason` (`removed` or `exited`).
+
+**TEAM-5.4** When constructing a system endpoint, the application shall produce an endpoint with member='system', worktree=<repoPath>, and runtime=nil.
+
+**TEAM-5.5** When PRStatusStore fires pr_state_changed (non-merged), the dispatcher shall write one inbox row per recipient resolved via the prStateChanged matrix row.
+
+**TEAM-5.6** When pr_state_changed has attrs.to == 'merged', the dispatcher shall use the prMerged matrix row.
+
+**TEAM-5.7** When a worktree joins a team-enabled repo, the dispatcher shall append one team_member_joined inbox row addressed to the lead.
+
+**TEAM-5.8** When a worktree is removed from a team-enabled repo (collapsing to one worktree), the dispatcher shall still append one team_member_left inbox row addressed to the lead.
+
+**TEAM-5.9** When pr_state_changed fires in a single-worktree repo, the dispatcher shall write the row to the subject worktree iff .worktree is in the matrix row.
+
+**TEAM-5.10** When team_message is dispatched and the user's teamPrompt template is non-empty, the dispatcher shall prepend the rendered prompt (followed by a blank line) to the body before the inbox write so the recipient sees the same per-recipient prompt the legacy channel path produced.
+
+**TEAM-5.11** When team_broadcast is dispatched, the dispatcher shall write one team_message inbox row per non-sender team member, each rendered against that recipient's agent context.
 
 ### TEAM-6.x — Sidebar Visualization
 
 **TEAM-6.1** While `agentTeamsEnabled` is true and a `RepoEntry` has two or more worktrees, the sidebar shall render that repo with a small "team" icon (SF Symbol `person.2.fill`) adjacent to its disclosure header. No per-worktree accent stripe is applied; the header icon is sufficient to indicate team membership.
 
 **TEAM-6.2** Right-clicking any team-enabled worktree's row shall include a *Show Team Members…* context-menu item. Selecting it shall display a popover listing each team member by name, branch, and role (lead / coworker), populated from the same source as `graftty team list`.
+
+### TEAM-7.x — Team Activity Log Window
+
+**TEAM-7.1** When the user invokes the *Window → Team Activity Log* command, the application shall open the Team Activity Log window for the focused worktree's team — and shall disable the command when the focused selection has no team (single-worktree repo, no selection, or `agentTeamsEnabled` off).
+
+**TEAM-7.2** Right-clicking a team-enabled worktree row in the sidebar shall include a *Show Team Activity…* item that opens the activity-log window for that team. The routing key derives from the same `(teamID, teamName)` pair the Window menu command uses, so both entry points target the same per-team `WindowGroup` instance.
+
+**TEAM-7.3** While the Team Activity Log window is open for a team, the application shall display every `TeamInboxMessage` for that team in chronological order, refreshing live as new rows land in the inbox.
+
+**TEAM-7.4** When the messages.jsonl file appended-to is the team's inbox, the application shall emit the parsed message list to the registered observer callback within one second of the append, including when the file is created after the observer started watching.
+
+**TEAM-7.5** When the inbox row is rendered in the activity log, the application shall render `team_message` rows from a non-system sender as a chat bubble (sender → recipient, timestamp, urgent badge if `priority == .urgent`) and every other row (system sender, or a non-`team_message` kind) as a system entry with a kind-specific SF Symbol and headline.
+
+**TEAM-7.6** While the Team Activity Log window is open, the application shall expose a "Reveal in Finder" affordance whose target is the team's `messages.jsonl` file.
+
+**TEAM-7.7** When the inbox row's `kind` is not one of the known team-event kinds, the application shall render it as a generic system entry with the `info.circle` SF Symbol and the raw `kind` string as the headline so a forward-compatible client still surfaces unknown rows readably.
+
+### TEAM-8.x — Legacy Channel Cleanup
+
+**TEAM-8.1** When the application starts, the application shall best-effort run `claude mcp remove graftty-channel`, ignoring non-zero exit and logging failure.
+
+**TEAM-8.2** When the application starts, the application shall delete `~/.claude/.mcp.json` if it exists and contains no MCP server entries other than `graftty-channel`.
+
+**TEAM-8.3** When the application starts, the application shall delete `~/.claude/plugins/graftty-channel` if present.
+
+**TEAM-8.4** When the application starts, if `defaultCommand` contains `--dangerously-load-development-channels server:graftty-channel`, the application shall strip the substring (with any adjacent leading whitespace), write the cleaned value back to `defaultCommand`, and present a one-shot informational `NSAlert` describing the change.
 
 ## EDITOR — Editor Integration
 

@@ -107,12 +107,14 @@ final class SurfaceHandle {
         // macOS APFS that hijacks `which graftty` to the GUI binary, which
         // silently exits 0. `BundlePathSanitizer` strips it and prepends
         // `Contents/Helpers` (where the CLI actually lives).
+        let sanitizedPath = BundlePathSanitizer.sanitized(
+            currentPath: ProcessInfo.processInfo.environment["PATH"] ?? "",
+            bundleURL: Bundle.main.bundleURL
+        )
+        let path = Self.agentHookPathPrefix().map { "\($0):\(sanitizedPath)" } ?? sanitizedPath
         var envPairs: [(key: String, value: String)] = [
             ("GRAFTTY_SOCK", socketPath),
-            ("PATH", BundlePathSanitizer.sanitized(
-                currentPath: ProcessInfo.processInfo.environment["PATH"] ?? "",
-                bundleURL: Bundle.main.bundleURL
-            )),
+            ("PATH", path),
         ]
         if let zmxDir {
             envPairs.append(("ZMX_DIR", zmxDir))
@@ -183,6 +185,15 @@ final class SurfaceHandle {
         free(cwdCStr)
         for (k, v) in envCStrings { free(k); free(v) }
         if let initialInputCStr { free(initialInputCStr) }
+    }
+
+    private static func agentHookPathPrefix() -> String? {
+        guard ProcessInfo.processInfo.environment["GRAFTTY_DISABLE_AGENT_HOOKS"] != "1" else {
+            return nil
+        }
+        return AgentHookInstaller
+            .binDirectory(rootDirectory: AgentHookInstaller.rootDirectory())
+            .path
     }
 
     deinit {

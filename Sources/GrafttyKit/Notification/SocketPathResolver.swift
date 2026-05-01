@@ -24,17 +24,4 @@ public enum SocketPathResolver {
         }
         return defaultDirectory.appendingPathComponent("graftty.sock").path
     }
-
-    /// Path for the channels socket — distinct from the control socket so
-    /// the two can evolve independently. Long-lived subscribers connect
-    /// here and stay connected for the life of their Claude session.
-    public static func resolveChannels(
-        environment: [String: String] = ProcessInfo.processInfo.environment,
-        defaultDirectory: URL = AppState.defaultDirectory
-    ) -> String {
-        if let v = environment["GRAFTTY_CHANNELS_SOCK"], !v.isEmpty {
-            return v
-        }
-        return defaultDirectory.appendingPathComponent("graftty-channels.sock").path
-    }
 }

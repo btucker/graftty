@@ -10,7 +10,7 @@ struct MainWindow: View {
     let prStatusStore: PRStatusStore
     let remoteBranchStore: RemoteBranchStore
     let worktreeMonitor: WorktreeMonitor
-    let channelRouter: ChannelRouter
+    let teamEventDispatcher: TeamEventDispatcher
 
     @EnvironmentObject private var updaterController: UpdaterController
 
@@ -447,7 +447,7 @@ struct MainWindow: View {
         case .success(let path): worktreePath = path
         }
 
-        let router = channelRouter
+        let dispatcher = teamEventDispatcher
         Task { @MainActor in
             let result = await AddWorktreeFlow.finishCreate(
                 repoPath: repo.path,
@@ -457,7 +457,7 @@ struct MainWindow: View {
                 worktreeMonitor: worktreeMonitor,
                 statsStore: statsStore,
                 terminalManager: terminalManager,
-                channelDispatch: { path, msg in router.dispatch(worktreePath: path, message: msg) }
+                teamEventDispatcher: dispatcher
             )
             switch result {
             case .failure(let err):
@@ -473,9 +473,9 @@ struct MainWindow: View {
                 }
             case .success(let outcome):
                 selectWorktree(outcome.worktreePath)
-                // TEAM-3.4: refresh instructions for all subscribers so
-                // they see the updated roster after the new member joined.
-                router.broadcastInstructions()
+                // Roster signal flows through the inbox: a
+                // team_member_joined row addressed to the lead is appended
+                // by TeamMembershipEvents on add, no live broadcast needed.
             }
         }
         return nil
@@ -662,12 +662,8 @@ struct MainWindow: View {
                     leaverPath: worktreePath,
                     reason: .removed,
                     teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
-                    dispatch: EventBodyRenderer.dispatchClosure(
-                        repos: appState.repos,
-                        inner: { path, msg in channelRouter.dispatch(worktreePath: path, message: msg) }
-                    )
+                    dispatcher: teamEventDispatcher
                 )
-                channelRouter.broadcastInstructions()
             }
         }
     }

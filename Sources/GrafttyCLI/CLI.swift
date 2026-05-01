@@ -7,7 +7,7 @@ struct GrafttyCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "graftty",
         abstract: "Graftty terminal multiplexer CLI",
-        subcommands: [Notify.self, Pane.self, MCPChannel.self, Team.self]
+        subcommands: [Notify.self, Pane.self, Team.self]
     )
 }
 
@@ -71,6 +71,12 @@ struct PaneList: ParsableCommand {
             throw ExitCode(1)
         case .teamList:
             CLIEnv.printError("Unexpected team_list response for list")
+            throw ExitCode(1)
+        case .teamHookOutput:
+            CLIEnv.printError("Unexpected team_hook_output response for list")
+            throw ExitCode(1)
+        case .teamInbox:
+            CLIEnv.printError("Unexpected team_inbox response for list")
             throw ExitCode(1)
         }
     }
@@ -163,6 +169,12 @@ enum CLIEnv {
             throw ExitCode(1)
         case .teamList:
             printError("Unexpected team_list response")
+            throw ExitCode(1)
+        case .teamHookOutput:
+            printError("Unexpected team_hook_output response")
+            throw ExitCode(1)
+        case .teamInbox:
+            printError("Unexpected team_inbox response")
             throw ExitCode(1)
         }
     }

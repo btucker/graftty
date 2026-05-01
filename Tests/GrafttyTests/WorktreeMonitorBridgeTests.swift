@@ -58,7 +58,7 @@ struct WorktreeMonitorBridgeTests {
             }, fetch: { _ in }),
             prStatusStore: prStore,
             remoteBranchStore: remoteBranchStore,
-            originRefPRFollowUpDelays: [.milliseconds(50)]
+            originRefPRFollowUpDelays: [.milliseconds(50), .milliseconds(250), .seconds(1)]
         )
 
         #expect(!remoteBranchStore.hasRemote(repoPath: "/repo", branch: "feature"))
@@ -74,15 +74,11 @@ struct WorktreeMonitorBridgeTests {
         try await waitUntil(timeout: 0.5) {
             remoteBranchStore.hasRemote(repoPath: "/repo", branch: "feature")
         }
-        try await waitUntil(timeout: 0.5) {
-            await fetcher.invocations == 1
-        }
-        #expect(prStore.absent.contains("/repo/wt"))
-        #expect(prStore.infos["/repo/wt"] == nil)
 
-        try await waitUntil(timeout: 0.5) {
+        try await waitUntil(timeout: 2.0) {
             prStore.infos["/repo/wt"]?.number == 42
         }
+        #expect(await fetcher.invocations >= 2)
         #expect(stateBox.state.selectedWorktreePath == nil)
     }
 

@@ -21,7 +21,6 @@
     "UPDATE",
     "KBD",
     "PR",
-    "CHAN",
     "IOS",
     "TEAM",
     "EDITOR"
@@ -47,7 +46,6 @@
     "UPDATE": "Self-Update",
     "KBD": "Keyboard Shortcuts",
     "PR": "PR/MR Status Display",
-    "CHAN": "Claude Code Channels",
     "IOS": "iOS App",
     "TEAM": "Agent Teams",
     "EDITOR": "Editor Integration"
@@ -125,14 +123,6 @@
     "PR.5": "PR Fetching",
     "PR.6": "Check Rollup",
     "PR.7": "Polling Cadence and Backoff",
-    "CHAN.1": "Router and Subscriber Routing",
-    "CHAN.2": "Channel Settings (Agent Teams pane)",
-    "CHAN.3": "Launch Flag Disclosure",
-    "CHAN.4": "MCP Server Installation",
-    "CHAN.5": "Event Emission",
-    "CHAN.6": "Prompt Update Lifecycle",
-    "CHAN.7": "Error Handling",
-    "CHAN.8": "Socket Infrastructure",
     "IOS.1": "Target and platform",
     "IOS.2": "Discovery and host storage",
     "IOS.3": "Authentication",
@@ -144,9 +134,11 @@
     "IOS.9": "Creating worktrees from the iOS client",
     "TEAM.1": "Settings & Enablement",
     "TEAM.2": "Team Identity & Membership",
-    "TEAM.3": "Team-Aware MCP Instructions",
+    "TEAM.3": "Team-Aware Hook Instructions",
     "TEAM.4": "`graftty team` CLI",
-    "TEAM.5": "`team_*` Channel Events",
-    "TEAM.6": "Sidebar Visualization"
+    "TEAM.5": "`team_*` Inbox Events",
+    "TEAM.6": "Sidebar Visualization",
+    "TEAM.7": "Team Activity Log Window",
+    "TEAM.8": "Legacy Channel Cleanup"
   }
 }

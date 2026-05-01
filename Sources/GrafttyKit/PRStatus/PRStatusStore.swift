@@ -49,9 +49,12 @@ public final class PRStatusStore {
     /// initial discovery of a PR (previous == nil) does not fire — a
     /// transition requires a previous state to transition FROM.
     ///
-    /// Consumed by ChannelRouter to deliver MCP channel events into
-    /// Claude Code sessions running in the worktree.
-    @ObservationIgnored public var onTransition: (@MainActor (_ worktreePath: String, _ message: ChannelServerMessage) -> Void)?
+    /// Delivers a `(RoutableEvent, worktreePath, attrs)` tuple. The body
+    /// string is reconstructable from `attrs` via
+    /// `RoutableEvent.defaultBody(attrs:)` — the consumer typically wraps
+    /// it back into a `ChannelServerMessage.event(...)` before handing it
+    /// to `TeamEventDispatcher.dispatchRoutableEvent(...)`.
+    @ObservationIgnored public var onTransition: (@MainActor (_ event: RoutableEvent, _ worktreePath: String, _ attrs: [String: String]) -> Void)?
 
     public init(
         executor: CLIExecutor = CLIRunner(),
@@ -332,20 +335,15 @@ public final class PRStatusStore {
             attrs["from"] = previous.state.rawValue
             attrs["to"] = current.state.rawValue
             attrs["pr_title"] = current.title
-            let body = "PR #\(current.number) state changed: \(previous.state.rawValue) → \(current.state.rawValue)"
-            onTransition(worktreePath, .event(
-                type: ChannelEventType.prStateChanged, attrs: attrs, body: body
-            ))
+            let routable: RoutableEvent = (current.state == .merged) ? .prMerged : .prStateChanged
+            onTransition(routable, worktreePath, attrs)
         }
 
         if previous.checks != current.checks {
             var attrs = common
             attrs["from"] = previous.checks.rawValue
             attrs["to"] = current.checks.rawValue
-            let body = "CI on PR #\(current.number): \(previous.checks.rawValue) → \(current.checks.rawValue)"
-            onTransition(worktreePath, .event(
-                type: ChannelEventType.ciConclusionChanged, attrs: attrs, body: body
-            ))
+            onTransition(.ciConclusionChanged, worktreePath, attrs)
         }
     }
 

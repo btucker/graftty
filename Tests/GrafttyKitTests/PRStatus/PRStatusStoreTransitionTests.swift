@@ -5,8 +5,8 @@ import XCTest
 final class PRStatusStoreTransitionTests: XCTestCase {
     func testStateOpenToMergedFiresEvent() {
         let store = PRStatusStore()
-        var events: [(String, ChannelServerMessage)] = []
-        store.onTransition = { path, msg in events.append((path, msg)) }
+        var events: [(RoutableEvent, String, [String: String])] = []
+        store.onTransition = { event, path, attrs in events.append((event, path, attrs)) }
 
         let url = URL(string: "https://github.com/acme/web/pull/42")!
         let prev = PRInfo(number: 42, title: "Add login",
@@ -23,34 +23,28 @@ final class PRStatusStoreTransitionTests: XCTestCase {
             origin: origin
         )
 
-        // Expect BOTH pr_state_changed and ci_conclusion_changed (both differ).
+        // Expect BOTH prMerged (state=>merged) and ciConclusionChanged (both differ).
         XCTAssertEqual(events.count, 2)
-        let types = events.map { msg -> String in
-            guard case let .event(t, _, _) = msg.1 else { return "" }
-            return t
-        }
-        XCTAssertTrue(types.contains(ChannelEventType.prStateChanged))
-        XCTAssertTrue(types.contains(ChannelEventType.ciConclusionChanged))
+        let routables = events.map(\.0)
+        XCTAssertTrue(routables.contains(.prMerged))
+        XCTAssertTrue(routables.contains(.ciConclusionChanged))
 
-        // Check attrs on the state-changed event.
-        let stateEvent = events.first { msg -> Bool in
-            if case let .event(t, _, _) = msg.1 { return t == ChannelEventType.prStateChanged }
-            return false
-        }!
-        guard case let .event(_, attrs, _) = stateEvent.1 else { return XCTFail() }
-        XCTAssertEqual(attrs["from"], "open")
-        XCTAssertEqual(attrs["to"], "merged")
-        XCTAssertEqual(attrs["pr_number"], "42")
-        XCTAssertEqual(attrs["provider"], "github")
-        XCTAssertEqual(attrs["repo"], "acme/web")
-        XCTAssertEqual(attrs["worktree"], "/wt/a")
-        XCTAssertEqual(attrs["pr_url"], url.absoluteString)
+        // Check attrs on the merged event.
+        let merged = events.first { $0.0 == .prMerged }!
+        XCTAssertEqual(merged.1, "/wt/a")
+        XCTAssertEqual(merged.2["from"], "open")
+        XCTAssertEqual(merged.2["to"], "merged")
+        XCTAssertEqual(merged.2["pr_number"], "42")
+        XCTAssertEqual(merged.2["provider"], "github")
+        XCTAssertEqual(merged.2["repo"], "acme/web")
+        XCTAssertEqual(merged.2["worktree"], "/wt/a")
+        XCTAssertEqual(merged.2["pr_url"], url.absoluteString)
     }
 
     func testIdempotentSamePRInfoFiresNothing() {
         let store = PRStatusStore()
         var count = 0
-        store.onTransition = { _, _ in count += 1 }
+        store.onTransition = { _, _, _ in count += 1 }
 
         let url = URL(string: "https://github.com/a/b/pull/1")!
         let same = PRInfo(number: 1, title: "t", url: url,
@@ -69,8 +63,8 @@ final class PRStatusStoreTransitionTests: XCTestCase {
 
     func testChecksPendingToFailureFiresOnlyCiEvent() {
         let store = PRStatusStore()
-        var events: [ChannelServerMessage] = []
-        store.onTransition = { _, msg in events.append(msg) }
+        var events: [(RoutableEvent, [String: String])] = []
+        store.onTransition = { event, _, attrs in events.append((event, attrs)) }
 
         let url = URL(string: "https://example/pr/7")!
         let prev = PRInfo(number: 7, title: "t", url: url,
@@ -86,8 +80,8 @@ final class PRStatusStoreTransitionTests: XCTestCase {
         )
 
         XCTAssertEqual(events.count, 1)
-        guard case let .event(type, attrs, _) = events.first else { return XCTFail() }
-        XCTAssertEqual(type, ChannelEventType.ciConclusionChanged)
+        let (routable, attrs) = events[0]
+        XCTAssertEqual(routable, .ciConclusionChanged)
         XCTAssertEqual(attrs["from"], "pending")
         XCTAssertEqual(attrs["to"], "failure")
         XCTAssertEqual(attrs["provider"], "gitlab")
@@ -96,8 +90,8 @@ final class PRStatusStoreTransitionTests: XCTestCase {
 
     func testNilPreviousDoesNotFireOnInitialDiscovery() {
         let store = PRStatusStore()
-        var events: [ChannelServerMessage] = []
-        store.onTransition = { _, msg in events.append(msg) }
+        var events: [(RoutableEvent, String, [String: String])] = []
+        store.onTransition = { event, path, attrs in events.append((event, path, attrs)) }
 
         let url = URL(string: "https://example/pr/1")!
         let next = PRInfo(number: 1, title: "t", url: url,

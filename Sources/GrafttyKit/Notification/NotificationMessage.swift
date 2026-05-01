@@ -1,12 +1,28 @@
 import Foundation
 
-public enum NotificationMessage: Sendable {
+public enum TeamHookRuntime: String, Codable, Sendable, Equatable {
+    case codex
+    case claude
+}
+
+public enum TeamHookEvent: String, Codable, Sendable, Equatable {
+    case sessionStart = "session-start"
+    case postToolUse = "post-tool-use"
+    case stop
+}
+
+public enum NotificationMessage: Sendable, Equatable {
     case notify(path: String, text: String, clearAfter: TimeInterval? = nil)
     case clear(path: String)
     case listPanes(path: String)
     case addPane(path: String, direction: PaneSplit, command: String?)
     case closePane(path: String, index: Int)
     case teamMessage(callerWorktree: String, recipient: String, text: String)
+    case teamSend(callerWorktree: String, recipient: String, text: String, priority: TeamInboxPriority)
+    case teamBroadcast(callerWorktree: String, text: String, priority: TeamInboxPriority)
+    case teamHook(callerWorktree: String, runtime: TeamHookRuntime, event: TeamHookEvent, sessionID: String?)
+    case teamInbox(callerWorktree: String?, worktree: String?, repo: String?, member: String?, unread: Bool, all: Bool)
+    case teamMembers(callerWorktree: String?, worktree: String?, repo: String?)
     case teamList(callerWorktree: String)
 }
 
@@ -14,7 +30,8 @@ extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, path, text, clearAfter, direction, command, index
         case callerWorktree = "caller_worktree"
-        case recipient
+        case recipient, priority, runtime, event, worktree, repo, member, unread, all
+        case sessionID = "session_id"
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -45,6 +62,36 @@ extension NotificationMessage: Codable {
             try container.encode(path, forKey: .callerWorktree)
             try container.encode(recipient, forKey: .recipient)
             try container.encode(text, forKey: .text)
+        case .teamSend(let path, let recipient, let text, let priority):
+            try container.encode("team_send", forKey: .type)
+            try container.encode(path, forKey: .callerWorktree)
+            try container.encode(recipient, forKey: .recipient)
+            try container.encode(text, forKey: .text)
+            try container.encode(priority, forKey: .priority)
+        case .teamBroadcast(let path, let text, let priority):
+            try container.encode("team_broadcast", forKey: .type)
+            try container.encode(path, forKey: .callerWorktree)
+            try container.encode(text, forKey: .text)
+            try container.encode(priority, forKey: .priority)
+        case .teamHook(let path, let runtime, let event, let sessionID):
+            try container.encode("team_hook", forKey: .type)
+            try container.encode(path, forKey: .callerWorktree)
+            try container.encode(runtime, forKey: .runtime)
+            try container.encode(event, forKey: .event)
+            try container.encodeIfPresent(sessionID, forKey: .sessionID)
+        case .teamInbox(let callerWorktree, let worktree, let repo, let member, let unread, let all):
+            try container.encode("team_inbox", forKey: .type)
+            try container.encodeIfPresent(callerWorktree, forKey: .callerWorktree)
+            try container.encodeIfPresent(worktree, forKey: .worktree)
+            try container.encodeIfPresent(repo, forKey: .repo)
+            try container.encodeIfPresent(member, forKey: .member)
+            try container.encode(unread, forKey: .unread)
+            try container.encode(all, forKey: .all)
+        case .teamMembers(let callerWorktree, let worktree, let repo):
+            try container.encode("team_members", forKey: .type)
+            try container.encodeIfPresent(callerWorktree, forKey: .callerWorktree)
+            try container.encodeIfPresent(worktree, forKey: .worktree)
+            try container.encodeIfPresent(repo, forKey: .repo)
         case .teamList(let path):
             try container.encode("team_list", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
@@ -80,6 +127,36 @@ extension NotificationMessage: Codable {
             let recipient = try container.decode(String.self, forKey: .recipient)
             let text = try container.decode(String.self, forKey: .text)
             self = .teamMessage(callerWorktree: path, recipient: recipient, text: text)
+        case "team_send":
+            let path = try container.decode(String.self, forKey: .callerWorktree)
+            let recipient = try container.decode(String.self, forKey: .recipient)
+            let text = try container.decode(String.self, forKey: .text)
+            let priority = try container.decode(TeamInboxPriority.self, forKey: .priority)
+            self = .teamSend(callerWorktree: path, recipient: recipient, text: text, priority: priority)
+        case "team_broadcast":
+            let path = try container.decode(String.self, forKey: .callerWorktree)
+            let text = try container.decode(String.self, forKey: .text)
+            let priority = try container.decode(TeamInboxPriority.self, forKey: .priority)
+            self = .teamBroadcast(callerWorktree: path, text: text, priority: priority)
+        case "team_hook":
+            let path = try container.decode(String.self, forKey: .callerWorktree)
+            let runtime = try container.decode(TeamHookRuntime.self, forKey: .runtime)
+            let event = try container.decode(TeamHookEvent.self, forKey: .event)
+            let sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
+            self = .teamHook(callerWorktree: path, runtime: runtime, event: event, sessionID: sessionID)
+        case "team_inbox":
+            let callerWorktree = try container.decodeIfPresent(String.self, forKey: .callerWorktree)
+            let worktree = try container.decodeIfPresent(String.self, forKey: .worktree)
+            let repo = try container.decodeIfPresent(String.self, forKey: .repo)
+            let member = try container.decodeIfPresent(String.self, forKey: .member)
+            let unread = try container.decode(Bool.self, forKey: .unread)
+            let all = try container.decode(Bool.self, forKey: .all)
+            self = .teamInbox(callerWorktree: callerWorktree, worktree: worktree, repo: repo, member: member, unread: unread, all: all)
+        case "team_members":
+            let callerWorktree = try container.decodeIfPresent(String.self, forKey: .callerWorktree)
+            let worktree = try container.decodeIfPresent(String.self, forKey: .worktree)
+            let repo = try container.decodeIfPresent(String.self, forKey: .repo)
+            self = .teamMembers(callerWorktree: callerWorktree, worktree: worktree, repo: repo)
         case "team_list":
             let path = try container.decode(String.self, forKey: .callerWorktree)
             self = .teamList(callerWorktree: path)
@@ -163,11 +240,13 @@ public enum ResponseMessage: Sendable, Equatable {
     case error(String)
     case paneList([PaneInfo])
     case teamList(teamName: String, members: [TeamListMember])
+    case teamHookOutput(String)
+    case teamInbox([TeamInboxMessage])
 }
 
 extension ResponseMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, message, panes
+        case type, message, panes, output, messages
         case teamName = "team_name"
         case members
     }
@@ -187,6 +266,12 @@ extension ResponseMessage: Codable {
             try container.encode("team_list", forKey: .type)
             try container.encode(teamName, forKey: .teamName)
             try container.encode(members, forKey: .members)
+        case .teamHookOutput(let output):
+            try container.encode("team_hook_output", forKey: .type)
+            try container.encode(output, forKey: .output)
+        case .teamInbox(let messages):
+            try container.encode("team_inbox", forKey: .type)
+            try container.encode(messages, forKey: .messages)
         }
     }
 
@@ -206,6 +291,12 @@ extension ResponseMessage: Codable {
             let teamName = try container.decode(String.self, forKey: .teamName)
             let members = try container.decode([TeamListMember].self, forKey: .members)
             self = .teamList(teamName: teamName, members: members)
+        case "team_hook_output":
+            let output = try container.decode(String.self, forKey: .output)
+            self = .teamHookOutput(output)
+        case "team_inbox":
+            let messages = try container.decode([TeamInboxMessage].self, forKey: .messages)
+            self = .teamInbox(messages)
         default:
             throw DecodingError.dataCorrupted(.init(codingPath: [CodingKeys.type], debugDescription: "Unknown response type: \(type)"))
         }
