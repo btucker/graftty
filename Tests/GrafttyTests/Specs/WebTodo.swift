@@ -179,11 +179,6 @@ struct WebTodo {
     func web_7_2() async throws { }
 
     @Test("""
-@spec WEB-7.3: The application shall reject `POST /worktrees` requests with invalid JSON, missing fields, or whitespace-only `worktreeName`/`branchName` with `400 Bad Request` and a JSON `{error: "<message>"}` body. `GET /worktrees` and other verbs shall return `405 Method Not Allowed`. Request bodies exceeding 64 KiB shall return `413 Payload Too Large` before any creator is invoked.
-""", .disabled("not yet implemented"))
-    func web_7_3() async throws { }
-
-    @Test("""
 @spec WEB-7.4: When `git worktree add` fails (branch already exists, path already in use, fatal ref-format rejection, etc.), the application shall respond `409 Conflict` with the captured stderr as `{error: "<stderr>"}`. When post-git discovery or surface creation fails, the application shall respond `500 Internal Server Error` with the underlying message. The web-created worktree shall not leave the Mac's `AppState` holding a half-materialized entry: either the entry appears in `.running` state with a surface, or not at all.
 """, .disabled("not yet implemented"))
     func web_7_4() async throws { }
