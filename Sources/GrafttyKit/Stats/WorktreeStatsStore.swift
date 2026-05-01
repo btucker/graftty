@@ -52,11 +52,11 @@ public final class WorktreeStatsStore {
     private var inFlightRepos: Set<String> = []
 
     /// Last successful stats compute per worktree. Used to gate the
-    /// per-worktree recompute cadence (DIVERGE-4.6), which runs at 30s
-    /// independent of the `git fetch` cadence. FSEvents on the worktree
-    /// contents (GIT-2.6) drives the common case; this poll is a safety
-    /// net for bursts the FSEvents coalescer ate and for changes that
-    /// happened while the app was backgrounded.
+    /// per-running-worktree recompute cadence (DIVERGE-4.6), which runs
+    /// at 30s independent of the `git fetch` cadence. FSEvents on the
+    /// worktree contents (GIT-2.6) drives the common case; this poll is a
+    /// safety net for bursts the FSEvents coalescer ate and for changes
+    /// that happened while the app was backgrounded.
     @ObservationIgnored
     private var lastStatsRefresh: [String: Date] = [:]
 
@@ -369,12 +369,13 @@ public final class WorktreeStatsStore {
             // Gate B below for the same tick.
             let didDispatchRepoFetch = maybeDispatchRepoFetch(repo: repo, now: now)
 
-            // Gate B: cheap local stats recompute per worktree (DIVERGE-4.6).
+            // Gate B: cheap local stats recompute per running worktree
+            // (DIVERGE-4.6 / PERF-1.3).
             // Skips any worktree the repo-fetch dispatch already scheduled —
             // `performRepoFetch` calls `refresh` for each non-stale worktree
             // after its fetch resolves.
             if didDispatchRepoFetch { continue }
-            for wt in repo.worktrees where wt.state.hasOnDiskWorktree {
+            for wt in repo.worktrees where shouldPollStats(for: wt) {
                 if let last = lastStatsRefresh[wt.path],
                    now.timeIntervalSince(last) < Double(statsInterval.components.seconds) {
                     continue
@@ -400,8 +401,9 @@ public final class WorktreeStatsStore {
         inFlightRepos.insert(repo.path)
         let repoPath = repo.path
         let worktrees = repo.worktrees
-            .filter { $0.state != .stale }
+            .filter(shouldPollStats)
             .map { (path: $0.path, branch: $0.branch) }
+        if worktrees.isEmpty { return false }
 
         Task { [weak self] in
             await self?.performRepoFetch(
@@ -410,6 +412,10 @@ public final class WorktreeStatsStore {
             )
         }
         return true
+    }
+
+    private func shouldPollStats(for worktree: WorktreeEntry) -> Bool {
+        worktree.state == .running
     }
 
     func performRepoFetch(
@@ -441,7 +447,7 @@ public final class WorktreeStatsStore {
             return
         }
 
-        // Recompute stats for each worktree on this repo after fetch succeeds.
+        // Recompute stats for each active worktree on this repo after fetch succeeds.
         for wt in worktrees {
             self.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
         }

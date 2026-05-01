@@ -34,6 +34,7 @@ struct MainWindow: View {
             SidebarView(
                 appState: $appState,
                 terminalManager: terminalManager,
+                paneTitleInvalidations: terminalManager.paneTitleInvalidations,
                 theme: terminalManager.theme,
                 statsStore: statsStore,
                 prStatusStore: prStatusStore,
@@ -152,6 +153,12 @@ struct MainWindow: View {
                     $appState.wrappedValue.sidebarWidth = width
                 }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in
+            applyAppVisibility(isVisible: false)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUnhideNotification)) { _ in
+            applyAppVisibility(isVisible: true)
         }
     }
 
@@ -387,6 +394,17 @@ struct MainWindow: View {
         guard let wt = appState.worktree(forPath: worktreePath), wt.state == .running else { return }
         for terminalID in wt.splitTree.allLeaves {
             terminalManager.setVisible(visible, for: terminalID)
+        }
+    }
+
+    private func applyAppVisibility(isVisible: Bool) {
+        guard let action = AppVisibilitySurfacePolicy.action(
+            selectedWorktreePath: appState.selectedWorktreePath,
+            appIsVisible: isVisible
+        ) else { return }
+        switch action {
+        case let .setSelectedWorktreeVisible(path, visible):
+            setWorktreeSurfacesVisible(visible, worktreePath: path)
         }
     }
 
