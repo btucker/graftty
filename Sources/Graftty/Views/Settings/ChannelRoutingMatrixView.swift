@@ -2,9 +2,9 @@ import SwiftUI
 import GrafttyKit
 
 /// 4×3 routing matrix UI (TEAM-1.8). Each cell binds to one bit of the
-/// corresponding `RecipientSet` field on `ChannelRoutingPreferences`.
+/// corresponding `RecipientSet` field on `TeamEventRoutingPreferences`.
 struct ChannelRoutingMatrixView: View {
-    @Binding var prefs: ChannelRoutingPreferences
+    @Binding var prefs: TeamEventRoutingPreferences
 
     var body: some View {
         Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
@@ -33,7 +33,7 @@ struct ChannelRoutingMatrixView: View {
     @ViewBuilder
     private func row(
         _ label: String,
-        keyPath: WritableKeyPath<ChannelRoutingPreferences, RecipientSet>
+        keyPath: WritableKeyPath<TeamEventRoutingPreferences, RecipientSet>
     ) -> some View {
         GridRow {
             Text(label)
@@ -44,7 +44,7 @@ struct ChannelRoutingMatrixView: View {
     }
 
     private func cellToggle(
-        keyPath: WritableKeyPath<ChannelRoutingPreferences, RecipientSet>,
+        keyPath: WritableKeyPath<TeamEventRoutingPreferences, RecipientSet>,
         recipient: RecipientSet
     ) -> some View {
         Toggle("", isOn: Binding<Bool>(

@@ -2,11 +2,11 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-@Suite("ChannelRoutingPreferences")
-struct ChannelRoutingPreferencesTests {
+@Suite("TeamEventRoutingPreferences")
+struct TeamEventRoutingPreferencesTests {
 
     @Test func defaultsMatchSpec() {
-        let prefs = ChannelRoutingPreferences()
+        let prefs = TeamEventRoutingPreferences()
         #expect(prefs.prStateChanged == .worktree)
         #expect(prefs.prMerged == .root)
         #expect(prefs.ciConclusionChanged == .worktree)
@@ -28,11 +28,11 @@ struct ChannelRoutingPreferencesTests {
     }
 
     @Test func codableRoundTripPreservesValues() throws {
-        var prefs = ChannelRoutingPreferences()
+        var prefs = TeamEventRoutingPreferences()
         prefs.prStateChanged = [.worktree, .root]
         prefs.ciConclusionChanged = []
         let data = try JSONEncoder().encode(prefs)
-        let decoded = try JSONDecoder().decode(ChannelRoutingPreferences.self, from: data)
+        let decoded = try JSONDecoder().decode(TeamEventRoutingPreferences.self, from: data)
         #expect(decoded == prefs)
         #expect(decoded.prStateChanged.contains(.worktree))
         #expect(decoded.prStateChanged.contains(.root))
@@ -40,17 +40,17 @@ struct ChannelRoutingPreferencesTests {
     }
 
     @Test func rawRepresentableRoundTrip() {
-        var prefs = ChannelRoutingPreferences()
+        var prefs = TeamEventRoutingPreferences()
         prefs.prMerged = [.root, .otherWorktrees]
         let raw = prefs.rawValue
         #expect(!raw.isEmpty)
-        let decoded = ChannelRoutingPreferences(rawValue: raw)
+        let decoded = TeamEventRoutingPreferences(rawValue: raw)
         #expect(decoded == prefs)
     }
 
     @Test func rawRepresentableRecoversFromGarbage() {
         // Invalid JSON should decode as nil (so @AppStorage falls back to default).
-        #expect(ChannelRoutingPreferences(rawValue: "not json") == nil)
-        #expect(ChannelRoutingPreferences(rawValue: "") == nil)
+        #expect(TeamEventRoutingPreferences(rawValue: "not json") == nil)
+        #expect(TeamEventRoutingPreferences(rawValue: "") == nil)
     }
 }

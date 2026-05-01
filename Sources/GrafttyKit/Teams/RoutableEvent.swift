@@ -29,7 +29,7 @@ public enum RoutableEvent: Sendable, Equatable {
     }
 
     /// The matrix-row `RecipientSet` field this event uses.
-    public func recipientSet(in prefs: ChannelRoutingPreferences) -> RecipientSet {
+    public func recipientSet(in prefs: TeamEventRoutingPreferences) -> RecipientSet {
         switch self {
         case .prStateChanged:        return prefs.prStateChanged
         case .prMerged:              return prefs.prMerged

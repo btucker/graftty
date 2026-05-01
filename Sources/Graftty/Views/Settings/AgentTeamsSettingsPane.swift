@@ -7,7 +7,7 @@ struct AgentTeamsSettingsPane: View {
     @AppStorage("agentTeamsEnabled") private var agentTeamsEnabled: Bool = false
     @AppStorage("teamSessionPrompt") private var teamSessionPrompt: String = DefaultPrompts.sessionPrompt
     @AppStorage("teamPrompt") private var teamPrompt: String = DefaultPrompts.eventPrompt
-    @AppStorage("channelRoutingPreferences") private var channelRoutingPreferences = ChannelRoutingPreferences()
+    @AppStorage("channelRoutingPreferences") private var channelRoutingPreferences = TeamEventRoutingPreferences()
 
     var body: some View {
         Form {
