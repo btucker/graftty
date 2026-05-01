@@ -11,6 +11,8 @@ public struct WorktreeDetailView: View {
     public let host: Host
     public let worktree: WorktreePanes
     public let onSelectPane: (_ sessionName: String) -> Void
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.biometricGate) private var gate
 
     @State private var controller: TerminalController?
     @State private var previews: PanePreviewClientPool<SessionClient>?
@@ -53,20 +55,36 @@ public struct WorktreeDetailView: View {
                 )
             }
         }
-        .task(id: worktree.layout) {
-            guard let layout = worktree.layout else { return }
-            if previews == nil {
-                previews = PanePreviewClientPool { sessionName in
-                    let wsURL = RootView.makeWebSocketURL(base: host.baseURL, session: sessionName)
-                    let ws = URLSessionWebSocketClient(url: wsURL)
-                    return SessionClient(sessionName: sessionName, webSocket: ws)
-                }
-            }
-            previews?.update(layout: layout)
+        // Re-keys on layout / scene-phase / gate transitions so we tear
+        // the pool down on `.background` and rebuild on `.active +
+        // unlocked`.
+        .task(id: PoolKey(layout: worktree.layout, scene: scenePhase, gateUnlocked: gate.isUnlocked)) {
+            await driveLifecycle()
         }
         .onDisappear {
             previews?.stopAll()
         }
+    }
+
+    private struct PoolKey: Hashable {
+        let layout: PaneLayoutNode?
+        let scene: ScenePhase
+        let gateUnlocked: Bool
+    }
+
+    private func driveLifecycle() async {
+        if scenePhase == .background {
+            previews?.stopAll()
+            return
+        }
+        guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
+        guard let layout = worktree.layout else { return }
+        if previews == nil {
+            previews = PanePreviewClientPool { sessionName in
+                SessionClient.live(baseURL: host.baseURL, sessionName: sessionName)
+            }
+        }
+        previews?.update(layout: layout)
     }
 }
 #endif
