@@ -98,7 +98,7 @@ final class AppServices {
         self.teamEventDispatcher = TeamEventDispatcher(
             inbox: teamInbox,
             preferencesProvider: {
-                let raw = UserDefaults.standard.string(forKey: SettingsKeys.channelRoutingPreferences) ?? ""
+                let raw = UserDefaults.standard.string(forKey: SettingsKeys.teamEventRoutingPreferences) ?? ""
                 return TeamEventRoutingPreferences(rawValue: raw) ?? TeamEventRoutingPreferences()
             },
             templateProvider: {
@@ -168,6 +168,11 @@ struct GrafttyApp: App {
         // Claude swapped out for an older worktree's Claude". Strip
         // before any surface spawns.
         ZmxLauncher.sanitizeProcessEnvironment()
+
+        // Must run before any @AppStorage binding reads `teamEventRoutingPreferences`
+        // (specifically the matrix in AgentTeamsSettingsPane) so SwiftUI binds
+        // to the migrated value, not the default. TEAM-1.10.
+        SettingsKeyMigration.run()
 
         // Must run before any UserDefaults read so non-binding readers see
         // the same defaults as @AppStorage. TEAM-1.6.

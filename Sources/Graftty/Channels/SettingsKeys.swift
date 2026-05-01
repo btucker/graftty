@@ -5,7 +5,7 @@ import GrafttyKit
 enum SettingsKeys {
     static let agentTeamsEnabled         = "agentTeamsEnabled"
     static let channelsEnabled           = "channelsEnabled"
-    static let channelRoutingPreferences = "channelRoutingPreferences"
+    static let teamEventRoutingPreferences = "teamEventRoutingPreferences"
     static let teamSessionPrompt         = "teamSessionPrompt"
     static let teamPrompt                = "teamPrompt"
     static let defaultCommand            = "defaultCommand"

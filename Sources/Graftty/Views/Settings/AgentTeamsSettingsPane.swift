@@ -7,7 +7,7 @@ struct AgentTeamsSettingsPane: View {
     @AppStorage("agentTeamsEnabled") private var agentTeamsEnabled: Bool = false
     @AppStorage("teamSessionPrompt") private var teamSessionPrompt: String = DefaultPrompts.sessionPrompt
     @AppStorage("teamPrompt") private var teamPrompt: String = DefaultPrompts.eventPrompt
-    @AppStorage("channelRoutingPreferences") private var channelRoutingPreferences = TeamEventRoutingPreferences()
+    @AppStorage("teamEventRoutingPreferences") private var teamEventRoutingPreferences = TeamEventRoutingPreferences()
 
     var body: some View {
         Form {
@@ -21,7 +21,7 @@ struct AgentTeamsSettingsPane: View {
 
             if agentTeamsEnabled {
                 Section {
-                    ChannelRoutingMatrixView(prefs: $channelRoutingPreferences)
+                    ChannelRoutingMatrixView(prefs: $teamEventRoutingPreferences)
                 } header: {
                     Text("Automated event routing")
                 } footer: {
