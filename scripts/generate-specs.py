@@ -2,13 +2,13 @@
 # /// script
 # requires-python = ">=3.11"
 # ///
-"""Regenerate SPECS.md from `@spec` annotations in Sources/ and Tests/.
+"""Regenerate SPECS.md from `@spec` annotations in source and test files.
 
-Walks every .swift file under Sources/ and Tests/, captures every `@spec
-ID: text` marker (whether on a Swift Testing `@Test` / `@Suite`, on a
-`/// @spec ID` doc comment over a type / XCTest method, or on a
-`@Test(.disabled(...))` inventory entry), validates uniqueness, and
-writes SPECS.md grouped by ID prefix and prefix-major.
+Walks Swift files under Sources/ and Tests/ plus TypeScript/TSX files under
+web-client/src, captures every `@spec ID: text` marker (whether on a Swift
+Testing `@Test` / `@Suite`, on a line-comment doc block over a type / test, or
+on a `@Test(.disabled(...))` inventory entry), validates uniqueness, and writes
+SPECS.md grouped by ID prefix and prefix-major.
 
 Section / subsection titles come from `scripts/spec-sections.json`.
 
@@ -33,11 +33,12 @@ CarrierKind = Literal["triple", "single", "doc"]
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SPECS_MD = REPO_ROOT / "SPECS.md"
 SECTIONS_JSON = REPO_ROOT / "scripts" / "spec-sections.json"
+SUPPORTED_SOURCE_SUFFIXES = {".swift", ".ts", ".tsx"}
 
 # A spec marker may appear inside:
 #   1. a `"""..."""` multi-line string literal (Swift Testing displayName)
 #   2. a `"..."` single-line string literal (Swift Testing displayName)
-#   3. a `///` doc-comment block (any kind: above a type, function, etc.)
+#   3. a `///` or `//` line-comment block (above a type, function, TS test, etc.)
 #
 # We capture all three by first finding `@spec <ID>` anywhere, then
 # extracting the surrounding "carrier" (the string literal or the doc-
@@ -86,9 +87,13 @@ def extract_carrier(text: str, marker_start: int) -> tuple[CarrierKind, str]:
         line_end = len(text)
     line_text = text[line_start:line_end]
 
-    if line_text.lstrip().startswith("///"):
-        # doc-comment carrier
-        return "doc", _extract_doc_block(text, marker_start)
+    stripped_line = line_text.lstrip()
+    if stripped_line.startswith("///"):
+        # Swift doc-comment carrier.
+        return "doc", _extract_line_comment_block(text, marker_start, "///")
+    if stripped_line.startswith("//"):
+        # TypeScript test/source comment carrier.
+        return "doc", _extract_line_comment_block(text, marker_start, "//")
 
     triple_open = text.rfind('"""', 0, marker_start)
     if triple_open != -1:
@@ -110,7 +115,7 @@ def extract_carrier(text: str, marker_start: int) -> tuple[CarrierKind, str]:
     )
 
 
-def _extract_doc_block(text: str, marker_start: int) -> str:
+def _extract_line_comment_block(text: str, marker_start: int, prefix: str) -> str:
     line_start = text.rfind("\n", 0, marker_start) + 1
     lines: list[str] = []
     cursor = line_start
@@ -120,9 +125,9 @@ def _extract_doc_block(text: str, marker_start: int) -> str:
             line_end = len(text)
         line = text[cursor:line_end]
         stripped = line.lstrip()
-        if not stripped.startswith("///"):
+        if not stripped.startswith(prefix):
             break
-        lines.append(stripped[3:].lstrip())
+        lines.append(stripped[len(prefix) :].lstrip())
         cursor = line_end + 1
     return "\n".join(lines)
 
@@ -148,11 +153,16 @@ def parse_carrier_text(kind: CarrierKind, carrier: str, spec_id: str) -> str:
 
 def kind_of(file: Path) -> SpecKind:
     # `*Todo.swift` files under Tests/ are inventory; everything else
-    # under Tests/ is a real test; everything under Sources/ is a type
+    # under Tests/ is a real test; TypeScript/TSX `.test.*` / `.spec.*`
+    # files under web-client are real tests; everything else is a type
     # annotation.
     if file.name.endswith("Todo.swift"):
         return "todo"
     if "Tests" in file.parts:
+        return "test"
+    if file.suffix in (".ts", ".tsx") and (
+        ".test." in file.name or ".spec." in file.name
+    ):
         return "test"
     return "type"
 
@@ -185,7 +195,11 @@ def collect_markers(roots: list[Path]) -> tuple[list[SpecMarker], list[str]]:
     markers: list[SpecMarker] = []
     errors: list[str] = []
     for root in roots:
-        for path in root.rglob("*.swift"):
+        if not root.exists():
+            continue
+        for path in root.rglob("*"):
+            if not path.is_file() or path.suffix not in SUPPORTED_SOURCE_SUFFIXES:
+                continue
             file_markers, file_errors = scan_swift_file(path)
             markers.extend(file_markers)
             errors.extend(file_errors)
@@ -297,7 +311,7 @@ def main() -> int:
     config = json.loads(SECTIONS_JSON.read_text())
 
     markers, scan_errors = collect_markers(
-        [REPO_ROOT / "Sources", REPO_ROOT / "Tests"]
+        [REPO_ROOT / "Sources", REPO_ROOT / "Tests", REPO_ROOT / "web-client" / "src"]
     )
     errors = scan_errors + validate(markers)
     if errors:
