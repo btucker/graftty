@@ -21,7 +21,10 @@ struct NotifyInputValidationTests {
         #expect(r.message?.contains("--clear") == true)
     }
 
-    @Test func bothIsConflict() {
+    @Test("""
+    @spec ATTN-1.6: If `graftty notify` is invoked with both a `<text>` argument and the `--clear` flag, then the CLI shall exit non-zero with a usage error rather than silently dropping the text and performing a clear.
+    """)
+    func bothIsConflict() {
         // The bug that triggered this: `graftty notify "Build failed" --clear`
         // previously exited 0. The text was dropped and the server received
         // just a clear. Andy's ambiguous input should error instead so he
@@ -50,7 +53,10 @@ struct NotifyInputValidationTests {
         #expect(r.message?.contains("empty") == true)
     }
 
-    @Test func whitespaceOnlyTextIsInvalid() {
+    @Test("""
+    @spec ATTN-1.7: If `graftty notify` is invoked with text that is empty or contains only whitespace characters (including tabs and newlines), then the CLI shall exit non-zero with a usage error rather than sending a visually-empty attention badge.
+    """)
+    func whitespaceOnlyTextIsInvalid() {
         // Spaces, tabs, newlines — all render as visually-empty badges.
         // Match trimmingCharacters(.whitespacesAndNewlines) semantics.
         for ws in ["   ", "\t", "\n", "  \t\n "] {
@@ -84,7 +90,10 @@ struct NotifyInputValidationTests {
         #expect(NotifyInputValidation.validate(text: "x", clear: false, clearAfter: -1) == .valid)
     }
 
-    @Test func clearAfterAboveCapIsRejected() {
+    @Test("""
+    @spec ATTN-1.8: If `graftty notify` is invoked with `--clear-after` greater than 86400 seconds (24 hours), then the CLI shall exit non-zero with a usage error. Values at or below 86400 are accepted; values at or below zero are handled server-side per `STATE-2.8`.
+    """)
+    func clearAfterAboveCapIsRejected() {
         let r = NotifyInputValidation.validate(text: "x", clear: false, clearAfter: 86401)
         #expect(r == .clearAfterTooLarge(max: 86400))
         #expect(r.message?.contains("86400") == true)
@@ -101,7 +110,10 @@ struct NotifyInputValidationTests {
     // ambiguous enough to warrant feedback rather than a mute
     // "did what you meant" guess.
 
-    @Test func clearWithPositiveClearAfterIsRejected() {
+    @Test("""
+    @spec ATTN-1.9: If `graftty notify` is invoked with both `--clear` and `--clear-after`, then the CLI shall exit non-zero with a usage error. `--clear-after` applies only to notify messages; combining it with `--clear` is ambiguous and previously resulted in the `--clear-after` value being silently dropped.
+    """)
+    func clearWithPositiveClearAfterIsRejected() {
         let r = NotifyInputValidation.validate(text: nil, clear: true, clearAfter: 30)
         #expect(r == .clearAfterWithClearFlag)
         #expect(r.message?.contains("--clear-after") == true)
@@ -135,7 +147,10 @@ struct NotifyInputValidationTests {
         #expect(r == .valid)
     }
 
-    @Test func textOneOverMaxIsRejected() {
+    @Test("""
+    @spec ATTN-1.10: If `graftty notify` is invoked with text longer than 200 Character (grapheme cluster) units, then the CLI shall exit non-zero with a usage error. Attention overlays are designed for short status pings rendered in a narrow sidebar capsule; large inputs (e.g. a piped `git log` or `ls -la`) blow up layout and drown the intended signal.
+    """)
+    func textOneOverMaxIsRejected() {
         let maxLen = NotifyInputValidation.textMaxLength
         let str = String(repeating: "a", count: maxLen + 1)
         let r = NotifyInputValidation.validate(text: str, clear: false)
@@ -174,7 +189,10 @@ struct NotifyInputValidationTests {
     // a literal glyph like `[31m` from an ANSI escape. Reject all
     // Cc-category scalars at the CLI so the user gets clear feedback.
 
-    @Test func textWithEmbeddedLineFeedIsInvalid() {
+    @Test("""
+    @spec ATTN-1.12: If `graftty notify` is invoked with text containing any Unicode Cc (control) scalar — line feed, carriage return, tab, bell, ANSI escape, DEL, null byte, or any other C0/C1 control — then the CLI shall exit non-zero with a usage error reading "Notification text cannot contain control characters (newlines, tabs, ANSI escapes, or other non-printable characters)". The sidebar capsule renders `Text(attentionText)` with `.lineLimit(1)` + `.truncationMode(.tail)`; newlines clip to the first line, tabs render at implementation-defined width, and ANSI escape sequences like `\\e[31m` show up as literal glyphs (the ESC byte is invisible in SwiftUI Text, producing strings like `[31mred[0m`). All of those are data loss or visual garbage from the user's perspective. The server-side `Attention.isValidText` applies the same rejection (silently drops) as a backstop for raw socket clients (`nc -U`, web surface, custom scripts) bypassing the CLI.
+    """)
+    func textWithEmbeddedLineFeedIsInvalid() {
         let r = NotifyInputValidation.validate(text: "line1\nline2", clear: false)
         #expect(r == .controlCharactersInText)
         #expect(r.message?.contains("control characters") == true)
@@ -252,7 +270,10 @@ struct NotifyInputValidationTests {
     // something else, so emoji sequences that embed ZWJ (U+200D) for
     // ligature remain valid.
 
-    @Test func textOfOnlyZeroWidthSpaceIsInvalid() {
+    @Test("""
+    @spec ATTN-1.13: If `graftty notify` is invoked with text whose scalars are entirely Unicode Format-category (Cf) and/or whitespace — e.g., `"\\u{FEFF}"` (BOM), `"\\u{200B}\\u{200C}\\u{FEFF}"` (mixed zero-width scalars) — then the CLI shall reject the message as `emptyText`. Swift's `whitespacesAndNewlines` trim strips some Cf scalars (ZWSP U+200B) but not others (BOM U+FEFF), producing a would-be zero-width badge; the extra allSatisfy check closes the gap. Mixed content that still carries at least one visible scalar (including ZWJ-joined emoji sequences like `👨‍👩‍👧`) remains valid. `Attention.isValidText` applies the same rejection server-side.
+    """)
+    func textOfOnlyZeroWidthSpaceIsInvalid() {
         // U+200B ZERO WIDTH SPACE — invisible, would render as blank.
         let r = NotifyInputValidation.validate(text: "\u{200B}", clear: false)
         #expect(r == .emptyText)
@@ -295,7 +316,10 @@ struct NotifyInputValidationTests {
     // Andy's flow (he types his own notify text), but consistent with
     // ATTN-1.12's "reject surprising render distortion" principle.
 
-    @Test func textWithRLOOverrideIsInvalid() {
+    @Test("""
+    @spec ATTN-1.14: If `graftty notify` is invoked with text containing any Unicode bidirectional-override scalar — the embedding family (`U+202A`–`U+202C`), the override family (`U+202D`–`U+202E`), or the isolate family (`U+2066`–`U+2069`) — then the CLI shall reject the message as `bidiControlInText` with the user-visible error "Notification text cannot contain bidirectional-override characters (U+202A-U+202E, U+2066-U+2069) — they visually reverse the text in the sidebar". These scalars are Unicode Format (Cf) so they slip past both `ATTN-1.12`'s Cc-control check and `ATTN-1.13`'s all-Cf-invisible check when mixed with visible content; a notify like `"\\u{202E}evil"` renders RTL-reversed in the sidebar capsule (the "Trojan Source" class of visual deception, CVE-2021-42574). RTL-natural text (Arabic, Hebrew) uses character-intrinsic directionality and does not use these override scalars, so it still validates cleanly. `Attention.isValidText` applies the same rejection server-side for raw socket clients that bypass the CLI.
+    """)
+    func textWithRLOOverrideIsInvalid() {
         // U+202E RIGHT-TO-LEFT OVERRIDE renders subsequent runs RTL.
         let r = NotifyInputValidation.validate(text: "\u{202E}evil", clear: false)
         #expect(r == .bidiControlInText)

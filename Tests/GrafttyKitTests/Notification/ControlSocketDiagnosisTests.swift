@@ -6,7 +6,10 @@ import Darwin
 @Suite("ControlSocketDiagnosis")
 struct ControlSocketDiagnosisTests {
 
-    @Test func classifiesConnectRefusedWithExistingFileAsStale() {
+    @Test("""
+    @spec ATTN-3.4: If the control socket file exists on disk but `connect()` fails with `ECONNREFUSED`, then the CLI shall print "Graftty is running but not listening on `<path>`. Quit and relaunch Graftty to reset the control socket." and exit with code 1, rather than conflating this stale-listener case with `ATTN-3.1`'s "not running" message. The conditions differ: `ENOENT` (file missing) means the app never created the socket, whereas `ECONNREFUSED` on an existing file means a prior Graftty instance crashed without unlinking, or its `SocketServer.start()` failed after the file was created but before listening began.
+    """)
+    func classifiesConnectRefusedWithExistingFileAsStale() {
         let reason = ControlSocketDiagnosis.classifyConnectFailure(
             errno: ECONNREFUSED,
             socketExists: true,
