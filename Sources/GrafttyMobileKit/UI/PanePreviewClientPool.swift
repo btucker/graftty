@@ -19,8 +19,9 @@ public final class PanePreviewClientPool<Client: PanePreviewClienting> {
         self.makeClient = makeClient
     }
 
-    public func update(layout: PaneLayoutNode) {
-        let wanted = Set(layout.sessionNames)
+    public func update(layout: PaneLayoutNode, maxLivePreviews: Int = .max) {
+        let wantedSessionNames = Array(layout.sessionNames.prefix(max(0, maxLivePreviews)))
+        let wanted = Set(wantedSessionNames)
 
         let removed = clients.keys.filter { !wanted.contains($0) }
         for sessionName in removed {
@@ -28,7 +29,7 @@ public final class PanePreviewClientPool<Client: PanePreviewClienting> {
             clients.removeValue(forKey: sessionName)
         }
 
-        for sessionName in wanted where clients[sessionName] == nil {
+        for sessionName in wantedSessionNames where clients[sessionName] == nil {
             let client = makeClient(sessionName)
             clients[sessionName] = client
             client.start()
