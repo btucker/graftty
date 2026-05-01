@@ -4,8 +4,7 @@ import GrafttyProtocol
 /// Single producer-side fan-out for every team event. `PRStatusStore`,
 /// `TeamMembershipEvents`, and the `graftty team msg`/`team broadcast`
 /// CLI handlers all flow through here, writing one `TeamInbox` row per
-/// matrix-resolved (or addressed) recipient. The legacy channel router
-/// is still constructed for now but receives no events; Phase 4 retires it.
+/// matrix-resolved (or addressed) recipient.
 public final class TeamEventDispatcher {
     private let inbox: TeamInbox
     private let preferencesProvider: () -> TeamEventRoutingPreferences

@@ -59,7 +59,7 @@ struct TeamTodo {
     func team_2_4() async throws { }
 
     @Test("""
-@spec TEAM-3.1: When a `graftty mcp-channel` subscriber connects on behalf of a worktree whose repo has team status (per TEAM-2.1), the application shall include the rendered team-aware instructions text in the initial `instructions` channel event sent to that subscriber. The instructions text describes only mechanism — peers, the `graftty team msg` command, the `team_*` channel event types — and contains no behavioral prescription.
+@spec TEAM-3.1: When `graftty team hook` requests `sessionStart` context for a worktree whose repo has team status (per TEAM-2.1), the application shall return the rendered team-aware instructions text. The instructions text describes only mechanism — peers, the `graftty team msg` command, the `team_*` event kinds delivered through the inbox — and contains no behavioral prescription.
 """, .disabled("not yet implemented"))
     func team_3_1() async throws { }
 
@@ -74,17 +74,12 @@ struct TeamTodo {
     func team_3_3() async throws { }
 
     @Test("""
-@spec TEAM-3.4: When the team membership of a worktree's repo changes (a worktree is added or removed, or `agentTeamsEnabled` toggles), the application shall re-render and re-broadcast the `instructions` event to every active subscriber whose worktree's team is affected. (This reuses the existing `broadcastInstructions` pipeline.)
-""", .disabled("not yet implemented"))
-    func team_3_4() async throws { }
-
-    @Test("""
 @spec TEAM-4.1: The application shall provide a CLI subcommand group `graftty team` with two subcommands: `msg <member-name> "<text>"` and `list`.
 """, .disabled("not yet implemented"))
     func team_4_1() async throws { }
 
     @Test("""
-@spec TEAM-4.2: `graftty team msg <member-name> "<text>"` shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, look up the team for that worktree, find a teammate matching `<member-name>`, and send a `team_message` channel event addressed to that teammate's worktree with `attrs.from = <calling-worktree's member name>` and body `<text>`. The CLI shall exit non-zero with a stderr message if (a) team mode is disabled, (b) the calling worktree has no team, or (c) `<member-name>` is not a teammate of the caller. In case (c) the error shall list the current teammates' member names.
+@spec TEAM-4.2: `graftty team msg <member-name> "<text>"` shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, look up the team for that worktree, find a teammate matching `<member-name>`, and write a `team_message` inbox row addressed to that teammate's worktree with `from.member = <calling-worktree's member name>` and body `<text>`. The CLI shall exit non-zero with a stderr message if (a) team mode is disabled, (b) the calling worktree has no team, or (c) `<member-name>` is not a teammate of the caller. In case (c) the error shall list the current teammates' member names.
 """, .disabled("not yet implemented"))
     func team_4_2() async throws { }
 
@@ -94,12 +89,12 @@ struct TeamTodo {
     func team_4_3() async throws { }
 
     @Test("""
-@spec TEAM-5.2: The application shall emit a `team_member_joined` channel event when a worktree is added to a team (a new worktree appears in a team-enabled repo, or a single-worktree repo gains a second worktree). Routing: addressed to the team's lead's worktree only. Attributes: `team`, `member` (joiner's member name), `branch`, `worktree` (joiner's path).
+@spec TEAM-5.2: The application shall write a `team_member_joined` inbox row when a worktree is added to a team (a new worktree appears in a team-enabled repo, or a single-worktree repo gains a second worktree). Routing: addressed to the team's lead's worktree only. Attributes: `team`, `member` (joiner's member name), `branch`, `worktree` (joiner's path).
 """, .disabled("not yet implemented"))
     func team_5_2() async throws { }
 
     @Test("""
-@spec TEAM-5.3: The application shall emit a `team_member_left` channel event when a worktree is removed from a team (the worktree is deleted, or the team-enabled repo collapses to one worktree). Routing: addressed to the team's lead's worktree only. Attributes: `team`, `member` (departing member's name), `reason` (`removed` or `exited`).
+@spec TEAM-5.3: The application shall write a `team_member_left` inbox row when a worktree is removed from a team (the worktree is deleted, or the team-enabled repo collapses to one worktree). Routing: addressed to the team's lead's worktree only. Attributes: `team`, `member` (departing member's name), `reason` (`removed` or `exited`).
 """, .disabled("not yet implemented"))
     func team_5_3() async throws { }
 
