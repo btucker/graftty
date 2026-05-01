@@ -14,24 +14,19 @@ struct TeamTodo {
     func team_1_1() async throws { }
 
     @Test("""
-@spec TEAM-1.2: `agentTeamsEnabled` is the single feature toggle governing both team mode and channel-event delivery. There is no separate `channelsEnabled` flag; the channel infrastructure is gated entirely by `agentTeamsEnabled`. When `agentTeamsEnabled` is false, no channel router, no MCP server registration, and no PR channel events fire.
+@spec TEAM-1.2: While `agentTeamsEnabled` is false, the application shall not write any team event rows to the inbox and `graftty team hook` shall return no-op responses; the agent team feature is fully gated by this flag.
 """, .disabled("not yet implemented"))
     func team_1_2() async throws { }
 
     @Test("""
-@spec TEAM-1.5: `agentTeamsEnabled` plus the `channelRoutingPreferences` JSON struct (see TEAM-1.8) supersede the previous coupled `teamPRNotificationsEnabled` flag. Channel events fire only when `agentTeamsEnabled` is true; per-event recipient sets are taken from the matrix in `channelRoutingPreferences`.
+@spec TEAM-1.5: `agentTeamsEnabled` plus the `teamEventRoutingPreferences` JSON struct (see TEAM-1.8) supersede the previous coupled `teamPRNotificationsEnabled` flag. Inbox events are written only when `agentTeamsEnabled` is true; per-event recipient sets are taken from the matrix in `teamEventRoutingPreferences`.
 """, .disabled("not yet implemented"))
     func team_1_5() async throws { }
 
     @Test("""
-@spec TEAM-1.6: The Agent Teams Settings pane shall expose **two** user-editable Stencil-templated text areas, each pre-populated with a non-empty default (`DefaultPrompts.sessionPrompt` and `DefaultPrompts.eventPrompt`) registered into `UserDefaults.standard` at app startup so non-binding readers see the same default until the user overrides. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt` (`@AppStorage("teamSessionPrompt")`, String) — rendered once at session start against the `agent` context; only `agent.branch` and `agent.lead` are meaningful at session start (`agent.this_worktree` and `agent.other_worktree` are always `false`), and the pane's variable-list disclosure deliberately omits the latter two. The rendered text is appended after a blank line to the auto-generated team-aware MCP-instructions text. The second, `teamPrompt` (`@AppStorage("teamPrompt")`, String) — rendered per channel-event delivery against the full four-field `agent` context; the rendered text is prepended after a blank line to the channel event's body before dispatch. Both templates use the same `agent` struct shape: `branch` (String), `lead` (Bool), `this_worktree` (Bool), `other_worktree` (Bool). The previously-defined `teamLeadPrompt` and `teamCoworkerPrompt` AppStorage keys are removed.
+@spec TEAM-1.6: The Agent Teams Settings pane shall expose **two** user-editable Stencil-templated text areas, each pre-populated with a non-empty default (`DefaultPrompts.sessionPrompt` and `DefaultPrompts.eventPrompt`) registered into `UserDefaults.standard` at app startup so non-binding readers see the same default until the user overrides. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt` (`@AppStorage("teamSessionPrompt")`, String) — rendered once at session start against the `agent` context; only `agent.branch` and `agent.lead` are meaningful at session start (`agent.this_worktree` and `agent.other_worktree` are always `false`), and the pane's variable-list disclosure deliberately omits the latter two. The rendered text is appended after a blank line to the auto-generated team-aware instructions text returned by `graftty team hook`. The second, `teamPrompt` (`@AppStorage("teamPrompt")`, String) — rendered per inbox-row write against the full four-field `agent` context evaluated against the recipient agent; the rendered text is prepended after a blank line to the inbox row's body before the row is appended to the recipient's `messages.jsonl`. Both templates use the same `agent` struct shape: `branch` (String), `lead` (Bool), `this_worktree` (Bool), `other_worktree` (Bool). The previously-defined `teamLeadPrompt` and `teamCoworkerPrompt` AppStorage keys are removed.
 """, .disabled("not yet implemented"))
     func team_1_6() async throws { }
-
-    @Test("""
-@spec TEAM-1.7: While `agentTeamsEnabled` is true, the Agent Teams Settings pane shall display the canonical channel launch flag `--dangerously-load-development-channels server:graftty-channel` in a monospaced selectable text view alongside a "Copy" button that writes the flag to the system clipboard, and a footer note explaining that the user must add the flag to their `claude` invocation (e.g., the Default Command field on the General Settings pane) for channel events to flow into the session.
-""", .disabled("not yet implemented"))
-    func team_1_7() async throws { }
 
     @Test("""
 @spec TEAM-1.8: The Agent Teams Settings pane shall render a 4×3 matrix of toggles (rows: PR state changed / PR merged / CI conclusion changed / Mergability changed; columns: Root agent / Worktree agent / Other worktree agents). Each cell binds to one bit of a `RecipientSet` field on the persisted `TeamEventRoutingPreferences` `Codable` struct. Defaults: state-changed/CI/mergability → worktree only; merged → root only. The matrix is rendered as its own Section between the main toggle and the prompt sections.
