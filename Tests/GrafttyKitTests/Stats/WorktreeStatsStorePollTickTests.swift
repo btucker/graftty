@@ -13,7 +13,7 @@ import Foundation
 @Suite("""
 WorktreeStatsStore.pollTick
 
-@spec DIVERGE-4.6: The polling loop shall also recompute divergence counts for every non-stale worktree on a 30-second per-worktree cadence, independent of the network `git fetch` cadence in DIVERGE-4.3. Local-only recomputation uses no network — `git rev-list`, `git diff --shortstat`, and `git status --porcelain` all run against the local object store — so it catches local changes (a `git add` in an external shell, a commit made by a tool other than Graftty) even when the repo's fetch cooldown is still active. When a tick finds a per-repo fetch is due in the same cycle, the per-worktree cadence is skipped for that repo because the fetch handler itself recomputes every worktree on success.
+@spec DIVERGE-4.6: The polling loop shall also recompute divergence counts for every running worktree on a 30-second per-worktree cadence, independent of the network `git fetch` cadence in DIVERGE-4.3. Local-only recomputation uses no network — `git rev-list`, `git diff --shortstat`, and `git status --porcelain` all run against the local object store — so it catches local changes (a `git add` in an external shell, a commit made by a tool other than Graftty) even when the repo's fetch cooldown is still active. When a tick finds a per-repo fetch is due in the same cycle, the per-worktree cadence is skipped for that repo because the fetch handler itself recomputes every running worktree on success.
 """)
 struct WorktreeStatsStorePollTickTests {
 
@@ -30,7 +30,7 @@ struct WorktreeStatsStorePollTickTests {
         let repo = RepoEntry(
             path: "/r",
             displayName: "r",
-            worktrees: [WorktreeEntry(path: "/r/wt", branch: "feature")]
+            worktrees: [WorktreeEntry(path: "/r/wt", branch: "feature", state: .running)]
         )
         await store.pollTickForTesting(repos: [repo])
 
@@ -51,7 +51,7 @@ struct WorktreeStatsStorePollTickTests {
         let repo = RepoEntry(
             path: "/r",
             displayName: "r",
-            worktrees: [WorktreeEntry(path: "/r/wt", branch: "feature")]
+            worktrees: [WorktreeEntry(path: "/r/wt", branch: "feature", state: .running)]
         )
         await store.pollTickForTesting(repos: [repo])
 
@@ -80,6 +80,24 @@ struct WorktreeStatsStorePollTickTests {
         try await Task.sleep(nanoseconds: 200_000_000)
 
         #expect(!compute.calledPaths.contains("/r/gone"))
+    }
+
+    @MainActor
+    @Test("""
+@spec PERF-1.3: The stats polling loop shall skip closed worktrees during its recurring local recompute cadence; a closed worktree exists on disk but has no live terminal surface, and repeatedly running local git scans for every tracked-but-closed row makes CPU scale with sidebar history rather than active work.
+""")
+    func pollTickSkipsClosedWorktrees() async throws {
+        let compute = RecordingCompute()
+        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in })
+
+        store.seedLastRepoFetchForTesting(Date(), forRepo: "/r")
+        let closedWt = WorktreeEntry(path: "/r/closed", branch: "feature", state: .closed)
+        let repo = RepoEntry(path: "/r", displayName: "r", worktrees: [closedWt])
+
+        await store.pollTickForTesting(repos: [repo])
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        #expect(!compute.calledPaths.contains("/r/closed"))
     }
 
     // MARK: - Helpers

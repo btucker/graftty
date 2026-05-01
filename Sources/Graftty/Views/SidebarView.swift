@@ -5,10 +5,11 @@ import GrafttyKit
 
 struct SidebarView: View {
     @Binding var appState: AppState
-    /// Observed so pane-title changes (libghostty `SET_TITLE`) repaint the
-    /// sidebar immediately. The manager's `titles` map is the source of
-    /// truth for per-pane labels.
-    @ObservedObject var terminalManager: TerminalManager
+    /// Used to read pane titles. Title change invalidation is deliberately
+    /// scoped to `paneTitleInvalidations` below so MainWindow does not
+    /// recompute on every shell title/PWD event.
+    let terminalManager: TerminalManager
+    @ObservedObject var paneTitleInvalidations: PaneTitleInvalidationSource
     let theme: GhosttyTheme
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
@@ -41,6 +42,9 @@ struct SidebarView: View {
     @State private var dropTargetWorktreeID: WorktreeEntry.ID?
 
     var body: some View {
+        // Explicit dependency: the titles live on TerminalManager, while this
+        // lightweight observable scopes invalidation to the sidebar.
+        let _ = paneTitleInvalidations.generation
         VStack(spacing: 0) {
             List {
                 ForEach(appState.repos) { repo in

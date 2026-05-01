@@ -1076,10 +1076,10 @@ struct GrafttyApp: App {
                     services.worktreeMonitor.stopWatchingWorktree(wt.path)
                 }
 
-                // Kick initial stats refresh for non-stale worktrees after
-                // reconciliation. Preserves the pre-migration "reconcile,
-                // then refresh" ordering without blocking startup.
-                for wt in binding.wrappedValue.repos[repoIdx].worktrees where wt.state.hasOnDiskWorktree {
+                // Kick initial stats refresh for running worktrees after
+                // reconciliation. Closed worktrees can be numerous sidebar
+                // history; polling them makes CPU scale with inactive rows.
+                for wt in binding.wrappedValue.repos[repoIdx].worktrees where wt.state == .running {
                     statsStore.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
                 }
             }
@@ -2230,7 +2230,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             // Existing worktrees' stats are driven by their own HEAD
             // callbacks and the polling loop, so a `.git/worktrees/`
             // directory tick only needs to seed stats for new entries.
-            for wt in result.newlyAdded {
+            for wt in result.newlyAdded where wt.state == .running {
                 store.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
             }
         }
@@ -2313,7 +2313,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         let remoteBranchStore = remoteBranchStore
         Task { @MainActor in
             guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }) else { return }
-            for wt in repo.worktrees where wt.state.hasOnDiskWorktree {
+            for wt in repo.worktrees where wt.state == .running {
                 // Origin-ref movement can shift every worktree's ahead /
                 // behind counts vs. origin/<default>, not just the PR
                 // state — e.g. a local `git fetch` in another terminal
@@ -2359,7 +2359,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         let store = statsStore
         Task { @MainActor in
             guard let repo = binding.wrappedValue.repos.first(where: { repo in
-                repo.worktrees.contains(where: { $0.path == worktreePath && $0.state != .stale })
+                repo.worktrees.contains(where: { $0.path == worktreePath && $0.state == .running })
             }),
                   let wt = repo.worktrees.first(where: { $0.path == worktreePath })
             else { return }

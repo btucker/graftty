@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import GhosttyKit
 import GrafttyKit
 @preconcurrency import UserNotifications
@@ -97,13 +98,24 @@ final class TerminalManager: ObservableObject {
     /// `destroySurface`. Not persisted — these are ephemeral runtime
     /// state that die with their shell. The sidebar reads this through
     /// `displayTitle(for:)`, which also applies the PWD-basename fallback.
-    @Published var titles: [TerminalID: String] = [:]
+    var titles: [TerminalID: String] = [:]
 
     /// Per-pane last-known working directory, populated from OSC 7
     /// (`GHOSTTY_ACTION_PWD`). Used as the second tier of the sidebar
     /// label fallback chain after `titles`. Cleaned up on
     /// `destroySurface` alongside `titles`.
-    @Published var pwds: [TerminalID: String] = [:]
+    var pwds: [TerminalID: String] = [:]
+
+    /// Sidebar-only invalidation source for pane title changes. Keep this
+    /// separate from TerminalManager's own objectWillChange because
+    /// MainWindow observes the manager for theme/keybind changes; publishing
+    /// pane titles through the manager invalidates the entire split view.
+    let paneTitleInvalidations = PaneTitleInvalidationSource()
+
+    /// Cached sidebar-visible pane titles. Raw `titles`/`pwds` can change
+    /// frequently from shell integration; only display-equivalent changes
+    /// trigger the sidebar-only invalidation source above.
+    private var renderedTitles: [TerminalID: String] = [:]
 
     /// Ghostty-config-derived keybind map, built in `initialize()` from the
     /// live `ghostty_config_t` via `GhosttyTriggerAdapter.resolver`.
@@ -499,6 +511,9 @@ final class TerminalManager: ObservableObject {
         surfaces.removeValue(forKey: terminalID)
         titles.removeValue(forKey: terminalID)
         pwds.removeValue(forKey: terminalID)
+        if renderedTitles.removeValue(forKey: terminalID) != nil {
+            paneTitleInvalidations.schedule()
+        }
         shellReadyFired.remove(terminalID)
         cachedShellPIDs.removeValue(forKey: terminalID)
     }
@@ -508,10 +523,41 @@ final class TerminalManager: ObservableObject {
     /// then empty — callers render the "shell" fallback on empty per
     /// LAYOUT-2.9.
     func displayTitle(for terminalID: TerminalID) -> String {
-        PaneTitle.display(
+        renderedTitles[terminalID] ?? ""
+    }
+
+    /// Record a sanitized program-set title and return whether the rendered
+    /// sidebar title changed. Rejected titles preserve the previous title.
+    @discardableResult
+    func recordTitle(_ title: String, for terminalID: TerminalID) -> Bool {
+        guard let sanitized = PaneTitle.sanitize(title) else { return false }
+        titles[terminalID] = sanitized
+        return updateRenderedTitle(for: terminalID)
+    }
+
+    /// Record the pane's latest PWD and return whether the rendered sidebar
+    /// title changed. The raw PWD is retained even when the basename display
+    /// is unchanged so relative editor-open handling stays accurate.
+    @discardableResult
+    func recordPWD(_ pwd: String, for terminalID: TerminalID) -> Bool {
+        pwds[terminalID] = pwd
+        return updateRenderedTitle(for: terminalID)
+    }
+
+    private func updateRenderedTitle(for terminalID: TerminalID) -> Bool {
+        let old = renderedTitles[terminalID] ?? ""
+        let new = PaneTitle.display(
             storedTitle: titles[terminalID],
             pwd: pwds[terminalID]
         )
+        guard old != new else { return false }
+        if new.isEmpty {
+            renderedTitles.removeValue(forKey: terminalID)
+        } else {
+            renderedTitles[terminalID] = new
+        }
+        paneTitleInvalidations.schedule()
+        return true
     }
 
     /// Look up the `NSView` hosting a given terminal's surface.
@@ -752,16 +798,14 @@ final class TerminalManager: ObservableObject {
             // dict past `maxStoredLength`. A legitimate title pushed
             // by the inner shell later still wins because we write the
             // filtered value back. See `PaneTitle.sanitize`.
-            if let sanitized = PaneTitle.sanitize(title), titles[id] != sanitized {
-                titles[id] = sanitized
-            }
+            recordTitle(title, for: id)
 
         case GHOSTTY_ACTION_PWD:
             guard let id = terminalID(from: target) else { return }
             guard let pwdPtr = action.action.pwd.pwd else { return }
             let pwd = String(cString: pwdPtr)
             // Feeds `displayTitle(for:)`'s PWD-basename fallback.
-            pwds[id] = pwd
+            recordPWD(pwd, for: id)
             if shellReadyFired.insert(id).inserted {
                 onShellReady?(id)
             }
