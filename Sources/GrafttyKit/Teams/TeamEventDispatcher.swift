@@ -144,10 +144,10 @@ public final class TeamEventDispatcher {
     /// per recipient resolved by `TeamEventRouter`. No-ops for events outside
     /// the matrix (`team_message`, `team_member_*`, etc.) and for subject
     /// worktrees not contained in any tracked repo. For single-worktree repos
-    /// `TeamEventRouter` (via `ChannelEventRouter`) still delivers to the
-    /// subject worktree iff `.worktree` is in the matrix row, so we resolve
-    /// the repo directly rather than going through `TeamLookup.team(for:)`
-    /// which requires a real (>=2 worktree) team.
+    /// `TeamEventRouter` still delivers to the subject worktree iff
+    /// `.worktree` is in the matrix row, so we resolve the repo directly
+    /// rather than going through `TeamLookup.team(for:)` which requires a
+    /// real (>=2 worktree) team.
     public func dispatchRoutableEvent(
         _ event: ChannelServerMessage,
         subjectWorktreePath: String,

@@ -10,7 +10,6 @@ struct MainWindow: View {
     let prStatusStore: PRStatusStore
     let remoteBranchStore: RemoteBranchStore
     let worktreeMonitor: WorktreeMonitor
-    let channelRouter: ChannelRouter
     let teamEventDispatcher: TeamEventDispatcher
 
     @EnvironmentObject private var updaterController: UpdaterController

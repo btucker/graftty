@@ -64,8 +64,6 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
 @MainActor
 final class AppServices {
     let socketServer: SocketServer
-    let channelRouter: ChannelRouter
-    let channelSettingsObserver: ChannelSettingsObserver
     let worktreeMonitor: WorktreeMonitor
     let statsStore: WorktreeStatsStore
     let remoteBranchStore: RemoteBranchStore
@@ -79,37 +77,6 @@ final class AppServices {
 
     init(socketPath: String) {
         self.socketServer = SocketServer(socketPath: socketPath)
-
-        let channelSocketPath = SocketPathResolver.resolveChannels()
-
-        // Two-phase wiring: construct the observer first so the router's
-        // promptProvider closure can delegate to it for per-worktree
-        // team-aware composition (TEAM-3.3). A Box bridges the forward
-        // reference from the router closure back to the observer that
-        // doesn't exist yet at closure-capture time.
-        final class Box<T: AnyObject> { weak var value: T? }
-        let observerBox = Box<ChannelSettingsObserver>()
-
-        let router = ChannelRouter(
-            socketPath: channelSocketPath,
-            promptProvider: { [observerBox] worktreePath in
-                if let observer = observerBox.value {
-                    return observer.composedPrompt(forWorktree: worktreePath)
-                }
-                // Fallback before observer is wired (should not normally happen).
-                return ""
-            }
-        )
-        let observer = ChannelSettingsObserver(
-            router: router,
-            onEnable: {
-                Task { await GrafttyApp.installChannelMCPServer() }
-            }
-        )
-        observerBox.value = observer
-
-        self.channelRouter = router
-        self.channelSettingsObserver = observer
 
         self.worktreeMonitor = WorktreeMonitor()
         self.statsStore = WorktreeStatsStore()
@@ -260,7 +227,6 @@ struct GrafttyApp: App {
                 prStatusStore: services.prStatusStore,
                 remoteBranchStore: services.remoteBranchStore,
                 worktreeMonitor: services.worktreeMonitor,
-                channelRouter: services.channelRouter,
                 teamEventDispatcher: services.teamEventDispatcher
             )
                 .environmentObject(webController)
@@ -633,26 +599,11 @@ struct GrafttyApp: App {
             NSLog("[Graftty] SocketServer.start() failed: %@", String(describing: error))
         }
 
-        if UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) {
-            Task { await Self.installChannelMCPServer() }
-            do {
-                try services.channelRouter.start()
-            } catch {
-                NSLog("[Graftty] Channels startup failed: %@", String(describing: error))
-            }
-        }
-
-        // Wire the AppState provider so ChannelSettingsObserver can compose
-        // per-worktree team instructions (TEAM-3.3). This must happen in
-        // startup() rather than AppServices.init() because @State is only
-        // accessible once SwiftUI's body has run. Capturing $appState here
-        // gives a stable Binding whose wrappedValue is always current.
-        let channelAppStateBinding = $appState
-        services.channelSettingsObserver.appStateProvider = { channelAppStateBinding.wrappedValue }
-
         // Wire the AppState provider for the team PR-merged dispatch hook
-        // (TEAM-5.4). Same timing constraint as above — @State only accessible
-        // after body runs, so we use a Binding-capture here rather than in init().
+        // (TEAM-5.4). @State is only accessible once SwiftUI's body has
+        // run, so we capture a Binding here rather than in
+        // AppServices.init().
+        let channelAppStateBinding = $appState
         services.appStateProvider = { channelAppStateBinding.wrappedValue }
 
         // SocketServer already dispatches onMessage to the main queue.
@@ -2372,37 +2323,6 @@ struct GrafttyApp: App {
         } else {
             Button(label, action: onTap)
         }
-    }
-
-    /// Registers the graftty-channel user-scope MCP server via `claude mcp`
-    /// and removes leftover config from prior versions (the plugin-wrapper
-    /// directory and the abandoned `~/.claude/.mcp.json`). Logs on failure;
-    /// never throws.
-    @MainActor
-    static func installChannelMCPServer() async {
-        // Absolute path to the CLI binary. When Graftty is bundled, the CLI
-        // lives at Graftty.app/Contents/Helpers/graftty per `scripts/bundle.sh`
-        // and `installCLI()` below.
-        let cliPath = Bundle.main.bundleURL
-            .appendingPathComponent("Contents/Helpers/graftty")
-            .path
-
-        // `swift run` has no bundled CLI — skip to avoid registering an
-        // entry pointing at a nonexistent binary, which would break every
-        // Claude session the user opens outside Graftty.
-        guard FileManager.default.fileExists(atPath: cliPath) else {
-            NSLog("[Graftty] Channels install skipped: bundled CLI not found at %@", cliPath)
-            return
-        }
-
-        await ChannelMCPInstaller.install(executor: CLIRunner(), cliPath: cliPath)
-
-        ChannelMCPInstaller.removeLegacyPluginDirectory(
-            pluginsRoot: ChannelMCPInstaller.defaultLegacyPluginsRoot()
-        )
-        ChannelMCPInstaller.removeLegacyMCPConfigFile(
-            path: ChannelMCPInstaller.defaultLegacyMCPConfigPath()
-        )
     }
 
     static func installAgentHookAssets() {
