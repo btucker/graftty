@@ -38,8 +38,8 @@ public enum TeamInstructionsRenderer {
           - ci_conclusion_changed — a worktree's CI conclusion changed; routing per matrix.
           - merge_state_changed — a worktree's PR mergability changed; routing per matrix.
 
-        You will receive direct messages from coworkers or the user through Graftty \
-        team inbox hook updates at tool or stop boundaries.
+        You will also receive direct `team_message` rows from coworkers or the user \
+        through Graftty team inbox hook updates at tool or stop boundaries.
 
         To see the current roster at any time:
           graftty team list
