@@ -19,11 +19,6 @@ struct IosTodo {
     func ios_1_2() async throws { }
 
     @Test("""
-@spec IOS-1.3: Wire-format types shared between `GrafttyMobile` and the `GrafttyKit` web server — `SessionInfo`, `WebControlEnvelope` — shall live in a shared library target `GrafttyProtocol`, imported by both targets. This ensures a breaking JSON-shape change is a compile-time error on both sides.
-""", .disabled("not yet implemented"))
-    func ios_1_3() async throws { }
-
-    @Test("""
 @spec IOS-1.4: While the iOS application is installed, it shall appear on the home screen and in the app switcher as "Graftty" (via `CFBundleDisplayName`) and shall use the same app icon as the macOS application, sourced from the shared master `Resources/AppIcon.png`. The Xcode target, `.xcodeproj`, on-disk sources directory, and bundle identifier keep the `GrafttyMobile` name internally so `Bundle.main.bundleIdentifier` checks, keychain service strings, and the `GrafttyMobileKit` SPM target continue to work unchanged — "GrafttyMobile" is the codebase's internal handle, "Graftty" is the user-facing brand on both platforms.
 """, .disabled("not yet implemented"))
     func ios_1_4() async throws { }
