@@ -1344,6 +1344,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-8.3** When the application starts, the application shall delete `~/.claude/plugins/graftty-channel` if present.
 
+**TEAM-8.4** When the application starts, if `defaultCommand` contains `--dangerously-load-development-channels server:graftty-channel`, the application shall strip the substring (with any adjacent leading whitespace), write the cleaned value back to `defaultCommand`, and present a one-shot informational `NSAlert` describing the change.
+
 ## EDITOR — Editor Integration
 
 ### EDITOR-1.x

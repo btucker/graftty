@@ -145,3 +145,54 @@ struct LegacyPluginDirectoryCleanupTests {
         // Pass condition: no crash.
     }
 }
+
+@Suite("@spec TEAM-8.4: When the application starts, if `defaultCommand` contains `--dangerously-load-development-channels server:graftty-channel`, the application shall strip the substring (with any adjacent leading whitespace), write the cleaned value back to `defaultCommand`, and present a one-shot informational `NSAlert` describing the change.")
+struct DefaultCommandScrubTests {
+    private func ephemeralDefaults() -> UserDefaults {
+        UserDefaults(suiteName: "test-\(UUID().uuidString)")!
+    }
+
+    @Test func scrubRemovesFlagAtEnd() {
+        let defaults = ephemeralDefaults()
+        defaults.set(
+            "claude --dangerously-load-development-channels server:graftty-channel",
+            forKey: "defaultCommand"
+        )
+
+        let didStrip = LegacyChannelCleanup.scrubDefaultCommandLaunchFlag(in: defaults)
+
+        #expect(didStrip == true)
+        #expect(defaults.string(forKey: "defaultCommand") == "claude")
+    }
+
+    @Test func scrubRemovesFlagInMiddle() {
+        let defaults = ephemeralDefaults()
+        defaults.set(
+            "claude --dangerously-load-development-channels server:graftty-channel --resume",
+            forKey: "defaultCommand"
+        )
+
+        let didStrip = LegacyChannelCleanup.scrubDefaultCommandLaunchFlag(in: defaults)
+
+        #expect(didStrip == true)
+        #expect(defaults.string(forKey: "defaultCommand") == "claude --resume")
+    }
+
+    @Test func scrubNoOpWhenFlagAbsent() {
+        let defaults = ephemeralDefaults()
+        defaults.set("claude", forKey: "defaultCommand")
+
+        let didStrip = LegacyChannelCleanup.scrubDefaultCommandLaunchFlag(in: defaults)
+
+        #expect(didStrip == false)
+        #expect(defaults.string(forKey: "defaultCommand") == "claude")
+    }
+
+    @Test func scrubNoOpWhenKeyUnset() {
+        let defaults = ephemeralDefaults()
+
+        let didStrip = LegacyChannelCleanup.scrubDefaultCommandLaunchFlag(in: defaults)
+
+        #expect(didStrip == false)
+    }
+}

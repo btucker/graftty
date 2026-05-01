@@ -75,4 +75,28 @@ public enum LegacyChannelCleanup {
             try? FileManager.default.removeItem(at: dir)
         }
     }
+
+    /// Strip `--dangerously-load-development-channels server:graftty-channel`
+    /// (with adjacent whitespace) from the user's stored `defaultCommand`.
+    /// Returns true if a change was made; the caller should present a
+    /// one-shot informational alert when true.
+    @discardableResult
+    public static func scrubDefaultCommandLaunchFlag(
+        in defaults: UserDefaults = .standard
+    ) -> Bool {
+        let key = "defaultCommand"
+        let flag = "--dangerously-load-development-channels server:graftty-channel"
+        guard let current = defaults.string(forKey: key), current.contains(flag) else {
+            return false
+        }
+        var cleaned = current.replacingOccurrences(of: flag, with: "")
+        // Collapse the double-space (or larger run) the substring removal
+        // leaves between the surrounding tokens.
+        while cleaned.contains("  ") {
+            cleaned = cleaned.replacingOccurrences(of: "  ", with: " ")
+        }
+        cleaned = cleaned.trimmingCharacters(in: .whitespaces)
+        defaults.set(cleaned, forKey: key)
+        return true
+    }
 }
