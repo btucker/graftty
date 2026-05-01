@@ -473,9 +473,9 @@ struct MainWindow: View {
                 }
             case .success(let outcome):
                 selectWorktree(outcome.worktreePath)
-                // Phase 2: live-channel roster broadcast is dropped; the
-                // team_member_joined inbox row addressed to the lead is
-                // the new signal (Phase 4 deletes ChannelRouter entirely).
+                // Roster signal flows through the inbox: a
+                // team_member_joined row addressed to the lead is appended
+                // by TeamMembershipEvents on add, no live broadcast needed.
             }
         }
         return nil
