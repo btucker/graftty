@@ -35,11 +35,13 @@ struct WorktreeStatsStoreCadenceTests {
         #expect(WorktreeStatsStore.repoFetchCadence(failureStreak: 100) == .seconds(30 * 32))
     }
 
-    /// DIVERGE-4.6: per-worktree local stats recompute cadence is
-    /// independent of the repo-level fetch cadence. Pinned at 30s to
-    /// match `PRStatusStore.cadenceFor`'s base so the sidebar's two
-    /// indicators (divergence + PR badge) refresh on the same tempo.
-    @Test func statsRefreshCadenceIsThirtySeconds() {
-        #expect(WorktreeStatsStore.statsRefreshCadence() == .seconds(30))
+    /// DIVERGE-4.4: the in-flight abandonment threshold caps how long
+    /// a still-`inFlight` Task can suppress fresh dispatches. Pinned
+    /// at 30s — long enough to absorb a normal `git` slow-path (FS
+    /// pressure, cold cache) but short enough that a hung subprocess
+    /// (ref-transaction lock during a concurrent `git push`) doesn't
+    /// permanently freeze the worktree's gutter.
+    @Test func inFlightAbandonmentThresholdIsThirtySeconds() {
+        #expect(WorktreeStatsStore.inFlightAbandonmentThreshold() == .seconds(30))
     }
 }

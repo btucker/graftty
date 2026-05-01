@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import GhosttyKit
 import GrafttyKit
 @preconcurrency import UserNotifications
@@ -46,9 +47,18 @@ final class TerminalManager: ObservableObject {
     private var ghosttyConfig: GhosttyConfig?
     private var surfaces: [TerminalID: SurfaceHandle] = [:]
 
+    var ptyDeviceAvailability: () -> PtyDeviceAvailability = {
+        PtyDeviceAvailability.live()
+    }
+
     /// Terminal IDs for which `onShellReady` has already fired. Used to
     /// gate the callback to exactly one invocation per pane.
     private var shellReadyFired: Set<TerminalID> = []
+
+    private enum ZmxSessionSnapshot {
+        case live(Set<String>)
+        case unavailable
+    }
 
     /// Terminal IDs that are the "first pane" of a worktree — the pane
     /// whose creation caused `.closed → .running`. Populated by
@@ -88,13 +98,24 @@ final class TerminalManager: ObservableObject {
     /// `destroySurface`. Not persisted — these are ephemeral runtime
     /// state that die with their shell. The sidebar reads this through
     /// `displayTitle(for:)`, which also applies the PWD-basename fallback.
-    @Published var titles: [TerminalID: String] = [:]
+    var titles: [TerminalID: String] = [:]
 
     /// Per-pane last-known working directory, populated from OSC 7
     /// (`GHOSTTY_ACTION_PWD`). Used as the second tier of the sidebar
     /// label fallback chain after `titles`. Cleaned up on
     /// `destroySurface` alongside `titles`.
-    @Published var pwds: [TerminalID: String] = [:]
+    var pwds: [TerminalID: String] = [:]
+
+    /// Sidebar-only invalidation source for pane title changes. Keep this
+    /// separate from TerminalManager's own objectWillChange because
+    /// MainWindow observes the manager for theme/keybind changes; publishing
+    /// pane titles through the manager invalidates the entire split view.
+    let paneTitleInvalidations = PaneTitleInvalidationSource()
+
+    /// Cached sidebar-visible pane titles. Raw `titles`/`pwds` can change
+    /// frequently from shell integration; only display-equivalent changes
+    /// trigger the sidebar-only invalidation source above.
+    private var renderedTitles: [TerminalID: String] = [:]
 
     /// Ghostty-config-derived keybind map, built in `initialize()` from the
     /// live `ghostty_config_t` via `GhosttyTriggerAdapter.resolver`.
@@ -381,13 +402,24 @@ final class TerminalManager: ObservableObject {
     ) -> [TerminalID: SurfaceHandle] {
         guard let app = ghosttyApp?.app else { return [:] }
 
-        // Hoist one zmx list call so K rehydrated leaves do not spawn K
-        // subprocesses. nil = no answer; helper falls back to per-leaf check.
-        let liveSessions: Set<String>? = zmxLauncher.flatMap { try? $0.listSessions() }
+        var zmxSessionSnapshot: ZmxSessionSnapshot?
+        func liveSessionsIfNeeded(for terminalID: TerminalID) -> ZmxSessionSnapshot? {
+            guard rehydratedSurfaces.contains(terminalID),
+                  let launcher = zmxLauncher else { return nil }
+            if zmxSessionSnapshot == nil {
+                zmxSessionSnapshot = (try? launcher.listSessions())
+                    .map(ZmxSessionSnapshot.live) ?? .unavailable
+            }
+            return zmxSessionSnapshot
+        }
 
         var created: [TerminalID: SurfaceHandle] = [:]
         for terminalID in splitTree.allLeaves where surfaces[terminalID] == nil {
-            clearRehydratedIfDaemonGone(terminalID, liveSessions: liveSessions)
+            guard canAllocatePTY(for: terminalID) else { continue }
+            clearRehydratedIfDaemonGone(
+                terminalID,
+                sessionSnapshot: liveSessionsIfNeeded(for: terminalID)
+            )
             let (zmxInitialInput, zmxDir) = resolveZmxSpawn(for: terminalID)
             // TERM-5.5: SurfaceHandle.init is failable now — ghostty_surface_new
             // can return null under libghostty resource exhaustion. Skip the
@@ -419,7 +451,8 @@ final class TerminalManager: ObservableObject {
             return existing
         }
 
-        clearRehydratedIfDaemonGone(terminalID, liveSessions: nil)
+        guard canAllocatePTY(for: terminalID) else { return nil }
+        clearRehydratedIfDaemonGone(terminalID, sessionSnapshot: nil)
 
         let (zmxInitialInput, zmxDir) = resolveZmxSpawn(for: terminalID)
         // TERM-5.5: failable init returns nil on libghostty rejection;
@@ -438,20 +471,35 @@ final class TerminalManager: ObservableObject {
         return handle
     }
 
+    private func canAllocatePTY(for terminalID: TerminalID) -> Bool {
+        guard ptyDeviceAvailability() == .available else {
+            NSLog("[Graftty] PTY allocation unavailable; skipping surface creation for %@", terminalID.id.uuidString)
+            return false
+        }
+        return true
+    }
+
     /// Cold-start session-loss check (ZMX-7.1): if a rehydrated pane's
     /// zmx daemon is gone, the imminent `zmx attach` will create a fresh
     /// daemon — treat the pane as fresh so the default command runs.
-    /// `liveSessions` lets callers batch one `zmx list` across many leaves;
-    /// pass `nil` to fall back to a per-call check.
+    /// `sessionSnapshot` lets callers batch one `zmx list` across many
+    /// leaves; pass `nil` to fall back to a per-call check.
     private func clearRehydratedIfDaemonGone(
         _ terminalID: TerminalID,
-        liveSessions: Set<String>?
+        sessionSnapshot: ZmxSessionSnapshot?
     ) {
         guard rehydratedSurfaces.contains(terminalID),
               let launcher = zmxLauncher else { return }
         let name = launcher.sessionName(for: terminalID.id)
-        let missing = liveSessions.map { !$0.contains(name) }
-            ?? launcher.isSessionMissing(name)
+        let missing: Bool
+        switch sessionSnapshot {
+        case .live(let sessions):
+            missing = !sessions.contains(name)
+        case .unavailable:
+            missing = false
+        case nil:
+            missing = launcher.isSessionMissing(name)
+        }
         if missing { clearRehydrated(terminalID) }
     }
 
@@ -463,6 +511,9 @@ final class TerminalManager: ObservableObject {
         surfaces.removeValue(forKey: terminalID)
         titles.removeValue(forKey: terminalID)
         pwds.removeValue(forKey: terminalID)
+        if renderedTitles.removeValue(forKey: terminalID) != nil {
+            paneTitleInvalidations.schedule()
+        }
         shellReadyFired.remove(terminalID)
         cachedShellPIDs.removeValue(forKey: terminalID)
     }
@@ -472,10 +523,41 @@ final class TerminalManager: ObservableObject {
     /// then empty — callers render the "shell" fallback on empty per
     /// LAYOUT-2.9.
     func displayTitle(for terminalID: TerminalID) -> String {
-        PaneTitle.display(
+        renderedTitles[terminalID] ?? ""
+    }
+
+    /// Record a sanitized program-set title and return whether the rendered
+    /// sidebar title changed. Rejected titles preserve the previous title.
+    @discardableResult
+    func recordTitle(_ title: String, for terminalID: TerminalID) -> Bool {
+        guard let sanitized = PaneTitle.sanitize(title) else { return false }
+        titles[terminalID] = sanitized
+        return updateRenderedTitle(for: terminalID)
+    }
+
+    /// Record the pane's latest PWD and return whether the rendered sidebar
+    /// title changed. The raw PWD is retained even when the basename display
+    /// is unchanged so relative editor-open handling stays accurate.
+    @discardableResult
+    func recordPWD(_ pwd: String, for terminalID: TerminalID) -> Bool {
+        pwds[terminalID] = pwd
+        return updateRenderedTitle(for: terminalID)
+    }
+
+    private func updateRenderedTitle(for terminalID: TerminalID) -> Bool {
+        let old = renderedTitles[terminalID] ?? ""
+        let new = PaneTitle.display(
             storedTitle: titles[terminalID],
             pwd: pwds[terminalID]
         )
+        guard old != new else { return false }
+        if new.isEmpty {
+            renderedTitles.removeValue(forKey: terminalID)
+        } else {
+            renderedTitles[terminalID] = new
+        }
+        paneTitleInvalidations.schedule()
+        return true
     }
 
     /// Look up the `NSView` hosting a given terminal's surface.
@@ -716,16 +798,14 @@ final class TerminalManager: ObservableObject {
             // dict past `maxStoredLength`. A legitimate title pushed
             // by the inner shell later still wins because we write the
             // filtered value back. See `PaneTitle.sanitize`.
-            if let sanitized = PaneTitle.sanitize(title), titles[id] != sanitized {
-                titles[id] = sanitized
-            }
+            recordTitle(title, for: id)
 
         case GHOSTTY_ACTION_PWD:
             guard let id = terminalID(from: target) else { return }
             guard let pwdPtr = action.action.pwd.pwd else { return }
             let pwd = String(cString: pwdPtr)
             // Feeds `displayTitle(for:)`'s PWD-basename fallback.
-            pwds[id] = pwd
+            recordPWD(pwd, for: id)
             if shellReadyFired.insert(id).inserted {
                 onShellReady?(id)
             }

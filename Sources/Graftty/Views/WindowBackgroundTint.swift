@@ -26,6 +26,7 @@ struct WindowBackgroundTint: NSViewRepresentable {
 
     private final class TintView: NSView {
         var theme: GhosttyTheme = .fallback
+        private var applyGate = WindowTintApplyGate()
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -34,6 +35,7 @@ struct WindowBackgroundTint: NSViewRepresentable {
 
         func apply() {
             guard let window else { return }
+            guard applyGate.shouldApply(theme: theme, window: window) else { return }
             window.backgroundColor = theme.backgroundNSColor
             window.titlebarAppearsTransparent = true
             // Extend the content view under the title bar so the
@@ -47,6 +49,22 @@ struct WindowBackgroundTint: NSViewRepresentable {
             // none of that fights the theme.
             window.appearance = theme.nsAppearance
         }
+    }
+}
+
+struct WindowTintApplyGate {
+    private struct Token: Equatable {
+        let theme: GhosttyTheme
+        let windowID: ObjectIdentifier
+    }
+
+    private var lastApplied: Token?
+
+    mutating func shouldApply(theme: GhosttyTheme, window: AnyObject) -> Bool {
+        let token = Token(theme: theme, windowID: ObjectIdentifier(window))
+        guard token != lastApplied else { return false }
+        lastApplied = token
+        return true
     }
 }
 

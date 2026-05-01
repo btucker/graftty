@@ -102,6 +102,8 @@ private struct PaneTile: View {
         ZStack(alignment: .bottomLeading) {
             if let controller, let client {
                 MiniTerminalPreview(controller: controller, client: client)
+            } else if controller != nil {
+                Color.black
             } else {
                 Color.black
                     .overlay(ProgressView().tint(.white))

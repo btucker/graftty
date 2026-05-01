@@ -21,9 +21,19 @@ public enum GitWorktreeRemove {
     ///     administrative entry correctly.
     ///   - worktreePath: the linked worktree to remove. Must not be the
     ///     main checkout — git refuses that.
-    public static func remove(repoPath: String, worktreePath: String) async throws {
+    ///   - force: when `true`, pass `--force` so git deletes the worktree
+    ///     even if it has uncommitted/untracked changes. Used by the
+    ///     "Force Delete" branch of the failure dialog (GIT-4.12).
+    public static func remove(
+        repoPath: String,
+        worktreePath: String,
+        force: Bool = false
+    ) async throws {
+        var args = ["worktree", "remove"]
+        if force { args.append("--force") }
+        args.append(worktreePath)
         let result = try await GitRunner.captureAll(
-            args: ["worktree", "remove", worktreePath],
+            args: args,
             at: repoPath
         )
         guard result.exitCode == 0 else {

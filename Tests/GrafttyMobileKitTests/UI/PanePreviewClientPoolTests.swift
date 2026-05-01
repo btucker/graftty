@@ -21,7 +21,7 @@ struct PanePreviewClientPoolTests {
     }
 
     @Test
-    func updateStartsOneClientForEachLeafAndStopsRemovedClients() {
+    func updateStartsOnlyCappedPreviewClientsAndStopsRemovedClients() {
         var made: [FakePreviewClient] = []
         let pool = PanePreviewClientPool { sessionName in
             let client = FakePreviewClient(sessionName: sessionName)
@@ -41,16 +41,16 @@ struct PanePreviewClientPoolTests {
             )
         )
 
-        pool.update(layout: layout)
+        pool.update(layout: layout, maxLivePreviews: 2)
 
-        #expect(made.map(\.sessionName).sorted() == ["bottom", "left", "top"])
+        #expect(made.map(\.sessionName) == ["left", "top"])
         #expect(made.allSatisfy { $0.startCount == 1 })
 
-        pool.update(layout: .leaf(sessionName: "top", title: "Top"))
+        pool.update(layout: .leaf(sessionName: "top", title: "Top"), maxLivePreviews: 2)
 
         #expect(made.first { $0.sessionName == "top" }?.stopCount == 0)
         #expect(made.first { $0.sessionName == "left" }?.stopCount == 1)
-        #expect(made.first { $0.sessionName == "bottom" }?.stopCount == 1)
+        #expect(made.first { $0.sessionName == "bottom" } == nil)
     }
 
     @Test

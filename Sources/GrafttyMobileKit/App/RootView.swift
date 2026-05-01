@@ -41,6 +41,7 @@ public struct RootView: View {
                 lockOverlay
             }
         }
+        .environment(\.biometricGate, gate)
         .task { await gate.authenticate() }
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
@@ -91,13 +92,16 @@ struct SessionStep: Hashable {
 }
 
 /// Fullscreen terminal view for one session. Owns the WebSocket and
-/// InMemoryTerminalSession for its lifetime; both are torn down when
-/// the view pops from the stack.
+/// InMemoryTerminalSession; both are torn down on `.background` and
+/// re-dialed on `.active` once the gate is unlocked.
 struct SingleSessionView: View {
     let step: SessionStep
     @Binding var navigationPath: NavigationPath
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.biometricGate) private var gate
 
-    @State private var client: SessionClient
+    @State private var client: SessionClient?
+    @State private var connection: ConnectionState = .connecting
     /// Per-host TerminalController constructed with the Mac's ghostty
     /// config as its `configSource` — so `baseConfigTemplate` holds
     /// the Mac config, and libghostty-spm's on-trait-change
@@ -117,17 +121,30 @@ struct SingleSessionView: View {
     /// keyboard programmatically from the show-keyboard button.
     @State private var focusRequestCount: Int = 0
 
+    enum ConnectionState: Equatable {
+        case connecting
+        case live
+        case suspended
+        case ended
+    }
+
     init(step: SessionStep, navigationPath: Binding<NavigationPath>) {
         self.step = step
         self._navigationPath = navigationPath
-        let wsURL = RootView.makeWebSocketURL(base: step.host.baseURL, session: step.sessionName)
-        let ws = URLSessionWebSocketClient(url: wsURL)
-        self._client = State(initialValue: SessionClient(sessionName: step.sessionName, webSocket: ws))
     }
 
     var body: some View {
-        GeometryReader { geo in
-            terminalContent(containerSize: geo.size)
+        Group {
+            switch connection {
+            case .connecting, .suspended:
+                loadingPlaceholder
+            case .live:
+                GeometryReader { geo in
+                    terminalContent(containerSize: geo.size)
+                }
+            case .ended:
+                endedBanner
+            }
         }
         // Fill the container edges (notch, home indicator, landscape
         // side-bands) — but .container not .all, so SwiftUI still
@@ -143,7 +160,7 @@ struct SingleSessionView: View {
                     .padding(.top, 12)
             }
             .overlay(alignment: .bottom) {
-                terminalChrome
+                if connection == .live { terminalChrome }
             }
             .animation(.easeInOut(duration: 0.15), value: isKeyboardVisible)
             .animation(.easeInOut(duration: 0.15), value: keyboardAllowed)
@@ -165,7 +182,14 @@ struct SingleSessionView: View {
             .onReceive(NotificationCenter.default.publisher(
                 for: UIResponder.keyboardWillHideNotification
             )) { _ in isKeyboardVisible = false }
-            .task { client.start() }
+            // Reads gate?.state inside `dialKey` so the @Observable
+            // gate's unlock triggers re-evaluation. `connection` is
+            // deliberately *not* in the key — it's the state-machine's
+            // output, and including it would re-fire the task on every
+            // transition (each re-fire only to hit a no-op early return).
+            .task(id: dialKey) {
+                await driveConnection()
+            }
             .task(id: step.host.id) {
                 // Fetch Mac config, then construct the per-host
                 // TerminalController with it baked into the init source.
@@ -180,23 +204,103 @@ struct SingleSessionView: View {
                     )
                 }
             }
-            .onDisappear { client.stop() }
+            .onDisappear {
+                client?.stop()
+                client = nil
+            }
     }
 
-    /// Partially-transparent back button in the top-left. Pops the
-    /// current SessionStep off `navigationPath`, landing on the worktree
-    /// detail the user drilled in from. The nav bar is hidden while the
-    /// terminal is full-screen, so this is the only in-app affordance
-    /// for going back (edge-swipe is still available but undiscoverable).
+    private var dialKey: DialKey {
+        DialKey(scene: scenePhase, gateUnlocked: gate.isUnlocked)
+    }
+
+    private struct DialKey: Hashable {
+        let scene: ScenePhase
+        let gateUnlocked: Bool
+    }
+
+    private func driveConnection() async {
+        if scenePhase == .background {
+            client?.stop()
+            client = nil
+            if connection != .ended { connection = .suspended }
+            return
+        }
+        guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
+        switch connection {
+        case .live, .ended:
+            return
+        case .connecting:
+            // First dial — trust the /sessions response that put the user
+            // here. Skip verification to keep the cold-open fast.
+            await openWebSocket()
+        case .suspended:
+            // IOS-7.2 / IOS-7.3: verify the session still exists before
+            // re-opening a WS that the server can't satisfy.
+            await verifyThenOpen()
+        }
+    }
+
+    private func verifyThenOpen() async {
+        let result: Result<[SessionInfo], Error>
+        do {
+            result = .success(try await SessionsFetcher.fetch(baseURL: step.host.baseURL))
+        } catch {
+            result = .failure(error)
+        }
+        if Task.isCancelled { return }
+        switch SessionRehydration.decide(sessionName: step.sessionName, sessionsResult: result) {
+        case .ended:
+            connection = .ended
+        case .dial:
+            await openWebSocket()
+        }
+    }
+
+    private func openWebSocket() async {
+        let new = SessionClient.live(baseURL: step.host.baseURL, sessionName: step.sessionName)
+        if Task.isCancelled || connection == .ended {
+            // Re-backgrounded (or ended) between WS construction and
+            // assignment. Stop the orphan so the WS task doesn't leak.
+            new.stop()
+            return
+        }
+        new.start()
+        client = new
+        connection = .live
+    }
+
+    private var loadingPlaceholder: some View {
+        Color.black.overlay(ProgressView().tint(.white))
+    }
+
+    private var endedBanner: some View {
+        ContentUnavailableView {
+            Label("Session no longer running", systemImage: "xmark.circle")
+        } description: {
+            Text("This pane was stopped while the app was in the background.")
+        } actions: {
+            Button("Back to sessions", action: popToParent)
+                .buttonStyle(.borderedProminent)
+        }
+        .background(.regularMaterial)
+    }
+
+    /// Partially-transparent back button in the top-left. The nav bar is
+    /// hidden while the terminal is full-screen, so this is the only
+    /// in-app affordance for going back (edge-swipe is still available
+    /// but undiscoverable).
     private var backButton: some View {
-        Button {
-            if !navigationPath.isEmpty {
-                navigationPath.removeLast()
-            }
-        } label: {
+        Button(action: popToParent) {
             keyboardGlyph("chevron.left")
         }
         .accessibilityLabel("Back")
+    }
+
+    private func popToParent() {
+        if !navigationPath.isEmpty {
+            navigationPath.removeLast()
+        }
     }
 
     @ViewBuilder
@@ -231,41 +335,44 @@ struct SingleSessionView: View {
     }
 
     private var terminalControlBar: some View {
+        // Bar is only mounted when `connection == .live`, where
+        // `client != nil` — the optional-chaining is purely to satisfy
+        // the compiler.
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 terminalTextControl("Esc", accessibilityLabel: "Escape") {
-                    client.sendEscape()
+                    client?.sendEscape()
                 }
                 terminalTextControl("Tab", accessibilityLabel: "Tab") {
-                    client.sendTab()
+                    client?.sendTab()
                 }
                 terminalTextControl("^C", accessibilityLabel: "Control C") {
-                    client.sendControl(.c)
+                    client?.sendControl(.c)
                 }
                 terminalTextControl("^D", accessibilityLabel: "Control D") {
-                    client.sendControl(.d)
+                    client?.sendControl(.d)
                 }
                 Divider()
                     .frame(height: 28)
                 terminalIconControl("arrow.left", accessibilityLabel: "Left arrow") {
-                    client.sendArrow(.left)
+                    client?.sendArrow(.left)
                 }
                 terminalIconControl("arrow.down", accessibilityLabel: "Down arrow") {
-                    client.sendArrow(.down)
+                    client?.sendArrow(.down)
                 }
                 terminalIconControl("arrow.up", accessibilityLabel: "Up arrow") {
-                    client.sendArrow(.up)
+                    client?.sendArrow(.up)
                 }
                 terminalIconControl("arrow.right", accessibilityLabel: "Right arrow") {
-                    client.sendArrow(.right)
+                    client?.sendArrow(.right)
                 }
                 Divider()
                     .frame(height: 28)
                 terminalIconControl("return", accessibilityLabel: "Submit return") {
-                    client.submitReturn()
+                    client?.submitReturn()
                 }
                 terminalTextControl("LF", accessibilityLabel: "Insert newline") {
-                    client.insertNewline()
+                    client?.insertNewline()
                 }
                 terminalIconControl(
                     "keyboard.chevron.compact.down",
@@ -298,7 +405,7 @@ struct SingleSessionView: View {
     /// parser wrap lines at `frame.width / realCellWidth < serverCols`.
     @ViewBuilder
     private func terminalContent(containerSize: CGSize) -> some View {
-        if let controller {
+        if let controller, let client {
             let pane = TerminalPaneView(
                 session: client.session,
                 controller: controller,
@@ -323,12 +430,8 @@ struct SingleSessionView: View {
                 }
             }
         } else {
-            // TerminalController not yet constructed (Mac config fetch
-            // in flight). Minimal placeholder; expected lifetime is a
-            // few tens of ms on cache hits, up to one round-trip on
-            // the first pane of a new host.
-            Color.black
-                .overlay(ProgressView().tint(.white))
+            // Mac-config fetch in flight, or client not yet assigned.
+            loadingPlaceholder
         }
     }
 

@@ -254,7 +254,8 @@ public final class ZmxLauncher: Sendable {
         _ = try? ZmxRunner.capture(
             executable: executable,
             args: ["kill", "--force", sessionName],
-            env: subprocessEnv(from: ProcessInfo.processInfo.environment)
+            env: subprocessEnv(from: ProcessInfo.processInfo.environment),
+            timeout: 2.0
         )
     }
 
@@ -266,7 +267,8 @@ public final class ZmxLauncher: Sendable {
         let output = try ZmxRunner.run(
             executable: executable,
             args: ["list", "--short"],
-            env: subprocessEnv(from: ProcessInfo.processInfo.environment)
+            env: subprocessEnv(from: ProcessInfo.processInfo.environment),
+            timeout: 2.0
         )
         return Set(parseListOutput(output))
     }
