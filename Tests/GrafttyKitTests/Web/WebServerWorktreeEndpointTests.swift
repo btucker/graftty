@@ -52,7 +52,7 @@ struct WebServerWorktreeEndpointTests {
         ]))
         defer { server.stop() }
 
-        let (data, response) = try await trustAllSession().data(
+        let (data, response) = try await trustAllData(
             from: URL(string: "https://localhost:\(port)/repos")!
         )
         let http = response as! HTTPURLResponse
@@ -77,7 +77,7 @@ struct WebServerWorktreeEndpointTests {
         let (server, port) = try Self.startServer(config: config, isAllowed: { _ in false })
         defer { server.stop() }
 
-        let (_, response) = try await trustAllSession().data(
+        let (_, response) = try await trustAllData(
             from: URL(string: "https://localhost:\(port)/repos")!
         )
         let http = response as! HTTPURLResponse
@@ -96,7 +96,7 @@ struct WebServerWorktreeEndpointTests {
         let (server, port) = try Self.startServer(config: config)
         defer { server.stop() }
 
-        let (data, response) = try await trustAllSession().data(
+        let (data, response) = try await trustAllData(
             from: URL(string: "https://localhost:\(port)/repos")!
         )
         let http = response as! HTTPURLResponse
@@ -128,7 +128,7 @@ struct WebServerWorktreeEndpointTests {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = body
 
-        let (data, response) = try await trustAllSession().data(for: req)
+        let (data, response) = try await trustAllData(for: req)
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 200)
         let decoded = try JSONDecoder().decode(WebServer.CreateWorktreeResponse.self, from: data)
@@ -150,7 +150,7 @@ struct WebServerWorktreeEndpointTests {
         req.httpMethod = "POST"
         req.httpBody = body
 
-        let (data, response) = try await trustAllSession().data(for: req)
+        let (data, response) = try await trustAllData(for: req)
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 409, "git-reported failure should map to 409 Conflict")
         struct ErrEnv: Codable { let error: String }
@@ -170,7 +170,7 @@ struct WebServerWorktreeEndpointTests {
         req.httpMethod = "POST"
         req.httpBody = Data("not json at all".utf8)
 
-        let (_, response) = try await trustAllSession().data(for: req)
+        let (_, response) = try await trustAllData(for: req)
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 400)
     }
@@ -188,7 +188,7 @@ struct WebServerWorktreeEndpointTests {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = Data(#"{"repoPath":"/tmp/repo","worktreeName":"feature-x"}"#.utf8)
 
-        let (_, response) = try await trustAllSession().data(for: req)
+        let (_, response) = try await trustAllData(for: req)
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 400)
     }
@@ -208,7 +208,7 @@ struct WebServerWorktreeEndpointTests {
         req.httpMethod = "POST"
         req.httpBody = body
 
-        let (_, response) = try await trustAllSession().data(for: req)
+        let (_, response) = try await trustAllData(for: req)
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 400)
     }
@@ -228,7 +228,7 @@ struct WebServerWorktreeEndpointTests {
         req.httpMethod = "POST"
         req.httpBody = body
 
-        let (_, response) = try await trustAllSession().data(for: req)
+        let (_, response) = try await trustAllData(for: req)
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 400)
     }
@@ -239,7 +239,7 @@ struct WebServerWorktreeEndpointTests {
         ))
         defer { server.stop() }
 
-        let (_, response) = try await trustAllSession().data(
+        let (_, response) = try await trustAllData(
             from: URL(string: "https://localhost:\(port)/worktrees")!
         )
         let http = response as! HTTPURLResponse
@@ -255,7 +255,7 @@ struct WebServerWorktreeEndpointTests {
         var req = URLRequest(url: URL(string: "https://localhost:\(port)/worktrees")!)
         req.httpMethod = "DELETE"
 
-        let (_, response) = try await trustAllSession().data(for: req)
+        let (_, response) = try await trustAllData(for: req)
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 405, "DELETE /worktrees should return Method Not Allowed")
     }
@@ -273,7 +273,7 @@ struct WebServerWorktreeEndpointTests {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = Data(repeating: UInt8(ascii: "x"), count: 64 * 1024 + 1)
 
-        let (data, response) = try await trustAllSession().data(for: req)
+        let (data, response) = try await trustAllData(for: req)
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 413)
         struct ErrEnv: Codable { let error: String }
@@ -297,7 +297,7 @@ struct WebServerWorktreeEndpointTests {
         req.httpMethod = "POST"
         req.httpBody = body
 
-        let (_, response) = try await trustAllSession().data(for: req)
+        let (_, response) = try await trustAllData(for: req)
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 503)
     }

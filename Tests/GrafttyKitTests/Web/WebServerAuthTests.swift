@@ -26,7 +26,7 @@ struct WebServerAuthTests {
         guard case let .listening(_, port) = server.status else {
             Issue.record("server not listening"); return
         }
-        let (_, response) = try await trustAllSession().data(from: URL(string: "https://localhost:\(port)/")!)
+        let (_, response) = try await trustAllData(from: URL(string: "https://localhost:\(port)/")!)
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 403)
     }
@@ -49,7 +49,7 @@ struct WebServerAuthTests {
         guard case let .listening(_, port) = server.status else {
             Issue.record("server not listening"); return
         }
-        let (_, response) = try await trustAllSession().data(
+        let (_, response) = try await trustAllData(
             from: URL(string: "https://localhost:\(port)/sessions")!
         )
         let http = response as! HTTPURLResponse
@@ -91,7 +91,7 @@ struct WebServerAuthTests {
         guard case let .listening(_, port) = server.status else {
             Issue.record("server not listening"); return
         }
-        let (data, response) = try await trustAllSession().data(
+        let (data, response) = try await trustAllData(
             from: URL(string: "https://localhost:\(port)/sessions")!
         )
         let http = response as! HTTPURLResponse
@@ -116,14 +116,14 @@ struct WebServerAuthTests {
         guard case let .listening(_, port) = server.status else {
             Issue.record("server not listening"); return
         }
-        let (data, response) = try await trustAllSession().data(from: URL(string: "https://localhost:\(port)/")!)
+        let (data, response) = try await trustAllData(from: URL(string: "https://localhost:\(port)/")!)
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 200)
         #expect(http.value(forHTTPHeaderField: "Content-Type")?.hasPrefix("text/html") == true)
         let html = String(data: data, encoding: .utf8) ?? ""
         #expect(html.contains("<div id=\"root\">"))
 
-        let (explicitData, explicitResponse) = try await trustAllSession().data(
+        let (explicitData, explicitResponse) = try await trustAllData(
             from: URL(string: "https://localhost:\(port)/index.html")!
         )
         let explicitHTTP = explicitResponse as! HTTPURLResponse
@@ -148,7 +148,7 @@ struct WebServerAuthTests {
         guard case let .listening(_, port) = server.status else {
             Issue.record("server not listening"); return
         }
-        let (data, response) = try await trustAllSession().data(
+        let (data, response) = try await trustAllData(
             from: URL(string: "https://localhost:\(port)/session/whatever")!
         )
         let http = response as! HTTPURLResponse
@@ -170,7 +170,7 @@ struct WebServerAuthTests {
         guard case let .listening(_, port) = server.status else {
             Issue.record("server not listening"); return
         }
-        let (_, response) = try await trustAllSession().data(
+        let (_, response) = try await trustAllData(
             from: URL(string: "https://localhost:\(port)/ws")!
         )
         let http = response as! HTTPURLResponse
@@ -189,7 +189,7 @@ struct WebServerAuthTests {
         guard case let .listening(_, port) = server.status else {
             Issue.record("server not listening"); return
         }
-        let (data, response) = try await trustAllSession().data(
+        let (data, response) = try await trustAllData(
             from: URL(string: "https://localhost:\(port)/app.js")!
         )
         let http = response as! HTTPURLResponse
@@ -227,7 +227,7 @@ struct WebServerAuthTests {
             Issue.record("server not listening"); return
         }
         let expected = try WebStaticResources.asset(for: "/app.js").data.count
-        let (data, response) = try await trustAllSession().data(
+        let (data, response) = try await trustAllData(
             from: URL(string: "https://localhost:\(port)/app.js")!
         )
         let http = response as! HTTPURLResponse
@@ -251,6 +251,7 @@ struct WebServerAuthTests {
             Issue.record("server not listening"); return
         }
         let session = trustAllSession()
+        defer { session.invalidateAndCancel() }
         let (_, r1) = try await session.data(
             from: URL(string: "https://localhost:\(port)/")!
         )

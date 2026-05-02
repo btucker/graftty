@@ -49,3 +49,23 @@ final class TrustAllDelegate: NSObject, URLSessionDelegate {
 func trustAllSession() -> URLSession {
     URLSession(configuration: .ephemeral, delegate: TrustAllDelegate(), delegateQueue: nil)
 }
+
+func withTrustAllSession<T>(
+    _ body: (URLSession) async throws -> T
+) async throws -> T {
+    let session = trustAllSession()
+    defer { session.invalidateAndCancel() }
+    return try await body(session)
+}
+
+func trustAllData(from url: URL) async throws -> (Data, URLResponse) {
+    try await withTrustAllSession { session in
+        try await session.data(from: url)
+    }
+}
+
+func trustAllData(for request: URLRequest) async throws -> (Data, URLResponse) {
+    try await withTrustAllSession { session in
+        try await session.data(for: request)
+    }
+}
