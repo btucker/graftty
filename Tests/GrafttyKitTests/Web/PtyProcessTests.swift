@@ -93,8 +93,12 @@ struct PtyProcessTests {
         FileManager.default.createFile(atPath: temp.path, contents: nil)
         defer { try? FileManager.default.removeItem(at: temp) }
 
-        let inheritedFD = Darwin.open(temp.path, O_RDWR)
-        #expect(inheritedFD > 2)
+        let rawFD = Darwin.open(temp.path, O_RDWR)
+        #expect(rawFD > 2)
+        let duplicatedFD = fcntl(rawFD, F_DUPFD, 200)
+        close(rawFD)
+        let inheritedFD = try #require(duplicatedFD >= 200 ? duplicatedFD : nil)
+        #expect(inheritedFD >= 200)
         defer { close(inheritedFD) }
 
         let script = "if sh -c ': >&\(inheritedFD)' 2>/dev/null; then echo leaked; else echo closed; fi; sleep 1"
