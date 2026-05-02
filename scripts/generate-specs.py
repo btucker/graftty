@@ -138,6 +138,11 @@ def parse_carrier_text(kind: CarrierKind, carrier: str, spec_id: str) -> str:
     body = re.sub(
         r"^@spec\s+[A-Z]+-[0-9]+(?:\.[0-9]+)?\s*:?\s*", "", carrier[idx:]
     )
+    if kind == "triple":
+        # Swift `"""..."""` strings drop a trailing `\<newline>` at compile
+        # time; strip it before the bare-newline collapse below so the `\`
+        # does not survive into the rendered prose.
+        body = re.sub(r"[ \t]*\\\n[ \t]*", " ", body)
     body = re.sub(r"\s*\n\s*", " ", body.strip())
     if kind in ("triple", "single"):
         # Swift string literals encode `\` as `\\`. Doc comments are
