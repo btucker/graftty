@@ -15,6 +15,57 @@ struct WebServerIntegrationTests {
         return dir
     }
 
+    @Test func webSocketAttachStartsInResolvedWorktreeDirectory() async throws {
+        if ProcessInfo.processInfo.environment["CI"] != nil { return }
+        let root = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("zmx-web-cwd-\(UUID().uuidString.prefix(8))", isDirectory: true)
+        let worktree = root.appendingPathComponent("repo/.worktrees/feature", isDirectory: true)
+        let zmxDir = root.appendingPathComponent("zmx", isDirectory: true)
+        let fakeZmx = root.appendingPathComponent("zmx-fake")
+        try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: zmxDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let expectedCwds = [worktree.path, "/private\(worktree.path)"]
+
+        try """
+        #!/bin/sh
+        printf 'cwd:%s\\n' "$PWD"
+        sleep 1
+        """.write(to: fakeZmx, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fakeZmx.path)
+
+        let sessionName = "graftty-cwd-test"
+        let server = WebServer(
+            config: WebServer.Config(
+                port: 0,
+                zmxExecutable: fakeZmx,
+                zmxDir: zmxDir,
+                sessionWorktreeProvider: { requested in
+                    requested == sessionName ? worktree.path : nil
+                }
+            ),
+            auth: WebServer.AuthPolicy(isAllowed: { _ in true }),
+            bindAddresses: ["127.0.0.1"],
+            tlsProvider: try makeTestTLSProvider()
+        )
+        try server.start()
+        defer { server.stop() }
+        guard case let .listening(_, port) = server.status else {
+            Issue.record("server not listening"); return
+        }
+
+        let url = URL(string: "wss://localhost:\(port)/ws?session=\(sessionName)")!
+        let wsSession = trustAllSession()
+        defer { wsSession.invalidateAndCancel() }
+        let wsTask = wsSession.webSocketTask(with: url)
+        wsTask.resume()
+        let text = try await Self.readUntil(task: wsTask, marker: "repo/.worktrees/feature", deadline: 3.0)
+        wsTask.cancel(with: .goingAway, reason: nil)
+
+        #expect(expectedCwds.contains(where: { text.contains("cwd:\($0)") }),
+                "WebSocket zmx attach should start in resolved worktree; saw \(text.count) bytes: \(text)")
+    }
+
     /// `WEB-5.6`: The server must handle a client dropping its WebSocket
     /// and then immediately reopening one to the same session name —
     /// which is what the client does on visibility-change or on a

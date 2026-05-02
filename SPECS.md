@@ -1140,6 +1140,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-2.4** The macOS application's Settings pane shall render the current Base URL (as already composed by `WebURLComposer.baseURL(host:port:)`) as a scannable QR code alongside the existing copy/open actions (`WEB-1.12`). When the server status is not `.listening`, the QR-code area shall render a placeholder explaining why (e.g., "Tailscale unavailable").
 
+**IOS-2.5** `HostStore.init` shall not perform filesystem I/O — neither reading `hosts.json` nor creating its parent directory. The picker view shall populate the store by `await store.loadIfNeeded()` from a SwiftUI `.task` modifier, so the JSON read + decode runs after the first frame commits rather than during view-tree construction on the launch path. While `store.hasLoaded` is false, `HostPickerView` shall suppress the "No saved hosts yet." copy so a user with persisted hosts does not see a flicker of the empty-state text in the brief window between view appearance and the detached read landing back on the main actor. Mutations (`add` / `update` / `delete` / `deleteAll`) shall guard with a synchronous `ensureLoaded()` fallback so a user-initiated mutation that races ahead of the async load cannot overwrite persisted state with an empty `next` list. The `~/Library/Application Support/<bundleID>/` parent directory shall be created lazily on first `write(_:)` (idempotent `createDirectory(withIntermediateDirectories:)`), so a launch that performs no mutation makes no directory-creation syscalls.
+
 ### IOS-3.x — Authentication
 
 **IOS-3.1** On cold launch, the application shall display a full-screen lock overlay until `LAContext.evaluatePolicy(.deviceOwnerAuthentication, …)` resolves successfully. While locked, no saved hostnames, session names, or terminal contents shall be visible.
@@ -1147,6 +1149,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-3.2** When the application enters the background, it shall record the wall-clock timestamp. When it foregrounds, if ≥5 minutes have elapsed since that timestamp, the application shall re-prompt per `IOS-3.1`.
 
 **IOS-3.3** On authentication denial or cancellation, the application shall remain locked with a retry button; no UI behind the lock shall become interactive.
+
+**IOS-3.4** During pre-main launch, the application's `LaunchScreen.storyboard` shall render a uniform `systemGroupedBackgroundColor` background with no foreground image and no branded color, so the visual transition from pre-main into the first frame is seamless. The first visible frame after pre-main is the lock overlay (`IOS-3.1`), which paints `.regularMaterial` over the host picker's `List` (whose default background is `systemGroupedBackground`). Matching the launch backdrop to the post-launch lock state's underlying color eliminates the launch → blur → list color flash that a branded launch image would otherwise introduce. Per Apple's HIG, the launch screen is a shell that resembles the first screen, not a branding splash.
 
 ### IOS-4.x — Session fetching and rendering
 
@@ -1199,6 +1203,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-6.5** On the first user keystroke within a session, the iOS client shall claim size-leadership by sending its last-measured viewport `(cols, rows)` to the server via a `WebControlEnvelope.resize` frame. Subsequent libghostty-reported layout changes shall be forwarded to the server. Before this moment, layout-driven resize callbacks shall be memoized but not sent, so the Mac pane's `TIOCGWINSZ` dictates the PTY's dimensions and `IOS-5.6`'s scroll-view path governs rendering.
 
 **IOS-6.6** While a terminal pane is focused on iOS, ordinary software-keyboard text shall be captured by GrafttyMobile's own `UIKeyInput` responder and forwarded to the remote PTY as raw UTF-8 bytes via `SessionClient.sendSoftwareKeyboardText(_:)`, rather than through libghostty's `TerminalSurface.sendText(_:)` path. A single software-keyboard newline shall be translated to CR (`0x0D`) per `IOS-6.3`, and software-keyboard delete shall send DEL (`0x7F`). This prevents normal typing from being wrapped in bracketed-paste delimiters (`ESC [ 200 ~` / `ESC [ 201 ~`) that prompt-driven TUIs can display as stray `[200~` text.
+
+**IOS-6.7** While a terminal pane is focused on iOS, libghostty-spm's built-in `TerminalInputAccessoryView` shall be suppressed so the only chrome above the software keyboard is the graftty-owned terminal control bar (`IOS-6.1`).
 
 ### IOS-7.x — Lifecycle
 
