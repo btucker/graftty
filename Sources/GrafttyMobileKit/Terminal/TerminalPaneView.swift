@@ -29,17 +29,27 @@ public struct TerminalPaneView: UIViewRepresentable {
     public let controller: TerminalController
     public let focusRequestCount: Int
     public let softwareKeyboardInput: SoftwareKeyboardInput?
+    /// Forces the terminal view's color-scheme appearance, overriding the
+    /// iOS system appearance. Use `.dark` or `.light` when the Ghostty
+    /// config specifies an explicit single theme so that libghostty's
+    /// `traitCollectionDidChange` → `setColorScheme()` path never
+    /// substitutes a system-default theme over the user's choice.
+    /// Pass `.unspecified` (the default) when the config uses a
+    /// `light:X,dark:Y` pair and should adapt to system appearance.
+    public let preferredInterfaceStyle: UIUserInterfaceStyle
 
     public init(
         session: InMemoryTerminalSession,
         controller: TerminalController,
         focusRequestCount: Int = 0,
-        softwareKeyboardInput: SoftwareKeyboardInput? = nil
+        softwareKeyboardInput: SoftwareKeyboardInput? = nil,
+        preferredInterfaceStyle: UIUserInterfaceStyle = .unspecified
     ) {
         self.session = session
         self.controller = controller
         self.focusRequestCount = focusRequestCount
         self.softwareKeyboardInput = softwareKeyboardInput
+        self.preferredInterfaceStyle = preferredInterfaceStyle
     }
 
     public func makeCoordinator() -> Coordinator { Coordinator() }
@@ -50,6 +60,7 @@ public struct TerminalPaneView: UIViewRepresentable {
 
     public func makeUIView(context: Context) -> TerminalInputContainerView {
         let view = TerminalInputContainerView()
+        view.overrideUserInterfaceStyle = preferredInterfaceStyle
         view.terminalView.controller = controller
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
@@ -59,6 +70,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     }
 
     public func updateUIView(_ view: TerminalInputContainerView, context: Context) {
+        view.overrideUserInterfaceStyle = preferredInterfaceStyle
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward

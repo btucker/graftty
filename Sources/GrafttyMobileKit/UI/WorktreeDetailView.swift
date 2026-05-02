@@ -17,6 +17,7 @@ public struct WorktreeDetailView: View {
     @Environment(\.biometricGate) private var gate
 
     @State private var controller: TerminalController?
+    @State private var preferredStyle: UIUserInterfaceStyle = .unspecified
     @State private var previews: PanePreviewClientPool<SessionClient>?
 
     public init(
@@ -35,10 +36,10 @@ public struct WorktreeDetailView: View {
                 PaneLayoutView(
                     layout: layout,
                     controller: controller,
-                    previewClient: { previews?.clients[$0] }
-                ) { sessionName in
-                    onSelectPane(sessionName)
-                }
+                    previewClient: { previews?.clients[$0] },
+                    onSelect: { sessionName in onSelectPane(sessionName) },
+                    preferredInterfaceStyle: preferredStyle
+                )
             } else {
                 ContentUnavailableView(
                     "No panes running",
@@ -52,6 +53,7 @@ public struct WorktreeDetailView: View {
         .task(id: host.id) {
             if controller == nil {
                 let text = await GhosttyConfigFetcher.fetch(baseURL: host.baseURL)
+                preferredStyle = GhosttyConfigFetcher.preferredInterfaceStyle(for: text)
                 controller = TerminalController(
                     configSource: text.map { .generated($0) } ?? .none
                 )
