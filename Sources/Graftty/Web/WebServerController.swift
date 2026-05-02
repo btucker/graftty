@@ -13,6 +13,11 @@ final class WebServerController: ObservableObject {
 
     private var server: WebServer?
     private var renewer: WebCertRenewer?
+    /// In-flight task running `certPair` + server bring-up off the
+    /// MainActor. Cancelled on stop()/re-reconcile, with each post-await
+    /// step gated on `Task.isCancelled` so a stale completion can't
+    /// race a fresh status onto the pane. WEB-8.6.
+    private var reconcileTask: Task<Void, Never>?
     private let settings: WebAccessSettings
     private let zmxExecutable: URL
     private let zmxDir: URL
@@ -51,6 +56,8 @@ final class WebServerController: ObservableObject {
     }
 
     func stop() {
+        reconcileTask?.cancel()
+        reconcileTask = nil
         renewer?.stop()
         renewer = nil
         server?.stop()
@@ -61,14 +68,14 @@ final class WebServerController: ObservableObject {
     }
 
     /// Install (or replace) the provider used for `GET /sessions`. Called
-    /// from `GrafttyApp.startup()` once `appState` is available. Forces
-    /// a reconcile so a running server picks up the new provider.
+    /// from `GrafttyApp.startup()` once `appState` is available. Rebuilds
+    /// a running server so it picks up the new closure; no-op if the
+    /// server isn't up yet (the next reconcile will read the latest one).
     func setSessionsProvider(
         _ provider: @escaping @Sendable () async -> [SessionInfo]
     ) {
         sessionsProvider = provider
-        lastApplied = nil  // force reconcile to rebuild the Config
-        reconcile()
+        rebuildIfRunning()
     }
 
     /// Install (or replace) the provider used by `/ws?session=...` to
@@ -78,19 +85,16 @@ final class WebServerController: ObservableObject {
         _ provider: @escaping @Sendable (String) async -> String?
     ) {
         sessionWorktreeProvider = provider
-        lastApplied = nil
-        reconcile()
+        rebuildIfRunning()
     }
 
     /// Install the provider used for `GET /repos`. Same contract as
-    /// `setSessionsProvider`; see there for the force-reconcile
-    /// rationale.
+    /// `setSessionsProvider`.
     func setReposProvider(
         _ provider: @escaping @Sendable () async -> [WebServer.RepoInfo]
     ) {
         reposProvider = provider
-        lastApplied = nil
-        reconcile()
+        rebuildIfRunning()
     }
 
     /// Install the provider used for `GET /worktrees/panes`. Same
@@ -99,8 +103,7 @@ final class WebServerController: ObservableObject {
         _ provider: @escaping @Sendable () async -> [WorktreePanes]
     ) {
         worktreePanesProvider = provider
-        lastApplied = nil
-        reconcile()
+        rebuildIfRunning()
     }
 
     /// Install the creator used for `POST /worktrees`. Must be wired
@@ -110,8 +113,31 @@ final class WebServerController: ObservableObject {
         _ creator: @escaping @Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome
     ) {
         worktreeCreator = creator
+        rebuildIfRunning()
+    }
+
+    /// Force-rebuild the running server so a new provider closure is
+    /// captured into a fresh `WebServer.Config`. No-ops when the server
+    /// isn't running yet — an in-flight `reconcileTask` reads providers
+    /// off `self` at WebServer-build time and will pick up the latest
+    /// closure on completion. Cancelling the in-flight task instead
+    /// would stack a parallel cert mint, since `Darwin.recv` doesn't
+    /// honor Task cancellation and the original cooperator-thread
+    /// `recv` finishes anyway.
+    private func rebuildIfRunning() {
+        guard server != nil else { return }
         lastApplied = nil
         reconcile()
+    }
+
+    /// Record a terminal state for this reconcile attempt. Gated on
+    /// `Task.isCancelled` so a slow `certPair` that throws on a fd
+    /// closed by a re-reconcile doesn't overwrite the freshly-set
+    /// status from the new attempt.
+    private func failReconcile(_ s: WebServer.Status) {
+        guard !Task.isCancelled else { return }
+        status = s
+        lastApplied = nil
     }
 
     private func reconcile() {
@@ -119,6 +145,8 @@ final class WebServerController: ObservableObject {
         if let last = lastApplied, last == desired { return }
         lastApplied = desired
 
+        reconcileTask?.cancel()
+        reconcileTask = nil
         renewer?.stop()
         renewer = nil
         server?.stop()
@@ -135,103 +163,129 @@ final class WebServerController: ObservableObject {
             status = .error("Port must be 0–65535 (got \(desired.port))")
             return
         }
+        let api: TailscaleLocalAPI
+        let tailscaleStatus: TailscaleLocalAPI.Status
         do {
-            let api = try TailscaleLocalAPI.autoDetected()
-            let tailscaleStatus = try runBlocking { try await api.status() }
-            guard let fqdn = tailscaleStatus.dnsName else {
-                status = .magicDNSDisabled
-                // Clear lastApplied so the next settings pulse re-probes;
-                // otherwise the user has to toggle web access off + on to
-                // recover after enabling MagicDNS in the admin console.
-                lastApplied = nil
-                return
-            }
-            let bind = tailscaleStatus.tailscaleIPs
-            let ownerLogin = tailscaleStatus.loginName
-            let auth = WebServer.AuthPolicy { [api] peerIP in
-                guard let whois = try? await api.whois(peerIP: peerIP) else { return false }
-                return whois.loginName == ownerLogin
-            }
-
-            let pair: (cert: Data, key: Data)
-            do {
-                pair = try runBlocking { try await api.certPair(for: fqdn) }
-            } catch TailscaleLocalAPI.Error.httpsCertsDisabled {
-                status = .httpsCertsNotEnabled
-                lastApplied = nil
-                return
-            } catch {
-                status = .certFetchFailed("\(error)")
-                lastApplied = nil
-                return
-            }
-            let provider: WebTLSContextProvider
-            do {
-                provider = WebTLSContextProvider(
-                    initial: try WebTLSCertFetcher.buildContext(
-                        certPEM: pair.cert, keyPEM: pair.key
-                    )
-                )
-            } catch {
-                status = .certFetchFailed("\(error)")
-                lastApplied = nil
-                return
-            }
-            let sessionsProvider = self.sessionsProvider ?? { [] }
-            let sessionWorktreeProvider = self.sessionWorktreeProvider ?? { _ in nil }
-            let repos = reposProvider ?? { [] }
-            let creator = worktreeCreator
-            let s = WebServer(
-                config: .init(
-                    port: desired.port,
-                    zmxExecutable: zmxExecutable,
-                    zmxDir: zmxDir,
-                    sessionsProvider: sessionsProvider,
-                    sessionWorktreeProvider: sessionWorktreeProvider,
-                    reposProvider: repos,
-                    worktreeCreator: creator,
-                    ghosttyConfigProvider: { GhosttyConfigReader.resolvedConfig() },
-                    worktreePanesProvider: worktreePanesProvider ?? { [] }
-                ),
-                auth: auth,
-                bindAddresses: bind,
-                tlsProvider: provider
-            )
-            try s.start()
-            server = s
-            status = s.status
-            self.serverHostname = fqdn
-
-            // Kick off the 24h renewal loop. Fresh bytes were just fetched
-            // above — no need for an immediate renewNow here. Re-auto-detect
-            // the LocalAPI transport inside the closure so a Tailscale
-            // restart that rotates the socket path / TCP port doesn't
-            // silently freeze renewal against a stale endpoint.
-            let renewer = WebCertRenewer(
-                provider: provider,
-                interval: 24 * 60 * 60,
-                fetch: {
-                    let api = try TailscaleLocalAPI.autoDetected()
-                    let pair = try await api.certPair(for: fqdn)
-                    return try WebTLSCertFetcher.buildContext(
-                        certPEM: pair.cert, keyPEM: pair.key
-                    )
-                }
-            )
-            renewer.start()
-            self.renewer = renewer
+            api = try TailscaleLocalAPI.autoDetected()
+            tailscaleStatus = try runBlocking { try await api.status() }
         } catch TailscaleLocalAPI.Error.socketUnreachable {
             status = .tailscaleUnavailable
+            return
+        } catch {
+            status = .error("\(error)")
+            return
+        }
+        guard let fqdn = tailscaleStatus.dnsName else {
+            // Clear lastApplied so the next settings pulse re-probes;
+            // otherwise the user has to toggle web access off + on to
+            // recover after enabling MagicDNS in the admin console.
+            failReconcile(.magicDNSDisabled)
+            return
+        }
+
+        status = .provisioningCert
+        let bind = tailscaleStatus.tailscaleIPs
+        let ownerLogin = tailscaleStatus.loginName
+        let port = desired.port
+        reconcileTask = Task { [weak self] in
+            await self?.completeReconcile(
+                api: api,
+                fqdn: fqdn,
+                bindAddresses: bind,
+                ownerLogin: ownerLogin,
+                port: port
+            )
+        }
+    }
+
+    private func completeReconcile(
+        api: TailscaleLocalAPI,
+        fqdn: String,
+        bindAddresses: [String],
+        ownerLogin: String,
+        port: Int
+    ) async {
+        let pair: (cert: Data, key: Data)
+        do {
+            pair = try await api.certPair(for: fqdn)
+        } catch is CancellationError {
+            return
+        } catch TailscaleLocalAPI.Error.httpsCertsDisabled {
+            failReconcile(.httpsCertsNotEnabled)
+            return
+        } catch {
+            failReconcile(.certFetchFailed("\(error)"))
+            return
+        }
+        if Task.isCancelled { return }
+
+        let provider: WebTLSContextProvider
+        do {
+            provider = WebTLSContextProvider(
+                initial: try WebTLSCertFetcher.buildContext(
+                    certPEM: pair.cert, keyPEM: pair.key
+                )
+            )
+        } catch {
+            failReconcile(.certFetchFailed("\(error)"))
+            return
+        }
+
+        let auth = WebServer.AuthPolicy { [api] peerIP in
+            guard let whois = try? await api.whois(peerIP: peerIP) else { return false }
+            return whois.loginName == ownerLogin
+        }
+        let sessionsProvider = self.sessionsProvider ?? { [] }
+        let sessionWorktreeProvider = self.sessionWorktreeProvider ?? { _ in nil }
+        let repos = reposProvider ?? { [] }
+        let creator = worktreeCreator
+        let s = WebServer(
+            config: .init(
+                port: port,
+                zmxExecutable: zmxExecutable,
+                zmxDir: zmxDir,
+                sessionsProvider: sessionsProvider,
+                sessionWorktreeProvider: sessionWorktreeProvider,
+                reposProvider: repos,
+                worktreeCreator: creator,
+                ghosttyConfigProvider: { GhosttyConfigReader.resolvedConfig() },
+                worktreePanesProvider: worktreePanesProvider ?? { [] }
+            ),
+            auth: auth,
+            bindAddresses: bindAddresses,
+            tlsProvider: provider
+        )
+        do {
+            try s.start()
         } catch {
             // `WEB-1.11`: classify via the shared helper so the
             // Settings pane renders "Port in use" instead of the raw
             // NIO bind error.
-            if WebServer.isAddressInUse(error) {
-                status = .portUnavailable
-            } else {
-                status = .error("\(error)")
-            }
+            failReconcile(WebServer.isAddressInUse(error) ? .portUnavailable : .error("\(error)"))
+            return
         }
+        server = s
+        status = s.status
+        serverHostname = fqdn
+
+        // Kick off the 24h renewal loop. Fresh bytes were just fetched
+        // above — no need for an immediate renewNow here. Re-auto-detect
+        // the LocalAPI transport inside the closure so a Tailscale
+        // restart that rotates the socket path / TCP port doesn't
+        // silently freeze renewal against a stale endpoint.
+        let r = WebCertRenewer(
+            provider: provider,
+            interval: 24 * 60 * 60,
+            fetch: {
+                let api = try TailscaleLocalAPI.autoDetected()
+                let pair = try await api.certPair(for: fqdn)
+                return try WebTLSCertFetcher.buildContext(
+                    certPEM: pair.cert, keyPEM: pair.key
+                )
+            }
+        )
+        r.start()
+        renewer = r
     }
 
     /// Bridge async to sync for the one-shot Tailscale `status()` at reconcile

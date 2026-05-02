@@ -92,6 +92,12 @@ struct WebSettingsPane: View {
                 adminConsoleError("MagicDNS must be enabled on your tailnet.")
             case .httpsCertsNotEnabled:
                 adminConsoleError("HTTPS certificates must be enabled on your tailnet.")
+            case .provisioningCert:
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Provisioning certificate from Tailscale…")
+                        .foregroundStyle(.secondary)
+                }
             case .certFetchFailed(let msg):
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Could not fetch certificate: \(msg)")

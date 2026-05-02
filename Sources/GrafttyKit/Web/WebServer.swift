@@ -17,6 +17,11 @@ public final class WebServer {
         case tailscaleUnavailable
         case magicDNSDisabled
         case httpsCertsNotEnabled
+        /// Tailscale is up and MagicDNS is configured; we're awaiting
+        /// the cert pair from `/localapi/v0/cert/<fqdn>?type=pair`. On
+        /// first-mint the ACME exchange runs 10–30s, so the Settings
+        /// pane renders progress instead of freezing the UI. WEB-8.6.
+        case provisioningCert
         case certFetchFailed(String)
         case portUnavailable
         case error(String)
