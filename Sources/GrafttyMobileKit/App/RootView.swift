@@ -199,9 +199,7 @@ struct SingleSessionView: View {
                 // color-scheme recomputes preserve the Mac theme.
                 let text = await GhosttyConfigFetcher.fetch(baseURL: step.host.baseURL)
                 if controller == nil {
-                    controller = TerminalController(
-                        configSource: text.map { .generated($0) } ?? .none
-                    )
+                    controller = MobileTerminalControllerFactory.make(configText: text)
                 }
             }
             .onDisappear {
@@ -258,6 +256,10 @@ struct SingleSessionView: View {
     }
 
     private func openWebSocket() async {
+        // URLSessionWebSocketTask.resume() fires synchronously inside
+        // SessionClient.live(), so guard before the dial — otherwise we
+        // burn a TCP/TLS handshake on a connection we'd immediately abort.
+        if Task.isCancelled || connection == .ended { return }
         let new = SessionClient.live(baseURL: step.host.baseURL, sessionName: step.sessionName)
         if Task.isCancelled || connection == .ended {
             // Re-backgrounded (or ended) between WS construction and
@@ -415,7 +417,7 @@ struct SingleSessionView: View {
                     deleteBackward: { client.deleteBackward() }
                 )
             )
-            let cellWidth = client.cellWidthPoints ?? fallbackCellWidth
+            let cellWidth = client.cellWidthPoints ?? TerminalWidthLayout.fallbackCellWidth
             let decision = TerminalWidthLayout.decide(
                 containerWidth: containerSize.width,
                 serverCols: client.serverGrid?.cols,
@@ -434,12 +436,6 @@ struct SingleSessionView: View {
             loadingPlaceholder
         }
     }
-
-    /// Fallback cell width for the one-frame gap before libghostty's
-    /// first resize callback lands. Chosen to overshoot realistic cell
-    /// widths for iOS-scale fonts — a too-wide frame just scrolls a few
-    /// empty cells, a too-narrow one makes the VT parser wrap.
-    private var fallbackCellWidth: CGFloat { 7.0 }
 
     private func keyboardGlyph(_ systemName: String) -> some View {
         Image(systemName: systemName)

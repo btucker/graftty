@@ -14,6 +14,7 @@
 		483FFAA6EA930913E3847B04 /* PanePreviewClientPoolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59C241EF3381506F0ED7BEC0 /* PanePreviewClientPoolTests.swift */; };
 		4FC268572A822F79E5CBF517 /* SessionClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E56275CF0FCFE37F85EFC75 /* SessionClientTests.swift */; };
 		4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89CA6F3FF97966B7A2455984 /* ReposFetcherTests.swift */; };
+		51B742D1977638B5BEF698BC /* TerminalControllerThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C398EDC2B44DA604D4AF26C /* TerminalControllerThemeTests.swift */; };
 		5E82901F3ADEA7B4769B7E59 /* TerminalWidthLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DFA9C1F66C7E92D9F0BCE9C /* TerminalWidthLayoutTests.swift */; };
 		64E9C62E3509B5F9F6CE55D5 /* GrafttyMobileKit in Frameworks */ = {isa = PBXBuildFile; productRef = 961E5DC72693D5319AE8805F /* GrafttyMobileKit */; };
 		69A3E70C24956F734A8B75EE /* GrafttyMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E56F1F52D5AD50167862DB5 /* GrafttyMobileApp.swift */; };
@@ -23,6 +24,7 @@
 		AA14A2ACD895768E8B7A2E2B /* HostControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */; };
 		C0A3025E89B3FB9D1A6C744A /* SessionsFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340D909E38FF8ABE9EA6B38B /* SessionsFetcherTests.swift */; };
 		C55600CC2CAE99D7769B31A8 /* LaunchScreenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D25E071713009F00061D699 /* LaunchScreenTests.swift */; };
+		E2F5A0F51C09C4F573A8D54B /* PanePreviewFontSizingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F40AE6FE268B97E52515213 /* PanePreviewFontSizingTests.swift */; };
 		FD935B889FE139844ADA79E6 /* TerminalPaneViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */; };
 /* End PBXBuildFile section */
 
@@ -32,6 +34,7 @@
 		2F8661072B5A91A28C0F46B5 /* BiometricGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricGateTests.swift; sourceTree = "<group>"; };
 		31B0E348299A1140862F5AE4 /* GrafttyMobileKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = GrafttyMobileKit; path = ../..; sourceTree = SOURCE_ROOT; };
 		340D909E38FF8ABE9EA6B38B /* SessionsFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsFetcherTests.swift; sourceTree = "<group>"; };
+		3C398EDC2B44DA604D4AF26C /* TerminalControllerThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalControllerThemeTests.swift; sourceTree = "<group>"; };
 		3D25E071713009F00061D699 /* LaunchScreenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchScreenTests.swift; sourceTree = "<group>"; };
 		3DFA9C1F66C7E92D9F0BCE9C /* TerminalWidthLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalWidthLayoutTests.swift; sourceTree = "<group>"; };
 		3E56275CF0FCFE37F85EFC75 /* SessionClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionClientTests.swift; sourceTree = "<group>"; };
@@ -39,6 +42,7 @@
 		5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPaneViewTests.swift; sourceTree = "<group>"; };
 		59C241EF3381506F0ED7BEC0 /* PanePreviewClientPoolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanePreviewClientPoolTests.swift; sourceTree = "<group>"; };
 		60476F2F86616EAD082CF370 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		6F40AE6FE268B97E52515213 /* PanePreviewFontSizingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanePreviewFontSizingTests.swift; sourceTree = "<group>"; };
 		7213F905213229A44DC07D77 /* GrafttyMobileKitTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GrafttyMobileKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		89CA6F3FF97966B7A2455984 /* ReposFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReposFetcherTests.swift; sourceTree = "<group>"; };
 		8E56F1F52D5AD50167862DB5 /* GrafttyMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrafttyMobileApp.swift; sourceTree = "<group>"; };
@@ -112,6 +116,7 @@
 		5326D4D06134BD55FD5087CF /* Terminal */ = {
 			isa = PBXGroup;
 			children = (
+				3C398EDC2B44DA604D4AF26C /* TerminalControllerThemeTests.swift */,
 				5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */,
 				3DFA9C1F66C7E92D9F0BCE9C /* TerminalWidthLayoutTests.swift */,
 			);
@@ -130,6 +135,7 @@
 		6369E2047B8A39CA96B1E94C /* UI */ = {
 			isa = PBXGroup;
 			children = (
+				6F40AE6FE268B97E52515213 /* PanePreviewFontSizingTests.swift */,
 				59C241EF3381506F0ED7BEC0 /* PanePreviewClientPoolTests.swift */,
 			);
 			path = UI;
@@ -276,10 +282,12 @@
 				6E3698272F39E3D8665B41E7 /* HostStoreTests.swift in Sources */,
 				C55600CC2CAE99D7769B31A8 /* LaunchScreenTests.swift in Sources */,
 				483FFAA6EA930913E3847B04 /* PanePreviewClientPoolTests.swift in Sources */,
+				E2F5A0F51C09C4F573A8D54B /* PanePreviewFontSizingTests.swift in Sources */,
 				4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */,
 				4FC268572A822F79E5CBF517 /* SessionClientTests.swift in Sources */,
 				0F0DC07D64128764A6E254A9 /* SessionLifecycleTests.swift in Sources */,
 				C0A3025E89B3FB9D1A6C744A /* SessionsFetcherTests.swift in Sources */,
+				51B742D1977638B5BEF698BC /* TerminalControllerThemeTests.swift in Sources */,
 				FD935B889FE139844ADA79E6 /* TerminalPaneViewTests.swift in Sources */,
 				5E82901F3ADEA7B4769B7E59 /* TerminalWidthLayoutTests.swift in Sources */,
 			);
@@ -462,6 +470,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGNING_REQUIRED = NO;
 				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = GrafttyMobile/Info.plist;

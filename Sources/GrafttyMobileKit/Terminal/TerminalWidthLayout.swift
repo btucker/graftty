@@ -14,6 +14,12 @@ import CoreGraphics
 /// real cell width lets it run at exactly `serverCols` and the server's
 /// output flows through without internal line-wrapping.
 public enum TerminalWidthLayout {
+    /// Fallback cell width for the one-frame gap before libghostty's
+    /// first resize callback lands. Chosen to overshoot realistic cell
+    /// widths for iOS-scale fonts — a too-wide frame just scrolls a few
+    /// empty cells, a too-narrow one makes the VT parser wrap.
+    public static let fallbackCellWidth: CGFloat = 7.0
+
     public enum Decision: Equatable {
         /// No horizontal scroll — pane takes the container width.
         case fits
