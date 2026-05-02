@@ -98,10 +98,16 @@ public final class TerminalInputContainerView: UIView {
             terminalView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        inputProxy.terminalView = terminalView
-        inputProxy.isHidden = true
-        inputProxy.isUserInteractionEnabled = false
+        inputProxy.translatesAutoresizingMaskIntoConstraints = false
+        inputProxy.backgroundColor = .clear
+        inputProxy.isOpaque = false
         addSubview(inputProxy)
+        NSLayoutConstraint.activate([
+            inputProxy.leadingAnchor.constraint(equalTo: leadingAnchor),
+            inputProxy.trailingAnchor.constraint(equalTo: trailingAnchor),
+            inputProxy.topAnchor.constraint(equalTo: topAnchor),
+            inputProxy.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(focusKeyboardInput))
         tap.cancelsTouchesInView = false
@@ -114,7 +120,6 @@ public final class TerminalInputContainerView: UIView {
 }
 
 final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTraits {
-    weak var terminalView: UITerminalView?
     var insertTextHandler: ((String) -> Void)?
     var deleteBackwardHandler: (() -> Void)?
 

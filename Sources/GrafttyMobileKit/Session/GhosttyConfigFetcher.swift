@@ -87,8 +87,11 @@ public enum GhosttyConfigFetcher {
     static func scaledForIOS(_ macConfig: String) -> String {
         let macSize = lastFontSize(in: macConfig) ?? defaultMacFontSize
         let iosSize = macSize * iosFontScale
-        let formatted = String(format: "%.1f", iosSize)
-        return macConfig + "\n# GrafttyMobile override — \(Int(iosFontScale * 100))% of desktop\nfont-size = \(formatted)\n"
+        return MobileTerminalControllerFactory.appendingFontSizeOverride(
+            to: macConfig,
+            fontSize: Float(iosSize),
+            comment: "GrafttyMobile override — \(Int(iosFontScale * 100))% of desktop"
+        )
     }
 
     /// Parse the last `font-size = N` line out of a Ghostty config file.
