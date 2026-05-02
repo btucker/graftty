@@ -679,6 +679,23 @@ struct GrafttyApp: App {
             }
         }
 
+        // Web/iOS attaches spawn their own `zmx attach` process. If that
+        // attach wins the race to create a new zmx daemon, its cwd becomes
+        // the daemon's shell cwd, so resolve the pane back to its worktree.
+        webController.setSessionWorktreeProvider { sessionName in
+            await MainActor.run { () -> String? in
+                for repo in appStateBinding.wrappedValue.repos {
+                    for wt in repo.worktrees where wt.state == .running {
+                        for leafID in wt.splitTree.allLeaves
+                        where ZmxLauncher.sessionName(for: leafID.id) == sessionName {
+                            return wt.path
+                        }
+                    }
+                }
+                return nil
+            }
+        }
+
         // IOS-4.10: per-worktree pane trees + titles for the mobile
         // client's worktree→pane drilldown. Only running worktrees
         // with at least one pane are returned.
