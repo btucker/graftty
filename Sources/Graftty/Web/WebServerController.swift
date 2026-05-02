@@ -23,6 +23,7 @@ final class WebServerController: ObservableObject {
     /// `terminalManager`'s session-name function exist. Nil before
     /// injection (default-empty provider is baked into `WebServer.Config`).
     private var sessionsProvider: (@Sendable () async -> [SessionInfo])?
+    private var sessionWorktreeProvider: (@Sendable (String) async -> String?)?
     private var worktreePanesProvider: (@Sendable () async -> [WorktreePanes])?
     /// Supplies `GET /repos` (`WEB-7.1`). Same injection timing as
     /// `sessionsProvider` — both read from `AppState`.
@@ -67,6 +68,17 @@ final class WebServerController: ObservableObject {
     ) {
         sessionsProvider = provider
         lastApplied = nil  // force reconcile to rebuild the Config
+        reconcile()
+    }
+
+    /// Install (or replace) the provider used by `/ws?session=...` to
+    /// start web/iOS attach processes in the same worktree directory as
+    /// their native pane.
+    func setSessionWorktreeProvider(
+        _ provider: @escaping @Sendable (String) async -> String?
+    ) {
+        sessionWorktreeProvider = provider
+        lastApplied = nil
         reconcile()
     }
 
@@ -166,6 +178,7 @@ final class WebServerController: ObservableObject {
                 return
             }
             let sessionsProvider = self.sessionsProvider ?? { [] }
+            let sessionWorktreeProvider = self.sessionWorktreeProvider ?? { _ in nil }
             let repos = reposProvider ?? { [] }
             let creator = worktreeCreator
             let s = WebServer(
@@ -174,6 +187,7 @@ final class WebServerController: ObservableObject {
                     zmxExecutable: zmxExecutable,
                     zmxDir: zmxDir,
                     sessionsProvider: sessionsProvider,
+                    sessionWorktreeProvider: sessionWorktreeProvider,
                     reposProvider: repos,
                     worktreeCreator: creator,
                     ghosttyConfigProvider: { GhosttyConfigReader.resolvedConfig() },

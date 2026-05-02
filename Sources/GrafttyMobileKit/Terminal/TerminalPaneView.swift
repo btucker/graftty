@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import GhosttyTerminal
+import ObjectiveC
 import SwiftUI
 import UIKit
 
@@ -172,5 +173,31 @@ final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTr
         get { .default }
         set {}
     }
+}
+
+/// libghostty-spm's `UITerminalView` is `final` and unconditionally returns
+/// its own `terminalInputAccessory` from `inputAccessoryView`. On iOS it
+/// auto-focuses itself in `touchesBegan`, so even when the parent's tap
+/// recognizer hands focus back to `inputProxy`, every tap reinstalls
+/// `UITerminalView` as first responder for one runloop tick — long enough
+/// for UIKit to mount the GhosttyKit bar above the keyboard alongside
+/// graftty's own SwiftUI `terminalControlBar` (`IOS-6.1`). The package
+/// exposes no opt-out, so we replace the `@objc` `inputAccessoryView`
+/// getter at the ObjC runtime level: UIKit's keyboard machinery dispatches
+/// via `objc_msgSend`, picks up our nil-returning IMP, and never installs
+/// the GhosttyKit bar regardless of which view wins the responder race.
+/// The swap is idempotent (`dispatch_once` semantics via `static let`) and
+/// fires from `GrafttyMobileApp.init`. (`IOS-6.7`.)
+extension UITerminalView {
+    static func suppressGhosttyInputAccessory() {
+        _ = swizzleInputAccessoryViewToNilOnce
+    }
+
+    private static let swizzleInputAccessoryViewToNilOnce: Void = {
+        let selector = #selector(getter: UIResponder.inputAccessoryView)
+        guard let method = class_getInstanceMethod(UITerminalView.self, selector) else { return }
+        let block: @convention(block) (UIResponder) -> UIView? = { _ in nil }
+        method_setImplementation(method, imp_implementationWithBlock(block))
+    }()
 }
 #endif

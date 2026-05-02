@@ -17,10 +17,17 @@ public final class WebSession {
         public let zmxExecutable: URL
         public let zmxDir: URL
         public let sessionName: String
-        public init(zmxExecutable: URL, zmxDir: URL, sessionName: String) {
+        public let workingDirectory: URL?
+        public init(
+            zmxExecutable: URL,
+            zmxDir: URL,
+            sessionName: String,
+            workingDirectory: URL? = nil
+        ) {
             self.zmxExecutable = zmxExecutable
             self.zmxDir = zmxDir
             self.sessionName = sessionName
+            self.workingDirectory = workingDirectory
         }
     }
 
@@ -72,7 +79,8 @@ public final class WebSession {
         do {
             spawned = try PtyProcess.spawn(
                 argv: launcher.attachArgv(sessionName: config.sessionName),
-                env: env
+                env: env,
+                currentDirectory: config.workingDirectory
             )
         } catch {
             throw Error.spawnFailed(error)

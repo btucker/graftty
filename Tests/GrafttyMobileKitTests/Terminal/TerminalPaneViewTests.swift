@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import GhosttyTerminal
 import Testing
 @testable import GrafttyMobileKit
 import UIKit
@@ -16,9 +17,9 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-6.7: While a terminal pane is rendered in the iOS app, touch hit-testing shall route through GrafttyMobile's app-owned `UIKeyInput` proxy rather than directly to libghostty-spm's `UITerminalView`, so UIKit never asks the Ghostty terminal view for its built-in `inputAccessoryView`. The only visible software-keyboard accessory row shall be GrafttyMobile's terminal control bar (`IOS-6.1`).
+@spec IOS-6.7: While a terminal pane is rendered in the iOS app, GrafttyMobile shall prevent libghostty-spm's built-in `TerminalInputAccessoryView` from appearing by routing terminal hit-testing through the app-owned `UIKeyInput` proxy and suppressing `UITerminalView.inputAccessoryView` at the UIKit ObjC dispatch path. The only visible software-keyboard accessory row shall be GrafttyMobile's terminal control bar (`IOS-6.1`).
 """)
-    func containerRoutesTouchesToKeyboardProxyInsteadOfGhosttyTerminal() {
+    func terminalPaneShowsOnlyGrafttyKeyboardAccessory() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         container.layoutIfNeeded()
 
@@ -26,6 +27,17 @@ struct TerminalPaneViewTests {
 
         #expect(hitView === container.inputProxy)
         #expect(hitView !== container.terminalView)
+
+        UITerminalView.suppressGhosttyInputAccessory()
+        // UIKit reads the first responder's `inputAccessoryView` through
+        // `objc_msgSend`, so the assertion mirrors that path. Direct
+        // Swift property access on a concrete type can statically
+        // dispatch and bypass the runtime IMP swap, hiding the
+        // suppression in production.
+        let accessory = UITerminalView(frame: .zero).perform(
+            #selector(getter: UIResponder.inputAccessoryView)
+        )?.takeUnretainedValue()
+        #expect(accessory == nil)
     }
 }
 #endif
