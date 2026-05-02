@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import Foundation
+import UIKit
 
 /// Process-local cache of resolved Ghostty configs keyed by baseURL.
 /// Fetched once per host per app launch — navigating pane→pane on the
@@ -109,6 +110,49 @@ public enum GhosttyConfigFetcher {
             }
         }
         return last
+    }
+
+    /// Infer the preferred UIUserInterfaceStyle from a Ghostty config string.
+    ///
+    /// Ghostty supports two `theme` formats:
+    /// - Single theme: `theme = Dracula` or `theme = "Gruvbox Dark Hard"` —
+    ///   an explicit choice that should be respected regardless of the system
+    ///   appearance. libghostty-spm's `setColorScheme()` call from
+    ///   `traitCollectionDidChange` would otherwise override it with a
+    ///   system-default light theme when the device is in Light Mode.
+    /// - Light/dark pair: `theme = light:GitHub Light,dark:Dracula` — the
+    ///   user wants adaptive appearance; leave the system appearance alone.
+    ///
+    /// For single themes the name is checked for the word "light"
+    /// (case-insensitive) to catch themes like "Solarized Light". Everything
+    /// else defaults to `.dark` since the vast majority of terminal themes are
+    /// dark. The returned style is applied as `overrideUserInterfaceStyle` on
+    /// the terminal container view so `traitCollectionDidChange` never
+    /// delivers a conflicting color scheme to libghostty.
+    static func preferredInterfaceStyle(for config: String) -> UIUserInterfaceStyle {
+        var lastTheme: String?
+        for line in config.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.hasPrefix("#") else { continue }
+            let parts = trimmed.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2 else { continue }
+            let key = parts[0].trimmingCharacters(in: .whitespaces)
+            guard key == "theme" else { continue }
+            lastTheme = parts[1]
+                .trimmingCharacters(in: .whitespaces)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\""))
+        }
+        guard let theme = lastTheme else { return .unspecified }
+        // light:/dark: prefix → user wants adaptive appearance.
+        if theme.contains("light:") || theme.contains("dark:") { return .unspecified }
+        // Single theme — infer from name; "light" wins, everything else is dark.
+        return theme.lowercased().contains("light") ? .light : .dark
+    }
+
+    /// Nil-safe wrapper: returns `.unspecified` when `config` is nil.
+    static func preferredInterfaceStyle(for config: String?) -> UIUserInterfaceStyle {
+        guard let config else { return .unspecified }
+        return preferredInterfaceStyle(for: config)
     }
 }
 #endif

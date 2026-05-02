@@ -13,17 +13,20 @@ public struct PaneLayoutView: View {
     public let controller: TerminalController?
     public let previewClient: (_ sessionName: String) -> SessionClient?
     public let onSelect: (_ sessionName: String) -> Void
+    public let preferredInterfaceStyle: UIUserInterfaceStyle
 
     public init(
         layout: PaneLayoutNode,
         controller: TerminalController? = nil,
         previewClient: @escaping (_ sessionName: String) -> SessionClient? = { _ in nil },
-        onSelect: @escaping (_ sessionName: String) -> Void
+        onSelect: @escaping (_ sessionName: String) -> Void,
+        preferredInterfaceStyle: UIUserInterfaceStyle = .unspecified
     ) {
         self.layout = layout
         self.controller = controller
         self.previewClient = previewClient
         self.onSelect = onSelect
+        self.preferredInterfaceStyle = preferredInterfaceStyle
     }
 
     public var body: some View {
@@ -41,7 +44,8 @@ public struct PaneLayoutView: View {
             return AnyView(PaneTile(
                 title: title.isEmpty ? sessionName : title,
                 controller: controller,
-                client: previewClient(sessionName)
+                client: previewClient(sessionName),
+                preferredInterfaceStyle: preferredInterfaceStyle
             ) {
                 onSelect(sessionName)
             })
@@ -78,6 +82,7 @@ private struct PaneTile: View {
     let title: String
     let controller: TerminalController?
     let client: SessionClient?
+    let preferredInterfaceStyle: UIUserInterfaceStyle
     let onTap: () -> Void
 
     var body: some View {
@@ -101,7 +106,7 @@ private struct PaneTile: View {
     private var preview: some View {
         ZStack(alignment: .bottomLeading) {
             if let controller, let client {
-                MiniTerminalPreview(controller: controller, client: client)
+                MiniTerminalPreview(controller: controller, client: client, preferredInterfaceStyle: preferredInterfaceStyle)
             } else if controller != nil {
                 Color.black
             } else {
@@ -125,6 +130,7 @@ private struct PaneTile: View {
 private struct MiniTerminalPreview: View {
     let controller: TerminalController
     let client: SessionClient
+    let preferredInterfaceStyle: UIUserInterfaceStyle
 
     var body: some View {
         GeometryReader { geo in
@@ -134,7 +140,7 @@ private struct MiniTerminalPreview: View {
             )
             let scale = renderWidth > 0 ? min(1, geo.size.width / renderWidth) : 1
 
-            TerminalPaneView(session: client.session, controller: controller)
+            TerminalPaneView(session: client.session, controller: controller, preferredInterfaceStyle: preferredInterfaceStyle)
                 .frame(width: renderWidth, height: geo.size.height / max(scale, 0.01))
                 .scaleEffect(scale, anchor: .topLeading)
                 .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)

@@ -1176,6 +1176,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.11** When the user taps a pane tile, the application shall open a fullscreen terminal view for that session — a single `TerminalPaneView` with the navigation bar hidden and the terminal extending beneath the top safe area (`IOS-4.8`). The WebSocket is opened on view appear and closed on view disappear; system edge-swipe-back returns to the worktree detail.
 
+**IOS-4.12** When the fetched Ghostty config specifies a single theme (not a light:X,dark:Y pair), \ the application shall force overrideUserInterfaceStyle on the terminal container view to match \ that theme's appearance so that libghostty-spm's traitCollectionDidChange → setColorScheme path \ never substitutes the system-default appearance over the user's explicit choice.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.1** On iPad (regular `horizontalSizeClass`), the application shall render a `NavigationSplitView` sidebar + detail layout. The sidebar shall show saved hosts; tapping a host reveals the session picker; tapping a session renders the detail as a terminal pane.
