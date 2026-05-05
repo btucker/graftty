@@ -129,11 +129,23 @@ public struct AgentHookInstaller: Sendable {
     /// additively over the user's existing settings.
     private static func claudeInlineSettingsJSON(grafttyCLIPath: String) -> String {
         let cmd = grafttyCLIPath
+        let stopEntry: [String: Any] = [
+            "hooks": [
+                ["type": "command", "command": "\(cmd) team hook claude stop"],
+                [
+                    "type": "command",
+                    "command": "\(cmd) team watch-inbox claude",
+                    "async": true,
+                    "asyncRewake": true,
+                    "timeout": 86400,
+                ],
+            ],
+        ]
         let payload: [String: Any] = [
             "hooks": [
                 "SessionStart": hookEntries(command: "\(cmd) team hook claude session-start"),
                 "PostToolUse": hookEntries(command: "\(cmd) team hook claude post-tool-use"),
-                "Stop": hookEntries(command: "\(cmd) team hook claude stop"),
+                "Stop": [stopEntry],
             ],
         ]
         // Note: .sortedKeys produces alphabetical event order (PostToolUse, SessionStart, Stop).

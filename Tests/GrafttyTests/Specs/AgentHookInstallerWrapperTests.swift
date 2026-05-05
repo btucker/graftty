@@ -44,6 +44,20 @@ struct AgentHookInstallerWrapperTests {
         #expect(execCount >= 2)
     }
 
+    @Test("@spec TEAM-IDLE-1.3: Claude wrapper Stop hook spawns the asyncRewake watcher.")
+    func claudeWrapperStopIncludesWatcher() {
+        let script = AgentHookInstaller.wrapperScript(
+            runtime: .claude,
+            wrapperDirectory: "/Users/x/agent-hooks/bin",
+            realCommandName: "claude",
+            grafttyCLIPath: "/usr/local/bin/graftty",
+            codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
+        )
+        #expect(script.contains("graftty team hook claude stop"))
+        #expect(script.contains("graftty team watch-inbox claude"))
+        #expect(script.contains("\"asyncRewake\":true"))
+    }
+
     @Test("Codex wrapper sets CODEX_HOME and runs sync-codex-home before exec.")
     func codexWrapperSetsCodexHome() {
         let script = AgentHookInstaller.wrapperScript(
