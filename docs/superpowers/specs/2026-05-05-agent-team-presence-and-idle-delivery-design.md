@@ -23,6 +23,7 @@ Both runtimes (Claude, Codex) need to participate. Codex hook wiring is incomple
 - Idle delivery for Claude via Claude Code's `asyncRewake` async-hook mechanism.
 - Idle delivery for Codex via zmx-send with a typing-state gate.
 - Observability events for registration, watcher lifecycle, and nudge attempts.
+- Removal of the now-redundant sidebar team-UX (`TeamRepoBadge`, "Show Team Members…" popover).
 
 ### Out of scope
 
@@ -206,7 +207,36 @@ Append-only `~/.graftty/teams/<id>/events.jsonl` records:
 - Watcher lifecycle (spawn, supersede, exit-2 wake, clean exit).
 - Nudge attempts (success and reason for skip — not registered, typing, no message stale enough, etc.).
 
-Used for: debugging, the team UI's recent-activity strip, and future blindspots-style introspection.
+Used for: debugging, the existing Team Activity Log window (TEAM-7.*), and future blindspots-style introspection.
+
+### 7. Sidebar team-UX cleanup
+
+The sidebar currently shows a "team" badge icon next to repo headers (TEAM-6.1) and a "Show Team Members…" right-click action that opens a member-list popover (TEAM-6.2). Both pre-date the inbox/hooks rework and don't carry their weight in the current model — the badge is purely decorative, and the popover duplicates information the user can get from `graftty team list`. Remove them as part of this work.
+
+**Out of scope of this removal:**
+
+- The Team Activity Log window and its sidebar entry point (TEAM-7.1, TEAM-7.2). The activity log is the natural surface for the new `events.jsonl` observability (Section 6) and stays.
+- The `agentTeamsEnabled` UserDefaults flag and the `AgentTeamsSettingsPane` toggle. The flag still gates whether team behavior is active at all; only the visual sidebar pieces are removed.
+- All `Teams/*` model code, hook plumbing, inbox machinery. The removal is UI-only.
+
+**Files removed:**
+
+- `Sources/Graftty/Views/TeamRepoBadge.swift` — entire file.
+- `TeamMembersPopover` private struct and the `.popover` modifier in `Sources/Graftty/Views/SidebarView.swift`.
+- The `teamPopoverWorktreePath` `@State` property in `SidebarView`.
+- The "Show Team Members…" `ClosureMenuItem` and its surrounding setup in `buildWorktreeMenu`.
+
+**Files modified:**
+
+- `Sources/Graftty/Views/SidebarView.swift` — drop the `TeamRepoBadge(repoPath: repo.path)` invocation in the disclosure-header `HStack`. Drop the popover. Trim `buildWorktreeMenu` to keep only the activity-log entry under the team-aware separator.
+
+**Spec hygiene:**
+
+Per `CLAUDE.md`'s "When removing features" workflow:
+
+1. Delete `@spec TEAM-6.1` and `@spec TEAM-6.2` entries in `Tests/GrafttyTests/Specs/TeamTodo.swift`.
+2. Re-run `scripts/generate-specs.py` and commit the updated `SPECS.md`.
+3. The "TEAM-6.2 / TEAM-7.2" comment in `SidebarView.swift` collapses to "TEAM-7.2: team-aware activity-log entry."
 
 ## Architectural decisions
 
@@ -240,6 +270,10 @@ Used for: debugging, the team UI's recent-activity strip, and future blindspots-
 
 ## Files to create / modify
 
+### Deleted
+
+- `Sources/Graftty/Views/TeamRepoBadge.swift` — entire file (TEAM-6.1).
+
 ### New
 
 - `Sources/GrafttyKit/Teams/TeamPresence.swift` — presence model and registration storage.
@@ -255,7 +289,9 @@ Used for: debugging, the team UI's recent-activity strip, and future blindspots-
 - `Sources/GrafttyKit/Teams/AgentHookInstaller.swift` — switch Claude wrapper to inline `--settings` (drop the on-disk settings file); rewrite Codex wrapper to set `CODEX_HOME` and call `graftty internal sync-codex-home`.
 - `Sources/GrafttyCLI/Team.swift` — new subcommands: `register`, `unregister`, `watch-inbox`. New `internal sync-codex-home` subcommand (under an `internal` group not surfaced to users).
 - `Sources/GrafttyKit/Zmx/ZmxRunner.swift` — instrument input forwarding to track uncommitted bytes per session; expose via daemon protocol.
-- `SPECS.md` — regenerated from new `@spec` annotations.
+- `Sources/Graftty/Views/SidebarView.swift` — drop `TeamRepoBadge` invocation, "Show Team Members…" menu item, `TeamMembersPopover` struct, and the `teamPopoverWorktreePath` state.
+- `Tests/GrafttyTests/Specs/TeamTodo.swift` — delete the `@spec TEAM-6.1` and `@spec TEAM-6.2` entries.
+- `SPECS.md` — regenerated from updated `@spec` annotations.
 - Add a TOML parsing dependency (e.g. `swift-toml` or similar) if one is not already available, for the `config.toml` merge in `CodexHomeMirror`.
 
 ## Open follow-ups (not blocking v1)
