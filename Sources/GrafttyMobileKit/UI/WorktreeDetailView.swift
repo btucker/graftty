@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import GrafttyProtocol
 import SwiftUI
+import UIKit
 
 private let maxLivePanePreviews = 2
 
@@ -16,6 +17,7 @@ public struct WorktreeDetailView: View {
     @Environment(\.biometricGate) private var gate
 
     @State private var baseConfig: String?
+    @State private var preferredStyle: UIUserInterfaceStyle = .unspecified
     @State private var previews: PanePreviewClientPool<SessionClient>?
 
     public init(
@@ -34,7 +36,8 @@ public struct WorktreeDetailView: View {
                 PaneLayoutView(
                     layout: layout,
                     baseConfig: baseConfig,
-                    previewClient: { previews?.clients[$0] }
+                    previewClient: { previews?.clients[$0] },
+                    preferredInterfaceStyle: preferredStyle
                 ) { sessionName in
                     onSelectPane(sessionName)
                 }
@@ -50,7 +53,9 @@ public struct WorktreeDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task(id: host.id) {
             baseConfig = nil
-            baseConfig = await GhosttyConfigFetcher.fetch(baseURL: host.baseURL) ?? ""
+            let text = await GhosttyConfigFetcher.fetch(baseURL: host.baseURL)
+            preferredStyle = GhosttyConfigFetcher.preferredInterfaceStyle(for: text)
+            baseConfig = text ?? ""
         }
         // Re-keys on layout / scene-phase / gate transitions so we tear
         // the pool down on `.background` and rebuild on `.active +

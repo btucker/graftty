@@ -2,6 +2,7 @@
 import GhosttyTerminal
 import GrafttyProtocol
 import SwiftUI
+import UIKit
 
 /// Renders a `PaneLayoutNode` tree as nested rectangles that mirror the
 /// Mac sidebar's split layout. Leaves become tappable tiles labelled
@@ -13,17 +14,20 @@ public struct PaneLayoutView: View {
     public let baseConfig: String?
     public let previewClient: (_ sessionName: String) -> SessionClient?
     public let onSelect: (_ sessionName: String) -> Void
+    public let preferredInterfaceStyle: UIUserInterfaceStyle
 
     public init(
         layout: PaneLayoutNode,
         baseConfig: String? = "",
         previewClient: @escaping (_ sessionName: String) -> SessionClient? = { _ in nil },
+        preferredInterfaceStyle: UIUserInterfaceStyle = .unspecified,
         onSelect: @escaping (_ sessionName: String) -> Void
     ) {
         self.layout = layout
         self.baseConfig = baseConfig
         self.previewClient = previewClient
         self.onSelect = onSelect
+        self.preferredInterfaceStyle = preferredInterfaceStyle
     }
 
     public var body: some View {
@@ -41,7 +45,8 @@ public struct PaneLayoutView: View {
             return AnyView(PaneTile(
                 title: title.isEmpty ? sessionName : title,
                 baseConfig: baseConfig,
-                client: previewClient(sessionName)
+                client: previewClient(sessionName),
+                preferredInterfaceStyle: preferredInterfaceStyle
             ) {
                 onSelect(sessionName)
             })
@@ -81,6 +86,7 @@ private struct PaneTile: View {
     let title: String
     let baseConfig: String?
     let client: SessionClient?
+    let preferredInterfaceStyle: UIUserInterfaceStyle
     let onTap: () -> Void
 
     @State private var controller: TerminalController?
@@ -146,7 +152,11 @@ private struct PaneTile: View {
     @ViewBuilder
     private func paneContent(client: SessionClient) -> some View {
         if let controller, controllerSourceConfig == baseConfig {
-            TerminalPaneView(session: client.session, controller: controller)
+            TerminalPaneView(
+                session: client.session,
+                controller: controller,
+                preferredInterfaceStyle: preferredInterfaceStyle
+            )
                 .allowsHitTesting(false)
                 .overlay(Color.black.opacity(0.08))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

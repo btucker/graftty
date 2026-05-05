@@ -6,17 +6,31 @@
         <description>Updates for Graftty.</description>
         <language>en</language>
         <item>
+            <title>Version 0.0.17</title>
+            <sparkle:version>0.0.17</sparkle:version>
+            <sparkle:shortVersionString>0.0.17</sparkle:shortVersionString>
+            <pubDate>Tue, 05 May 2026 02:34:03 +0000</pubDate>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
+<ul dir="auto">
+<li>test(bridge): inject scheduler so origin-ref follow-up test stops flaking on CI by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4379973808" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/127" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/127/hovercard" href="https://github.com/btucker/graftty/pull/127">#127</a></li>
+<li>Batch sidebar worktree label computation by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4381036378" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/128" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/128/hovercard" href="https://github.com/btucker/graftty/pull/128">#128</a></li>
+</ul>
+<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.0.16...v0.0.17"><tt>v0.0.16...v0.0.17</tt></a></p>]]></description>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.0.17/Graftty-0.0.17.zip" length="15137003" type="application/octet-stream" sparkle:edSignature="FzvK1wMwesY9so6H0pj886HelxY0vnMQoBo2kPri7Fq5ecNHh2sz16cxkMSx6I0NynKRoV6ATVbWXXK1ti+QBQ=="/>
+        </item>
+        <item>
             <title>Version 0.0.15</title>
             <sparkle:version>0.0.15</sparkle:version>
             <sparkle:shortVersionString>0.0.15</sparkle:shortVersionString>
             <pubDate>Fri, 01 May 2026 21:09:41 +0000</pubDate>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
-<ul dir="auto">
-<li>appcast: v0.0.14 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4362528451" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/113" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/113/hovercard" href="https://github.com/btucker/graftty/pull/113">#113</a></li>
-<li>fix(git): refresh divergence on every 5s tick (DIVERGE-4.6) by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4366194402" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/114" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/114/hovercard" href="https://github.com/btucker/graftty/pull/114">#114</a></li>
-</ul>
-<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.0.14...v0.0.15"><tt>v0.0.14...v0.0.15</tt></a></p>]]></description>
+            <description>&lt;h2 dir="auto"&gt;What's Changed&lt;/h2&gt;
+&lt;ul dir="auto"&gt;
+&lt;li&gt;appcast: v0.0.14 by @github-actions[bot] in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4362528451" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/113" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/113/hovercard" href="https://github.com/btucker/graftty/pull/113"&gt;#113&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;fix(git): refresh divergence on every 5s tick (DIVERGE-4.6) by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4366194402" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/114" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/114/hovercard" href="https://github.com/btucker/graftty/pull/114"&gt;#114&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.0.14...v0.0.15"&gt;&lt;tt&gt;v0.0.14...v0.0.15&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
             <enclosure url="https://github.com/btucker/graftty/releases/download/v0.0.15/Graftty-0.0.15.zip" length="15081833" type="application/octet-stream" sparkle:edSignature="XwazcCE1HxKOwS25K1VTYyLZ4a82ZmRCXtLoxEba96Z/j6t/oIJsKdrEDNcdxLRVwixJCQF1pUnWS6v+JT1IAQ=="/>
         </item>
         <item>
