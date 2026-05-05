@@ -44,6 +44,25 @@ struct TeamHookRendererTests {
         #expect(try TeamHookRenderer.codexStop(messages: []) == "{}")
     }
 
+    @Test("@spec TEAM-PRESENCE-1.1: When an agent session starts, the application shall inject a team protocol primer in the SessionStart additionalContext.")
+    func sessionStartIncludesPrimer() throws {
+        let json = try TeamHookRenderer.sessionStart(runtime: .codex, teamContext: "team data here")
+        let context = try additionalContext(from: json)
+
+        #expect(context.contains("graftty team register"))
+        #expect(context.contains("graftty team inbox"))
+        #expect(context.contains("graftty team send"))
+        #expect(context.contains("graftty team status"))
+        #expect(context.contains("team data here"))
+    }
+
+    @Test("Both runtimes produce the identical SessionStart primer text.")
+    func bothRuntimesAlign() throws {
+        let claude = try TeamHookRenderer.sessionStart(runtime: .claude, teamContext: "X")
+        let codex = try TeamHookRenderer.sessionStart(runtime: .codex, teamContext: "X")
+        #expect(claude == codex)
+    }
+
     private func message(id: String, priority: TeamInboxPriority, body: String) -> TeamInboxMessage {
         TeamInboxMessage(
             id: id,
