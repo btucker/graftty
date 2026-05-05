@@ -40,6 +40,13 @@ public actor IdleDeliveryService {
     /// drained inbox followed by a fresh stale message fires again.
     private var lastNudgedHead: [String: String] = [:]
 
+    /// Per-recipient memory of the last skip reason we logged. Skip events
+    /// only emit on transitions: the typing gate firing every 10s shouldn't
+    /// produce one event per gated agent per tick. Cleared whenever a
+    /// `nudgeSent` fires for that key so the next skip after a successful
+    /// nudge logs again.
+    private var lastSkipReason: [String: String] = [:]
+
     public init(
         presence: TeamPresenceStorage,
         inboxRoot: URL,
@@ -104,7 +111,7 @@ public actor IdleDeliveryService {
         // TEAM-IDLE-2.3: dedupe on the head ID — one nudge per stale-state.
         let key = "\(record.teamID)/\(record.worktree)/\(record.runtime.rawValue)"
         if lastNudgedHead[key] == head.id {
-            emitSkip(record: record, reason: "debounced", headID: head.id)
+            emitSkip(record: record, key: key, reason: "debounced", headID: head.id)
             return
         }
 
@@ -113,7 +120,7 @@ public actor IdleDeliveryService {
         // retry on the next tick once the user commits the line.
         for sessionID in sessionLookup(record) {
             if inputState.uncommittedBytes(forSession: sessionID) > 0 {
-                emitSkip(record: record, reason: "typing", headID: head.id)
+                emitSkip(record: record, key: key, reason: "typing", headID: head.id)
                 return
             }
         }
@@ -121,6 +128,10 @@ public actor IdleDeliveryService {
         let body = Self.renderBody(stale: stale)
         await nudgeSender.send(to: record, message: body, messageIDs: stale.map(\.id))
         lastNudgedHead[key] = head.id
+        // A successful nudge ends any prior skip-state; the next skip after
+        // this point should log again rather than dedupe against the old
+        // reason.
+        lastSkipReason[key] = nil
         try? eventLog?.append(
             .init(teamID: record.teamID, kind: .nudgeSent, detail: [
                 "worktree": record.worktree,
@@ -131,7 +142,13 @@ public actor IdleDeliveryService {
         )
     }
 
-    private func emitSkip(record: TeamPresenceRecord, reason: String, headID: String) {
+    private func emitSkip(record: TeamPresenceRecord, key: String, reason: String, headID: String) {
+        // Only emit on transition: holding the typing gate (or the debounce
+        // gate) for many consecutive ticks should not produce one event
+        // per tick. The next nudgeSent for this key clears `lastSkipReason`,
+        // so post-nudge skips log again.
+        if lastSkipReason[key] == reason { return }
+        lastSkipReason[key] = reason
         try? eventLog?.append(
             .init(teamID: record.teamID, kind: .nudgeSkipped, detail: [
                 "worktree": record.worktree,

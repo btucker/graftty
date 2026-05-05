@@ -194,6 +194,53 @@ struct IdleDeliveryTests {
         #expect(contents.contains("\"nudgeSent\""))
     }
 
+    @Test("nudgeSkipped events dedupe across consecutive ticks with the same skip reason.")
+    func skipEventDeduplicatesAcrossTicks() async throws {
+        let env = try TestEnvironment.make()
+        defer { env.cleanup() }
+        try env.presence.write(
+            TeamPresenceRecord(
+                teamID: env.teamID,
+                worktree: "wt-foo",
+                runtime: .codex,
+                pid: 1,
+                registeredAt: Date()
+            )
+        )
+        try env.appendOldMessage(
+            id: "m1",
+            recipientWorktree: "wt-foo",
+            runtime: .codex,
+            body: "hi",
+            ageSeconds: 90
+        )
+
+        let inputState = ZmxInputState()
+        // Hold the typing gate so each tick emits skip(reason: "typing").
+        // Without dedupe, three ticks would write three nudgeSkipped events;
+        // with dedupe, the reason matches across ticks so only the first logs.
+        inputState.recordInput("typing".data(using: .utf8)!, forSession: "wt-foo")
+
+        let recorder = TestNudgeRecorder()
+        let service = IdleDeliveryService(
+            presence: env.presence,
+            inboxRoot: env.inboxRoot,
+            inputState: inputState,
+            nudgeSender: recorder,
+            eventLog: env.eventLog
+        )
+        await service.tick()
+        await service.tick()
+        await service.tick()
+
+        let logFile = env._eventLogRoot
+            .appendingPathComponent(env.teamID)
+            .appendingPathComponent("events.jsonl")
+        let contents = (try? String(contentsOf: logFile)) ?? ""
+        let skipLines = contents.split(separator: "\n").filter { $0.contains("\"nudgeSkipped\"") }
+        #expect(skipLines.count == 1)  // First tick logs; subsequent dedupe.
+    }
+
     @Test("Ignores Claude registrants — Codex-only target for now.")
     func skipsClaudeAgents() async throws {
         let env = try TestEnvironment.make()

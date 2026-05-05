@@ -11,6 +11,20 @@ public enum TeamHookEvent: String, Codable, Sendable, Equatable, CaseIterable {
     case stop
 }
 
+public extension TeamHookEvent {
+    /// Hook-config JSON key form, e.g. `.sessionStart` → `"SessionStart"`.
+    /// Codex's `hooks.json` and Claude's inline `--settings` JSON both use
+    /// these CamelCase event names, so this is the shared source of truth
+    /// for `CodexHomeMirror` and `AgentHookInstaller`.
+    var camelCaseKey: String {
+        switch self {
+        case .sessionStart: return "SessionStart"
+        case .postToolUse: return "PostToolUse"
+        case .stop: return "Stop"
+        }
+    }
+}
+
 public enum NotificationMessage: Sendable, Equatable {
     case notify(path: String, text: String, clearAfter: TimeInterval? = nil)
     case clear(path: String)

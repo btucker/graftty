@@ -75,7 +75,7 @@ public struct CodexHomeMirror: Sendable {
         }
         var hooks = (root["hooks"] as? [String: Any]) ?? [:]
         for event in TeamHookEvent.allCases {
-            let key = Self.codexEventKey(event)
+            let key = event.camelCaseKey
             let existing = (hooks[key] as? [[String: Any]]) ?? []
             let stripped = existing.filter { group in
                 let handlers = (group["hooks"] as? [[String: Any]]) ?? []
@@ -90,15 +90,6 @@ public struct CodexHomeMirror: Sendable {
         let outURL = mirrorDirectory.appendingPathComponent("hooks.json")
         let data = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: outURL, options: .atomic)
-    }
-
-    /// Codex's hooks.json uses CamelCase event keys; map our kebab-case enum.
-    private static func codexEventKey(_ event: TeamHookEvent) -> String {
-        switch event {
-        case .sessionStart: return "SessionStart"
-        case .postToolUse: return "PostToolUse"
-        case .stop: return "Stop"
-        }
     }
 
     private func grafttyMatcherGroup(event: TeamHookEvent) -> [String: Any] {

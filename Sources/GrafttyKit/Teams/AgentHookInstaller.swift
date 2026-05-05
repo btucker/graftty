@@ -129,25 +129,28 @@ public struct AgentHookInstaller: Sendable {
     /// additively over the user's existing settings.
     private static func claudeInlineSettingsJSON(grafttyCLIPath: String) -> String {
         let cmd = grafttyCLIPath
-        let stopEntry: [String: Any] = [
-            "hooks": [
-                ["type": "command", "command": "\(cmd) team hook claude stop"],
-                [
-                    "type": "command",
-                    "command": "\(cmd) team watch-inbox claude",
-                    "async": true,
-                    "asyncRewake": true,
-                    "timeout": 86400,
-                ],
-            ],
-        ]
-        let payload: [String: Any] = [
-            "hooks": [
-                "SessionStart": hookEntries(command: "\(cmd) team hook claude session-start"),
-                "PostToolUse": hookEntries(command: "\(cmd) team hook claude post-tool-use"),
-                "Stop": [stopEntry],
-            ],
-        ]
+        var hooks: [String: Any] = [:]
+        for event in TeamHookEvent.allCases {
+            if event == .stop {
+                hooks[event.camelCaseKey] = [
+                    [
+                        "hooks": [
+                            ["type": "command", "command": "\(cmd) team hook claude \(event.rawValue)"],
+                            [
+                                "type": "command",
+                                "command": "\(cmd) team watch-inbox claude",
+                                "async": true,
+                                "asyncRewake": true,
+                                "timeout": 86400,
+                            ],
+                        ],
+                    ],
+                ]
+            } else {
+                hooks[event.camelCaseKey] = hookEntries(command: "\(cmd) team hook claude \(event.rawValue)")
+            }
+        }
+        let payload: [String: Any] = ["hooks": hooks]
         // Note: .sortedKeys produces alphabetical event order (PostToolUse, SessionStart, Stop).
         // JSON object key order has no semantic effect; sorting just keeps the wrapper output stable.
         let data = (try? JSONSerialization.data(

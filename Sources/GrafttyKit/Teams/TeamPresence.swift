@@ -83,13 +83,13 @@ public struct TeamPresenceStorage: Sendable {
 
     private func presenceDirectory(teamID: String) -> URL {
         rootDirectory
-            .appendingPathComponent(teamID, isDirectory: true)
+            .appendingPathComponent(TeamInbox.fileComponent(teamID), isDirectory: true)
             .appendingPathComponent("presence", isDirectory: true)
     }
 
     private func filePath(teamID: String, worktree: String, runtime: TeamHookRuntime) -> URL {
-        presenceDirectory(teamID: teamID)
-            .appendingPathComponent("\(worktree).\(runtime.rawValue).json")
+        let leaf = TeamInbox.fileComponent("\(worktree).\(runtime.rawValue)") + ".json"
+        return presenceDirectory(teamID: teamID).appendingPathComponent(leaf)
     }
 }
 

@@ -349,7 +349,13 @@ public final class TeamInbox {
         )
     }
 
-    private static func fileComponent(_ raw: String) -> String {
+    /// Sanitizes an arbitrary string so it can be safely used as a single
+    /// filesystem path component. Replaces any character outside
+    /// `[A-Za-z0-9._-]` with `_`. Used by every Teams subsystem that maps
+    /// `teamID`/`sessionID`/`worktree` into a directory or filename — keeps
+    /// path-separator characters in those identifiers from escaping the
+    /// team subtree.
+    public static func fileComponent(_ raw: String) -> String {
         var result = ""
         for scalar in raw.unicodeScalars {
             switch scalar {

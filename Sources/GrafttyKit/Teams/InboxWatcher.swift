@@ -221,9 +221,10 @@ public actor InboxWatcher {
     }
 
     private func pidFilePath() -> URL {
-        pidFileRoot
-            .appendingPathComponent(teamID, isDirectory: true)
+        let leaf = TeamInbox.fileComponent("\(sessionID).\(recipient.runtime.rawValue)") + ".pid"
+        return pidFileRoot
+            .appendingPathComponent(TeamInbox.fileComponent(teamID), isDirectory: true)
             .appendingPathComponent("watchers", isDirectory: true)
-            .appendingPathComponent("\(sessionID).\(recipient.runtime.rawValue).pid")
+            .appendingPathComponent(leaf)
     }
 }
