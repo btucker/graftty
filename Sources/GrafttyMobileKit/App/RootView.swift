@@ -110,6 +110,7 @@ struct SingleSessionView: View {
     /// fetching the Mac config; replaced with a real controller
     /// once the fetch lands.
     @State private var controller: TerminalController?
+    @State private var preferredStyle: UIUserInterfaceStyle = .unspecified
     /// Actual system state (driven by keyboardWillShow/Hide).
     @State private var isKeyboardVisible: Bool = false
     /// User-controlled: false after the user taps "Hide keyboard". A
@@ -199,6 +200,7 @@ struct SingleSessionView: View {
                 // color-scheme recomputes preserve the Mac theme.
                 let text = await GhosttyConfigFetcher.fetch(baseURL: step.host.baseURL)
                 if controller == nil {
+                    preferredStyle = GhosttyConfigFetcher.preferredInterfaceStyle(for: text)
                     controller = MobileTerminalControllerFactory.make(configText: text)
                 }
             }
@@ -415,7 +417,8 @@ struct SingleSessionView: View {
                 softwareKeyboardInput: .init(
                     insertText: { text in client.sendSoftwareKeyboardText(text) },
                     deleteBackward: { client.deleteBackward() }
-                )
+                ),
+                preferredInterfaceStyle: preferredStyle
             )
             let cellWidth = client.cellWidthPoints ?? TerminalWidthLayout.fallbackCellWidth
             let decision = TerminalWidthLayout.decide(

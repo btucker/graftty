@@ -298,7 +298,10 @@ def render_specs_md(markers: list[SpecMarker], config: dict) -> str:
             parts.append(heading)
             parts.append("")
             for m in sorted(major_groups[major], key=SpecMarker.sort_key):
-                parts.append(f"**{m.spec_id}** {m.text}")
+                line = f"**{m.spec_id}**"
+                if m.text:
+                    line += f" {m.text}"
+                parts.append(line)
                 parts.append("")
 
     return "\n".join(parts).rstrip() + "\n"

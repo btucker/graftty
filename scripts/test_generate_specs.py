@@ -68,5 +68,19 @@ class ParseCarrierTextTests(unittest.TestCase):
         self.assertEqual(result, "Each worktree shall expose a state.")
 
 
+class RenderSpecsMdTests(unittest.TestCase):
+    def test_empty_spec_text_does_not_render_trailing_space(self) -> None:
+        marker = gs.SpecMarker(
+            spec_id="PR-8.11",
+            text="",
+            file=Path("Tests/GrafttyTests/Specs/PrTodo.swift"),
+            line=1,
+            kind="todo",
+        )
+        rendered = gs.render_specs_md([marker], {"section_order": ["PR"]})
+        self.assertIn("**PR-8.11**\n", rendered)
+        self.assertNotIn("**PR-8.11** \n", rendered)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1034,29 +1034,29 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PR-8.10** The polling ticker shall keep firing `onTick` on its configured interval indefinitely, without stalling after one or more sleep / pulse cycles. `pulse()` shall cause the next tick to fire ahead of schedule, with bounded latency, rather than waiting for the full interval.
 
-**PR-8.11** 
+**PR-8.11**
 
-**PR-8.12** 
+**PR-8.12**
 
-**PR-8.13** 
+**PR-8.13**
 
 **PR-8.14** When the application resolves PR status for a repo's worktrees, it shall issue a single `gh pr list --json statusCheckRollup,mergeable,...` call per repo and distribute the resulting snapshot to every worktree whose branch matches a head ref. The previous per-branch fetcher fired two `gh` subprocesses (`pr list` + `pr checks`) per worktree per polling tick; the per-repo batch keeps total CLI invocations linear in the number of repos rather than the number of worktrees.
 
 **PR-8.15** When the application resolves PR/MR status for a GitLab repo's worktrees, it shall issue a single `glab mr list --all` call per repo for the listing and fan out per-MR `glab mr view` calls in parallel only for branches the caller cares about. A repo with 100 MRs and 5 worktrees must produce 1 list call + 5 view calls per tick, not 100 view calls.
 
-**PR-8.16** 
+**PR-8.16**
 
-**PR-8.17** 
+**PR-8.17**
 
-**PR-8.18** 
+**PR-8.18**
 
-**PR-8.19** 
+**PR-8.19**
 
 **PR-8.20** When the application picks the sidebar `#<number>` badge tone for a worktree's PR, the priority shall be merged > CI failure > CI pending > merge conflict > open. CI signals win over a merge conflict because they're tighter feedback on the user's current change; once CI is clean, the conflict tone surfaces and tells the user to rebase. The new `.conflicting` tone gives "PR has conflicts but CI is green" a visually distinct signal from "PR is broken in CI".
 
-**PR-8.21** 
+**PR-8.21**
 
-**PR-8.22** 
+**PR-8.22**
 
 ## CHAN — Claude Code Channels
 
@@ -1205,6 +1205,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-4.13** When GrafttyMobile constructs a `TerminalController` from the Mac-provided Ghostty config (`IOS-4.7`), it shall not install libghostty-spm's built-in light/dark `TerminalTheme` overlay. UIKit trait changes may still report the phone's `.light` or `.dark` color scheme to libghostty, but the rendered config shall continue to use the Mac config's background, foreground, palette, and theme-derived colors rather than switching to GhosttyTerminal's default Alabaster/Afterglow themes.
 
 **IOS-4.14** When a worktree's pane layout is a single leaf, the worktree-detail screen shall render a static labeled tile rather than a live terminal preview, and shall not open a preview WebSocket for that pane.
+
+**IOS-4.15** When the fetched Ghostty config specifies a single `theme =` value (not a `light:X,dark:Y` pair), the application shall force `overrideUserInterfaceStyle` on the terminal container view to match that theme's appearance so that libghostty-spm's `traitCollectionDidChange` → `setColorScheme` path never substitutes the system-default appearance over the user's explicit choice.
 
 ### IOS-5.x — Multi-pane layout
 
