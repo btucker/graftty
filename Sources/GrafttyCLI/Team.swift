@@ -302,6 +302,30 @@ struct TeamUnregister: ParsableCommand {
     }
 }
 
+struct InternalGroup: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "internal",
+        abstract: "Internal subcommands invoked by graftty itself; not meant for direct use.",
+        subcommands: [SyncCodexHome.self]
+    )
+}
+
+struct SyncCodexHome: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "sync-codex-home",
+        abstract: "Rebuild the CODEX_HOME mirror under <rootDirectory>/codex-home/."
+    )
+
+    func run() throws {
+        let mirror = CodexHomeMirror(
+            sourceDirectory: CodexHomeMirror.defaultSourceDirectory(),
+            mirrorDirectory: CodexHomeMirror.defaultMirrorDirectory(),
+            grafttyCLIPath: ProcessInfo.processInfo.arguments.first ?? "graftty"
+        )
+        try mirror.rebuild()
+    }
+}
+
 /// Helpers shared by `team register` / `team unregister` — both walk
 /// the same path: cwd → AppState → TeamView → (team, worktree name).
 /// Returns nil when the cwd is not in a tracked, team-enabled worktree

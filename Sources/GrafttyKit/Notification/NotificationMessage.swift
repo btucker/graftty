@@ -5,7 +5,7 @@ public enum TeamHookRuntime: String, Codable, Sendable, Equatable {
     case claude
 }
 
-public enum TeamHookEvent: String, Codable, Sendable, Equatable {
+public enum TeamHookEvent: String, Codable, Sendable, Equatable, CaseIterable {
     case sessionStart = "session-start"
     case postToolUse = "post-tool-use"
     case stop
