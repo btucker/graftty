@@ -308,7 +308,6 @@ struct TeamUnregister: ParsableCommand {
 /// so the wrapper-driven CLI calls can no-op cleanly.
 private enum TeamPresenceCLI {
     static func resolveTeamAndWorktree() -> (TeamView, String)? {
-        let cwd = FileManager.default.currentDirectoryPath
         guard let state = try? AppState.load(from: AppState.defaultDirectory) else {
             return nil
         }
@@ -318,7 +317,7 @@ private enum TeamPresenceCLI {
         guard let team = TeamLookup.team(for: worktreePath, in: state.repos) else {
             return nil
         }
-        guard let worktreeName = TeamLookup.worktreeName(forCwd: cwd, in: team) else {
+        guard let worktreeName = team.members.first(where: { $0.worktreePath == worktreePath })?.name else {
             return nil
         }
         return (team, worktreeName)

@@ -20,6 +20,13 @@ struct TeamPresenceTests {
 
         try storage.write(record)
 
+        // Behaviorally enforce the on-disk path layout the spec promises.
+        let expectedPath = tmpRoot
+            .appendingPathComponent("team-abc")
+            .appendingPathComponent("presence")
+            .appendingPathComponent("feature-foo.claude.json")
+        #expect(FileManager.default.fileExists(atPath: expectedPath.path))
+
         let loaded = try storage.read(teamID: "team-abc", worktree: "feature-foo", runtime: .claude)
         #expect(loaded == record)
     }
