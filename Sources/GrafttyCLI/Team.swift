@@ -128,13 +128,24 @@ struct TeamHook: ParsableCommand {
     }
 
     func run() throws {
+        // Drain the hook event JSON the runtime writes to our stdin
+        // BEFORE doing anything else. If we exit without consuming it,
+        // the runtime's write syscall hits EPIPE and reports "failed to
+        // write hook stdin: Broken pipe". The payload also carries
+        // `session_id`, which we prefer over the env-var fallback.
+        let stdinData = FileHandle.standardInput.readDataToEndOfFile()
+        let stdinPayload = (try? JSONSerialization.jsonObject(with: stdinData) as? [String: Any]) ?? [:]
+        let stdinSessionID = stdinPayload["session_id"] as? String
+
         guard let worktreePath = try? WorktreeResolver.resolve() else {
             print("{}")
             return
         }
         let runtime = TeamHookRuntime(rawValue: runtime)!
         let event = TeamHookEvent(rawValue: event)!
-        let resolvedSessionID = sessionID ?? ProcessInfo.processInfo.environment["GRAFTTY_AGENT_SESSION_ID"]
+        let resolvedSessionID = sessionID
+            ?? stdinSessionID
+            ?? ProcessInfo.processInfo.environment["GRAFTTY_AGENT_SESSION_ID"]
         do {
             let response = try SocketClient.sendExpectingResponse(
                 .teamHook(
@@ -342,9 +353,11 @@ struct TeamWatchInbox: ParsableCommand {
         }
 
         // Hook payload is JSON on stdin: { "session_id": "...", "cwd": "..." }.
-        // Both fields are best-effort; we no-op silently if cwd isn't a team
-        // worktree, since wrapper hooks call us unconditionally.
-        let stdinData = FileHandle.standardInput.availableData
+        // Read to EOF rather than `availableData` so the runtime's write
+        // doesn't hit EPIPE if the payload is delivered in chunks; both
+        // fields are best-effort, and we no-op silently if cwd isn't a
+        // team worktree since wrapper hooks call us unconditionally.
+        let stdinData = FileHandle.standardInput.readDataToEndOfFile()
         let payload = (try? JSONSerialization.jsonObject(with: stdinData) as? [String: Any]) ?? [:]
         let sessionID = (payload["session_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             ?? UUID().uuidString
