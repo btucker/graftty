@@ -15,6 +15,7 @@ struct Team: ParsableCommand {
             TeamList.self,
             TeamRegister.self,
             TeamUnregister.self,
+            TeamWatchInbox.self,
         ]
     )
 }
@@ -299,6 +300,76 @@ struct TeamUnregister: ParsableCommand {
             worktree: worktreeName,
             runtime: runtimeValue
         )
+    }
+}
+
+struct TeamWatchInbox: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "watch-inbox",
+        abstract: "Long-running inbox watcher; exits 2 on a new directed message (used by Claude asyncRewake)."
+    )
+
+    @Argument(help: "Runtime: codex or claude")
+    var runtime: String
+
+    func run() throws {
+        guard let runtimeValue = TeamHookRuntime(rawValue: runtime) else {
+            throw ValidationError("runtime must be one of: codex, claude")
+        }
+
+        // Hook payload is JSON on stdin: { "session_id": "...", "cwd": "..." }.
+        // Both fields are best-effort; we no-op silently if cwd isn't a team
+        // worktree, since wrapper hooks call us unconditionally.
+        let stdinData = FileHandle.standardInput.availableData
+        let payload = (try? JSONSerialization.jsonObject(with: stdinData) as? [String: Any]) ?? [:]
+        let sessionID = (payload["session_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            ?? UUID().uuidString
+
+        guard let (team, worktreeName) = TeamPresenceCLI.resolveTeamAndWorktree() else {
+            return
+        }
+        let teamID = TeamLookup.id(of: team)
+
+        let inboxRoot = AppState.defaultDirectory
+            .appendingPathComponent("team-inbox", isDirectory: true)
+        let pidRoot = TeamPresenceStorage.defaultRoot()
+
+        let outcome = WatcherOutcome()
+        let watcher = InboxWatcher(
+            sessionID: sessionID,
+            recipient: .init(member: worktreeName, runtime: runtimeValue),
+            teamID: teamID,
+            inboxRootDirectory: inboxRoot,
+            outcome: outcome,
+            pidFileRoot: pidRoot
+        )
+
+        Task.detached { await watcher.runUntilSignal() }
+
+        // Block synchronously waiting for the watcher to resolve, then
+        // bridge the outcome back to a real process exit. asyncRewake
+        // declares timeout=86400, so we'll be killed by Claude's harness
+        // long before this hits its own ceiling.
+        let semaphore = DispatchSemaphore(value: 0)
+        nonisolated(unsafe) var capturedExit: Int32 = 0
+        nonisolated(unsafe) var capturedStderr = ""
+        Task.detached {
+            do {
+                let result = try await outcome.wait(timeout: 86_400)
+                capturedExit = result.exitCode
+                capturedStderr = result.stderr
+            } catch {
+                capturedExit = 1
+                capturedStderr = "watch-inbox timeout\n"
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+
+        if !capturedStderr.isEmpty {
+            FileHandle.standardError.write(Data(capturedStderr.utf8))
+        }
+        Foundation.exit(capturedExit)
     }
 }
 
