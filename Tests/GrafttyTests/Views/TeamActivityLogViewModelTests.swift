@@ -93,6 +93,32 @@ struct TeamActivityLogViewModelRenderedItemsTests {
         #expect(items[1].isContinuation == true)
     }
 
+    @Test("A day boundary that falls right after a memberJoined still emits a divider.")
+    func dayDividerSurvivesMarker() {
+        let cal = Calendar(identifier: .gregorian)
+        let evening = DateComponents(
+            calendar: cal, year: 2026, month: 3, day: 4, hour: 23, minute: 59, second: 30
+        ).date!
+        let stillEvening = DateComponents(
+            calendar: cal, year: 2026, month: 3, day: 4, hour: 23, minute: 59, second: 45
+        ).date!
+        let morning = DateComponents(
+            calendar: cal, year: 2026, month: 3, day: 5, hour: 0, minute: 0, second: 30
+        ).date!
+        let messages = [
+            chatMessage(id: "m1", from: "alice", body: "a", at: evening),
+            joinedMessage(id: "m2", member: "carol", at: stillEvening),
+            chatMessage(id: "m3", from: "alice", body: "b", at: morning),
+        ]
+        let items = TeamActivityLogViewModel.renderedItems(from: messages, calendar: cal)
+        // chat, marker, divider, chat = 4 items.
+        #expect(items.count == 4)
+        guard case .dayDivider = items[2].row else {
+            Issue.record("expected day-divider at index 2, got \(items[2].row)")
+            return
+        }
+    }
+
     // MARK: - Fixtures
 
     private func chatMessage(id: String, from: String, body: String, at: Date) -> TeamInboxMessage {

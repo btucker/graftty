@@ -95,8 +95,15 @@ struct TranscriptRow: View {
         case .memberJoined, .memberLeft, .dayDivider:
             return ""
         }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: date)
+        return Self.timeFormatter.string(from: date)
     }
+
+    /// Static — `DateFormatter` is expensive to construct, and a
+    /// transcript scrolled to the bottom rebuilds dozens of these per
+    /// frame on every observer emit if the formatter is per-row.
+    private static let timeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
 }

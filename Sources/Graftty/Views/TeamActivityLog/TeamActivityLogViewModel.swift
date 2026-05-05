@@ -14,7 +14,16 @@ import Observation
 @MainActor
 final class TeamActivityLogViewModel {
     /// Latest snapshot of the team's inbox, in append order.
-    var messages: [TeamInboxMessage] = []
+    /// Setter recomputes `renderedItems` so SwiftUI sees a single
+    /// observable change per emit instead of paying for the full
+    /// annotation walk every time the view body reads renderedItems.
+    var messages: [TeamInboxMessage] = [] {
+        didSet { renderedItems = Self.renderedItems(from: messages, calendar: .current) }
+    }
+
+    /// Annotated transcript items derived from `messages`. Read-only
+    /// from outside; updated atomically with `messages`.
+    private(set) var renderedItems: [RenderedFeedItem] = []
 
     /// Display name used in the window title bar; fixed at init time so
     /// renames during the window's lifetime do not retitle.
@@ -58,59 +67,62 @@ extension TeamActivityLogViewModel {
         calendar: Calendar
     ) -> [RenderedFeedItem] {
         var out: [RenderedFeedItem] = []
-        var prev: (actor: String, timestamp: Date, day: Date)?
+        // Continuation chain (`actor` + `timestamp`) is independent
+        // from the day pointer used for divider insertion: a marker
+        // resets the chain but doesn't reset the day, so a midnight
+        // crossing after a marker still surfaces a divider.
+        var prevContinuation: (actor: String, timestamp: Date)?
+        var prevDay: Date?
 
         for msg in messages {
             let row = ActivityFeedRow.resolve(msg)
             let day = calendar.startOfDay(for: msg.createdAt)
 
-            // Insert day-divider when local-day rolls over.
-            if let previous = prev, previous.day != day {
+            if let lastDay = prevDay, lastDay != day {
                 out.append(.init(
                     id: "day-\(day.timeIntervalSince1970)",
                     row: .dayDivider(label: dayLabel(for: day, calendar: calendar)),
                     isContinuation: false
                 ))
-                prev = nil  // Day boundary always breaks continuation.
+                prevContinuation = nil
             }
 
             switch row {
             case let .chat(worktree, _, _, ts, _),
                  let .system(worktree, _, _, ts):
-                let isCont = prev.map { p in
+                let isCont = prevContinuation.map { p in
                     p.actor == worktree
                         && ts.timeIntervalSince(p.timestamp) <= continuationWindow
                 } ?? false
                 out.append(.init(id: msg.id, row: row, isContinuation: isCont))
-                prev = (worktree, ts, day)
+                prevContinuation = (worktree, ts)
 
             case .memberJoined, .memberLeft:
                 out.append(.init(id: msg.id, row: row, isContinuation: false))
-                prev = nil  // Markers reset the continuation chain.
+                prevContinuation = nil
 
             case .dayDivider:
                 // resolve(_:) does not produce dayDivider; only the
                 // weaving code above does.
                 continue
             }
+            prevDay = day
         }
         return out
     }
 
-    /// Renders a `Date` as the day-divider label: "Today", "Yesterday",
-    /// or "MMM d" for older days.
+    /// Date → day-divider label: "Today", "Yesterday", or "MMM d".
     nonisolated private static func dayLabel(for day: Date, calendar: Calendar) -> String {
         if calendar.isDateInToday(day) { return "Today" }
         if calendar.isDateInYesterday(day) { return "Yesterday" }
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.dateFormat = "MMM d"
-        return formatter.string(from: day)
+        return Self.olderDayFormatter.string(from: day)
     }
 
-    /// View-side accessor — wraps the static helper using the system
-    /// calendar at the actor's locale.
-    var renderedItems: [RenderedFeedItem] {
-        Self.renderedItems(from: messages, calendar: .current)
-    }
+    /// Static — `DateFormatter` is expensive to construct and the
+    /// formatter is stateless aside from locale/calendar.
+    nonisolated private static let olderDayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d"
+        return f
+    }()
 }

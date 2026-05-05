@@ -29,13 +29,13 @@ enum ActivityFeedRow: Equatable {
     /// `dayDivider` rows between midnight crossings.
     static func resolve(_ message: TeamInboxMessage) -> ActivityFeedRow {
         switch message.kind {
-        case "team_member_joined":
+        case TeamChannelEvents.EventType.memberJoined:
             return .memberJoined(worktree: message.to.member)
-        case "team_member_left":
+        case TeamChannelEvents.EventType.memberLeft:
             return .memberLeft(worktree: message.to.member)
-        case "team_message":
-            // Self-message (where from == to) drops the recipient
-            // suffix — the header reads as a one-actor entry.
+        case TeamChannelEvents.EventType.message:
+            // Self-message reads as a one-actor entry rather than
+            // "alice → alice".
             let recipient: String? = message.from.member == message.to.member
                 ? nil
                 : message.to.member
@@ -47,9 +47,6 @@ enum ActivityFeedRow: Equatable {
                 isUrgent: message.priority == .urgent
             )
         default:
-            // PR / CI / merge events plus any future kind: scope to
-            // the routed-to worktree, render with a kind-specific
-            // icon, fall back to info.circle for unknown kinds.
             return .system(
                 worktree: message.to.member,
                 iconName: Self.iconName(forKind: message.kind),
@@ -61,9 +58,9 @@ enum ActivityFeedRow: Equatable {
 
     private static func iconName(forKind kind: String) -> String {
         switch kind {
-        case "pr_state_changed": return "circle.fill"
-        case "ci_conclusion_changed": return "checkmark.seal"
-        case "merge_state_changed": return "arrow.triangle.merge"
+        case TeamChannelEvents.WireType.prStateChanged: return "circle.fill"
+        case TeamChannelEvents.WireType.ciConclusionChanged: return "checkmark.seal"
+        case TeamChannelEvents.WireType.mergeStateChanged: return "arrow.triangle.merge"
         default: return "info.circle"
         }
     }
