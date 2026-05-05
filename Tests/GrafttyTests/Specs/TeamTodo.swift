@@ -93,13 +93,4 @@ struct TeamTodo {
 """, .disabled("not yet implemented"))
     func team_5_3() async throws { }
 
-    @Test("""
-@spec TEAM-6.1: While `agentTeamsEnabled` is true and a `RepoEntry` has two or more worktrees, the sidebar shall render that repo with a small "team" icon (SF Symbol `person.2.fill`) adjacent to its disclosure header. No per-worktree accent stripe is applied; the header icon is sufficient to indicate team membership.
-""", .disabled("not yet implemented"))
-    func team_6_1() async throws { }
-
-    @Test("""
-@spec TEAM-6.2: Right-clicking any team-enabled worktree's row shall include a *Show Team Members…* context-menu item. Selecting it shall display a popover listing each team member by name, branch, and role (lead / coworker), populated from the same source as `graftty team list`.
-""", .disabled("not yet implemented"))
-    func team_6_2() async throws { }
 }
