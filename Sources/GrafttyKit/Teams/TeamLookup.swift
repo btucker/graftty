@@ -54,4 +54,18 @@ public enum TeamLookup {
     public static func id(forRepoPath repoPath: String) -> String {
         repoPath
     }
+
+    /// Returns the sanitized name of the team member whose worktree
+    /// path contains (or equals) `cwd`. Used by `graftty team
+    /// register` / `unregister` to identify which member is announcing
+    /// presence from a possibly-nested working directory.
+    public static func worktreeName(forCwd cwd: String, in team: TeamView) -> String? {
+        team.members.first(where: { isPath(cwd, withinOrEqualTo: $0.worktreePath) })?.name
+    }
+
+    private static func isPath(_ cwd: String, withinOrEqualTo path: String) -> Bool {
+        let normalized = (cwd as NSString).standardizingPath
+        let target = (path as NSString).standardizingPath
+        return normalized == target || normalized.hasPrefix(target + "/")
+    }
 }

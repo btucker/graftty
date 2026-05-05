@@ -13,6 +13,8 @@ struct Team: ParsableCommand {
             TeamInbox.self,
             TeamMsg.self,
             TeamList.self,
+            TeamRegister.self,
+            TeamUnregister.self,
         ]
     )
 }
@@ -242,6 +244,84 @@ struct TeamList: ParsableCommand {
         let worktreePath = try CLIEnv.resolveWorktree()
         let response = try CLIEnv.sendRequest(.teamList(callerWorktree: worktreePath))
         try TeamOutput.printMembers(response)
+    }
+}
+
+struct TeamRegister: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "register",
+        abstract: "Announce agent presence for the current worktree."
+    )
+
+    @Option(name: .long, help: "Runtime: codex or claude")
+    var runtime: String
+
+    func run() throws {
+        guard let runtimeValue = TeamHookRuntime(rawValue: runtime) else {
+            throw ValidationError("runtime must be one of: codex, claude")
+        }
+        guard let (team, worktreeName) = TeamPresenceCLI.resolveTeamAndWorktree() else {
+            // No team for this cwd — silently no-op so it's safe to call
+            // unconditionally from a wrapper script.
+            return
+        }
+        let storage = TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
+        let record = TeamPresenceRecord(
+            teamID: TeamLookup.id(of: team),
+            worktree: worktreeName,
+            runtime: runtimeValue,
+            pid: ProcessInfo.processInfo.processIdentifier,
+            registeredAt: Date()
+        )
+        try storage.write(record)
+    }
+}
+
+struct TeamUnregister: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "unregister",
+        abstract: "Clear agent presence for the current worktree."
+    )
+
+    @Option(name: .long, help: "Runtime: codex or claude")
+    var runtime: String
+
+    func run() throws {
+        guard let runtimeValue = TeamHookRuntime(rawValue: runtime) else {
+            throw ValidationError("runtime must be one of: codex, claude")
+        }
+        guard let (team, worktreeName) = TeamPresenceCLI.resolveTeamAndWorktree() else {
+            return
+        }
+        let storage = TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
+        try storage.delete(
+            teamID: TeamLookup.id(of: team),
+            worktree: worktreeName,
+            runtime: runtimeValue
+        )
+    }
+}
+
+/// Helpers shared by `team register` / `team unregister` — both walk
+/// the same path: cwd → AppState → TeamView → (team, worktree name).
+/// Returns nil when the cwd is not in a tracked, team-enabled worktree
+/// so the wrapper-driven CLI calls can no-op cleanly.
+private enum TeamPresenceCLI {
+    static func resolveTeamAndWorktree() -> (TeamView, String)? {
+        let cwd = FileManager.default.currentDirectoryPath
+        guard let state = try? AppState.load(from: AppState.defaultDirectory) else {
+            return nil
+        }
+        guard let worktreePath = try? WorktreeResolver.resolve() else {
+            return nil
+        }
+        guard let team = TeamLookup.team(for: worktreePath, in: state.repos) else {
+            return nil
+        }
+        guard let worktreeName = TeamLookup.worktreeName(forCwd: cwd, in: team) else {
+            return nil
+        }
+        return (team, worktreeName)
     }
 }
 
