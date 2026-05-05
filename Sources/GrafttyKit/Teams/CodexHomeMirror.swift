@@ -117,28 +117,41 @@ public struct CodexHomeMirror: Sendable {
     private func writeMergedConfig() throws {
         let userConfigURL = sourceDirectory.appendingPathComponent("config.toml")
         let userText = (try? String(contentsOf: userConfigURL)) ?? ""
-
-        let merged: String
-        if userText.contains("codex_hooks") {
-            merged = TomlEditor.setBool(userText, table: "features", key: "codex_hooks", value: true)
-        } else if userText.contains("[features]") {
-            merged = TomlEditor.insertAfterTableHeader(userText, table: "features", line: "codex_hooks = true")
-        } else {
-            let trailing = userText.isEmpty || userText.hasSuffix("\n") ? "" : "\n"
-            let separator = userText.isEmpty ? "" : "\n"
-            merged = userText + "\(trailing)\(separator)[features]\ncodex_hooks = true\n"
-        }
-
+        let merged = TomlEditor.ensureBool(userText, table: "features", key: "codex_hooks", value: true)
         let outURL = mirrorDirectory.appendingPathComponent("config.toml")
         try merged.write(to: outURL, atomically: true, encoding: .utf8)
     }
 }
 
 /// Tiny TOML editor for the narrow case of toggling a boolean in a known table
-/// without disturbing comments or other keys. Falls back to text manipulation
-/// because most TOML libraries don't preserve round-trip comments.
+/// without disturbing comments or other keys.
+///
+/// **Limitations** (acceptable for our single-key feature-flag use case):
+/// - Does not handle inline tables (`features = { codex_hooks = true }`).
+///   If a user expresses `features` as an inline table, this editor will
+///   produce invalid TOML by also appending a `[features]` section header.
+/// - Does not handle multiline strings spanning section boundaries.
+/// - Does not handle dotted keys (`features.codex_hooks = true` at top level).
+///
+/// If your use case requires any of the above, switch to a real TOML library.
 enum TomlEditor {
-    static func setBool(_ text: String, table: String, key: String, value: Bool) -> String {
+    static func ensureBool(_ text: String, table: String, key: String, value: Bool) -> String {
+        // 1. If the key is already set inside the target table, replace its value.
+        // 2. Else if the target table exists, insert the key after its header.
+        // 3. Else append a new [table] block with the key.
+        if let replaced = replaceWithinTable(text, table: table, key: key, value: value) {
+            return replaced
+        }
+        if textHasTableHeader(text, table: table) {
+            return insertAfterTableHeader(text, table: table, line: "\(key) = \(value)")
+        }
+        let trailing = text.isEmpty || text.hasSuffix("\n") ? "" : "\n"
+        let separator = text.isEmpty ? "" : "\n"
+        return text + "\(trailing)\(separator)[\(table)]\n\(key) = \(value)\n"
+    }
+
+    /// Returns nil if the key is not present inside the target table; otherwise the rewritten text.
+    private static func replaceWithinTable(_ text: String, table: String, key: String, value: Bool) -> String? {
         let lines = text.components(separatedBy: "\n")
         var out: [String] = []
         var inTargetTable = false
@@ -157,10 +170,14 @@ enum TomlEditor {
             }
             out.append(line)
         }
-        if didReplace { return out.joined(separator: "\n") }
-        return insertAfterTableHeader(text, table: table, line: "\(key) = \(value)")
+        return didReplace ? out.joined(separator: "\n") : nil
     }
 
+    private static func textHasTableHeader(_ text: String, table: String) -> Bool {
+        text.components(separatedBy: "\n").contains { $0.trimmingCharacters(in: .whitespaces) == "[\(table)]" }
+    }
+
+    /// Insert a line directly after the `[table]` header. Caller must have verified the table exists.
     static func insertAfterTableHeader(_ text: String, table: String, line: String) -> String {
         let lines = text.components(separatedBy: "\n")
         var out: [String] = []
@@ -171,10 +188,6 @@ enum TomlEditor {
                 out.append(line)
                 inserted = true
             }
-        }
-        if !inserted {
-            let trailing = text.hasSuffix("\n") || text.isEmpty ? "" : "\n"
-            return text + "\(trailing)\n[\(table)]\n\(line)\n"
         }
         return out.joined(separator: "\n")
     }

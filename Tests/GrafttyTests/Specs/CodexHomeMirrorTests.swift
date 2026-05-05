@@ -57,6 +57,12 @@ struct CodexHomeMirrorTests {
         let sessionStart = hooks["SessionStart"] as! [[String: Any]]
         // User's matcher-group + graftty's = 2.
         #expect(sessionStart.count == 2)
+        let commands = sessionStart.flatMap { group -> [String] in
+            let handlers = (group["hooks"] as? [[String: Any]]) ?? []
+            return handlers.compactMap { $0["command"] as? String }
+        }
+        #expect(commands.contains("/path/to/user-script.sh"))
+        #expect(commands.contains(where: { $0.hasPrefix("/usr/local/bin/graftty team hook codex") }))
 
         // Re-running rebuild is idempotent (graftty entries strip-and-replace, not duplicate).
         try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()

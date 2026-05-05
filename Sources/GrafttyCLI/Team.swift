@@ -317,10 +317,11 @@ struct SyncCodexHome: ParsableCommand {
     )
 
     func run() throws {
+        let cliPath = Bundle.main.executablePath ?? CommandLine.arguments[0]
         let mirror = CodexHomeMirror(
             sourceDirectory: CodexHomeMirror.defaultSourceDirectory(),
             mirrorDirectory: CodexHomeMirror.defaultMirrorDirectory(),
-            grafttyCLIPath: ProcessInfo.processInfo.arguments.first ?? "graftty"
+            grafttyCLIPath: cliPath
         )
         try mirror.rebuild()
     }
