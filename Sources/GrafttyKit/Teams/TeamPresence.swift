@@ -92,3 +92,29 @@ public struct TeamPresenceStorage: Sendable {
             .appendingPathComponent("\(worktree).\(runtime.rawValue).json")
     }
 }
+
+/// @spec TEAM-PRESENCE-1.4
+/// Stateless helper for the process-monitor's stale-record sweep. The
+/// wrapper trap installed by the agent runtime hook is the primary
+/// cleanup path; this fallback covers the SIGKILL / hard-crash cases
+/// where the trap never fires and a presence file would otherwise
+/// linger across the dead PID's lifetime.
+public enum TeamPresenceMonitor {
+    public static func cleanupStale(
+        storage: TeamPresenceStorage,
+        isAlive: (Int32) -> Bool = { TeamPresenceMonitor.kernelIsAlive($0) }
+    ) {
+        let records = (try? storage.listAll()) ?? []
+        for record in records where !isAlive(record.pid) {
+            try? storage.delete(teamID: record.teamID, worktree: record.worktree, runtime: record.runtime)
+        }
+    }
+
+    public static func kernelIsAlive(_ pid: Int32) -> Bool {
+        // kill(pid, 0): returns 0 if pid is alive (and signal-deliverable),
+        // -1 + errno=ESRCH if not. Any other error (EPERM) means the
+        // process exists but we can't signal it — still alive.
+        if kill(pid, 0) == 0 { return true }
+        return errno != ESRCH
+    }
+}

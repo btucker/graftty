@@ -71,6 +71,12 @@ final class AppServices {
     let teamInbox: TeamInbox
     let teamEventDispatcher: TeamEventDispatcher
     var worktreeMonitorBridge: WorktreeMonitorBridge?
+    /// Drives `TeamPresenceMonitor.cleanupStale` on a slow cadence so
+    /// SIGKILL'd agents (whose wrapper trap never fired) don't leave
+    /// dangling presence files. The wrapper trap is the primary cleanup
+    /// path; this is the SIGKILL / hard-crash fallback. Retained here so
+    /// the ticker outlives `startup()`. TEAM-PRESENCE-1.4.
+    var presenceCleanupTicker: PollingTicker?
     /// Provides the current AppState for the team PR-merged dispatch hook.
     /// Set in GrafttyApp.startup() once @State is accessible (TEAM-5.4).
     var appStateProvider: (() -> AppState)?
@@ -727,6 +733,26 @@ struct GrafttyApp: App {
             ticker: prTicker,
             getRepos: { binding.wrappedValue.repos }
         )
+
+        // Sweep dangling presence files left behind by SIGKILL'd agents
+        // whose wrapper trap never fired. The wrapper trap is the primary
+        // cleanup path (TEAM-PRESENCE-1.3); this fallback runs on a slow
+        // cadence and only deletes records whose recorded PID is no
+        // longer alive per `kill(pid, 0)` semantics. Continues while
+        // backgrounded for the same reason the stats poller does:
+        // agent processes can die at any time and Graftty might not be
+        // frontmost when it happens.
+        let presenceTicker = PollingTicker(
+            interval: .seconds(30),
+            pauseWhenInactive: { false }
+        )
+        services.presenceCleanupTicker = presenceTicker
+        let presenceStorage = TeamPresenceStorage(
+            rootDirectory: TeamPresenceStorage.defaultRoot()
+        )
+        presenceTicker.start {
+            TeamPresenceMonitor.cleanupStale(storage: presenceStorage)
+        }
 
         restoreRunningWorktrees()
 
