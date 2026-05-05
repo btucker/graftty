@@ -10,7 +10,8 @@ struct AgentHookInstallerWrapperTests {
             runtime: .claude,
             wrapperDirectory: "/Users/x/agent-hooks/bin",
             realCommandName: "claude",
-            grafttyCLIPath: "/usr/local/bin/graftty"
+            grafttyCLIPath: "/usr/local/bin/graftty",
+            codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
         )
 
         // Inline JSON includes the three SessionStart/PostToolUse/Stop hook entries.
@@ -34,7 +35,8 @@ struct AgentHookInstallerWrapperTests {
             runtime: .claude,
             wrapperDirectory: "/Users/x/agent-hooks/bin",
             realCommandName: "claude",
-            grafttyCLIPath: "/usr/local/bin/graftty"
+            grafttyCLIPath: "/usr/local/bin/graftty",
+            codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
         )
         #expect(script.contains("GRAFTTY_DISABLE_AGENT_HOOKS"))
         // Both branches must end in an exec of the real binary.
@@ -48,10 +50,12 @@ struct AgentHookInstallerWrapperTests {
             runtime: .codex,
             wrapperDirectory: "/Users/x/agent-hooks/bin",
             realCommandName: "codex",
-            grafttyCLIPath: "/usr/local/bin/graftty"
+            grafttyCLIPath: "/usr/local/bin/graftty",
+            codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
         )
         #expect(script.contains("internal sync-codex-home"))
-        #expect(script.contains("CODEX_HOME=\"$HOME/.graftty/agent-hooks/codex-home\""))
+        #expect(script.contains("CODEX_HOME="))
+        #expect(script.contains("/Users/x/agent-hooks/codex-home"))
         #expect(script.contains("trap"))
         #expect(script.contains("graftty team unregister --runtime codex"))
     }

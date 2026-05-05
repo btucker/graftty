@@ -38,7 +38,8 @@ struct AgentHookInstallerTests {
             runtime: .codex,
             wrapperDirectory: "/app/hooks/bin",
             realCommandName: "codex",
-            grafttyCLIPath: "/app/graftty"
+            grafttyCLIPath: "/app/graftty",
+            codexHomeDirectory: "/app/hooks/codex-home"
         )
 
         #expect(script.contains(#"if [ "$dir" = '/app/hooks/bin' ]; then"#))
@@ -51,7 +52,8 @@ struct AgentHookInstallerTests {
             runtime: .claude,
             wrapperDirectory: "/tmp/has $dollar/it's/bin",
             realCommandName: "claude",
-            grafttyCLIPath: "/app/graftty"
+            grafttyCLIPath: "/app/graftty",
+            codexHomeDirectory: "/tmp/has $dollar/it's/codex-home"
         )
 
         #expect(script.contains(#"if [ "$dir" = '/tmp/has $dollar/it'"'"'s/bin' ]; then"#))

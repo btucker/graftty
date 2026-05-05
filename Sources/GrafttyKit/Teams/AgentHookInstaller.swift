@@ -37,13 +37,18 @@ public struct AgentHookInstaller: Sendable {
         var written: [URL] = []
         let claudeWrapper = binDirectory.appendingPathComponent("claude")
         let codexWrapper = binDirectory.appendingPathComponent("codex")
+        let codexHomeDirectory = binDirectory
+            .deletingLastPathComponent()
+            .appendingPathComponent("codex-home", isDirectory: true)
+            .path
 
         try writeIfChanged(
             AgentHookInstaller.wrapperScript(
                 runtime: .claude,
                 wrapperDirectory: binDirectory.path,
                 realCommandName: "claude",
-                grafttyCLIPath: grafttyCLIPath
+                grafttyCLIPath: grafttyCLIPath,
+                codexHomeDirectory: codexHomeDirectory
             ),
             to: claudeWrapper,
             executable: true,
@@ -54,7 +59,8 @@ public struct AgentHookInstaller: Sendable {
                 runtime: .codex,
                 wrapperDirectory: binDirectory.path,
                 realCommandName: "codex",
-                grafttyCLIPath: grafttyCLIPath
+                grafttyCLIPath: grafttyCLIPath,
+                codexHomeDirectory: codexHomeDirectory
             ),
             to: codexWrapper,
             executable: true,
@@ -68,7 +74,8 @@ public struct AgentHookInstaller: Sendable {
         runtime: TeamHookRuntime,
         wrapperDirectory: String,
         realCommandName: String,
-        grafttyCLIPath: String
+        grafttyCLIPath: String,
+        codexHomeDirectory: String
     ) -> String {
         let resolveBlock = realBinaryResolutionShell(
             wrapperDirectory: wrapperDirectory,
@@ -92,10 +99,11 @@ public struct AgentHookInstaller: Sendable {
             fi
             """
         case .codex:
+            let codexHomeLiteral = shellLiteral(codexHomeDirectory)
             runtimeBlock = """
             if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
               \(shellCommandToken(grafttyCLIPath)) internal sync-codex-home
-              ( exec env CODEX_HOME="$HOME/.graftty/agent-hooks/codex-home" "$real_binary" "$@" )
+              ( exec env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@" )
             else
               ( exec "$real_binary" "$@" )
             fi
@@ -115,6 +123,10 @@ public struct AgentHookInstaller: Sendable {
         """
     }
 
+    /// @spec TEAM-IDLE-1.2
+    /// Builds the inline `--settings` JSON payload that the Claude wrapper
+    /// passes to `claude --settings '<json>'`. Lays the graftty hooks
+    /// additively over the user's existing settings.
     private static func claudeInlineSettingsJSON(grafttyCLIPath: String) -> String {
         let cmd = grafttyCLIPath
         let payload: [String: Any] = [
@@ -124,6 +136,8 @@ public struct AgentHookInstaller: Sendable {
                 "Stop": hookEntries(command: "\(cmd) team hook claude stop"),
             ],
         ]
+        // Note: .sortedKeys produces alphabetical event order (PostToolUse, SessionStart, Stop).
+        // JSON object key order has no semantic effect; sorting just keeps the wrapper output stable.
         let data = (try? JSONSerialization.data(
             withJSONObject: payload,
             options: [.sortedKeys, .withoutEscapingSlashes]
