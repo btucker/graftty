@@ -4,14 +4,14 @@ import Testing
 
 @Suite("Agent Hook Installer")
 struct AgentHookInstallerTests {
-    @Test func installWritesWrappersAndSettingsIdempotently() throws {
+    @Test func installWritesWrappersIdempotently() throws {
         let root = try Self.temporaryDirectory()
         let installer = AgentHookInstaller(rootDirectory: root, grafttyCLIPath: "/usr/local/bin/graftty")
 
         let first = try installer.install()
         let second = try installer.install()
 
-        #expect(first.writtenFiles.count == 3)
+        #expect(first.writtenFiles.count == 2)
         #expect(second.writtenFiles.isEmpty)
         #expect(FileManager.default.isExecutableFile(atPath: root.appendingPathComponent("bin/claude").path))
         #expect(FileManager.default.isExecutableFile(atPath: root.appendingPathComponent("bin/codex").path))
@@ -38,8 +38,7 @@ struct AgentHookInstallerTests {
             runtime: .codex,
             wrapperDirectory: "/app/hooks/bin",
             realCommandName: "codex",
-            grafttyCLIPath: "/app/graftty",
-            claudeSettingsPath: nil
+            grafttyCLIPath: "/app/graftty"
         )
 
         #expect(script.contains(#"if [ "$dir" = '/app/hooks/bin' ]; then"#))
@@ -52,23 +51,12 @@ struct AgentHookInstallerTests {
             runtime: .claude,
             wrapperDirectory: "/tmp/has $dollar/it's/bin",
             realCommandName: "claude",
-            grafttyCLIPath: "/app/graftty",
-            claudeSettingsPath: "/tmp/has $dollar/it's/settings.json"
+            grafttyCLIPath: "/app/graftty"
         )
 
         #expect(script.contains(#"if [ "$dir" = '/tmp/has $dollar/it'"'"'s/bin' ]; then"#))
-        #expect(script.contains(#"exec "$real_binary" --settings '/tmp/has $dollar/it'"'"'s/settings.json' "$@""#))
-    }
-
-    @Test func claudeSettingsContainGrafttyHooks() throws {
-        let data = AgentHookInstaller.claudeSettingsData(grafttyCLIPath: "/app/graftty")
-        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
-        let hooks = json["hooks"] as! [String: Any]
-
-        #expect(hooks.keys.contains("SessionStart"))
-        #expect(hooks.keys.contains("PostToolUse"))
-        #expect(hooks.keys.contains("Stop"))
-        #expect(String(data: data, encoding: .utf8)!.contains("/app/graftty team hook claude stop"))
+        // Inline JSON is passed via --settings, single-quoted (with escaped single quotes if any).
+        #expect(script.contains(#"--settings '"#))
     }
 
     private static func temporaryDirectory() throws -> URL {

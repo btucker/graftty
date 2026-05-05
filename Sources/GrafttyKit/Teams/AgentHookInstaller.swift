@@ -31,10 +31,6 @@ public struct AgentHookInstaller: Sendable {
         Self.binDirectory(rootDirectory: rootDirectory)
     }
 
-    public var claudeSettingsURL: URL {
-        rootDirectory.appendingPathComponent("claude-settings.json")
-    }
-
     public func install() throws -> AgentHookInstallResult {
         try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
 
@@ -47,8 +43,7 @@ public struct AgentHookInstaller: Sendable {
                 runtime: .claude,
                 wrapperDirectory: binDirectory.path,
                 realCommandName: "claude",
-                grafttyCLIPath: grafttyCLIPath,
-                claudeSettingsPath: claudeSettingsURL.path
+                grafttyCLIPath: grafttyCLIPath
             ),
             to: claudeWrapper,
             executable: true,
@@ -59,17 +54,10 @@ public struct AgentHookInstaller: Sendable {
                 runtime: .codex,
                 wrapperDirectory: binDirectory.path,
                 realCommandName: "codex",
-                grafttyCLIPath: grafttyCLIPath,
-                claudeSettingsPath: nil
+                grafttyCLIPath: grafttyCLIPath
             ),
             to: codexWrapper,
             executable: true,
-            written: &written
-        )
-        try writeIfChanged(
-            AgentHookInstaller.claudeSettingsData(grafttyCLIPath: grafttyCLIPath),
-            to: claudeSettingsURL,
-            executable: false,
             written: &written
         )
 
@@ -80,25 +68,71 @@ public struct AgentHookInstaller: Sendable {
         runtime: TeamHookRuntime,
         wrapperDirectory: String,
         realCommandName: String,
-        grafttyCLIPath: String,
-        claudeSettingsPath: String?
+        grafttyCLIPath: String
     ) -> String {
-        let settingsExec: String
-        if let claudeSettingsPath {
-            settingsExec = """
+        let resolveBlock = realBinaryResolutionShell(
+            wrapperDirectory: wrapperDirectory,
+            realCommandName: realCommandName
+        )
+        let trapBlock = """
+        cleanup() { \(shellCommandToken(grafttyCLIPath)) team unregister --runtime \(runtime.rawValue) 2>/dev/null || true; }
+        trap cleanup EXIT
+        """
+
+        let runtimeBlock: String
+        switch runtime {
+        case .claude:
+            let inlineJSON = claudeInlineSettingsJSON(grafttyCLIPath: grafttyCLIPath)
+            let escapedJSON = shellLiteral(inlineJSON)
+            runtimeBlock = """
             if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
-              exec "$real_binary" --settings \(shellLiteral(claudeSettingsPath)) "$@"
+              ( exec "$real_binary" --settings \(escapedJSON) "$@" )
+            else
+              ( exec "$real_binary" "$@" )
             fi
             """
-        } else {
-            settingsExec = ""
+        case .codex:
+            runtimeBlock = """
+            if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
+              \(shellCommandToken(grafttyCLIPath)) internal sync-codex-home
+              ( exec env CODEX_HOME="$HOME/.graftty/agent-hooks/codex-home" "$real_binary" "$@" )
+            else
+              ( exec "$real_binary" "$@" )
+            fi
+            """
         }
 
         return """
         #!/bin/sh
         # GRAFTTY_AGENT_HOOK_WRAPPER version=\(version)
         # Hooks run: \(grafttyCLIPath) team hook \(runtime.rawValue)
+        \(resolveBlock)
 
+        \(trapBlock)
+
+        \(runtimeBlock)
+        exit $?
+        """
+    }
+
+    private static func claudeInlineSettingsJSON(grafttyCLIPath: String) -> String {
+        let cmd = grafttyCLIPath
+        let payload: [String: Any] = [
+            "hooks": [
+                "SessionStart": hookEntries(command: "\(cmd) team hook claude session-start"),
+                "PostToolUse": hookEntries(command: "\(cmd) team hook claude post-tool-use"),
+                "Stop": hookEntries(command: "\(cmd) team hook claude stop"),
+            ],
+        ]
+        let data = (try? JSONSerialization.data(
+            withJSONObject: payload,
+            options: [.sortedKeys, .withoutEscapingSlashes]
+        )) ?? Data("{}".utf8)
+        return String(data: data, encoding: .utf8) ?? "{}"
+    }
+
+    private static func realBinaryResolutionShell(wrapperDirectory: String, realCommandName: String) -> String {
+        """
         real_binary=""
         old_ifs="$IFS"
         IFS=":"
@@ -117,23 +151,7 @@ public struct AgentHookInstaller: Sendable {
           printf '%s\\n' "graftty: unable to find real \(realCommandName) outside \(wrapperDirectory)" >&2
           exit 127
         fi
-
-        \(settingsExec)
-        exec "$real_binary" "$@"
         """
-    }
-
-    public static func claudeSettingsData(grafttyCLIPath: String) -> Data {
-        let commandPrefix = shellCommandToken(grafttyCLIPath)
-        let payload: [String: Any] = [
-            "hooks": [
-                "SessionStart": hookEntries(command: "\(commandPrefix) team hook claude session-start"),
-                "PostToolUse": hookEntries(command: "\(commandPrefix) team hook claude post-tool-use"),
-                "Stop": hookEntries(command: "\(commandPrefix) team hook claude stop"),
-            ],
-        ]
-        return (try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]))
-            ?? Data("{}".utf8)
     }
 
     private static func hookEntries(command: String) -> [[String: Any]] {
