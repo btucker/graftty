@@ -12,14 +12,47 @@ struct AgentHookInstallerTests {
         let second = try installer.install()
 
         // Two wrappers (claude, codex) + four zsh-init shim files
-        // (.zshenv, .zprofile, .zshrc, .zlogin) = 6.
-        #expect(first.writtenFiles.count == 6)
+        // (.zshenv, .zprofile, .zshrc, .zlogin) + two bash-init files
+        // (bash-launcher, .bashrc) = 8.
+        #expect(first.writtenFiles.count == 8)
         #expect(second.writtenFiles.isEmpty)
         #expect(FileManager.default.isExecutableFile(atPath: root.appendingPathComponent("bin/claude").path))
         #expect(FileManager.default.isExecutableFile(atPath: root.appendingPathComponent("bin/codex").path))
         for shim in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
             let path = root.appendingPathComponent("zsh-init").appendingPathComponent(shim).path
             #expect(FileManager.default.fileExists(atPath: path))
+        }
+        let bashLauncher = root.appendingPathComponent("bash-init/bash-launcher").path
+        #expect(FileManager.default.isExecutableFile(atPath: bashLauncher))
+        let bashRC = root.appendingPathComponent("bash-init/.bashrc").path
+        #expect(FileManager.default.fileExists(atPath: bashRC))
+    }
+
+    @Test func bashrcShimSourcesUserBashrcAndPrependsAgentBin() {
+        let shim = AgentHookInstaller.bashrcShim()
+        #expect(shim.contains(#"source "$HOME/.bashrc""#))
+        #expect(shim.contains("GRAFTTY_AGENT_HOOKS_BIN"))
+        #expect(shim.contains(#"export PATH="$GRAFTTY_AGENT_HOOKS_BIN:$PATH""#))
+        // Strip-then-prepend so nested bash invocations don't accumulate
+        // duplicates.
+        #expect(shim.contains(#"_graftty_path="${_graftty_path//:$GRAFTTY_AGENT_HOOKS_BIN:/:}""#))
+    }
+
+    @Test func bashLauncherExecsBashWithRcfileFlag() {
+        let script = AgentHookInstaller.bashLauncherScript(rcfilePath: "/tmp/test/.bashrc")
+        #expect(script.contains("#!/bin/sh"))
+        #expect(script.contains(#"exec bash --rcfile '/tmp/test/.bashrc' "$@""#))
+    }
+
+    @Test func wrappedUserShellSubstitutesBashOnly() {
+        let root = URL(fileURLWithPath: "/test")
+        // Bash → substituted with launcher path.
+        let bashSubst = AgentHookInstaller.wrappedUserShell("/bin/bash", rootDirectory: root)
+        #expect(bashSubst == "/test/bash-init/bash-launcher")
+        // zsh / fish / sh / anything else → pass through.
+        for shell in ["/bin/zsh", "/usr/local/bin/fish", "/bin/sh", "/bin/dash"] {
+            let result = AgentHookInstaller.wrappedUserShell(shell, rootDirectory: root)
+            #expect(result == shell)
         }
     }
 

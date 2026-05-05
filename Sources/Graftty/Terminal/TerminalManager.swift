@@ -697,7 +697,22 @@ final class TerminalManager: ObservableObject {
         // This is the same SHELL libghostty will spawn when config.command
         // is nil; we hand it back to zmx as the inner process so the
         // attached session runs the user's real shell.
-        let userShell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/sh"
+        let rawUserShell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/sh"
+        // When the user's shell is bash, substitute graftty's bash-launcher
+        // (which exec's `bash --rcfile <shim>`) so the inner bash sources
+        // a graftty-managed .bashrc that re-prepends the wrapper bin to
+        // PATH after the user's own .bashrc has had its say. Bash has no
+        // ZDOTDIR-style env-var redirect; --rcfile is the only way in.
+        // GRAFTTY_DISABLE_AGENT_HOOKS=1 falls through to the original shell.
+        let userShell: String
+        if ProcessInfo.processInfo.environment["GRAFTTY_DISABLE_AGENT_HOOKS"] == "1" {
+            userShell = rawUserShell
+        } else {
+            userShell = AgentHookInstaller.wrappedUserShell(
+                rawUserShell,
+                rootDirectory: AgentHookInstaller.rootDirectory()
+            )
+        }
         // Pass GHOSTTY_RESOURCES_DIR through so the launcher can re-inject
         // ZDOTDIR for zsh users. Without this, Ghostty's shell integration
         // never loads in the inner shell zmx spawns, and chpwd-driven OSC 7
