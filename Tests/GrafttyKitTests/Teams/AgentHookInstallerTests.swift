@@ -11,10 +11,36 @@ struct AgentHookInstallerTests {
         let first = try installer.install()
         let second = try installer.install()
 
-        #expect(first.writtenFiles.count == 2)
+        // Two wrappers (claude, codex) + four zsh-init shim files
+        // (.zshenv, .zprofile, .zshrc, .zlogin) = 6.
+        #expect(first.writtenFiles.count == 6)
         #expect(second.writtenFiles.isEmpty)
         #expect(FileManager.default.isExecutableFile(atPath: root.appendingPathComponent("bin/claude").path))
         #expect(FileManager.default.isExecutableFile(atPath: root.appendingPathComponent("bin/codex").path))
+        for shim in [".zshenv", ".zprofile", ".zshrc", ".zlogin"] {
+            let path = root.appendingPathComponent("zsh-init").appendingPathComponent(shim).path
+            #expect(FileManager.default.fileExists(atPath: path))
+        }
+    }
+
+    @Test func zshrcShimSourcesUserRcAndPrependsAgentBin() {
+        let shim = AgentHookInstaller.zshrcShim()
+        // Sources user's real .zshrc first.
+        #expect(shim.contains(#"source "$HOME/.zshrc""#))
+        // Then re-prepends graftty's wrapper bin (after .zshrc has had
+        // its say) — gated on GRAFTTY_AGENT_HOOKS_BIN being set.
+        #expect(shim.contains("GRAFTTY_AGENT_HOOKS_BIN"))
+        #expect(shim.contains(#"export PATH="$GRAFTTY_AGENT_HOOKS_BIN:$PATH""#))
+        // Strips an existing occurrence first (idempotent under nested zsh).
+        #expect(shim.contains(#"_graftty_path="${_graftty_path//:$GRAFTTY_AGENT_HOOKS_BIN:/:}""#))
+    }
+
+    @Test func zshenvProfileLoginShimSourcesUserHome() {
+        for basename in [".zshenv", ".zprofile", ".zlogin"] {
+            let shim = AgentHookInstaller.zshSourceShim(homeBasename: basename)
+            #expect(shim.contains("\"$HOME/\(basename)\""))
+            #expect(shim.contains("source"))
+        }
     }
 
     @Test func installRepairsStaleWrapperMarker() throws {

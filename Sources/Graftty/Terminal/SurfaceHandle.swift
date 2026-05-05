@@ -111,11 +111,24 @@ final class SurfaceHandle {
             currentPath: ProcessInfo.processInfo.environment["PATH"] ?? "",
             bundleURL: Bundle.main.bundleURL
         )
-        let path = Self.agentHookPathPrefix().map { "\($0):\(sanitizedPath)" } ?? sanitizedPath
+        let agentHookBin = Self.agentHookPathPrefix()
+        let path = agentHookBin.map { "\($0):\(sanitizedPath)" } ?? sanitizedPath
         var envPairs: [(key: String, value: String)] = [
             ("GRAFTTY_SOCK", socketPath),
             ("PATH", path),
         ]
+        // Hand the wrapper bin path to the user's shell init via env so
+        // the ZDOTDIR shim's `.zshrc` can re-prepend it AFTER the user's
+        // own PATH manipulations run. Without this, .zshrc lines like
+        // `export PATH="$BUN_INSTALL/bin:$PATH"` push graftty's surface-
+        // env-injected prepend behind the user's claude / codex
+        // installations and the wrapper never gets invoked.
+        if let agentHookBin {
+            envPairs.append(("GRAFTTY_AGENT_HOOKS_BIN", agentHookBin))
+            envPairs.append(("ZDOTDIR", AgentHookInstaller
+                .zshInitDirectory(rootDirectory: AgentHookInstaller.rootDirectory())
+                .path))
+        }
         if let zmxDir {
             envPairs.append(("ZMX_DIR", zmxDir))
         }
