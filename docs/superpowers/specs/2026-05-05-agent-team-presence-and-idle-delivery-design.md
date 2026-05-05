@@ -55,12 +55,20 @@ The Codex wrapper sets `CODEX_HOME` to a graftty-controlled directory that mirro
 
 ```sh
 GRAFTTY_HOME="$HOME/.graftty/agent-hooks/codex-home"
+
+cleanup() { graftty team unregister --runtime codex 2>/dev/null || true; }
+trap cleanup EXIT
+
 if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
   graftty internal sync-codex-home
-  exec env CODEX_HOME="$GRAFTTY_HOME" "$real_codex" "$@"
+  ( exec env CODEX_HOME="$GRAFTTY_HOME" "$real_codex" "$@" )
+else
+  ( exec "$real_codex" "$@" )
 fi
-exec "$real_codex" "$@"
+exit $?
 ```
+
+The subshell with `exec` preserves the lifecycle semantics (signals propagate to the agent, the wrapper holds no extra state) while keeping the parent shell alive long enough to fire the `EXIT` trap. The `cleanup` function runs on any exit path the trap can observe — normal exit, `SIGINT` from Ctrl-C, `SIGTERM`, `SIGHUP`. `SIGKILL` is the only path it can't catch; for that case, graftty's process monitor (which knows the agent's PID from launch) is the fallback that clears stale presence on next observation.
 
 **`graftty internal sync-codex-home`** is fast (directory walk + symlink ops), idempotent, and runs on every wrapper invocation:
 
@@ -83,11 +91,18 @@ exec "$real_codex" "$@"
 The Claude wrapper passes the entire hook configuration as an inline JSON string via `--settings`, which Claude Code documents as "load **additional** settings from" (additive, not replacing).
 
 ```sh
+cleanup() { graftty team unregister --runtime claude 2>/dev/null || true; }
+trap cleanup EXIT
+
 if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
-  exec "$real_claude" --settings "$GRAFTTY_CLAUDE_SETTINGS_JSON" "$@"
+  ( exec "$real_claude" --settings "$GRAFTTY_CLAUDE_SETTINGS_JSON" "$@" )
+else
+  ( exec "$real_claude" "$@" )
 fi
-exec "$real_claude" "$@"
+exit $?
 ```
+
+Same trap-and-subshell pattern as the Codex wrapper. The cleanup is identical except for the `--runtime claude` argument.
 
 The inline JSON is generated at install time and embedded directly in the wrapper script. This eliminates `~/.graftty/agent-hooks/claude-settings.json` from the on-disk surface — there is no separate settings file to keep in sync.
 
@@ -118,9 +133,14 @@ Small (~250 tokens) and identical for both runtimes — the renderer already pro
 
 **Storage:** `~/.graftty/teams/<teamID>/presence/<worktree>.<runtime>.json` — records `pid`, `registeredAt`, `runtime`, `worktree`. One file per (worktree, runtime) pair.
 
-**Set:** new CLI subcommand `graftty team register` (companion to existing `graftty team hook ...`). Reads worktree + team from cwd. Writes the presence file. Idempotent.
+**Set:** new CLI subcommand `graftty team register` (companion to existing `graftty team hook ...`). Reads worktree + team from cwd. Writes the presence file. Idempotent. The agent runs this as its first action; the SessionStart-injected protocol primer instructs it to.
 
-**Clear:** graftty's existing process monitor (it owns the launcher and knows the PID) clears presence when the agent process exits. No heartbeat. No explicit `unregister` command in v1.
+**Clear:** layered cleanup, in order of likelihood:
+
+1. **Wrapper trap.** The wrapper script registers an `EXIT` trap that runs `graftty team unregister --runtime <claude|codex>` whenever the wrapper exits, including signal-induced exits (`SIGINT`/`SIGTERM`/`SIGHUP`). This is the primary cleanup path and handles every clean and most signal-driven shutdowns.
+2. **Graftty process monitor (fallback).** If the wrapper itself is killed with `SIGKILL` (or otherwise dies before its trap can fire), the trap doesn't run and presence stays on disk pointing at a dead PID. Graftty's process monitor — which already tracks each agent's PID from launch — clears the presence record on its next observation cycle.
+
+A new CLI subcommand `graftty team unregister --runtime <claude|codex>` reads the worktree from cwd and removes the matching presence file. Idempotent (no-op if the file is already gone, e.g. when the agent never registered before being killed). No heartbeat.
 
 **Consumed by:**
 
@@ -208,7 +228,8 @@ Used for: debugging, the team UI's recent-activity strip, and future blindspots-
 
 - **TEAM-PRESENCE-1.1** — When an agent session starts, the application shall inject a team protocol primer in the SessionStart `additionalContext`.
 - **TEAM-PRESENCE-1.2** — When the agent runs `graftty team register`, the application shall persist a presence record at `~/.graftty/teams/<id>/presence/<worktree>.<runtime>.json`.
-- **TEAM-PRESENCE-1.3** — When an agent process exits, the application shall clear its presence record on next observation.
+- **TEAM-PRESENCE-1.3** — When the agent wrapper script exits, the application shall remove the presence record via `graftty team unregister`.
+- **TEAM-PRESENCE-1.4** — When an agent process exits without its wrapper trap firing (e.g. SIGKILL), the application's process monitor shall clear the stale presence record on next observation.
 - **TEAM-IDLE-1.1** — When the Codex wrapper runs with `GRAFTTY_DISABLE_AGENT_HOOKS != 1`, the application shall synthesize `<graftty-home>` with symlinks to the user's `~/.codex/` entries and graftty-owned `hooks.json` and `config.toml`, then exec `codex` with `CODEX_HOME=<graftty-home>`.
 - **TEAM-IDLE-1.2** — When the Claude wrapper runs with `GRAFTTY_DISABLE_AGENT_HOOKS != 1`, the application shall exec `claude --settings '<inline JSON>'` so graftty's hooks layer additively over the user's settings.
 - **TEAM-IDLE-1.3** — When Claude's Stop hook fires, the application shall spawn an `asyncRewake` inbox watcher coalesced per session.
@@ -232,7 +253,7 @@ Used for: debugging, the team UI's recent-activity strip, and future blindspots-
 
 - `Sources/GrafttyKit/Teams/TeamHookRenderer.swift` — add the protocol primer to `SessionStart` `additionalContext`.
 - `Sources/GrafttyKit/Teams/AgentHookInstaller.swift` — switch Claude wrapper to inline `--settings` (drop the on-disk settings file); rewrite Codex wrapper to set `CODEX_HOME` and call `graftty internal sync-codex-home`.
-- `Sources/GrafttyCLI/Team.swift` — new subcommands: `register`, `watch-inbox`. New `internal sync-codex-home` subcommand (under an `internal` group not surfaced to users).
+- `Sources/GrafttyCLI/Team.swift` — new subcommands: `register`, `unregister`, `watch-inbox`. New `internal sync-codex-home` subcommand (under an `internal` group not surfaced to users).
 - `Sources/GrafttyKit/Zmx/ZmxRunner.swift` — instrument input forwarding to track uncommitted bytes per session; expose via daemon protocol.
 - `SPECS.md` — regenerated from new `@spec` annotations.
 - Add a TOML parsing dependency (e.g. `swift-toml` or similar) if one is not already available, for the `config.toml` merge in `CodexHomeMirror`.
