@@ -3,34 +3,37 @@ import Foundation
 @testable import GrafttyKit
 
 /// When a PR fetch fails (network hiccup, gh auth expired, rate
-/// limit), the cached PR info must stay in place rather than being
-/// wiped. A transient failure shouldn't erase the user-visible badge
-/// — gh is the only channel, and dropping cached info on every failed
-/// poll makes the breadcrumb / sidebar badge flicker in and out while
-/// the backoff (`PR-7.2`) waits to retry. The right behaviour is to
-/// keep the last-known state and let the next successful fetch either
-/// confirm or update it.
+/// limit), the cached PR info must stay in place rather than
+/// being wiped. A transient failure shouldn't erase the
+/// user-visible badge — gh is the only channel, and dropping
+/// cached info on every failed poll makes the breadcrumb /
+/// sidebar badge flicker in and out while the per-repo backoff
+/// waits to retry. Keep the last-known state and let the next
+/// successful fetch either confirm or update it.
 @Suite("""
 PRStatusStore — fetch-failure cache preservation
 
-@spec PR-7.10: When a PR fetch fails (network error, rate limit, expired `gh` auth), the application shall preserve the worktree's last-known `PRInfo` cache entry rather than removing it. A transient failure is not evidence that the PR stopped existing, and dropping cached info on every failed poll makes the sidebar badge and breadcrumb PR button flicker in and out while the `PR-7.2` backoff waits to retry. The next successful fetch either confirms the cached state or updates it.
+@spec PR-7.10: When a PR fetch fails (network error, rate limit, expired `gh` auth), the application shall preserve every worktree's last-known `PRInfo` cache entry for that repo rather than removing them. A transient failure is not evidence that any PR stopped existing, and dropping cached info on every failed poll makes the sidebar badge and breadcrumb PR button flicker in and out while the per-repo backoff waits to retry. The next successful fetch either confirms the cached state or updates it.
 """)
 struct PRStatusStoreFetchFailureTests {
 
     enum StubError: Error { case failed }
 
-    /// Scripted fetcher whose response can be flipped to "throw" after
-    /// the first success, so the test can observe what happens to the
-    /// cached info across one failure without also having to model
-    /// the whole retry cadence.
+    /// Scripted fetcher whose response flips to "throw" after the
+    /// first success, so the test can observe what happens to
+    /// cached info across one failure without modeling the retry
+    /// cadence.
     actor FlipFetcher: PRFetcher {
         private var mode: Mode
-        enum Mode { case ok(PRInfo?), throwing }
-        init(initial: PRInfo?) { self.mode = .ok(initial) }
+        enum Mode { case ok(RepoPRSnapshot), throwing }
+        init(initial: RepoPRSnapshot) { self.mode = .ok(initial) }
         func flipToThrowing() { mode = .throwing }
-        func fetch(origin: HostingOrigin, branch: String) async throws -> PRInfo? {
+        func fetch(
+            origin: HostingOrigin,
+            branchesOfInterest: Set<String>
+        ) async throws -> RepoPRSnapshot {
             switch mode {
-            case .ok(let info): return info
+            case .ok(let snap): return snap
             case .throwing: throw StubError.failed
             }
         }
@@ -53,12 +56,21 @@ struct PRStatusStoreFetchFailureTests {
 
     @MainActor
     @Test func fetchFailureKeepsLastKnownInfo() async throws {
-        let fetcher = FlipFetcher(initial: Self.pr(number: 42))
+        let initial = RepoPRSnapshot(prsByBranch: ["feat": Self.pr(number: 42)])
+        let fetcher = FlipFetcher(initial: initial)
         let store = PRStatusStore(
             executor: FakeCLIExecutor(),
             fetcherFor: { _ in fetcher },
             detectHost: { _ in Self.origin }
         )
+        let ticker = ManualTicker()
+        let repo = RepoEntry(
+            path: "/repo",
+            displayName: "repo",
+            worktrees: [WorktreeEntry(path: "/wt", branch: "feat", state: .running)]
+        )
+        store.start(ticker: ticker, getRepos: { [repo] })
+        defer { store.stop() }
 
         store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "feat")
         for _ in 0..<100 {
@@ -67,11 +79,15 @@ struct PRStatusStoreFetchFailureTests {
         }
         #expect(store.infos["/wt"]?.number == 42, "first fetch should publish PR#42")
 
-        // Flip the fetcher to throwing and trigger another refresh.
         await fetcher.flipToThrowing()
+        // Step the in-flight clock past `refreshCadence` so the
+        // next refresh isn't suppressed by the still-recorded slot.
+        store.seedInFlightSinceForTesting(
+            Date().addingTimeInterval(-3600),
+            forRepo: "/repo"
+        )
         store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "feat")
 
-        // Wait long enough for the failed fetch to land.
         try await Task.sleep(for: .milliseconds(120))
 
         #expect(
@@ -80,3 +96,4 @@ struct PRStatusStoreFetchFailureTests {
         )
     }
 }
+

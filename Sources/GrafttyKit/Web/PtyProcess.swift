@@ -52,6 +52,7 @@ public enum PtyProcess {
     public static func spawn(
         argv: [String],
         env: [String: String],
+        currentDirectory: URL? = nil,
         initialSize: (cols: UInt16, rows: UInt16)? = nil,
         resetSignalMask: Bool = true
     ) throws -> Spawned {
@@ -108,6 +109,7 @@ public enum PtyProcess {
         let envStrings = mergedEnv.map { "\($0)=\($1)" }
         let envCStrings = envStrings.map { strdup($0) }
         var envPointers: [UnsafeMutablePointer<CChar>?] = envCStrings + [nil]
+        let cwdCString: UnsafeMutablePointer<CChar>? = currentDirectory.flatMap { strdup($0.path) }
 
         let pid = _fork()
         if pid < 0 {
@@ -116,10 +118,14 @@ public enum PtyProcess {
             close(master)
             for ptr in argvCStrings { free(ptr) }
             for ptr in envCStrings { free(ptr) }
+            if let cwdCString { free(cwdCString) }
             throw Error.forkFailed(errno: err)
         }
         if pid == 0 {
             _ = setsid()
+            if let cwdCString, chdir(cwdCString) != 0 {
+                _exit(127)
+            }
             let slave = Darwin.open(slavePath, O_RDWR)
             if slave < 0 { _exit(127) }
             // Non-fatal on some kernels; continue regardless of rc.
@@ -189,6 +195,7 @@ public enum PtyProcess {
         close(parentSlaveFD)
         for ptr in argvCStrings { free(ptr) }
         for ptr in envCStrings { free(ptr) }
+        if let cwdCString { free(cwdCString) }
         return Spawned(masterFD: master, pid: pid)
     }
 

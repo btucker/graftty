@@ -4,7 +4,7 @@ import Testing
 import GrafttyKit
 @testable import Graftty
 
-@Suite("WorktreeMonitorBridge origin-ref refresh")
+@Suite("WorktreeMonitorBridge origin-ref refresh", .serialized)
 struct WorktreeMonitorBridgeTests {
 
     @MainActor
@@ -48,6 +48,15 @@ struct WorktreeMonitorBridgeTests {
             ],
             selectedWorktreePath: nil
         ))
+        // Mirror app launch: prStore needs `getRepos` set before it
+        // can apply fetched snapshots to worktrees. The bridge does
+        // not start the store; the app does.
+        prStore.start(
+            ticker: PollingTicker(interval: .seconds(60)),
+            getRepos: { stateBox.state.repos }
+        )
+        defer { prStore.stop() }
+        let followUps = RecordedFollowUps()
         let bridge = WorktreeMonitorBridge(
             appState: Binding(
                 get: { stateBox.state },
@@ -58,7 +67,9 @@ struct WorktreeMonitorBridgeTests {
             }, fetch: { _ in }),
             prStatusStore: prStore,
             remoteBranchStore: remoteBranchStore,
-            originRefPRFollowUpDelays: [.milliseconds(50)]
+            originRefPRFollowUpScheduler: { _, work in
+                Task { await followUps.append(work) }
+            }
         )
 
         #expect(!remoteBranchStore.hasRemote(repoPath: "/repo", branch: "feature"))
@@ -68,21 +79,40 @@ struct WorktreeMonitorBridgeTests {
             repoPath: "/repo"
         )
 
-        try await waitUntil(timeout: 0.5) {
+        // Phase 1: immediate path. List runs once, hasRemote flips,
+        // the immediate refresh fetches nil → worktree marked absent,
+        // and both follow-ups get recorded by the injected scheduler.
+        try await waitUntil(timeout: 5.0) {
             await remoteBranchLister.invocations(for: "/repo") == 1
         }
-        try await waitUntil(timeout: 0.5) {
+        try await waitUntil(timeout: 5.0) {
             remoteBranchStore.hasRemote(repoPath: "/repo", branch: "feature")
         }
-        try await waitUntil(timeout: 0.5) {
-            await fetcher.invocations == 1
+        try await waitUntil(timeout: 5.0) {
+            prStore.absent.contains("/repo/wt")
         }
-        #expect(prStore.absent.contains("/repo/wt"))
-        #expect(prStore.infos["/repo/wt"] == nil)
+        try await waitUntil(timeout: 5.0) {
+            await followUps.count == 2
+        }
+        #expect(await fetcher.invocations == 1)
 
-        try await waitUntil(timeout: 0.5) {
+        // Phase 2: drive the follow-ups deterministically. With
+        // wall-clock removed from the test, only per-step MainActor
+        // latency bounds each `waitUntil` — never a cumulative
+        // sleep+hop budget that CI parallelism can blow past.
+        await followUps.fireNext()
+        try await waitUntil(timeout: 5.0) {
             prStore.infos["/repo/wt"]?.number == 42
         }
+        #expect(await fetcher.invocations == 2)
+        #expect(!prStore.absent.contains("/repo/wt"))
+
+        await followUps.fireNext()
+        try await waitUntil(timeout: 5.0) {
+            await fetcher.invocations == 3
+        }
+        #expect(prStore.infos["/repo/wt"]?.number == 42)
+        #expect(!prStore.absent.contains("/repo/wt"))
         #expect(stateBox.state.selectedWorktreePath == nil)
     }
 
@@ -109,6 +139,22 @@ private final class AppStateBox {
     }
 }
 
+private actor RecordedFollowUps {
+    private var pending: [@Sendable () async -> Void] = []
+
+    var count: Int { pending.count }
+
+    func append(_ work: @escaping @Sendable () async -> Void) {
+        pending.append(work)
+    }
+
+    func fireNext() async {
+        guard !pending.isEmpty else { return }
+        let work = pending.removeFirst()
+        await work()
+    }
+}
+
 private actor SequencedPRFetcher: PRFetcher {
     private var results: [PRInfo?]
     private(set) var invocations = 0
@@ -117,10 +163,22 @@ private actor SequencedPRFetcher: PRFetcher {
         self.results = results
     }
 
-    func fetch(origin: HostingOrigin, branch: String) async throws -> PRInfo? {
+    func fetch(
+        origin: HostingOrigin,
+        branchesOfInterest: Set<String>
+    ) async throws -> RepoPRSnapshot {
         invocations += 1
-        if results.isEmpty { return nil }
-        return results.removeFirst()
+        let next: PRInfo?
+        if results.count > 1 {
+            next = results.removeFirst()
+        } else {
+            next = results.first ?? nil
+        }
+        guard let pr = next else {
+            return RepoPRSnapshot(prsByBranch: [:])
+        }
+        let branch = branchesOfInterest.first ?? "feature"
+        return RepoPRSnapshot(prsByBranch: [branch: pr])
     }
 }
 

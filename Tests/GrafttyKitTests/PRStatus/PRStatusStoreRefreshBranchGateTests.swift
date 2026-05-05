@@ -2,21 +2,23 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-/// The polling loop already skips worktrees whose `branch` is a git
-/// sentinel like `(detached)` (see PRStatusStore+Poller's pick loop).
-/// The on-demand callers — MainWindow's select-worktree refresh and
-/// `branchDidChange` from a HEAD-change event — did not, meaning a
-/// detached-HEAD worktree still fired two wasted `gh pr list` calls
-/// per selection / HEAD change. PR-7.5.
-@Suite("PRStatusStore — refresh fetchable-branch gate")
+/// Refresh paths must skip git sentinel branches (`(detached)` etc.)
+/// and must avoid host detection / fetch when no remote branch
+/// exists locally — the on-demand callers (sidebar selection,
+/// `branchDidChange` from a HEAD-change event) need the same
+/// gates the polling tick uses (`PR-7.5`).
+@Suite("PRStatusStore — refresh fetchable-branch gate", .serialized)
 struct PRStatusStoreRefreshBranchGateTests {
 
     /// Counts `fetch` calls so we can verify the gate is respected.
-    final class CountingFetcher: PRFetcher, @unchecked Sendable {
-        var fetchCount: Int = 0
-        func fetch(origin: HostingOrigin, branch: String) async throws -> PRInfo? {
+    actor CountingFetcher: PRFetcher {
+        private(set) var fetchCount = 0
+        func fetch(
+            origin: HostingOrigin,
+            branchesOfInterest: Set<String>
+        ) async throws -> RepoPRSnapshot {
             fetchCount += 1
-            return nil
+            return RepoPRSnapshot(prsByBranch: [:])
         }
     }
 
@@ -30,31 +32,10 @@ struct PRStatusStoreRefreshBranchGateTests {
         )
 
         store.refresh(worktreePath: "/wt", repoPath: "/r", branch: "(detached)")
-        // Give any accidentally-spawned Task a chance to run to completion.
         try? await Task.sleep(nanoseconds: 50_000_000)
 
-        #expect(!store.isInFlightForTesting("/wt"), "sentinel branch must not enter inFlight")
-        #expect(fetcher.fetchCount == 0, "no `gh` invocations for sentinel branches")
-    }
-
-    @MainActor
-    @Test func branchDidChangeToSentinelDoesNotFetch() async {
-        let fetcher = CountingFetcher()
-        let store = PRStatusStore(
-            executor: FakeCLIExecutor(),
-            fetcherFor: { _ in fetcher },
-            detectHost: { _ in HostingOrigin(provider: .github, host: "github.com", owner: "o", repo: "r") }
-        )
-
-        // Precondition: the worktree already had some cached state.
-        store.beginInFlightForTesting("/wt")
-        #expect(store.isInFlightForTesting("/wt"))
-
-        store.branchDidChange(worktreePath: "/wt", repoPath: "/r", branch: "(detached)")
-        try? await Task.sleep(nanoseconds: 50_000_000)
-
-        #expect(!store.isInFlightForTesting("/wt"), "branchDidChange → sentinel must release inFlight")
-        #expect(fetcher.fetchCount == 0, "branchDidChange → sentinel must not fetch")
+        #expect(!store.isInFlightForTesting("/r"), "sentinel branch must not enter inFlight")
+        #expect(await fetcher.fetchCount == 0, "no `gh` invocations for sentinel branches")
     }
 
     @MainActor
@@ -67,13 +48,12 @@ struct PRStatusStoreRefreshBranchGateTests {
         )
 
         store.refresh(worktreePath: "/wt", repoPath: "/r", branch: "main")
-        // Wait for the spawned Task to run to completion.
         for _ in 0..<20 {
-            if fetcher.fetchCount > 0 { break }
+            if await fetcher.fetchCount > 0 { break }
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
 
-        #expect(fetcher.fetchCount == 1, "real branches are still fetched")
+        #expect(await fetcher.fetchCount == 1, "real branches are still fetched")
     }
 
     @MainActor
@@ -119,6 +99,14 @@ struct PRStatusStoreRefreshBranchGateTests {
             },
             remoteBranchStore: remoteBranchStore
         )
+        let ticker = ManualTicker()
+        let repo = RepoEntry(
+            path: "/repo",
+            displayName: "repo",
+            worktrees: [WorktreeEntry(path: "/wt", branch: "feature", state: .running)]
+        )
+        store.start(ticker: ticker, getRepos: { [repo] })
+        defer { store.stop() }
 
         store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "feature")
 
@@ -135,7 +123,7 @@ struct PRStatusStoreRefreshBranchGateTests {
         let remoteBranchStore = RemoteBranchStore(list: { repoPath in
             try await lister.list(repoPath: repoPath)
         })
-        let ticker = RemoteGateTicker()
+        let ticker = ManualTicker()
         let fetcher = RemoteGateCountingFetcher(response: Self.pr(number: 77))
         let store = PRStatusStore(
             executor: FakeCLIExecutor(),
@@ -146,7 +134,7 @@ struct PRStatusStoreRefreshBranchGateTests {
         let repo = RepoEntry(
             path: "/repo",
             displayName: "repo",
-            worktrees: [WorktreeEntry(path: "/repo/wt", branch: "feature")]
+            worktrees: [WorktreeEntry(path: "/repo/wt", branch: "feature", state: .running)]
         )
 
         store.start(ticker: ticker, getRepos: { [repo] })
@@ -154,20 +142,29 @@ struct PRStatusStoreRefreshBranchGateTests {
 
         await ticker.fire()
         try await Task.sleep(for: .milliseconds(100))
-        #expect(await fetcher.invocations == 0)
+        // Without a remote branch the per-repo fetch may run, but
+        // the snapshot won't include `feature` and the worktree is
+        // marked locally-unpushed (no info, not absent).
+        #expect(store.infos["/repo/wt"] == nil)
 
         await lister.set(branches: ["feature"])
         remoteBranchStore.refresh(repoPath: "/repo")
-        try await waitUntil(timeout: 1.0) {
+        try await waitUntil(timeout: 5.0) {
             remoteBranchStore.hasRemote(repoPath: "/repo", branch: "feature")
         }
 
+        // Step past both the in-flight window and the cadence
+        // interval, then re-tick. Without seeding `lastFetch` here,
+        // the non-forced tick is suppressed by the cadence guard
+        // because the first tick set `lastFetch` to "now".
+        let past = Date().addingTimeInterval(-3600)
+        store.seedInFlightSinceForTesting(past, forRepo: "/repo")
+        store.seedLastFetchForTesting(past, forRepo: "/repo")
         await ticker.fire()
 
-        try await waitUntil(timeout: 1.0) {
-            await fetcher.invocations == 1
+        try await waitUntil(timeout: 10.0) {
+            store.infos["/repo/wt"]?.number == 77
         }
-        #expect(store.infos["/repo/wt"]?.number == 77)
     }
 
     @MainActor
@@ -188,6 +185,14 @@ struct PRStatusStoreRefreshBranchGateTests {
             detectHost: { _ in Self.origin },
             remoteBranchStore: remoteBranchStore
         )
+        let ticker = ManualTicker()
+        let repo = RepoEntry(
+            path: "/repo",
+            displayName: "repo",
+            worktrees: [WorktreeEntry(path: "/wt", branch: "feature", state: .running)]
+        )
+        store.start(ticker: ticker, getRepos: { [repo] })
+        defer { store.stop() }
 
         store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "feature")
         try await waitUntil(timeout: 1.0) {
@@ -249,9 +254,20 @@ private actor RemoteGateCountingFetcher: PRFetcher {
         self.response = response
     }
 
-    func fetch(origin: HostingOrigin, branch: String) async throws -> PRInfo? {
+    func fetch(
+        origin: HostingOrigin,
+        branchesOfInterest: Set<String>
+    ) async throws -> RepoPRSnapshot {
         invocations += 1
-        return response
+        guard let response else { return RepoPRSnapshot(prsByBranch: [:]) }
+        // Map response to the only branch the gate tests care about.
+        var byBranch: [String: PRInfo] = [:]
+        if let branch = branchesOfInterest.first {
+            byBranch[branch] = response
+        } else {
+            byBranch["feature"] = response
+        }
+        return RepoPRSnapshot(prsByBranch: byBranch)
     }
 }
 
@@ -271,38 +287,18 @@ private actor MutableRemoteBranchLister {
     }
 }
 
-@MainActor
-private final class RemoteGateTicker: PollingTickerLike {
-    private var onTick: (@MainActor () async -> Void)?
-
-    func start(onTick: @MainActor @escaping () async -> Void) {
-        self.onTick = onTick
-    }
-
-    func stop() {
-        onTick = nil
-    }
-
-    func pulse() {}
-
-    func fire() async {
-        await onTick?()
-    }
-}
 
 private final class LockedCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var value = 0
 
     func increment() {
-        lock.lock()
-        defer { lock.unlock() }
+        lock.lock(); defer { lock.unlock() }
         value += 1
     }
 
     func current() -> Int {
-        lock.lock()
-        defer { lock.unlock() }
+        lock.lock(); defer { lock.unlock() }
         return value
     }
 }

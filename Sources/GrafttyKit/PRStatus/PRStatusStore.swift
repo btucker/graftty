@@ -2,6 +2,14 @@ import Foundation
 import Observation
 import os
 
+/// PR/MR status store. Polls per-repo (one host CLI call per repo
+/// per tick) and distributes the snapshot to every worktree whose
+/// branch matches a PR head. The public surface
+/// (`infos[worktreePath]`, `absent`, `refresh`, `branchDidChange`,
+/// `clear`) is unchanged so views keep working — only the fetch
+/// path is repo-batched.
+///
+/// @spec PR-8.16
 @MainActor
 @Observable
 public final class PRStatusStore {
@@ -13,44 +21,35 @@ public final class PRStatusStore {
     @ObservationIgnored private let fetcherFor: (HostingProvider) -> PRFetcher?
     @ObservationIgnored private let detectHost: @Sendable (String) async throws -> HostingOrigin?
     @ObservationIgnored private let remoteBranchStore: RemoteBranchStore?
+
     @ObservationIgnored private var hostByRepo: [String: HostingOrigin?] = [:]
-    /// Per-path timestamp of the most recently dispatched fetch. Stored
-    /// as a date rather than a bare Set so a hung prior Task (a `gh pr
-    /// list` / `gh pr checks` subprocess stuck on an HTTP response or
-    /// rate-limit back-off) is considered abandoned after
-    /// `refreshCadence`, at which point a new refresh is allowed
-    /// through. Bumping `generation` on each allowed refresh drops the
-    /// stuck Task's late write if it ever returns. Mirrors
-    /// `WorktreeStatsStore`'s DIVERGE-4.4 pattern. `PR-7.13`.
-    @ObservationIgnored private var inFlight: [String: Date] = [:]
-    @ObservationIgnored private var lastFetch: [String: Date] = [:]
-    @ObservationIgnored private var failureStreak: [String: Int] = [:]
-    /// Per-path generation counter. Bumped by `clear(worktreePath:)`
-    /// and by `refresh`/`tick` dispatches so that an in-flight
-    /// `performFetch` can detect when its result has been invalidated —
-    /// either by a user-triggered `clear` or by a superseding dispatch
-    /// that took over the `inFlight` slot — and bail out before writing
-    /// stale data back into `infos`/`absent`.
-    @ObservationIgnored private var generation: [String: Int] = [:]
+
+    /// All per-repo polling state collapsed into a single value.
+    /// `inFlightSince` doubles as the abandoned-fetch detector: a
+    /// dispatch older than `refreshCadence` is treated as stuck
+    /// and superseded by the next one. `generation` increments on
+    /// every dispatch so a stuck Task's late write is dropped.
+    /// @spec PR-8.17
+    private struct RepoFetchState {
+        var inFlightSince: Date?
+        var lastFetch: Date?
+        var failureStreak: Int = 0
+        var generation: Int = 0
+    }
+    @ObservationIgnored private var fetchStateByRepo: [String: RepoFetchState] = [:]
+
     @ObservationIgnored private var ticker: PollingTickerLike?
     @ObservationIgnored private var getRepos: @MainActor () -> [RepoEntry] = { [] }
     @ObservationIgnored private let logger = Logger(subsystem: "com.btucker.graftty", category: "PRStatusStore")
 
-    /// Fires when a worktree's PR cache transitions into `.merged` for a
-    /// PR number that was not previously cached as merged. Set by the app
-    /// to drive the "PR merged — delete worktree?" offer dialog. The
-    /// callback is intentionally fire-once-per-transition: an idempotent
-    /// poll result ("still merged, same PR number") does not re-fire, so
-    /// the listener does not need per-PR debouncing.
+    /// Fires when a worktree's PR cache transitions into `.merged`
+    /// for a PR number that was not previously cached as merged.
+    /// Drives the "PR merged — delete worktree?" offer dialog.
     @ObservationIgnored public var onPRMerged: (@MainActor (_ worktreePath: String, _ prNumber: Int) -> Void)?
 
-    /// Fires on PR state or CI-conclusion transitions for a tracked
-    /// worktree. Idempotent polls (same info twice) do not fire. The
-    /// initial discovery of a PR (previous == nil) does not fire — a
-    /// transition requires a previous state to transition FROM.
-    ///
-    /// Consumed by ChannelRouter to deliver MCP channel events into
-    /// Claude Code sessions running in the worktree.
+    /// Fires on PR state, CI-conclusion, or mergeable-state
+    /// transitions for a tracked worktree. Idempotent polls don't
+    /// fire. Initial discovery (previous == nil) doesn't fire.
     @ObservationIgnored public var onTransition: (@MainActor (_ worktreePath: String, _ message: ChannelServerMessage) -> Void)?
 
     public init(
@@ -82,131 +81,141 @@ public final class PRStatusStore {
         }
     }
 
-    /// Force a fetch for one worktree, regardless of cadence. Silently
-    /// no-ops for git sentinel branches (`(detached)` / `(bare)` /
-    /// `(unknown)` / unborn / empty) that cannot correspond to a real
-    /// `refs/heads/` value — `PR-7.5`. Defers to an in-flight prior
-    /// fetch only while that fetch is plausibly still running
-    /// (`PR-7.13`): beyond the `refreshCadence` cap, the prior Task is
-    /// treated as abandoned (stuck `gh` subprocess) and a fresh fetch
-    /// supersedes it. Bumping `generation` ensures the abandoned Task's
-    /// late write is dropped if it ever returns.
+    /// Force a fetch for the repo containing this worktree,
+    /// bypassing the polling cadence. The previous per-branch
+    /// refresh path is gone: a single repo fetch covers every
+    /// worktree, and one in-flight fetch satisfies a refresh
+    /// request for any of the repo's worktrees. Silently no-ops
+    /// for git sentinel branches (`(detached)` / `(bare)` /
+    /// `(unknown)` / unborn / empty) — `PR-7.5`.
     public func refresh(worktreePath: String, repoPath: String, branch: String) {
         guard Self.isFetchableBranch(branch) else { return }
         guard hasRemoteBranch(repoPath: repoPath, branch: branch) else {
             markLocallyUnpushed(worktreePath)
             return
         }
-        let now = Date()
-        let cap = Double(Self.refreshCadence().components.seconds)
-        if let started = inFlight[worktreePath],
-           now.timeIntervalSince(started) < cap {
-            return
-        }
-        inFlight[worktreePath] = now
-        generation[worktreePath, default: 0] += 1
-
-        // Snapshot synchronously — a `clear()` between here and Task
-        // start must invalidate this fetch. `PR-7.9`.
-        let fetchGeneration = generation[worktreePath, default: 0]
-        Task { [weak self] in
-            await self?.performFetch(
-                worktreePath: worktreePath,
-                repoPath: repoPath,
-                branch: branch,
-                fetchGeneration: fetchGeneration
-            )
-        }
+        dispatchRepoFetch(repoPath: repoPath, force: true)
     }
 
     public func clear(worktreePath: String) {
-        // Guard the observable mutations so a no-op clear (worktree never
-        // had a cached PR) doesn't fire `@Observable` notifications and
-        // re-render every SidebarView row.
-        if infos[worktreePath] != nil {
-            infos.removeValue(forKey: worktreePath)
-        }
-        if absent.contains(worktreePath) {
-            absent.remove(worktreePath)
-        }
-        lastFetch.removeValue(forKey: worktreePath)
-        failureStreak.removeValue(forKey: worktreePath)
-        // Release the in-flight gate so a subsequent `refresh` isn't
-        // silently suppressed while the prior Task drains. The Task's
-        // late write is handled by the generation check in
-        // `performFetch`.
-        inFlight.removeValue(forKey: worktreePath)
-        // Bump the generation so any in-flight fetch's late write
-        // (after its await resumes) can detect it's been invalidated
-        // and discard its result.
-        generation[worktreePath, default: 0] += 1
+        markLocallyUnpushed(worktreePath)
     }
 
-    // Test hooks — not used in production. Kept internal so they're
-    // reachable from GrafttyKitTests without widening the public API.
-    func generationForTesting(_ worktreePath: String) -> Int {
-        generation[worktreePath, default: 0]
-    }
-
-    func isInFlightForTesting(_ worktreePath: String) -> Bool {
-        inFlight[worktreePath] != nil
-    }
-
-    func beginInFlightForTesting(_ worktreePath: String) {
-        inFlight[worktreePath] = Date()
-    }
-
-    /// Seed the in-flight timestamp so tests can simulate a prior
-    /// refresh Task that's been pending longer than `refreshCadence`
-    /// — i.e., considered abandoned. A subsequent `refresh` call must
-    /// then dispatch a fresh Task rather than silently deferring to the
-    /// stuck one. Mirrors `WorktreeStatsStore.seedInFlightSinceForTesting`.
-    func seedInFlightSinceForTesting(_ date: Date, forWorktree worktreePath: String) {
-        inFlight[worktreePath] = date
-    }
-
-    /// Notify the store that a worktree's branch has changed. Drops the
-    /// cached PR info synchronously so the UI doesn't keep showing the
-    /// previous branch's PR through the gh-fetch in-flight window, then
-    /// schedules a fresh fetch for the new branch — `clear` already
-    /// released the `inFlight` gate, so the subsequent `refresh` won't
-    /// be suppressed by a concurrent polling-cycle fetch.
+    /// Notify the store that a worktree's branch has changed.
+    /// Drops the cached PR info synchronously — the UI mustn't
+    /// keep showing the old branch's PR through the fetch
+    /// in-flight window — and forces a repo refresh.
     public func branchDidChange(worktreePath: String, repoPath: String, branch: String) {
         clear(worktreePath: worktreePath)
         refresh(worktreePath: worktreePath, repoPath: repoPath, branch: branch)
     }
 
-    // MARK: - Fetch
+    // MARK: - Test hooks
 
-    private func performFetch(
-        worktreePath: String,
-        repoPath: String,
-        branch: String,
-        fetchGeneration: Int
-    ) async {
-        // Release the in-flight slot only if our generation is still
-        // the current one. A superseding dispatch (user `clear`, branch
-        // change, or a `PR-7.13` stuck-Task recovery) already took over
-        // the slot with its own timestamp; blindly removing here would
-        // let yet another dispatch race in alongside the live one.
-        // Mirrors `WorktreeStatsStore.apply`'s release discipline.
-        defer {
-            if generation[worktreePath, default: 0] == fetchGeneration {
-                inFlight.removeValue(forKey: worktreePath)
+    func generationForTesting(_ repoPath: String) -> Int {
+        fetchStateByRepo[repoPath]?.generation ?? 0
+    }
+
+    func isInFlightForTesting(_ repoPath: String) -> Bool {
+        fetchStateByRepo[repoPath]?.inFlightSince != nil
+    }
+
+    /// Seed the in-flight timestamp so tests can simulate a prior
+    /// refresh Task that's been pending longer than `refreshCadence`
+    /// — i.e., considered abandoned. A subsequent `refresh` call
+    /// must then dispatch a fresh Task rather than silently
+    /// deferring to the stuck one.
+    func seedInFlightSinceForTesting(_ date: Date, forRepo repoPath: String) {
+        fetchStateByRepo[repoPath, default: RepoFetchState()].inFlightSince = date
+    }
+
+    /// Seed the last-fetch timestamp so tests can simulate enough
+    /// wall time having passed that the polling cadence guard
+    /// (`!force` branch in `dispatchRepoFetch`) won't suppress a
+    /// non-forced `tick`. Pair with `seedInFlightSinceForTesting`
+    /// when fast-forwarding both the in-flight cap and the cadence.
+    func seedLastFetchForTesting(_ date: Date, forRepo repoPath: String) {
+        fetchStateByRepo[repoPath, default: RepoFetchState()].lastFetch = date
+    }
+
+    func applyInfoForTesting(worktreePath: String, info: PRInfo) {
+        infos[worktreePath] = info
+    }
+
+    func markAbsentForTesting(_ worktreePath: String) {
+        markAbsent(worktreePath)
+    }
+
+    // MARK: - Fetch dispatch
+
+    /// Returns true if the dispatch went through; false if it was
+    /// suppressed (cadence, in-flight, or unsupported host).
+    @discardableResult
+    private func dispatchRepoFetch(repoPath: String, force: Bool) -> Bool {
+        if let cached = hostByRepo[repoPath],
+           cached == nil || cached?.provider == .unsupported {
+            return false
+        }
+        let now = Date()
+        let inFlightCap = Double(Self.refreshCadence().components.seconds)
+        var state = fetchStateByRepo[repoPath, default: RepoFetchState()]
+        if let started = state.inFlightSince,
+           now.timeIntervalSince(started) < inFlightCap {
+            return false
+        }
+        if !force, let last = state.lastFetch {
+            let interval = Double(Self.cadenceFor(failureStreak: state.failureStreak).components.seconds)
+            if now.timeIntervalSince(last) < interval {
+                return false
             }
         }
 
-        // Caller snapshotted `fetchGeneration`; we re-read `generation`
-        // after each await and bail on mismatch so a `clear()` during
-        // the fetch drops the stale write.
+        state.inFlightSince = now
+        state.generation += 1
+        fetchStateByRepo[repoPath] = state
+        let gen = state.generation
+
+        Task { [weak self] in
+            await self?.performRepoFetch(repoPath: repoPath, fetchGeneration: gen)
+        }
+        return true
+    }
+
+    private struct WorktreeView {
+        let path: String
+        let branch: String
+        let hasRemote: Bool
+    }
+
+    /// Worktrees for `repoPath` from the current model. Re-read at
+    /// apply time (not snapshotted at dispatch) so a
+    /// `branchDidChange` between dispatch and result lands on the
+    /// new branch rather than writing the old branch's stale PR
+    /// back into the worktree's cache. @spec PR-8.18
+    private func currentWorktreeViews(repoPath: String) -> [WorktreeView] {
+        guard let repo = getRepos().first(where: { $0.path == repoPath }) else { return [] }
+        return repo.worktrees
+            .filter { $0.state.hasOnDiskWorktree }
+            .map { wt in
+                WorktreeView(
+                    path: wt.path,
+                    branch: wt.branch,
+                    hasRemote: hasRemoteBranch(repoPath: repoPath, branch: wt.branch)
+                )
+            }
+    }
+
+    private func performRepoFetch(repoPath: String, fetchGeneration: Int) async {
+        defer {
+            if fetchStateByRepo[repoPath]?.generation == fetchGeneration {
+                fetchStateByRepo[repoPath]?.inFlightSince = nil
+            }
+        }
+
         let origin: HostingOrigin?
         if let cached = hostByRepo[repoPath] {
             origin = cached
         } else {
-            // Only cache on success. A thrown CLIError (git missing
-            // from PATH, spawn failure) would otherwise poison the
-            // cache for the session. `PR-7.11`. Log at debug level —
-            // polls can fire many times while the env is misconfigured.
             do {
                 let detected = try await detectHost(repoPath)
                 origin = detected
@@ -216,83 +225,103 @@ public final class PRStatusStore {
                 origin = nil
             }
         }
-        if generation[worktreePath, default: 0] != fetchGeneration { return }
+        if fetchStateByRepo[repoPath]?.generation != fetchGeneration { return }
         guard let origin, origin.provider != .unsupported,
               let fetcher = fetcherFor(origin.provider) else {
-            markAbsent(worktreePath)
-            lastFetch[worktreePath] = Date()
+            applySnapshot(RepoPRSnapshot(prsByBranch: [:]), repoPath: repoPath, origin: nil)
+            fetchStateByRepo[repoPath]?.lastFetch = Date()
             return
         }
 
+        let branchesOfInterest = Set(
+            currentWorktreeViews(repoPath: repoPath)
+                .filter { Self.isFetchableBranch($0.branch) && $0.hasRemote }
+                .map(\.branch)
+        )
+
+        let snapshot: RepoPRSnapshot
         do {
-            let pr = try await fetcher.fetch(origin: origin, branch: branch)
-            if generation[worktreePath, default: 0] != fetchGeneration { return }
-            lastFetch[worktreePath] = Date()
-            failureStreak[worktreePath] = 0
-            if let pr {
-                // Fire-once transition detection: callback is invoked
-                // when this fetch lands on a merged PR whose number
-                // wasn't already cached as merged. Covers nil→merged,
-                // open→merged, and merged-N→merged-M. Same-PR
-                // merged→merged re-fetches (the steady-state poll
-                // result) do nothing.
-                let prev = infos[worktreePath]
-                let justMerged = pr.state == .merged
-                    && (prev?.state != .merged || prev?.number != pr.number)
+            snapshot = try await fetcher.fetch(origin: origin, branchesOfInterest: branchesOfInterest)
+        } catch {
+            if fetchStateByRepo[repoPath]?.generation != fetchGeneration { return }
+            logger.info("PR fetch failed for repo \(repoPath): \(String(describing: error))")
+            // PR-7.10: per-worktree `infos` stays untouched on
+            // failure. Next successful fetch reconciles.
+            fetchStateByRepo[repoPath]?.failureStreak += 1
+            fetchStateByRepo[repoPath]?.lastFetch = Date()
+            return
+        }
+
+        if fetchStateByRepo[repoPath]?.generation != fetchGeneration { return }
+        fetchStateByRepo[repoPath]?.lastFetch = Date()
+        fetchStateByRepo[repoPath]?.failureStreak = 0
+
+        applySnapshot(snapshot, repoPath: repoPath, origin: origin)
+    }
+
+    /// Distributes `snapshot` to each worktree of `repoPath`. When
+    /// `origin` is nil the snapshot is treated as authoritatively
+    /// empty (unsupported host) — every fetchable, pushed worktree
+    /// is marked absent.
+    private func applySnapshot(
+        _ snapshot: RepoPRSnapshot,
+        repoPath: String,
+        origin: HostingOrigin?
+    ) {
+        for wt in currentWorktreeViews(repoPath: repoPath) {
+            if !Self.isFetchableBranch(wt.branch) {
+                clear(worktreePath: wt.path)
+                continue
+            }
+            if !wt.hasRemote {
+                markLocallyUnpushed(wt.path)
+                continue
+            }
+            guard let pr = snapshot.prsByBranch[wt.branch] else {
+                if infos[wt.path] != nil {
+                    infos.removeValue(forKey: wt.path)
+                }
+                markAbsent(wt.path)
+                continue
+            }
+            let prev = infos[wt.path]
+            let justMerged = pr.state == .merged
+                && (prev?.state != .merged || prev?.number != pr.number)
+            if let origin {
                 detectAndFireTransitions(
-                    worktreePath: worktreePath,
+                    worktreePath: wt.path,
                     previous: prev,
                     current: pr,
                     origin: origin
                 )
-                if prev != pr {
-                    infos[worktreePath] = pr
-                }
-                if absent.contains(worktreePath) {
-                    absent.remove(worktreePath)
-                }
-                if justMerged, let onPRMerged {
-                    onPRMerged(worktreePath, pr.number)
-                }
-            } else {
-                if infos[worktreePath] != nil {
-                    infos.removeValue(forKey: worktreePath)
-                }
-                markAbsent(worktreePath)
             }
-        } catch {
-            if generation[worktreePath, default: 0] != fetchGeneration { return }
-            logger.info("PR fetch failed for \(worktreePath): \(String(describing: error))")
-            failureStreak[worktreePath, default: 0] += 1
-            lastFetch[worktreePath] = Date()
-            // `PR-7.10`: leave `infos[worktreePath]` untouched. A
-            // transient failure isn't evidence the PR stopped
-            // existing; the next successful fetch reconciles.
+            if prev != pr {
+                infos[wt.path] = pr
+            }
+            if absent.contains(wt.path) {
+                absent.remove(wt.path)
+            }
+            if justMerged, let onPRMerged {
+                onPRMerged(wt.path, pr.number)
+            }
         }
     }
 
     private func markAbsent(_ worktreePath: String) {
+        // Set.insert is idempotent; the contains-check is only
+        // here so an idempotent poll doesn't fire `@Observable`
+        // notifications and re-render every SidebarView row.
         if !absent.contains(worktreePath) {
             absent.insert(worktreePath)
         }
     }
 
     private func markLocallyUnpushed(_ worktreePath: String) {
-        var invalidatedInFlight = false
-
         if infos[worktreePath] != nil {
             infos.removeValue(forKey: worktreePath)
         }
         if absent.contains(worktreePath) {
             absent.remove(worktreePath)
-        }
-        lastFetch.removeValue(forKey: worktreePath)
-        failureStreak.removeValue(forKey: worktreePath)
-        if inFlight.removeValue(forKey: worktreePath) != nil {
-            invalidatedInFlight = true
-        }
-        if invalidatedInFlight {
-            generation[worktreePath, default: 0] += 1
         }
     }
 
@@ -301,23 +330,18 @@ public final class PRStatusStore {
         return remoteBranchStore.hasRemote(repoPath: repoPath, branch: branch)
     }
 
-    private func hasRemoteBranch(for worktree: WorktreeEntry, repoPath: String) -> Bool {
-        hasRemoteBranch(repoPath: repoPath, branch: worktree.branch)
-    }
-
     private func detectAndFireTransitions(
         worktreePath: String,
         previous: PRInfo?,
         current: PRInfo,
         origin: HostingOrigin
     ) {
-        guard let onTransition else { return }
-        guard let previous else { return }  // initial discovery: not a transition
+        guard let onTransition, let previous else { return }
 
-        // Early return before the dict-allocation path when nothing changed.
-        guard previous.state != current.state || previous.checks != current.checks else {
-            return
-        }
+        let stateChanged = previous.state != current.state
+        let checksChanged = previous.checks != current.checks
+        let mergeableChanged = previous.mergeable != current.mergeable
+        guard stateChanged || checksChanged || mergeableChanged else { return }
 
         let common: [String: String] = [
             "pr_number": String(current.number),
@@ -327,7 +351,7 @@ public final class PRStatusStore {
             "worktree": worktreePath,
         ]
 
-        if previous.state != current.state {
+        if stateChanged {
             var attrs = common
             attrs["from"] = previous.state.rawValue
             attrs["to"] = current.state.rawValue
@@ -337,8 +361,7 @@ public final class PRStatusStore {
                 type: ChannelEventType.prStateChanged, attrs: attrs, body: body
             ))
         }
-
-        if previous.checks != current.checks {
+        if checksChanged {
             var attrs = common
             attrs["from"] = previous.checks.rawValue
             attrs["to"] = current.checks.rawValue
@@ -347,11 +370,18 @@ public final class PRStatusStore {
                 type: ChannelEventType.ciConclusionChanged, attrs: attrs, body: body
             ))
         }
+        if mergeableChanged {
+            var attrs = common
+            attrs["from"] = previous.mergeable.rawValue
+            attrs["to"] = current.mergeable.rawValue
+            let body = "Merge state on PR #\(current.number): \(previous.mergeable.rawValue) → \(current.mergeable.rawValue)"
+            onTransition(worktreePath, .event(
+                type: ChannelEventType.mergeStateChanged, attrs: attrs, body: body
+            ))
+        }
     }
 
-    /// Test seam so tests can exercise transition detection without
-    /// spinning up a fetcher. `internal` so `@testable import` reaches it
-    /// from `GrafttyKitTests` without widening the public surface.
+    /// Test seam.
     internal func detectAndFireTransitionsForTesting(
         worktreePath: String,
         previous: PRInfo?,
@@ -367,74 +397,34 @@ public final class PRStatusStore {
 
 extension PRStatusStore {
 
-    /// `GitWorktreeDiscovery` encodes git's non-branch worktree states
-    /// as the sentinel strings `"(detached)"`, `"(bare)"`, and
-    /// `"(unknown)"`. None of them correspond to a real `refs/heads/`
-    /// value, so passing them to `gh pr list --head <branch>` guarantees
-    /// an empty result — two wasted `gh` invocations per polling tick,
-    /// per affected worktree. Skip at the fetch-gate.
+    /// Branches wrapped in parens (`(detached)`, `(bare)`,
+    /// `(unknown)`, `(unborn)`) are git sentinels — none of them
+    /// correspond to a real `refs/heads/` value, so they can't
+    /// appear in any PR snapshot.
     public nonisolated static func isFetchableBranch(_ branch: String) -> Bool {
-        // Anything wrapped in parens is a sentinel from parsePorcelain;
-        // keep the check liberal so new sentinels added upstream (e.g.
-        // `(unborn)`) don't silently start incurring fetches.
         if branch.hasPrefix("(") && branch.hasSuffix(")") { return false }
-        // Defensive: empty/whitespace also can't be a branch.
         return !branch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Time-bound cap on the `inFlight` guard (`PR-7.13`). A normal
-    /// `gh pr list` + `gh pr checks` pair resolves in under a few seconds;
-    /// anything in-flight longer than this is assumed abandoned (stuck
-    /// subprocess, rate-limit back-off, auth retry loop) and superseded by
-    /// the next dispatch. Independent of `cadenceFor` — the poll cadence
-    /// can be tighter (e.g. 10s while CI is pending) without shrinking
-    /// this stuck-guard window, which would otherwise kill legitimately
-    /// slow `gh` calls.
+    /// Time-bound cap on the per-repo `inFlight` guard. A normal
+    /// `gh pr list` resolves in under a few seconds; anything
+    /// in-flight longer is assumed abandoned (stuck subprocess,
+    /// rate-limit back-off, auth retry loop) and superseded by the
+    /// next dispatch.
     nonisolated static func refreshCadence() -> Duration {
         .seconds(30)
     }
 
-    nonisolated static func cadenceFor(
-        info: PRInfo?,
-        isAbsent: Bool,
-        failureStreak: Int
-    ) -> Duration {
-        // PR-7.1: 10s while CI is pending (so green/red transitions land in
-        // the breadcrumb within one polling window); 30s for any other
-        // known state — open/merged with non-pending checks, or absent.
-        // Polling is the only detection channel for an open→merged
-        // transition that lands on the hosting provider without a local
-        // `git fetch`, so cadence directly governs user-visible staleness.
-        let base: Duration
-        if info?.checks == .pending {
-            base = .seconds(10)
-        } else if info != nil || isAbsent {
-            base = .seconds(30)
-        } else {
-            base = .zero
-        }
-        // PR-7.2: cap at 60s. Higher caps (the prior 30-minute ceiling)
-        // produce silent staleness — `PR-7.10` preserves last-known
-        // `PRInfo` on failure, so the breadcrumb sits confidently on data
-        // that's drifted up to half an hour out of date with no visual
-        // cue. Cap and floor happen to coincide at 60s; they serve
-        // distinct purposes — the floor only kicks in when `base ==
-        // .zero` (unknown-state guard, prevents hammering a broken CLI
-        // every tick), the cap clamps the backoff multiplier for every
-        // tier. They're not a single value masquerading as two.
-        return ExponentialBackoff.scale(
-            base: base,
+    /// Per-repo polling cadence. Single base value (5s) matches
+    /// the ticker interval — every tick attempts a fetch unless an
+    /// earlier one is still in-flight or just completed. Failures
+    /// back off exponentially up to 60s so a misconfigured `gh`
+    /// doesn't hammer the network on every tick. @spec PR-8.19
+    nonisolated static func cadenceFor(failureStreak: Int) -> Duration {
+        ExponentialBackoff.scale(
+            base: .seconds(5),
             streak: failureStreak,
-            cap: .seconds(60),
-            floor: .seconds(60)
-        )
-    }
-
-    func cadence(for worktreePath: String) -> Duration {
-        Self.cadenceFor(
-            info: infos[worktreePath],
-            isAbsent: absent.contains(worktreePath),
-            failureStreak: failureStreak[worktreePath] ?? 0
+            cap: .seconds(60)
         )
     }
 
@@ -461,54 +451,22 @@ extension PRStatusStore {
 
     private func tick() async {
         let repos = getRepos()
-        let now = Date()
-        let inFlightCap = Double(Self.refreshCadence().components.seconds)
-
-        struct Candidate { let path, repoPath, branch: String }
-        var candidates: [Candidate] = []
-
-        for repo in repos {
-            // If host resolution already concluded "no origin" or "unsupported",
-            // skip. Uncached repos fall through — performFetch resolves on first run.
-            if let cached = hostByRepo[repo.path],
-               cached == nil || cached?.provider == .unsupported {
-                continue
-            }
-            for wt in repo.worktrees where wt.state.hasOnDiskWorktree {
-                if !Self.isFetchableBranch(wt.branch) { continue }
-                guard hasRemoteBranch(for: wt, repoPath: repo.path) else {
-                    markLocallyUnpushed(wt.path)
-                    continue
-                }
-                // `PR-7.13` time-bounded in-flight check: defer to a
-                // prior dispatch only while it's plausibly still
-                // running. Past the cap it's treated as abandoned and
-                // a fresh fetch supersedes it below.
-                if let started = inFlight[wt.path],
-                   now.timeIntervalSince(started) < inFlightCap {
-                    continue
-                }
-                let interval = cadence(for: wt.path)
-                let last = lastFetch[wt.path]
-                if let last, now.timeIntervalSince(last) < Double(interval.components.seconds) {
-                    continue
-                }
-                candidates.append(Candidate(path: wt.path, repoPath: repo.path, branch: wt.branch))
-            }
+        pruneStaleRepoState(currentRepoPaths: Set(repos.map(\.path)))
+        for repo in repos where repo.worktrees.contains(where: { $0.state.hasOnDiskWorktree }) {
+            dispatchRepoFetch(repoPath: repo.path, force: false)
         }
+    }
 
-        for c in candidates {
-            inFlight[c.path] = Date()
-            generation[c.path, default: 0] += 1
-            let gen = generation[c.path, default: 0]
-            Task { [weak self] in
-                await self?.performFetch(
-                    worktreePath: c.path,
-                    repoPath: c.repoPath,
-                    branch: c.branch,
-                    fetchGeneration: gen
-                )
-            }
+    /// Drop bookkeeping for repos no longer in the model. Without
+    /// this, `fetchStateByRepo` and `hostByRepo` grow unbounded as
+    /// the user adds and removes repos over a long-running
+    /// session. @spec PR-8.22
+    private func pruneStaleRepoState(currentRepoPaths: Set<String>) {
+        for repoPath in fetchStateByRepo.keys where !currentRepoPaths.contains(repoPath) {
+            fetchStateByRepo.removeValue(forKey: repoPath)
+        }
+        for repoPath in hostByRepo.keys where !currentRepoPaths.contains(repoPath) {
+            hostByRepo.removeValue(forKey: repoPath)
         }
     }
 }

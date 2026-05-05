@@ -2,63 +2,58 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-/// DIVERGE-4.6: the polling tick must recompute divergence stats per
-/// worktree on its own 30s cadence, NOT only after a successful repo
-/// `git fetch`. Before cycle 143, `pollTick` only ever called
-/// `store.refresh` from inside `performRepoFetch`, so a repo whose
-/// 5-minute fetch window hadn't elapsed left local working-tree
-/// changes (a `git add` in an external shell, a commit made by a tool
-/// other than Graftty) stale in the sidebar for up to the full fetch
-/// window.
+/// DIVERGE-4.6: the polling tick must recompute divergence stats for
+/// every running worktree on every 5-second tick, with no per-worktree
+/// throttle. Before this simplification, `pollTick` gated each worktree
+/// behind a 30-second `lastStatsRefresh` clock — so an FSEvents-driven
+/// refresh that bumped the clock could leave a worktree stale for up to
+/// 30 seconds if a follow-up event was coalesced or fired on a path the
+/// watcher wasn't listening on. Collapsing the cadence to a single 5s
+/// loop (with `inFlight` as the only in-tick guard) keeps the divergence
+/// gutter from going stale after a merge of `origin/<default>` into a
+/// feature branch when the FSEvents path missed the change.
 @Suite("""
 WorktreeStatsStore.pollTick
 
-@spec DIVERGE-4.6: The polling loop shall also recompute divergence counts for every running worktree on a 30-second per-worktree cadence, independent of the network `git fetch` cadence in DIVERGE-4.3. Local-only recomputation uses no network — `git rev-list`, `git diff --shortstat`, and `git status --porcelain` all run against the local object store — so it catches local changes (a `git add` in an external shell, a commit made by a tool other than Graftty) even when the repo's fetch cooldown is still active. When a tick finds a per-repo fetch is due in the same cycle, the per-worktree cadence is skipped for that repo because the fetch handler itself recomputes every running worktree on success.
+@spec DIVERGE-4.6: When the divergence-stats polling tick fires, the application shall recompute divergence counts for every running worktree, with no per-worktree throttle beyond the `inFlight` dedup guard from `DIVERGE-4.4` — the local subprocess pipeline (`git rev-list`, `git diff --shortstat`, `git status --porcelain`) is cheap and bounded, so the gutter never stays stale waiting for a per-worktree cooldown to elapse. If the same tick finds a per-repo `git fetch` is due, the per-worktree dispatch shall be skipped for that repo because the fetch handler itself recomputes every running worktree on success.
 """)
 struct WorktreeStatsStorePollTickTests {
 
     @MainActor
-    @Test func pollTickRefreshesWorktreeEvenWhenFetchCooldownActive() async throws {
+    @Test func pollTickRefreshesRunningWorktreeOnEveryTickWithNoPerWorktreeThrottle() async throws {
         let compute = RecordingCompute()
         let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in })
 
-        // Fresh repo-fetch timestamp → 5-min fetch cadence NOT elapsed.
+        // Repo-fetch cooldown is fresh (so Gate B is the path under
+        // test). The simplified model has no per-worktree throttle —
+        // every tick refreshes every running worktree. Two ticks in a
+        // row must dispatch two refreshes (modulo `inFlight` dedup,
+        // which clears between ticks because the injected compute
+        // returns synchronously).
         store.seedLastRepoFetchForTesting(Date(), forRepo: "/r")
-        // No `lastStatsRefresh` seed for the worktree → its 30s cadence
-        // IS elapsed (vacuously), so pollTick's Gate B must dispatch.
 
         let repo = RepoEntry(
             path: "/r",
             displayName: "r",
             worktrees: [WorktreeEntry(path: "/r/wt", branch: "feature", state: .running)]
         )
+
         await store.pollTickForTesting(repos: [repo])
+        try await waitUntil(timeout: 2.0) { compute.callCount(for: "/r/wt") >= 1 }
 
-        // compute is invoked on a detached Task from pollTick; wait for
-        // the Task to schedule and the RecordingCompute to observe it.
-        try await waitUntil(timeout: 2.0) { compute.calledPaths.contains("/r/wt") }
-    }
+        // Wait for the first compute Task to clear `inFlight` via apply().
+        let inFlightCleared: () async -> Bool = { @MainActor in
+            !store.isInFlightForTesting("/r/wt")
+        }
+        let deadline = Date().addingTimeInterval(2.0)
+        while Date() < deadline {
+            if await inFlightCleared() { break }
+            try await Task.sleep(nanoseconds: 25_000_000)
+        }
+        #expect(await inFlightCleared())
 
-    @MainActor
-    @Test func pollTickSkipsWorktreeWhenBothGatesAreFresh() async throws {
-        let compute = RecordingCompute()
-        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in })
-
-        // Both gates fresh: fetch cooldown active AND stats cooldown active.
-        store.seedLastRepoFetchForTesting(Date(), forRepo: "/r")
-        store.seedLastStatsRefreshForTesting(Date(), forWorktree: "/r/wt")
-
-        let repo = RepoEntry(
-            path: "/r",
-            displayName: "r",
-            worktrees: [WorktreeEntry(path: "/r/wt", branch: "feature", state: .running)]
-        )
         await store.pollTickForTesting(repos: [repo])
-
-        // Give a detached Task a chance to land if it were going to.
-        try await Task.sleep(nanoseconds: 200_000_000)
-        #expect(!compute.calledPaths.contains("/r/wt"),
-                "fresh stats cadence must gate the local recompute")
+        try await waitUntil(timeout: 2.0) { compute.callCount(for: "/r/wt") >= 2 }
     }
 
     @MainActor
@@ -67,11 +62,11 @@ struct WorktreeStatsStorePollTickTests {
         let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in })
 
         store.seedLastRepoFetchForTesting(Date(), forRepo: "/r")
-        // No stats-cadence seed → gate would otherwise fire, but the
-        // worktree is stale so it must be skipped (PR-7.4 / DIVERGE-1.6
-        // parity — stale entries render no stats indicator and the
-        // polling loop must not compute against a path that no longer
-        // exists on disk).
+        // The unconditional per-worktree dispatch would otherwise fire,
+        // but the worktree is stale so it must be skipped (PR-7.4 /
+        // DIVERGE-1.6 parity — stale entries render no stats indicator
+        // and the polling loop must not compute against a path that no
+        // longer exists on disk).
         var staleWt = WorktreeEntry(path: "/r/gone", branch: "feature")
         staleWt.state = .stale
         let repo = RepoEntry(path: "/r", displayName: "r", worktrees: [staleWt])
@@ -124,21 +119,33 @@ struct WorktreeStatsStorePollTickTests {
 private final class RecordingCompute: @unchecked Sendable {
     private let lock = NSLock()
     private var _calledPaths: Set<String> = []
+    private var _callCounts: [String: Int] = [:]
 
     var calledPaths: Set<String> {
         lock.lock(); defer { lock.unlock() }
         return _calledPaths
     }
 
+    func callCount(for path: String) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return _callCounts[path, default: 0]
+    }
+
     var function: WorktreeStatsStore.ComputeFunction {
         { [weak self] worktreePath, _, _, _ in
             self?.record(worktreePath)
-            return WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
+            // Return a non-nil stats so apply() clears the in-flight
+            // gate — the second-tick assertion needs the slot freed.
+            return WorktreeStatsStore.ComputeResult(
+                defaultBranch: "main",
+                stats: WorktreeStats(ahead: 0, behind: 0, insertions: 0, deletions: 0)
+            )
         }
     }
 
     private func record(_ path: String) {
         lock.lock(); defer { lock.unlock() }
         _calledPaths.insert(path)
+        _callCounts[path, default: 0] += 1
     }
 }

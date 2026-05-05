@@ -41,6 +41,7 @@ public final class SocketServer: @unchecked Sendable {
     /// is 104 bytes — accounting for the null terminator, the path must be ≤103
     /// bytes when encoded as UTF-8.
     public static let maxPathBytes = 103
+    public static let listenBacklog: Int32 = 64
 
     public init(socketPath: String) { self.socketPath = socketPath }
     deinit { stop() }
@@ -86,7 +87,7 @@ public final class SocketServer: @unchecked Sendable {
         // start hitting ECONNREFUSED under burst load. The prior backlog
         // of 5 was the historical `listen(2)` default and had effectively
         // no headroom.
-        guard Darwin.listen(listenFD, 64) == 0 else { close(listenFD); throw SocketServerError.listenFailed(errno: errno) }
+        guard Darwin.listen(listenFD, Self.listenBacklog) == 0 else { close(listenFD); throw SocketServerError.listenFailed(errno: errno) }
 
         let src = DispatchSource.makeReadSource(fileDescriptor: listenFD, queue: queue)
         src.setEventHandler { [weak self] in self?.acceptConnection() }

@@ -13,6 +13,7 @@ struct BundlePathSanitizerTests {
     var macosDir: String { bundleURL.appendingPathComponent("Contents/MacOS").path }
     var helpersDir: String { bundleURL.appendingPathComponent("Contents/Helpers").path }
 
+    /// @spec ATTN-4.2: When the application creates a terminal pane surface, the application shall override the spawned shell's `PATH` to a sanitized form that removes any entry equal to the bundle's `Contents/MacOS` directory and prepends the bundle's `Contents/Helpers` directory. Without this, the embedded libghostty's bundle-self-locating logic puts `Graftty.app/Contents/MacOS` on PATH, and on macOS's case-insensitive APFS volume `which graftty` resolves the lowercase lookup to the GUI binary `Graftty` (which silently exits `0` on unknown args, so `graftty --help` prints nothing). The override is exact-path equality — unrelated `Contents/MacOS` directories from other apps in the user's PATH are left alone.
     @Test func stripsBundleMacOSDirAndPrependsHelpers() {
         let input = "/usr/local/bin:\(macosDir):/usr/bin"
         let result = BundlePathSanitizer.sanitized(currentPath: input, bundleURL: bundleURL)

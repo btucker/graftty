@@ -34,7 +34,7 @@ struct PRStatusStoreHostCacheTests {
 
         store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "main")
         for _ in 0..<100 {
-            if callLog.current() >= 1 { break }
+            if callLog.current() >= 1 && !store.isInFlightForTesting("/repo") { break }
             try await Task.sleep(for: .milliseconds(5))
         }
 
@@ -73,7 +73,7 @@ struct PRStatusStoreHostCacheTests {
 
         store.refresh(worktreePath: "/a", repoPath: "/repo", branch: "main")
         for _ in 0..<100 {
-            if callLog.current() >= 1 { break }
+            if callLog.current() >= 1 && !store.isInFlightForTesting("/repo") { break }
             try await Task.sleep(for: .milliseconds(5))
         }
 
@@ -84,11 +84,20 @@ struct PRStatusStoreHostCacheTests {
     }
 }
 
-/// A fetcher stub that always returns the same PRInfo (or nil).
+/// A fetcher stub that always returns the same snapshot.
 private final class ReturningFetcher: PRFetcher, @unchecked Sendable {
-    let info: PRInfo?
-    init(info: PRInfo?) { self.info = info }
-    func fetch(origin: HostingOrigin, branch: String) async throws -> PRInfo? { info }
+    let snapshot: RepoPRSnapshot
+    init(info: PRInfo?) {
+        if let info {
+            self.snapshot = RepoPRSnapshot(prsByBranch: ["main": info])
+        } else {
+            self.snapshot = RepoPRSnapshot(prsByBranch: [:])
+        }
+    }
+    func fetch(
+        origin: HostingOrigin,
+        branchesOfInterest: Set<String>
+    ) async throws -> RepoPRSnapshot { snapshot }
 }
 
 /// Thread-safe counter for `@Sendable` closures.

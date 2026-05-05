@@ -88,15 +88,10 @@ struct PrTodo {
 """, .disabled("not yet implemented"))
     func pr_6_2() async throws { }
 
-    @Test("""
-@spec PR-7.1: The application shall poll a worktree's PR status on a tiered cadence: 10 seconds while the PR's checks are `.pending`, and 30 seconds otherwise — a known PR with non-pending checks (open passing/failing, or merged), or a worktree observed to have no associated PR (absent). The pending-tier tightening exists because users are actively watching CI for the green/red transition and the 30-second baseline produces visible "I just pushed, why hasn't it gone green yet" staleness during a CI run. The 30-second baseline applies elsewhere because polling is the sole detection channel for an open→merged transition that lands on the hosting provider without a local `git fetch` (`watchOriginRefs` per GIT-2.5 catches local push/fetch but is blind to remote-only events), and a slower cadence directly surfaces as user-visible staleness in the sidebar badge and breadcrumb PR button.
-""", .disabled("not yet implemented"))
-    func pr_7_1() async throws { }
-
-    @Test("""
-@spec PR-7.2: When a fetch for a worktree fails, the application shall apply exponential backoff to its cadence: the base interval (or 60s if the base is zero) shall be doubled for each consecutive failure up to a shift of 5, capped at 60 seconds. The cap is intentionally tight because `PR-7.10` preserves the last-known `PRInfo` on failure — without a tight cap, a run of transient `gh` failures would silently freeze the breadcrumb on data that has drifted minutes-to-hours out of date with no visual cue, since the cached info looks settled and confident even though its scheduled refresh has been pushed far into the future.
-""", .disabled("not yet implemented"))
-    func pr_7_2() async throws { }
+    // PR-7.1 (per-state cadence tiers) and PR-7.2 (per-state
+    // exponential backoff) were superseded by PR-8.19 — per-repo
+    // batched fetching collapses the cadence model to a single
+    // 5-second base with a 60-second backoff cap.
 
     @Test("""
 @spec PR-7.3: The application shall not poll worktrees whose branch is a git sentinel value (`(detached)`, `(bare)`, `(unknown)`, any other parenthesized value, or empty / whitespace-only), since none of these correspond to a real ref that a hosting provider can associate with a PR.
@@ -118,10 +113,11 @@ struct PrTodo {
 """, .disabled("not yet implemented"))
     func pr_7_6() async throws { }
 
-    @Test("""
-@spec PR-7.9: When `PRStatusStore.refresh` schedules a fetch, it shall snapshot the worktree's per-path generation counter synchronously at scheduling time (not inside the spawned Task). A subsequent `branchDidChange` between the original `refresh` and when its spawned Task actually starts running would otherwise let the stale Task snapshot the post-bump generation and pass its post-await check — allowing the prior branch's still-in-flight fetch to write over the new branch's freshly-landed result when the network returns them out of order.
-""", .disabled("not yet implemented"))
-    func pr_7_9() async throws { }
+    // PR-7.9 (per-path generation snapshotting) was superseded by
+    // PR-8.18 — per-repo batched fetching re-reads worktree state
+    // at apply time, so a `branchDidChange` between dispatch and
+    // result lands on the new branch without needing the
+    // dispatch-time generation snapshot.
 
     @Test("""
 @spec PR-7.11: When host detection (`GitOriginHost.detect` or equivalent) throws for a repository — process launch failure, git binary missing from PATH, etc. — the application shall not cache the failure in the `hostByRepo` map. Only successful detections (whether returning a resolved `HostingOrigin` or a legitimate "no origin remote" nil) shall be cached. Otherwise a transient environment glitch at first fetch poisons the repo's PR tracking for the whole session, since the poll tick skips cached-nil repos and no code path re-attempts detection.

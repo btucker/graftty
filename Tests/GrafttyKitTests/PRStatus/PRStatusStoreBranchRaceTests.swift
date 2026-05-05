@@ -2,45 +2,47 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-/// A pausable PRFetcher: each `fetch` parks on a per-branch continuation
-/// that the test releases explicitly. Lets us force the ordering where
-/// a stale fetch (branchA's) lands AFTER a fresh fetch (branchB's),
-/// which is the window where `branchDidChange` can be overwritten by a
-/// still-in-flight previous refresh.
-private final class PausablePRFetcher: PRFetcher, @unchecked Sendable {
+/// A pausable repo fetcher: each `fetch` parks on a continuation
+/// the test releases explicitly. Lets us force an in-flight fetch
+/// to land AFTER the worktree's branch has changed.
+private final class PausableFetcher: PRFetcher, @unchecked Sendable {
     private let lock = NSLock()
-    private var waiting: [String: CheckedContinuation<PRInfo?, Never>] = [:]
+    private var continuations: [CheckedContinuation<RepoPRSnapshot, Never>] = []
 
-    func fetch(origin: HostingOrigin, branch: String) async throws -> PRInfo? {
+    func fetch(
+        origin: HostingOrigin,
+        branchesOfInterest: Set<String>
+    ) async throws -> RepoPRSnapshot {
         await withCheckedContinuation { cont in
             lock.lock()
-            waiting[branch] = cont
+            continuations.append(cont)
             lock.unlock()
         }
     }
 
-    func release(branch: String, with info: PRInfo?) {
+    @discardableResult
+    func release(with snapshot: RepoPRSnapshot) -> Bool {
         lock.lock()
-        let cont = waiting.removeValue(forKey: branch)
+        let cont = continuations.isEmpty ? nil : continuations.removeFirst()
         lock.unlock()
-        cont?.resume(returning: info)
+        cont?.resume(returning: snapshot)
+        return cont != nil
     }
 
-    func isWaiting(on branch: String) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return waiting[branch] != nil
+    var pending: Int {
+        lock.lock(); defer { lock.unlock() }
+        return continuations.count
     }
 }
 
-/// Race: after `branchDidChange`, the prior branch's still-in-flight
-/// fetch must not overwrite the new branch's freshly-written result.
-/// Pre-fix, both Tasks snapshotted the same generation (because
-/// branchDidChange bumped once via clear, then both Task1 and Task2
-/// ran AFTER that bump and captured the post-bump value). Whichever
-/// Task wrote last won, and if the network made the stale fetch
-/// slower, the sidebar showed the OLD branch's PR for that worktree.
-@Suite("PRStatusStore — branchDidChange stale-fetch race")
+/// After `branchDidChange`, the in-flight fetch's result must
+/// land on the worktree's NEW branch — never write back the OLD
+/// branch's PR into the cache. The per-repo store re-reads
+/// worktree state at apply time so a branch change between
+/// dispatch and result lands on the new branch.
+///
+/// @spec PR-8.18
+@Suite("PRStatusStore — branchDidChange race")
 struct PRStatusStoreBranchRaceTests {
 
     private static func pr(number: Int) -> PRInfo {
@@ -55,51 +57,59 @@ struct PRStatusStoreBranchRaceTests {
     }
 
     @MainActor
-    @Test func staleFetchDoesNotOverwriteFreshAfterBranchChange() async throws {
-        let fetcher = PausablePRFetcher()
+    @Test func staleFetchAppliesToCurrentBranchNotDispatchBranch() async throws {
+        let fetcher = PausableFetcher()
         let origin = HostingOrigin(provider: .github, host: "github.com", owner: "foo", repo: "bar")
+
+        let repoBox = RepoEntryBox(repo: RepoEntry(
+            path: "/repo",
+            displayName: "repo",
+            worktrees: [WorktreeEntry(path: "/wt", branch: "branchA", state: .running)]
+        ))
         let store = PRStatusStore(
             executor: FakeCLIExecutor(),
             fetcherFor: { _ in fetcher },
             detectHost: { _ in origin }
         )
+        let ticker = ManualTicker()
+        store.start(ticker: ticker, getRepos: { [repoBox.repo] })
+        defer { store.stop() }
 
-        // Fire BOTH refreshes before yielding. With no await between
-        // them, neither Task1 nor Task2 has started running yet — so
-        // if refresh() did NOT snapshot generation synchronously, both
-        // Tasks would snapshot the same (post-bump) value and the
-        // stale one could overwrite the fresh one.
         store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "branchA")
+        for _ in 0..<100 {
+            if fetcher.pending > 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(fetcher.pending > 0, "first fetch should be parked")
+
+        // Worktree's branch flips — same shape as a HEAD-change
+        // FSEvent landing while a poll is mid-flight.
+        repoBox.repo.worktrees[0].branch = "branchB"
         store.branchDidChange(worktreePath: "/wt", repoPath: "/repo", branch: "branchB")
 
-        // Wait for at least branchB's fetch to park.
+        // The in-flight fetch returns a snapshot containing both
+        // branches' PRs. Apply must look up branch B (current),
+        // not A (dispatch-time).
+        let snapshot = RepoPRSnapshot(prsByBranch: [
+            "branchA": Self.pr(number: 100),
+            "branchB": Self.pr(number: 200),
+        ])
+        fetcher.release(with: snapshot)
+
         for _ in 0..<100 {
-            if fetcher.isWaiting(on: "branchB") { break }
+            if store.infos["/wt"]?.number != nil { break }
             try await Task.sleep(for: .milliseconds(5))
         }
-        #expect(fetcher.isWaiting(on: "branchB"), "Task2 should be parked on branchB fetch")
-
-        // Release the FRESH fetch first — Task2 writes PR#200.
-        fetcher.release(branch: "branchB", with: Self.pr(number: 200))
-        for _ in 0..<100 {
-            if store.infos["/wt"]?.number == 200 { break }
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        #expect(store.infos["/wt"]?.number == 200, "Task2 wrote branchB's PR")
-
-        // Release the stale fetch too (if it parked). With the bug,
-        // Task1 would overwrite PR#200 with PR#100; with the fix,
-        // Task1 either bailed before reaching fetcher.fetch (pre-await
-        // generation check) or bails after resume (post-await
-        // generation check). Either way, PR#200 stays.
-        if fetcher.isWaiting(on: "branchA") {
-            fetcher.release(branch: "branchA", with: Self.pr(number: 100))
-        }
-        try await Task.sleep(for: .milliseconds(80))
-
         #expect(
             store.infos["/wt"]?.number == 200,
-            "Stale branchA fetch must not overwrite branchB's fresh result"
+            "fetch result must apply to current branch (B), not dispatch-time branch (A)"
         )
     }
 }
+
+@MainActor
+private final class RepoEntryBox {
+    var repo: RepoEntry
+    init(repo: RepoEntry) { self.repo = repo }
+}
+

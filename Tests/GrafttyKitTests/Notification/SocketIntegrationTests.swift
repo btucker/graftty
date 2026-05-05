@@ -167,6 +167,13 @@ struct SocketIntegrationTests {
         }
     }
 
+    @Test("""
+    @spec ATTN-2.8: The application's Unix-domain socket server shall call `listen(2)` with a backlog of 64, not the historical default of 5. A user scripting parallel `graftty notify` invocations (e.g. from a hook that fans out across a monorepo) can easily exceed 5 pending connections, and the extra backlog entries cost negligible kernel resources while preventing spurious `ECONNREFUSED` for the later clients.
+    """)
+    func listenBacklogIsSixtyFour() {
+        #expect(SocketServer.listenBacklog == 64)
+    }
+
     /// ATTN-2.7: `start()` records its failure in `lastStartError` so
     /// callers (notably `GrafttyApp.startup` which historically used
     /// `try?` and discarded the error) have a diagnostic trail the UI

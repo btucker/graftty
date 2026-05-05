@@ -5,37 +5,49 @@ import Foundation
 @Suite("PRStatusStore integration")
 struct PRStatusStoreIntegrationTests {
 
+    private static let listArgs = [
+        "pr", "list", "--repo", "foo/bar",
+        "--state", "all", "--limit", "100",
+        "--json", "number,title,url,state,headRefName,headRepositoryOwner,statusCheckRollup,mergeable",
+    ]
+    private static let origin = HostingOrigin(
+        provider: .github, host: "github.com", owner: "foo", repo: "bar"
+    )
+
+    @MainActor
+    private static func makeStore(
+        executor: CLIExecutor,
+        provider: HostingProvider = .github,
+        host: String = "github.com",
+        owner: String = "foo",
+        repo: String = "bar",
+        worktrees: [WorktreeEntry] = [
+            WorktreeEntry(path: "/wt", branch: "feature/x", state: .running)
+        ]
+    ) -> (PRStatusStore, ManualTicker) {
+        let originLocal = HostingOrigin(provider: provider, host: host, owner: owner, repo: repo)
+        let store = PRStatusStore(executor: executor, detectHost: { _ in originLocal })
+        let ticker = ManualTicker()
+        let repoEntry = RepoEntry(path: "/repo", displayName: "repo", worktrees: worktrees)
+        store.start(ticker: ticker, getRepos: { [repoEntry] })
+        return (store, ticker)
+    }
+
     @Test func fetchesAndPublishesPRInfo() async throws {
         let fake = FakeCLIExecutor()
         fake.stub(
             command: "gh",
-            args: [
-                "pr", "list", "--repo", "foo/bar",
-                "--head", "feature/x", "--state", "open", "--limit", "5",
-                "--json", "number,title,url,state,headRefName,headRepositoryOwner"
-            ],
+            args: Self.listArgs,
             output: CLIOutput(
-                stdout: #"[{"number":10,"title":"hello","url":"https://github.com/foo/bar/pull/10","state":"OPEN","headRefName":"feature/x","headRepositoryOwner":{"login":"foo"}}]"#,
+                stdout: #"[{"number":10,"title":"hello","url":"https://github.com/foo/bar/pull/10","state":"OPEN","headRefName":"feature/x","headRepositoryOwner":{"login":"foo"},"statusCheckRollup":[],"mergeable":"MERGEABLE"}]"#,
                 stderr: "",
                 exitCode: 0
             )
         )
-        fake.stub(
-            command: "gh",
-            args: ["pr", "checks", "10", "--repo", "foo/bar", "--json", "name,state,bucket"],
-            output: CLIOutput(stdout: "[]", stderr: "", exitCode: 0)
-        )
 
-        // Inject a host detector so the test doesn't need to touch GitRunner's
-        // shared-state executor (which races with other suites in parallel).
-        let origin = HostingOrigin(provider: .github, host: "github.com", owner: "foo", repo: "bar")
-        let store = await PRStatusStore(
-            executor: fake,
-            detectHost: { _ in origin }
-        )
+        let (store, _) = await Self.makeStore(executor: fake)
         await store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "feature/x")
 
-        // Poll for the async Task to complete.
         for _ in 0..<50 {
             if await store.infos["/wt"] != nil { break }
             try await Task.sleep(for: .milliseconds(50))
@@ -45,34 +57,19 @@ struct PRStatusStoreIntegrationTests {
         #expect(info?.number == 10)
         #expect(info?.state == .open)
         #expect(info?.checks == PRInfo.Checks.none)
+        #expect(info?.mergeable == .mergeable)
+        await MainActor.run { store.stop() }
     }
 
     @Test func absentWhenNoPR() async throws {
         let fake = FakeCLIExecutor()
         fake.stub(
             command: "gh",
-            args: [
-                "pr", "list", "--repo", "foo/bar",
-                "--head", "feature/x", "--state", "open", "--limit", "5",
-                "--json", "number,title,url,state,headRefName,headRepositoryOwner"
-            ],
-            output: CLIOutput(stdout: "[]", stderr: "", exitCode: 0)
-        )
-        fake.stub(
-            command: "gh",
-            args: [
-                "pr", "list", "--repo", "foo/bar",
-                "--head", "feature/x", "--state", "merged", "--limit", "5",
-                "--json", "number,title,url,state,headRefName,headRepositoryOwner,mergedAt"
-            ],
+            args: Self.listArgs,
             output: CLIOutput(stdout: "[]", stderr: "", exitCode: 0)
         )
 
-        let origin = HostingOrigin(provider: .github, host: "github.com", owner: "foo", repo: "bar")
-        let store = await PRStatusStore(
-            executor: fake,
-            detectHost: { _ in origin }
-        )
+        let (store, _) = await Self.makeStore(executor: fake)
         await store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "feature/x")
 
         for _ in 0..<50 {
@@ -82,56 +79,41 @@ struct PRStatusStoreIntegrationTests {
 
         #expect(await store.infos["/wt"] == nil)
         #expect(await store.absent.contains("/wt"))
+        await MainActor.run { store.stop() }
     }
 
     @Test func branchDidChangeDropsStalePRImmediatelyAndRefetchesForNewBranch() async throws {
-        // Reproduces the "wrong PR after branch switch" symptom: a worktree
-        // showed branch A's PR for minutes after the user checked out
-        // branch B, because nothing notified PRStatusStore that the branch
-        // had changed — only the polling tick (5–15 min cadence) eventually
-        // corrected it.
+        // Reproduces the "wrong PR after branch switch" symptom: a
+        // worktree showed branch A's PR for minutes after the user
+        // checked out branch B because nothing notified
+        // PRStatusStore that the branch had changed.
         let fake = FakeCLIExecutor()
-
-        // Branch A: PR #100
+        // Single per-repo response covers both branches; the
+        // store distributes by current worktree branch.
         fake.stub(
             command: "gh",
-            args: [
-                "pr", "list", "--repo", "foo/bar",
-                "--head", "branchA", "--state", "open", "--limit", "5",
-                "--json", "number,title,url,state,headRefName,headRepositoryOwner"
-            ],
+            args: Self.listArgs,
             output: CLIOutput(
-                stdout: #"[{"number":100,"title":"A","url":"https://github.com/foo/bar/pull/100","state":"OPEN","headRefName":"branchA","headRepositoryOwner":{"login":"foo"}}]"#,
+                stdout: """
+                [
+                  {"number":100,"title":"A","url":"https://github.com/foo/bar/pull/100","state":"OPEN","headRefName":"branchA","headRepositoryOwner":{"login":"foo"},"statusCheckRollup":[],"mergeable":"MERGEABLE"},
+                  {"number":200,"title":"B","url":"https://github.com/foo/bar/pull/200","state":"OPEN","headRefName":"branchB","headRepositoryOwner":{"login":"foo"},"statusCheckRollup":[],"mergeable":"MERGEABLE"}
+                ]
+                """,
                 stderr: "", exitCode: 0
             )
         )
-        fake.stub(
-            command: "gh",
-            args: ["pr", "checks", "100", "--repo", "foo/bar", "--json", "name,state,bucket"],
-            output: CLIOutput(stdout: "[]", stderr: "", exitCode: 0)
-        )
 
-        // Branch B: PR #200
-        fake.stub(
-            command: "gh",
-            args: [
-                "pr", "list", "--repo", "foo/bar",
-                "--head", "branchB", "--state", "open", "--limit", "5",
-                "--json", "number,title,url,state,headRefName,headRepositoryOwner"
-            ],
-            output: CLIOutput(
-                stdout: #"[{"number":200,"title":"B","url":"https://github.com/foo/bar/pull/200","state":"OPEN","headRefName":"branchB","headRepositoryOwner":{"login":"foo"}}]"#,
-                stderr: "", exitCode: 0
-            )
-        )
-        fake.stub(
-            command: "gh",
-            args: ["pr", "checks", "200", "--repo", "foo/bar", "--json", "name,state,bucket"],
-            output: CLIOutput(stdout: "[]", stderr: "", exitCode: 0)
-        )
-
-        let origin = HostingOrigin(provider: .github, host: "github.com", owner: "foo", repo: "bar")
-        let store = await PRStatusStore(executor: fake, detectHost: { _ in origin })
+        let (repoBox, store) = await MainActor.run {
+            let repoBox = RepoEntryBox(repo: RepoEntry(
+                path: "/repo",
+                displayName: "repo",
+                worktrees: [WorktreeEntry(path: "/wt", branch: "branchA", state: .running)]
+            ))
+            let store = PRStatusStore(executor: fake, detectHost: { _ in Self.origin })
+            store.start(ticker: ManualTicker(), getRepos: { [repoBox.repo] })
+            return (repoBox, store)
+        }
 
         await store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "branchA")
         for _ in 0..<50 {
@@ -140,30 +122,37 @@ struct PRStatusStoreIntegrationTests {
         }
         #expect(await store.infos["/wt"]?.number == 100)
 
-        // Branch changed externally (e.g. the user ran `git checkout`).
-        // The bridge notifies the store.
+        // Branch changed externally — bridge notifies the store.
+        await MainActor.run {
+            repoBox.repo.worktrees[0].branch = "branchB"
+        }
+        // Step past in-flight cap so the second refresh dispatches.
+        await MainActor.run {
+            store.seedInFlightSinceForTesting(
+                Date().addingTimeInterval(-3600),
+                forRepo: "/repo"
+            )
+        }
         await store.branchDidChange(worktreePath: "/wt", repoPath: "/repo", branch: "branchB")
 
-        // Stale info must be dropped immediately — not after the new fetch
-        // lands. Otherwise the UI keeps showing branch A's PR through the
-        // gh-fetch in-flight window.
+        // Stale info dropped immediately — not after the new fetch lands.
         #expect(await store.infos["/wt"] == nil, "stale PR still showing after branch change")
 
-        // Eventually the new branch's PR is fetched and published.
         for _ in 0..<50 {
             if await store.infos["/wt"]?.number == 200 { break }
             try await Task.sleep(for: .milliseconds(50))
         }
         #expect(await store.infos["/wt"]?.number == 200)
+        await MainActor.run { store.stop() }
     }
 
     @Test func unsupportedHostMarksAbsent() async throws {
         let fake = FakeCLIExecutor()
-
-        let origin = HostingOrigin(provider: .unsupported, host: "bitbucket.org", owner: "foo", repo: "bar")
-        let store = await PRStatusStore(
+        let (store, _) = await Self.makeStore(
             executor: fake,
-            detectHost: { _ in origin }
+            provider: .unsupported,
+            host: "bitbucket.org",
+            worktrees: [WorktreeEntry(path: "/wt", branch: "main", state: .running)]
         )
         await store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "main")
 
@@ -173,5 +162,13 @@ struct PRStatusStoreIntegrationTests {
         }
 
         #expect(await store.absent.contains("/wt"))
+        await MainActor.run { store.stop() }
     }
 }
+
+@MainActor
+private final class RepoEntryBox {
+    var repo: RepoEntry
+    init(repo: RepoEntry) { self.repo = repo }
+}
+

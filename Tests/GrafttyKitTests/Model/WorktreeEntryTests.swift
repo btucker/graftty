@@ -97,7 +97,10 @@ struct WorktreeEntryTests {
         #expect(entry.attention == nil)
     }
 
-    @Test func clearAttentionIfTimestampIsNoopForReplacedAttention() {
+    @Test("""
+    @spec STATE-2.6: When an attention overlay was set with an auto-clear duration, the application shall clear that overlay after the duration elapses, unless by then the overlay has already been cleared or replaced by a newer notification. Pane-scoped overlay timers are independent per pane.
+    """)
+    func clearAttentionIfTimestampIsNoopForReplacedAttention() {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
         let t1 = Date()
         entry.attention = Attention(text: "A", timestamp: t1, clearAfter: 10)
@@ -446,7 +449,10 @@ struct WorktreeEntryTests {
     // re-open block can recreate the exact layout and the user still
     // sees any CLI-notify badge (which is a worktree-level concern).
 
-    @Test func prepareForStopClearsPaneAttentionAndClosesState() {
+    @Test("""
+    @spec STATE-2.11: When the user triggers Stop on a running worktree (`TERM-1.2`'s companion — tears down all panes at once while preserving the split tree for re-open), the application shall drop every pane-scoped attention entry on that worktree. Extends `STATE-2.7`'s per-pane rule to the all-panes-at-once case. Without this, a stale pane attention badge from before the Stop would reappear on the fresh pane's sidebar row when the user re-opens the worktree — same-`TerminalID` leaves are reused on re-open to preserve layout, so the attention dictionary must be cleared explicitly. The worktree-level `attention` slot (CLI-notify) is left untouched — it's a worktree-wide concern independent of which panes are alive.
+    """)
+    func prepareForStopClearsPaneAttentionAndClosesState() {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
         let paneA = TerminalID()
         let paneB = TerminalID()

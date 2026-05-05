@@ -5,26 +5,18 @@ import Foundation
 @Suite("GitHubPRFetcher")
 struct GitHubPRFetcherTests {
     let origin = HostingOrigin(provider: .github, host: "github.com", owner: "btucker", repo: "graftty")
-    let branch = "feature/git-improvements"
 
-    // `gh pr list --head` does not support the `<owner>:<branch>` syntax
-    // — its help text literally says so, and it silently returns `[]` for
-    // any value containing a colon. So the fetcher sends the bare branch
-    // name, and applies the "same-repo-as-base" invariant (PR-1.1) by
-    // filtering results on `headRepositoryOwner.login` post-hoc.
-    func listArgs(state: String) -> [String] {
-        let jsonFields = state == "merged"
-            ? "number,title,url,state,headRefName,headRepositoryOwner,mergedAt"
-            : "number,title,url,state,headRefName,headRepositoryOwner"
-        return [
-            "pr", "list",
-            "--repo", "btucker/graftty",
-            "--head", branch,
-            "--state", state,
-            "--limit", "5",
-            "--json", jsonFields,
-        ]
-    }
+    /// Single per-repo `gh pr list` invocation that returns every
+    /// open and recently-merged PR for the repo, with
+    /// `statusCheckRollup` and `mergeable` baked in. One CLI call
+    /// regardless of how many worktrees the user has on this repo.
+    static let listArgs: [String] = [
+        "pr", "list",
+        "--repo", "btucker/graftty",
+        "--state", "all",
+        "--limit", "100",
+        "--json", "number,title,url,state,headRefName,headRepositoryOwner,statusCheckRollup,mergeable",
+    ]
 
     func loadFixture(_ name: String) -> String {
         let url = Bundle.module.url(forResource: name, withExtension: "json")!
@@ -35,21 +27,18 @@ struct GitHubPRFetcherTests {
         let fake = FakeCLIExecutor()
         fake.stub(
             command: "gh",
-            args: listArgs(state: "open"),
+            args: Self.listArgs,
             output: CLIOutput(stdout: loadFixture("gh-pr-open-passing"), stderr: "", exitCode: 0)
-        )
-        fake.stub(
-            command: "gh",
-            args: ["pr", "checks", "412", "--repo", "btucker/graftty", "--json", "name,state,bucket"],
-            output: CLIOutput(stdout: loadFixture("gh-pr-checks-passing"), stderr: "", exitCode: 0)
         )
 
         let fetcher = GitHubPRFetcher(executor: fake, now: { Date(timeIntervalSince1970: 100) })
-        let pr = try await fetcher.fetch(origin: origin, branch: branch)
+        let snapshot = try await fetcher.fetch(origin: origin, branchesOfInterest: [])
 
+        let pr = snapshot.prsByBranch["feature/git-improvements"]
         #expect(pr?.number == 412)
         #expect(pr?.state == .open)
         #expect(pr?.checks == .success)
+        #expect(pr?.mergeable == .mergeable)
         #expect(pr?.title == "Add PR/MR status button to breadcrumb")
         #expect(pr?.url.absoluteString == "https://github.com/btucker/graftty/pull/412")
     }
@@ -58,219 +47,158 @@ struct GitHubPRFetcherTests {
         let fake = FakeCLIExecutor()
         fake.stub(
             command: "gh",
-            args: listArgs(state: "open"),
-            output: CLIOutput(stdout: loadFixture("gh-pr-empty"), stderr: "", exitCode: 0)
-        )
-        fake.stub(
-            command: "gh",
-            args: listArgs(state: "merged"),
+            args: Self.listArgs,
             output: CLIOutput(stdout: loadFixture("gh-pr-merged"), stderr: "", exitCode: 0)
         )
 
         let fetcher = GitHubPRFetcher(executor: fake, now: { Date() })
-        let pr = try await fetcher.fetch(origin: origin, branch: branch)
+        let snapshot = try await fetcher.fetch(origin: origin, branchesOfInterest: [])
 
+        let pr = snapshot.prsByBranch["feature/github-integration"]
         #expect(pr?.number == 398)
         #expect(pr?.state == .merged)
         #expect(pr?.checks == PRInfo.Checks.none)
     }
 
-    @Test func sendsBareBranchToGhHead() async throws {
-        // Regression: the prior implementation passed `--head <owner>:<branch>`
-        // to `gh pr list`, but gh's `--head` filter explicitly does not support
-        // that syntax and silently returns an empty array — so no worktree
-        // ever displayed a PR. Pin the contract: the value after `--head`
-        // must be the bare branch name with no colons.
-        let fake = FakeCLIExecutor()
-        fake.stub(
-            command: "gh",
-            args: listArgs(state: "open"),
-            output: CLIOutput(stdout: loadFixture("gh-pr-empty"), stderr: "", exitCode: 0)
-        )
-        fake.stub(
-            command: "gh",
-            args: listArgs(state: "merged"),
-            output: CLIOutput(stdout: loadFixture("gh-pr-empty"), stderr: "", exitCode: 0)
-        )
-
-        let fetcher = GitHubPRFetcher(executor: fake, now: { Date() })
-        _ = try await fetcher.fetch(origin: origin, branch: branch)
-
-        let listInvocation = fake.invocations.first { $0.args.contains("list") }
-        let args = listInvocation?.args ?? []
-        guard let headIdx = args.firstIndex(of: "--head") else {
-            Issue.record("expected --head in gh pr list args")
-            return
-        }
-        let headValue = args[args.index(after: headIdx)]
-        #expect(headValue == branch)
-        #expect(!headValue.contains(":"))
-    }
-
     @Test("""
-    @spec PR-1.1: When the application resolves the PR for a worktree's branch on a GitHub origin, it shall scope the lookup to PRs whose head ref lives in the same repository as the base so that PRs from forks which happen to share the branch name are not associated with the worktree. Because `gh pr list --head` does not support the `<owner>:<branch>` syntax (it silently returns an empty result), the filter shall be implemented by passing the bare branch name to `gh`, requesting `headRepositoryOwner` in the JSON output, and discarding results whose `headRepositoryOwner.login` does not match the origin owner (compared case-insensitively).
+    @spec PR-1.1: When the application resolves the PR for a worktree's branch on a GitHub origin, it shall scope the lookup to PRs whose head ref lives in the same repository as the base so that PRs from forks which happen to share the branch name are not associated with the worktree. Per-repo batched fetching applies the filter post-hoc by comparing each PR's `headRepositoryOwner.login` (case-insensitive) against the origin's owner and dropping PRs from other repositories before they reach the per-worktree distribution.
     """)
     func filtersOutForkPRsViaHeadRepositoryOwner() async throws {
-        // Another user's fork can have a PR open against this repo with
-        // the same branch name; `gh pr list --head <branch>` happily
-        // returns it alongside ours. The fetcher must filter to PRs whose
-        // `headRepositoryOwner.login` matches the origin's owner so a
-        // worktree never picks up a stranger's PR (PR-1.1).
         let fake = FakeCLIExecutor()
         fake.stub(
             command: "gh",
-            args: listArgs(state: "open"),
+            args: Self.listArgs,
             output: CLIOutput(stdout: loadFixture("gh-pr-fork-open"), stderr: "", exitCode: 0)
-        )
-        fake.stub(
-            command: "gh",
-            args: listArgs(state: "merged"),
-            output: CLIOutput(stdout: loadFixture("gh-pr-empty"), stderr: "", exitCode: 0)
         )
 
         let fetcher = GitHubPRFetcher(executor: fake, now: { Date() })
-        let pr = try await fetcher.fetch(origin: origin, branch: branch)
+        let snapshot = try await fetcher.fetch(origin: origin, branchesOfInterest: [])
 
-        #expect(pr == nil)
+        #expect(snapshot.prsByBranch.isEmpty, "fork PRs must be filtered out")
     }
 
     @Test func matchesOwnerCaseInsensitively() async throws {
-        // GitHub logins are canonicalized on the API side but users type
-        // remote URLs in whatever casing they like (`git@github.com:BTucker/...`).
-        // Don't let a casing mismatch between the parsed remote and the
-        // API-returned `login` drop the user's own PR.
-        let fake = FakeCLIExecutor()
         let mixedCaseOrigin = HostingOrigin(
-            provider: .github,
-            host: "github.com",
-            owner: "BTucker",
-            repo: "graftty"
+            provider: .github, host: "github.com", owner: "BTucker", repo: "graftty"
         )
-        let openArgs = [
+        let mixedCaseListArgs = [
             "pr", "list",
             "--repo", "BTucker/graftty",
-            "--head", branch,
-            "--state", "open",
-            "--limit", "5",
-            "--json", "number,title,url,state,headRefName,headRepositoryOwner",
+            "--state", "all",
+            "--limit", "100",
+            "--json", "number,title,url,state,headRefName,headRepositoryOwner,statusCheckRollup,mergeable",
         ]
-        fake.stub(
-            command: "gh",
-            args: openArgs,
-            output: CLIOutput(stdout: loadFixture("gh-pr-open-passing"), stderr: "", exitCode: 0)
-        )
-        fake.stub(
-            command: "gh",
-            args: ["pr", "checks", "412", "--repo", "BTucker/graftty", "--json", "name,state,bucket"],
-            output: CLIOutput(stdout: loadFixture("gh-pr-checks-passing"), stderr: "", exitCode: 0)
-        )
-
-        let fetcher = GitHubPRFetcher(executor: fake, now: { Date() })
-        let pr = try await fetcher.fetch(origin: mixedCaseOrigin, branch: branch)
-
-        #expect(pr?.number == 412)
-    }
-
-    @Test func returnsNilWhenNoOpenOrMerged() async throws {
         let fake = FakeCLIExecutor()
         fake.stub(
             command: "gh",
-            args: listArgs(state: "open"),
-            output: CLIOutput(stdout: loadFixture("gh-pr-empty"), stderr: "", exitCode: 0)
+            args: mixedCaseListArgs,
+            output: CLIOutput(stdout: loadFixture("gh-pr-open-passing"), stderr: "", exitCode: 0)
         )
+
+        let fetcher = GitHubPRFetcher(executor: fake, now: { Date() })
+        let snapshot = try await fetcher.fetch(origin: mixedCaseOrigin, branchesOfInterest: [])
+        #expect(snapshot.prsByBranch["feature/git-improvements"]?.number == 412)
+    }
+
+    @Test func returnsEmptySnapshotWhenNoOpenOrMerged() async throws {
+        let fake = FakeCLIExecutor()
         fake.stub(
             command: "gh",
-            args: listArgs(state: "merged"),
+            args: Self.listArgs,
             output: CLIOutput(stdout: loadFixture("gh-pr-empty"), stderr: "", exitCode: 0)
         )
 
         let fetcher = GitHubPRFetcher(executor: fake, now: { Date() })
-        let pr = try await fetcher.fetch(origin: origin, branch: branch)
-        #expect(pr == nil)
+        let snapshot = try await fetcher.fetch(origin: origin, branchesOfInterest: [])
+        #expect(snapshot.prsByBranch.isEmpty)
     }
 
-    // PR-5.4: `gh pr list` and `gh pr checks` are separate subprocess
-    // calls. A transient failure of the SECOND (auth hiccup, rate limit,
-    // network blip, gh version bump that broke the checks subcommand)
-    // used to propagate out and make the whole fetch fail — the caller
-    // (PRStatusStore) caught the error and DROPPED the cached PRInfo
-    // entirely. User-visible: the `#<number>` sidebar badge (PR-3.2) and
-    // breadcrumb PR button disappeared even though the PR itself was
-    // still cached-discoverable. Fix: treat the second call as best-effort;
-    // fall back to `.none` checks so the PR identity still surfaces.
-    @Test("""
-    @spec PR-5.4: When `gh pr list` succeeds but the subsequent `gh pr checks` call for the resolved PR fails (auth hiccup, rate limit, subcommand regression, network blip), the application shall still surface the PR's identity with `.none` check status rather than propagating the checks error out of the fetch. The `#<number>` sidebar badge (`PR-3.2`) and the breadcrumb PR button shall remain visible — losing them because checks couldn't be resolved produces worse UX than displaying them with neutral check state.
-    """)
-    func openPRSurfacesEvenWhenChecksFetchFails() async throws {
-        let fake = FakeCLIExecutor()
-        fake.stub(
-            command: "gh",
-            args: listArgs(state: "open"),
-            output: CLIOutput(stdout: loadFixture("gh-pr-open-passing"), stderr: "", exitCode: 0)
-        )
-        fake.stub(
-            command: "gh",
-            args: ["pr", "checks", "412", "--repo", "btucker/graftty", "--json", "name,state,bucket"],
-            error: CLIError.nonZeroExit(command: "gh", exitCode: 1, stderr: "authentication required")
-        )
-
-        let fetcher = GitHubPRFetcher(executor: fake, now: { Date(timeIntervalSince1970: 100) })
-        let pr = try await fetcher.fetch(origin: origin, branch: branch)
-
-        // The PR is still resolved — what the user cares about.
-        #expect(pr?.number == 412)
-        #expect(pr?.state == .open)
-        // Checks degrade to neutral rather than making the PR vanish.
-        #expect(pr?.checks == PRInfo.Checks.none)
-    }
-
-    /// External-contributor PRs can be titled with Unicode
-    /// bidirectional-override scalars (U+202A-U+202E, U+2066-U+2069),
-    /// producing the "Trojan Source" render distortion (CVE-2021-42574)
-    /// in the breadcrumb's `PRButton` — which renders `Text(info.title)`
-    /// with no filtering of its own. ATTN-1.14 + LAYOUT-2.18 block this
-    /// on self-owned surfaces (notify text, OSC 2 titles); the PR-title
-    /// intake needs the same defense because the author is explicitly
-    /// not trusted.
-    ///
-    /// Strip (not reject) the scalars — rejection would hide the PR
-    /// entirely and worsen UX. Stripped title still conveys the human-
-    /// readable gist of the PR; if the user wants to see the raw title
-    /// they can click through to the hosting provider.
     @Test("""
     @spec PR-5.5: When the application stores a PR/MR title into a `PRInfo` for display (breadcrumb `PRButton`, accessibility label, tooltip), it shall first strip every Unicode bidirectional-override scalar (the embedding, override, and isolate families — the same ranges as `ATTN-1.14`). PR titles are author-controlled, including authors who submit from malicious forks; a poisoned title like `"Fix \\u{202E}redli\\u{202C} helper"` would otherwise render RTL-reversed in the breadcrumb as `"Fix ildeeper helper"`-style text — the same Trojan Source visual deception (CVE-2021-42574) `ATTN-1.14` and `LAYOUT-2.18` block on self-owned surfaces. Unlike those surfaces, the PR-title path STRIPS rather than REJECTS: a poisoned title shouldn't hide the PR entirely from the user (they still need to see "a PR exists"); stripping yields a legible-ish version and the user can click through to the hosting provider for the raw text. Applies to both `GitHubPRFetcher` and `GitLabPRFetcher`.
     """)
     func stripsBidiOverrideScalarsFromTitle() async throws {
-        // Inline stub with a title containing U+202E RIGHT-TO-LEFT
-        // OVERRIDE and U+202C POP DIRECTIONAL FORMATTING.
         let rawJSON = #"""
-        [{"number":1,"title":"Fix \#u{202E}redli\#u{202C} helper","url":"https://github.com/btucker/graftty/pull/1","state":"OPEN","headRefName":"feature/git-improvements","headRepositoryOwner":{"login":"btucker"}}]
+        [{"number":1,"title":"Fix \#u{202E}redli\#u{202C} helper","url":"https://github.com/btucker/graftty/pull/1","state":"OPEN","headRefName":"feature/git-improvements","headRepositoryOwner":{"login":"btucker"},"statusCheckRollup":[],"mergeable":"MERGEABLE"}]
         """#
         let fake = FakeCLIExecutor()
-        fake.stub(command: "gh", args: listArgs(state: "open"),
+        fake.stub(command: "gh", args: Self.listArgs,
                   output: CLIOutput(stdout: rawJSON, stderr: "", exitCode: 0))
-        fake.stub(command: "gh",
-                  args: ["pr", "checks", "1", "--repo", "btucker/graftty",
-                         "--json", "name,state,bucket"],
-                  output: CLIOutput(stdout: "[]", stderr: "", exitCode: 0))
 
         let fetcher = GitHubPRFetcher(executor: fake, now: { Date() })
-        let pr = try await fetcher.fetch(origin: origin, branch: branch)
+        let snapshot = try await fetcher.fetch(origin: origin, branchesOfInterest: [])
+        let pr = snapshot.prsByBranch["feature/git-improvements"]
 
         #expect(pr?.number == 1)
-        // BIDI-override scalars stripped; the legible content remains.
         #expect(pr?.title == "Fix redli helper")
+    }
+
+    @Test("""
+    @spec PR-8.14: When the application resolves PR status for a repo's worktrees, it shall issue a single `gh pr list --json statusCheckRollup,mergeable,...` call per repo and distribute the resulting snapshot to every worktree whose branch matches a head ref. The previous per-branch fetcher fired two `gh` subprocesses (`pr list` + `pr checks`) per worktree per polling tick; the per-repo batch keeps total CLI invocations linear in the number of repos rather than the number of worktrees.
+    """)
+    func issuesOneCallPerRepoCoveringAllBranches() async throws {
+        let fake = FakeCLIExecutor()
+        let multiPR = """
+        [
+          {"number":1,"title":"A","url":"https://github.com/btucker/graftty/pull/1","state":"OPEN","headRefName":"branchA","headRepositoryOwner":{"login":"btucker"},"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}],"mergeable":"MERGEABLE"},
+          {"number":2,"title":"B","url":"https://github.com/btucker/graftty/pull/2","state":"OPEN","headRefName":"branchB","headRepositoryOwner":{"login":"btucker"},"statusCheckRollup":[{"status":"IN_PROGRESS"}],"mergeable":"CONFLICTING"},
+          {"number":3,"title":"C","url":"https://github.com/btucker/graftty/pull/3","state":"MERGED","headRefName":"branchC","headRepositoryOwner":{"login":"btucker"},"statusCheckRollup":[],"mergeable":"UNKNOWN"}
+        ]
+        """
+        fake.stub(command: "gh", args: Self.listArgs,
+                  output: CLIOutput(stdout: multiPR, stderr: "", exitCode: 0))
+
+        let fetcher = GitHubPRFetcher(executor: fake, now: { Date() })
+        // Caller asks about three branches; only one CLI call is fired.
+        let snapshot = try await fetcher.fetch(
+            origin: origin,
+            branchesOfInterest: ["branchA", "branchB", "branchC"]
+        )
+
+        #expect(fake.invocations.count == 1, "expected exactly one `gh` subprocess for the whole repo")
+        #expect(snapshot.prsByBranch["branchA"]?.checks == .success)
+        #expect(snapshot.prsByBranch["branchB"]?.checks == .pending)
+        #expect(snapshot.prsByBranch["branchB"]?.mergeable == .conflicting)
+        #expect(snapshot.prsByBranch["branchC"]?.state == .merged)
+    }
+
+    @Test func openPRWinsOverMergedForSameBranch() async throws {
+        // Same branch, two PR rows: one open, one merged. The open
+        // one wins (the merged one is presumably an old, closed
+        // attempt at the same feature).
+        let fake = FakeCLIExecutor()
+        let stdout = """
+        [
+          {"number":99,"title":"old","url":"https://github.com/btucker/graftty/pull/99","state":"MERGED","headRefName":"feat","headRepositoryOwner":{"login":"btucker"},"statusCheckRollup":[],"mergeable":"UNKNOWN"},
+          {"number":100,"title":"new","url":"https://github.com/btucker/graftty/pull/100","state":"OPEN","headRefName":"feat","headRepositoryOwner":{"login":"btucker"},"statusCheckRollup":[],"mergeable":"MERGEABLE"}
+        ]
+        """
+        fake.stub(command: "gh", args: Self.listArgs,
+                  output: CLIOutput(stdout: stdout, stderr: "", exitCode: 0))
+
+        let fetcher = GitHubPRFetcher(executor: fake, now: { Date() })
+        let snapshot = try await fetcher.fetch(origin: origin, branchesOfInterest: [])
+        #expect(snapshot.prsByBranch["feat"]?.number == 100)
+        #expect(snapshot.prsByBranch["feat"]?.state == .open)
     }
 }
 
 @Suite("GitHubPRFetcher.rollup")
 struct GitHubPRFetcherRollupTests {
-    // `gh pr checks --json ...` exposes the per-check verdict via the
-    // `bucket` field (values: "pass", "fail", "pending", "skipping",
-    // "cancel"), NOT `conclusion` (which is the underlying Actions
-    // attribute visible only through the GraphQL API). Earlier code asked
-    // gh for `conclusion` and got a hard error — this suite now pins
-    // against the real gh schema.
+
+    private static func check(status: String? = nil, conclusion: String? = nil, state: String? = nil)
+        -> GitHubPRFetcher.RawPR.RawCheck
+    {
+        let raw = encode(status: status, conclusion: conclusion, state: state)
+        return try! JSONDecoder().decode(GitHubPRFetcher.RawPR.RawCheck.self, from: Data(raw.utf8))
+    }
+
+    private static func encode(status: String?, conclusion: String?, state: String?) -> String {
+        var parts: [String] = []
+        if let status { parts.append("\"status\":\"\(status)\"") }
+        if let conclusion { parts.append("\"conclusion\":\"\(conclusion)\"") }
+        if let state { parts.append("\"state\":\"\(state)\"") }
+        return "{\(parts.joined(separator: ","))}"
+    }
 
     @Test func emptyIsNone() {
         #expect(GitHubPRFetcher.rollup([]) == PRInfo.Checks.none)
@@ -278,47 +206,55 @@ struct GitHubPRFetcherRollupTests {
 
     @Test func anyFailureWins() {
         #expect(GitHubPRFetcher.rollup([
-            ("COMPLETED", "pass"),
-            ("COMPLETED", "fail")
+            Self.check(status: "COMPLETED", conclusion: "SUCCESS"),
+            Self.check(status: "COMPLETED", conclusion: "FAILURE"),
         ]) == .failure)
     }
 
     @Test func inProgressBeatsSuccess() {
         #expect(GitHubPRFetcher.rollup([
-            ("COMPLETED", "pass"),
-            ("IN_PROGRESS", nil)
+            Self.check(status: "COMPLETED", conclusion: "SUCCESS"),
+            Self.check(status: "IN_PROGRESS"),
         ]) == .pending)
     }
 
-    @Test func pendingBucketIsPending() {
-        #expect(GitHubPRFetcher.rollup([("PENDING", "pending")]) == .pending)
+    @Test func statusContextPendingIsPending() {
+        #expect(GitHubPRFetcher.rollup([Self.check(state: "PENDING")]) == .pending)
     }
 
-    @Test func queuedStateIsPending() {
-        #expect(GitHubPRFetcher.rollup([("QUEUED", nil)]) == .pending)
+    @Test func queuedStatusIsPending() {
+        #expect(GitHubPRFetcher.rollup([Self.check(status: "QUEUED")]) == .pending)
     }
 
     @Test func allPassIsSuccess() {
         #expect(GitHubPRFetcher.rollup([
-            ("COMPLETED", "pass"),
-            ("COMPLETED", "pass")
+            Self.check(status: "COMPLETED", conclusion: "SUCCESS"),
+            Self.check(state: "SUCCESS"),
         ]) == .success)
     }
 
-    @Test func completedWithNullBucketIsNone() {
-        // Neutral / skipped checks: COMPLETED but gh didn't classify it.
+    @Test func skippingDoesNotCountAsSuccess() {
+        // One skipped check alongside a passing one: don't promote
+        // to "success" — user probably wants visibility that not
+        // everything ran.
         #expect(GitHubPRFetcher.rollup([
-            ("COMPLETED", "pass"),
-            ("COMPLETED", nil)
+            Self.check(status: "COMPLETED", conclusion: "SUCCESS"),
+            Self.check(status: "COMPLETED", conclusion: "SKIPPED"),
         ]) == PRInfo.Checks.none)
     }
 
-    @Test func skippingAndCancelDoNotCountAsSuccess() {
-        // One skip alongside passes: don't promote to "success" — user
-        // probably wants visibility that not everything ran.
+    @Test func actionRequiredCountsAsFailure() {
         #expect(GitHubPRFetcher.rollup([
-            ("COMPLETED", "pass"),
-            ("COMPLETED", "skipping")
-        ]) == PRInfo.Checks.none)
+            Self.check(status: "COMPLETED", conclusion: "ACTION_REQUIRED"),
+        ]) == .failure)
     }
+}
+
+@Suite("GitHubPRFetcher.mapMergeable")
+struct GitHubPRFetcherMergeableTests {
+    @Test func mergeable() { #expect(GitHubPRFetcher.mapMergeable("MERGEABLE") == .mergeable) }
+    @Test func conflicting() { #expect(GitHubPRFetcher.mapMergeable("CONFLICTING") == .conflicting) }
+    @Test func unknownPassesThrough() { #expect(GitHubPRFetcher.mapMergeable("UNKNOWN") == .unknown) }
+    @Test func nilIsUnknown() { #expect(GitHubPRFetcher.mapMergeable(nil) == .unknown) }
+    @Test func caseInsensitive() { #expect(GitHubPRFetcher.mapMergeable("mergeable") == .mergeable) }
 }

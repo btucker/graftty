@@ -1,63 +1,120 @@
 import Foundation
 
+/// Per-repo `glab mr list` fetcher. The listing call returns every
+/// MR for the repo plus `has_conflicts`. Pipeline status isn't in
+/// the list payload, so we fan out per-MR `glab mr view` requests
+/// in parallel for the branches the caller cares about.
+///
+/// @spec PR-8.15
 public struct GitLabPRFetcher: PRFetcher {
     private let executor: CLIExecutor
     private let now: @Sendable () -> Date
 
-    public init(executor: CLIExecutor = CLIRunner(), now: @Sendable @escaping () -> Date = { Date() }) {
+    /// Maximum number of `glab mr view` subprocesses in flight at
+    /// once. Bounded so a repo with many open MRs (or a slow
+    /// `glab`) can't saturate file descriptors / process slots.
+    static let pipelineConcurrency = 6
+
+    public init(
+        executor: CLIExecutor = CLIRunner(),
+        now: @Sendable @escaping () -> Date = { Date() }
+    ) {
         self.executor = executor
         self.now = now
     }
 
-    public func fetch(origin: HostingOrigin, branch: String) async throws -> PRInfo? {
-        if let opened = try await fetchOne(origin: origin, branch: branch, scope: .opened) {
-            // PR-5.4 parity: pipeline status is a SEPARATE `glab mr view`
-            // call because the MR list endpoint (backing `glab mr list`)
-            // doesn't include `head_pipeline` — only the single-MR view
-            // does. If the view call fails, still surface the MR with
-            // neutral checks rather than dropping the whole PRInfo.
-            let checks = (try? await fetchPipelineStatus(origin: origin, iid: opened.iid)) ?? .none
-            return PRInfo(
-                number: opened.iid,
+    public func fetch(
+        origin: HostingOrigin,
+        branchesOfInterest: Set<String>
+    ) async throws -> RepoPRSnapshot {
+        let raw = try await listMRs(origin: origin)
+        let fetched = now()
+
+        // PR-5.3: same-repo (non-fork) filter via project-id equality;
+        // pick one MR per branch (open wins over merged).
+        var primaryByBranch: [String: RawMR] = [:]
+        for mr in raw {
+            guard let src = mr.source_project_id, let tgt = mr.target_project_id, src == tgt else { continue }
+            guard Self.mapState(mr.state) != nil else { continue }
+            if let existing = primaryByBranch[mr.source_branch] {
+                if existing.state.lowercased() != "opened" && mr.state.lowercased() == "opened" {
+                    primaryByBranch[mr.source_branch] = mr
+                }
+            } else {
+                primaryByBranch[mr.source_branch] = mr
+            }
+        }
+
+        // Pipeline status is only in the per-MR view payload. Fetch
+        // in parallel, capped at `pipelineConcurrency` so a repo
+        // with many open MRs (or a slow `glab`) can't spawn dozens
+        // of subprocesses at once. Restricted to branches the
+        // caller cares about so a 100-MR repo with 5 worktrees
+        // fires 5 view calls, not 100.
+        let needsPipeline = primaryByBranch
+            .filter { branchesOfInterest.contains($0.key) && $0.value.state.lowercased() == "opened" }
+            .map(\.value)
+        let pipelineByIID = await withTaskGroup(of: (Int, PRInfo.Checks).self) { group in
+            var iter = needsPipeline.makeIterator()
+            var out: [Int: PRInfo.Checks] = [:]
+            for _ in 0..<min(Self.pipelineConcurrency, needsPipeline.count) {
+                guard let mr = iter.next() else { break }
+                group.addTask { [executor] in
+                    let checks = (try? await Self.fetchPipelineStatus(executor: executor, origin: origin, iid: mr.iid)) ?? .none
+                    return (mr.iid, checks)
+                }
+            }
+            while let (iid, checks) = await group.next() {
+                out[iid] = checks
+                if let mr = iter.next() {
+                    group.addTask { [executor] in
+                        let checks = (try? await Self.fetchPipelineStatus(executor: executor, origin: origin, iid: mr.iid)) ?? .none
+                        return (mr.iid, checks)
+                    }
+                }
+            }
+            return out
+        }
+
+        var byBranch: [String: PRInfo] = [:]
+        for (branch, mr) in primaryByBranch {
+            let state = Self.mapState(mr.state)!
+            let checks: PRInfo.Checks = state == .merged ? .none : (pipelineByIID[mr.iid] ?? .none)
+            let mergeable: PRInfo.Mergeable
+            if state == .merged {
+                mergeable = .unknown
+            } else if let conflict = mr.has_conflicts {
+                mergeable = conflict ? .conflicting : .mergeable
+            } else {
+                mergeable = .unknown
+            }
+            byBranch[branch] = PRInfo(
+                number: mr.iid,
                 // PR-5.5: strip BIDI-override scalars from the
                 // author-controlled title (same rationale as the
                 // GitHub side).
-                title: BidiOverrides.stripping(opened.title),
-                url: opened.web_url,
-                state: .open,
+                title: BidiOverrides.stripping(mr.title),
+                url: mr.web_url,
+                state: state,
                 checks: checks,
-                fetchedAt: now()
+                mergeable: mergeable,
+                fetchedAt: fetched
             )
         }
-        if let merged = try await fetchOne(origin: origin, branch: branch, scope: .merged) {
-            return PRInfo(
-                number: merged.iid,
-                title: BidiOverrides.stripping(merged.title),
-                url: merged.web_url,
-                state: .merged,
-                checks: .none,
-                fetchedAt: now()
-            )
-        }
-        return nil
+        return RepoPRSnapshot(prsByBranch: byBranch)
     }
 
     // MARK: - Internals
 
-    enum Scope { case opened, merged }
-
-    private struct RawMR: Decodable {
+    struct RawMR: Decodable {
         let iid: Int
         let title: String
         let web_url: URL
         let state: String
         let source_branch: String
-        // PR-5.3: `glab mr list --source-branch` returns MRs from forks
-        // too (their source_project_id differs from the target
-        // project's). We use these to filter forks out — same rationale
-        // as `headRepositoryOwner` on the GitHub side.
         let source_project_id: Int?
         let target_project_id: Int?
+        let has_conflicts: Bool?
     }
 
     private struct RawMRDetail: Decodable {
@@ -69,42 +126,41 @@ public struct GitLabPRFetcher: PRFetcher {
         let status: String
     }
 
-    private func fetchOne(origin: HostingOrigin, branch: String, scope: Scope) async throws -> RawMR? {
-        // PR-5.3: `--per-page 5` (rather than 1) so a fork MR returned
-        // first by glab's default sort cannot crowd out a same-repo MR
-        // that the source/target project-id filter would otherwise accept.
-        // State selection is expressed via boolean flags (`--merged` for
-        // merged MRs; the default is opened-only). The earlier
-        // `--state <string>` spelling was removed by glab in favor of
-        // discrete flags, which is why it was silently rejecting every
-        // invocation and hiding the integration entirely.
-        var args = [
+    private func listMRs(origin: HostingOrigin) async throws -> [RawMR] {
+        let args = [
             "mr", "list",
             "--repo", origin.slug,
-            "--source-branch", branch,
-            "--per-page", "5",
-            "-F", "json"
+            "--all",
+            "--per-page", "100",
+            "-F", "json",
         ]
-        if case .merged = scope { args.append("--merged") }
         let output = try await executor.run(command: "glab", args: args, at: NSTemporaryDirectory())
         let data = Data(output.stdout.utf8)
-        let mrs = try JSONDecoder().decode([RawMR].self, from: data)
-        return mrs.first { mr in
-            guard let src = mr.source_project_id, let tgt = mr.target_project_id else { return false }
-            return src == tgt
-        }
+        return try JSONDecoder().decode([RawMR].self, from: data)
     }
 
-    private func fetchPipelineStatus(origin: HostingOrigin, iid: Int) async throws -> PRInfo.Checks {
+    private static func fetchPipelineStatus(
+        executor: CLIExecutor,
+        origin: HostingOrigin,
+        iid: Int
+    ) async throws -> PRInfo.Checks {
         let args = [
             "mr", "view", String(iid),
             "--repo", origin.slug,
-            "-F", "json"
+            "-F", "json",
         ]
         let output = try await executor.run(command: "glab", args: args, at: NSTemporaryDirectory())
         let data = Data(output.stdout.utf8)
         let detail = try JSONDecoder().decode(RawMRDetail.self, from: data)
-        return detail.head_pipeline.map { Self.mapStatus($0.status) } ?? .none
+        return detail.head_pipeline.map { mapStatus($0.status) } ?? .none
+    }
+
+    static func mapState(_ raw: String) -> PRInfo.State? {
+        switch raw.lowercased() {
+        case "opened": return .open
+        case "merged": return .merged
+        default: return nil
+        }
     }
 
     static func mapStatus(_ status: String) -> PRInfo.Checks {

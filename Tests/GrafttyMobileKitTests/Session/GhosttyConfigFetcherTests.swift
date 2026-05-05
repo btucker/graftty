@@ -4,10 +4,7 @@ import UIKit
 @testable import GrafttyMobileKit
 
 @Suite("""
-@spec IOS-4.12: When the fetched Ghostty config specifies a single theme (not a light:X,dark:Y pair), \
-the application shall force overrideUserInterfaceStyle on the terminal container view to match \
-that theme's appearance so that libghostty-spm's traitCollectionDidChange → setColorScheme path \
-never substitutes the system-default appearance over the user's explicit choice.
+@spec IOS-4.15: When the fetched Ghostty config specifies a single `theme =` value (not a `light:X,dark:Y` pair), the application shall force `overrideUserInterfaceStyle` on the terminal container view to match that theme's appearance so that libghostty-spm's `traitCollectionDidChange` → `setColorScheme` path never substitutes the system-default appearance over the user's explicit choice.
 """)
 struct GhosttyConfigFetcherInterfaceStyleTests {
 

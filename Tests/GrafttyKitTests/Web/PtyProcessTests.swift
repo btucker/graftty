@@ -83,6 +83,43 @@ struct PtyProcessTests {
         #expect(String(data: collected, encoding: .utf8)?.contains("13 42") == true,
                 "expected '13 42' in output; got \(collected.count) bytes: \(String(data: collected, encoding: .utf8) ?? "<non-utf8>")")
     }
+
+    @Test("""
+    @spec WEB-4.6: When the application forks a `zmx attach` child for a web WebSocket, the child shall close every inherited file descriptor above 2 before `execve`. Rationale: without this, parent-opened sockets (notably the `WebServer` listen socket) without `FD_CLOEXEC` leak into the zmx child and survive the parent. After Graftty quits, the listen port stays bound to an orphan zmx process and the next Graftty launch cannot rebind.
+    """)
+    func inheritedFileDescriptorsAboveStdioAreClosedBeforeExec() throws {
+        let temp = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("pty-fd-leak-\(UUID().uuidString)")
+        FileManager.default.createFile(atPath: temp.path, contents: nil)
+        defer { try? FileManager.default.removeItem(at: temp) }
+
+        let rawFD = Darwin.open(temp.path, O_RDWR)
+        #expect(rawFD > 2)
+        let duplicatedFD = fcntl(rawFD, F_DUPFD, 200)
+        close(rawFD)
+        let inheritedFD = try #require(duplicatedFD >= 200 ? duplicatedFD : nil)
+        #expect(inheritedFD >= 200)
+        defer { close(inheritedFD) }
+
+        let script = "if sh -c ': >&\(inheritedFD)' 2>/dev/null; then echo leaked; else echo closed; fi; sleep 1"
+        let spawn = try PtyProcess.spawn(
+            argv: ["/bin/sh", "-c", script],
+            env: [:]
+        )
+        defer { close(spawn.masterFD) }
+
+        let collected = Self.drain(masterFD: spawn.masterFD, deadlineSeconds: 5) {
+            let text = String(data: $0, encoding: .utf8) ?? ""
+            return text.contains("closed") || text.contains("leaked")
+        }
+        kill(spawn.pid, SIGTERM)
+        var status: Int32 = 0
+        _ = waitpid(spawn.pid, &status, 0)
+
+        let text = String(data: collected, encoding: .utf8) ?? ""
+        #expect(text.contains("closed"), "expected child fd \(inheritedFD) to be closed; got \(text)")
+        #expect(!text.contains("leaked"), "child inherited fd \(inheritedFD): \(text)")
+    }
 }
 
 // MARK: - fd_set helpers (Swift doesn't expose FD_ZERO/FD_SET as macros)

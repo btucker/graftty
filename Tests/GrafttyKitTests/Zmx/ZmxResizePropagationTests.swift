@@ -309,7 +309,9 @@ struct ZmxResizePropagationTests {
     /// blocked SIGWINCH delivery to zmx entirely — the handler never
     /// fired, so even the LF nudge couldn't recover a resize that was
     /// never seen. This test asserts that's no longer the case.
-    @Test(.timeLimit(.minutes(1)))
+    @Test("""
+    @spec WEB-4.7: When the application transitions the forked child into `zmx attach`, the final `execve` shall be performed via `posix_spawn` with `POSIX_SPAWN_SETEXEC | POSIX_SPAWN_SETSIGMASK` and an empty initial signal mask. `fork(2)` preserves the parent's sigmask and plain `execve(2)` carries it across — and the Swift runtime (GCD/Dispatch) blocks a family of signals on its service threads, so a child inheriting that mask starts with SIGWINCH blocked. `zmx attach` installs a SIGWINCH handler to forward PTY resize events to the daemon; if SIGWINCH is blocked the handler never fires, the kernel sets the signal pending, and WebSocket-sent resize events silently vanish until an unrelated signal or explicit unblock drains them. The spawn-level mask reset is the kernel-boundary fix that guarantees the exec'd image starts with every signal unblocked.
+    """, .timeLimit(.minutes(1)))
     func resizeIsPropagatedAfterUserInput() throws {
         try Self.withScopedZmxDir { launcher in
             let session = launcher.sessionName(for: UUID())

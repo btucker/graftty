@@ -29,6 +29,18 @@ struct PRButton: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(maxWidth: 260, alignment: .leading)
+
+            if info.state == .open && info.mergeable == .conflicting {
+                Text("merge conflict")
+                    .font(.caption2)
+                    .fontWeight(.medium)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .foregroundColor(PRInfo.Mergeable.conflicting.statusColor)
+                    .background(
+                        Capsule().fill(PRInfo.Mergeable.conflicting.statusColor.opacity(0.18))
+                    )
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 2)
@@ -92,6 +104,20 @@ extension PRInfo.Checks {
         case .failure: return Color(red: 0.97, green: 0.32, blue: 0.29)
         case .pending: return Color(red: 0.82, green: 0.60, blue: 0.13)
         case .none:    return Color(red: 0.43, green: 0.46, blue: 0.51)
+        }
+    }
+}
+
+extension PRInfo.Mergeable {
+    /// Color for the merge-conflict cue. Distinct from CI failure
+    /// red so a "PR has conflicts but CI is green" state reads
+    /// differently from "PR is broken in CI". Used by the sidebar
+    /// `#<number>` badge when `PRBadgeStyle` returns `.conflicting`
+    /// and by the breadcrumb's "merge conflict" pill.
+    var statusColor: Color {
+        switch self {
+        case .conflicting: return Color(red: 0.95, green: 0.46, blue: 0.20)
+        case .mergeable, .unknown: return PRInfo.State.open.statusColor
         }
     }
 }

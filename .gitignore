@@ -14,3 +14,4 @@ Apps/*/build/
 **/xcuserdata/
 **/*.xcuserstate
 .swiftpm/xcode/
+__pycache__/

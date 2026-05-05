@@ -17,6 +17,11 @@ public final class WebServer {
         case tailscaleUnavailable
         case magicDNSDisabled
         case httpsCertsNotEnabled
+        /// Tailscale is up and MagicDNS is configured; we're awaiting
+        /// the cert pair from `/localapi/v0/cert/<fqdn>?type=pair`. On
+        /// first-mint the ACME exchange runs 10–30s, so the Settings
+        /// pane renders progress instead of freezing the UI. WEB-8.6.
+        case provisioningCert
         case certFetchFailed(String)
         case portUnavailable
         case error(String)
@@ -82,6 +87,10 @@ public final class WebServer {
         /// Source for `GET /sessions`. Called on each request; runs fast
         /// because the list is read from in-memory AppState (no git work).
         public let sessionsProvider: @Sendable () async -> [SessionInfo]
+        /// Resolves a WebSocket session name to the worktree directory the
+        /// attach process should start in. Nil preserves the previous
+        /// process-cwd behavior for unknown or legacy sessions.
+        public let sessionWorktreeProvider: @Sendable (String) async -> String?
         /// Source for `GET /repos`. Same fast-snapshot contract as
         /// `sessionsProvider`: read from in-memory AppState, no git.
         public let reposProvider: @Sendable () async -> [RepoInfo]
@@ -110,6 +119,7 @@ public final class WebServer {
             zmxExecutable: URL,
             zmxDir: URL,
             sessionsProvider: @escaping @Sendable () async -> [SessionInfo] = { [] },
+            sessionWorktreeProvider: @escaping @Sendable (String) async -> String? = { _ in nil },
             reposProvider: @escaping @Sendable () async -> [RepoInfo] = { [] },
             worktreeCreator: (@Sendable (CreateWorktreeRequest) async -> CreateWorktreeOutcome)? = nil,
             ghosttyConfigProvider: @escaping @Sendable () async -> String = { "" },
@@ -119,6 +129,7 @@ public final class WebServer {
             self.zmxExecutable = zmxExecutable
             self.zmxDir = zmxDir
             self.sessionsProvider = sessionsProvider
+            self.sessionWorktreeProvider = sessionWorktreeProvider
             self.reposProvider = reposProvider
             self.worktreeCreator = worktreeCreator
             self.ghosttyConfigProvider = ghosttyConfigProvider
@@ -299,12 +310,22 @@ public final class WebServer {
             },
             upgradePipelineHandler: { channel, head in
                 let session = Self.parseSession(from: head.uri)
-                let wsHandler = WebSocketBridgeHandler(
-                    sessionName: session,
-                    zmxExecutable: config.zmxExecutable,
-                    zmxDir: config.zmxDir
-                )
-                return channel.pipeline.addHandler(wsHandler)
+                let promise = channel.eventLoop.makePromise(of: String?.self)
+                channel.eventLoop.execute {
+                    Task {
+                        let worktreePath = await config.sessionWorktreeProvider(session)
+                        promise.succeed(worktreePath)
+                    }
+                }
+                return promise.futureResult.flatMap { worktreePath in
+                    let wsHandler = WebSocketBridgeHandler(
+                        sessionName: session,
+                        zmxExecutable: config.zmxExecutable,
+                        zmxDir: config.zmxDir,
+                        workingDirectory: worktreePath.map { URL(fileURLWithPath: $0, isDirectory: true) }
+                    )
+                    return channel.pipeline.addHandler(wsHandler)
+                }
             }
         )
     }
@@ -662,13 +683,15 @@ public final class WebServer {
         let sessionName: String
         let zmxExecutable: URL
         let zmxDir: URL
+        let workingDirectory: URL?
         private var session: WebSession?
         private weak var channel: Channel?
 
-        init(sessionName: String, zmxExecutable: URL, zmxDir: URL) {
+        init(sessionName: String, zmxExecutable: URL, zmxDir: URL, workingDirectory: URL?) {
             self.sessionName = sessionName
             self.zmxExecutable = zmxExecutable
             self.zmxDir = zmxDir
+            self.workingDirectory = workingDirectory
         }
 
         func handlerAdded(context: ChannelHandlerContext) {
@@ -676,7 +699,8 @@ public final class WebServer {
             let sess = WebSession(config: WebSession.Config(
                 zmxExecutable: zmxExecutable,
                 zmxDir: zmxDir,
-                sessionName: sessionName
+                sessionName: sessionName,
+                workingDirectory: workingDirectory
             ))
             sess.onPTYData = { [weak self] data in
                 guard let self, let channel = self.channel else { return }

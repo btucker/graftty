@@ -1,1 +1,1 @@
-[{"number":398,"title":"GitHub integration scaffold","url":"https://github.com/btucker/graftty/pull/398","state":"MERGED","headRefName":"feature/github-integration","mergedAt":"2026-04-15T10:00:00Z","headRepositoryOwner":{"login":"btucker"}}]
+[{"number":398,"title":"GitHub integration scaffold","url":"https://github.com/btucker/graftty/pull/398","state":"MERGED","headRefName":"feature/github-integration","headRepositoryOwner":{"login":"btucker"},"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}],"mergeable":"MERGEABLE"}]

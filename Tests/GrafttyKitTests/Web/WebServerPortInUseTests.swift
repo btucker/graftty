@@ -4,16 +4,16 @@ import Foundation
 
 /// Pins that `WebServer.start` classifies an EADDRINUSE bind failure
 /// as `.portUnavailable` on the WebServer instance. `WebServerController`
-/// currently overwrites this with `.error(rawString)` in its catch
-/// block — the raw NIO error (`"bind(descriptor:ptr:bytes:): Address
-/// already in use) (errno: 48)"`) is opaque to users. The controller
-/// fix must read `server.status` after the throw; this test lets a
-/// future refactor delete the controller's separate classification
-/// logic with confidence.
+/// also calls the same `WebServer.isAddressInUse(_:)` helper before
+/// falling back to `.error(rawString)`, so the user sees "Port in use"
+/// rather than an opaque NIO bind error.
 @Suite("WebServer — port-in-use classification")
 struct WebServerPortInUseTests {
 
-    @Test func secondBindOnSamePortReportsPortUnavailable() throws {
+    @Test("""
+    @spec WEB-1.11: When the server fails to bind because the configured port is already in use (EADDRINUSE), the application shall surface the status as `.portUnavailable` — rendered as "Port in use" in the Settings pane — rather than the raw NIO error string (`"bind(descriptor:ptr:bytes:): Address already in use) (errno: 48)"`). Recognition is locale-stable: classify by the bridged `NSPOSIXErrorDomain` + `EADDRINUSE` errno code, with the NIO string-match kept as a secondary path. Both `WebServer.start` and `WebServerController` use a single shared `WebServer.isAddressInUse(_:)` classifier so they cannot drift on recognising the same error.
+    """)
+    func secondBindOnSamePortReportsPortUnavailable() throws {
         // Bind the first server to an ephemeral port, then capture the
         // port and try to start a second server on the same port. The
         // second start() must throw AND set `status = .portUnavailable`.
@@ -47,5 +47,16 @@ struct WebServerPortInUseTests {
             second.status == .portUnavailable,
             "port-in-use must classify as .portUnavailable, not .error(raw); got \(second.status)"
         )
+    }
+
+    @Test func addressInUseClassifierAcceptsPOSIXErrnoAndStringFallback() {
+        let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(EADDRINUSE))
+        #expect(WebServer.isAddressInUse(posix))
+
+        struct StringOnlyError: Error, CustomStringConvertible {
+            let description = "bind(descriptor:ptr:bytes:): Address already in use) (errno: 48)"
+        }
+        #expect(WebServer.isAddressInUse(StringOnlyError()))
+        #expect(!WebServer.isAddressInUse(NSError(domain: NSPOSIXErrorDomain, code: Int(ECONNREFUSED))))
     }
 }

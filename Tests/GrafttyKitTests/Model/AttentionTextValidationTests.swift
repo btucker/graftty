@@ -38,7 +38,10 @@ struct AttentionTextValidationTests {
         #expect(Attention.isValidText(s))
     }
 
-    @Test func textOneOverMaxIsInvalid() {
+    @Test("""
+    @spec STATE-2.10: When the application receives a `notify` message over the socket whose text is longer than 200 Character (grapheme cluster) units, the application shall silently drop the message rather than render or persist a blob the sidebar capsule cannot display cleanly. This backs up the CLI's `ATTN-1.10` validation for non-CLI socket clients (raw `nc -U`, web surface, custom scripts).
+    """)
+    func textOneOverMaxIsInvalid() {
         let s = String(repeating: "a", count: Attention.textMaxLength + 1)
         #expect(!Attention.isValidText(s))
     }
@@ -122,7 +125,10 @@ struct AttentionClearAfterTests {
         #expect(Attention.effectiveClearAfter(nil) == nil)
     }
 
-    @Test func zeroAndNegativeBecomeNil() {
+    @Test("""
+    @spec STATE-2.8: If a notify request specifies an auto-clear duration of zero or negative, then the application shall treat the notification as having no auto-clear timer (the overlay persists until cleared by the CLI or replaced by another notification).
+    """)
+    func zeroAndNegativeBecomeNil() {
         #expect(Attention.effectiveClearAfter(0) == nil)
         #expect(Attention.effectiveClearAfter(-1) == nil)
         #expect(Attention.effectiveClearAfter(-9999) == nil)

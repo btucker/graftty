@@ -12,7 +12,10 @@ public struct HostPickerView: View {
     public var body: some View {
         List {
             Section("Saved hosts") {
-                if store.hosts.isEmpty {
+                // Gate empty-state copy on `hasLoaded` — otherwise users
+                // with saved hosts see a brief "No saved hosts yet"
+                // flicker before the async load lands.
+                if store.hasLoaded && store.hosts.isEmpty {
                     Text("No saved hosts yet.").foregroundStyle(.secondary)
                 }
                 ForEach(store.hosts) { host in
@@ -43,6 +46,7 @@ public struct HostPickerView: View {
         .sheet(isPresented: $showingAdd) {
             AddHostView { host in try store.add(host) }
         }
+        .task { await store.loadIfNeeded() }
     }
 }
 #endif

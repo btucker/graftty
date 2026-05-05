@@ -10,7 +10,7 @@ import Foundation
 @Suite("""
 PRStatusStore polling tick liveness
 
-@spec PR-7.14: The PR polling tick shall dispatch eligible per-worktree fetches and return without awaiting those fetch Tasks. The ticker loop itself must remain live even if a `gh` / `glab` subprocess hangs, otherwise `PR-7.13`'s abandoned-in-flight recovery never gets a later polling tick on which to supersede the stuck fetch. A hung fetch may occupy that worktree's `inFlight` slot until the `PR-7.13` 30-second inFlight cap elapses, but it must not stop unrelated worktrees from polling or require the user to click the sidebar to trigger the separate on-demand refresh path.
+@spec PR-7.14: The PR polling tick shall dispatch eligible per-repo fetches and return without awaiting those fetch Tasks. The ticker loop itself must remain live even if a `gh` / `glab` subprocess hangs, otherwise `PR-7.13`'s abandoned-in-flight recovery never gets a later polling tick on which to supersede the stuck fetch. A hung fetch may occupy that repo's `inFlight` slot until the `PR-7.13` 30-second inFlight cap elapses, but it must not stop unrelated repos from polling or require the user to click the sidebar to trigger the separate on-demand refresh path.
 """)
 struct PRStatusStorePollTickHangTests {
 
@@ -95,8 +95,11 @@ private actor HangingPRFetcher: PRFetcher {
         self.stream = stream
     }
 
-    func fetch(origin: HostingOrigin, branch: String) async throws -> PRInfo? {
+    func fetch(
+        origin: HostingOrigin,
+        branchesOfInterest: Set<String>
+    ) async throws -> RepoPRSnapshot {
         for await _ in stream {}
-        return nil
+        return RepoPRSnapshot(prsByBranch: [:])
     }
 }

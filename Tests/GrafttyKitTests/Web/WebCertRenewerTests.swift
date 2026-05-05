@@ -19,6 +19,28 @@ struct WebCertRenewerTests {
         #expect(provider.current() === replacement)
     }
 
+    @Test("""
+    @spec WEB-8.3: While the server is listening, the application shall re-fetch the cert every 24 hours. If the returned PEM bytes differ from the currently-serving material, the application shall construct a new `NIOSSLContext` and atomically swap the reference read by the per-channel `ChannelInitializer` via `WebTLSContextProvider.swap(_:)`. The application shall not close the listening socket and shall not disturb in-flight connections — existing WebSocket streams keep their prior context for their lifetime.
+    """)
+    func startRenewsAfterConfiguredIntervalAndSwapsContext() async throws {
+        let initial = try makeTestTLSContext()
+        let replacement = try makeTestTLSContext()
+        let provider = WebTLSContextProvider(initial: initial)
+        let renewer = WebCertRenewer(
+            provider: provider,
+            interval: 0.01,
+            fetch: { replacement }
+        )
+        renewer.start()
+        defer { renewer.stop() }
+
+        for _ in 0..<20 {
+            if provider.current() === replacement { return }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        Issue.record("renewal interval did not swap the TLS context")
+    }
+
     @Test func renewNow_swallowsFetchError() async throws {
         let initial = try makeTestTLSContext()
         let provider = WebTLSContextProvider(initial: initial)

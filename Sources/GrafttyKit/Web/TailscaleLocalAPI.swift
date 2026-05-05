@@ -164,9 +164,19 @@ public struct TailscaleLocalAPI {
     /// machine's MagicDNS name. Classifies "tailnet HTTPS disabled"
     /// into `.httpsCertsDisabled` so the Settings pane can render an
     /// admin-console deep link instead of an opaque 500. WEB-8.2.
+    ///
+    /// The 90 s recv timeout is sized for first-time Let's Encrypt
+    /// minting — tailscaled runs an ACME DNS-01 exchange before the
+    /// response starts streaming, which routinely takes 10–30 s and
+    /// can run longer under nameserver hiccups. The 2 s default used
+    /// for `whois`/`status` would silently truncate the response and
+    /// surface as `.malformedResponse`. WEB-8.5.
     public func certPair(for fqdn: String) async throws -> (cert: Data, key: Data) {
         let escaped = fqdn.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? fqdn
-        let (code, body) = try await transportCall(path: "/localapi/v0/cert/\(escaped)?type=pair")
+        let (code, body) = try await transportCall(
+            path: "/localapi/v0/cert/\(escaped)?type=pair",
+            recvTimeoutSeconds: 90
+        )
         if code == 200 {
             return try Self.parseCertPair(body)
         }
@@ -289,7 +299,16 @@ public struct TailscaleLocalAPI {
     /// non-200. Callers that want to inspect an error body (e.g., the
     /// cert endpoint's "HTTPS disabled" response) go through this;
     /// the simpler `request(path:)` funnels through here too.
-    private func transportCall(path: String) async throws -> (Int, Data) {
+    ///
+    /// `recvTimeoutSeconds` sets `SO_RCVTIMEO` for this call. The 2 s
+    /// default fits the WebServer auth hot path (`whois`, `status`);
+    /// `certPair` overrides to a longer value because first-time
+    /// Let's Encrypt minting can pause tailscaled for 10–30 s before
+    /// the response starts streaming. WEB-8.5.
+    private func transportCall(
+        path: String,
+        recvTimeoutSeconds: Int = 2
+    ) async throws -> (Int, Data) {
         let fd: Int32
         let hostHeader: String
         let authHeader: String
@@ -307,11 +326,14 @@ public struct TailscaleLocalAPI {
         }
         defer { close(fd) }
 
-        // 2s send/recv timeout so a hung tailscaled doesn't wedge the WebServer
-        // auth path indefinitely.
-        var timeout = timeval(tv_sec: 2, tv_usec: 0)
-        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-        _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+        // Send timeout stays short — the request payload is <200 bytes
+        // and any send-side hang means tailscaled is unresponsive.
+        // Recv timeout is per-call so cert minting can wait for Let's
+        // Encrypt without affecting the auth-path defaults. WEB-8.5.
+        var sendTimeout = timeval(tv_sec: 2, tv_usec: 0)
+        var recvTimeout = timeval(tv_sec: recvTimeoutSeconds, tv_usec: 0)
+        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &recvTimeout, socklen_t(MemoryLayout<timeval>.size))
+        _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &sendTimeout, socklen_t(MemoryLayout<timeval>.size))
 
         // HTTP/1.0 avoids Transfer-Encoding: chunked responses that the
         // macsys TCP LocalAPI emits for larger payloads (e.g., `status`).

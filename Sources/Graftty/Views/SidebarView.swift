@@ -89,6 +89,10 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func repoSection(_ repo: RepoEntry) -> some View {
+        let worktreeLabels = SidebarWorktreeLabel.texts(
+            for: repo.worktrees,
+            inRepoAtPath: repo.path
+        )
         DisclosureGroup(
             isExpanded: Binding(
                 get: { !repo.isCollapsed },
@@ -100,7 +104,15 @@ struct SidebarView: View {
             )
         ) {
             ForEach(repo.worktrees) { worktree in
-                worktreeBlock(worktree, repo: repo)
+                worktreeBlock(
+                    worktree,
+                    repo: repo,
+                    displayName: worktreeLabels[worktree.id] ?? SidebarWorktreeLabel.text(
+                        for: worktree,
+                        inRepoAtPath: repo.path,
+                        siblingPaths: repo.worktrees.map(\.path)
+                    )
+                )
                     // Outdent the worktree rows so each row's state
                     // indicator lines up under the parent repo's folder
                     // icon rather than sitting further right than the
@@ -153,7 +165,11 @@ struct SidebarView: View {
     /// focused pane is distinguished by text emphasis rather than a
     /// second background.
     @ViewBuilder
-    private func worktreeBlock(_ worktree: WorktreeEntry, repo: RepoEntry) -> some View {
+    private func worktreeBlock(
+        _ worktree: WorktreeEntry,
+        repo: RepoEntry,
+        displayName: String
+    ) -> some View {
         let isActive = appState.selectedWorktreePath == worktree.path
         let attention = SidebarAttentionLayout.layout(for: worktree)
         let isDropTarget = dropTargetWorktreeID == worktree.id
@@ -164,7 +180,7 @@ struct SidebarView: View {
                 WorktreeRow(
                     entry: worktree,
                     isActive: isActive,
-                    displayName: label(for: worktree, in: repo),
+                    displayName: displayName,
                     isMainCheckout: worktree.path == repo.path,
                     theme: theme,
                     stats: statsStore.stats[worktree.path],
@@ -173,7 +189,13 @@ struct SidebarView: View {
                         repoPath: repo.path
                     ),
                     prBadge: prStatusStore.infos[worktree.path].map {
-                        PRBadge(number: $0.number, state: $0.state, checks: $0.checks, url: $0.url)
+                        PRBadge(
+                            number: $0.number,
+                            state: $0.state,
+                            checks: $0.checks,
+                            mergeable: $0.mergeable,
+                            url: $0.url
+                        )
                     },
                     attentionText: attention.worktreeCapsule
                 )
@@ -258,14 +280,6 @@ struct SidebarView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(theme.foreground.opacity(isDropTarget ? 0.5 : 0), lineWidth: 1.5)
-        )
-    }
-
-    private func label(for worktree: WorktreeEntry, in repo: RepoEntry) -> String {
-        SidebarWorktreeLabel.text(
-            for: worktree,
-            inRepoAtPath: repo.path,
-            siblingPaths: repo.worktrees.map(\.path)
         )
     }
 

@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import GhosttyTerminal
+import ObjectiveC
 import SwiftUI
 import UIKit
 
@@ -110,10 +111,16 @@ public final class TerminalInputContainerView: UIView {
             terminalView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        inputProxy.terminalView = terminalView
-        inputProxy.isHidden = true
-        inputProxy.isUserInteractionEnabled = false
+        inputProxy.translatesAutoresizingMaskIntoConstraints = false
+        inputProxy.backgroundColor = .clear
+        inputProxy.isOpaque = false
         addSubview(inputProxy)
+        NSLayoutConstraint.activate([
+            inputProxy.leadingAnchor.constraint(equalTo: leadingAnchor),
+            inputProxy.trailingAnchor.constraint(equalTo: trailingAnchor),
+            inputProxy.topAnchor.constraint(equalTo: topAnchor),
+            inputProxy.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
 
         let tap = UITapGestureRecognizer(target: self, action: #selector(focusKeyboardInput))
         tap.cancelsTouchesInView = false
@@ -126,7 +133,6 @@ public final class TerminalInputContainerView: UIView {
 }
 
 final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTraits {
-    weak var terminalView: UITerminalView?
     var insertTextHandler: ((String) -> Void)?
     var deleteBackwardHandler: (() -> Void)?
 
@@ -134,6 +140,16 @@ final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTr
     var hasText: Bool { true }
 
     override var inputAccessoryView: UIView? {
+        nil
+    }
+
+    /// IOS-6.8: hit-test transparent. Touches pass through to
+    /// `UITerminalView` underneath so its pan-to-scroll and pinch-to-zoom
+    /// gesture recognizers receive them. The keyboard responder chain
+    /// is independent of hit-testing — `becomeFirstResponder()` from the
+    /// container's tap recognizer still routes software-keyboard input
+    /// here per IOS-6.6.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         nil
     }
 
@@ -179,5 +195,43 @@ final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTr
         get { .default }
         set {}
     }
+}
+
+/// libghostty-spm's `UITerminalView` is `final` and unconditionally returns
+/// its own `terminalInputAccessory` from `inputAccessoryView`. On iOS it
+/// also auto-focuses itself in `touchesBegan` — once the keyboard responder
+/// — UIKit mounts the GhosttyKit bar above the keyboard alongside graftty's
+/// own SwiftUI `terminalControlBar` (`IOS-6.1`). The package exposes no
+/// opt-out, so we replace two `@objc` getters at the ObjC runtime level:
+///   - `inputAccessoryView` → nil, so even if `UITerminalView` ever does
+///      win the responder race, no accessory mounts.
+///   - `canBecomeFirstResponder` → false, so the `becomeFirstResponder()`
+///      call inside its `touchesBegan` is a no-op and our `inputProxy`
+///      stays the first responder (IOS-6.6 routing). The view's pan and
+///      pinch gesture recognizers are unaffected — UIKit doesn't gate
+///      gesture recognizers on responder status.
+/// UIKit's keyboard / responder machinery dispatches via `objc_msgSend`
+/// and picks up our IMPs. The swaps are idempotent (`dispatch_once`
+/// semantics via `static let`) and fire from `GrafttyMobileApp.init`.
+/// (`IOS-6.7`.)
+extension UITerminalView {
+    static func suppressGhosttyInputAccessory() {
+        _ = swizzleInputAccessoryViewToNilOnce
+        _ = swizzleCanBecomeFirstResponderToFalseOnce
+    }
+
+    private static let swizzleInputAccessoryViewToNilOnce: Void = {
+        let selector = #selector(getter: UIResponder.inputAccessoryView)
+        guard let method = class_getInstanceMethod(UITerminalView.self, selector) else { return }
+        let block: @convention(block) (UIResponder) -> UIView? = { _ in nil }
+        method_setImplementation(method, imp_implementationWithBlock(block))
+    }()
+
+    private static let swizzleCanBecomeFirstResponderToFalseOnce: Void = {
+        let selector = #selector(getter: UIResponder.canBecomeFirstResponder)
+        guard let method = class_getInstanceMethod(UITerminalView.self, selector) else { return }
+        let block: @convention(block) (UIResponder) -> Bool = { _ in false }
+        method_setImplementation(method, imp_implementationWithBlock(block))
+    }()
 }
 #endif

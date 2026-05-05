@@ -50,4 +50,25 @@ struct SidebarWorktreeLabelTests {
         )
         #expect(label == "feature-x")
     }
+
+    @Test func repoLabelsMatchPerRowLabels() {
+        let main = WorktreeEntry(path: "/repo", branch: "main")
+        let nested = WorktreeEntry(path: "/repo/.worktrees/feature-x", branch: "feature/x")
+        let sibling = WorktreeEntry(path: "/repo/.other/feature-x", branch: "feature/x-alt")
+        let worktrees = [main, nested, sibling]
+
+        let labels = SidebarWorktreeLabel.texts(
+            for: worktrees,
+            inRepoAtPath: "/repo"
+        )
+        let siblingPaths = worktrees.map(\.path)
+
+        for worktree in worktrees {
+            #expect(labels[worktree.id] == SidebarWorktreeLabel.text(
+                for: worktree,
+                inRepoAtPath: "/repo",
+                siblingPaths: siblingPaths
+            ))
+        }
+    }
 }

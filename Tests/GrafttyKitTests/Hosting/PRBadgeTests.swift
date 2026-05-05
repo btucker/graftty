@@ -36,4 +36,10 @@ struct PRBadgeTests {
         let b = PRBadge(number: 42, state: .open, checks: .success, url: otherURL)
         #expect(a != b)
     }
+
+    @Test func inequalWhenMergeableDiffers() {
+        let a = PRBadge(number: 42, state: .open, checks: .success, mergeable: .mergeable, url: sampleURL)
+        let b = PRBadge(number: 42, state: .open, checks: .success, mergeable: .conflicting, url: sampleURL)
+        #expect(a != b)
+    }
 }

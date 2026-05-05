@@ -1,1 +1,1 @@
-[{"number":412,"title":"Add PR/MR status button to breadcrumb","url":"https://github.com/btucker/graftty/pull/412","state":"OPEN","headRefName":"feature/git-improvements","headRepositoryOwner":{"login":"btucker"}}]
+[{"number":412,"title":"Add PR/MR status button to breadcrumb","url":"https://github.com/btucker/graftty/pull/412","state":"OPEN","headRefName":"feature/git-improvements","headRepositoryOwner":{"login":"btucker"},"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}],"mergeable":"MERGEABLE"}]

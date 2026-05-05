@@ -192,7 +192,11 @@ struct WorktreeRow: View {
 
     @ViewBuilder
     private func prBadgeLabel(_ badge: PRBadge) -> some View {
-        let tone = PRBadgeStyle.tone(state: badge.state, checks: badge.checks)
+        let tone = PRBadgeStyle.tone(
+            state: badge.state,
+            checks: badge.checks,
+            mergeable: badge.mergeable
+        )
         Button {
             NSWorkspace.shared.open(badge.url)
         } label: {
@@ -200,6 +204,17 @@ struct WorktreeRow: View {
                 .font(.caption)
                 .fontWeight(.medium)
                 .foregroundColor(color(for: tone))
+                .padding(.horizontal, 3)
+                .overlay {
+                    if tone == .conflicting {
+                        // Outline ring on conflict — pairs with the
+                        // breadcrumb's "merge conflict" pill so both
+                        // surfaces share the same visual language.
+                        // PR-8.20.
+                        Capsule()
+                            .strokeBorder(color(for: tone), lineWidth: 1)
+                    }
+                }
                 .modifier(PulseIfPending(isPending: tone.pulses))
         }
         .buttonStyle(.plain)
@@ -209,10 +224,11 @@ struct WorktreeRow: View {
 
     private func color(for tone: PRBadgeStyle.Tone) -> Color {
         switch tone {
-        case .open:      return PRInfo.State.open.statusColor
-        case .merged:    return PRInfo.State.merged.statusColor
-        case .ciFailure: return PRInfo.Checks.failure.statusColor
-        case .ciPending: return PRInfo.Checks.pending.statusColor
+        case .open:        return PRInfo.State.open.statusColor
+        case .merged:      return PRInfo.State.merged.statusColor
+        case .ciFailure:   return PRInfo.Checks.failure.statusColor
+        case .ciPending:   return PRInfo.Checks.pending.statusColor
+        case .conflicting: return PRInfo.Mergeable.conflicting.statusColor
         }
     }
 
@@ -222,13 +238,14 @@ struct WorktreeRow: View {
         case .open:   stateWord = "open"
         case .merged: stateWord = "merged"
         }
-        let ciSuffix: String
+        let suffix: String
         switch tone {
-        case .ciFailure: ciSuffix = ", CI failing"
-        case .ciPending: ciSuffix = ", CI running"
-        case .open, .merged: ciSuffix = ""
+        case .ciFailure:   suffix = ", CI failing"
+        case .ciPending:   suffix = ", CI running"
+        case .conflicting: suffix = ", merge conflict"
+        case .open, .merged: suffix = ""
         }
-        return "Pull request \(badge.number), \(stateWord)\(ciSuffix). Click to open in browser."
+        return "Pull request \(badge.number), \(stateWord)\(suffix). Click to open in browser."
     }
 
     @ViewBuilder

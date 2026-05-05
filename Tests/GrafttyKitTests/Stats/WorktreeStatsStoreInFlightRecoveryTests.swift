@@ -17,7 +17,7 @@ import Foundation
 @Suite("""
 WorktreeStatsStore — in-flight stuck-refresh recovery
 
-@spec DIVERGE-4.4: While a divergence computation is in flight for a particular worktree, duplicate refresh requests for the same worktree shall be dropped — but only while the in-flight Task is plausibly still running. After a period equal to DIVERGE-4.6's 30-second per-worktree cadence, a subsequent refresh shall supersede the prior Task: the generation counter is bumped so the stuck Task's late `apply` is discarded, and a fresh compute is dispatched. Without the staleness cap, a `git` subprocess blocked on a ref-transaction lock (e.g., during a concurrent `git push`) permanently locks the worktree's divergence gutter at whatever value was observed in the lock window.
+@spec DIVERGE-4.4: While a divergence computation is in flight for a particular worktree, duplicate refresh requests for the same worktree shall be dropped — but only while the in-flight Task is plausibly still running. After 30 seconds (the in-flight abandonment threshold), a subsequent refresh shall supersede the prior Task: the generation counter is bumped so the stuck Task's late `apply` is discarded, and a fresh compute is dispatched. Without the staleness cap, a `git` subprocess blocked on a ref-transaction lock (e.g., during a concurrent `git push`) permanently locks the worktree's divergence gutter at whatever value was observed in the lock window.
 """)
 struct WorktreeStatsStoreInFlightRecoveryTests {
 
@@ -60,7 +60,7 @@ struct WorktreeStatsStoreInFlightRecoveryTests {
         try await Task.sleep(nanoseconds: 50_000_000)
         #expect(store.isInFlightForTesting("/wt"))
 
-        // Fast-forward the in-flight timestamp past `statsRefreshCadence`
+        // Fast-forward the in-flight timestamp past `inFlightAbandonmentThreshold`
         // so the next refresh treats the prior Task as abandoned and
         // supersedes it. In production this threshold is reached
         // naturally on the next pollTick cadence (~30s after the hang).

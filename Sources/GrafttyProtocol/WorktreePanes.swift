@@ -44,6 +44,11 @@ public indirect enum PaneLayoutNode: Sendable, Hashable {
         case horizontal
         case vertical
     }
+
+    public var isLeaf: Bool {
+        if case .leaf = self { return true }
+        return false
+    }
 }
 
 extension PaneLayoutNode: Codable {

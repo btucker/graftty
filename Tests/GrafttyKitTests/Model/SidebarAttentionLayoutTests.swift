@@ -28,7 +28,10 @@ struct SidebarAttentionLayoutTests {
                 "STATE-2.3: worktree-scoped attention must not duplicate onto pane rows")
     }
 
-    @Test func paneScopedAttentionRendersOnlyOnItsOwnPane() {
+    @Test("""
+    @spec STATE-2.2: While a pane row has a pane-scoped attention overlay, the sidebar shall replace *that pane's* title text with the overlay's text rendered in a red capsule. Sibling pane rows are unaffected.
+    """)
+    func paneScopedAttentionRendersOnlyOnItsOwnPane() {
         var entry = WorktreeEntry(path: "/w", branch: "main", state: .running)
         let t1 = TerminalID()
         let t2 = TerminalID()

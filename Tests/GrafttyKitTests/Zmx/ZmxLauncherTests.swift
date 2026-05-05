@@ -12,14 +12,20 @@ struct ZmxLauncherUnitTests {
     // name, changing this function would orphan that daemon — they'd
     // get a fresh shell instead of their reattached one.
 
-    @Test func sessionNameIsDeterministic() throws {
+    @Test("""
+    @spec ZMX-2.2: The session-naming function shall be deterministic and shall not change across releases without an explicit migration step, since changing it orphans every existing user's daemons.
+    """)
+    func sessionNameIsDeterministic() throws {
         let id = UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!
         let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/dev/null"))
         let name = launcher.sessionName(for: id)
         #expect(name == "graftty-deadbeef")
     }
 
-    @Test func sessionNameUsesFirst8HexCharsOfUUID() throws {
+    @Test("""
+    @spec ZMX-2.1: The application shall derive the zmx session name for each pane as the literal string `"graftty-"` followed by the first 8 lowercase hex characters (i.e., the leading 4 bytes, yielding 32 bits of namespace uniqueness) of the pane's UUID with dashes stripped.
+    """)
+    func sessionNameUsesFirst8HexCharsOfUUID() throws {
         // First 8 hex chars of any UUID are the leading 4 bytes.
         let id = UUID(uuidString: "01234567-89AB-CDEF-FEDC-BA9876543210")!
         let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/dev/null"))
@@ -189,7 +195,10 @@ struct ZmxLauncherUnitTests {
     // ZDOTDIR into GHOSTTY_ZSH_ZDOTDIR so the integration's .zshenv
     // can restore the user's original on the other side.
 
-    @Test func attachInitialInputReInjectsZshIntegrationZDOTDIRWhenAvailable() throws {
+    @Test("""
+    @spec ZMX-6.3: If `GHOSTTY_RESOURCES_DIR` is set (per `CONFIG-2.1`) and the user's shell basename is `zsh`, the `initial_input` written per `ZMX-4.1` shall prefix the `exec` line with `if [ -n "$ZDOTDIR" ]; then export GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR"; fi; ZDOTDIR='<ghostty-resources>/shell-integration/zsh'` so the inner shell zmx spawns re-sources Ghostty's zsh integration. Without this re-injection, Ghostty's integration `.zshenv` in the outer shell has already restored `ZDOTDIR` to the user's original value, so the post-`exec` inner shell sources only the user's plain rc files — precmd hooks do not run, no OSC 7 / OSC 133 sequences are emitted, and `PWD-x.x`, the default-command first-PWD trigger, and shell-integration-driven attention badges all go silent.
+    """)
+    func attachInitialInputReInjectsZshIntegrationZDOTDIRWhenAvailable() throws {
         let launcher = ZmxLauncher(
             executable: URL(fileURLWithPath: "/Applications/Graftty.app/Contents/Helpers/zmx")
         )
@@ -263,7 +272,10 @@ struct ZmxLauncherUnitTests {
         #expect(input.hasPrefix("exec "))
     }
 
-    @Test func attachInitialInputGuardsGHOSTTYZshZDOTDIROnNonEmptyOuter() throws {
+    @Test("""
+    @spec ZMX-6.4: If the outer shell's `ZDOTDIR` is unset or empty, the `GHOSTTY_ZSH_ZDOTDIR` assignment in `ZMX-6.3` shall not execute. Ghostty's integration `.zshenv` gates its restore branch on `${GHOSTTY_ZSH_ZDOTDIR+X}` (which matches empty-string-set), and zsh's dotfile lookup uses `${ZDOTDIR-$HOME}` (falls back to `$HOME` only when *unset*, not when empty) — so an unguarded assignment would export `ZDOTDIR=""` into the inner shell and cause it to silently skip the user's `.zshenv`/`.zprofile`/`.zshrc`/`.zlogin`. Guarding keeps `GHOSTTY_ZSH_ZDOTDIR` unset so the integration's `else: unset ZDOTDIR` branch fires and dotfile lookup defaults to `$HOME`.
+    """)
+    func attachInitialInputGuardsGHOSTTYZshZDOTDIROnNonEmptyOuter() throws {
         // See ZmxLauncher.attachInitialInput for why a bare
         // GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR" would break the inner shell.
         let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/zmx"))
@@ -374,6 +386,15 @@ struct ZmxLauncherUnitTests {
         #expect(env["ZMX_DIR"] == "/tmp/zmx-xyz")
     }
 
+    @Test("""
+    @spec ZMX-3.1: The application shall pass `ZMX_DIR=~/Library/Application Support/Graftty/zmx/` in the environment of every spawned `zmx` invocation, so Graftty-owned daemons live in a private socket directory distinct from any user-personal `zmx` usage.
+    """)
+    func defaultZmxDirIsPassedToSpawnedZmxInvocations() throws {
+        let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/dev/null"))
+        let expected = AppState.defaultDirectory.appendingPathComponent("zmx", isDirectory: true).path
+        #expect(launcher.envAdditions()["ZMX_DIR"] == expected)
+    }
+
     @Test func subprocessEnvOverridesInheritedZmxDir() throws {
         // If the parent already had a ZMX_DIR, our launcher's dir wins.
         let launcher = ZmxLauncher(
@@ -410,7 +431,10 @@ struct ZmxLauncherUnitTests {
     // contains `ZMX_SESSION` and that the impure sweep actually
     // unsets a set value.
 
-    @Test func leakyEnvKeysIncludesZmxSession() {
+    @Test("""
+    @spec ZMX-7.4: At application launch, before any terminal surface is spawned, the application shall `unsetenv(...)` inherited process environment variables whose values would hijack downstream spawns into the parent shell's scope. The list shall include at minimum: `ZMX_SESSION`, `GIT_DIR`, and `GIT_WORK_TREE`.
+    """)
+    func leakyEnvKeysIncludesZmxSession() {
         #expect(ZmxLauncher.leakyEnvKeysToStripAtAppLaunch.contains("ZMX_SESSION"))
     }
 
@@ -458,7 +482,10 @@ struct ZmxLauncherUnitTests {
         #expect(launcher.isSessionMissing("graftty-aaaa1111") == false)
     }
 
-    @Test func isSessionMissingFalseWhenListSessionsThrows() throws {
+    @Test("""
+    @spec ZMX-7.2: If `zmx list` fails for any reason at the cold-start query site (per `ZMX-7.1`), the application shall treat the result as "session not missing" and take no recovery action — preferring a missed recovery over a spurious rehydration clear.
+    """)
+    func isSessionMissingFalseWhenListSessionsThrows() throws {
         // /bin/sh is executable so isAvailable is true, but listSessions
         // throws because it isn't zmx — locks the throw → false bias.
         let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/bin/sh"))

@@ -602,14 +602,14 @@ struct GrafttyApp: App {
 
         reconcileOnLaunch()
 
-        // Start the stats poller: a 5s ticker that, per-repo, gates
-        // both the 5-minute `git fetch` cadence (DIVERGE-4.3) and the
-        // per-worktree 30s local recompute cadence (DIVERGE-4.6). Keeps
-        // polling while Graftty is backgrounded — the user's Claude /
-        // editor session is often in a different frontmost app, and
-        // that's exactly when a `git add` in an external shell or a
-        // merge on origin needs to show up in the sidebar without
-        // requiring a click back into Graftty first.
+        // Start the stats poller: a 5s ticker that, per-repo, gates the
+        // 30-second `git fetch` cadence (DIVERGE-4.3) and unconditionally
+        // refreshes every running worktree on every tick (DIVERGE-4.6).
+        // Keeps polling while Graftty is backgrounded (DIVERGE-4.8) —
+        // the user's Claude / editor session is often in a different
+        // frontmost app, and that's exactly when a `git add` in an
+        // external shell or a merge on origin needs to show up in the
+        // sidebar without requiring a click back into Graftty first.
         let statsTicker = PollingTicker(
             interval: .seconds(5),
             pauseWhenInactive: { false }
@@ -676,6 +676,23 @@ struct GrafttyApp: App {
                     }
                 }
                 return sessions
+            }
+        }
+
+        // Web/iOS attaches spawn their own `zmx attach` process. If that
+        // attach wins the race to create a new zmx daemon, its cwd becomes
+        // the daemon's shell cwd, so resolve the pane back to its worktree.
+        webController.setSessionWorktreeProvider { sessionName in
+            await MainActor.run { () -> String? in
+                for repo in appStateBinding.wrappedValue.repos {
+                    for wt in repo.worktrees where wt.state == .running {
+                        for leafID in wt.splitTree.allLeaves
+                        where ZmxLauncher.sessionName(for: leafID.id) == sessionName {
+                            return wt.path
+                        }
+                    }
+                }
+                return nil
             }
         }
 
@@ -2154,24 +2171,40 @@ struct GrafttyApp: App {
 
 @MainActor
 final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
+    /// Tests substitute an immediate-fire recorder so a CI MainActor
+    /// starvation episode can't push the wall-clock follow-up sleep
+    /// past the test's `waitUntil` window.
+    typealias FollowUpScheduler = @Sendable (
+        _ delay: Duration,
+        _ work: @escaping @Sendable () async -> Void
+    ) -> Void
+
+    nonisolated static let defaultFollowUpScheduler: FollowUpScheduler = { delay, work in
+        Task.detached {
+            try? await Task.sleep(for: delay)
+            if Task.isCancelled { return }
+            await work()
+        }
+    }
+
     let appState: Binding<AppState>
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
     let remoteBranchStore: RemoteBranchStore
-    private let originRefPRFollowUpDelays: [Duration]
+    private let originRefPRFollowUpScheduler: FollowUpScheduler
 
     init(
         appState: Binding<AppState>,
         statsStore: WorktreeStatsStore,
         prStatusStore: PRStatusStore,
         remoteBranchStore: RemoteBranchStore,
-        originRefPRFollowUpDelays: [Duration] = [.seconds(1), .seconds(5)]
+        originRefPRFollowUpScheduler: @escaping FollowUpScheduler = WorktreeMonitorBridge.defaultFollowUpScheduler
     ) {
         self.appState = appState
         self.statsStore = statsStore
         self.prStatusStore = prStatusStore
         self.remoteBranchStore = remoteBranchStore
-        self.originRefPRFollowUpDelays = originRefPRFollowUpDelays
+        self.originRefPRFollowUpScheduler = originRefPRFollowUpScheduler
     }
 
     /// Called when `.git/worktrees/` changes (new worktree added, existing
@@ -2302,27 +2335,15 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
     /// `<repoPath>/.git/logs/refs/remotes/origin/` moves — i.e. a
     /// `git push` or `git fetch` landed. Covers the `gh pr create`
     /// flow, which pushes then creates the PR via API without touching
-    /// local HEAD. We refresh every non-stale worktree in the repo
-    /// because a single directory-level event doesn't tell us which
-    /// specific branch's ref moved, and `PRStatusStore.refresh` is
-    /// already idempotent against duplicate fetches via its `inFlight`
-    /// gate.
+    /// local HEAD. Drives only the remote-branch and PR refresh; the
+    /// divergence stats are already covered by the unconditional 5s
+    /// polling tick (DIVERGE-4.6), so they don't need a parallel
+    /// FSEvents kick here.
     nonisolated func worktreeMonitorDidDetectOriginRefChange(_ monitor: WorktreeMonitor, repoPath: String) {
         let binding = appState
-        let statsStore = statsStore
         let remoteBranchStore = remoteBranchStore
         Task { @MainActor in
-            guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }) else { return }
-            for wt in repo.worktrees where wt.state == .running {
-                // Origin-ref movement can shift every worktree's ahead /
-                // behind counts vs. origin/<default>, not just the PR
-                // state — e.g. a local `git fetch` in another terminal
-                // advances `origin/main` and every feature-branch
-                // worktree now has a new "behind" count. Refresh stats
-                // symmetrically with PR so the sidebar doesn't need a
-                // full poll cycle to catch up.
-                statsStore.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
-            }
+            guard binding.wrappedValue.repos.contains(where: { $0.path == repoPath }) else { return }
             remoteBranchStore.refresh(repoPath: repoPath) { [weak self] in
                 self?.refreshPushedPRs(repoPath: repoPath)
                 self?.scheduleOriginRefPRFollowUps(repoPath: repoPath)
@@ -2339,37 +2360,19 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
     }
 
     private func scheduleOriginRefPRFollowUps(repoPath: String) {
-        for delay in originRefPRFollowUpDelays {
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: delay)
-                if Task.isCancelled { return }
-                self?.refreshPushedPRs(repoPath: repoPath)
+        // Detached so a starved MainActor (heavy app startup, CI
+        // test parallelism) can't push the sleep out by many
+        // seconds; only the eventual `refreshPushedPRs` hops back.
+        let delays: [Duration] = [.seconds(1), .seconds(5)]
+        for delay in delays {
+            originRefPRFollowUpScheduler(delay) { [weak self] in
+                await self?.refreshPushedPRs(repoPath: repoPath)
             }
-        }
-    }
-
-    /// GIT-2.6: working-tree content change (edit, stage, untracked-file
-    /// add) fired through FSEvents. Drives the dirty-state indicator
-    /// without waiting for the 30s local poll (DIVERGE-4.6). Idempotent
-    /// — `statsStore.refresh` self-dedups via `inFlight`, and the
-    /// generation counter guards against a late compute writing to a
-    /// worktree that was just dismissed.
-    nonisolated func worktreeMonitorDidDetectContentChange(_ monitor: WorktreeMonitor, worktreePath: String) {
-        let binding = appState
-        let store = statsStore
-        Task { @MainActor in
-            guard let repo = binding.wrappedValue.repos.first(where: { repo in
-                repo.worktrees.contains(where: { $0.path == worktreePath && $0.state == .running })
-            }),
-                  let wt = repo.worktrees.first(where: { $0.path == worktreePath })
-            else { return }
-            store.refresh(worktreePath: worktreePath, repoPath: repo.path, branch: wt.branch)
         }
     }
 
     nonisolated func worktreeMonitorDidDetectBranchChange(_ monitor: WorktreeMonitor, worktreePath: String) {
         let binding = appState
-        let store = statsStore
         let prStore = prStatusStore
         let remoteBranchStore = remoteBranchStore
         // Branch changes fire in bursts (rebase, interactive checkout), so
@@ -2392,7 +2395,6 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             guard let repoIdx = binding.wrappedValue.repos.firstIndex(where: { $0.path == repoPath }),
                   let wtIdx = binding.wrappedValue.repos[repoIdx].worktrees.firstIndex(where: { $0.path == worktreePath }) else { return }
             binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].branch = match.branch
-            store.refresh(worktreePath: worktreePath, repoPath: repoPath, branch: match.branch)
             prStore.clear(worktreePath: worktreePath)
             remoteBranchStore.refresh(repoPath: repoPath) {
                 guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }),

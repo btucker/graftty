@@ -2,62 +2,59 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
-// When a worktree is removed from the model (or a branch change forces
-// a re-resolve), `clear(worktreePath:)` wipes the known PR state. Two
-// invariants that weren't previously covered:
-//
-//   1. inFlight gets reset. Otherwise, a refresh mid-fetch would leave
-//      the path stuck in `inFlight` until the prior Task completes,
-//      blocking the next refresh — which for branch-change-triggered
-//      re-resolves is exactly the moment Andy expects the new branch's
-//      PR to show up immediately.
-//
-//   2. Each `clear` bumps a per-path generation counter. `performFetch`
-//      captures the generation at start and checks it before writing
-//      back to `infos`/`absent`/etc. If the generation changed (because
-//      clear ran during the in-flight fetch), the stale blob is
-//      dropped — no ghost PR badge for a cleared worktree.
+/// `clear(worktreePath:)` is per-worktree-cache only now: it
+/// removes `infos[wt]` and `absent` membership for the path. The
+/// per-repo polling state (in-flight, generation, lastFetch,
+/// failureStreak) is no longer keyed by worktree path, so a
+/// worktree removal doesn't invalidate the repo's in-flight fetch
+/// — the next dispatched fetch's snapshot simply won't find that
+/// worktree to apply to.
+///
+/// @spec PR-8.21
 @Suite("PRStatusStore.clear")
 struct PRStatusStoreClearTests {
 
     @MainActor
-    @Test func clearRemovesInFlightEntry() async {
-        let fake = FakeCLIExecutor()
+    @Test func clearRemovesCachedInfo() async {
         let store = PRStatusStore(
-            executor: fake,
+            executor: FakeCLIExecutor(),
             fetcherFor: { _ in nil },
             detectHost: { _ in nil }
         )
-        store.beginInFlightForTesting("/wt")
-        #expect(store.isInFlightForTesting("/wt"))
+        let url = URL(string: "https://github.com/x/y/pull/1")!
+        let info = PRInfo(
+            number: 1, title: "x", url: url,
+            state: .open, checks: .pending, fetchedAt: Date()
+        )
+        store.applyInfoForTesting(worktreePath: "/wt", info: info)
+        #expect(store.infos["/wt"] != nil)
         store.clear(worktreePath: "/wt")
-        #expect(!store.isInFlightForTesting("/wt"))
+        #expect(store.infos["/wt"] == nil)
     }
 
     @MainActor
-    @Test func clearBumpsGenerationCounter() async {
-        let fake = FakeCLIExecutor()
+    @Test func clearRemovesAbsentMembership() async {
         let store = PRStatusStore(
-            executor: fake,
+            executor: FakeCLIExecutor(),
             fetcherFor: { _ in nil },
             detectHost: { _ in nil }
         )
-        let before = store.generationForTesting("/wt")
+        store.markAbsentForTesting("/wt")
+        #expect(store.absent.contains("/wt"))
         store.clear(worktreePath: "/wt")
-        let after = store.generationForTesting("/wt")
-        #expect(after == before + 1)
+        #expect(!store.absent.contains("/wt"))
     }
 
     @MainActor
-    @Test func repeatedClearsKeepBumpingGeneration() async {
-        let fake = FakeCLIExecutor()
+    @Test func clearOnNeverSeenWorktreeIsNoOp() async {
         let store = PRStatusStore(
-            executor: fake,
+            executor: FakeCLIExecutor(),
             fetcherFor: { _ in nil },
             detectHost: { _ in nil }
         )
-        let start = store.generationForTesting("/wt")
-        for _ in 0..<3 { store.clear(worktreePath: "/wt") }
-        #expect(store.generationForTesting("/wt") == start + 3)
+        // No throw, no @Observable mutation.
+        store.clear(worktreePath: "/never-seen")
+        #expect(store.infos.isEmpty)
+        #expect(store.absent.isEmpty)
     }
 }
