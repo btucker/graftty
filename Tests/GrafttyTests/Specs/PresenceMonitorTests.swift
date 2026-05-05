@@ -13,7 +13,11 @@ struct PresenceMonitorTests {
         try storage.write(.init(teamID: "team-abc", worktree: "alive", runtime: .claude, pid: 1, registeredAt: Date()))
         try storage.write(.init(teamID: "team-abc", worktree: "dead", runtime: .claude, pid: 999_999, registeredAt: Date()))
 
-        TeamPresenceMonitor.cleanupStale(storage: storage, isAlive: { $0 == 1 })
+        TeamPresenceMonitor.cleanupStale(
+            storage: storage,
+            isAlive: { $0 == 1 },
+            eventLog: TeamEventLog(rootDirectory: tmpRoot.appendingPathComponent("events", isDirectory: true))
+        )
 
         let alive = try storage.read(teamID: "team-abc", worktree: "alive", runtime: .claude)
         let dead = try storage.read(teamID: "team-abc", worktree: "dead", runtime: .claude)

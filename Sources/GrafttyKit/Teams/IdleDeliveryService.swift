@@ -32,6 +32,7 @@ public actor IdleDeliveryService {
     private let nudgeSender: NudgeSender
     private let sessionLookup: SessionLookup
     private let now: @Sendable () -> Date
+    private let eventLog: TeamEventLog?
 
     /// Per-recipient memory of "the most recent stale message ID we
     /// already nudged about". A new tick that observes the same head
@@ -45,7 +46,8 @@ public actor IdleDeliveryService {
         inputState: ZmxInputState,
         nudgeSender: NudgeSender,
         sessionLookup: SessionLookup? = nil,
-        now: @escaping @Sendable () -> Date = { Date() }
+        now: @escaping @Sendable () -> Date = { Date() },
+        eventLog: TeamEventLog? = TeamEventLog.defaultLog()
     ) {
         self.presence = presence
         self.inboxRoot = inboxRoot
@@ -58,6 +60,7 @@ public actor IdleDeliveryService {
         // session] map.
         self.sessionLookup = sessionLookup ?? { record in [record.worktree] }
         self.now = now
+        self.eventLog = eventLog
     }
 
     /// Loop forever, ticking on a fixed cadence. Cancellation breaks the
@@ -92,22 +95,51 @@ public actor IdleDeliveryService {
         }
         let cutoff = now().addingTimeInterval(-Self.staleAgeThreshold)
         let stale = forRecipient.filter { $0.createdAt <= cutoff }
-        guard let head = stale.last else { return }
+        guard let head = stale.last else {
+            // No stale messages addressed to this recipient. Stay quiet —
+            // logging on every empty tick would drown out signal in noise.
+            return
+        }
 
         // TEAM-IDLE-2.3: dedupe on the head ID — one nudge per stale-state.
         let key = "\(record.teamID)/\(record.worktree)/\(record.runtime.rawValue)"
-        if lastNudgedHead[key] == head.id { return }
+        if lastNudgedHead[key] == head.id {
+            emitSkip(record: record, reason: "debounced", headID: head.id)
+            return
+        }
 
         // TEAM-IDLE-2.2: typing gate. Skip if any session hosting this
         // recipient is mid-line. Don't update lastNudgedHead — we want to
         // retry on the next tick once the user commits the line.
         for sessionID in sessionLookup(record) {
-            if inputState.uncommittedBytes(forSession: sessionID) > 0 { return }
+            if inputState.uncommittedBytes(forSession: sessionID) > 0 {
+                emitSkip(record: record, reason: "typing", headID: head.id)
+                return
+            }
         }
 
         let body = Self.renderBody(stale: stale)
         await nudgeSender.send(to: record, message: body, messageIDs: stale.map(\.id))
         lastNudgedHead[key] = head.id
+        try? eventLog?.append(
+            .init(teamID: record.teamID, kind: .nudgeSent, detail: [
+                "worktree": record.worktree,
+                "runtime": record.runtime.rawValue,
+                "message_count": String(stale.count),
+                "head_message_id": head.id,
+            ])
+        )
+    }
+
+    private func emitSkip(record: TeamPresenceRecord, reason: String, headID: String) {
+        try? eventLog?.append(
+            .init(teamID: record.teamID, kind: .nudgeSkipped, detail: [
+                "worktree": record.worktree,
+                "runtime": record.runtime.rawValue,
+                "reason": reason,
+                "head_message_id": headID,
+            ])
+        )
     }
 
     private static func renderBody(stale: [TeamInboxMessage]) -> String {

@@ -102,11 +102,24 @@ public struct TeamPresenceStorage: Sendable {
 public enum TeamPresenceMonitor {
     public static func cleanupStale(
         storage: TeamPresenceStorage,
-        isAlive: (Int32) -> Bool = { TeamPresenceMonitor.kernelIsAlive($0) }
+        isAlive: (Int32) -> Bool = { TeamPresenceMonitor.kernelIsAlive($0) },
+        eventLog: TeamEventLog? = TeamEventLog.defaultLog()
     ) {
         let records = (try? storage.listAll()) ?? []
         for record in records where !isAlive(record.pid) {
-            try? storage.delete(teamID: record.teamID, worktree: record.worktree, runtime: record.runtime)
+            do {
+                try storage.delete(teamID: record.teamID, worktree: record.worktree, runtime: record.runtime)
+                try? eventLog?.append(
+                    .init(teamID: record.teamID, kind: .unregistered, detail: [
+                        "worktree": record.worktree,
+                        "runtime": record.runtime.rawValue,
+                        "pid": String(record.pid),
+                        "reason": "process_dead",
+                    ])
+                )
+            } catch {
+                // Swallow — best-effort cleanup.
+            }
         }
     }
 

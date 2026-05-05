@@ -31,7 +31,8 @@ struct IdleDeliveryTests {
             presence: env.presence,
             inboxRoot: env.inboxRoot,
             inputState: ZmxInputState(),
-            nudgeSender: recorder
+            nudgeSender: recorder,
+            eventLog: env.eventLog
         )
 
         await service.tick()
@@ -75,7 +76,8 @@ struct IdleDeliveryTests {
             presence: env.presence,
             inboxRoot: env.inboxRoot,
             inputState: inputState,
-            nudgeSender: recorder
+            nudgeSender: recorder,
+            eventLog: env.eventLog
         )
         await service.tick()
         let captured = await recorder.captured
@@ -109,7 +111,8 @@ struct IdleDeliveryTests {
             presence: env.presence,
             inboxRoot: env.inboxRoot,
             inputState: ZmxInputState(),
-            nudgeSender: recorder
+            nudgeSender: recorder,
+            eventLog: env.eventLog
         )
         await service.tick()
         await service.tick()
@@ -145,11 +148,50 @@ struct IdleDeliveryTests {
             presence: env.presence,
             inboxRoot: env.inboxRoot,
             inputState: ZmxInputState(),
-            nudgeSender: recorder
+            nudgeSender: recorder,
+            eventLog: env.eventLog
         )
         await service.tick()
         let captured = await recorder.captured
         #expect(captured.isEmpty)
+    }
+
+    @Test("Nudge emits a `nudgeSent` event into events.jsonl.")
+    func nudgeEmitsEvent() async throws {
+        let env = try TestEnvironment.make()
+        defer { env.cleanup() }
+        try env.presence.write(
+            TeamPresenceRecord(
+                teamID: env.teamID,
+                worktree: "wt-foo",
+                runtime: .codex,
+                pid: 1,
+                registeredAt: Date()
+            )
+        )
+        try env.appendOldMessage(
+            id: "m1",
+            recipientWorktree: "wt-foo",
+            runtime: .codex,
+            body: "hi",
+            ageSeconds: 90
+        )
+
+        let recorder = TestNudgeRecorder()
+        let service = IdleDeliveryService(
+            presence: env.presence,
+            inboxRoot: env.inboxRoot,
+            inputState: ZmxInputState(),
+            nudgeSender: recorder,
+            eventLog: env.eventLog
+        )
+        await service.tick()
+
+        let logFile = env._eventLogRoot
+            .appendingPathComponent(env.teamID)
+            .appendingPathComponent("events.jsonl")
+        let contents = (try? String(contentsOf: logFile)) ?? ""
+        #expect(contents.contains("\"nudgeSent\""))
     }
 
     @Test("Ignores Claude registrants — Codex-only target for now.")
@@ -179,7 +221,8 @@ struct IdleDeliveryTests {
             presence: env.presence,
             inboxRoot: env.inboxRoot,
             inputState: ZmxInputState(),
-            nudgeSender: recorder
+            nudgeSender: recorder,
+            eventLog: env.eventLog
         )
         await service.tick()
         let captured = await recorder.captured
@@ -193,6 +236,8 @@ struct IdleDeliveryTests {
         let teamID: String
         let presence: TeamPresenceStorage
         let inboxRoot: URL
+        let eventLog: TeamEventLog
+        let _eventLogRoot: URL
         let _root: URL
 
         static func make() throws -> TestEnvironment {
@@ -203,10 +248,14 @@ struct IdleDeliveryTests {
             try FileManager.default.createDirectory(at: presenceRoot, withIntermediateDirectories: true)
             let inboxRoot = root.appendingPathComponent("inbox", isDirectory: true)
             try FileManager.default.createDirectory(at: inboxRoot, withIntermediateDirectories: true)
+            let eventLogRoot = root.appendingPathComponent("events", isDirectory: true)
+            try FileManager.default.createDirectory(at: eventLogRoot, withIntermediateDirectories: true)
             return TestEnvironment(
                 teamID: "test-team",
                 presence: TeamPresenceStorage(rootDirectory: presenceRoot),
                 inboxRoot: inboxRoot,
+                eventLog: TeamEventLog(rootDirectory: eventLogRoot),
+                _eventLogRoot: eventLogRoot,
                 _root: root
             )
         }

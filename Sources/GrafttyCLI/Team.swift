@@ -267,14 +267,22 @@ struct TeamRegister: ParsableCommand {
             return
         }
         let storage = TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
+        let teamID = TeamLookup.id(of: team)
         let record = TeamPresenceRecord(
-            teamID: TeamLookup.id(of: team),
+            teamID: teamID,
             worktree: worktreeName,
             runtime: runtimeValue,
             pid: ProcessInfo.processInfo.processIdentifier,
             registeredAt: Date()
         )
         try storage.write(record)
+        try? TeamEventLog.defaultLog().append(
+            .init(teamID: teamID, kind: .registered, detail: [
+                "worktree": worktreeName,
+                "runtime": runtimeValue.rawValue,
+                "pid": String(record.pid),
+            ])
+        )
     }
 }
 
@@ -295,11 +303,27 @@ struct TeamUnregister: ParsableCommand {
             return
         }
         let storage = TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
-        try storage.delete(
-            teamID: TeamLookup.id(of: team),
+        let teamID = TeamLookup.id(of: team)
+        // Only emit `unregistered` if there was actually a record to clear,
+        // so repeat-invocations from a wrapper script don't spam the log.
+        let priorRecord = try? storage.read(
+            teamID: teamID,
             worktree: worktreeName,
             runtime: runtimeValue
         )
+        try storage.delete(
+            teamID: teamID,
+            worktree: worktreeName,
+            runtime: runtimeValue
+        )
+        if priorRecord != nil {
+            try? TeamEventLog.defaultLog().append(
+                .init(teamID: teamID, kind: .unregistered, detail: [
+                    "worktree": worktreeName,
+                    "runtime": runtimeValue.rawValue,
+                ])
+            )
+        }
     }
 }
 

@@ -24,7 +24,8 @@ struct InboxWatcherTests {
             teamID: teamID,
             inboxRootDirectory: inboxRoot,
             outcome: outcome,
-            pidFileRoot: pidRoot
+            pidFileRoot: pidRoot,
+            eventLog: TeamEventLog(rootDirectory: tmpRoot.appendingPathComponent("events", isDirectory: true))
         )
 
         let runTask = Task.detached { await watcher.runUntilSignal() }
@@ -84,7 +85,8 @@ struct InboxWatcherTests {
             teamID: teamID,
             inboxRootDirectory: inboxRoot,
             outcome: outcome,
-            pidFileRoot: pidRoot
+            pidFileRoot: pidRoot,
+            eventLog: TeamEventLog(rootDirectory: tmpRoot.appendingPathComponent("events", isDirectory: true))
         )
 
         let runTask = Task.detached { await watcher.runUntilSignal() }

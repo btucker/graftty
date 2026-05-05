@@ -73,6 +73,7 @@ public actor InboxWatcher {
     public let inboxRootDirectory: URL
     public let outcome: WatcherOutcome
     public let pidFileRoot: URL
+    public let eventLog: TeamEventLog?
 
     private var observerCancellable: TeamInboxObserver.Cancellable?
     private var observer: TeamInboxObserver?
@@ -92,7 +93,8 @@ public actor InboxWatcher {
         teamID: String,
         inboxRootDirectory: URL,
         outcome: WatcherOutcome,
-        pidFileRoot: URL
+        pidFileRoot: URL,
+        eventLog: TeamEventLog? = TeamEventLog.defaultLog()
     ) {
         self.sessionID = sessionID
         self.recipient = recipient
@@ -100,6 +102,7 @@ public actor InboxWatcher {
         self.inboxRootDirectory = inboxRootDirectory
         self.outcome = outcome
         self.pidFileRoot = pidFileRoot
+        self.eventLog = eventLog
     }
 
     /// Park the current task until either the outcome is resolved or the
@@ -113,6 +116,12 @@ public actor InboxWatcher {
             return
         }
 
+        emit(.watcherSpawned, detail: [
+            "session": sessionID,
+            "member": recipient.member,
+            "runtime": recipient.runtime.rawValue,
+        ])
+
         startObserver()
 
         // Park until cancellation. The observer callback is what
@@ -125,6 +134,11 @@ public actor InboxWatcher {
         observerCancellable?.cancel()
         observerCancellable = nil
         observer = nil
+
+        emit(.watcherExited, detail: [
+            "session": sessionID,
+            "runtime": recipient.runtime.rawValue,
+        ])
     }
 
     private func startObserver() {
@@ -152,7 +166,16 @@ public actor InboxWatcher {
                 (msg.to.runtime == nil || msg.to.runtime == recipient.runtime.rawValue)
         }) else { return }
         hasFired = true
+        emit(.watcherWoke, detail: [
+            "session": sessionID,
+            "runtime": recipient.runtime.rawValue,
+            "message_id": match.id,
+        ])
         await outcome.complete(exitCode: 2, stderr: Self.summary(for: match))
+    }
+
+    private func emit(_ kind: TeamEvent.Kind, detail: [String: String]) {
+        try? eventLog?.append(.init(teamID: teamID, kind: kind, detail: detail))
     }
 
     private static func summary(for message: TeamInboxMessage) -> String {
@@ -181,6 +204,11 @@ public actor InboxWatcher {
               priorPID != ProcessInfo.processInfo.processIdentifier else {
             return
         }
+        emit(.watcherSuperseded, detail: [
+            "session": sessionID,
+            "runtime": recipient.runtime.rawValue,
+            "prior_pid": String(priorPID),
+        ])
         // Already-dead prior is fine; SIGTERM returns -1/ESRCH, ignore.
         _ = kill(priorPID, SIGTERM)
         // Poll up to ~500ms for the prior to actually exit before we
