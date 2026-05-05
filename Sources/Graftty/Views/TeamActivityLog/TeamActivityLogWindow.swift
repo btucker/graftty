@@ -52,18 +52,15 @@ struct TeamActivityLogWindow: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 6) {
-                            ForEach(viewModel.messages, id: \.id) { msg in
-                                TeamActivityLogRow(message: msg).id(msg.id)
+                        LazyVStack(alignment: .leading, spacing: 0) {
+                            ForEach(viewModel.renderedItems) { item in
+                                TeamActivityLogRow(item: item).id(item.id)
                             }
                         }
-                        .padding()
+                        .padding(.vertical, 8)
                     }
-                    // Auto-scroll to the newest row whenever the
-                    // tail-id changes (a new append landed). Keying
-                    // off `.last?.id` rather than `.count` makes the
-                    // trigger stable across initial-state emits.
-                    .onChange(of: viewModel.messages.last?.id) { _, newID in
+                    // Auto-scroll to the newest row whenever the tail-id changes.
+                    .onChange(of: viewModel.renderedItems.last?.id) { _, newID in
                         if let newID {
                             withAnimation(.easeOut(duration: 0.15)) {
                                 proxy.scrollTo(newID, anchor: .bottom)
