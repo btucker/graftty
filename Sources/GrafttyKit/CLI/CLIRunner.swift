@@ -80,36 +80,63 @@ public struct CLIRunner: CLIExecutor {
             // If we waited until termination to read, a process that writes
             // more than the pipe buffer (~16–64 KB) would block on write and
             // never exit — leaking the continuation. `readabilityHandler`
-            // fires on background queues, so guard shared state with a lock.
+            // fires on background queues; PipeBuffers guards shared state
+            // with a lock and tracks per-stream EOF so the termination path
+            // can confirm both streams fully drained before resuming.
+            //
+            // Mixing `readabilityHandler` with a synchronous
+            // `readDataToEndOfFile()` in terminationHandler has a real
+            // race: the readabilityHandler may have read a chunk but not
+            // yet appended it to the buffer when terminationHandler reads
+            // `buffers.stderrData`, producing empty stderr for a process
+            // that did write (e.g. `/usr/bin/env totally-not-a-real-cmd`
+            // emits "env: …: No such file" then exits 127, but the racey
+            // path observed exit=127 with stderr=""). Solution: drain
+            // exclusively via readabilityHandler, signal EOF via the
+            // empty-chunk firing, and have terminationHandler block until
+            // both streams have reached EOF before resuming.
             let buffers = PipeBuffers()
 
             stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
                 let chunk = handle.availableData
-                if chunk.isEmpty { return }
+                if chunk.isEmpty {
+                    handle.readabilityHandler = nil
+                    buffers.markStdoutEOF()
+                    return
+                }
                 buffers.appendStdout(chunk)
             }
             stderrPipe.fileHandleForReading.readabilityHandler = { handle in
                 let chunk = handle.availableData
-                if chunk.isEmpty { return }
+                if chunk.isEmpty {
+                    handle.readabilityHandler = nil
+                    buffers.markStderrEOF()
+                    return
+                }
                 buffers.appendStderr(chunk)
             }
 
             process.terminationHandler = { proc in
-                // Stop the handlers and drain any remaining bytes synchronously.
-                stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                stderrPipe.fileHandleForReading.readabilityHandler = nil
-                let finalOut = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                let finalErr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                buffers.appendStdout(finalOut)
-                buffers.appendStderr(finalErr)
+                // Wait (bounded) for both streams to reach EOF in their
+                // readabilityHandler before snapshotting the buffers. The
+                // process is already dead, so the kernel has closed the
+                // write side of both pipes; the readabilityHandler must
+                // fire one final empty-chunk per stream. Cap the wait at
+                // 5 s as a paranoid backstop — a kernel that fails to
+                // deliver EOF is itself a bug, but we'd rather report the
+                // partial output than hang the test runner.
+                buffers.waitForBothEOFs(timeout: 5.0)
 
                 let stdoutStr = String(data: buffers.stdoutData, encoding: .utf8) ?? ""
                 let stderrStr = String(data: buffers.stderrData, encoding: .utf8) ?? ""
 
-                // `/usr/bin/env` exits with 127 and emits a line prefixed with
-                // "env:" when the command is not found. The prefix discriminates
-                // env's own error from a child command that happens to say
-                // "No such file" while coincidentally exiting 127.
+                // `/usr/bin/env` exits with 127 and emits "env: <cmd>: No
+                // such file or directory" on stderr when the command is
+                // not found. The prefix discriminates env's own error
+                // from a child that exits 127 for some other reason — but
+                // since `env` itself can only exit 127 on missing-command,
+                // stderr matching is belt-and-braces (the exit code is
+                // already conclusive).
                 if proc.terminationStatus == 127,
                    stderrStr.hasPrefix("env:") && stderrStr.contains("No such file") {
                     cont.resume(throwing: CLIError.notFound(command: command))
@@ -133,13 +160,22 @@ public struct CLIRunner: CLIExecutor {
     }
 }
 
-/// Thread-safe byte accumulator for pipe drain handlers. `readabilityHandler`
-/// fires on background queues, and `terminationHandler` fires on yet another
-/// queue, so appends and final reads need a lock.
+/// Thread-safe byte accumulator for pipe drain handlers, with explicit
+/// per-stream EOF signalling so a synchronous waiter (the process
+/// terminationHandler) can block until both readabilityHandlers have
+/// flushed their last chunk. `readabilityHandler` fires on private
+/// background queues, and `terminationHandler` on another, so without
+/// this synchronization the terminationHandler can snapshot the buffer
+/// before an in-flight readabilityHandler appends — observed empirically
+/// as empty stderr for `/usr/bin/env`'s "command not found" path under
+/// concurrent test load.
 private final class PipeBuffers: @unchecked Sendable {
     private var _stdout = Data()
     private var _stderr = Data()
     private let lock = NSLock()
+    private let condition = NSCondition()
+    private var stdoutEOF = false
+    private var stderrEOF = false
 
     var stdoutData: Data {
         lock.lock(); defer { lock.unlock() }
@@ -159,5 +195,29 @@ private final class PipeBuffers: @unchecked Sendable {
     func appendStderr(_ chunk: Data) {
         lock.lock(); defer { lock.unlock() }
         _stderr.append(chunk)
+    }
+
+    func markStdoutEOF() {
+        condition.lock(); defer { condition.unlock() }
+        stdoutEOF = true
+        condition.broadcast()
+    }
+
+    func markStderrEOF() {
+        condition.lock(); defer { condition.unlock() }
+        stderrEOF = true
+        condition.broadcast()
+    }
+
+    /// Block until both pipes' readabilityHandler have signalled EOF,
+    /// or `timeout` elapses. Returns true on EOF, false on timeout.
+    @discardableResult
+    func waitForBothEOFs(timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        condition.lock(); defer { condition.unlock() }
+        while !(stdoutEOF && stderrEOF) {
+            if !condition.wait(until: deadline) { return false }
+        }
+        return true
     }
 }
