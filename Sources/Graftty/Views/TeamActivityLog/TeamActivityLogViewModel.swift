@@ -44,3 +44,73 @@ final class TeamActivityLogViewModel {
         cancellable = nil
     }
 }
+
+extension TeamActivityLogViewModel {
+    /// Continuation window: messages from the same actor within this
+    /// duration collapse their headers.
+    nonisolated static let continuationWindow: TimeInterval = 5 * 60
+
+    /// Pure helper extracted for testability. Annotates each message
+    /// with a `isContinuation` flag and weaves in `dayDivider` items
+    /// at local-midnight crossings.
+    nonisolated static func renderedItems(
+        from messages: [TeamInboxMessage],
+        calendar: Calendar
+    ) -> [RenderedFeedItem] {
+        var out: [RenderedFeedItem] = []
+        var prev: (actor: String, timestamp: Date, day: Date)?
+
+        for msg in messages {
+            let row = ActivityFeedRow.resolve(msg)
+            let day = calendar.startOfDay(for: msg.createdAt)
+
+            // Insert day-divider when local-day rolls over.
+            if let previous = prev, previous.day != day {
+                out.append(.init(
+                    id: "day-\(day.timeIntervalSince1970)",
+                    row: .dayDivider(label: dayLabel(for: day, calendar: calendar)),
+                    isContinuation: false
+                ))
+                prev = nil  // Day boundary always breaks continuation.
+            }
+
+            switch row {
+            case let .chat(worktree, _, _, ts, _),
+                 let .system(worktree, _, _, ts):
+                let isCont = prev.map { p in
+                    p.actor == worktree
+                        && ts.timeIntervalSince(p.timestamp) <= continuationWindow
+                } ?? false
+                out.append(.init(id: msg.id, row: row, isContinuation: isCont))
+                prev = (worktree, ts, day)
+
+            case .memberJoined, .memberLeft:
+                out.append(.init(id: msg.id, row: row, isContinuation: false))
+                prev = nil  // Markers reset the continuation chain.
+
+            case .dayDivider:
+                // resolve(_:) does not produce dayDivider; only the
+                // weaving code above does.
+                continue
+            }
+        }
+        return out
+    }
+
+    /// Renders a `Date` as the day-divider label: "Today", "Yesterday",
+    /// or "MMM d" for older days.
+    nonisolated private static func dayLabel(for day: Date, calendar: Calendar) -> String {
+        if calendar.isDateInToday(day) { return "Today" }
+        if calendar.isDateInYesterday(day) { return "Yesterday" }
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.dateFormat = "MMM d"
+        return formatter.string(from: day)
+    }
+
+    /// View-side accessor — wraps the static helper using the system
+    /// calendar at the actor's locale.
+    var renderedItems: [RenderedFeedItem] {
+        Self.renderedItems(from: messages, calendar: .current)
+    }
+}
