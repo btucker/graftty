@@ -10,7 +10,7 @@ struct ZmxInputStateTests {
         #expect(state.uncommittedBytes(forSession: "s1") == 0)
     }
 
-    @Test("@spec TEAM-IDLE-2.2: Bytes accumulate until a CR/LF is observed, then reset.")
+    @Test("Bytes accumulate until a CR/LF is observed, then reset.")
     func resetOnNewline() {
         let state = ZmxInputState()
         state.recordInput("hello".data(using: .utf8)!, forSession: "s1")
