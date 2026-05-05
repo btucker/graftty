@@ -86,6 +86,8 @@ public actor InboxWatcher {
     /// same wall-clock second the watcher booted.
     private var initialIDs: Set<String> = []
     private var sawInitialEmit = false
+    private var isReady: Bool = false
+    private var readyContinuations: [CheckedContinuation<Void, Never>] = []
 
     public init(
         sessionID: String,
@@ -105,6 +107,26 @@ public actor InboxWatcher {
         self.eventLog = eventLog
     }
 
+    /// Awaits until the watcher has finished startup: PID file written and
+    /// the FSEvents observer has fired its initial callback (i.e., it is
+    /// actually listening). Resolves immediately if already ready.
+    /// Tests use this instead of `Task.sleep` to avoid timing flakiness on
+    /// contended CI executors.
+    public func whenReady() async {
+        if isReady { return }
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            readyContinuations.append(cont)
+        }
+    }
+
+    private func markReady() {
+        if isReady { return }
+        isReady = true
+        let pending = readyContinuations
+        readyContinuations.removeAll()
+        for c in pending { c.resume() }
+    }
+
     /// Park the current task until either the outcome is resolved or the
     /// task is cancelled. Sets up the PID file and observer once.
     public func runUntilSignal() async {
@@ -113,6 +135,9 @@ public actor InboxWatcher {
             try writePIDFile()
         } catch {
             await outcome.complete(exitCode: 1, stderr: "watcher setup failed: \(error)\n")
+            // Even on setup failure, unblock any whenReady() waiters so
+            // tests don't hang indefinitely.
+            markReady()
             return
         }
 
@@ -158,6 +183,9 @@ public actor InboxWatcher {
         if !sawInitialEmit {
             sawInitialEmit = true
             initialIDs = Set(messages.map(\.id))
+            // FSEvents has now delivered its initial state — the observer
+            // is actually live. Unblock any whenReady() waiters.
+            markReady()
             return
         }
         guard let match = messages.first(where: { msg in

@@ -31,8 +31,10 @@ struct InboxWatcherTests {
         let runTask = Task.detached { await watcher.runUntilSignal() }
         defer { runTask.cancel() }
 
-        // Give the watcher a moment to register PID and attach the FSEvents source.
-        try await Task.sleep(nanoseconds: 200_000_000)
+        // Wait for the watcher to register its PID and for the FSEvents
+        // observer to fire its initial callback (i.e., it's actually
+        // listening). Avoids Task.sleep, which stretches under CI load.
+        await watcher.whenReady()
 
         // Append a message addressed to this watcher's recipient.
         _ = try inbox.appendMessage(
@@ -92,8 +94,10 @@ struct InboxWatcherTests {
         let runTask = Task.detached { await watcher.runUntilSignal() }
         defer { runTask.cancel() }
 
-        // Give the watcher time to supersede + write its own PID.
-        try await Task.sleep(nanoseconds: 600_000_000)
+        // Wait for the watcher to supersede the prior PID, write its own
+        // PID, and have the FSEvents observer attach. Replaces a
+        // Task.sleep that stretched arbitrarily on contended CI executors.
+        await watcher.whenReady()
 
         // PID file now contains our process's PID, not the prior child's.
         let nowOnDisk = try String(contentsOf: priorPidFile, encoding: .utf8)
