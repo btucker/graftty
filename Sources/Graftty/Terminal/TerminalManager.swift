@@ -233,6 +233,13 @@ final class TerminalManager: ObservableObject {
     /// before that, which is safe — `SurfaceNSView.keyDown` nil-checks it.
     var inputActivityObserver: PaneInputActivityObserver?
 
+    /// Fires once per surface destruction so the idle-delivery pipeline
+    /// can evict per-pane registry entries (`agentForPane`,
+    /// PaneInputActivityRegistry stamps, WorktreeAgentStateRegistry
+    /// states keyed off the pane's resolved agent identity). Wired by
+    /// `GrafttyApp.startup()` after the pipeline is constructed.
+    var paneClosed: ((UUID) -> Void)?
+
     /// Fired when cmd-click resolves to a CLI editor; owner spawns a new
     /// pane split-right of the source with `initialInput` as the command.
     var onOpenInEditorPane: ((TerminalID, String) -> Void)?
@@ -523,6 +530,7 @@ final class TerminalManager: ObservableObject {
         }
         shellReadyFired.remove(terminalID)
         cachedShellPIDs.removeValue(forKey: terminalID)
+        paneClosed?(terminalID.id)
     }
 
     /// The rendered sidebar label for a pane. Chains in priority order:

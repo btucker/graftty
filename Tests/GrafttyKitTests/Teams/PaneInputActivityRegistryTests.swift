@@ -35,6 +35,16 @@ struct PaneInputActivityRegistryTests {
         #expect(r.lastInputAt(paneID: b) == Date(timeIntervalSince1970: 1_010))
     }
 
+    @Test("removeStamp drops the entry, leaving lastInputAt nil for that pane.")
+    func removeStampDropsEntry() {
+        let pane = UUID()
+        let r = PaneInputActivityRegistry(now: { Date(timeIntervalSince1970: 1_000) })
+        r.recordKeystroke(paneID: pane)
+        #expect(r.lastInputAt(paneID: pane) != nil)
+        r.removeStamp(paneID: pane)
+        #expect(r.lastInputAt(paneID: pane) == nil)
+    }
+
     private final class Clock: @unchecked Sendable {
         var value: Date
         init(value: Date) { self.value = value }

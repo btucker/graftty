@@ -86,4 +86,13 @@ struct WorktreeAgentStateRegistryTests {
         r.handleEngagedGraceElapsed(worktree: "/w", runtime: "codex")
         #expect(r.state(worktree: "/w", runtime: "codex") == .active)
     }
+
+    @Test("removeState drops the entry, returning state to unknown.")
+    func removeStateDropsEntry() {
+        let r = WorktreeAgentStateRegistry()
+        r.handleSessionStart(worktree: "/w", runtime: "codex")
+        #expect(r.state(worktree: "/w", runtime: "codex") == .active)
+        r.removeState(worktree: "/w", runtime: "codex")
+        #expect(r.state(worktree: "/w", runtime: "codex") == .unknown)
+    }
 }

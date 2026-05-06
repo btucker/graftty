@@ -941,6 +941,20 @@ struct GrafttyApp: App {
         // creation time.
         terminalManager.inputActivityObserver = inputObserver
 
+        // Evict per-pane registry entries when a pane is destroyed so
+        // agentForPane / input-stamps / agent-state don't grow unbounded
+        // across the app's lifetime. Lookup of the agent identity has to
+        // happen BEFORE removing the agentForPane entry so the
+        // (worktree, runtime) for state cleanup is still resolvable.
+        terminalManager.paneClosed = { [weak services, stateRegistry, inputRegistry] paneID in
+            let agent = services?.agentForPane[paneID]
+            services?.agentForPane.removeValue(forKey: paneID)
+            inputRegistry.removeStamp(paneID: paneID)
+            if let agent {
+                stateRegistry.removeState(worktree: agent.worktree, runtime: agent.runtime)
+            }
+        }
+
         restoreRunningWorktrees()
 
         // WEB-5.4: feed the web server a snapshot of running sessions on

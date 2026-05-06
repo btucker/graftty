@@ -54,6 +54,11 @@ public final class WorktreeAgentStateRegistry: @unchecked Sendable {
         if states[key] == .user_engaged { states[key] = .idle }
     }
 
+    public func removeState(worktree: String, runtime: String) {
+        lock.lock(); defer { lock.unlock() }
+        states.removeValue(forKey: Key(worktree, runtime))
+    }
+
     private func set(_ state: AgentState, worktree: String, runtime: String) {
         lock.lock(); defer { lock.unlock() }
         states[Key(worktree, runtime)] = state

@@ -22,4 +22,9 @@ public final class PaneInputActivityRegistry: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         return stamps[paneID]
     }
+
+    public func removeStamp(paneID: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        stamps.removeValue(forKey: paneID)
+    }
 }
