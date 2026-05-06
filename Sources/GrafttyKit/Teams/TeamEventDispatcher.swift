@@ -321,9 +321,9 @@ public final class TeamEventDispatcher {
             repos: repos,
             templateString: templateProvider()
         )
-        if case let .event(_, _, body) = result.event {
-            return (body, result.agentPrompt)
-        }
+        // `split(...)` returns the input event unchanged on this path,
+        // so `originalBody` is the body field. The unwrap dance the
+        // earlier draft did was redundant.
         return (originalBody, result.agentPrompt)
     }
 }

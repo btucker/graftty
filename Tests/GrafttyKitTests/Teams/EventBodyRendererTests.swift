@@ -92,6 +92,20 @@ struct EventBodyRendererSplitTests {
         #expect(Self.body(result.event) == "EVENT")
     }
 
+    @Test("Auto-append trims trailing whitespace from the template so a template ending in \\n doesn't produce three blank lines before the body.")
+    func autoAppendTrimsTemplateTrailingWhitespace() throws {
+        let event = ChannelServerMessage.event(type: "pr_state_changed", attrs: [:], body: "EVENT-CONTENT")
+        let result = EventBodyRenderer.split(
+            event: event,
+            recipientWorktreePath: "/r/alice",
+            subjectWorktreePath: "/r/alice",
+            repos: [Self.fixtureRepo()],
+            templateString: "Hello.\n"
+        )
+        let prompt = try #require(result.agentPrompt)
+        #expect(prompt == "Hello.\n\nEVENT-CONTENT")
+    }
+
     private static func fixtureRepo() -> RepoEntry {
         // The repo's main worktree is the lead; alice is a coworker.
         // One repo with two worktrees: "main" at /r and "alice" at

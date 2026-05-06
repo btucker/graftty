@@ -83,8 +83,7 @@ public enum EventBodyRenderer {
             return EventBodyRendererResult(event: event, agentPrompt: nil)
         }
 
-        // Compute the agent context for this delivery (unchanged from the
-        // pre-split body(...) function).
+        // Compute the agent context for this delivery.
         let recipientRepo = repos.first { repo in
             repo.worktrees.contains(where: { $0.path == recipientWorktreePath })
         }
@@ -110,10 +109,18 @@ public enum EventBodyRenderer {
         // Auto-append `\n\n{{ body }}` to templates that don't reference
         // the body themselves, so out-of-the-box templates and legacy
         // user-customized templates keep producing today's "prelude
-        // followed by body" output without migration.
-        let effectiveTemplate = referencesBody(templateString)
-            ? templateString
-            : "\(templateString)\n\n{{ body }}"
+        // followed by body" output without migration. Trim trailing
+        // whitespace before splicing so a template that ends in `\n`
+        // doesn't produce three blank lines between prelude and body.
+        let effectiveTemplate: String = {
+            if referencesBody(templateString) { return templateString }
+            let trimmedTrailing = templateString.replacingOccurrences(
+                of: #"\s+$"#,
+                with: "",
+                options: .regularExpression
+            )
+            return "\(trimmedTrailing)\n\n{{ body }}"
+        }()
 
         guard let rendered = renderAgentTemplate(
             effectiveTemplate,
