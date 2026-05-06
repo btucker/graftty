@@ -349,6 +349,32 @@ public final class TeamInbox {
             .appendingPathComponent(Self.fileComponent(worktree) + ".json")
     }
 
+    /// @spec TEAM-IDLE-2.6
+    /// Per-(team, worktree, runtime) cursor advanced after a successful
+    /// zmx-send delivery. Distinct from the per-session `cursor` (advanced
+    /// on hook delivery) and the per-worktree read watermark (advanced when
+    /// the user runs `graftty team inbox`). Three watermarks because each
+    /// tracks a different "the agent has seen this" semantic.
+    public func zmxWatermark(teamID: String, worktree: String, runtime: String) throws -> String? {
+        let url = zmxWatermarkURL(teamID: teamID, worktree: worktree, runtime: runtime)
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        let data = try Data(contentsOf: url)
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public func advanceZmxWatermark(teamID: String, worktree: String, runtime: String, to messageID: String) throws {
+        let url = zmxWatermarkURL(teamID: teamID, worktree: worktree, runtime: runtime)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try messageID.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func zmxWatermarkURL(teamID: String, worktree: String, runtime: String) -> URL {
+        rootDirectory
+            .appendingPathComponent(Self.fileComponent(teamID), isDirectory: true)
+            .appendingPathComponent("zmx-watermarks", isDirectory: true)
+            .appendingPathComponent("\(Self.fileComponent(worktree)).\(runtime)")
+    }
+
     private func teamDirectory(teamID: String) -> URL {
         rootDirectory.appendingPathComponent(Self.fileComponent(teamID), isDirectory: true)
     }
