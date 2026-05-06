@@ -1,188 +1,102 @@
 import Foundation
 
-/// Pluggable target for `IdleDeliveryService` nudges. Production wires this
-/// to a zmx-send keystroke writer; tests record invocations.
+/// Pluggable target for `IdleDeliveryService` nudges. Production wires
+/// this to a zmx PTY writer; tests record invocations.
 public protocol NudgeSender: Sendable {
-    func send(to recipient: TeamPresenceRecord, message: String, messageIDs: [String]) async
+    func send(paneID: UUID, message: String, messageIDs: [String]) async
 }
-
-/// Resolves the zmx session names that host `(worktree, runtime)` for the
-/// uncommitted-typed-byte gate. Production injects a closure backed by
-/// `AppState` (each running worktree's pane leaves -> `ZmxLauncher.sessionName`);
-/// tests inject a stub that returns a single deterministic key (typically
-/// the worktree name) so they can drive the gate via the same lookup.
-public typealias SessionLookup = @Sendable (TeamPresenceRecord) -> [String]
 
 /// @spec TEAM-IDLE-2.1
 /// @spec TEAM-IDLE-2.3
-/// Background poller that ticks every `pollInterval` seconds, finds
-/// registered Codex agents whose inbox holds unread messages older than
-/// `staleAgeThreshold`, and nudges them via `NudgeSender` — gated on
-/// (a) the typing state for any zmx session hosting the recipient and
-/// (b) once-per-stale-state debounce keyed on the most recent stale ID.
+/// @spec TEAM-IDLE-2.4
+/// @spec TEAM-IDLE-2.5
+/// @spec TEAM-IDLE-2.6
+/// Event-driven Codex idle-delivery dispatcher. Receives Stop and
+/// new-message-arrival signals, queries the agent-state registry,
+/// and on `idle` sends pending messages via NudgeSender then
+/// advances the per-(team,worktree,runtime) zmxWatermark.
 public actor IdleDeliveryService {
-    /// A message must sit unread this long before it counts as stale.
-    public static let staleAgeThreshold: TimeInterval = 60
-    /// Default cadence for `startPolling()`. Tests drive `tick()` directly.
-    public static let pollInterval: TimeInterval = 10
-
-    private let presence: TeamPresenceStorage
-    private let inboxRoot: URL
-    private let inputState: ZmxInputState
+    private let inbox: TeamInbox
+    private let state: WorktreeAgentStateRegistry
     private let nudgeSender: NudgeSender
-    private let sessionLookup: SessionLookup
-    private let now: @Sendable () -> Date
     private let eventLog: TeamEventLog?
-
-    /// Per-recipient memory of "the most recent stale message ID we
-    /// already nudged about". A new tick that observes the same head
-    /// no-ops; a tick that sees a *new* head (more messages arrived) or a
-    /// drained inbox followed by a fresh stale message fires again.
-    private var lastNudgedHead: [String: String] = [:]
-
-    /// Per-recipient memory of the last skip reason we logged. Skip events
-    /// only emit on transitions: the typing gate firing every 10s shouldn't
-    /// produce one event per gated agent per tick. Cleared whenever a
-    /// `nudgeSent` fires for that key so the next skip after a successful
-    /// nudge logs again.
-    private var lastSkipReason: [String: String] = [:]
+    private let now: @Sendable () -> Date
 
     public init(
-        presence: TeamPresenceStorage,
-        inboxRoot: URL,
-        inputState: ZmxInputState,
+        inbox: TeamInbox,
+        state: WorktreeAgentStateRegistry,
         nudgeSender: NudgeSender,
-        sessionLookup: SessionLookup? = nil,
-        now: @escaping @Sendable () -> Date = { Date() },
-        eventLog: TeamEventLog? = TeamEventLog.defaultLog()
+        eventLog: TeamEventLog? = TeamEventLog.defaultLog(),
+        now: @escaping @Sendable () -> Date = { Date() }
     ) {
-        self.presence = presence
-        self.inboxRoot = inboxRoot
-        self.inputState = inputState
+        self.inbox = inbox
+        self.state = state
         self.nudgeSender = nudgeSender
-        // Default lookup: use the worktree name as the session key. Suits
-        // tests (which drive the input-state through that same key) and
-        // is a safe-but-imperfect production fallback until the WebSession
-        // sessionName plumbing surfaces a real (worktree, runtime) → [pane
-        // session] map.
-        self.sessionLookup = sessionLookup ?? { record in [record.worktree] }
-        self.now = now
         self.eventLog = eventLog
+        self.now = now
     }
 
-    /// Loop forever, ticking on a fixed cadence. Cancellation breaks the
-    /// loop. The app boot path runs this in a detached task.
-    public func startPolling() async {
-        while !Task.isCancelled {
-            await tick()
-            try? await Task.sleep(nanoseconds: UInt64(Self.pollInterval * 1_000_000_000))
-        }
+    public func onStop(team: String, worktree: String, runtime: String, paneID: UUID?) async {
+        await maybeDeliver(team: team, worktree: worktree, runtime: runtime, paneID: paneID, trigger: "stop")
     }
 
-    /// One pass over every registered Codex agent. All I/O failures are
-    /// swallowed so a single corrupt presence file doesn't poison the loop.
-    public func tick() async {
-        let records = (try? presence.listAll()) ?? []
-        for record in records where record.runtime == .codex {
-            await processOne(record)
-        }
+    public func onMessageArrival(team: String, worktree: String, runtime: String, paneID: UUID?) async {
+        await maybeDeliver(team: team, worktree: worktree, runtime: runtime, paneID: paneID, trigger: "messageArrival")
     }
 
-    private func processOne(_ record: TeamPresenceRecord) async {
-        let inbox = TeamInbox(rootDirectory: inboxRoot)
-        let messages = (try? inbox.messages(teamID: record.teamID)) ?? []
-        // TEAM-IDLE-2.1: only messages addressed to this worktree, with a
-        // matching runtime tag (or no runtime tag at all — system events).
-        let forRecipient = messages.filter { msg in
-            guard msg.to.worktree == record.worktree else { return false }
-            if let runtime = msg.to.runtime, runtime != record.runtime.rawValue {
-                return false
-            }
-            return true
-        }
-        let cutoff = now().addingTimeInterval(-Self.staleAgeThreshold)
-        let stale = forRecipient.filter { $0.createdAt <= cutoff }
-        guard let head = stale.last else {
-            // No stale messages addressed to this recipient. Stay quiet —
-            // logging on every empty tick would drown out signal in noise.
+    private func maybeDeliver(team: String, worktree: String, runtime: String, paneID: UUID?, trigger: String) async {
+        let s = state.state(worktree: worktree, runtime: runtime)
+        guard s == .idle else {
+            log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_state_\(s.rawValue)")
             return
         }
-
-        // TEAM-IDLE-2.3: dedupe on the head ID — one nudge per stale-state.
-        let key = "\(record.teamID)/\(record.worktree)/\(record.runtime.rawValue)"
-        if lastNudgedHead[key] == head.id {
-            emitSkip(record: record, key: key, reason: "debounced", headID: head.id)
+        guard let paneID else {
+            log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_no_pane")
             return
         }
+        let watermark: String?
+        do { watermark = try inbox.zmxWatermark(teamID: team, worktree: worktree, runtime: runtime) }
+        catch { log(team: team, worktree: worktree, runtime: runtime, outcome: "error_watermark_read"); return }
 
-        // TEAM-IDLE-2.2: typing gate. Skip if any session hosting this
-        // recipient is mid-line. Don't update lastNudgedHead — we want to
-        // retry on the next tick once the user commits the line.
-        for sessionID in sessionLookup(record) {
-            if inputState.uncommittedBytes(forSession: sessionID) > 0 {
-                emitSkip(record: record, key: key, reason: "typing", headID: head.id)
-                return
-            }
+        let pending: [TeamInboxMessage]
+        do { pending = try inbox.unreadMessages(teamID: team, recipientWorktree: worktree, after: watermark) }
+        catch { log(team: team, worktree: worktree, runtime: runtime, outcome: "error_inbox_read"); return }
+
+        guard !pending.isEmpty else {
+            log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_no_pending"); return
         }
 
-        let body = Self.renderBody(stale: stale)
-        await nudgeSender.send(to: record, message: body, messageIDs: stale.map(\.id))
-        lastNudgedHead[key] = head.id
-        // A successful nudge ends any prior skip-state; the next skip after
-        // this point should log again rather than dedupe against the old
-        // reason.
-        lastSkipReason[key] = nil
-        try? eventLog?.append(
-            .init(teamID: record.teamID, kind: .nudgeSent, detail: [
-                "worktree": record.worktree,
-                "runtime": record.runtime.rawValue,
-                "message_count": String(stale.count),
-                "head_message_id": head.id,
-            ])
-        )
+        let text = TeamHookRenderer.format(messages: pending) + "\r"
+        await nudgeSender.send(paneID: paneID, message: text, messageIDs: pending.map(\.id))
+        do {
+            try inbox.advanceZmxWatermark(teamID: team, worktree: worktree, runtime: runtime, to: pending.last!.id)
+        } catch {
+            log(team: team, worktree: worktree, runtime: runtime, outcome: "error_watermark_write"); return
+        }
+        log(team: team, worktree: worktree, runtime: runtime,
+            outcome: "sent", messageIDs: pending.map(\.id), trigger: trigger)
     }
 
-    private func emitSkip(record: TeamPresenceRecord, key: String, reason: String, headID: String) {
-        // Only emit on transition: holding the typing gate (or the debounce
-        // gate) for many consecutive ticks should not produce one event
-        // per tick. The next nudgeSent for this key clears `lastSkipReason`,
-        // so post-nudge skips log again.
-        if lastSkipReason[key] == reason { return }
-        lastSkipReason[key] = reason
-        try? eventLog?.append(
-            .init(teamID: record.teamID, kind: .nudgeSkipped, detail: [
-                "worktree": record.worktree,
-                "runtime": record.runtime.rawValue,
-                "reason": reason,
-                "head_message_id": headID,
-            ])
-        )
-    }
-
-    private static func renderBody(stale: [TeamInboxMessage]) -> String {
-        var seen = Set<String>()
-        let senders = stale
-            .map(\.from.member)
-            .filter { seen.insert($0).inserted }
-            .joined(separator: ", ")
-        let count = stale.count
-        let pluralS = count == 1 ? "" : "s"
-        return "[graftty] You have \(count) unread team message\(pluralS) from \(senders). Run `graftty team inbox` to read."
+    private func log(
+        team: String, worktree: String, runtime: String,
+        outcome: String, messageIDs: [String] = [], trigger: String = ""
+    ) {
+        guard let eventLog else { return }
+        var detail: [String: String] = ["worktree": worktree, "runtime": runtime, "outcome": outcome]
+        if !messageIDs.isEmpty { detail["messageIDs"] = messageIDs.joined(separator: ",") }
+        if !trigger.isEmpty { detail["trigger"] = trigger }
+        try? eventLog.append(TeamEvent(teamID: team, kind: .zmxNudgeAttempt, detail: detail, timestamp: now()))
     }
 }
 
-/// Production `NudgeSender` placeholder. Logs the nudge but does not yet
-/// write keystrokes — the actual zmx-send plumbing (writing to the Codex
-/// pane's PTY master fd) is a follow-up. The `IdleDeliveryService` gating
-/// logic is wired and tested; this class just stubs the I/O side until the
-/// shared writer surfaces a public API the service can call.
-public final class ZmxNudgeSender: NudgeSender {
+/// @spec TEAM-IDLE-2.6
+/// Production NudgeSender that writes pending-message text into the
+/// recipient pane's zmx PTY. Wired with a `ZmxWriter` adapter at app
+/// boot (Task 9). Stub for now — Task 6 implements the real wire-up.
+public final class ZmxNudgeSender: NudgeSender, @unchecked Sendable {
     public init() {}
-
-    public func send(to recipient: TeamPresenceRecord, message: String, messageIDs: [String]) async {
-        NSLog("[Graftty] idle-delivery nudge pending for %@.%@: %@",
-              recipient.worktree,
-              recipient.runtime.rawValue,
-              message)
+    public func send(paneID: UUID, message: String, messageIDs: [String]) async {
+        NSLog("[Graftty] zmx-send pending wire-up: pane=%@ ids=%@",
+              paneID.uuidString, messageIDs.joined(separator: ","))
     }
 }

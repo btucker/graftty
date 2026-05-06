@@ -1,362 +1,118 @@
-import Testing
 import Foundation
+import Testing
 @testable import GrafttyKit
 
-@Suite("IdleDeliveryService — Codex zmx-send poller")
-struct IdleDeliveryTests {
-    @Test("@spec TEAM-IDLE-2.1: While a Codex agent is registered and idle, the application shall poll its inbox and, when an unread message has been waiting for more than 60 seconds, deliver it via zmx-send.")
-    func staleMessageDelivered() async throws {
-        let env = try TestEnvironment.make()
-        defer { env.cleanup() }
+@Suite("IdleDeliveryService — event-driven idle delivery")
+struct IdleDeliveryServiceTests {
+    @Test("@spec TEAM-IDLE-2.1: While the worktree state is idle, onStop with pending messages calls the nudge sender and advances the watermark.")
+    func onStopIdleWithPendingDelivers() async throws {
+        let f = try Fixture()
+        let id = try f.appendUnread(body: "hello")
+        f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
+        f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
 
-        try env.presence.write(
-            TeamPresenceRecord(
-                teamID: env.teamID,
-                worktree: "wt-foo",
-                runtime: .codex,
-                pid: 1,
-                registeredAt: Date()
-            )
-        )
-        try env.appendOldMessage(
-            id: "m1",
-            recipientWorktree: "wt-foo",
-            runtime: .codex,
-            body: "hello",
-            ageSeconds: 90
-        )
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: f.paneID)
 
-        let recorder = TestNudgeRecorder()
-        let service = IdleDeliveryService(
-            presence: env.presence,
-            inboxRoot: env.inboxRoot,
-            inputState: ZmxInputState(),
-            nudgeSender: recorder,
-            eventLog: env.eventLog
-        )
-
-        await service.tick()
-
-        let captured = await recorder.captured
-        #expect(captured.count == 1)
-        #expect(captured.first?.recipient.worktree == "wt-foo")
-        #expect(captured.first?.messageIDs == ["m1"])
-        #expect(captured.first?.message.contains("1 unread team message") == true)
+        #expect(f.sender.calls.count == 1)
+        #expect(f.sender.calls[0].messageIDs == [id])
+        #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "codex") == id)
     }
 
-    @Test("@spec TEAM-IDLE-2.2: While the user has uncommitted typed bytes for a Codex agent's pane, the application shall not deliver a nudge to that agent.")
-    func skipsWhileTyping() async throws {
-        let env = try TestEnvironment.make()
-        defer { env.cleanup() }
+    @Test("@spec TEAM-IDLE-2.2: While the worktree state is user_engaged, onStop defers — no nudge, no watermark advance.")
+    func onStopUserEngagedDefers() async throws {
+        let f = try Fixture()
+        _ = try f.appendUnread(body: "hello")
+        f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
+        f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: f.frozen)
 
-        try env.presence.write(
-            TeamPresenceRecord(
-                teamID: env.teamID,
-                worktree: "wt-foo",
-                runtime: .codex,
-                pid: 1,
-                registeredAt: Date()
-            )
-        )
-        try env.appendOldMessage(
-            id: "m1",
-            recipientWorktree: "wt-foo",
-            runtime: .codex,
-            body: "hi",
-            ageSeconds: 90
-        )
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: f.paneID)
 
-        let inputState = ZmxInputState()
-        // Default sessionLookup keys on the worktree name; mark that
-        // session as mid-line so the gate trips.
-        inputState.recordInput("typing".data(using: .utf8)!, forSession: "wt-foo")
-
-        let recorder = TestNudgeRecorder()
-        let service = IdleDeliveryService(
-            presence: env.presence,
-            inboxRoot: env.inboxRoot,
-            inputState: inputState,
-            nudgeSender: recorder,
-            eventLog: env.eventLog
-        )
-        await service.tick()
-        let captured = await recorder.captured
-        #expect(captured.isEmpty)
+        #expect(f.sender.calls.isEmpty)
+        #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "codex") == nil)
     }
 
-    @Test("@spec TEAM-IDLE-2.3: When the inbox state has not changed since a prior nudge, the application shall send at most one nudge per stale-state.")
-    func debouncesNudges() async throws {
-        let env = try TestEnvironment.make()
-        defer { env.cleanup() }
-
-        try env.presence.write(
-            TeamPresenceRecord(
-                teamID: env.teamID,
-                worktree: "wt-foo",
-                runtime: .codex,
-                pid: 1,
-                registeredAt: Date()
-            )
-        )
-        try env.appendOldMessage(
-            id: "m1",
-            recipientWorktree: "wt-foo",
-            runtime: .codex,
-            body: "hi",
-            ageSeconds: 90
-        )
-
-        let recorder = TestNudgeRecorder()
-        let service = IdleDeliveryService(
-            presence: env.presence,
-            inboxRoot: env.inboxRoot,
-            inputState: ZmxInputState(),
-            nudgeSender: recorder,
-            eventLog: env.eventLog
-        )
-        await service.tick()
-        await service.tick()
-        await service.tick()
-        let captured = await recorder.captured
-        #expect(captured.count == 1)
+    @Test("@spec TEAM-IDLE-2.3: A second onStop with same state and watermark does not redeliver.")
+    func dedupedOnStop() async throws {
+        let f = try Fixture()
+        _ = try f.appendUnread(body: "hello")
+        f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
+        f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: f.paneID)
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: f.paneID)
+        #expect(f.sender.calls.count == 1)
     }
 
-    @Test("Skips messages younger than 60 seconds.")
-    func skipsRecentMessages() async throws {
-        let env = try TestEnvironment.make()
-        defer { env.cleanup() }
-
-        try env.presence.write(
-            TeamPresenceRecord(
-                teamID: env.teamID,
-                worktree: "wt-foo",
-                runtime: .codex,
-                pid: 1,
-                registeredAt: Date()
-            )
-        )
-        try env.appendOldMessage(
-            id: "m1",
-            recipientWorktree: "wt-foo",
-            runtime: .codex,
-            body: "hi",
-            ageSeconds: 30
-        )
-
-        let recorder = TestNudgeRecorder()
-        let service = IdleDeliveryService(
-            presence: env.presence,
-            inboxRoot: env.inboxRoot,
-            inputState: ZmxInputState(),
-            nudgeSender: recorder,
-            eventLog: env.eventLog
-        )
-        await service.tick()
-        let captured = await recorder.captured
-        #expect(captured.isEmpty)
+    @Test("@spec TEAM-IDLE-2.4: With no pane (paneID nil), onStop does not call the sender.")
+    func noPaneSkipsAndLogs() async throws {
+        let f = try Fixture()
+        _ = try f.appendUnread(body: "hello")
+        f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
+        f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: nil)
+        #expect(f.sender.calls.isEmpty)
     }
 
-    @Test("Nudge emits a `nudgeSent` event into events.jsonl.")
-    func nudgeEmitsEvent() async throws {
-        let env = try TestEnvironment.make()
-        defer { env.cleanup() }
-        try env.presence.write(
-            TeamPresenceRecord(
-                teamID: env.teamID,
-                worktree: "wt-foo",
-                runtime: .codex,
-                pid: 1,
-                registeredAt: Date()
-            )
-        )
-        try env.appendOldMessage(
-            id: "m1",
-            recipientWorktree: "wt-foo",
-            runtime: .codex,
-            body: "hi",
-            ageSeconds: 90
-        )
+    @Test("@spec TEAM-IDLE-2.1: onMessageArrival with idle delivers; with active is a no-op.")
+    func onMessageArrivalGatedByState() async throws {
+        let f = try Fixture()
+        _ = try f.appendUnread(body: "hello")
 
-        let recorder = TestNudgeRecorder()
-        let service = IdleDeliveryService(
-            presence: env.presence,
-            inboxRoot: env.inboxRoot,
-            inputState: ZmxInputState(),
-            nudgeSender: recorder,
-            eventLog: env.eventLog
-        )
-        await service.tick()
+        f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
+        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: f.paneID)
+        #expect(f.sender.calls.isEmpty, "active state must not deliver")
 
-        let logFile = env._eventLogRoot
-            .appendingPathComponent(env.teamID)
-            .appendingPathComponent("events.jsonl")
-        let contents = (try? String(contentsOf: logFile)) ?? ""
-        #expect(contents.contains("\"nudgeSent\""))
+        f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
+        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: f.paneID)
+        #expect(f.sender.calls.count == 1)
     }
 
-    @Test("nudgeSkipped events dedupe across consecutive ticks with the same skip reason.")
-    func skipEventDeduplicatesAcrossTicks() async throws {
-        let env = try TestEnvironment.make()
-        defer { env.cleanup() }
-        try env.presence.write(
-            TeamPresenceRecord(
-                teamID: env.teamID,
-                worktree: "wt-foo",
-                runtime: .codex,
-                pid: 1,
-                registeredAt: Date()
-            )
-        )
-        try env.appendOldMessage(
-            id: "m1",
-            recipientWorktree: "wt-foo",
-            runtime: .codex,
-            body: "hi",
-            ageSeconds: 90
-        )
-
-        let inputState = ZmxInputState()
-        // Hold the typing gate so each tick emits skip(reason: "typing").
-        // Without dedupe, three ticks would write three nudgeSkipped events;
-        // with dedupe, the reason matches across ticks so only the first logs.
-        inputState.recordInput("typing".data(using: .utf8)!, forSession: "wt-foo")
-
-        let recorder = TestNudgeRecorder()
-        let service = IdleDeliveryService(
-            presence: env.presence,
-            inboxRoot: env.inboxRoot,
-            inputState: inputState,
-            nudgeSender: recorder,
-            eventLog: env.eventLog
-        )
-        await service.tick()
-        await service.tick()
-        await service.tick()
-
-        let logFile = env._eventLogRoot
-            .appendingPathComponent(env.teamID)
-            .appendingPathComponent("events.jsonl")
-        let contents = (try? String(contentsOf: logFile)) ?? ""
-        let skipLines = contents.split(separator: "\n").filter { $0.contains("\"nudgeSkipped\"") }
-        #expect(skipLines.count == 1)  // First tick logs; subsequent dedupe.
+    final class StubSender: NudgeSender, @unchecked Sendable {
+        struct Call { let paneID: UUID; let text: String; let messageIDs: [String] }
+        var calls: [Call] = []
+        func send(paneID: UUID, message: String, messageIDs: [String]) async {
+            calls.append(.init(paneID: paneID, text: message, messageIDs: messageIDs))
+        }
     }
 
-    @Test("Ignores Claude registrants — Codex-only target for now.")
-    func skipsClaudeAgents() async throws {
-        let env = try TestEnvironment.make()
-        defer { env.cleanup() }
+    struct Fixture {
+        let teamID = "/repo"
+        let worktree = "/repo/.worktrees/alice"
+        let paneID = UUID()
+        let sender = StubSender()
+        let state: WorktreeAgentStateRegistry
+        let inbox: TeamInbox
+        let service: IdleDeliveryService
+        let frozen: Date
 
-        try env.presence.write(
-            TeamPresenceRecord(
-                teamID: env.teamID,
-                worktree: "wt-bar",
-                runtime: .claude,
-                pid: 2,
-                registeredAt: Date()
-            )
-        )
-        try env.appendOldMessage(
-            id: "m1",
-            recipientWorktree: "wt-bar",
-            runtime: .claude,
-            body: "hi",
-            ageSeconds: 90
-        )
-
-        let recorder = TestNudgeRecorder()
-        let service = IdleDeliveryService(
-            presence: env.presence,
-            inboxRoot: env.inboxRoot,
-            inputState: ZmxInputState(),
-            nudgeSender: recorder,
-            eventLog: env.eventLog
-        )
-        await service.tick()
-        let captured = await recorder.captured
-        #expect(captured.isEmpty)
-    }
-
-    /// Tmp-dir scaffold for presence + inbox roots, plus a helper that
-    /// writes a backdated `TeamInboxMessage` directly to the JSONL so the
-    /// service sees it as stale without us having to time-travel `Date()`.
-    struct TestEnvironment {
-        let teamID: String
-        let presence: TeamPresenceStorage
-        let inboxRoot: URL
-        let eventLog: TeamEventLog
-        let _eventLogRoot: URL
-        let _root: URL
-
-        static func make() throws -> TestEnvironment {
-            let root = URL(fileURLWithPath: NSTemporaryDirectory())
-                .appendingPathComponent("graftty-idle-\(UUID().uuidString)", isDirectory: true)
-            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-            let presenceRoot = root.appendingPathComponent("presence", isDirectory: true)
-            try FileManager.default.createDirectory(at: presenceRoot, withIntermediateDirectories: true)
-            let inboxRoot = root.appendingPathComponent("inbox", isDirectory: true)
-            try FileManager.default.createDirectory(at: inboxRoot, withIntermediateDirectories: true)
-            let eventLogRoot = root.appendingPathComponent("events", isDirectory: true)
-            try FileManager.default.createDirectory(at: eventLogRoot, withIntermediateDirectories: true)
-            return TestEnvironment(
-                teamID: "test-team",
-                presence: TeamPresenceStorage(rootDirectory: presenceRoot),
-                inboxRoot: inboxRoot,
-                eventLog: TeamEventLog(rootDirectory: eventLogRoot),
-                _eventLogRoot: eventLogRoot,
-                _root: root
+        init() throws {
+            let dir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("graftty-idle-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            self.frozen = Date(timeIntervalSince1970: 1_700_000_000)
+            let frozen = self.frozen
+            self.state = WorktreeAgentStateRegistry(now: { frozen })
+            self.inbox = TeamInbox(rootDirectory: dir, idGenerator: { UUID().uuidString }, now: { frozen })
+            self.service = IdleDeliveryService(
+                inbox: inbox,
+                state: state,
+                nudgeSender: sender,
+                eventLog: nil,
+                now: { frozen }
             )
         }
 
-        func cleanup() { try? FileManager.default.removeItem(at: _root) }
-
-        func appendOldMessage(
-            id: String,
-            recipientWorktree: String,
-            runtime: TeamHookRuntime,
-            body: String,
-            ageSeconds: TimeInterval
-        ) throws {
-            let message = TeamInboxMessage(
-                id: id,
-                batchID: nil,
-                createdAt: Date().addingTimeInterval(-ageSeconds),
-                team: "TestTeam",
+        func appendUnread(body: String) throws -> String {
+            let msg = try inbox.appendMessage(
+                teamID: teamID,
+                teamName: "repo",
                 repoPath: "/repo",
-                from: TeamInboxEndpoint(member: "sender", worktree: "wt-other", runtime: "codex"),
-                to: TeamInboxEndpoint(member: recipientWorktree, worktree: recipientWorktree, runtime: runtime.rawValue),
+                from: TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil),
+                to: TeamInboxEndpoint(member: "alice", worktree: worktree, runtime: nil),
                 priority: .normal,
                 kind: "team_message",
                 body: body
             )
-            let url = TeamInbox.messagesURLFor(rootDirectory: inboxRoot, teamID: teamID)
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            let line = try encoder.encode(message) + Data([0x0A])
-            if FileManager.default.fileExists(atPath: url.path) {
-                let handle = try FileHandle(forWritingTo: url)
-                try handle.seekToEnd()
-                try handle.write(contentsOf: line)
-                try handle.close()
-            } else {
-                try line.write(to: url)
-            }
+            return msg.id
         }
-    }
-}
-
-actor TestNudgeRecorder: NudgeSender {
-    struct Captured {
-        let recipient: TeamPresenceRecord
-        let message: String
-        let messageIDs: [String]
-    }
-    private(set) var captured: [Captured] = []
-
-    func send(to recipient: TeamPresenceRecord, message: String, messageIDs: [String]) async {
-        captured.append(Captured(recipient: recipient, message: message, messageIDs: messageIDs))
     }
 }

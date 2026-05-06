@@ -754,24 +754,16 @@ struct GrafttyApp: App {
             TeamPresenceMonitor.cleanupStale(storage: presenceStorage)
         }
 
-        // TEAM-IDLE-2.1/2.2/2.3: poll registered Codex agents for stale
-        // unread messages, deliver a nudge via zmx-send when one passes
-        // the typing/debounce gates. The ZmxNudgeSender placeholder logs
-        // the intended nudge until the keystroke-write plumbing lands; the
-        // gating logic runs in production already so behavior tests can
-        // observe it. The shared `ZmxInputState` is constructed here but
-        // not yet plumbed into `WebSession` instances — typing-gate input
-        // currently always reports zero bytes for native panes (see the
-        // `ZmxInputState` doc comment for why the 60 s freshness gate
-        // covers that gap), and remote-pane wiring is a follow-up.
-        let idleDelivery = IdleDeliveryService(
-            presence: presenceStorage,
-            inboxRoot: AppState.defaultDirectory
-                .appendingPathComponent("team-inbox", isDirectory: true),
-            inputState: ZmxInputState(),
+        // TEAM-IDLE-2.1: construct the event-driven IdleDeliveryService.
+        // State-transition wiring (onStop / onMessageArrival call sites)
+        // and inbox-observer subscription are deferred to Task 9.
+        // TODO: Task 9 — wire IdleDeliveryService into hook events and inbox observer.
+        let stateRegistry = WorktreeAgentStateRegistry()
+        _ = IdleDeliveryService(
+            inbox: services.teamInbox,
+            state: stateRegistry,
             nudgeSender: ZmxNudgeSender()
         )
-        Task.detached { await idleDelivery.startPolling() }
 
         restoreRunningWorktrees()
 
