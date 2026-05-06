@@ -8,7 +8,9 @@ struct TeamInboxRequestHandlerTests {
         inbox: TeamInbox,
         templateProvider: @escaping () -> String = { "" },
         sessionPromptRenderer: ((TeamView, TeamMember) -> String?)? = nil,
-        onStop: (@Sendable (String, String, String, UUID?) -> Void)? = nil
+        onStop: (@Sendable (String, String, String, UUID?) -> Void)? = nil,
+        onSessionStart: (@Sendable (String, String, String, UUID?) -> Void)? = nil,
+        onPostToolUse: (@Sendable (String, String, String, UUID?) -> Void)? = nil
     ) -> TeamInboxRequestHandler {
         TeamInboxRequestHandler(
             inbox: inbox,
@@ -18,7 +20,9 @@ struct TeamInboxRequestHandlerTests {
                 templateProvider: templateProvider
             ),
             sessionPromptRenderer: sessionPromptRenderer,
-            onStop: onStop
+            onStop: onStop,
+            onSessionStart: onSessionStart,
+            onPostToolUse: onPostToolUse
         )
     }
 
@@ -211,6 +215,63 @@ struct TeamInboxRequestHandlerTests {
             event: .stop, sessionID: "s-1", repos: [repo], teamsEnabled: true
         )
         #expect(stopOutput == "{}")
+    }
+
+    @Test("@spec TEAM-IDLE-2.4: SessionStart hook fires onSessionStart callback before returning rendered context.")
+    func sessionStartFiresOnSessionStartCallback() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
+        let recorder = OnStopCallRecorder()
+        let handler = Self.makeHandler(
+            inbox: inbox,
+            onSessionStart: { team, worktree, runtime, paneID in
+                recorder.append(team: team, worktree: worktree, runtime: runtime, paneID: paneID)
+            }
+        )
+
+        let output = try handler.hook(
+            callerWorktree: "/repo/.worktrees/alice", runtime: .codex,
+            event: .sessionStart, sessionID: "s-1", repos: [repo], teamsEnabled: true
+        )
+
+        // Callback fired exactly once with correct coordinates.
+        #expect(recorder.calls.count == 1)
+        #expect(recorder.calls[0].team == "/repo")
+        #expect(recorder.calls[0].worktree == "/repo/.worktrees/alice")
+        #expect(recorder.calls[0].runtime == "codex")
+        #expect(recorder.calls[0].paneID == nil)
+        // Rendered output is unchanged — callback is a side-effect only.
+        #expect(output.contains("Graftty Agent Team session context"))
+    }
+
+    @Test("@spec TEAM-IDLE-2.4: PostToolUse hook fires onPostToolUse callback before returning rendered context.")
+    func postToolUseFiresOnPostToolUseCallback() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
+        let recorder = OnStopCallRecorder()
+        let handler = Self.makeHandler(
+            inbox: inbox,
+            onPostToolUse: { team, worktree, runtime, paneID in
+                recorder.append(team: team, worktree: worktree, runtime: runtime, paneID: paneID)
+            }
+        )
+
+        let output = try handler.hook(
+            callerWorktree: "/repo/.worktrees/alice", runtime: .codex,
+            event: .postToolUse, sessionID: "s-1", repos: [repo], teamsEnabled: true
+        )
+
+        // Callback fired exactly once with correct coordinates.
+        #expect(recorder.calls.count == 1)
+        #expect(recorder.calls[0].team == "/repo")
+        #expect(recorder.calls[0].worktree == "/repo/.worktrees/alice")
+        #expect(recorder.calls[0].runtime == "codex")
+        #expect(recorder.calls[0].paneID == nil)
+        // Rendered output is unchanged — callback is a side-effect only.
+        // No urgent messages in inbox, so output is the "nothing pending" response.
+        #expect(!output.isEmpty)
     }
 
     private static let fixedDate = Date(timeIntervalSince1970: 1_800_000_000)

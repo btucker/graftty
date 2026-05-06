@@ -4,6 +4,16 @@ import UserNotifications
 import GrafttyKit
 import GrafttyProtocol
 
+/// Callbacks injected into `TeamInboxRequestHandler` from the app's
+/// idle-delivery pipeline. Constructed once in `GrafttyApp.startup()` and
+/// stored on `AppServices` so the static `handleTeamHook` path can pick
+/// them up without requiring an instance reference.
+struct TeamHookCallbacks {
+    let onStop: @Sendable (String, String, String, UUID?) -> Void
+    let onSessionStart: @Sendable (String, String, String, UUID?) -> Void
+    let onPostToolUse: @Sendable (String, String, String, UUID?) -> Void
+}
+
 final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate {
     static let shared = AgentNotificationRouter()
 
@@ -80,6 +90,24 @@ final class AppServices {
     /// Provides the current AppState for the team PR-merged dispatch hook.
     /// Set in GrafttyApp.startup() once @State is accessible (TEAM-5.4).
     var appStateProvider: (() -> AppState)?
+
+    // MARK: - Idle Delivery Pipeline (TEAM-IDLE-2.x)
+    /// Hook callbacks wired to the idle-delivery pipeline. Set in
+    /// `GrafttyApp.startup()` after the pipeline is constructed.
+    var teamHookCallbacks: TeamHookCallbacks?
+    /// Retained so the idle pipeline stays alive for the app's lifetime.
+    var idleDeliveryService: IdleDeliveryService?
+    var agentStateRegistry: WorktreeAgentStateRegistry?
+    var inputActivityRegistry: PaneInputActivityRegistry?
+    var graceScheduler: EngagedGraceScheduler?
+    /// Pane → (worktree, runtime) map. Updated from SessionStart/PostToolUse
+    /// callbacks so the keystroke observer can route keystrokes to the right
+    /// agent. All access is on the main actor (AppServices is @MainActor).
+    var agentForPane: [UUID: (worktree: String, runtime: String)] = [:]
+    /// Holds the `TeamInboxObserver` cancellables so the observers stay
+    /// active for the lifetime of the app (one observer per team-ID started
+    /// at launch for each known repo).
+    var inboxObserverCancellables: [TeamInboxObserver.Cancellable] = []
 
     init(socketPath: String) {
         self.socketServer = SocketServer(socketPath: socketPath)
@@ -644,6 +672,10 @@ struct GrafttyApp: App {
         }
         let teamInbox = services.teamInbox
         let teamEventDispatcher = services.teamEventDispatcher
+        // hookCallbacks is set below in the idle-pipeline wiring; capture
+        // by reference through AppServices so the closure sees the value
+        // once it is assigned.
+        let appServicesRef = services
         services.socketServer.onRequest = { message in
             MainActor.assumeIsolated {
                 Self.handlePaneRequest(
@@ -651,7 +683,8 @@ struct GrafttyApp: App {
                     appState: binding,
                     terminalManager: tm,
                     teamInbox: teamInbox,
-                    teamEventDispatcher: teamEventDispatcher
+                    teamEventDispatcher: teamEventDispatcher,
+                    hookCallbacks: appServicesRef.teamHookCallbacks
                 )
             }
         }
@@ -754,16 +787,157 @@ struct GrafttyApp: App {
             TeamPresenceMonitor.cleanupStale(storage: presenceStorage)
         }
 
-        // TEAM-IDLE-2.1: construct the event-driven IdleDeliveryService.
-        // State-transition wiring (onStop / onMessageArrival call sites)
-        // and inbox-observer subscription are deferred to Task 9.
-        // TODO: Task 9 — wire IdleDeliveryService into hook events and inbox observer.
+        // TEAM-IDLE-2.1 / TEAM-IDLE-2.2 / TEAM-IDLE-2.4 / TEAM-IDLE-2.5:
+        // Build and wire the event-driven idle-delivery pipeline.
+
         let stateRegistry = WorktreeAgentStateRegistry()
-        _ = IdleDeliveryService(
+        let inputRegistry = PaneInputActivityRegistry()
+        let idleService = IdleDeliveryService(
             inbox: services.teamInbox,
             state: stateRegistry,
             nudgeSender: ZmxNudgeSender(writer: AppZmxWriter(terminalManager: terminalManager))
         )
+
+        // Pane-to-agent mapping maintained on AppServices (@MainActor).
+        // Updated on every SessionStart/PostToolUse so keystrokes can be
+        // routed to the right (worktree, runtime). Runtime defaults to
+        // "codex" for panes with no recorded agent identity (v1 heuristic).
+        //
+        // All callbacks fire from handleTeamHook → TeamInboxRequestHandler.hook,
+        // which runs inside MainActor.assumeIsolated. Using assumeIsolated here
+        // lets us read/write MainActor state without crossing an actor boundary.
+
+        // Build the engaged-grace scheduler. Its onElapsed fires after
+        // 60s of no keystrokes and triggers onMessageArrival so any
+        // pending messages drain once the user stops typing.
+        let graceScheduler = EngagedGraceScheduler(
+            state: stateRegistry,
+            onElapsed: { [weak idleService] worktree, runtime in
+                // EngagedGraceScheduler.bump calls handleEngagedGraceElapsed
+                // then fires onElapsed inside Task { @MainActor }, so we are on
+                // the main actor here.
+                guard let service = idleService else { return }
+                let paneID: UUID? = MainActor.assumeIsolated {
+                    guard let wt = binding.wrappedValue.worktree(forPath: worktree) else { return nil }
+                    return (wt.focusedTerminalID ?? wt.splitTree.allLeaves.first)?.id
+                }
+                let teamID: String? = MainActor.assumeIsolated {
+                    binding.wrappedValue.repos.first(where: {
+                        $0.worktrees.contains(where: { $0.path == worktree })
+                    })?.path
+                }
+                guard let teamID else { return }
+                Task {
+                    await service.onMessageArrival(
+                        team: teamID, worktree: worktree, runtime: runtime, paneID: paneID
+                    )
+                }
+            }
+        )
+
+        // Wire the keystroke observer. The onKeystroke closure resolves
+        // pane → (worktree, runtime) from AppServices.agentForPane map and
+        // drives the state registry + grace timer. Fires on MainActor.
+        let inputObserver = PaneInputActivityObserver(
+            registry: inputRegistry,
+            onKeystroke: { [weak graceScheduler, weak services] paneID in
+                // SurfaceNSView.keyDown fires on main thread. Use
+                // assumeIsolated so we can read MainActor-isolated state.
+                MainActor.assumeIsolated {
+                    guard let agent = services?.agentForPane[paneID] else { return }
+                    stateRegistry.handleKeystroke(worktree: agent.worktree, runtime: agent.runtime)
+                    graceScheduler?.bump(worktree: agent.worktree, runtime: agent.runtime)
+                }
+            }
+        )
+
+        // Wire the three hook callbacks.
+        // These fire from handleTeamHook, which runs inside MainActor.assumeIsolated.
+        let hookCallbacks = TeamHookCallbacks(
+            onStop: { [weak idleService] team, worktree, runtime, _ in
+                guard let service = idleService else { return }
+                let paneID: UUID? = MainActor.assumeIsolated {
+                    guard let wt = binding.wrappedValue.worktree(forPath: worktree) else { return nil }
+                    return (wt.focusedTerminalID ?? wt.splitTree.allLeaves.first)?.id
+                }
+                Task { await service.onStop(team: team, worktree: worktree, runtime: runtime, paneID: paneID) }
+            },
+            onSessionStart: { [weak services] team, worktree, runtime, _ in
+                MainActor.assumeIsolated {
+                    if let paneID: UUID = {
+                        guard let wt = binding.wrappedValue.worktree(forPath: worktree) else { return nil }
+                        return (wt.focusedTerminalID ?? wt.splitTree.allLeaves.first)?.id
+                    }() {
+                        services?.agentForPane[paneID] = (worktree: worktree, runtime: runtime)
+                    }
+                }
+                stateRegistry.handleSessionStart(worktree: worktree, runtime: runtime)
+            },
+            onPostToolUse: { [weak services] team, worktree, runtime, _ in
+                MainActor.assumeIsolated {
+                    if let paneID: UUID = {
+                        guard let wt = binding.wrappedValue.worktree(forPath: worktree) else { return nil }
+                        return (wt.focusedTerminalID ?? wt.splitTree.allLeaves.first)?.id
+                    }() {
+                        services?.agentForPane[paneID] = (worktree: worktree, runtime: runtime)
+                    }
+                }
+                stateRegistry.handlePostToolUse(worktree: worktree, runtime: runtime)
+            }
+        )
+
+        // Subscribe the idle service to inbox file-system events.
+        // TeamInboxObserver fires with the full message list on every
+        // append. We track the previous count and fire onMessageArrival
+        // only when new messages arrive, to avoid redundant delivers.
+        // We watch each team's inbox for all repos that exist at startup time;
+        // the watcher self-heals for the file-not-yet-created case via the
+        // directory watch inside TeamInboxObserver.
+        var lastSeenMessageCount: [String: Int] = [:]
+        let inboxRoot = AppState.defaultDirectory
+            .appendingPathComponent("team-inbox", isDirectory: true)
+        for repo in binding.wrappedValue.repos {
+            let teamID = repo.path
+            let observer = TeamInboxObserver(rootDirectory: inboxRoot, teamID: teamID)
+            let cancellable = observer.start { [weak idleService] messages in
+                let prev = lastSeenMessageCount[teamID] ?? 0
+                let curr = messages.count
+                guard curr > prev else {
+                    lastSeenMessageCount[teamID] = curr
+                    return
+                }
+                lastSeenMessageCount[teamID] = curr
+                guard let newest = messages.last else { return }
+                guard let service = idleService else { return }
+                let recipientWorktree = newest.to.worktree
+                let runtime = newest.to.runtime ?? "codex"
+                Task { @MainActor in
+                    let paneID: UUID? = {
+                        guard let wt = binding.wrappedValue.worktree(forPath: recipientWorktree) else { return nil }
+                        return (wt.focusedTerminalID ?? wt.splitTree.allLeaves.first)?.id
+                    }()
+                    await service.onMessageArrival(
+                        team: teamID,
+                        worktree: recipientWorktree,
+                        runtime: runtime,
+                        paneID: paneID
+                    )
+                }
+            }
+            services.inboxObserverCancellables.append(cancellable)
+        }
+
+        // Persist pipeline components on AppServices so they outlive startup().
+        services.agentStateRegistry = stateRegistry
+        services.inputActivityRegistry = inputRegistry
+        services.idleDeliveryService = idleService
+        services.graceScheduler = graceScheduler
+        services.teamHookCallbacks = hookCallbacks
+
+        // Inject the input observer into future SurfaceHandle constructions.
+        // The terminalManager holds a reference and passes it at surface
+        // creation time.
+        terminalManager.inputActivityObserver = inputObserver
 
         restoreRunningWorktrees()
 
@@ -1380,7 +1554,8 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         teamInbox: TeamInbox,
-        teamEventDispatcher: TeamEventDispatcher
+        teamEventDispatcher: TeamEventDispatcher,
+        hookCallbacks: TeamHookCallbacks? = nil
     ) -> ResponseMessage? {
         switch message {
         case .listPanes(let path):
@@ -1428,7 +1603,8 @@ struct GrafttyApp: App {
                 sessionID: sessionID,
                 appState: appState,
                 teamInbox: teamInbox,
-                teamEventDispatcher: teamEventDispatcher
+                teamEventDispatcher: teamEventDispatcher,
+                hookCallbacks: hookCallbacks
             )
         case .teamInbox(let callerPath, let worktree, let repo, let member, let unread, let all):
             return handleTeamInbox(
@@ -1528,10 +1704,15 @@ struct GrafttyApp: App {
         sessionID: String?,
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
-        teamEventDispatcher: TeamEventDispatcher
+        teamEventDispatcher: TeamEventDispatcher,
+        hookCallbacks: TeamHookCallbacks? = nil
     ) -> ResponseMessage {
         do {
-            let output = try teamInboxRequestHandler(inbox: teamInbox, dispatcher: teamEventDispatcher).hook(
+            let output = try teamInboxRequestHandler(
+                inbox: teamInbox,
+                dispatcher: teamEventDispatcher,
+                hookCallbacks: hookCallbacks
+            ).hook(
                 callerWorktree: callerPath,
                 runtime: runtime,
                 event: event,
@@ -1663,12 +1844,16 @@ struct GrafttyApp: App {
 
     private static func teamInboxRequestHandler(
         inbox: TeamInbox,
-        dispatcher: TeamEventDispatcher
+        dispatcher: TeamEventDispatcher,
+        hookCallbacks: TeamHookCallbacks? = nil
     ) -> TeamInboxRequestHandler {
         TeamInboxRequestHandler(
             inbox: inbox,
             dispatcher: dispatcher,
-            sessionPromptRenderer: renderTeamSessionPrompt(team:viewer:)
+            sessionPromptRenderer: renderTeamSessionPrompt(team:viewer:),
+            onStop: hookCallbacks?.onStop,
+            onSessionStart: hookCallbacks?.onSessionStart,
+            onPostToolUse: hookCallbacks?.onPostToolUse
         )
     }
 

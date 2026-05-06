@@ -39,17 +39,23 @@ public final class TeamInboxRequestHandler {
     private let dispatcher: TeamEventDispatcher
     private let sessionPromptRenderer: ((TeamView, TeamMember) -> String?)?
     private let onStop: (@Sendable (_ team: String, _ worktree: String, _ runtime: String, _ paneID: UUID?) -> Void)?
+    private let onSessionStart: (@Sendable (_ team: String, _ worktree: String, _ runtime: String, _ paneID: UUID?) -> Void)?
+    private let onPostToolUse: (@Sendable (_ team: String, _ worktree: String, _ runtime: String, _ paneID: UUID?) -> Void)?
 
     public init(
         inbox: TeamInbox,
         dispatcher: TeamEventDispatcher,
         sessionPromptRenderer: ((TeamView, TeamMember) -> String?)? = nil,
-        onStop: (@Sendable (String, String, String, UUID?) -> Void)? = nil
+        onStop: (@Sendable (String, String, String, UUID?) -> Void)? = nil,
+        onSessionStart: (@Sendable (String, String, String, UUID?) -> Void)? = nil,
+        onPostToolUse: (@Sendable (String, String, String, UUID?) -> Void)? = nil
     ) {
         self.inbox = inbox
         self.dispatcher = dispatcher
         self.sessionPromptRenderer = sessionPromptRenderer
         self.onStop = onStop
+        self.onSessionStart = onSessionStart
+        self.onPostToolUse = onPostToolUse
     }
 
     @discardableResult
@@ -181,12 +187,14 @@ public final class TeamInboxRequestHandler {
 
         switch event {
         case .sessionStart:
+            onSessionStart?(teamID, context.sender.worktreePath, runtime.rawValue, nil)
             var text = TeamInstructionsRenderer.render(team: context.team, viewer: context.sender)
             if let renderedPrompt = sessionPromptRenderer?(context.team, context.sender) {
                 text += "\n\n\(renderedPrompt)"
             }
             return try TeamHookRenderer.sessionStart(runtime: runtime, teamContext: text)
         case .postToolUse:
+            onPostToolUse?(teamID, context.sender.worktreePath, runtime.rawValue, nil)
             let allUnread = try inbox.unreadMessages(
                 teamID: teamID,
                 recipientWorktree: context.sender.worktreePath,

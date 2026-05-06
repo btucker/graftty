@@ -228,6 +228,11 @@ final class TerminalManager: ObservableObject {
     /// sets it via `GrafttyApp`.
     var editorPreference: EditorPreference?
 
+    /// Passive keystroke tap for the idle-delivery pipeline. Set by
+    /// `GrafttyApp.startup()` after the pipeline is constructed; nil
+    /// before that, which is safe — `SurfaceNSView.keyDown` nil-checks it.
+    var inputActivityObserver: PaneInputActivityObserver?
+
     /// Fired when cmd-click resolves to a CLI editor; owner spawns a new
     /// pane split-right of the source with `initialInput` as the command.
     var onOpenInEditorPane: ((TerminalID, String) -> Void)?
@@ -432,7 +437,8 @@ final class TerminalManager: ObservableObject {
                 socketPath: socketPath,
                 zmxInitialInput: zmxInitialInput,
                 zmxDir: zmxDir,
-                terminalManager: self
+                terminalManager: self,
+                inputActivityObserver: inputActivityObserver
             ) else { continue }
             surfaces[terminalID] = handle
             created[terminalID] = handle
@@ -465,7 +471,8 @@ final class TerminalManager: ObservableObject {
             zmxInitialInput: zmxInitialInput,
             extraInitialInput: extraInitialInput,
             zmxDir: zmxDir,
-            terminalManager: self
+            terminalManager: self,
+            inputActivityObserver: inputActivityObserver
         ) else { return nil }
         surfaces[terminalID] = handle
         return handle
