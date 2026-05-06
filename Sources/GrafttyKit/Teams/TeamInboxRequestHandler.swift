@@ -38,15 +38,18 @@ public final class TeamInboxRequestHandler {
     private let inbox: TeamInbox
     private let dispatcher: TeamEventDispatcher
     private let sessionPromptRenderer: ((TeamView, TeamMember) -> String?)?
+    private let onStop: (@Sendable (_ team: String, _ worktree: String, _ runtime: String, _ paneID: UUID?) -> Void)?
 
     public init(
         inbox: TeamInbox,
         dispatcher: TeamEventDispatcher,
-        sessionPromptRenderer: ((TeamView, TeamMember) -> String?)? = nil
+        sessionPromptRenderer: ((TeamView, TeamMember) -> String?)? = nil,
+        onStop: (@Sendable (String, String, String, UUID?) -> Void)? = nil
     ) {
         self.inbox = inbox
         self.dispatcher = dispatcher
         self.sessionPromptRenderer = sessionPromptRenderer
+        self.onStop = onStop
     }
 
     @discardableResult
@@ -210,6 +213,7 @@ public final class TeamInboxRequestHandler {
             // Claude side picks them up via the asyncRewake watcher;
             // Codex picks them up at the next SessionStart or via
             // IdleDeliveryService once production zmx-send wiring lands.
+            onStop?(teamID, context.sender.worktreePath, runtime.rawValue, nil)
             return try TeamHookRenderer.stop(runtime: runtime, messages: [])
         }
     }

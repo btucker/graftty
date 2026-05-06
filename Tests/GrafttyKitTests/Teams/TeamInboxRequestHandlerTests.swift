@@ -7,7 +7,8 @@ struct TeamInboxRequestHandlerTests {
     private static func makeHandler(
         inbox: TeamInbox,
         templateProvider: @escaping () -> String = { "" },
-        sessionPromptRenderer: ((TeamView, TeamMember) -> String?)? = nil
+        sessionPromptRenderer: ((TeamView, TeamMember) -> String?)? = nil,
+        onStop: (@Sendable (String, String, String, UUID?) -> Void)? = nil
     ) -> TeamInboxRequestHandler {
         TeamInboxRequestHandler(
             inbox: inbox,
@@ -16,7 +17,8 @@ struct TeamInboxRequestHandlerTests {
                 preferencesProvider: { TeamEventRoutingPreferences() },
                 templateProvider: templateProvider
             ),
-            sessionPromptRenderer: sessionPromptRenderer
+            sessionPromptRenderer: sessionPromptRenderer,
+            onStop: onStop
         )
     }
 
@@ -169,6 +171,48 @@ struct TeamInboxRequestHandlerTests {
         #expect(cursorAfterStop?.lastSeenID == nil)
     }
 
+    @Test("@spec TEAM-IDLE-2.5: Stop hook fires onStop side-effect callback before returning {}.")
+    func stopHookFiresOnStopCallback() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
+        let recorder = OnStopCallRecorder()
+        let handler = Self.makeHandler(
+            inbox: inbox,
+            onStop: { team, worktree, runtime, paneID in
+                recorder.append(team: team, worktree: worktree, runtime: runtime, paneID: paneID)
+            }
+        )
+
+        _ = try handler.send(
+            callerWorktree: "/repo", recipient: "alice", text: "hi",
+            priority: .normal, repos: [repo], teamsEnabled: true
+        )
+        let stopOutput = try handler.hook(
+            callerWorktree: "/repo/.worktrees/alice", runtime: .codex,
+            event: .stop, sessionID: "s-1", repos: [repo], teamsEnabled: true
+        )
+
+        #expect(stopOutput == "{}")
+        #expect(recorder.calls.count == 1)
+        #expect(recorder.calls[0].worktree == "/repo/.worktrees/alice")
+        #expect(recorder.calls[0].runtime == "codex")
+        #expect(recorder.calls[0].paneID == nil)  // handler doesn't know panes — app wiring resolves them
+    }
+
+    @Test("@spec TEAM-IDLE-2.5: Stop hook with no onStop callback still returns {} (back-compat).")
+    func stopHookWithoutCallbackStillWorks() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
+        let handler = Self.makeHandler(inbox: inbox)
+        let stopOutput = try handler.hook(
+            callerWorktree: "/repo/.worktrees/alice", runtime: .codex,
+            event: .stop, sessionID: "s-1", repos: [repo], teamsEnabled: true
+        )
+        #expect(stopOutput == "{}")
+    }
+
     private static let fixedDate = Date(timeIntervalSince1970: 1_800_000_000)
 
     private static func fixedIDs(_ values: [String]) -> () -> String {
@@ -184,5 +228,15 @@ struct TeamInboxRequestHandlerTests {
             .appendingPathComponent("graftty-team-inbox-request-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
+    }
+}
+
+final class OnStopCallRecorder: @unchecked Sendable {
+    struct Call { let team: String; let worktree: String; let runtime: String; let paneID: UUID? }
+    private let lock = NSLock()
+    private(set) var calls: [Call] = []
+    func append(team: String, worktree: String, runtime: String, paneID: UUID?) {
+        lock.lock(); defer { lock.unlock() }
+        calls.append(.init(team: team, worktree: worktree, runtime: runtime, paneID: paneID))
     }
 }
