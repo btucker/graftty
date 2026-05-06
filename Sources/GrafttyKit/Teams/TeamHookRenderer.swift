@@ -67,21 +67,17 @@ public enum TeamHookRenderer {
     }
 
     public static func codexStop(messages: [TeamInboxMessage]) throws -> String {
-        // Stop hook in both Claude and Codex only accepts top-level
-        // fields (decision/reason/continue/stopReason/systemMessage/
+        // Stop schema in both runtimes accepts only top-level fields
+        // (decision/reason/continue/stopReason/systemMessage/
         // suppressOutput) — `hookSpecificOutput.additionalContext` is
-        // explicitly NOT in either runtime's Stop schema, so emitting
-        // it triggers "hook returned invalid stop hook JSON output"
-        // and the messages don't get delivered anyway.
-        //
-        // Inbox delivery on Stop is therefore a no-op. PostToolUse
-        // covers messages received during a turn, and (Claude only)
-        // the asyncRewake watcher wired by AgentHookInstaller catches
-        // anything that lands during the idle period that follows.
-        // Codex has no equivalent watcher today, so messages arriving
-        // in the brief gap between the last tool use and Stop are
-        // caught at the next SessionStart's inbox replay or by the
-        // IdleDeliveryService zmx-send poller (60s threshold).
+        // not in either runtime's Stop schema, so emitting it triggers
+        // "hook returned invalid stop hook JSON output". Stop is
+        // therefore a true no-op for inbox delivery, and the request
+        // handler also skips the cursor advance so pending messages
+        // stay queued. Live delivery paths are: PostToolUse (urgent
+        // only) for both runtimes, plus the Claude-only asyncRewake
+        // watcher; on Codex, normal-priority messages need zmx-send
+        // wiring in IdleDeliveryService to surface mid-session.
         _ = messages
         return "{}"
     }
