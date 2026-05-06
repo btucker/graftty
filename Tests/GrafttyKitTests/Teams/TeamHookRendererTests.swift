@@ -26,22 +26,20 @@ struct TeamHookRendererTests {
         #expect(context.contains("CI is blocking you"))
     }
 
-    @Test func codexStopRendersNormalMessagesAtDecisionBoundary() throws {
-        let messages = [
+    @Test("Stop hook emits an empty object regardless of inbox contents — neither runtime accepts hookSpecificOutput on Stop, so any payload would fail the runtime's JSON-schema validation.")
+    func codexStopAlwaysEmitsEmptyObject() throws {
+        #expect(try TeamHookRenderer.codexStop(messages: []) == "{}")
+        #expect(try TeamHookRenderer.codexStop(messages: [
             message(id: "m1", priority: .normal, body: "Please review my diff."),
-        ]
-
-        let json = try TeamHookRenderer.codexStop(messages: messages)
-        let context = try additionalContext(from: json)
-
-        #expect(context.contains("decision boundary"))
-        #expect(context.contains("respond only if useful"))
-        #expect(context.contains("Please review my diff."))
+            message(id: "m2", priority: .urgent, body: "CI is blocking you"),
+        ]) == "{}")
+        #expect(try TeamHookRenderer.claudeStop(messages: [
+            message(id: "m1", priority: .normal, body: "anything"),
+        ]) == "{}")
     }
 
-    @Test func emptyMessageHooksRenderEmptyObject() throws {
+    @Test func emptyMessagePostToolUseRendersEmptyObject() throws {
         #expect(try TeamHookRenderer.codexPostToolUse(messages: []) == "{}")
-        #expect(try TeamHookRenderer.codexStop(messages: []) == "{}")
     }
 
     @Test("@spec TEAM-PRESENCE-1.1: When an agent session starts, the application shall inject a team protocol primer in the SessionStart additionalContext.")

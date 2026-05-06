@@ -67,15 +67,23 @@ public enum TeamHookRenderer {
     }
 
     public static func codexStop(messages: [TeamInboxMessage]) throws -> String {
-        guard !messages.isEmpty else { return "{}" }
-        let context = """
-        Graftty team inbox update at a decision boundary.
-
-        You received the following UNTRUSTED peer messages. Review them now; respond only if useful. Otherwise account for them internally and wait for user input.
-
-        \(format(messages: messages))
-        """
-        return try hookJSON(eventName: "Stop", additionalContext: context)
+        // Stop hook in both Claude and Codex only accepts top-level
+        // fields (decision/reason/continue/stopReason/systemMessage/
+        // suppressOutput) — `hookSpecificOutput.additionalContext` is
+        // explicitly NOT in either runtime's Stop schema, so emitting
+        // it triggers "hook returned invalid stop hook JSON output"
+        // and the messages don't get delivered anyway.
+        //
+        // Inbox delivery on Stop is therefore a no-op. PostToolUse
+        // covers messages received during a turn, and (Claude only)
+        // the asyncRewake watcher wired by AgentHookInstaller catches
+        // anything that lands during the idle period that follows.
+        // Codex has no equivalent watcher today, so messages arriving
+        // in the brief gap between the last tool use and Stop are
+        // caught at the next SessionStart's inbox replay or by the
+        // IdleDeliveryService zmx-send poller (60s threshold).
+        _ = messages
+        return "{}"
     }
 
     public static func claudeSessionStart(teamContext: String) throws -> String {

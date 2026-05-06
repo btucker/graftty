@@ -141,6 +141,11 @@ struct TeamInboxRequestHandlerTests {
         let cursor = try inbox.cursor(teamID: "/repo", sessionID: "session-1")
         #expect(cursor?.lastSeenID == nil)
 
+        // Stop hook in both runtimes only accepts top-level fields,
+        // so the rendered output is `{}` regardless of the inbox
+        // state — the previously-undelivered normal message stays
+        // pending and is replayed at the next SessionStart's inbox
+        // dump (or via the asyncRewake watcher on Claude).
         let stopOutput = try handler.hook(
             callerWorktree: "/repo/.worktrees/alice",
             runtime: .codex,
@@ -149,7 +154,7 @@ struct TeamInboxRequestHandlerTests {
             repos: [repo],
             teamsEnabled: true
         )
-        #expect(stopOutput.contains("normal first"))
+        #expect(stopOutput == "{}")
     }
 
     private static let fixedDate = Date(timeIntervalSince1970: 1_800_000_000)
