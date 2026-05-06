@@ -364,7 +364,7 @@ public final class TeamInbox {
 
     public func advanceZmxWatermark(teamID: String, worktree: String, runtime: String, to messageID: String) throws {
         let url = zmxWatermarkURL(teamID: teamID, worktree: worktree, runtime: runtime)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try ensureParentDirectory(for: url)
         try messageID.write(to: url, atomically: true, encoding: .utf8)
     }
 

@@ -27,6 +27,14 @@ struct TeamInboxZmxWatermarkTests {
         #expect(try inbox.zmxWatermark(teamID: "/r", worktree: "/r/alice", runtime: "claude") == nil)
     }
 
+    @Test("Advancing twice replaces the prior value (latest write wins).")
+    func advanceOverwritesPriorValue() throws {
+        let inbox = try Self.makeInbox()
+        try inbox.advanceZmxWatermark(teamID: "/r", worktree: "/r/alice", runtime: "codex", to: "msg-1")
+        try inbox.advanceZmxWatermark(teamID: "/r", worktree: "/r/alice", runtime: "codex", to: "msg-2")
+        #expect(try inbox.zmxWatermark(teamID: "/r", worktree: "/r/alice", runtime: "codex") == "msg-2")
+    }
+
     private static func makeInbox() throws -> TeamInbox {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-zmx-watermark-\(UUID().uuidString)")
