@@ -100,9 +100,10 @@ public enum TeamHookRenderer {
 
     public static func format(messages: [TeamInboxMessage]) -> String {
         messages.map { message in
-            """
+            let agentText = message.agentPrompt ?? message.body
+            return """
             [id=\(message.id) priority=\(message.priority.rawValue) from=\(message.from.member) runtime=\(message.from.runtime ?? "unknown") at=\(timestamp(message.createdAt))]
-            \(message.body)
+            \(agentText)
             """
         }.joined(separator: "\n\n")
     }

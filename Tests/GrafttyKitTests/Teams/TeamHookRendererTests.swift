@@ -61,7 +61,40 @@ struct TeamHookRendererTests {
         #expect(claude == codex)
     }
 
-    private func message(id: String, priority: TeamInboxPriority, body: String) -> TeamInboxMessage {
+    @Test("format(messages:) emits agentPrompt when non-nil.")
+    func formatEmitsAgentPromptWhenPresent() {
+        let msg = message(
+            id: "m1",
+            priority: .normal,
+            body: "EVENT-BODY",
+            agentPrompt: "Hello alice.\n\nEVENT-BODY"
+        )
+        let rendered = TeamHookRenderer.format(messages: [msg])
+        #expect(rendered.contains("Hello alice."))
+        #expect(rendered.contains("EVENT-BODY"))
+        // The prompt already contains the body content; we shouldn't see
+        // the body emitted a SECOND time after the prompt.
+        #expect(rendered.components(separatedBy: "EVENT-BODY").count - 1 == 1)
+    }
+
+    @Test("format(messages:) falls through to body when agentPrompt is nil.")
+    func formatFallsThroughToBodyWhenPromptNil() {
+        let msg = message(
+            id: "m1",
+            priority: .normal,
+            body: "RAW-EVENT",
+            agentPrompt: nil
+        )
+        let rendered = TeamHookRenderer.format(messages: [msg])
+        #expect(rendered.contains("RAW-EVENT"))
+    }
+
+    private func message(
+        id: String,
+        priority: TeamInboxPriority,
+        body: String,
+        agentPrompt: String? = nil
+    ) -> TeamInboxMessage {
         TeamInboxMessage(
             id: id,
             batchID: nil,
@@ -71,7 +104,8 @@ struct TeamHookRendererTests {
             from: TeamInboxEndpoint(member: "main", worktree: "/repo/acme", runtime: "claude"),
             to: TeamInboxEndpoint(member: "feature-auth", worktree: "/repo/acme/.worktrees/feature-auth", runtime: "codex"),
             priority: priority,
-            body: body
+            body: body,
+            agentPrompt: agentPrompt
         )
     }
 
