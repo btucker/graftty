@@ -66,6 +66,22 @@ struct IdleDeliveryServiceTests {
         #expect(f.sender.calls.count == 1)
     }
 
+    @Test("@spec TEAM-IDLE-2.7: Nudge attempts append zmxNudgeAttempt rows to events.jsonl via TeamEventLog, never via TeamEventDispatcher.")
+    func nudgeLogsToEventLog() async throws {
+        let f = try FixtureWithEventLog()
+        _ = try f.appendUnread(body: "hello")
+        f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
+        f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
+
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: f.paneID)
+
+        let events = try f.readEvents()
+        #expect(events.count == 1)
+        #expect(events[0].kind == .zmxNudgeAttempt)
+        #expect(events[0].detail["outcome"] == "sent")
+        #expect(events[0].detail["trigger"] == "stop")
+    }
+
     final class StubSender: NudgeSender, @unchecked Sendable {
         struct Call { let paneID: UUID; let text: String; let messageIDs: [String] }
         var calls: [Call] = []
@@ -113,6 +129,66 @@ struct IdleDeliveryServiceTests {
                 body: body
             )
             return msg.id
+        }
+    }
+
+    struct FixtureWithEventLog {
+        let teamID = "/repo"
+        let worktree = "/repo/.worktrees/alice"
+        let paneID = UUID()
+        let sender = StubSender()
+        let state: WorktreeAgentStateRegistry
+        let inbox: TeamInbox
+        let service: IdleDeliveryService
+        let eventLog: TeamEventLog
+        let frozen: Date
+        let rootDir: URL
+
+        init() throws {
+            let dir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("graftty-idle-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            self.rootDir = dir
+            self.frozen = Date(timeIntervalSince1970: 1_700_000_000)
+            let frozen = self.frozen
+            self.state = WorktreeAgentStateRegistry(now: { frozen })
+            self.inbox = TeamInbox(rootDirectory: dir, idGenerator: { UUID().uuidString }, now: { frozen })
+            self.eventLog = TeamEventLog(rootDirectory: dir)
+            self.service = IdleDeliveryService(
+                inbox: inbox,
+                state: state,
+                nudgeSender: sender,
+                eventLog: eventLog,
+                now: { frozen }
+            )
+        }
+
+        func appendUnread(body: String) throws -> String {
+            let msg = try inbox.appendMessage(
+                teamID: teamID,
+                teamName: "repo",
+                repoPath: "/repo",
+                from: TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil),
+                to: TeamInboxEndpoint(member: "alice", worktree: worktree, runtime: nil),
+                priority: .normal,
+                kind: "team_message",
+                body: body
+            )
+            return msg.id
+        }
+
+        func readEvents() throws -> [TeamEvent] {
+            let eventsPath = rootDir
+                .appendingPathComponent(TeamInbox.fileComponent(teamID), isDirectory: true)
+                .appendingPathComponent("events.jsonl")
+            guard FileManager.default.fileExists(atPath: eventsPath.path) else { return [] }
+            let data = try Data(contentsOf: eventsPath)
+            let lines = data.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: true)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try lines.map { line in
+                try decoder.decode(TeamEvent.self, from: Data(line))
+            }
         }
     }
 }
