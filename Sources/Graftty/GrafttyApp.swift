@@ -9,9 +9,9 @@ import GrafttyProtocol
 /// stored on `AppServices` so the static `handleTeamHook` path can pick
 /// them up without requiring an instance reference.
 struct TeamHookCallbacks {
-    let onStop: @Sendable (String, String, String, UUID?) -> Void
-    let onSessionStart: @Sendable (String, String, String, UUID?) -> Void
-    let onPostToolUse: @Sendable (String, String, String, UUID?) -> Void
+    let onStop: @Sendable (String, String, String) -> Void
+    let onSessionStart: @Sendable (String, String, String) -> Void
+    let onPostToolUse: @Sendable (String, String, String) -> Void
 }
 
 final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate {
@@ -861,7 +861,7 @@ struct GrafttyApp: App {
         // Wire the three hook callbacks.
         // These fire from handleTeamHook, which runs inside MainActor.assumeIsolated.
         let hookCallbacks = TeamHookCallbacks(
-            onStop: { [weak idleService] team, worktree, runtime, _ in
+            onStop: { [weak idleService] team, worktree, runtime in
                 guard let service = idleService else { return }
                 let paneID = resolvePaneID(worktree)
                 // Flip the state machine before the delivery evaluator runs.
@@ -871,7 +871,7 @@ struct GrafttyApp: App {
                 stateRegistry.handleStop(worktree: worktree, runtime: runtime, lastInputAt: lastInputAt)
                 Task { await service.onStop(team: team, worktree: worktree, runtime: runtime, paneID: paneID) }
             },
-            onSessionStart: { [weak services] team, worktree, runtime, _ in
+            onSessionStart: { [weak services] team, worktree, runtime in
                 if let paneID = resolvePaneID(worktree) {
                     MainActor.assumeIsolated {
                         services?.agentForPane[paneID] = (worktree: worktree, runtime: runtime)
@@ -879,7 +879,7 @@ struct GrafttyApp: App {
                 }
                 stateRegistry.handleSessionStart(worktree: worktree, runtime: runtime)
             },
-            onPostToolUse: { [weak services] team, worktree, runtime, _ in
+            onPostToolUse: { [weak services] team, worktree, runtime in
                 if let paneID = resolvePaneID(worktree) {
                     MainActor.assumeIsolated {
                         services?.agentForPane[paneID] = (worktree: worktree, runtime: runtime)

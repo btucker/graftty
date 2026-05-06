@@ -8,9 +8,9 @@ struct TeamInboxRequestHandlerTests {
         inbox: TeamInbox,
         templateProvider: @escaping () -> String = { "" },
         sessionPromptRenderer: ((TeamView, TeamMember) -> String?)? = nil,
-        onStop: (@Sendable (String, String, String, UUID?) -> Void)? = nil,
-        onSessionStart: (@Sendable (String, String, String, UUID?) -> Void)? = nil,
-        onPostToolUse: (@Sendable (String, String, String, UUID?) -> Void)? = nil
+        onStop: (@Sendable (String, String, String) -> Void)? = nil,
+        onSessionStart: (@Sendable (String, String, String) -> Void)? = nil,
+        onPostToolUse: (@Sendable (String, String, String) -> Void)? = nil
     ) -> TeamInboxRequestHandler {
         TeamInboxRequestHandler(
             inbox: inbox,
@@ -183,8 +183,8 @@ struct TeamInboxRequestHandlerTests {
         let recorder = OnStopCallRecorder()
         let handler = Self.makeHandler(
             inbox: inbox,
-            onStop: { team, worktree, runtime, paneID in
-                recorder.append(team: team, worktree: worktree, runtime: runtime, paneID: paneID)
+            onStop: { team, worktree, runtime in
+                recorder.append(team: team, worktree: worktree, runtime: runtime)
             }
         )
 
@@ -201,7 +201,6 @@ struct TeamInboxRequestHandlerTests {
         #expect(recorder.calls.count == 1)
         #expect(recorder.calls[0].worktree == "/repo/.worktrees/alice")
         #expect(recorder.calls[0].runtime == "codex")
-        #expect(recorder.calls[0].paneID == nil)  // handler doesn't know panes — app wiring resolves them
     }
 
     @Test("@spec TEAM-IDLE-2.5: Stop hook with no onStop callback still returns {} (back-compat).")
@@ -225,8 +224,8 @@ struct TeamInboxRequestHandlerTests {
         let recorder = OnStopCallRecorder()
         let handler = Self.makeHandler(
             inbox: inbox,
-            onSessionStart: { team, worktree, runtime, paneID in
-                recorder.append(team: team, worktree: worktree, runtime: runtime, paneID: paneID)
+            onSessionStart: { team, worktree, runtime in
+                recorder.append(team: team, worktree: worktree, runtime: runtime)
             }
         )
 
@@ -240,7 +239,6 @@ struct TeamInboxRequestHandlerTests {
         #expect(recorder.calls[0].team == "/repo")
         #expect(recorder.calls[0].worktree == "/repo/.worktrees/alice")
         #expect(recorder.calls[0].runtime == "codex")
-        #expect(recorder.calls[0].paneID == nil)
         // Rendered output is unchanged — callback is a side-effect only.
         #expect(output.contains("Graftty Agent Team session context"))
     }
@@ -253,8 +251,8 @@ struct TeamInboxRequestHandlerTests {
         let recorder = OnStopCallRecorder()
         let handler = Self.makeHandler(
             inbox: inbox,
-            onPostToolUse: { team, worktree, runtime, paneID in
-                recorder.append(team: team, worktree: worktree, runtime: runtime, paneID: paneID)
+            onPostToolUse: { team, worktree, runtime in
+                recorder.append(team: team, worktree: worktree, runtime: runtime)
             }
         )
 
@@ -268,7 +266,6 @@ struct TeamInboxRequestHandlerTests {
         #expect(recorder.calls[0].team == "/repo")
         #expect(recorder.calls[0].worktree == "/repo/.worktrees/alice")
         #expect(recorder.calls[0].runtime == "codex")
-        #expect(recorder.calls[0].paneID == nil)
         // Rendered output is unchanged — callback is a side-effect only.
         // No urgent messages in inbox, so output is the "nothing pending" response.
         #expect(!output.isEmpty)
@@ -293,11 +290,11 @@ struct TeamInboxRequestHandlerTests {
 }
 
 final class OnStopCallRecorder: @unchecked Sendable {
-    struct Call { let team: String; let worktree: String; let runtime: String; let paneID: UUID? }
+    struct Call { let team: String; let worktree: String; let runtime: String }
     private let lock = NSLock()
     private(set) var calls: [Call] = []
-    func append(team: String, worktree: String, runtime: String, paneID: UUID?) {
+    func append(team: String, worktree: String, runtime: String) {
         lock.lock(); defer { lock.unlock() }
-        calls.append(.init(team: team, worktree: worktree, runtime: runtime, paneID: paneID))
+        calls.append(.init(team: team, worktree: worktree, runtime: runtime))
     }
 }
