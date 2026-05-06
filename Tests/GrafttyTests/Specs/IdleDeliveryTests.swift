@@ -52,7 +52,7 @@ struct IdleDeliveryServiceTests {
         #expect(f.sender.calls.isEmpty)
     }
 
-    @Test("@spec TEAM-IDLE-2.1: onMessageArrival with idle delivers; with active is a no-op.")
+    @Test("onMessageArrival delivers when idle; is a no-op when active.")
     func onMessageArrivalGatedByState() async throws {
         let f = try Fixture()
         _ = try f.appendUnread(body: "hello")

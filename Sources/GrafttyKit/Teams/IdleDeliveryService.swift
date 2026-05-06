@@ -62,14 +62,14 @@ public actor IdleDeliveryService {
         do { pending = try inbox.unreadMessages(teamID: team, recipientWorktree: worktree, after: watermark) }
         catch { log(team: team, worktree: worktree, runtime: runtime, outcome: "error_inbox_read"); return }
 
-        guard !pending.isEmpty else {
+        guard let lastMessage = pending.last else {
             log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_no_pending"); return
         }
 
         let text = TeamHookRenderer.format(messages: pending) + "\r"
         await nudgeSender.send(paneID: paneID, message: text, messageIDs: pending.map(\.id))
         do {
-            try inbox.advanceZmxWatermark(teamID: team, worktree: worktree, runtime: runtime, to: pending.last!.id)
+            try inbox.advanceZmxWatermark(teamID: team, worktree: worktree, runtime: runtime, to: lastMessage.id)
         } catch {
             log(team: team, worktree: worktree, runtime: runtime, outcome: "error_watermark_write"); return
         }
