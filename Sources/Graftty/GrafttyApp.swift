@@ -823,17 +823,13 @@ struct GrafttyApp: App {
         let graceScheduler = EngagedGraceScheduler(
             state: stateRegistry,
             onElapsed: { [weak idleService] worktree, runtime in
-                // EngagedGraceScheduler.bump calls handleEngagedGraceElapsed
-                // then fires onElapsed inside Task { @MainActor }, so we are on
-                // the main actor here.
+                // onElapsed is @MainActor, so binding.wrappedValue is
+                // accessible directly — no MainActor.assumeIsolated dance.
                 guard let service = idleService else { return }
                 let paneID = resolvePaneID(worktree)
-                let teamID: String? = MainActor.assumeIsolated {
-                    binding.wrappedValue.repos.first(where: {
-                        $0.worktrees.contains(where: { $0.path == worktree })
-                    })?.path
-                }
-                guard let teamID else { return }
+                guard let teamID = binding.wrappedValue.repos.first(where: {
+                    $0.worktrees.contains(where: { $0.path == worktree })
+                })?.path else { return }
                 Task {
                     await service.onMessageArrival(
                         team: teamID, worktree: worktree, runtime: runtime, paneID: paneID

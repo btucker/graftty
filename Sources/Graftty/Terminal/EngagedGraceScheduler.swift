@@ -8,18 +8,13 @@ import GrafttyKit
 /// idle-delivery evaluation so any pending messages can drain.
 @MainActor
 final class EngagedGraceScheduler {
-    private struct Key: Hashable {
-        let worktree: String
-        let runtime: String
-    }
-
     private let state: WorktreeAgentStateRegistry
-    private let onElapsed: @Sendable (_ worktree: String, _ runtime: String) -> Void
-    private var timers: [Key: Timer] = [:]
+    private let onElapsed: @MainActor (_ worktree: String, _ runtime: String) -> Void
+    private var timers: [AgentRuntimeKey: Timer] = [:]
 
     init(
         state: WorktreeAgentStateRegistry,
-        onElapsed: @escaping @Sendable (String, String) -> Void
+        onElapsed: @escaping @MainActor (String, String) -> Void
     ) {
         self.state = state
         self.onElapsed = onElapsed
@@ -28,7 +23,7 @@ final class EngagedGraceScheduler {
     /// Reset the per-(worktree, runtime) 60s countdown. Called on every
     /// keystroke so consecutive typing keeps the timer pushed forward.
     func bump(worktree: String, runtime: String) {
-        let key = Key(worktree: worktree, runtime: runtime)
+        let key = AgentRuntimeKey(worktree: worktree, runtime: runtime)
         timers[key]?.invalidate()
         timers[key] = Timer.scheduledTimer(
             withTimeInterval: WorktreeAgentStateRegistry.userEngagedGrace,

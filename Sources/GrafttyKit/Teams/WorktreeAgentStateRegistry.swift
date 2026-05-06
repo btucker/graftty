@@ -14,24 +14,22 @@ public final class WorktreeAgentStateRegistry: @unchecked Sendable {
     public static let userEngagedGrace: TimeInterval = 60
 
     private let now: @Sendable () -> Date
-    private let lock = NSLock()
-    private var states: [Key: AgentState] = [:]
+    private let states = LockedDictionary<AgentRuntimeKey, AgentState>()
 
     public init(now: @escaping @Sendable () -> Date = { Date() }) {
         self.now = now
     }
 
     public func state(worktree: String, runtime: String) -> AgentState {
-        lock.lock(); defer { lock.unlock() }
-        return states[Key(worktree, runtime)] ?? .unknown
+        states.get(AgentRuntimeKey(worktree: worktree, runtime: runtime)) ?? .unknown
     }
 
     public func handleSessionStart(worktree: String, runtime: String) {
-        set(.active, worktree: worktree, runtime: runtime)
+        states.set(AgentRuntimeKey(worktree: worktree, runtime: runtime), .active)
     }
 
     public func handlePostToolUse(worktree: String, runtime: String) {
-        set(.active, worktree: worktree, runtime: runtime)
+        states.set(AgentRuntimeKey(worktree: worktree, runtime: runtime), .active)
     }
 
     public func handleStop(worktree: String, runtime: String, lastInputAt: Date?) {
@@ -39,34 +37,25 @@ public final class WorktreeAgentStateRegistry: @unchecked Sendable {
             guard let lastInputAt else { return false }
             return now().timeIntervalSince(lastInputAt) < Self.userEngagedGrace
         }()
-        set(recentlyTyping ? .user_engaged : .idle, worktree: worktree, runtime: runtime)
+        states.set(
+            AgentRuntimeKey(worktree: worktree, runtime: runtime),
+            recentlyTyping ? .user_engaged : .idle
+        )
     }
 
     public func handleKeystroke(worktree: String, runtime: String) {
-        lock.lock(); defer { lock.unlock() }
-        let key = Key(worktree, runtime)
-        if states[key] == .idle { states[key] = .user_engaged }
+        states.update(AgentRuntimeKey(worktree: worktree, runtime: runtime)) { value in
+            if value == .idle { value = .user_engaged }
+        }
     }
 
     public func handleEngagedGraceElapsed(worktree: String, runtime: String) {
-        lock.lock(); defer { lock.unlock() }
-        let key = Key(worktree, runtime)
-        if states[key] == .user_engaged { states[key] = .idle }
+        states.update(AgentRuntimeKey(worktree: worktree, runtime: runtime)) { value in
+            if value == .user_engaged { value = .idle }
+        }
     }
 
     public func removeState(worktree: String, runtime: String) {
-        lock.lock(); defer { lock.unlock() }
-        states.removeValue(forKey: Key(worktree, runtime))
-    }
-
-    private func set(_ state: AgentState, worktree: String, runtime: String) {
-        lock.lock(); defer { lock.unlock() }
-        states[Key(worktree, runtime)] = state
-    }
-
-    private struct Key: Hashable {
-        let worktree: String
-        let runtime: String
-        init(_ w: String, _ r: String) { self.worktree = w; self.runtime = r }
+        states.remove(AgentRuntimeKey(worktree: worktree, runtime: runtime))
     }
 }
