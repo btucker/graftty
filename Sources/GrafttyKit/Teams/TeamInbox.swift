@@ -44,6 +44,12 @@ public struct TeamInboxMessage: Codable, Sendable, Equatable {
     public let priority: TeamInboxPriority
     public let kind: String
     public let body: String
+    /// Rendered `teamPrompt` template output for this delivery, or nil
+    /// when the template was empty / failed to render / pre-split row
+    /// from disk. Hook delivery (`TeamHookRenderer.format`) emits this
+    /// when present and falls through to `body` otherwise; activity
+    /// log / watcher / `team inbox` CLI ignore it. See @spec TEAM-1.6.
+    public let agentPrompt: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -52,6 +58,7 @@ public struct TeamInboxMessage: Codable, Sendable, Equatable {
         case team
         case repoPath = "repo_path"
         case from, to, priority, kind, body
+        case agentPrompt = "agent_prompt"
     }
 
     public init(
@@ -64,7 +71,8 @@ public struct TeamInboxMessage: Codable, Sendable, Equatable {
         to: TeamInboxEndpoint,
         priority: TeamInboxPriority,
         kind: String = "team_message",
-        body: String
+        body: String,
+        agentPrompt: String? = nil
     ) {
         self.id = id
         self.batchID = batchID
@@ -76,6 +84,7 @@ public struct TeamInboxMessage: Codable, Sendable, Equatable {
         self.priority = priority
         self.kind = kind
         self.body = body
+        self.agentPrompt = agentPrompt
     }
 }
 

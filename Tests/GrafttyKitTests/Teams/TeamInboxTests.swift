@@ -164,3 +164,72 @@ private final class FixedIDGenerator {
         return values.removeFirst()
     }
 }
+
+@Suite("TeamInboxMessage — agent_prompt forward-compat")
+struct TeamInboxMessageAgentPromptCodableTests {
+    @Test("Round-trip: a row with agentPrompt set encodes the agent_prompt JSON key.")
+    func roundTripWithPrompt() throws {
+        let msg = TeamInboxMessage(
+            id: "id-1",
+            batchID: nil,
+            createdAt: Date(timeIntervalSince1970: 1_800),
+            team: "team",
+            repoPath: "/repo",
+            from: TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil),
+            to: TeamInboxEndpoint(member: "alice", worktree: "/repo/.worktrees/alice", runtime: nil),
+            priority: .normal,
+            kind: "team_message",
+            body: "ping",
+            agentPrompt: "Hi alice — context: ping"
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(msg)
+        let json = try #require(String(data: data, encoding: .utf8))
+        #expect(json.contains("\"agent_prompt\":\"Hi alice — context: ping\""))
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(TeamInboxMessage.self, from: data)
+        #expect(decoded == msg)
+    }
+
+    @Test("Round-trip: a row without agentPrompt encodes the JSON without an agent_prompt key.")
+    func roundTripWithoutPrompt() throws {
+        let msg = TeamInboxMessage(
+            id: "id-2",
+            batchID: nil,
+            createdAt: Date(timeIntervalSince1970: 1_800),
+            team: "team",
+            repoPath: "/repo",
+            from: TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil),
+            to: TeamInboxEndpoint(member: "alice", worktree: "/repo/.worktrees/alice", runtime: nil),
+            priority: .normal,
+            kind: "team_message",
+            body: "ping",
+            agentPrompt: nil
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let data = try encoder.encode(msg)
+        let json = try #require(String(data: data, encoding: .utf8))
+        #expect(!json.contains("agent_prompt"))
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(TeamInboxMessage.self, from: data)
+        #expect(decoded.agentPrompt == nil)
+    }
+
+    @Test("Forward-compat: a legacy row on disk (no agent_prompt key) decodes with agentPrompt = nil.")
+    func decodeLegacyRow() throws {
+        let legacy = """
+        {"id":"id-3","created_at":"1970-01-01T00:30:00Z","team":"team","repo_path":"/repo","from":{"member":"main","worktree":"/repo","runtime":null},"to":{"member":"alice","worktree":"/repo/.worktrees/alice","runtime":null},"priority":"normal","kind":"team_message","body":"legacy"}
+        """
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let decoded = try decoder.decode(TeamInboxMessage.self, from: Data(legacy.utf8))
+        #expect(decoded.agentPrompt == nil)
+        #expect(decoded.body == "legacy")
+    }
+}
