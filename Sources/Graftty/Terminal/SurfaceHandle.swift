@@ -56,7 +56,8 @@ final class SurfaceHandle {
         zmxInitialInput: String? = nil,
         extraInitialInput: String? = nil,
         zmxDir: String? = nil,
-        terminalManager: TerminalManager? = nil
+        terminalManager: TerminalManager? = nil,
+        inputActivityObserver: PaneInputActivityObserver? = nil
     ) {
         self.terminalID = terminalID
         self.worktreePath = worktreePath
@@ -72,6 +73,7 @@ final class SurfaceHandle {
         self.view = surfaceView
         surfaceView.terminalID = terminalID
         surfaceView.terminalManager = terminalManager
+        surfaceView.inputActivityObserver = inputActivityObserver
         // NB: the original impl used a `defer` here to bind
         // `surfaceView.surface = self.surface` after all exit paths. That
         // was fine for a non-failable init, but failable-init's nil-return
@@ -325,6 +327,11 @@ final class SurfaceNSView: NSView {
     /// libghostty owns authoritative state; this is our UI shadow.
     var isReadonly: Bool = false
 
+    /// Passive keystroke tap wired by the app at startup. Set by
+    /// `SurfaceHandle` after construction from the shared
+    /// `PaneInputActivityRegistry`. Nil-safe — missing observer is a no-op.
+    var inputActivityObserver: PaneInputActivityObserver?
+
     /// Cursor to display when the mouse is over this surface. libghostty
     /// drives this via `GHOSTTY_ACTION_MOUSE_SHAPE` (e.g., pointer when
     /// over a link, text beam over normal cells). Defaults to the text
@@ -569,6 +576,9 @@ final class SurfaceNSView: NSView {
         guard surface != nil else {
             super.keyDown(with: event)
             return
+        }
+        if let paneID = terminalID?.id {
+            inputActivityObserver?.recordKeystroke(paneID: paneID)
         }
         markVisibleForInput()
         // Forward ALL keys to libghostty — including Cmd-modified ones —
