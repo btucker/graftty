@@ -860,6 +860,11 @@ struct GrafttyApp: App {
                     guard let wt = binding.wrappedValue.worktree(forPath: worktree) else { return nil }
                     return (wt.firstPane)?.id
                 }
+                // Flip the state machine before the delivery evaluator runs.
+                // Without this, state stays `.active` from the prior
+                // SessionStart and `IdleDeliveryService.maybeDeliver` skips.
+                let lastInputAt = paneID.flatMap { inputRegistry.lastInputAt(paneID: $0) }
+                stateRegistry.handleStop(worktree: worktree, runtime: runtime, lastInputAt: lastInputAt)
                 Task { await service.onStop(team: team, worktree: worktree, runtime: runtime, paneID: paneID) }
             },
             onSessionStart: { [weak services] team, worktree, runtime, _ in
@@ -1783,7 +1788,7 @@ struct GrafttyApp: App {
             timestamp: payload.attentionTimestamp
         )
         if let worktree = appState.wrappedValue.worktree(forPath: payload.worktreePath),
-           let terminalID = worktree.focusedTerminalID ?? worktree.splitTree.allLeaves.first {
+           let terminalID = worktree.firstPane {
             terminalManager.setFocus(terminalID)
         }
     }

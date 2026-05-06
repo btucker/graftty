@@ -114,7 +114,9 @@ public enum TeamHookRenderer {
         return String(data: data, encoding: .utf8) ?? "{}"
     }
 
+    private static let isoFormatter = ISO8601DateFormatter()
+
     private static func timestamp(_ date: Date) -> String {
-        ISO8601DateFormatter().string(from: date)
+        isoFormatter.string(from: date)
     }
 }
