@@ -91,12 +91,17 @@ public actor IdleDeliveryService {
 
 /// @spec TEAM-IDLE-2.6
 /// Production NudgeSender that writes pending-message text into the
-/// recipient pane's zmx PTY. Wired with a `ZmxWriter` adapter at app
-/// boot (Task 9). Stub for now — Task 6 implements the real wire-up.
+/// recipient pane's zmx PTY via a `ZmxWriter` adapter. Tests inject
+/// a stub writer; production uses `AppZmxWriter` (Sources/Graftty)
+/// which calls `typeText` on the pane's `SurfaceHandle`.
 public final class ZmxNudgeSender: NudgeSender, @unchecked Sendable {
-    public init() {}
+    private let writer: ZmxWriter
+    public init(writer: ZmxWriter) {
+        self.writer = writer
+    }
     public func send(paneID: UUID, message: String, messageIDs: [String]) async {
-        NSLog("[Graftty] zmx-send pending wire-up: pane=%@ ids=%@",
-              paneID.uuidString, messageIDs.joined(separator: ","))
+        let session = ZmxLauncher.sessionName(for: paneID)
+        do { try await writer.write(sessionName: session, text: message) }
+        catch { NSLog("[Graftty] zmx send failed for %@: %@", session, "\(error)") }
     }
 }

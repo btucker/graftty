@@ -762,7 +762,7 @@ struct GrafttyApp: App {
         _ = IdleDeliveryService(
             inbox: services.teamInbox,
             state: stateRegistry,
-            nudgeSender: ZmxNudgeSender()
+            nudgeSender: ZmxNudgeSender(writer: AppZmxWriter(terminalManager: terminalManager))
         )
 
         restoreRunningWorktrees()

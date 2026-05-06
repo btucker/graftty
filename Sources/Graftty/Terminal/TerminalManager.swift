@@ -570,6 +570,13 @@ final class TerminalManager: ObservableObject {
         surfaces[terminalID]
     }
 
+    /// Look up the `SurfaceHandle` whose zmx session name matches `sessionName`.
+    /// Used by `AppZmxWriter` to route an idle-delivery nudge to the correct
+    /// pane. Session names are derived from `ZmxLauncher.sessionName(for:)`.
+    func handle(forSessionName sessionName: String) -> SurfaceHandle? {
+        surfaces.first(where: { ZmxLauncher.sessionName(for: $0.key.id) == sessionName })?.value
+    }
+
     /// Tell libghostty whether a surface is currently visible. On visible,
     /// force a repaint so a re-shown pane presents a clean full frame.
     func setVisible(_ visible: Bool, for terminalID: TerminalID) {
