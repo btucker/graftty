@@ -155,6 +155,18 @@ struct TeamInboxRequestHandlerTests {
             teamsEnabled: true
         )
         #expect(stopOutput == "{}")
+
+        // Critical side-effect contract: because Stop emits `{}`
+        // and never delivers content to the agent, it must NOT
+        // advance the cursor. Advancing it would silently mark
+        // pending messages "delivered" and bury them past the next
+        // SessionStart's replay — every Stop firing during an idle
+        // period would walk the cursor forward over messages the
+        // agent never saw. The cursor stays nil here for the same
+        // reason it stayed nil after PostToolUse skipped the
+        // normal-priority message above.
+        let cursorAfterStop = try inbox.cursor(teamID: "/repo", sessionID: "session-1")
+        #expect(cursorAfterStop?.lastSeenID == nil)
     }
 
     private static let fixedDate = Date(timeIntervalSince1970: 1_800_000_000)

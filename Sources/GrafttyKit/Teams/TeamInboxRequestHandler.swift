@@ -201,21 +201,16 @@ public final class TeamInboxRequestHandler {
             )
             return try TeamHookRenderer.postToolUse(runtime: runtime, messages: messages)
         case .stop:
-            let messages = try inbox.unreadMessages(
-                teamID: teamID,
-                recipientWorktree: context.sender.worktreePath,
-                after: cursor.lastSeenID
-            )
-            try advanceCursorAcrossDeliveredPrefix(
-                delivered: messages,
-                allUnread: messages,
-                teamID: teamID,
-                sessionID: sessionID,
-                worktree: context.sender.worktreePath,
-                runtime: runtime,
-                after: cursor.lastSeenID
-            )
-            return try TeamHookRenderer.stop(runtime: runtime, messages: messages)
+            // Stop renderer is a no-op (`{}`) for both runtimes —
+            // neither runtime's Stop schema accepts
+            // `hookSpecificOutput.additionalContext`, so we can't
+            // deliver content here. Skip the cursor advance too, since
+            // advancing it would silently mark messages "delivered"
+            // and bury them past the next SessionStart's replay. The
+            // Claude side picks them up via the asyncRewake watcher;
+            // Codex picks them up at the next SessionStart or via
+            // IdleDeliveryService once production zmx-send wiring lands.
+            return try TeamHookRenderer.stop(runtime: runtime, messages: [])
         }
     }
 
