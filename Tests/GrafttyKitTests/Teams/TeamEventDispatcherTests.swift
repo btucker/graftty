@@ -167,7 +167,7 @@ struct TeamEventDispatcherTests {
         #expect(messages.first?.from.member == "system")
     }
 
-    @Test("@spec TEAM-5.10: When team_message is dispatched and the user's teamPrompt template is non-empty, the dispatcher shall prepend the rendered prompt (followed by a blank line) to the body before the inbox write so the recipient sees the same per-recipient prompt the legacy channel path produced.")
+    @Test("@spec TEAM-5.10: When team_message is dispatched and the user's teamPrompt template is non-empty, the dispatcher shall write the inbox row with the original event body and the rendered per-recipient prompt stored separately as agentPrompt.")
     func teamMessageRespectsTeamPromptTemplate() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
@@ -188,8 +188,56 @@ struct TeamEventDispatcherTests {
         )
 
         let resolved = try #require(message)
-        // Recipient is alice, so `agent.branch == "alice"`.
-        #expect(resolved.body == "From alice:\n\nping")
+        // Recipient is alice, so `agent.branch == "alice"`. The original
+        // event body is stored verbatim; the rendered prompt is split out
+        // into agentPrompt with the body auto-appended.
+        #expect(resolved.body == "ping")
+        #expect(resolved.agentPrompt?.contains("From alice:") == true)
+        #expect(resolved.agentPrompt?.contains("ping") == true)
+    }
+
+    @Test("@spec TEAM-5.12: When a routable event is dispatched and the user's teamPrompt template is non-empty, the dispatcher shall write the inbox row with the original event body intact and the rendered per-recipient prompt stored separately as agentPrompt.")
+    func routableEventStoresBodyAndAgentPromptSeparately() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let inbox = TeamInbox(rootDirectory: root)
+        let prefs = TeamEventRoutingPreferences(
+            prStateChanged: [.worktree],
+            prMerged: [.root],
+            ciConclusionChanged: [.worktree],
+            mergabilityChanged: [.worktree]
+        )
+        let dispatcher = TeamEventDispatcher(
+            inbox: inbox,
+            preferencesProvider: { prefs },
+            templateProvider: { "Hello {{ agent.branch }}." }
+        )
+
+        let body = "PR #42 state changed: draft → open"
+        let event = ChannelServerMessage.event(
+            type: TeamChannelEvents.WireType.prStateChanged,
+            attrs: ["worktree": "/repo/.worktrees/alice", "to": "open", "from": "draft", "pr_number": "42", "pr_url": "https://x", "provider": "github", "repo": "x/y"],
+            body: body
+        )
+
+        try dispatcher.dispatchRoutableEvent(
+            event,
+            subjectWorktreePath: "/repo/.worktrees/alice",
+            repos: [repo]
+        )
+
+        let team = TeamLookup.team(for: "/repo/.worktrees/alice", in: [repo])!
+        let messages = try inbox.messages(teamID: TeamLookup.id(of: team))
+        #expect(messages.count == 1)
+        let row = try #require(messages.first)
+        // Body field carries the original event body — no prelude, no
+        // agent prompt mixed in.
+        #expect(row.body == body)
+        // Rendered prompt is split out into agentPrompt. The template
+        // includes `{{ agent.branch }}` (proves the template ran) and
+        // the auto-append wires the body in too.
+        #expect(row.agentPrompt?.contains("Hello alice.") == true)
+        #expect(row.agentPrompt?.contains(body) == true)
     }
 
     @Test("@spec TEAM-5.11: When team_broadcast is dispatched, the dispatcher shall write one team_message inbox row per non-sender team member, each rendered against that recipient's agent context.")

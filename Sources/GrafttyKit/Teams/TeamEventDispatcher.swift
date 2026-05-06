@@ -45,7 +45,7 @@ public final class TeamEventDispatcher {
             attrs: ["team": team.repoDisplayName, "from": senderMember.name],
             body: text
         )
-        let body = renderBody(
+        let rendered = renderBody(
             event: event,
             recipientWorktreePath: recipientMember.worktreePath,
             subjectWorktreePath: senderMember.worktreePath,
@@ -68,7 +68,8 @@ public final class TeamEventDispatcher {
             ),
             priority: priority,
             kind: TeamChannelEvents.EventType.message,
-            body: body
+            body: rendered.body,
+            agentPrompt: rendered.agentPrompt
         )
     }
 
@@ -108,7 +109,7 @@ public final class TeamEventDispatcher {
                 from: senderMember.name,
                 text: text
             )
-            let body = renderBody(
+            let rendered = renderBody(
                 event: event,
                 recipientWorktreePath: recipient.worktreePath,
                 subjectWorktreePath: senderMember.worktreePath,
@@ -130,7 +131,8 @@ public final class TeamEventDispatcher {
                 ),
                 priority: priority,
                 kind: TeamChannelEvents.EventType.message,
-                body: body
+                body: rendered.body,
+                agentPrompt: rendered.agentPrompt
             )
             messages.append(msg)
         }
@@ -167,7 +169,7 @@ public final class TeamEventDispatcher {
         guard !recipients.isEmpty else { return }
 
         for recipientPath in recipients {
-            let body = renderBody(
+            let rendered = renderBody(
                 event: event,
                 recipientWorktreePath: recipientPath,
                 subjectWorktreePath: subjectWorktreePath,
@@ -186,7 +188,8 @@ public final class TeamEventDispatcher {
                 ),
                 priority: .normal,
                 kind: type,
-                body: body
+                body: rendered.body,
+                agentPrompt: rendered.agentPrompt
             )
         }
     }
@@ -215,7 +218,7 @@ public final class TeamEventDispatcher {
         guard case let .event(type, _, _) = event else { return }
 
         let lead = team.lead
-        let body = renderBody(
+        let rendered = renderBody(
             event: event,
             recipientWorktreePath: lead.worktreePath,
             subjectWorktreePath: joiner.worktreePath,
@@ -233,7 +236,8 @@ public final class TeamEventDispatcher {
             ),
             priority: .normal,
             kind: type,
-            body: body
+            body: rendered.body,
+            agentPrompt: rendered.agentPrompt
         )
     }
 
@@ -270,7 +274,7 @@ public final class TeamEventDispatcher {
         )
         guard case let .event(type, _, _) = event else { return }
 
-        let body = renderBody(
+        let rendered = renderBody(
             event: event,
             recipientWorktreePath: repo.path,
             subjectWorktreePath: leaverWorktreePath,
@@ -290,32 +294,36 @@ public final class TeamEventDispatcher {
             ),
             priority: .normal,
             kind: type,
-            body: body
+            body: rendered.body,
+            agentPrompt: rendered.agentPrompt
         )
     }
 
     // MARK: - Body rendering
 
     /// Renders the user's `teamPrompt` template against the per-recipient
-    /// agent context. When the template is empty the original event body
-    /// is returned unchanged, matching the legacy channel-path behavior.
+    /// agent context and returns the event-only body plus the rendered
+    /// agent prompt. When the template is empty / fails to render, returns
+    /// the original body and a nil prompt — matching the legacy passthrough
+    /// behavior. The owning spec for the prompt-storage shape is TEAM-1.6
+    /// (anchored on `TeamInboxMessage.agentPrompt`).
     private func renderBody(
         event: ChannelServerMessage,
         recipientWorktreePath: String,
         subjectWorktreePath: String?,
         repos: [RepoEntry]
-    ) -> String {
-        guard case let .event(_, _, originalBody) = event else { return "" }
-        let template = templateProvider()
-        guard !template.isEmpty else { return originalBody }
-        let rendered = EventBodyRenderer.body(
-            for: event,
+    ) -> (body: String, agentPrompt: String?) {
+        guard case let .event(_, _, originalBody) = event else { return ("", nil) }
+        let result = EventBodyRenderer.split(
+            event: event,
             recipientWorktreePath: recipientWorktreePath,
             subjectWorktreePath: subjectWorktreePath,
             repos: repos,
-            templateString: template
+            templateString: templateProvider()
         )
-        if case let .event(_, _, body) = rendered { return body }
-        return originalBody
+        if case let .event(_, _, body) = result.event {
+            return (body, result.agentPrompt)
+        }
+        return (originalBody, result.agentPrompt)
     }
 }

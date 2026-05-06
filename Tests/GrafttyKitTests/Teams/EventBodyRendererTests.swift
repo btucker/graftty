@@ -23,7 +23,7 @@ struct EventBodyRendererSplitTests {
     }
 
     @Test("Template without {{ body }} → auto-append: agentPrompt contains both prelude and body.")
-    func autoAppendsBodyWhenTemplateLacksReference() {
+    func autoAppendsBodyWhenTemplateLacksReference() throws {
         let event = ChannelServerMessage.event(type: "pr_state_changed", attrs: [:], body: "EVENT-CONTENT")
         let result = EventBodyRenderer.split(
             event: event,
@@ -32,9 +32,9 @@ struct EventBodyRendererSplitTests {
             repos: [Self.fixtureRepo()],
             templateString: "Hello {{ agent.branch }}."
         )
-        let prompt = try? #require(result.agentPrompt)
-        #expect(prompt?.contains("Hello alice.") == true)
-        #expect(prompt?.contains("EVENT-CONTENT") == true)
+        let prompt = try #require(result.agentPrompt)
+        #expect(prompt.contains("Hello alice."))
+        #expect(prompt.contains("EVENT-CONTENT"))
         #expect(Self.body(result.event) == "EVENT-CONTENT")
     }
 
