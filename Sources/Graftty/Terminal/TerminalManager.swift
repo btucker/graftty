@@ -573,6 +573,14 @@ final class TerminalManager: ObservableObject {
     /// Look up the `SurfaceHandle` whose zmx session name matches `sessionName`.
     /// Used by `AppZmxWriter` to route an idle-delivery nudge to the correct
     /// pane. Session names are derived from `ZmxLauncher.sessionName(for:)`.
+    ///
+    /// Reverse-lookup of the surface handle whose pane derives the given
+    /// session name (`graftty-<8hex>`). O(n) over the surface set —
+    /// acceptable for typical pane counts (1–20). Used by `AppZmxWriter`
+    /// to route a `zmx send` payload to the right PTY without rebuilding
+    /// a session-name index. If the pane count grows large enough that
+    /// nudges become a hot path, replace with a dictionary maintained
+    /// in the surface-create/destroy hooks.
     func handle(forSessionName sessionName: String) -> SurfaceHandle? {
         surfaces.first(where: { ZmxLauncher.sessionName(for: $0.key.id) == sessionName })?.value
     }
