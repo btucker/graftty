@@ -154,7 +154,8 @@ public final class TeamInbox {
         to: TeamInboxEndpoint,
         priority: TeamInboxPriority,
         kind: String = "team_message",
-        body: String
+        body: String,
+        agentPrompt: String? = nil
     ) throws -> TeamInboxMessage {
         let message = TeamInboxMessage(
             id: idGenerator(),
@@ -166,7 +167,8 @@ public final class TeamInbox {
             to: to,
             priority: priority,
             kind: kind,
-            body: body
+            body: body,
+            agentPrompt: agentPrompt
         )
         try append(message, teamID: teamID)
         return message
