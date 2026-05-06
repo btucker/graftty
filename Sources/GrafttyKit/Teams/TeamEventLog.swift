@@ -18,6 +18,8 @@ public struct TeamEvent: Codable, Sendable {
         case watcherExited
         case nudgeSent
         case nudgeSkipped
+        case agentStateTransition
+        case zmxNudgeAttempt
     }
 
     public let teamID: String
