@@ -819,7 +819,7 @@ struct GrafttyApp: App {
                 guard let service = idleService else { return }
                 let paneID: UUID? = MainActor.assumeIsolated {
                     guard let wt = binding.wrappedValue.worktree(forPath: worktree) else { return nil }
-                    return (wt.focusedTerminalID ?? wt.splitTree.allLeaves.first)?.id
+                    return (wt.firstPane)?.id
                 }
                 let teamID: String? = MainActor.assumeIsolated {
                     binding.wrappedValue.repos.first(where: {
@@ -858,7 +858,7 @@ struct GrafttyApp: App {
                 guard let service = idleService else { return }
                 let paneID: UUID? = MainActor.assumeIsolated {
                     guard let wt = binding.wrappedValue.worktree(forPath: worktree) else { return nil }
-                    return (wt.focusedTerminalID ?? wt.splitTree.allLeaves.first)?.id
+                    return (wt.firstPane)?.id
                 }
                 Task { await service.onStop(team: team, worktree: worktree, runtime: runtime, paneID: paneID) }
             },
@@ -866,7 +866,7 @@ struct GrafttyApp: App {
                 MainActor.assumeIsolated {
                     if let paneID: UUID = {
                         guard let wt = binding.wrappedValue.worktree(forPath: worktree) else { return nil }
-                        return (wt.focusedTerminalID ?? wt.splitTree.allLeaves.first)?.id
+                        return (wt.firstPane)?.id
                     }() {
                         services?.agentForPane[paneID] = (worktree: worktree, runtime: runtime)
                     }
@@ -877,7 +877,7 @@ struct GrafttyApp: App {
                 MainActor.assumeIsolated {
                     if let paneID: UUID = {
                         guard let wt = binding.wrappedValue.worktree(forPath: worktree) else { return nil }
-                        return (wt.focusedTerminalID ?? wt.splitTree.allLeaves.first)?.id
+                        return (wt.firstPane)?.id
                     }() {
                         services?.agentForPane[paneID] = (worktree: worktree, runtime: runtime)
                     }
@@ -915,7 +915,7 @@ struct GrafttyApp: App {
                     Task { @MainActor in
                         let paneID: UUID? = {
                             guard let wt = binding.wrappedValue.worktree(forPath: recipientWorktree) else { return nil }
-                            return (wt.focusedTerminalID ?? wt.splitTree.allLeaves.first)?.id
+                            return (wt.firstPane)?.id
                         }()
                         await service.onMessageArrival(
                             team: teamID,
@@ -1424,7 +1424,7 @@ struct GrafttyApp: App {
         if let path = appState.selectedWorktreePath,
            let wt = appState.worktree(forPath: path),
            wt.state == .running,
-           let target = wt.focusedTerminalID ?? wt.splitTree.allLeaves.first {
+           let target = wt.firstPane {
             terminalManager.setFocus(target)
         }
 
@@ -1914,7 +1914,7 @@ struct GrafttyApp: App {
         guard wt.state == .running else {
             return .error("worktree not running")
         }
-        guard let targetID = wt.focusedTerminalID ?? wt.splitTree.allLeaves.first else {
+        guard let targetID = wt.firstPane else {
             return .error("no panes to split")
         }
         guard let newID = splitPane(
@@ -1965,7 +1965,7 @@ struct GrafttyApp: App {
             for wtIdx in appState.repos[repoIdx].worktrees.indices {
                 let wt = appState.repos[repoIdx].worktrees[wtIdx]
                 if wt.path == path, wt.state == .running,
-                   let focused = wt.focusedTerminalID ?? wt.splitTree.allLeaves.first {
+                   let focused = wt.firstPane {
                     // Cmd+D = "Split Horizontally" = new pane to the right;
                     // Cmd+Shift+D = "Split Vertically" = new pane below. Map
                     // to `PaneSplit` so we reuse the same insertion logic as
@@ -2455,7 +2455,7 @@ struct GrafttyApp: App {
         guard let path = appState.selectedWorktreePath else { return nil }
         for repo in appState.repos {
             for wt in repo.worktrees where wt.path == path && wt.state == .running {
-                return wt.focusedTerminalID ?? wt.splitTree.allLeaves.first
+                return wt.firstPane
             }
         }
         return nil
