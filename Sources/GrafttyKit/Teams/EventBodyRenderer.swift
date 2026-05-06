@@ -2,11 +2,31 @@ import Foundation
 import os
 import Stencil
 
+/// Result of rendering a team-inbox event template. Carries the original
+/// event (the body field is unchanged from what arrived on the wire) plus
+/// the rendered `agentPrompt` — the per-recipient text the dispatcher
+/// will deliver to the agent. `agentPrompt` is nil iff the template was
+/// empty, the render failed, or the rendered output was empty after
+/// trimming.
+public struct EventBodyRendererResult: Equatable {
+    public let event: ChannelServerMessage
+    public let agentPrompt: String?
+
+    public init(event: ChannelServerMessage, agentPrompt: String?) {
+        self.event = event
+        self.agentPrompt = agentPrompt
+    }
+}
+
 /// Team-inbox renderer. Renders the user's `teamPrompt` Stencil template
-/// against the per-delivery `agent` context and returns a
-/// `ChannelServerMessage` with the rendered text prepended to the body.
-/// On empty template, empty render, or render failure, returns the
-/// original event unchanged. Implements TEAM-3.3.
+/// against the per-delivery `agent` context and returns the original
+/// event plus the rendered agent prompt as separate fields. Stencil
+/// templates may reference `{{ body }}` to control where the event
+/// content appears; templates that don't reference it get
+/// `\n\n{{ body }}` auto-appended before rendering, preserving the
+/// pre-split prepend behavior. On empty template, empty render, or
+/// render failure, returns the original event with `agentPrompt = nil`.
+/// Implements TEAM-3.3.
 public enum EventBodyRenderer {
 
     private static let logger = Logger(subsystem: "com.btucker.graftty", category: "EventBodyRenderer")
@@ -16,9 +36,22 @@ public enum EventBodyRenderer {
     /// registry instead of allocating a fresh `Environment` per call.
     private static let sharedEnvironment = Environment()
 
+    /// Regex matches a Stencil `body` reference with any internal whitespace
+    /// — `{{ body }}`, `{{body}}`, `{{  body  }}`. Used to decide whether the
+    /// renderer should auto-append `\n\n{{ body }}` to a template that
+    /// hasn't placed the body itself.
+    private static let bodyReferencePattern = try! NSRegularExpression(
+        pattern: #"\{\{\s*body\s*\}\}"#
+    )
+
+    private static func referencesBody(_ template: String) -> Bool {
+        let range = NSRange(template.startIndex..., in: template)
+        return bodyReferencePattern.firstMatch(in: template, range: range) != nil
+    }
+
     /// Builds the `[String: Any]` agent dict consumed by every Stencil render
     /// in `Graftty`. Centralizes the four key strings so the wire shape can't
-    /// drift between call sites (`body(...)`, team-instructions composition,
+    /// drift between call sites (`split(...)`, team-instructions composition,
     /// tests). Worktree-scoped flags default to `false` for the session-start
     /// path where no event exists yet.
     public static func makeAgentContext(
@@ -35,18 +68,23 @@ public enum EventBodyRenderer {
         ]
     }
 
-    public static func body(
-        for event: ChannelServerMessage,
+    public static func split(
+        event: ChannelServerMessage,
         recipientWorktreePath: String,
         subjectWorktreePath: String?,
         repos: [RepoEntry],
         templateString: String
-    ) -> ChannelServerMessage {
+    ) -> EventBodyRendererResult {
         // Empty template = passthrough.
-        guard !templateString.isEmpty else { return event }
-        guard case let .event(type, attrs, originalBody) = event else { return event }
+        guard !templateString.isEmpty else {
+            return EventBodyRendererResult(event: event, agentPrompt: nil)
+        }
+        guard case let .event(_, _, originalBody) = event else {
+            return EventBodyRendererResult(event: event, agentPrompt: nil)
+        }
 
-        // Compute the agent context for this delivery.
+        // Compute the agent context for this delivery (unchanged from the
+        // pre-split body(...) function).
         let recipientRepo = repos.first { repo in
             repo.worktrees.contains(where: { $0.path == recipientWorktreePath })
         }
@@ -68,25 +106,41 @@ public enum EventBodyRenderer {
             thisWorktree: isThisWorktree,
             otherWorktree: isOtherWorktree
         )
-        guard let rendered = renderAgentTemplate(templateString, agent: agentDict) else {
-            return event
+
+        // Auto-append `\n\n{{ body }}` to templates that don't reference
+        // the body themselves, so out-of-the-box templates and legacy
+        // user-customized templates keep producing today's "prelude
+        // followed by body" output without migration.
+        let effectiveTemplate = referencesBody(templateString)
+            ? templateString
+            : "\(templateString)\n\n{{ body }}"
+
+        guard let rendered = renderAgentTemplate(
+            effectiveTemplate,
+            agent: agentDict,
+            body: originalBody
+        ) else {
+            return EventBodyRendererResult(event: event, agentPrompt: nil)
         }
 
-        return .event(type: type, attrs: attrs, body: "\(rendered)\n\n\(originalBody)")
+        return EventBodyRendererResult(event: event, agentPrompt: rendered)
     }
 }
 
 extension EventBodyRenderer {
-    /// Renders a Stencil template against an agent-context dict. Returns the
-    /// trimmed rendered string, or nil on render failure / empty result.
-    /// Centralizes the render + trim + error-log logic shared by per-event
-    /// rendering and session-start MCP-instructions rendering.
+    /// Renders a Stencil template against an agent-context dict, with an
+    /// optional top-level `body` variable carrying the original event
+    /// content. Returns the trimmed rendered string, or nil on render
+    /// failure / empty result. `body` defaults to nil for the session-
+    /// start path where no event is in flight.
     public static func renderAgentTemplate(
         _ template: String,
-        agent: [String: Any]
+        agent: [String: Any],
+        body: String? = nil
     ) -> String? {
         guard !template.isEmpty else { return nil }
-        let context: [String: Any] = ["agent": agent]
+        var context: [String: Any] = ["agent": agent]
+        if let body { context["body"] = body }
         let rendered: String
         do {
             rendered = try sharedEnvironment.renderTemplate(string: template, context: context)

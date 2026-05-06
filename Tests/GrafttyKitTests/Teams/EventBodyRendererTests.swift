@@ -1,151 +1,113 @@
-import Testing
 import Foundation
+import Testing
 @testable import GrafttyKit
 
-@Suite("EventBodyRenderer")
-struct EventBodyRendererTests {
-
-    private func makeRepo() -> RepoEntry {
-        TeamTestFixtures.makeRepo(branches: ["main", "feature/login"])
-    }
-
-    private func makeEvent(_ body: String = "PR #42 merged.") -> ChannelServerMessage {
-        .event(type: "pr_state_changed", attrs: ["to": "merged"], body: body)
-    }
-
-    @Test func emptyTemplatePassesThrough() {
-        let repo = makeRepo()
-        let result = EventBodyRenderer.body(
-            for: makeEvent(),
-            recipientWorktreePath: "/r/multi",
-            subjectWorktreePath: "/r/multi/.worktrees/feature-login",
-            repos: [repo],
+@Suite("EventBodyRenderer.split — split + auto-append + body variable")
+struct EventBodyRendererSplitTests {
+    @Test("Empty template: passthrough — agentPrompt nil, event body unchanged.")
+    func emptyTemplatePassthrough() {
+        let event = ChannelServerMessage.event(
+            type: "pr_state_changed",
+            attrs: [:],
+            body: "PR #1 went open → ready"
+        )
+        let result = EventBodyRenderer.split(
+            event: event,
+            recipientWorktreePath: "/r/alice",
+            subjectWorktreePath: "/r/alice",
+            repos: [Self.fixtureRepo()],
             templateString: ""
         )
-        guard case let .event(_, _, body) = result else {
-            Issue.record("expected .event variant"); return
-        }
-        #expect(body == "PR #42 merged.")
+        #expect(result.agentPrompt == nil)
+        #expect(Self.body(result.event) == "PR #1 went open → ready")
     }
 
-    @Test func happyPathPrependsRendered() {
-        let repo = makeRepo()
-        let result = EventBodyRenderer.body(
-            for: makeEvent(),
-            recipientWorktreePath: "/r/multi",
-            subjectWorktreePath: "/r/multi/.worktrees/feature-login",
-            repos: [repo],
-            templateString: "Lead got an event."
+    @Test("Template without {{ body }} → auto-append: agentPrompt contains both prelude and body.")
+    func autoAppendsBodyWhenTemplateLacksReference() {
+        let event = ChannelServerMessage.event(type: "pr_state_changed", attrs: [:], body: "EVENT-CONTENT")
+        let result = EventBodyRenderer.split(
+            event: event,
+            recipientWorktreePath: "/r/alice",
+            subjectWorktreePath: "/r/alice",
+            repos: [Self.fixtureRepo()],
+            templateString: "Hello {{ agent.branch }}."
         )
-        guard case let .event(_, _, body) = result else {
-            Issue.record("expected .event"); return
-        }
-        #expect(body == "Lead got an event.\n\nPR #42 merged.")
+        let prompt = try? #require(result.agentPrompt)
+        #expect(prompt?.contains("Hello alice.") == true)
+        #expect(prompt?.contains("EVENT-CONTENT") == true)
+        #expect(Self.body(result.event) == "EVENT-CONTENT")
     }
 
-    @Test func leadFlagIsTrueForRootRecipient() {
-        let repo = makeRepo()
-        let result = EventBodyRenderer.body(
-            for: makeEvent(),
-            recipientWorktreePath: "/r/multi",
-            subjectWorktreePath: "/r/multi/.worktrees/feature-login",
-            repos: [repo],
-            templateString: "{% if agent.lead %}LEAD{% else %}NOT_LEAD{% endif %}"
+    @Test("Template with explicit {{ body }} → no auto-append: author placement honored.")
+    func respectsExplicitBodyReference() {
+        let event = ChannelServerMessage.event(type: "pr_state_changed", attrs: [:], body: "EVENT-CONTENT")
+        let result = EventBodyRenderer.split(
+            event: event,
+            recipientWorktreePath: "/r/alice",
+            subjectWorktreePath: "/r/alice",
+            repos: [Self.fixtureRepo()],
+            templateString: "Before: {{ body }} :After"
         )
-        guard case let .event(_, _, body) = result else {
-            Issue.record("expected .event"); return
-        }
-        #expect(body.hasPrefix("LEAD"))
+        #expect(result.agentPrompt == "Before: EVENT-CONTENT :After")
     }
 
-    @Test func leadFlagIsFalseForCoworker() {
-        let repo = makeRepo()
-        let result = EventBodyRenderer.body(
-            for: makeEvent(),
-            recipientWorktreePath: "/r/multi/.worktrees/feature-login",
-            subjectWorktreePath: "/r/multi/.worktrees/feature-login",
-            repos: [repo],
-            templateString: "{% if agent.lead %}LEAD{% else %}NOT_LEAD{% endif %}"
+    @Test("Template with {{body}} (no internal whitespace) → no auto-append (regex tolerates whitespace variants).")
+    func toleratesNoSpaceBodyReference() {
+        let event = ChannelServerMessage.event(type: "pr_state_changed", attrs: [:], body: "X")
+        let result = EventBodyRenderer.split(
+            event: event,
+            recipientWorktreePath: "/r/alice",
+            subjectWorktreePath: "/r/alice",
+            repos: [Self.fixtureRepo()],
+            templateString: "[{{body}}]"
         )
-        guard case let .event(_, _, body) = result else {
-            Issue.record("expected .event"); return
-        }
-        #expect(body.hasPrefix("NOT_LEAD"))
+        #expect(result.agentPrompt == "[X]")
     }
 
-    @Test func thisWorktreeFlagIsTrueWhenRecipientIsSubject() {
-        let repo = makeRepo()
-        let result = EventBodyRenderer.body(
-            for: makeEvent(),
-            recipientWorktreePath: "/r/multi/.worktrees/feature-login",
-            subjectWorktreePath: "/r/multi/.worktrees/feature-login",
-            repos: [repo],
-            templateString: "{% if agent.this_worktree %}MINE{% else %}NOT_MINE{% endif %}"
+    @Test("Template that suppresses body via false-branch {% if %} renders without the body.")
+    func suppressedBodyProducesPromptWithoutBody() {
+        let event = ChannelServerMessage.event(type: "pr_state_changed", attrs: [:], body: "DO-NOT-SHOW")
+        let result = EventBodyRenderer.split(
+            event: event,
+            recipientWorktreePath: "/r/alice",
+            subjectWorktreePath: "/r/alice",
+            repos: [Self.fixtureRepo()],
+            templateString: "Suppressed{% if false %}{{ body }}{% endif %}"
         )
-        guard case let .event(_, _, body) = result else {
-            Issue.record("expected .event"); return
-        }
-        #expect(body.hasPrefix("MINE"))
+        #expect(result.agentPrompt == "Suppressed")
+        #expect(Self.body(result.event) == "DO-NOT-SHOW")
     }
 
-    @Test func otherWorktreeFlagIsTrueWhenRecipientIsNotSubject() {
-        let repo = makeRepo()
-        let result = EventBodyRenderer.body(
-            for: makeEvent(),
-            recipientWorktreePath: "/r/multi",
-            subjectWorktreePath: "/r/multi/.worktrees/feature-login",
-            repos: [repo],
-            templateString: "{% if agent.other_worktree %}OTHER{% else %}NOT_OTHER{% endif %}"
+    @Test("Malformed Stencil → passthrough.")
+    func renderFailurePassthrough() {
+        let event = ChannelServerMessage.event(type: "pr_state_changed", attrs: [:], body: "EVENT")
+        let result = EventBodyRenderer.split(
+            event: event,
+            recipientWorktreePath: "/r/alice",
+            subjectWorktreePath: "/r/alice",
+            repos: [Self.fixtureRepo()],
+            templateString: "{% if %}"
         )
-        guard case let .event(_, _, body) = result else {
-            Issue.record("expected .event"); return
-        }
-        #expect(body.hasPrefix("OTHER"))
+        #expect(result.agentPrompt == nil)
+        #expect(Self.body(result.event) == "EVENT")
     }
 
-    @Test func nilSubjectMakesBothPerEventFlagsFalse() {
-        let repo = makeRepo()
-        let result = EventBodyRenderer.body(
-            for: .event(type: "team_message", attrs: ["from": "lead"], body: "hi"),
-            recipientWorktreePath: "/r/multi/.worktrees/feature-login",
-            subjectWorktreePath: nil,
-            repos: [repo],
-            templateString: "{% if agent.this_worktree %}T{% endif %}{% if agent.other_worktree %}O{% endif %}NEITHER"
+    private static func fixtureRepo() -> RepoEntry {
+        // The repo's main worktree is the lead; alice is a coworker.
+        // One repo with two worktrees: "main" at /r and "alice" at
+        // /r/alice with branch "alice".
+        RepoEntry(
+            path: "/r",
+            displayName: "r",
+            worktrees: [
+                WorktreeEntry(path: "/r", branch: "main", state: .running),
+                WorktreeEntry(path: "/r/alice", branch: "alice", state: .running),
+            ]
         )
-        guard case let .event(_, _, body) = result else {
-            Issue.record("expected .event"); return
-        }
-        #expect(body.hasPrefix("NEITHER"))
     }
 
-    @Test func renderFailureFallsBackToOriginal() {
-        let repo = makeRepo()
-        // Unbalanced tags — Stencil throws.
-        let result = EventBodyRenderer.body(
-            for: makeEvent(),
-            recipientWorktreePath: "/r/multi",
-            subjectWorktreePath: "/r/multi/.worktrees/feature-login",
-            repos: [repo],
-            templateString: "{% if agent.lead %}unclosed"
-        )
-        guard case let .event(_, _, body) = result else {
-            Issue.record("expected .event"); return
-        }
-        #expect(body == "PR #42 merged.")
-    }
-
-    @Test func whitespaceOnlyRenderSkipsPrepend() {
-        let repo = makeRepo()
-        let result = EventBodyRenderer.body(
-            for: makeEvent(),
-            recipientWorktreePath: "/r/multi",
-            subjectWorktreePath: "/r/multi/.worktrees/feature-login",
-            repos: [repo],
-            templateString: "{% if agent.lead %}  {% endif %}"
-        )
-        guard case let .event(_, _, body) = result else {
-            Issue.record("expected .event"); return
-        }
-        #expect(body == "PR #42 merged.")
+    private static func body(_ event: ChannelServerMessage) -> String {
+        guard case let .event(_, _, body) = event else { return "" }
+        return body
     }
 }
