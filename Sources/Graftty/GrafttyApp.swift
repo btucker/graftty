@@ -798,6 +798,16 @@ struct GrafttyApp: App {
             nudgeSender: ZmxNudgeSender(writer: AppZmxWriter(terminalManager: terminalManager))
         )
 
+        // Shared helper for the five pane-resolution sites in this
+        // wiring block. Hops onto MainActor (callers are @Sendable
+        // closures that may be invoked off the main thread) and looks
+        // up the worktree's primary pane via the existing extension.
+        let resolvePaneID: @Sendable (String) -> UUID? = { worktreePath in
+            MainActor.assumeIsolated {
+                binding.wrappedValue.worktree(forPath: worktreePath)?.firstPane?.id
+            }
+        }
+
         // Pane-to-agent mapping maintained on AppServices (@MainActor).
         // Updated on every SessionStart/PostToolUse so keystrokes can be
         // routed to the right (worktree, runtime). Runtime defaults to
@@ -817,10 +827,7 @@ struct GrafttyApp: App {
                 // then fires onElapsed inside Task { @MainActor }, so we are on
                 // the main actor here.
                 guard let service = idleService else { return }
-                let paneID: UUID? = MainActor.assumeIsolated {
-                    guard let wt = binding.wrappedValue.worktree(forPath: worktree) else { return nil }
-                    return (wt.firstPane)?.id
-                }
+                let paneID = resolvePaneID(worktree)
                 let teamID: String? = MainActor.assumeIsolated {
                     binding.wrappedValue.repos.first(where: {
                         $0.worktrees.contains(where: { $0.path == worktree })
@@ -856,10 +863,7 @@ struct GrafttyApp: App {
         let hookCallbacks = TeamHookCallbacks(
             onStop: { [weak idleService] team, worktree, runtime, _ in
                 guard let service = idleService else { return }
-                let paneID: UUID? = MainActor.assumeIsolated {
-                    guard let wt = binding.wrappedValue.worktree(forPath: worktree) else { return nil }
-                    return (wt.firstPane)?.id
-                }
+                let paneID = resolvePaneID(worktree)
                 // Flip the state machine before the delivery evaluator runs.
                 // Without this, state stays `.active` from the prior
                 // SessionStart and `IdleDeliveryService.maybeDeliver` skips.
@@ -868,22 +872,16 @@ struct GrafttyApp: App {
                 Task { await service.onStop(team: team, worktree: worktree, runtime: runtime, paneID: paneID) }
             },
             onSessionStart: { [weak services] team, worktree, runtime, _ in
-                MainActor.assumeIsolated {
-                    if let paneID: UUID = {
-                        guard let wt = binding.wrappedValue.worktree(forPath: worktree) else { return nil }
-                        return (wt.firstPane)?.id
-                    }() {
+                if let paneID = resolvePaneID(worktree) {
+                    MainActor.assumeIsolated {
                         services?.agentForPane[paneID] = (worktree: worktree, runtime: runtime)
                     }
                 }
                 stateRegistry.handleSessionStart(worktree: worktree, runtime: runtime)
             },
             onPostToolUse: { [weak services] team, worktree, runtime, _ in
-                MainActor.assumeIsolated {
-                    if let paneID: UUID = {
-                        guard let wt = binding.wrappedValue.worktree(forPath: worktree) else { return nil }
-                        return (wt.firstPane)?.id
-                    }() {
+                if let paneID = resolvePaneID(worktree) {
+                    MainActor.assumeIsolated {
                         services?.agentForPane[paneID] = (worktree: worktree, runtime: runtime)
                     }
                 }
@@ -918,10 +916,7 @@ struct GrafttyApp: App {
                 for (recipientWorktree, recipientMessages) in byWorktree {
                     let runtime = recipientMessages.last?.to.runtime ?? "codex"
                     Task { @MainActor in
-                        let paneID: UUID? = {
-                            guard let wt = binding.wrappedValue.worktree(forPath: recipientWorktree) else { return nil }
-                            return (wt.firstPane)?.id
-                        }()
+                        let paneID = resolvePaneID(recipientWorktree)
                         await service.onMessageArrival(
                             team: teamID,
                             worktree: recipientWorktree,
