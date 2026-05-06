@@ -217,7 +217,7 @@ struct TeamInboxRequestHandlerTests {
         #expect(stopOutput == "{}")
     }
 
-    @Test("@spec TEAM-IDLE-2.4: SessionStart hook fires onSessionStart callback before returning rendered context.")
+    @Test("SessionStart hook fires onSessionStart callback before returning rendered context.")
     func sessionStartFiresOnSessionStartCallback() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
@@ -245,7 +245,7 @@ struct TeamInboxRequestHandlerTests {
         #expect(output.contains("Graftty Agent Team session context"))
     }
 
-    @Test("@spec TEAM-IDLE-2.4: PostToolUse hook fires onPostToolUse callback before returning rendered context.")
+    @Test("PostToolUse hook fires onPostToolUse callback before returning rendered context.")
     func postToolUseFiresOnPostToolUseCallback() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])

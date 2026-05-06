@@ -907,21 +907,23 @@ struct GrafttyApp: App {
                     return
                 }
                 lastSeenMessageCount[teamID] = curr
-                guard let newest = messages.last else { return }
+                let newMessages = Array(messages[prev..<curr])
+                let byWorktree = Dictionary(grouping: newMessages, by: { $0.to.worktree })
                 guard let service = idleService else { return }
-                let recipientWorktree = newest.to.worktree
-                let runtime = newest.to.runtime ?? "codex"
-                Task { @MainActor in
-                    let paneID: UUID? = {
-                        guard let wt = binding.wrappedValue.worktree(forPath: recipientWorktree) else { return nil }
-                        return (wt.focusedTerminalID ?? wt.splitTree.allLeaves.first)?.id
-                    }()
-                    await service.onMessageArrival(
-                        team: teamID,
-                        worktree: recipientWorktree,
-                        runtime: runtime,
-                        paneID: paneID
-                    )
+                for (recipientWorktree, recipientMessages) in byWorktree {
+                    let runtime = recipientMessages.last?.to.runtime ?? "codex"
+                    Task { @MainActor in
+                        let paneID: UUID? = {
+                            guard let wt = binding.wrappedValue.worktree(forPath: recipientWorktree) else { return nil }
+                            return (wt.focusedTerminalID ?? wt.splitTree.allLeaves.first)?.id
+                        }()
+                        await service.onMessageArrival(
+                            team: teamID,
+                            worktree: recipientWorktree,
+                            runtime: runtime,
+                            paneID: paneID
+                        )
+                    }
                 }
             }
             services.inboxObserverCancellables.append(cancellable)
