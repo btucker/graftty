@@ -258,7 +258,11 @@ struct WorktreeRow: View {
                     .strikethrough()
                     .foregroundColor(theme.foreground.opacity(0.5))
             } else if isMainCheckout {
-                Text("root")
+                // Italic distinguishes the main checkout from feature
+                // worktrees; the label itself is the worktree's display
+                // name (e.g. "main") so the user sees the actual branch
+                // identity rather than a generic placeholder.
+                Text(displayName)
                     .italic()
                     .foregroundColor(
                         isActive
