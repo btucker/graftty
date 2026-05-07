@@ -898,20 +898,26 @@ struct GrafttyApp: App {
         // We watch each team's inbox for all repos that exist at startup time;
         // the watcher self-heals for the file-not-yet-created case via the
         // directory watch inside TeamInboxObserver.
-        var lastSeenMessageCount: [String: Int] = [:]
         let inboxRoot = AppState.defaultDirectory
             .appendingPathComponent("team-inbox", isDirectory: true)
         for repo in binding.wrappedValue.repos {
             let teamID = repo.path
             let observer = TeamInboxObserver(rootDirectory: inboxRoot, teamID: teamID)
+            // Per-observer counter: each observer's queue serializes its
+            // own callback, so no synchronization is needed for this Int.
+            // (A previous version used a shared `[String: Int]` map across
+            // all observer closures and crashed under concurrent mutation
+            // by multiple observer queues — Swift Dictionary is not
+            // thread-safe.)
+            var lastSeenCount = 0
             let cancellable = observer.start { [weak idleService] messages in
-                let prev = lastSeenMessageCount[teamID] ?? 0
+                let prev = lastSeenCount
                 let curr = messages.count
                 guard curr > prev else {
-                    lastSeenMessageCount[teamID] = curr
+                    lastSeenCount = curr
                     return
                 }
-                lastSeenMessageCount[teamID] = curr
+                lastSeenCount = curr
                 let newMessages = Array(messages[prev..<curr])
                 let byWorktree = Dictionary(grouping: newMessages, by: { $0.to.worktree })
                 guard let service = idleService else { return }
