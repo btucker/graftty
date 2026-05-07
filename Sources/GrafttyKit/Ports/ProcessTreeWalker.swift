@@ -2,7 +2,11 @@
 import Foundation
 import Darwin
 
-public struct ProcessTreeWalker: Sendable {
+public protocol ProcessTreeWalking: Sendable {
+    func descendants(of root: pid_t) -> [pid_t]
+}
+
+public struct ProcessTreeWalker: ProcessTreeWalking, Sendable {
     public init() {}
 
     /// All PIDs in the subtree rooted at `root`, inclusive. Returns
