@@ -64,16 +64,6 @@ struct PortsTodo {
     func ports_3_4() async throws { }
 
     @Test("""
-@spec PORTS-3.5: When the user clicks a `PortChip`, the application shall open `http://localhost:<port>/` via `NSWorkspace.shared.open`.
-""", .disabled("not yet implemented"))
-    func ports_3_5() async throws { }
-
-    @Test("""
-@spec PORTS-3.6: When a `PortChip` is hovered, the application shall display a tooltip reading `Open http://localhost:<port>/`.
-""", .disabled("not yet implemented"))
-    func ports_3_6() async throws { }
-
-    @Test("""
 @spec PORTS-4.1: When a pane is registered, the application shall include it in subsequent scan ticks until it is unregistered.
 """, .disabled("not yet implemented"))
     func ports_4_1() async throws { }
