@@ -44,11 +44,6 @@ struct PortsTodo {
     func ports_2_3() async throws { }
 
     @Test("""
-@spec PORTS-3.1: While a pane has at least one `PortBinding`, the application shall render one `PortChip` per binding inline with the pane title.
-""", .disabled("not yet implemented"))
-    func ports_3_1() async throws { }
-
-    @Test("""
 @spec PORTS-3.2: When `PortChip` icons render, the application shall use SF Symbol `personalhotspot` for `.loopback` scope and `globe` for `.lan` scope.
 """, .disabled("not yet implemented"))
     func ports_3_2() async throws { }
@@ -57,11 +52,6 @@ struct PortsTodo {
 @spec PORTS-3.3: When chips would overflow the available width, the application shall wrap chips to the next line aligned under the pane title text rather than flush with the row's leading edge.
 """, .disabled("not yet implemented"))
     func ports_3_3() async throws { }
-
-    @Test("""
-@spec PORTS-3.4: When a pane has an active `AttentionCapsule`, the application shall hide port chips for that pane until the capsule clears.
-""", .disabled("not yet implemented"))
-    func ports_3_4() async throws { }
 
     @Test("""
 @spec PORTS-4.1: When a pane is registered, the application shall include it in subsequent scan ticks until it is unregistered.

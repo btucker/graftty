@@ -243,7 +243,8 @@ struct SidebarView: View {
                             isFocusedPane: isActive
                                 && worktree.focusedTerminalID == terminalID,
                             theme: theme,
-                            attentionText: attention.paneCapsules[terminalID]
+                            attentionText: attention.paneCapsules[terminalID],
+                            portBindings: []
                         )
                     }
                     .buttonStyle(.plain)
