@@ -84,6 +84,7 @@ private struct AgentVariablesDocs: View {
                 if includesEventScope {
                     Text("agent.this_worktree (Bool) — true iff event is about agent's own worktree.")
                     Text("agent.other_worktree (Bool) — true iff event is about a different worktree.")
+                    Text("event.type (String) — wire-format event type, e.g. \"merge_state_changed\", \"pr_state_changed\", \"ci_conclusion_changed\", \"team_message\".")
                 }
             }
             .font(.caption)

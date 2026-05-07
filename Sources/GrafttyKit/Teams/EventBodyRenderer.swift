@@ -79,7 +79,7 @@ public enum EventBodyRenderer {
         guard !templateString.isEmpty else {
             return EventBodyRendererResult(event: event, agentPrompt: nil)
         }
-        guard case let .event(_, _, originalBody) = event else {
+        guard case let .event(eventType, eventAttrs, originalBody) = event else {
             return EventBodyRendererResult(event: event, agentPrompt: nil)
         }
 
@@ -122,10 +122,17 @@ public enum EventBodyRenderer {
             return "\(trimmedTrailing)\n\n{{ body }}"
         }()
 
+        let eventDict: [String: Any] = [
+            "type": eventType,
+            "attrs": eventAttrs,
+            "body": originalBody,
+        ]
+
         guard let rendered = renderAgentTemplate(
             effectiveTemplate,
             agent: agentDict,
-            body: originalBody
+            body: originalBody,
+            event: eventDict
         ) else {
             return EventBodyRendererResult(event: event, agentPrompt: nil)
         }
@@ -135,19 +142,22 @@ public enum EventBodyRenderer {
 }
 
 extension EventBodyRenderer {
-    /// Renders a Stencil template against an agent-context dict, with an
-    /// optional top-level `body` variable carrying the original event
-    /// content. Returns the trimmed rendered string, or nil on render
-    /// failure / empty result. `body` defaults to nil for the session-
-    /// start path where no event is in flight.
+    /// Renders a Stencil template against an agent-context dict, with
+    /// optional top-level `body` and `event` variables carrying the
+    /// original event content and event metadata respectively. Returns
+    /// the trimmed rendered string, or nil on render failure / empty
+    /// result. `body` and `event` default to nil for the session-start
+    /// path where no event is in flight.
     public static func renderAgentTemplate(
         _ template: String,
         agent: [String: Any],
-        body: String? = nil
+        body: String? = nil,
+        event: [String: Any]? = nil
     ) -> String? {
         guard !template.isEmpty else { return nil }
         var context: [String: Any] = ["agent": agent]
         if let body { context["body"] = body }
+        if let event { context["event"] = event }
         let rendered: String
         do {
             rendered = try sharedEnvironment.renderTemplate(string: template, context: context)

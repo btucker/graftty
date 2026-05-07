@@ -106,22 +106,76 @@ struct EventBodyRendererSplitTests {
         #expect(prompt == "Hello.\n\nEVENT-CONTENT")
     }
 
-    private static func fixtureRepo() -> RepoEntry {
-        // The repo's main worktree is the lead; alice is a coworker.
-        // One repo with two worktrees: "main" at /r and "alice" at
-        // /r/alice with branch "alice".
-        RepoEntry(
-            path: "/r",
-            displayName: "r",
-            worktrees: [
-                WorktreeEntry(path: "/r", branch: "main", state: .running),
-                WorktreeEntry(path: "/r/alice", branch: "alice", state: .running),
-            ]
-        )
-    }
+    private static func fixtureRepo() -> RepoEntry { eventBodyRendererFixtureRepo() }
 
     private static func body(_ event: ChannelServerMessage) -> String {
         guard case let .event(_, _, body) = event else { return "" }
         return body
+    }
+}
+
+/// Shared two-worktree fixture: lead `main` at `/r`, coworker `alice` at `/r/alice`.
+fileprivate func eventBodyRendererFixtureRepo() -> RepoEntry {
+    RepoEntry(
+        path: "/r",
+        displayName: "r",
+        worktrees: [
+            WorktreeEntry(path: "/r",       branch: "main",  state: .running),
+            WorktreeEntry(path: "/r/alice", branch: "alice", state: .running),
+        ]
+    )
+}
+
+@Suite("""
+@spec TEAM-1.11: When `EventBodyRenderer.split` renders the per-event `teamPrompt` template, the application shall expose a top-level `event` object on the render context with `event.type` (wire-format event-type string), `event.attrs` (the event's attribute dictionary), and `event.body` (the original event body) — letting templates branch on the event type via a chained `{% if event.type == "…" %} … {% elif … %}` block (Stencil has no `case`/`switch` tag).
+""")
+struct EventBodyRendererEventContextTests {
+
+    @Test("`{{ event.type }}` resolves to the wire-format event-type string.")
+    func exposesEventTypeVariable() throws {
+        let result = renderWithTemplate("type={{ event.type }}", eventType: "merge_state_changed")
+        let prompt = try #require(result.agentPrompt)
+        #expect(prompt.hasPrefix("type=merge_state_changed"))
+    }
+
+    @Test("Templates can branch on event.type via chained {% if … elif %}.")
+    func branchesOnEventTypeViaChainedIf() throws {
+        let result = renderWithTemplate(
+            """
+            {% if event.type == "merge_state_changed" -%}
+            MERGE
+            {%- elif event.type == "pr_state_changed" -%}
+            PR
+            {%- endif %}
+            """,
+            eventType: "merge_state_changed"
+        )
+        let prompt = try #require(result.agentPrompt)
+        #expect(prompt.hasPrefix("MERGE"))
+    }
+
+    @Test("`{{ event.attrs.<key> }}` resolves attributes from the event payload.")
+    func exposesEventAttrs() throws {
+        let result = renderWithTemplate(
+            "pr={{ event.attrs.pr_number }}",
+            eventType: "pr_state_changed",
+            attrs: ["pr_number": "42"]
+        )
+        let prompt = try #require(result.agentPrompt)
+        #expect(prompt.hasPrefix("pr=42"))
+    }
+
+    private func renderWithTemplate(
+        _ template: String,
+        eventType: String,
+        attrs: [String: String] = [:]
+    ) -> EventBodyRendererResult {
+        EventBodyRenderer.split(
+            event: .event(type: eventType, attrs: attrs, body: "BODY"),
+            recipientWorktreePath: "/r/alice",
+            subjectWorktreePath: "/r/alice",
+            repos: [eventBodyRendererFixtureRepo()],
+            templateString: template
+        )
     }
 }

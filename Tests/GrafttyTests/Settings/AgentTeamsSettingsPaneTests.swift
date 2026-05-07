@@ -51,6 +51,49 @@ struct AgentTeamsSettingsPaneTests {
         }
     }
 
+    /// The default per-event template uses a chained `{% if event.type == "…" %}`
+    /// (Stencil has no `case`/`switch` tag) to give event-specific guidance.
+    /// The merge_state_changed branch tells the agent to merge the default branch.
+    @Test func defaultEventPromptBranchesOnEventType() throws {
+        let event = ChannelServerMessage.event(
+            type: "merge_state_changed",
+            attrs: ["pr_number": "42", "from": "clean", "to": "dirty"],
+            body: "PR #42 mergability: clean → dirty"
+        )
+        let result = EventBodyRenderer.split(
+            event: event,
+            recipientWorktreePath: "/r/alice",
+            subjectWorktreePath: "/r/alice",
+            repos: [
+                RepoEntry(
+                    path: "/r",
+                    displayName: "r",
+                    worktrees: [
+                        WorktreeEntry(path: "/r",       branch: "main",  state: .running),
+                        WorktreeEntry(path: "/r/alice", branch: "alice", state: .running),
+                    ]
+                )
+            ],
+            templateString: DefaultPrompts.eventPrompt
+        )
+        let prompt = try #require(result.agentPrompt)
+        #expect(prompt.contains("merge the default branch"))
+        // Sanity: the unrelated `pr_state_changed` branch must not have rendered.
+        #expect(!prompt.contains("react to the new state"))
+        // The `{%- ... -%}` whitespace controls should produce a flat, three-paragraph
+        // output without spurious blank lines from the multi-line template source.
+        let expected = """
+        A Graftty automated team event was just delivered to you.
+
+        This event is about your own worktree.
+
+        Your branch's mergeability against the default branch changed. If your branch can no longer merge cleanly, merge the default branch into your branch and resolve any conflicts before continuing.
+
+        PR #42 mergability: clean → dirty
+        """
+        #expect(prompt == expected)
+    }
+
     @Test func teamSessionPromptAndTeamPromptAreIndependent() {
         let defaults = UserDefaults(suiteName: "AgentTeamsPaneTests-3")!
         defaults.removePersistentDomain(forName: "AgentTeamsPaneTests-3")
