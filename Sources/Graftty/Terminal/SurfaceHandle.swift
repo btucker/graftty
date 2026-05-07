@@ -303,18 +303,24 @@ final class SurfaceHandle {
     /// don't treat as a submit trigger.
     func pressReturn() {
         var keyEvent = ghostty_input_key_s()
-        keyEvent.mods = ghostty_input_mods_e(0)
-        keyEvent.consumed_mods = ghostty_input_mods_e(0)
+        keyEvent.mods = GHOSTTY_MODS_NONE
+        keyEvent.consumed_mods = GHOSTTY_MODS_NONE
         keyEvent.keycode = 36  // kVK_Return
         keyEvent.unshifted_codepoint = 0x0D  // CR — control char, lets libghostty encode
         keyEvent.composing = false
         keyEvent.text = nil
 
         keyEvent.action = GHOSTTY_ACTION_PRESS
-        _ = ghostty_surface_key(surface, keyEvent)
+        let pressHandled = ghostty_surface_key(surface, keyEvent)
 
         keyEvent.action = GHOSTTY_ACTION_RELEASE
-        _ = ghostty_surface_key(surface, keyEvent)
+        let releaseHandled = ghostty_surface_key(surface, keyEvent)
+
+        NSLog(
+            "[Graftty] pressReturn fired: press=%@ release=%@",
+            pressHandled ? "handled" : "unhandled",
+            releaseHandled ? "handled" : "unhandled"
+        )
     }
 
     func requestClose() {

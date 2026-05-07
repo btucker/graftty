@@ -52,6 +52,17 @@ struct IdleDeliveryServiceTests {
         #expect(f.sender.calls.isEmpty)
     }
 
+    @Test("Claude runtime is skipped — asyncRewake watcher already covers it; zmx-send would double-deliver.")
+    func claudeRuntimeIsSkipped() async throws {
+        let f = try Fixture()
+        _ = try f.appendUnread(body: "hello")
+        f.state.handleSessionStart(worktree: f.worktree, runtime: "claude")
+        f.state.handleStop(worktree: f.worktree, runtime: "claude", lastInputAt: nil)
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: "claude", paneID: f.paneID)
+        #expect(f.sender.calls.isEmpty)
+        #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "claude") == nil)
+    }
+
     @Test("onMessageArrival delivers when idle; is a no-op when active.")
     func onMessageArrivalGatedByState() async throws {
         let f = try Fixture()

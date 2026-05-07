@@ -45,6 +45,15 @@ public actor IdleDeliveryService {
     }
 
     private func maybeDeliver(team: String, worktree: String, runtime: String, paneID: UUID?, trigger: String) async {
+        // zmx-send is the Codex equivalent of Claude's asyncRewake
+        // watcher. Claude already receives unread messages via the
+        // watcher's stderr-on-exit path, so dispatching zmx-send here
+        // would deliver every event twice. Gate at the runtime
+        // boundary.
+        guard runtime == "codex" else {
+            log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_runtime_\(runtime)")
+            return
+        }
         let s = state.state(worktree: worktree, runtime: runtime)
         guard s == .idle else {
             log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_state_\(s.rawValue)")
