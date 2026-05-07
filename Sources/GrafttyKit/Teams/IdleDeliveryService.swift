@@ -45,13 +45,6 @@ public actor IdleDeliveryService {
     }
 
     private func maybeDeliver(team: String, worktree: String, runtime: String, paneID: UUID?, trigger: String) async {
-        // Unconditional entry log so we can see in events.jsonl
-        // whether maybeDeliver is being called at all for a given
-        // worktree. Reading these in tail order distinguishes
-        // "observer never dispatched" (no entry) from "dispatched but
-        // gated" (entry + skipped_*).
-        log(team: team, worktree: worktree, runtime: runtime,
-            outcome: "called_pane_\(paneID?.uuidString ?? "nil")", trigger: trigger)
         // zmx-send is the Codex equivalent of Claude's asyncRewake
         // watcher. Claude already receives unread messages via the
         // watcher's stderr-on-exit path, so dispatching zmx-send here

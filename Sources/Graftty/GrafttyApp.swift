@@ -108,6 +108,12 @@ final class AppServices {
     /// active for the lifetime of the app (one observer per team-ID started
     /// at launch for each known repo).
     var inboxObserverCancellables: [TeamInboxObserver.Cancellable] = []
+    /// Strong references to the observers themselves. `start()` captures
+    /// `self` weakly; without this, the observer deallocates as soon as
+    /// the for-loop iteration ends, the async closure inside `start`
+    /// finds `weak self` nil, and `attach`/`emit` never run — FSEvents
+    /// sources are never installed.
+    var inboxObservers: [TeamInboxObserver] = []
 
     init(socketPath: String) {
         self.socketServer = SocketServer(socketPath: socketPath)
@@ -909,22 +915,10 @@ struct GrafttyApp: App {
                 let newMessages = Array(messages[prev..<curr])
                 let byWorktree = Dictionary(grouping: newMessages, by: { $0.to.worktree })
                 guard let service = idleService else { return }
-                NSLog(
-                    "[Graftty] inbox-observer fire: team=%@ prev=%d curr=%d new_recipients=%d",
-                    teamID, prev, curr, byWorktree.count
-                )
                 for (recipientWorktree, recipientMessages) in byWorktree {
                     let runtime = recipientMessages.last?.to.runtime ?? "codex"
-                    NSLog(
-                        "[Graftty] dispatching onMessageArrival: worktree=%@ runtime=%@ msgs=%d",
-                        recipientWorktree, runtime, recipientMessages.count
-                    )
                     Task { @MainActor in
                         let paneID = resolvePaneID(recipientWorktree)
-                        NSLog(
-                            "[Graftty] resolved paneID=%@ for %@",
-                            paneID?.uuidString ?? "nil", recipientWorktree
-                        )
                         await service.onMessageArrival(
                             team: teamID,
                             worktree: recipientWorktree,
@@ -935,6 +929,7 @@ struct GrafttyApp: App {
                 }
             }
             services.inboxObserverCancellables.append(cancellable)
+            services.inboxObservers.append(observer)
         }
 
         // Persist pipeline components on AppServices so they outlive startup().
