@@ -84,6 +84,13 @@ private struct AgentVariablesDocs: View {
                 if includesEventScope {
                     Text("agent.this_worktree (Bool) — true iff event is about agent's own worktree.")
                     Text("agent.other_worktree (Bool) — true iff event is about a different worktree.")
+                    Text("event.type (String) — wire-format event type. One of:")
+                    Text(verbatim: "    \"\(TeamChannelEvents.WireType.prStateChanged)\" — PR opened/closed/draft/merged.")
+                    Text(verbatim: "    \"\(TeamChannelEvents.WireType.ciConclusionChanged)\" — PR's CI conclusion changed.")
+                    Text(verbatim: "    \"\(TeamChannelEvents.WireType.mergeStateChanged)\" — branch mergeability vs. default branch changed.")
+                    Text(verbatim: "    \"\(TeamChannelEvents.EventType.message)\" — direct message between teammates.")
+                    Text(verbatim: "    \"\(TeamChannelEvents.EventType.memberJoined)\" — new worktree joined the team.")
+                    Text(verbatim: "    \"\(TeamChannelEvents.EventType.memberLeft)\" — worktree left the team.")
                 }
             }
             .font(.caption)
