@@ -41,7 +41,13 @@ public struct ProcessTreeWalker: ProcessTreeWalking, Sendable {
         }
         var result: [pid_t: [pid_t]] = [:]
         for root in roots {
-            guard known.contains(root) else { result[root] = []; continue }
+            // proc_listpids samples in two passes (size, then fill); a PID
+            // spawned between them misses the snapshot. Fall back to a
+            // direct proc_pidinfo so a freshly-spawned root still resolves.
+            guard known.contains(root) || isLive(pid: root) else {
+                result[root] = []
+                continue
+            }
             var subtree: [pid_t] = [root]
             var queue: [pid_t] = [root]
             while let next = queue.popLast() {
@@ -74,4 +80,9 @@ public struct ProcessTreeWalker: ProcessTreeWalking, Sendable {
         }
     }
 
+    private func isLive(pid: pid_t) -> Bool {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
+        return proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size
+    }
 }
