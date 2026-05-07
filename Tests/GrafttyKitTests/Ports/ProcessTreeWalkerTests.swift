@@ -32,9 +32,22 @@ struct ProcessTreeWalkerTests {
         parent.arguments = ["-c", "sleep 5 & wait"]
         try parent.run()
         defer { parent.terminate() }
-        try await Task.sleep(for: .milliseconds(150))
         let walker = ProcessTreeWalker()
-        let pids = walker.descendants(of: parent.processIdentifier)
+
+        // `proc_listpids` + `proc_pidinfo` have a finite registration
+        // latency for freshly-`fork()`ed processes: a process can be
+        // alive (`kill(pid, 0)` succeeds) yet still have `proc_pidinfo`
+        // return zero bytes while the kernel populates `proc_bsdinfo`.
+        // A fixed sleep can't bound this on a loaded CI runner, so
+        // poll until both bash and its `sleep 5 &` child are visible.
+        var pids: [pid_t] = []
+        let deadline = Date().addingTimeInterval(2.0)
+        while Date() < deadline {
+            pids = walker.descendants(of: parent.processIdentifier)
+            if pids.count >= 2 { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+
         #expect(pids.contains(parent.processIdentifier))
         #expect(pids.count >= 2)
     }
