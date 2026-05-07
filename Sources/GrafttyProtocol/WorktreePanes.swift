@@ -195,8 +195,6 @@ extension PaneLayoutNode: Codable {
             self = .leaf(
                 sessionName: try c.decode(String.self, forKey: .sessionName),
                 title: try c.decode(String.self, forKey: .title),
-                // Pre-sidebar-mirror leaves omit this key; treat as nil
-                // rather than failing decode so old servers stay readable.
                 attentionText: try c.decodeIfPresent(String.self, forKey: .attentionText)
             )
         case .split:

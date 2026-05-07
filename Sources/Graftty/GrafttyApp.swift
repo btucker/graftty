@@ -1095,21 +1095,22 @@ struct GrafttyApp: App {
                             : nil
                         out.append(WorktreePanes(
                             path: wt.path,
-                            displayName: labels[wt.id] ?? wt.displayName(
-                                amongSiblingPaths: repo.worktrees.map(\.path)
-                            ),
+                            displayName: labels[wt.id] ?? "",
                             repoDisplayName: repo.displayName,
                             displayBranch: wt.displayBranch,
-                            state: WorktreeWireState(rawValue: wt.state.rawValue) ?? .closed,
+                            state: WorktreeWireState(wt.state),
                             isMainCheckout: wt.path == repo.path,
                             prBadge: panesPRStore.infos[wt.path].map(PRBadge.init(from:)),
-                            stats: stats?.toWire(baseRef: stats?.upstreamRefs?.displayLabel),
+                            stats: stats?.toWire(),
                             attentionText: wt.attention?.text,
-                            layout: paneLayoutNode(
-                                running: wt.state == .running ? wt.splitTree.root : nil,
-                                titles: terminalManager.titles,
-                                paneAttention: wt.paneAttention
-                            )
+                            layout: (wt.state == .running ? wt.splitTree.root : nil)
+                                .map {
+                                    paneLayoutNode(
+                                        from: $0,
+                                        titles: terminalManager.titles,
+                                        paneAttention: wt.paneAttention
+                                    )
+                                }
                         ))
                     }
                 }
@@ -3031,24 +3032,13 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
 }
 
 /// Convert the Mac-side `SplitTree.Node` into the wire-format
-/// `PaneLayoutNode`, or return nil when the worktree isn't running
-/// (in which case the mobile picker draws no pane child rows).
-/// Leaves carry the ZMX session name, the pane's current title (or
-/// the empty string if libghostty hasn't emitted one yet), and the
-/// pane-scoped attention text from the worktree's `paneAttention`.
+/// `PaneLayoutNode`. Leaves carry the ZMX session name, the pane's
+/// current title (or the empty string if libghostty hasn't emitted
+/// one yet), and the pane-scoped attention text from the worktree's
+/// `paneAttention`.
 @MainActor
 private func paneLayoutNode(
-    running root: SplitTree.Node?,
-    titles: [TerminalID: String],
-    paneAttention: [TerminalID: Attention]
-) -> PaneLayoutNode? {
-    guard let root else { return nil }
-    return convert(root, titles: titles, paneAttention: paneAttention)
-}
-
-@MainActor
-private func convert(
-    _ node: SplitTree.Node,
+    from node: SplitTree.Node,
     titles: [TerminalID: String],
     paneAttention: [TerminalID: Attention]
 ) -> PaneLayoutNode {
@@ -3063,8 +3053,23 @@ private func convert(
         return .split(
             direction: s.direction == .horizontal ? .horizontal : .vertical,
             ratio: s.ratio,
-            left: convert(s.left, titles: titles, paneAttention: paneAttention),
-            right: convert(s.right, titles: titles, paneAttention: paneAttention)
+            left: paneLayoutNode(from: s.left, titles: titles, paneAttention: paneAttention),
+            right: paneLayoutNode(from: s.right, titles: titles, paneAttention: paneAttention)
         )
+    }
+}
+
+extension WorktreeWireState {
+    /// Exhaustive bridge from the persistence-side `WorktreeState` (in
+    /// GrafttyKit, whose `encode(to:)` coerces `.creating → .closed`)
+    /// to the wire enum. A `switch` rather than `rawValue` round-trip
+    /// so a future `WorktreeState` case is a compile error here.
+    init(_ state: WorktreeState) {
+        switch state {
+        case .closed: self = .closed
+        case .running: self = .running
+        case .stale: self = .stale
+        case .creating: self = .creating
+        }
     }
 }

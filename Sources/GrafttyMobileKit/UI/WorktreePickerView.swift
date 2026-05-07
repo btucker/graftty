@@ -104,9 +104,9 @@ public struct WorktreePickerView: View {
     }
 }
 
-/// Worktree row + its pane children as one block. `.creating`
-/// entries are decorative until `git worktree add` returns — the
-/// on-disk path may not exist yet, so the row is non-tappable.
+/// `.creating` rows are non-tappable: their on-disk path may not
+/// exist yet, so navigating in would race the in-flight `git
+/// worktree add`.
 private struct WorktreeBlock: View {
     let worktree: WorktreePanes
     let onSelect: () -> Void
@@ -140,7 +140,12 @@ private struct WorktreeRowContent: View {
             if let badge = worktree.prBadge {
                 PRBadgeLabel(badge: badge)
             }
-            branchLabel
+            primaryText
+            if let secondary = secondaryBranch {
+                Text(secondary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if let attention = worktree.attentionText {
                 AttentionCapsule(text: attention)
             }
@@ -174,20 +179,6 @@ private struct WorktreeRowContent: View {
         case .closed, .creating: return .secondary
         case .running: return .green
         case .stale: return .yellow
-        }
-    }
-
-    @ViewBuilder
-    private var branchLabel: some View {
-        let primary = primaryText
-        let secondary = secondaryBranch
-        HStack(spacing: 6) {
-            primary
-            if let secondary {
-                Text(secondary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
     }
 
