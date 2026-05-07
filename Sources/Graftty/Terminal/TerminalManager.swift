@@ -78,6 +78,11 @@ final class TerminalManager: ObservableObject {
     /// fall back to libghostty's default $SHELL spawn.
     var zmxLauncher: ZmxLauncher?
 
+    /// Set by `GrafttyApp` after construction. When non-nil, pane add /
+    /// remove flows propagate registration so the scanner can poll
+    /// listening sockets for each pane's process subtree.
+    var portScanner: PortScanner?
+
     /// `(terminalID → inner-shell PID)` cache. Resolving the shell PID
     /// from a zmx session log involves a disk read; the menu's "Move to
     /// current worktree" action calls `shellCwd(for:)` per right-click,
@@ -339,16 +344,24 @@ final class TerminalManager: ObservableObject {
             return cwd
         }
         cachedShellPIDs.removeValue(forKey: id)
+        guard let pid = lookupShellPID(for: id) else { return nil }
+        return PIDCwdReader.cwd(ofPID: pid)
+    }
+
+    /// Best-effort shell PID for a pane via the zmx daemon log. Returns
+    /// nil for panes whose log hasn't been written yet — call sites
+    /// should re-attempt later if needed. Caches successful lookups in
+    /// `cachedShellPIDs` to amortize the log read across calls.
+    func lookupShellPID(for id: TerminalID) -> pid_t? {
+        if let cached = cachedShellPIDs[id] { return cached }
         guard let launcher = zmxLauncher, launcher.isAvailable else { return nil }
         let sessionName = launcher.sessionName(for: id.id)
         guard let pid = ZmxPIDLookup.shellPID(
             logFile: launcher.logFile(forSession: sessionName),
             sessionName: sessionName
-        ) else {
-            return nil
-        }
+        ) else { return nil }
         cachedShellPIDs[id] = pid
-        return PIDCwdReader.cwd(ofPID: pid)
+        return pid
     }
 
     /// Rebuild the keybind bridge from the current config. Call after
@@ -449,6 +462,9 @@ final class TerminalManager: ObservableObject {
             ) else { continue }
             surfaces[terminalID] = handle
             created[terminalID] = handle
+            if let scanner = portScanner, let pid = lookupShellPID(for: terminalID) {
+                Task { await scanner.registerPane(terminalID, shellPID: pid) }
+            }
         }
         return created
     }
@@ -482,6 +498,9 @@ final class TerminalManager: ObservableObject {
             inputActivityObserver: inputActivityObserver
         ) else { return nil }
         surfaces[terminalID] = handle
+        if let scanner = portScanner, let pid = lookupShellPID(for: terminalID) {
+            Task { await scanner.registerPane(terminalID, shellPID: pid) }
+        }
         return handle
     }
 
@@ -660,6 +679,9 @@ final class TerminalManager: ObservableObject {
     }
 
     func destroySurface(terminalID: TerminalID) {
+        if let scanner = portScanner {
+            Task { await scanner.unregisterPane(terminalID) }
+        }
         surfaces[terminalID]?.requestClose()
         forgetSurfaceRuntimeState(for: terminalID)
         killZmxSession(for: terminalID)
