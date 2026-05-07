@@ -77,6 +77,15 @@ struct IdleDeliveryServiceTests {
         #expect(f.sender.calls.count == 1)
     }
 
+    @Test("Unknown state with a resolved pane delivers — covers the post-graftty-restart case where SessionStart hasn't fired yet for an existing Codex session.")
+    func unknownStateWithPaneDelivers() async throws {
+        let f = try Fixture()
+        _ = try f.appendUnread(body: "hello")
+        // No handleSessionStart / handleStop call — state stays .unknown.
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: f.paneID)
+        #expect(f.sender.calls.count == 1)
+    }
+
     @Test("@spec TEAM-IDLE-2.7: Nudge attempts append zmxNudgeAttempt rows to events.jsonl via TeamEventLog, never via TeamEventDispatcher.")
     func nudgeLogsToEventLog() async throws {
         let f = try FixtureWithEventLog()

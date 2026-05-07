@@ -54,8 +54,17 @@ public actor IdleDeliveryService {
             log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_runtime_\(runtime)")
             return
         }
+        // .idle: agent fired Stop with no recent typing — clear deliver.
+        // .unknown: no SessionStart observed since graftty started, but
+        //   if the worktree has a pane the agent is presumably running
+        //   (e.g. an existing session that predates graftty's restart).
+        //   Better to deliver and let the message land in the input
+        //   buffer than to silently hold it forever waiting for a
+        //   SessionStart that may never come.
+        // .active / .user_engaged: skip — pretty clear the agent is
+        //   busy or the user is typing.
         let s = state.state(worktree: worktree, runtime: runtime)
-        guard s == .idle else {
+        guard s == .idle || s == .unknown else {
             log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_state_\(s.rawValue)")
             return
         }
