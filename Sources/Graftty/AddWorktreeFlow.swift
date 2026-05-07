@@ -105,7 +105,7 @@ enum AddWorktreeFlow {
         worktreeMonitor: WorktreeMonitor,
         statsStore: WorktreeStatsStore,
         terminalManager: TerminalManager,
-        channelDispatch: (@MainActor (String, ChannelServerMessage) -> Void)? = nil
+        teamEventDispatcher: TeamEventDispatcher
     ) async -> Swift.Result<Result, FlowError> {
         // Start from origin's default branch so fresh feature worktrees
         // branch off main rather than whatever the main checkout has
@@ -173,17 +173,12 @@ enum AddWorktreeFlow {
             statsStore.refresh(worktreePath: path, repoPath: repoPath, branch: branch)
         }
 
-        if let dispatch = channelDispatch {
-            TeamMembershipEvents.fireJoined(
-                repo: appState.wrappedValue.repos[repoIdx],
-                joinerWorktreePath: worktreePath,
-                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
-                dispatch: EventBodyRenderer.dispatchClosure(
-                    repos: appState.wrappedValue.repos,
-                    inner: { path, msg in dispatch(path, msg) }
-                )
-            )
-        }
+        TeamMembershipEvents.fireJoined(
+            repo: appState.wrappedValue.repos[repoIdx],
+            joinerWorktreePath: worktreePath,
+            teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
+            dispatcher: teamEventDispatcher
+        )
 
         // Promote the placeholder. Mirrors the `.closed → .running`
         // transition block inside `MainWindow.selectWorktree`, minus
@@ -221,7 +216,7 @@ enum AddWorktreeFlow {
         worktreeMonitor: WorktreeMonitor,
         statsStore: WorktreeStatsStore,
         terminalManager: TerminalManager,
-        channelDispatch: (@MainActor (String, ChannelServerMessage) -> Void)? = nil
+        teamEventDispatcher: TeamEventDispatcher
     ) async -> Swift.Result<Result, FlowError> {
         let worktreePath: String
         switch beginCreate(
@@ -241,7 +236,7 @@ enum AddWorktreeFlow {
             worktreeMonitor: worktreeMonitor,
             statsStore: statsStore,
             terminalManager: terminalManager,
-            channelDispatch: channelDispatch
+            teamEventDispatcher: teamEventDispatcher
         )
     }
 

@@ -1,55 +1,122 @@
 import SwiftUI
 import AppKit
+import UserNotifications
 import GrafttyKit
 import GrafttyProtocol
+
+/// Callbacks injected into `TeamInboxRequestHandler` from the app's
+/// idle-delivery pipeline. Constructed once in `GrafttyApp.startup()` and
+/// stored on `AppServices` so the static `handleTeamHook` path can pick
+/// them up without requiring an instance reference.
+struct TeamHookCallbacks {
+    let onStop: @Sendable (String, String, String) -> Void
+    let onSessionStart: @Sendable (String, String, String) -> Void
+    let onPostToolUse: @Sendable (String, String, String) -> Void
+}
+
+final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate {
+    static let shared = AgentNotificationRouter()
+
+    @MainActor var onActivate: ((AgentStopNotificationPayload) -> Void)?
+
+    func install() {
+        UNUserNotificationCenter.current().delegate = self
+    }
+
+    func post(_ notification: AgentStopNotificationContent) {
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            let post = {
+                let content = UNMutableNotificationContent()
+                content.title = notification.title
+                content.body = notification.body
+                content.sound = .default
+                content.userInfo = notification.userInfo
+                let request = UNNotificationRequest(
+                    identifier: UUID().uuidString,
+                    content: content,
+                    trigger: nil
+                )
+                center.add(request)
+            }
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                post()
+            case .notDetermined:
+                center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                    if granted { post() }
+                }
+            default:
+                break
+            }
+        }
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        let raw = response.notification.request.content.userInfo
+        var userInfo: [String: Any] = [:]
+        for (key, value) in raw {
+            guard let key = key as? String else { continue }
+            userInfo[key] = value
+        }
+        guard let payload = try? AgentStopNotification.payload(from: userInfo) else { return }
+        await MainActor.run {
+            self.onActivate?(payload)
+        }
+    }
+}
 
 /// Holds long-lived non-SwiftUI services for the app. Retained for the lifetime of
 /// `GrafttyApp` so weak delegates (e.g. `WorktreeMonitor.delegate`) stay alive.
 @MainActor
 final class AppServices {
     let socketServer: SocketServer
-    let channelRouter: ChannelRouter
-    let channelSettingsObserver: ChannelSettingsObserver
     let worktreeMonitor: WorktreeMonitor
     let statsStore: WorktreeStatsStore
     let remoteBranchStore: RemoteBranchStore
     let prStatusStore: PRStatusStore
+    let teamInbox: TeamInbox
+    let teamEventDispatcher: TeamEventDispatcher
     var worktreeMonitorBridge: WorktreeMonitorBridge?
+    /// Drives `TeamPresenceMonitor.cleanupStale` on a slow cadence so
+    /// SIGKILL'd agents (whose wrapper trap never fired) don't leave
+    /// dangling presence files. The wrapper trap is the primary cleanup
+    /// path; this is the SIGKILL / hard-crash fallback. Retained here so
+    /// the ticker outlives `startup()`. TEAM-PRESENCE-1.4.
+    var presenceCleanupTicker: PollingTicker?
     /// Provides the current AppState for the team PR-merged dispatch hook.
     /// Set in GrafttyApp.startup() once @State is accessible (TEAM-5.4).
     var appStateProvider: (() -> AppState)?
 
+    // MARK: - Idle Delivery Pipeline (TEAM-IDLE-2.x)
+    /// Hook callbacks wired to the idle-delivery pipeline. Set in
+    /// `GrafttyApp.startup()` after the pipeline is constructed.
+    var teamHookCallbacks: TeamHookCallbacks?
+    /// Retained so the idle pipeline stays alive for the app's lifetime.
+    var idleDeliveryService: IdleDeliveryService?
+    var agentStateRegistry: WorktreeAgentStateRegistry?
+    var inputActivityRegistry: PaneInputActivityRegistry?
+    var graceScheduler: EngagedGraceScheduler?
+    /// Pane → (worktree, runtime) map. Updated from SessionStart/PostToolUse
+    /// callbacks so the keystroke observer can route keystrokes to the right
+    /// agent. All access is on the main actor (AppServices is @MainActor).
+    var agentForPane: [UUID: (worktree: String, runtime: String)] = [:]
+    /// Holds the `TeamInboxObserver` cancellables so the observers stay
+    /// active for the lifetime of the app (one observer per team-ID started
+    /// at launch for each known repo).
+    var inboxObserverCancellables: [TeamInboxObserver.Cancellable] = []
+    /// Strong references to the observers themselves. `start()` captures
+    /// `self` weakly; without this, the observer deallocates as soon as
+    /// the for-loop iteration ends, the async closure inside `start`
+    /// finds `weak self` nil, and `attach`/`emit` never run — FSEvents
+    /// sources are never installed.
+    var inboxObservers: [TeamInboxObserver] = []
+
     init(socketPath: String) {
         self.socketServer = SocketServer(socketPath: socketPath)
-
-        let channelSocketPath = SocketPathResolver.resolveChannels()
-
-        // Two-phase wiring: construct the observer first so the router's
-        // promptProvider closure can delegate to it for per-worktree
-        // team-aware composition (TEAM-3.3). A Box bridges the forward
-        // reference from the router closure back to the observer that
-        // doesn't exist yet at closure-capture time.
-        final class Box<T: AnyObject> { weak var value: T? }
-        let observerBox = Box<ChannelSettingsObserver>()
-
-        let router = ChannelRouter(
-            socketPath: channelSocketPath,
-            promptProvider: { [observerBox] worktreePath in
-                if let observer = observerBox.value {
-                    return observer.composedPrompt(forWorktree: worktreePath)
-                }
-                // Fallback before observer is wired (should not normally happen).
-                return ""
-            }
-        )
-        let observer = ChannelSettingsObserver(
-            router: router,
-            onEnable: { Task { await GrafttyApp.installChannelMCPServer() } }
-        )
-        observerBox.value = observer
-
-        self.channelRouter = router
-        self.channelSettingsObserver = observer
 
         self.worktreeMonitor = WorktreeMonitor()
         self.statsStore = WorktreeStatsStore()
@@ -57,48 +124,45 @@ final class AppServices {
         self.remoteBranchStore = remoteBranchStore
         self.prStatusStore = PRStatusStore(remoteBranchStore: remoteBranchStore)
 
-        // Route PRStatusStore transitions into ChannelRouter. Captured weakly
-        // so AppServices can own both without a retain cycle.
-        //
+        // Lift the team inbox up here so the request handler
+        // (`teamInboxRequestHandler()`) and the dispatcher share one
+        // disk root rather than each constructing its own.
+        let teamInbox = TeamInbox(
+            rootDirectory: AppState.defaultDirectory
+                .appendingPathComponent("team-inbox", isDirectory: true)
+        )
+        self.teamInbox = teamInbox
+        self.teamEventDispatcher = TeamEventDispatcher(
+            inbox: teamInbox,
+            preferencesProvider: {
+                let raw = UserDefaults.standard.string(forKey: SettingsKeys.teamEventRoutingPreferences) ?? ""
+                return TeamEventRoutingPreferences(rawValue: raw) ?? TeamEventRoutingPreferences()
+            },
+            templateProvider: {
+                UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
+            }
+        )
+
+        // Route PRStatusStore transitions through the inbox dispatcher.
         // `appStateProvider` is set later in startup() once @State is live;
         // before that point the guard below is a no-op.
-        self.prStatusStore.onTransition = { [weak router, weak self] subjectWorktreePath, message in
-            guard let router, let self else { return }
+        self.prStatusStore.onTransition = { [weak self] routable, subjectWorktreePath, attrs in
+            guard let self else { return }
             guard UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) else { return }
-            guard case let .event(eventType, attrs, _) = message else {
-                // Non-event messages (shouldn't happen for PRStatusStore transitions, but defensive).
-                router.dispatch(worktreePath: subjectWorktreePath, message: message)
-                return
-            }
-
-            guard let routableEvent = RoutableEvent(channelEventType: eventType, attrs: attrs) else {
-                // Non-routable channel events still get dispatched to the originating worktree.
-                router.dispatch(worktreePath: subjectWorktreePath, message: message)
-                return
-            }
-
-            let prefsRaw = UserDefaults.standard.string(forKey: SettingsKeys.channelRoutingPreferences) ?? ""
-            let prefs = ChannelRoutingPreferences(rawValue: prefsRaw) ?? ChannelRoutingPreferences()
-
             let appState = self.appStateProvider?() ?? AppState()
-            let recipients = ChannelEventRouter.recipients(
-                event: routableEvent,
-                subjectWorktreePath: subjectWorktreePath,
-                repos: appState.repos,
-                preferences: prefs
+            let event = ChannelServerMessage.event(
+                type: routable.wireType,
+                attrs: attrs,
+                body: routable.defaultBody(attrs: attrs)
             )
-
-            let template = UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
-
-            for recipient in recipients {
-                let renderedMessage = EventBodyRenderer.body(
-                    for: message,
-                    recipientWorktreePath: recipient,
+            do {
+                try self.teamEventDispatcher.dispatchRoutableEvent(
+                    event,
                     subjectWorktreePath: subjectWorktreePath,
-                    repos: appState.repos,
-                    templateString: template
+                    repos: appState.repos
                 )
-                router.dispatch(worktreePath: recipient, message: renderedMessage)
+            } catch {
+                NSLog("[Graftty] dispatchRoutableEvent failed: %@", String(describing: error))
             }
         }
     }
@@ -141,6 +205,11 @@ struct GrafttyApp: App {
         // Claude swapped out for an older worktree's Claude". Strip
         // before any surface spawns.
         ZmxLauncher.sanitizeProcessEnvironment()
+
+        // Must run before any @AppStorage binding reads `teamEventRoutingPreferences`
+        // (specifically the matrix in AgentTeamsSettingsPane) so SwiftUI binds
+        // to the migrated value, not the default. TEAM-1.10.
+        SettingsKeyMigration.run()
 
         // Must run before any UserDefaults read so non-binding readers see
         // the same defaults as @AppStorage. TEAM-1.6.
@@ -200,7 +269,7 @@ struct GrafttyApp: App {
                 prStatusStore: services.prStatusStore,
                 remoteBranchStore: services.remoteBranchStore,
                 worktreeMonitor: services.worktreeMonitor,
-                channelRouter: services.channelRouter
+                teamEventDispatcher: services.teamEventDispatcher
             )
                 .environmentObject(webController)
                 .environmentObject(updaterController)
@@ -273,6 +342,16 @@ struct GrafttyApp: App {
                 bridgedButton("Close Pane", action: .closeSurface) { handleClosePane() }
             }
 
+            // TEAM-7.1: *Window → Team Activity Log* opens the activity
+            // window for the focused worktree's team. Disabled when the
+            // current selection has no team (single-worktree repo or
+            // teams disabled). The button is hosted inside a tiny View
+            // wrapper so it can read the `\.openWindow` environment
+            // value, which is unavailable directly inside `.commands`.
+            CommandGroup(after: .windowList) {
+                TeamActivityLogMenuButton(appState: $appState)
+            }
+
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates...") {
                     updaterController.checkForUpdatesWithUI()
@@ -313,6 +392,32 @@ struct GrafttyApp: App {
                     .tabItem { Label("Agent Teams", systemImage: "person.2.fill") }
             }
         }
+
+        // TEAM-7.1: Team Activity Log window. Opened via the *Window*
+        // menu command (TEAM-7.1) and the sidebar's worktree-row
+        // context menu (TEAM-7.2). The window's `for:` value is a
+        // `TeamActivityLogWindowID` (Hashable+Codable) so SwiftUI can
+        // route `openWindow(id:value:)` invocations and so each team
+        // gets its own window instance keyed by team ID.
+        WindowGroup(
+            "Team Activity Log",
+            id: TeamActivityLogWindowID.windowGroupID,
+            for: TeamActivityLogWindowID.self
+        ) { $boundID in
+            if let boundID {
+                TeamActivityLogWindow(
+                    rootDirectory: AppState.defaultDirectory
+                        .appendingPathComponent("team-inbox", isDirectory: true),
+                    teamID: boundID.teamID,
+                    teamName: boundID.teamName
+                )
+            } else {
+                Text("No team selected.")
+                    .foregroundStyle(.secondary)
+                    .padding()
+                    .frame(minWidth: 480, minHeight: 360)
+            }
+        }
     }
 
     private func startup() {
@@ -328,6 +433,30 @@ struct GrafttyApp: App {
         let zmxLauncher = ZmxLauncher(executable: zmxBinary, zmxDir: zmxDir)
         terminalManager.zmxLauncher = zmxLauncher
 
+        // Wrappers always go on PATH; the Agent Teams toggle is read inside
+        // the wrapper at request time.
+        Self.installAgentHookAssets()
+
+        // One-shot cleanup of the retired graftty-channel MCP integration
+        // (TEAM-8.1 / TEAM-8.2 / TEAM-8.3). Runs idempotently every launch
+        // until we drop it in a few releases.
+        Task { await LegacyChannelCleanup.run() }
+
+        // Strip the legacy `--dangerously-load-development-channels
+        // server:graftty-channel` substring from `defaultCommand` and
+        // disclose the change once via NSAlert. Runs on the main actor
+        // so the modal alert can sit on the run loop after `startup()`
+        // returns (TEAM-8.4).
+        Task { @MainActor in
+            if LegacyChannelCleanup.scrubDefaultCommandLaunchFlag() {
+                let alert = NSAlert()
+                alert.messageText = "Legacy launch flag removed"
+                alert.informativeText = "Removed --dangerously-load-development-channels server:graftty-channel from your default command. Agent teams now run via the unified hook adapter."
+                alert.addButton(withTitle: "OK")
+                alert.runModal()
+            }
+        }
+
         if !zmxLauncher.isAvailable {
             DispatchQueue.main.async {
                 ZmxFallbackBanner.presentIfNeeded()
@@ -335,6 +464,14 @@ struct GrafttyApp: App {
         }
 
         terminalManager.initialize()
+        AgentNotificationRouter.shared.install()
+        AgentNotificationRouter.shared.onActivate = { [appState = $appState, tm = terminalManager] payload in
+            Self.activateAgentStopNotification(
+                payload,
+                appState: appState,
+                terminalManager: tm
+            )
+        }
 
         terminalManager.editorPreference = EditorPreference(
             defaults: .standard,
@@ -524,36 +661,11 @@ struct GrafttyApp: App {
             NSLog("[Graftty] SocketServer.start() failed: %@", String(describing: error))
         }
 
-        // Claude Code Channels — only active when agent teams are enabled.
-        // On enable, register the graftty-channel user-scope MCP server via
-        // `claude mcp` (idempotent) and start the router so new Claude sessions
-        // launched by the user with
-        // `--dangerously-load-development-channels server:graftty-channel`
-        // connect successfully. The user is responsible for the launch
-        // flag — Graftty no longer auto-injects it, since the injection
-        // only covered sessions started from `defaultCommand`. MCP
-        // registration is fire-and-forget: it does subprocess I/O and the
-        // router does not depend on it completing before start().
-        if UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) {
-            Task { await Self.installChannelMCPServer() }
-            do {
-                try services.channelRouter.start()
-            } catch {
-                NSLog("[Graftty] Channels startup failed: %@", String(describing: error))
-            }
-        }
-
-        // Wire the AppState provider so ChannelSettingsObserver can compose
-        // per-worktree team instructions (TEAM-3.3). This must happen in
-        // startup() rather than AppServices.init() because @State is only
-        // accessible once SwiftUI's body has run. Capturing $appState here
-        // gives a stable Binding whose wrappedValue is always current.
-        let channelAppStateBinding = $appState
-        services.channelSettingsObserver.appStateProvider = { channelAppStateBinding.wrappedValue }
-
         // Wire the AppState provider for the team PR-merged dispatch hook
-        // (TEAM-5.4). Same timing constraint as above — @State only accessible
-        // after body runs, so we use a Binding-capture here rather than in init().
+        // (TEAM-5.4). @State is only accessible once SwiftUI's body has
+        // run, so we capture a Binding here rather than in
+        // AppServices.init().
+        let channelAppStateBinding = $appState
         services.appStateProvider = { channelAppStateBinding.wrappedValue }
 
         // SocketServer already dispatches onMessage to the main queue.
@@ -564,11 +676,22 @@ struct GrafttyApp: App {
                 Self.handleNotification(message, appState: binding, terminalManager: tm)
             }
         }
-        let router = services.channelRouter
+        let teamInbox = services.teamInbox
+        let teamEventDispatcher = services.teamEventDispatcher
+        // hookCallbacks is set below in the idle-pipeline wiring; capture
+        // by reference through AppServices so the closure sees the value
+        // once it is assigned.
+        let appServicesRef = services
         services.socketServer.onRequest = { message in
             MainActor.assumeIsolated {
-                Self.handlePaneRequest(message, appState: binding, terminalManager: tm,
-                                       channelRouter: router)
+                Self.handlePaneRequest(
+                    message,
+                    appState: binding,
+                    terminalManager: tm,
+                    teamInbox: teamInbox,
+                    teamEventDispatcher: teamEventDispatcher,
+                    hookCallbacks: appServicesRef.teamHookCallbacks
+                )
             }
         }
 
@@ -649,6 +772,223 @@ struct GrafttyApp: App {
             ticker: prTicker,
             getRepos: { binding.wrappedValue.repos }
         )
+
+        // Sweep dangling presence files left behind by SIGKILL'd agents
+        // whose wrapper trap never fired. The wrapper trap is the primary
+        // cleanup path (TEAM-PRESENCE-1.3); this fallback runs on a slow
+        // cadence and only deletes records whose recorded PID is no
+        // longer alive per `kill(pid, 0)` semantics. Continues while
+        // backgrounded for the same reason the stats poller does:
+        // agent processes can die at any time and Graftty might not be
+        // frontmost when it happens.
+        let presenceTicker = PollingTicker(
+            interval: .seconds(30),
+            pauseWhenInactive: { false }
+        )
+        services.presenceCleanupTicker = presenceTicker
+        let presenceStorage = TeamPresenceStorage(
+            rootDirectory: TeamPresenceStorage.defaultRoot()
+        )
+        presenceTicker.start {
+            TeamPresenceMonitor.cleanupStale(storage: presenceStorage)
+        }
+
+        // TEAM-IDLE-2.1 / TEAM-IDLE-2.2 / TEAM-IDLE-2.4 / TEAM-IDLE-2.5:
+        // Build and wire the event-driven idle-delivery pipeline.
+
+        let stateRegistry = WorktreeAgentStateRegistry()
+        let inputRegistry = PaneInputActivityRegistry()
+        let idleService = IdleDeliveryService(
+            inbox: services.teamInbox,
+            state: stateRegistry,
+            nudgeSender: ZmxNudgeSender(writer: AppZmxWriter(terminalManager: terminalManager))
+        )
+
+        // Shared helper for the five pane-resolution sites in this
+        // wiring block. Hops onto MainActor (callers are @Sendable
+        // closures that may be invoked off the main thread) and looks
+        // up the worktree's primary pane via the existing extension.
+        let resolvePaneID: @Sendable (String) -> UUID? = { worktreePath in
+            MainActor.assumeIsolated {
+                binding.wrappedValue.worktree(forPath: worktreePath)?.firstPane?.id
+            }
+        }
+
+        // Resolve a recipient worktree's runtime so the IdleDelivery
+        // runtime-gate can correctly skip Claude (whose asyncRewake
+        // watcher is the canonical delivery path). team_message rows
+        // don't carry an explicit `to.runtime`, so without this the
+        // dispatch site would blindly default to "codex" and zmx-send
+        // would fire alongside asyncRewake — the double-delivery the
+        // user observed.
+        let resolveRuntime: @Sendable (String, UUID?) -> String? = { worktreePath, paneID in
+            MainActor.assumeIsolated {
+                if let paneID, let agent = services.agentForPane[paneID] {
+                    return agent.runtime
+                }
+                if let record = try? presenceStorage.listAll().first(where: { $0.worktree == worktreePath }) {
+                    return record.runtime.rawValue
+                }
+                return nil
+            }
+        }
+
+        // Pane-to-agent mapping maintained on AppServices (@MainActor).
+        // Updated on every SessionStart/PostToolUse so keystrokes can be
+        // routed to the right (worktree, runtime). Runtime defaults to
+        // "codex" for panes with no recorded agent identity (v1 heuristic).
+        //
+        // All callbacks fire from handleTeamHook → TeamInboxRequestHandler.hook,
+        // which runs inside MainActor.assumeIsolated. Using assumeIsolated here
+        // lets us read/write MainActor state without crossing an actor boundary.
+
+        // Build the engaged-grace scheduler. Its onElapsed fires after
+        // 60s of no keystrokes and triggers onMessageArrival so any
+        // pending messages drain once the user stops typing.
+        let graceScheduler = EngagedGraceScheduler(
+            state: stateRegistry,
+            onElapsed: { [weak idleService] worktree, runtime in
+                // onElapsed is @MainActor, so binding.wrappedValue is
+                // accessible directly — no MainActor.assumeIsolated dance.
+                guard let service = idleService else { return }
+                let paneID = resolvePaneID(worktree)
+                guard let teamID = binding.wrappedValue.repos.first(where: {
+                    $0.worktrees.contains(where: { $0.path == worktree })
+                })?.path else { return }
+                Task {
+                    await service.onMessageArrival(
+                        team: teamID, worktree: worktree, runtime: runtime, paneID: paneID
+                    )
+                }
+            }
+        )
+
+        // Wire the keystroke observer. The onKeystroke closure resolves
+        // pane → (worktree, runtime) from AppServices.agentForPane map and
+        // drives the state registry + grace timer. Fires on MainActor.
+        let inputObserver = PaneInputActivityObserver(
+            registry: inputRegistry,
+            onKeystroke: { [weak graceScheduler, weak services] paneID in
+                // SurfaceNSView.keyDown fires on main thread. Use
+                // assumeIsolated so we can read MainActor-isolated state.
+                MainActor.assumeIsolated {
+                    guard let agent = services?.agentForPane[paneID] else { return }
+                    stateRegistry.handleKeystroke(worktree: agent.worktree, runtime: agent.runtime)
+                    graceScheduler?.bump(worktree: agent.worktree, runtime: agent.runtime)
+                }
+            }
+        )
+
+        // Wire the three hook callbacks.
+        // These fire from handleTeamHook, which runs inside MainActor.assumeIsolated.
+        let hookCallbacks = TeamHookCallbacks(
+            onStop: { [weak idleService] team, worktree, runtime in
+                guard let service = idleService else { return }
+                let paneID = resolvePaneID(worktree)
+                // Flip the state machine before the delivery evaluator runs.
+                // Without this, state stays `.active` from the prior
+                // SessionStart and `IdleDeliveryService.maybeDeliver` skips.
+                let lastInputAt = paneID.flatMap { inputRegistry.lastInputAt(paneID: $0) }
+                stateRegistry.handleStop(worktree: worktree, runtime: runtime, lastInputAt: lastInputAt)
+                Task { await service.onStop(team: team, worktree: worktree, runtime: runtime, paneID: paneID) }
+            },
+            onSessionStart: { [weak services] team, worktree, runtime in
+                if let paneID = resolvePaneID(worktree) {
+                    MainActor.assumeIsolated {
+                        services?.agentForPane[paneID] = (worktree: worktree, runtime: runtime)
+                    }
+                }
+                stateRegistry.handleSessionStart(worktree: worktree, runtime: runtime)
+            },
+            onPostToolUse: { [weak services] team, worktree, runtime in
+                if let paneID = resolvePaneID(worktree) {
+                    MainActor.assumeIsolated {
+                        services?.agentForPane[paneID] = (worktree: worktree, runtime: runtime)
+                    }
+                }
+                stateRegistry.handlePostToolUse(worktree: worktree, runtime: runtime)
+            }
+        )
+
+        // Subscribe the idle service to inbox file-system events.
+        // TeamInboxObserver fires with the full message list on every
+        // append. We track the previous count and fire onMessageArrival
+        // only when new messages arrive, to avoid redundant delivers.
+        // We watch each team's inbox for all repos that exist at startup time;
+        // the watcher self-heals for the file-not-yet-created case via the
+        // directory watch inside TeamInboxObserver.
+        let inboxRoot = AppState.defaultDirectory
+            .appendingPathComponent("team-inbox", isDirectory: true)
+        for repo in binding.wrappedValue.repos {
+            let teamID = repo.path
+            let observer = TeamInboxObserver(rootDirectory: inboxRoot, teamID: teamID)
+            // Per-observer counter: each observer's queue serializes its
+            // own callback, so no synchronization is needed for this Int.
+            // (A previous version used a shared `[String: Int]` map across
+            // all observer closures and crashed under concurrent mutation
+            // by multiple observer queues — Swift Dictionary is not
+            // thread-safe.)
+            var lastSeenCount = 0
+            let cancellable = observer.start { [weak idleService] messages in
+                let prev = lastSeenCount
+                let curr = messages.count
+                guard curr > prev else {
+                    lastSeenCount = curr
+                    return
+                }
+                lastSeenCount = curr
+                let newMessages = Array(messages[prev..<curr])
+                let byWorktree = Dictionary(grouping: newMessages, by: { $0.to.worktree })
+                guard let service = idleService else { return }
+                for (recipientWorktree, recipientMessages) in byWorktree {
+                    Task { @MainActor in
+                        let paneID = resolvePaneID(recipientWorktree)
+                        // Prefer the in-session / presence-registry runtime
+                        // over the message's nullable `to.runtime`. Falling
+                        // back to "codex" is the safe default only when we
+                        // genuinely can't tell — the runtime-gate inside
+                        // maybeDeliver will skip Claude either way.
+                        let runtime = resolveRuntime(recipientWorktree, paneID)
+                            ?? recipientMessages.last?.to.runtime
+                            ?? "codex"
+                        await service.onMessageArrival(
+                            team: teamID,
+                            worktree: recipientWorktree,
+                            runtime: runtime,
+                            paneID: paneID
+                        )
+                    }
+                }
+            }
+            services.inboxObserverCancellables.append(cancellable)
+            services.inboxObservers.append(observer)
+        }
+
+        // Persist pipeline components on AppServices so they outlive startup().
+        services.agentStateRegistry = stateRegistry
+        services.inputActivityRegistry = inputRegistry
+        services.idleDeliveryService = idleService
+        services.graceScheduler = graceScheduler
+        services.teamHookCallbacks = hookCallbacks
+
+        // Inject the input observer into future SurfaceHandle constructions.
+        // The terminalManager holds a reference and passes it at surface
+        // creation time.
+        terminalManager.inputActivityObserver = inputObserver
+
+        // Evict per-pane registry entries when a pane is destroyed so
+        // agentForPane / input-stamps / agent-state don't grow unbounded
+        // across the app's lifetime. Lookup of the agent identity has to
+        // happen BEFORE removing the agentForPane entry so the
+        // (worktree, runtime) for state cleanup is still resolvable.
+        terminalManager.paneClosed = { [weak services, stateRegistry, inputRegistry] paneID in
+            let agent = services?.agentForPane[paneID]
+            services?.agentForPane.removeValue(forKey: paneID)
+            inputRegistry.removeStamp(paneID: paneID)
+            if let agent {
+                stateRegistry.removeState(worktree: agent.worktree, runtime: agent.runtime)
+            }
+        }
 
         restoreRunningWorktrees()
 
@@ -739,7 +1079,7 @@ struct GrafttyApp: App {
         // isolation as the native sidebar's "+" button.
         let worktreeMonitor = services.worktreeMonitor
         let statsStore = services.statsStore
-        let channelRouterForWeb = services.channelRouter
+        let dispatcherForWeb = services.teamEventDispatcher
         webController.setWorktreeCreator { req in
             let result = await AddWorktreeFlow.add(
                 repoPath: req.repoPath,
@@ -749,16 +1089,10 @@ struct GrafttyApp: App {
                 worktreeMonitor: worktreeMonitor,
                 statsStore: statsStore,
                 terminalManager: tm,
-                channelDispatch: EventBodyRenderer.dispatchClosure(
-                    repos: appStateBinding.wrappedValue.repos,
-                    inner: { path, msg in channelRouterForWeb.dispatch(worktreePath: path, message: msg) }
-                )
+                teamEventDispatcher: dispatcherForWeb
             )
             switch result {
             case .success(let outcome):
-                // TEAM-3.4: refresh instructions for all subscribers so
-                // they see the updated roster after the new member joined.
-                await channelRouterForWeb.broadcastInstructions()
                 return .success(WebServer.CreateWorktreeResponse(
                     sessionName: outcome.sessionName,
                     worktreePath: outcome.worktreePath
@@ -1139,7 +1473,7 @@ struct GrafttyApp: App {
         if let path = appState.selectedWorktreePath,
            let wt = appState.worktree(forPath: path),
            wt.state == .running,
-           let target = wt.focusedTerminalID ?? wt.splitTree.allLeaves.first {
+           let target = wt.firstPane {
             terminalManager.setFocus(target)
         }
 
@@ -1253,7 +1587,8 @@ struct GrafttyApp: App {
                     }
                 }
             }
-        case .listPanes, .addPane, .closePane, .teamMessage, .teamList:
+        case .listPanes, .addPane, .closePane, .teamMessage, .teamSend,
+             .teamBroadcast, .teamHook, .teamInbox, .teamMembers, .teamList:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
             // fire-and-forget onMessage path.
@@ -1269,7 +1604,9 @@ struct GrafttyApp: App {
         _ message: NotificationMessage,
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
-        channelRouter: ChannelRouter
+        teamInbox: TeamInbox,
+        teamEventDispatcher: TeamEventDispatcher,
+        hookCallbacks: TeamHookCallbacks? = nil
     ) -> ResponseMessage? {
         switch message {
         case .listPanes(let path):
@@ -1281,60 +1618,303 @@ struct GrafttyApp: App {
             return closePaneByIndex(path: path, index: index,
                                     appState: appState, terminalManager: terminalManager)
         case .teamMessage(let callerPath, let recipient, let text):
-            // TEAM-4.2: resolve caller's team, find recipient member, dispatch team_message
-            guard UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) else {
-                return .error("team mode is disabled")
-            }
-            guard let callerWt = appState.wrappedValue.worktree(forPath: callerPath) else {
-                return .error("not inside a tracked worktree")
-            }
-            guard let team = TeamView.team(for: callerWt, in: appState.wrappedValue.repos, teamsEnabled: true) else {
-                return .error("your repo has no other team members yet")
-            }
-            guard let senderMember = team.members.first(where: { $0.worktreePath == callerPath }) else {
-                return .error("internal error: caller not in resolved team")
-            }
-            guard let recipientMember = team.memberNamed(recipient) else {
-                let names = team.members.map { $0.name }.filter { $0 != senderMember.name }
-                return .error("\(recipient) is not a teammate of this worktree; current teammates: \(names.joined(separator: ", "))")
-            }
-            let template = UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
-            let renderedMessage = EventBodyRenderer.body(
-                for: TeamChannelEvents.teamMessage(
-                    team: team.repoDisplayName,
-                    from: senderMember.name,
-                    text: text
-                ),
-                recipientWorktreePath: recipientMember.worktreePath,
-                subjectWorktreePath: nil,
-                repos: appState.wrappedValue.repos,
-                templateString: template
+            return handleTeamSend(
+                callerPath: callerPath,
+                recipient: recipient,
+                text: text,
+                priority: .normal,
+                appState: appState,
+                teamInbox: teamInbox,
+                teamEventDispatcher: teamEventDispatcher
             )
-            channelRouter.dispatch(
-                worktreePath: recipientMember.worktreePath,
-                message: renderedMessage
+        case .teamSend(let callerPath, let recipient, let text, let priority):
+            return handleTeamSend(
+                callerPath: callerPath,
+                recipient: recipient,
+                text: text,
+                priority: priority,
+                appState: appState,
+                teamInbox: teamInbox,
+                teamEventDispatcher: teamEventDispatcher
             )
-            return .ok
+        case .teamBroadcast(let callerPath, let text, let priority):
+            return handleTeamBroadcast(
+                callerPath: callerPath,
+                text: text,
+                priority: priority,
+                appState: appState,
+                teamInbox: teamInbox,
+                teamEventDispatcher: teamEventDispatcher
+            )
+        case .teamHook(let callerPath, let runtime, let event, let sessionID):
+            return handleTeamHook(
+                callerPath: callerPath,
+                runtime: runtime,
+                event: event,
+                sessionID: sessionID,
+                appState: appState,
+                teamInbox: teamInbox,
+                teamEventDispatcher: teamEventDispatcher,
+                hookCallbacks: hookCallbacks
+            )
+        case .teamInbox(let callerPath, let worktree, let repo, let member, let unread, let all):
+            return handleTeamInbox(
+                callerPath: callerPath,
+                worktree: worktree,
+                repo: repo,
+                member: member,
+                unread: unread,
+                all: all,
+                appState: appState,
+                teamInbox: teamInbox,
+                teamEventDispatcher: teamEventDispatcher
+            )
+        case .teamMembers(let callerPath, let worktree, let repo):
+            return handleTeamMembers(
+                callerPath: callerPath,
+                worktree: worktree,
+                repo: repo,
+                appState: appState,
+                teamInbox: teamInbox,
+                teamEventDispatcher: teamEventDispatcher
+            )
         case .teamList(let callerPath):
-            // TEAM-4.3: list members of caller's team
-            guard UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled) else {
-                return .error("team mode is disabled")
-            }
-            guard let callerWt = appState.wrappedValue.worktree(forPath: callerPath),
-                  let team = TeamView.team(for: callerWt, in: appState.wrappedValue.repos, teamsEnabled: true) else {
-                return .error("not in a team")
-            }
-            let members = team.members.map { m in
-                TeamListMember(
-                    name: m.name, branch: m.branch, worktreePath: m.worktreePath,
-                    role: m.role.rawValue, isRunning: m.isRunning
-                )
-            }
-            return .teamList(teamName: team.repoDisplayName, members: members)
+            return handleTeamMembers(
+                callerPath: callerPath,
+                worktree: nil,
+                repo: nil,
+                appState: appState,
+                teamInbox: teamInbox,
+                teamEventDispatcher: teamEventDispatcher
+            )
         case .notify, .clear:
             // Fire-and-forget cases — no response. `onMessage` already handled them.
             return nil
         }
+    }
+
+    @MainActor
+    private static func handleTeamSend(
+        callerPath: String,
+        recipient: String,
+        text: String,
+        priority: TeamInboxPriority,
+        appState: Binding<AppState>,
+        teamInbox: TeamInbox,
+        teamEventDispatcher: TeamEventDispatcher
+    ) -> ResponseMessage {
+        do {
+            let handler = teamInboxRequestHandler(inbox: teamInbox, dispatcher: teamEventDispatcher)
+            _ = try handler.send(
+                callerWorktree: callerPath,
+                recipient: recipient,
+                text: text,
+                priority: priority,
+                repos: appState.wrappedValue.repos,
+                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            )
+            return .ok
+        } catch let error as TeamInboxRequestError {
+            return .error(error.description)
+        } catch {
+            return .error("failed to write team inbox message: \(error)")
+        }
+    }
+
+    @MainActor
+    private static func handleTeamBroadcast(
+        callerPath: String,
+        text: String,
+        priority: TeamInboxPriority,
+        appState: Binding<AppState>,
+        teamInbox: TeamInbox,
+        teamEventDispatcher: TeamEventDispatcher
+    ) -> ResponseMessage {
+        do {
+            let handler = teamInboxRequestHandler(inbox: teamInbox, dispatcher: teamEventDispatcher)
+            _ = try handler.broadcast(
+                callerWorktree: callerPath,
+                text: text,
+                priority: priority,
+                repos: appState.wrappedValue.repos,
+                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            )
+            return .ok
+        } catch let error as TeamInboxRequestError {
+            return .error(error.description)
+        } catch {
+            return .error("failed to write team inbox broadcast: \(error)")
+        }
+    }
+
+    @MainActor
+    private static func handleTeamHook(
+        callerPath: String,
+        runtime: TeamHookRuntime,
+        event: TeamHookEvent,
+        sessionID: String?,
+        appState: Binding<AppState>,
+        teamInbox: TeamInbox,
+        teamEventDispatcher: TeamEventDispatcher,
+        hookCallbacks: TeamHookCallbacks? = nil
+    ) -> ResponseMessage {
+        do {
+            let output = try teamInboxRequestHandler(
+                inbox: teamInbox,
+                dispatcher: teamEventDispatcher,
+                hookCallbacks: hookCallbacks
+            ).hook(
+                callerWorktree: callerPath,
+                runtime: runtime,
+                event: event,
+                sessionID: sessionID,
+                repos: appState.wrappedValue.repos,
+                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            )
+            if event == .stop {
+                recordAgentStop(
+                    callerPath: callerPath,
+                    runtime: runtime,
+                    sessionID: sessionID,
+                    appState: appState
+                )
+            }
+            return .teamHookOutput(output)
+        } catch let error as TeamInboxRequestError {
+            return .error(error.description)
+        } catch {
+            return .error("failed to render team hook context: \(error)")
+        }
+    }
+
+    @MainActor
+    private static func recordAgentStop(
+        callerPath: String,
+        runtime: TeamHookRuntime,
+        sessionID: String?,
+        appState: Binding<AppState>
+    ) {
+        let timestamp = Date()
+        for repoIndex in appState.wrappedValue.repos.indices {
+            for worktreeIndex in appState.wrappedValue.repos[repoIndex].worktrees.indices
+                where appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex].path == callerPath {
+                let worktree = appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
+                let worktreeName = WorktreeNameSanitizer.sanitize(worktree.branch)
+                let resolvedSessionID = sessionID ?? "\(runtime.rawValue):\(worktreeName):\(callerPath)"
+                appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex].attention = Attention(
+                    text: "\(AgentStopNotification.displayName(runtime)) needs input",
+                    timestamp: timestamp
+                )
+                AgentNotificationRouter.shared.post(
+                    AgentStopNotification.content(
+                        runtime: runtime,
+                        worktreeName: worktreeName,
+                        worktreePath: callerPath,
+                        sessionID: resolvedSessionID,
+                        timestamp: timestamp
+                    )
+                )
+                return
+            }
+        }
+    }
+
+    @MainActor
+    private static func activateAgentStopNotification(
+        _ payload: AgentStopNotificationPayload,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager
+    ) {
+        NSApp.activate(ignoringOtherApps: true)
+        AgentStopNotification.acknowledgeSelection(
+            appState: &appState.wrappedValue,
+            worktreePath: payload.worktreePath,
+            timestamp: payload.attentionTimestamp
+        )
+        if let worktree = appState.wrappedValue.worktree(forPath: payload.worktreePath),
+           let terminalID = worktree.firstPane {
+            terminalManager.setFocus(terminalID)
+        }
+    }
+
+    @MainActor
+    private static func handleTeamInbox(
+        callerPath: String?,
+        worktree: String?,
+        repo: String?,
+        member: String?,
+        unread: Bool,
+        all: Bool,
+        appState: Binding<AppState>,
+        teamInbox: TeamInbox,
+        teamEventDispatcher: TeamEventDispatcher
+    ) -> ResponseMessage {
+        do {
+            let messages = try teamInboxRequestHandler(inbox: teamInbox, dispatcher: teamEventDispatcher).diagnosticMessages(
+                callerWorktree: callerPath,
+                worktree: worktree,
+                repo: repo,
+                member: member,
+                unread: unread,
+                all: all,
+                repos: appState.wrappedValue.repos,
+                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            )
+            return .teamInbox(messages)
+        } catch let error as TeamInboxRequestError {
+            return .error(error.description)
+        } catch {
+            return .error("failed to read team inbox: \(error)")
+        }
+    }
+
+    @MainActor
+    private static func handleTeamMembers(
+        callerPath: String?,
+        worktree: String?,
+        repo: String?,
+        appState: Binding<AppState>,
+        teamInbox: TeamInbox,
+        teamEventDispatcher: TeamEventDispatcher
+    ) -> ResponseMessage {
+        do {
+            let result = try teamInboxRequestHandler(inbox: teamInbox, dispatcher: teamEventDispatcher).members(
+                callerWorktree: callerPath,
+                worktree: worktree,
+                repo: repo,
+                repos: appState.wrappedValue.repos,
+                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            )
+            return .teamList(teamName: result.teamName, members: result.members)
+        } catch let error as TeamInboxRequestError {
+            return .error(error.description)
+        } catch {
+            return .error("failed to list team members: \(error)")
+        }
+    }
+
+    private static func teamInboxRequestHandler(
+        inbox: TeamInbox,
+        dispatcher: TeamEventDispatcher,
+        hookCallbacks: TeamHookCallbacks? = nil
+    ) -> TeamInboxRequestHandler {
+        TeamInboxRequestHandler(
+            inbox: inbox,
+            dispatcher: dispatcher,
+            sessionPromptRenderer: renderTeamSessionPrompt(team:viewer:),
+            onStop: hookCallbacks?.onStop,
+            onSessionStart: hookCallbacks?.onSessionStart,
+            onPostToolUse: hookCallbacks?.onPostToolUse
+        )
+    }
+
+    private static func renderTeamSessionPrompt(team: TeamView, viewer: TeamMember) -> String? {
+        let template = UserDefaults.standard.string(forKey: SettingsKeys.teamSessionPrompt) ?? ""
+        return EventBodyRenderer.renderSessionPrompt(
+            template: template,
+            branch: viewer.branch,
+            lead: viewer.role == .lead
+        )
     }
 
     @MainActor
@@ -1383,7 +1963,7 @@ struct GrafttyApp: App {
         guard wt.state == .running else {
             return .error("worktree not running")
         }
-        guard let targetID = wt.focusedTerminalID ?? wt.splitTree.allLeaves.first else {
+        guard let targetID = wt.firstPane else {
             return .error("no panes to split")
         }
         guard let newID = splitPane(
@@ -1434,7 +2014,7 @@ struct GrafttyApp: App {
             for wtIdx in appState.repos[repoIdx].worktrees.indices {
                 let wt = appState.repos[repoIdx].worktrees[wtIdx]
                 if wt.path == path, wt.state == .running,
-                   let focused = wt.focusedTerminalID ?? wt.splitTree.allLeaves.first {
+                   let focused = wt.firstPane {
                     // Cmd+D = "Split Horizontally" = new pane to the right;
                     // Cmd+Shift+D = "Split Vertically" = new pane below. Map
                     // to `PaneSplit` so we reuse the same insertion logic as
@@ -1924,7 +2504,7 @@ struct GrafttyApp: App {
         guard let path = appState.selectedWorktreePath else { return nil }
         for repo in appState.repos {
             for wt in repo.worktrees where wt.path == path && wt.state == .running {
-                return wt.focusedTerminalID ?? wt.splitTree.allLeaves.first
+                return wt.firstPane
             }
         }
         return nil
@@ -2057,40 +2637,25 @@ struct GrafttyApp: App {
         }
     }
 
-    /// Register the graftty-channel user-scope MCP server via `claude mcp`,
-    /// and remove any leftover config from prior versions (the plugin-
-    /// wrapper directory and the abandoned `~/.claude/.mcp.json`). Logs on
-    /// failure; never throws.
-    ///
-    /// Static so that both `startup()` and `ChannelSettingsObserver`'s
-    /// `onEnable` closure can call it without needing a live `GrafttyApp`
-    /// struct instance (the struct is a SwiftUI App value type; capturing
-    /// `self` across scenes is awkward).
-    @MainActor
-    static func installChannelMCPServer() async {
-        // Absolute path to the CLI binary. When Graftty is bundled, the CLI
-        // lives at Graftty.app/Contents/Helpers/graftty per `scripts/bundle.sh`
-        // and `installCLI()` below.
-        let cliPath = Bundle.main.bundleURL
+    static func installAgentHookAssets() {
+        do {
+            _ = try AgentHookInstaller(
+                rootDirectory: AgentHookInstaller.rootDirectory(),
+                grafttyCLIPath: agentHookCLIPath()
+            ).install()
+        } catch {
+            NSLog("[Graftty] Agent hook asset install failed: %@", String(describing: error))
+        }
+    }
+
+    private static func agentHookCLIPath() -> String {
+        let bundled = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Helpers/graftty")
             .path
-
-        // `swift run` has no bundled CLI — skip to avoid registering an
-        // entry pointing at a nonexistent binary, which would break every
-        // Claude session the user opens outside Graftty.
-        guard FileManager.default.fileExists(atPath: cliPath) else {
-            NSLog("[Graftty] Channels install skipped: bundled CLI not found at %@", cliPath)
-            return
+        if FileManager.default.fileExists(atPath: bundled) {
+            return bundled
         }
-
-        await ChannelMCPInstaller.install(executor: CLIRunner(), cliPath: cliPath)
-
-        ChannelMCPInstaller.removeLegacyPluginDirectory(
-            pluginsRoot: ChannelMCPInstaller.defaultLegacyPluginsRoot()
-        )
-        ChannelMCPInstaller.removeLegacyMCPConfigFile(
-            path: ChannelMCPInstaller.defaultLegacyMCPConfigPath()
-        )
+        return "graftty"
     }
 
     private func installCLI() {

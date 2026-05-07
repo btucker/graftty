@@ -56,7 +56,8 @@ final class SurfaceHandle {
         zmxInitialInput: String? = nil,
         extraInitialInput: String? = nil,
         zmxDir: String? = nil,
-        terminalManager: TerminalManager? = nil
+        terminalManager: TerminalManager? = nil,
+        inputActivityObserver: PaneInputActivityObserver? = nil
     ) {
         self.terminalID = terminalID
         self.worktreePath = worktreePath
@@ -72,6 +73,7 @@ final class SurfaceHandle {
         self.view = surfaceView
         surfaceView.terminalID = terminalID
         surfaceView.terminalManager = terminalManager
+        surfaceView.inputActivityObserver = inputActivityObserver
         // NB: the original impl used a `defer` here to bind
         // `surfaceView.surface = self.surface` after all exit paths. That
         // was fine for a non-failable init, but failable-init's nil-return
@@ -107,13 +109,28 @@ final class SurfaceHandle {
         // macOS APFS that hijacks `which graftty` to the GUI binary, which
         // silently exits 0. `BundlePathSanitizer` strips it and prepends
         // `Contents/Helpers` (where the CLI actually lives).
+        let sanitizedPath = BundlePathSanitizer.sanitized(
+            currentPath: ProcessInfo.processInfo.environment["PATH"] ?? "",
+            bundleURL: Bundle.main.bundleURL
+        )
+        let agentHookBin = Self.agentHookPathPrefix()
+        let path = agentHookBin.map { "\($0):\(sanitizedPath)" } ?? sanitizedPath
         var envPairs: [(key: String, value: String)] = [
             ("GRAFTTY_SOCK", socketPath),
-            ("PATH", BundlePathSanitizer.sanitized(
-                currentPath: ProcessInfo.processInfo.environment["PATH"] ?? "",
-                bundleURL: Bundle.main.bundleURL
-            )),
+            ("PATH", path),
         ]
+        // Hand the wrapper bin path to the user's shell init via env so
+        // the ZDOTDIR shim's `.zshrc` can re-prepend it AFTER the user's
+        // own PATH manipulations run. Without this, .zshrc lines like
+        // `export PATH="$BUN_INSTALL/bin:$PATH"` push graftty's surface-
+        // env-injected prepend behind the user's claude / codex
+        // installations and the wrapper never gets invoked.
+        if let agentHookBin {
+            envPairs.append(("GRAFTTY_AGENT_HOOKS_BIN", agentHookBin))
+            envPairs.append(("ZDOTDIR", AgentHookInstaller
+                .zshInitDirectory(rootDirectory: AgentHookInstaller.rootDirectory())
+                .path))
+        }
         if let zmxDir {
             envPairs.append(("ZMX_DIR", zmxDir))
         }
@@ -183,6 +200,15 @@ final class SurfaceHandle {
         free(cwdCStr)
         for (k, v) in envCStrings { free(k); free(v) }
         if let initialInputCStr { free(initialInputCStr) }
+    }
+
+    private static func agentHookPathPrefix() -> String? {
+        guard ProcessInfo.processInfo.environment["GRAFTTY_DISABLE_AGENT_HOOKS"] != "1" else {
+            return nil
+        }
+        return AgentHookInstaller
+            .binDirectory(rootDirectory: AgentHookInstaller.rootDirectory())
+            .path
     }
 
     deinit {
@@ -268,6 +294,35 @@ final class SurfaceHandle {
         }
     }
 
+    /// Synthesize a Return keypress (press + release) via
+    /// `ghostty_surface_key`, mirroring what `SurfaceNSView.keyDown`
+    /// does for a real Enter key event but constructed without an
+    /// `NSEvent`. Used by the agent-teams idle-delivery nudge to
+    /// commit a typed-in message: `typeText` alone leaves a `\r` byte
+    /// in the PTY that TUI receivers (Codex / Claude in raw mode)
+    /// don't treat as a submit trigger.
+    func pressReturn() {
+        var keyEvent = ghostty_input_key_s()
+        keyEvent.mods = GHOSTTY_MODS_NONE
+        keyEvent.consumed_mods = GHOSTTY_MODS_NONE
+        keyEvent.keycode = 36  // kVK_Return
+        keyEvent.unshifted_codepoint = 0x0D  // CR — control char, lets libghostty encode
+        keyEvent.composing = false
+        keyEvent.text = nil
+
+        keyEvent.action = GHOSTTY_ACTION_PRESS
+        let pressHandled = ghostty_surface_key(surface, keyEvent)
+
+        keyEvent.action = GHOSTTY_ACTION_RELEASE
+        let releaseHandled = ghostty_surface_key(surface, keyEvent)
+
+        NSLog(
+            "[Graftty] pressReturn fired: press=%@ release=%@",
+            pressHandled ? "handled" : "unhandled",
+            releaseHandled ? "handled" : "unhandled"
+        )
+    }
+
     func requestClose() {
         ghostty_surface_request_close(surface)
     }
@@ -300,6 +355,11 @@ final class SurfaceNSView: NSView {
     /// context-menu action so the checkmark reflects the current mode.
     /// libghostty owns authoritative state; this is our UI shadow.
     var isReadonly: Bool = false
+
+    /// Passive keystroke tap wired by the app at startup. Set by
+    /// `SurfaceHandle` after construction from the shared
+    /// `PaneInputActivityRegistry`. Nil-safe — missing observer is a no-op.
+    var inputActivityObserver: PaneInputActivityObserver?
 
     /// Cursor to display when the mouse is over this surface. libghostty
     /// drives this via `GHOSTTY_ACTION_MOUSE_SHAPE` (e.g., pointer when
@@ -545,6 +605,9 @@ final class SurfaceNSView: NSView {
         guard surface != nil else {
             super.keyDown(with: event)
             return
+        }
+        if let paneID = terminalID?.id {
+            inputActivityObserver?.recordKeystroke(paneID: paneID)
         }
         markVisibleForInput()
         // Forward ALL keys to libghostty — including Cmd-modified ones —

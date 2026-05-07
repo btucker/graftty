@@ -62,6 +62,13 @@ public final class WebSession {
     private let stateLock = NSLock()
     private var isClosed = false
 
+    /// Per-session typed-but-uncommitted-byte tracker (TEAM-IDLE-2.2). Optional
+    /// because not all `WebSession` callers need it (tests, future non-Codex
+    /// uses); set by the caller that owns the shared instance. When non-nil,
+    /// each `write(_:)` chunk is reported under `config.sessionName` and
+    /// `close()` clears the entry.
+    public var inputState: ZmxInputState?
+
     public init(config: Config) {
         self.config = config
     }
@@ -91,6 +98,10 @@ public final class WebSession {
 
     public func write(_ data: Data) {
         guard let fd = spawned?.masterFD, !data.isEmpty else { return }
+        // TEAM-IDLE-2.2: track the chunk before we hand it to the PTY so an
+        // idle-delivery tick that observes the session right after the write
+        // sees the uncommitted-byte count we just produced.
+        inputState?.recordInput(data, forSession: config.sessionName)
         try? data.withUnsafeBytes { buf in
             guard let base = buf.baseAddress else { return }
             let typed = base.assumingMemoryBound(to: UInt8.self)
@@ -115,6 +126,10 @@ public final class WebSession {
         onExit = nil
         onPTYSize = nil
         stateLock.unlock()
+
+        // TEAM-IDLE-2.2: drop our slot in the shared tracker so a future
+        // session that reuses this name doesn't inherit a stale byte count.
+        inputState?.removeSession(config.sessionName)
 
         if let spawned {
             // WEB-4.5: SIGTERM (not SIGKILL) so `zmx attach` gets a chance

@@ -228,6 +228,18 @@ final class TerminalManager: ObservableObject {
     /// sets it via `GrafttyApp`.
     var editorPreference: EditorPreference?
 
+    /// Passive keystroke tap for the idle-delivery pipeline. Set by
+    /// `GrafttyApp.startup()` after the pipeline is constructed; nil
+    /// before that, which is safe — `SurfaceNSView.keyDown` nil-checks it.
+    var inputActivityObserver: PaneInputActivityObserver?
+
+    /// Fires once per surface destruction so the idle-delivery pipeline
+    /// can evict per-pane registry entries (`agentForPane`,
+    /// PaneInputActivityRegistry stamps, WorktreeAgentStateRegistry
+    /// states keyed off the pane's resolved agent identity). Wired by
+    /// `GrafttyApp.startup()` after the pipeline is constructed.
+    var paneClosed: ((UUID) -> Void)?
+
     /// Fired when cmd-click resolves to a CLI editor; owner spawns a new
     /// pane split-right of the source with `initialInput` as the command.
     var onOpenInEditorPane: ((TerminalID, String) -> Void)?
@@ -432,7 +444,8 @@ final class TerminalManager: ObservableObject {
                 socketPath: socketPath,
                 zmxInitialInput: zmxInitialInput,
                 zmxDir: zmxDir,
-                terminalManager: self
+                terminalManager: self,
+                inputActivityObserver: inputActivityObserver
             ) else { continue }
             surfaces[terminalID] = handle
             created[terminalID] = handle
@@ -465,7 +478,8 @@ final class TerminalManager: ObservableObject {
             zmxInitialInput: zmxInitialInput,
             extraInitialInput: extraInitialInput,
             zmxDir: zmxDir,
-            terminalManager: self
+            terminalManager: self,
+            inputActivityObserver: inputActivityObserver
         ) else { return nil }
         surfaces[terminalID] = handle
         return handle
@@ -516,6 +530,7 @@ final class TerminalManager: ObservableObject {
         }
         shellReadyFired.remove(terminalID)
         cachedShellPIDs.removeValue(forKey: terminalID)
+        paneClosed?(terminalID.id)
     }
 
     /// The rendered sidebar label for a pane. Chains in priority order:
@@ -568,6 +583,21 @@ final class TerminalManager: ObservableObject {
     /// Look up the `SurfaceHandle` for a given terminal.
     func handle(for terminalID: TerminalID) -> SurfaceHandle? {
         surfaces[terminalID]
+    }
+
+    /// Look up the `SurfaceHandle` whose zmx session name matches `sessionName`.
+    /// Used by `AppZmxWriter` to route an idle-delivery nudge to the correct
+    /// pane. Session names are derived from `ZmxLauncher.sessionName(for:)`.
+    ///
+    /// Reverse-lookup of the surface handle whose pane derives the given
+    /// session name (`graftty-<8hex>`). O(n) over the surface set —
+    /// acceptable for typical pane counts (1–20). Used by `AppZmxWriter`
+    /// to route a `zmx send` payload to the right PTY without rebuilding
+    /// a session-name index. If the pane count grows large enough that
+    /// nudges become a hot path, replace with a dictionary maintained
+    /// in the surface-create/destroy hooks.
+    func handle(forSessionName sessionName: String) -> SurfaceHandle? {
+        surfaces.first(where: { ZmxLauncher.sessionName(for: $0.key.id) == sessionName })?.value
     }
 
     /// Tell libghostty whether a surface is currently visible. On visible,
@@ -697,7 +727,22 @@ final class TerminalManager: ObservableObject {
         // This is the same SHELL libghostty will spawn when config.command
         // is nil; we hand it back to zmx as the inner process so the
         // attached session runs the user's real shell.
-        let userShell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/sh"
+        let rawUserShell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/sh"
+        // When the user's shell is bash, substitute graftty's bash-launcher
+        // (which exec's `bash --rcfile <shim>`) so the inner bash sources
+        // a graftty-managed .bashrc that re-prepends the wrapper bin to
+        // PATH after the user's own .bashrc has had its say. Bash has no
+        // ZDOTDIR-style env-var redirect; --rcfile is the only way in.
+        // GRAFTTY_DISABLE_AGENT_HOOKS=1 falls through to the original shell.
+        let userShell: String
+        if ProcessInfo.processInfo.environment["GRAFTTY_DISABLE_AGENT_HOOKS"] == "1" {
+            userShell = rawUserShell
+        } else {
+            userShell = AgentHookInstaller.wrappedUserShell(
+                rawUserShell,
+                rootDirectory: AgentHookInstaller.rootDirectory()
+            )
+        }
         // Pass GHOSTTY_RESOURCES_DIR through so the launcher can re-inject
         // ZDOTDIR for zsh users. Without this, Ghostty's shell integration
         // never loads in the inner shell zmx spawns, and chpwd-driven OSC 7
