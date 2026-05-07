@@ -47,22 +47,40 @@ struct PaneTitleRow: View {
     /// `graftty notify` text renders on the enclosing worktree row
     /// instead; see STATE-2.3.
     let attentionText: String?
+    /// Port bindings detected for this pane's process subtree (PORTS-3.1).
+    /// Hidden while `attentionText` is non-nil (PORTS-3.4) so an active
+    /// attention ping owns the row's secondary surface unambiguously.
+    let portBindings: [PortBinding]
+
+    var shouldRenderPortChips: Bool {
+        attentionText == nil && !portBindings.isEmpty
+    }
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
             Text("↳")
                 .font(.caption)
                 .fontWeight(isFocusedPane ? .bold : .regular)
                 .foregroundColor(theme.foreground.opacity(arrowOpacity))
-            if let attentionText {
-                AttentionCapsule(text: attentionText)
-            } else {
-                Text(title.isEmpty ? "shell" : title)
-                    .font(.caption)
-                    .fontWeight(isFocusedPane ? .semibold : .regular)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .foregroundColor(theme.foreground.opacity(titleOpacity))
+            // Title and chips share a FlowLayout container; wrapped chips
+            // therefore hang under the title text instead of flushing to
+            // the row's leading edge (PORTS-3.3).
+            FlowLayout(spacing: 4, rowSpacing: 3) {
+                if let attentionText {
+                    AttentionCapsule(text: attentionText)
+                } else {
+                    Text(title.isEmpty ? "shell" : title)
+                        .font(.caption)
+                        .fontWeight(isFocusedPane ? .semibold : .regular)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .foregroundColor(theme.foreground.opacity(titleOpacity))
+                    if shouldRenderPortChips {
+                        ForEach(portBindings, id: \.self) { binding in
+                            PortChip(binding: binding, theme: theme)
+                        }
+                    }
+                }
             }
             Spacer(minLength: 0)
         }
@@ -92,6 +110,54 @@ struct PaneTitleRow: View {
     private var arrowOpacity: Double {
         if isFocusedPane { return 0.75 }
         return isActiveWorktree ? 0.5 : 0.35
+    }
+}
+
+/// Minimal flow layout: wraps subviews to next line at container width
+/// while preserving inline layout on each row. Used by `PaneTitleRow` so
+/// wrapped port chips align under the title text rather than flush to
+/// the row's leading edge (PORTS-3.3).
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 4
+    var rowSpacing: CGFloat = 3
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var rowWidth: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var totalHeight: CGFloat = 0
+        var maxRowWidth: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if rowWidth + size.width > maxWidth, rowWidth > 0 {
+                totalHeight += rowHeight + rowSpacing
+                maxRowWidth = max(maxRowWidth, rowWidth - spacing)
+                rowWidth = 0
+                rowHeight = 0
+            }
+            rowWidth += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        totalHeight += rowHeight
+        maxRowWidth = max(maxRowWidth, rowWidth - spacing)
+        return CGSize(width: maxRowWidth, height: totalHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var rowHeight: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > bounds.maxX, x > bounds.minX {
+                x = bounds.minX
+                y += rowHeight + rowSpacing
+                rowHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
     }
 }
 

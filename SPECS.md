@@ -1323,3 +1323,47 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PERF-1.6** Pane title metadata changes shall not publish through TerminalManager itself, so title churn does not invalidate MainWindow observers.
 
 **PERF-1.7** Multiple rendered pane-title changes in one debounce window shall coalesce into one sidebar invalidation.
+
+## PORTS — PORTS
+
+### PORTS-1.x
+
+**PORTS-1.1** When a pane's foreground process is non-shell, the application shall scan that process subtree's TCP listening sockets every 2 seconds.
+
+**PORTS-1.2** While a pane's foreground process is the shell, the application shall not invoke `lsof` for that pane.
+
+**PORTS-1.3** Tick during in-flight scan is dropped (single-flight invariant)
+
+**PORTS-1.4** Lsof failure leaves snapshot empty
+
+### PORTS-2.x
+
+**PORTS-2.1** Same PID with IPv4 + IPv6 binds on same port collapses to one binding
+
+**PORTS-2.2** Single IPv4 loopback listener becomes one .loopback binding
+
+**PORTS-2.3** Forked workers collapse to one binding with lowest PID
+
+### PORTS-3.x
+
+**PORTS-3.1** While a pane has at least one `PortBinding`, the application shall render one `PortChip` per binding inline with the pane title.
+
+**PORTS-3.2** PortChip icon name is `personalhotspot` for .loopback, `globe` for .lan
+
+**PORTS-3.3** FlowLayout configuration drives wrap-with-indent layout
+
+**PORTS-3.4** When a pane has an active `AttentionCapsule`, the application shall hide port chips for that pane until the capsule clears.
+
+**PORTS-3.5** When the user clicks a `PortChip`, the application shall open `http://localhost:<port>/` via `NSWorkspace.shared.open`.
+
+**PORTS-3.6** When a `PortChip` is hovered, the application shall display a tooltip reading `Open http://localhost:<port>/`.
+
+### PORTS-4.x
+
+**PORTS-4.1** Registered pane with no listeners produces empty bindings
+
+**PORTS-4.2** Unregister drops the snapshot
+
+**PORTS-4.3** When a pane is dragged to another worktree, the application shall preserve its registration and binding snapshot (`TerminalID` is stable).
+
+**PORTS-4.4** Tick clears bindings when previous scan had them but new scan has none

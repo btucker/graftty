@@ -31,6 +31,10 @@ struct SidebarView: View {
     /// the listening addresses to compose the URL.
     @EnvironmentObject private var webController: WebServerController
 
+    /// Injected by GrafttyApp so each pane row can render port-binding
+    /// chips for ports its process subtree is currently listening on.
+    @EnvironmentObject private var portBindings: PortBindingsModel
+
     /// SwiftUI's environment-provided window-opener. Used by the
     /// worktree-row context menu's *Show Team Activity…* item
     /// (TEAM-7.2) to route to the `TeamActivityLogWindowID`-keyed
@@ -243,7 +247,8 @@ struct SidebarView: View {
                             isFocusedPane: isActive
                                 && worktree.focusedTerminalID == terminalID,
                             theme: theme,
-                            attentionText: attention.paneCapsules[terminalID]
+                            attentionText: attention.paneCapsules[terminalID],
+                            portBindings: portBindings.bindings[terminalID] ?? []
                         )
                     }
                     .buttonStyle(.plain)
