@@ -76,9 +76,26 @@ public final class SessionClient {
         case d
     }
 
-    public init(sessionName: String, webSocket: WebSocketClient) {
+    /// IOS-4.18: pane previews on the worktree-detail screen are
+    /// read-only thumbnails. They must never claim PTY size-leadership,
+    /// because doing so converts every libghostty viewport tick into a
+    /// `WebControlEnvelope.resize` frame and creates a font-size
+    /// feedback loop with the server's reported `serverGrid.cols`.
+    public enum Role: Sendable {
+        case fullscreen
+        case preview
+    }
+
+    public let role: Role
+
+    public init(
+        sessionName: String,
+        webSocket: WebSocketClient,
+        role: Role = .fullscreen
+    ) {
         self.sessionName = sessionName
         self.ws = webSocket
+        self.role = role
 
         final class Box {
             var onBytes: (@Sendable (Data) -> Void)?
@@ -95,8 +112,14 @@ public final class SessionClient {
         // LF is the soft-keyboard Return; translate to CR so TUIs see
         // "submit" rather than "insert newline."
         box.onBytes = { [weak self] data in
+            guard let self else { return }
+            // IOS-4.18: preview clients must not forward libghostty's
+            // internal bytes (answerback / cursor queries / theme
+            // probes) upstream — doing so would claim leadership and
+            // start the resize feedback loop with the server.
+            if self.role == .preview { return }
             let isSoftReturn = data.count == 1 && data.first == 0x0A
-            self?.sendBinary(isSoftReturn ? Self.cr : data)
+            self.sendBinary(isSoftReturn ? Self.cr : data)
             Task { @MainActor [weak self] in
                 self?.claimLeadershipIfNeeded()
             }
@@ -127,7 +150,10 @@ public final class SessionClient {
             let next = CGFloat(viewport.cellWidthPixels) / displayScale
             if cellWidthPoints != next { cellWidthPoints = next }
         }
-        if isLeader {
+        // IOS-4.18: even if a future code path were to flip `isLeader`
+        // for a preview role, preview clients still refuse to emit
+        // resize envelopes. Belt-and-suspenders with `onBytes`.
+        if isLeader, role != .preview {
             sendResizeToServer(cols: cols, rows: rows)
         }
     }
