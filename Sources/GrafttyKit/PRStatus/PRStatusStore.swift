@@ -47,10 +47,17 @@ public final class PRStatusStore {
     /// Drives the "PR merged — delete worktree?" offer dialog.
     @ObservationIgnored public var onPRMerged: (@MainActor (_ worktreePath: String, _ prNumber: Int) -> Void)?
 
-    /// Fires on PR state, CI-conclusion, or mergeable-state
-    /// transitions for a tracked worktree. Idempotent polls don't
-    /// fire. Initial discovery (previous == nil) doesn't fire.
-    @ObservationIgnored public var onTransition: (@MainActor (_ worktreePath: String, _ message: ChannelServerMessage) -> Void)?
+    /// Fires on PR state, CI-conclusion, or mergeable-state transitions
+    /// for a tracked worktree. Idempotent polls (same info twice) do not
+    /// fire. The initial discovery of a PR (previous == nil) does not
+    /// fire — a transition requires a previous state to transition FROM.
+    ///
+    /// Delivers a `(RoutableEvent, worktreePath, attrs)` tuple. The body
+    /// string is reconstructable from `attrs` via
+    /// `RoutableEvent.defaultBody(attrs:)` — the consumer typically wraps
+    /// it back into a `ChannelServerMessage.event(...)` before handing it
+    /// to `TeamEventDispatcher.dispatchRoutableEvent(...)`.
+    @ObservationIgnored public var onTransition: (@MainActor (_ event: RoutableEvent, _ worktreePath: String, _ attrs: [String: String]) -> Void)?
 
     public init(
         executor: CLIExecutor = CLIRunner(),
@@ -356,28 +363,20 @@ public final class PRStatusStore {
             attrs["from"] = previous.state.rawValue
             attrs["to"] = current.state.rawValue
             attrs["pr_title"] = current.title
-            let body = "PR #\(current.number) state changed: \(previous.state.rawValue) → \(current.state.rawValue)"
-            onTransition(worktreePath, .event(
-                type: ChannelEventType.prStateChanged, attrs: attrs, body: body
-            ))
+            let routable: RoutableEvent = (current.state == .merged) ? .prMerged : .prStateChanged
+            onTransition(routable, worktreePath, attrs)
         }
         if checksChanged {
             var attrs = common
             attrs["from"] = previous.checks.rawValue
             attrs["to"] = current.checks.rawValue
-            let body = "CI on PR #\(current.number): \(previous.checks.rawValue) → \(current.checks.rawValue)"
-            onTransition(worktreePath, .event(
-                type: ChannelEventType.ciConclusionChanged, attrs: attrs, body: body
-            ))
+            onTransition(.ciConclusionChanged, worktreePath, attrs)
         }
         if mergeableChanged {
             var attrs = common
             attrs["from"] = previous.mergeable.rawValue
             attrs["to"] = current.mergeable.rawValue
-            let body = "Merge state on PR #\(current.number): \(previous.mergeable.rawValue) → \(current.mergeable.rawValue)"
-            onTransition(worktreePath, .event(
-                type: ChannelEventType.mergeStateChanged, attrs: attrs, body: body
-            ))
+            onTransition(.mergabilityChanged, worktreePath, attrs)
         }
     }
 

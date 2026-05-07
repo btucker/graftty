@@ -4,8 +4,8 @@ import GrafttyKit
 /// The row that sits at the very top of the detail column. Shows:
 /// `{repo} / {worktree-display-name} ({branch})` on the left and, when
 /// available, a PR button on the trailing edge. Home checkout renders
-/// as italic "root". The worktree-name carries a tooltip with the full
-/// filesystem path.
+/// the worktree name in italic to distinguish it from feature worktrees.
+/// The worktree-name carries a tooltip with the full filesystem path.
 struct BreadcrumbBar: View {
     let repoName: String?
     let worktreeDisplayName: String?
@@ -65,7 +65,7 @@ struct BreadcrumbBar: View {
     }
 
     private func worktreeLabel(_ name: String) -> some View {
-        Text(isHomeCheckout ? "root" : name)
+        Text(name)
             .italic(isHomeCheckout)
             .fontWeight(isHomeCheckout ? .regular : .medium)
             .foregroundColor(theme.foreground)

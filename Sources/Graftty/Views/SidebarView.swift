@@ -31,12 +31,15 @@ struct SidebarView: View {
     /// the listening addresses to compose the URL.
     @EnvironmentObject private var webController: WebServerController
 
+    /// SwiftUI's environment-provided window-opener. Used by the
+    /// worktree-row context menu's *Show Team Activity…* item
+    /// (TEAM-7.2) to route to the `TeamActivityLogWindowID`-keyed
+    /// `WindowGroup` declared in `GrafttyApp`.
+    @Environment(\.openWindow) private var openWindow
+
     @Binding var pendingAddWorktree: AddWorktreeRequest?
 
     @AppStorage("agentTeamsEnabled") private var agentTeamsEnabled: Bool = false
-
-    /// Worktree path whose "Show Team Members…" popover is currently presented.
-    @State private var teamPopoverWorktreePath: String? = nil
 
     /// Hovered drop-target row during a pane drag (PWD-1.5). Nil otherwise.
     @State private var dropTargetWorktreeID: WorktreeEntry.ID?
@@ -132,10 +135,6 @@ struct SidebarView: View {
                 Text(repo.displayName)
                     .foregroundColor(theme.foreground)
                     .fontWeight(.semibold)
-                if agentTeamsEnabled && repo.worktrees.count >= 2 {
-                    TeamRepoBadge(repoPath: repo.path)
-                        .font(.system(size: 11))
-                }
                 Spacer()
                 Button {
                     pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: "")
@@ -263,17 +262,6 @@ struct SidebarView: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(isActive ? theme.foreground.opacity(0.16) : .clear)
         )
-        // TEAM-6.2: "Show Team Members…" popover
-        .popover(isPresented: Binding(
-            get: { teamPopoverWorktreePath == worktree.path },
-            set: { shown in if !shown { teamPopoverWorktreePath = nil } }
-        )) {
-            TeamMembersPopover(
-                worktree: worktree,
-                repos: appState.repos,
-                teamsEnabled: agentTeamsEnabled
-            )
-        }
         // PWD-1.5: drop-target highlight. Stroked so it composes with
         // the active-worktree background fill above when the dragged-
         // onto row is also the active one.
@@ -319,12 +307,20 @@ struct SidebarView: View {
                 onDeleteWorktree(worktree.path)
             })
         }
-        // TEAM-6.2: "Show Team Members…" opens a popover listing team members.
+        // TEAM-7.2: team-aware items appear when the worktree is in a
+        // team-enabled repo with ≥2 worktrees.
         if agentTeamsEnabled,
-           TeamView.team(for: worktree, in: appState.repos, teamsEnabled: true) != nil {
+           let team = TeamView.team(for: worktree, in: appState.repos, teamsEnabled: true) {
             menu.addItem(.separator())
-            menu.addItem(ClosureMenuItem(title: "Show Team Members…") {
-                teamPopoverWorktreePath = worktree.path
+            // TEAM-7.2: opens the activity-log window for this team.
+            let teamID = TeamLookup.id(of: team)
+            let teamName = team.repoDisplayName
+            let openWindow = self.openWindow
+            menu.addItem(ClosureMenuItem(title: "Show Team Activity…") {
+                openWindow(
+                    id: TeamActivityLogWindowID.windowGroupID,
+                    value: TeamActivityLogWindowID(teamID: teamID, teamName: teamName)
+                )
             })
         }
         return menu
@@ -412,52 +408,5 @@ struct SidebarView: View {
             }
         }
         return true
-    }
-}
-
-// MARK: - Team Members Popover (TEAM-6.2)
-
-/// Inline popover listing all members of the team that contains `worktree`.
-/// Presented from the "Show Team Members…" context-menu item.
-private struct TeamMembersPopover: View {
-    let worktree: WorktreeEntry
-    let repos: [RepoEntry]
-    let teamsEnabled: Bool
-
-    var body: some View {
-        let team = TeamView.team(for: worktree, in: repos, teamsEnabled: teamsEnabled)
-        VStack(alignment: .leading, spacing: 0) {
-            if let team {
-                Text("Team — \(team.repoDisplayName)")
-                    .font(.headline)
-                    .padding(.bottom, 8)
-                Divider()
-                ForEach(team.members, id: \.worktreePath) { member in
-                    HStack(spacing: 8) {
-                        Image(systemName: member.role == .lead ? "star.fill" : "person.fill")
-                            .foregroundStyle(member.role == .lead ? Color.yellow : Color.secondary)
-                            .frame(width: 16)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(member.name)
-                                .fontWeight(member.role == .lead ? .semibold : .regular)
-                            Text(member.branch)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Circle()
-                            .fill(member.isRunning ? Color.green : Color.secondary.opacity(0.4))
-                            .frame(width: 8, height: 8)
-                    }
-                    .padding(.vertical, 4)
-                    Divider().opacity(0.4)
-                }
-            } else {
-                Text("No team")
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding()
-        .frame(minWidth: 220, maxWidth: 320)
     }
 }
