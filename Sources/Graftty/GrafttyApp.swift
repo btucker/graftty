@@ -814,6 +814,25 @@ struct GrafttyApp: App {
             }
         }
 
+        // Resolve a recipient worktree's runtime so the IdleDelivery
+        // runtime-gate can correctly skip Claude (whose asyncRewake
+        // watcher is the canonical delivery path). team_message rows
+        // don't carry an explicit `to.runtime`, so without this the
+        // dispatch site would blindly default to "codex" and zmx-send
+        // would fire alongside asyncRewake — the double-delivery the
+        // user observed.
+        let resolveRuntime: @Sendable (String, UUID?) -> String? = { worktreePath, paneID in
+            MainActor.assumeIsolated {
+                if let paneID, let agent = services.agentForPane[paneID] {
+                    return agent.runtime
+                }
+                if let record = try? presenceStorage.listAll().first(where: { $0.worktree == worktreePath }) {
+                    return record.runtime.rawValue
+                }
+                return nil
+            }
+        }
+
         // Pane-to-agent mapping maintained on AppServices (@MainActor).
         // Updated on every SessionStart/PostToolUse so keystrokes can be
         // routed to the right (worktree, runtime). Runtime defaults to
@@ -922,9 +941,16 @@ struct GrafttyApp: App {
                 let byWorktree = Dictionary(grouping: newMessages, by: { $0.to.worktree })
                 guard let service = idleService else { return }
                 for (recipientWorktree, recipientMessages) in byWorktree {
-                    let runtime = recipientMessages.last?.to.runtime ?? "codex"
                     Task { @MainActor in
                         let paneID = resolvePaneID(recipientWorktree)
+                        // Prefer the in-session / presence-registry runtime
+                        // over the message's nullable `to.runtime`. Falling
+                        // back to "codex" is the safe default only when we
+                        // genuinely can't tell — the runtime-gate inside
+                        // maybeDeliver will skip Claude either way.
+                        let runtime = resolveRuntime(recipientWorktree, paneID)
+                            ?? recipientMessages.last?.to.runtime
+                            ?? "codex"
                         await service.onMessageArrival(
                             team: teamID,
                             worktree: recipientWorktree,
