@@ -10,8 +10,10 @@ public final class PortBindingsModel: ObservableObject {
 
     public func set(_ id: TerminalID, _ list: [PortBinding]) {
         if list.isEmpty {
+            guard bindings[id] != nil else { return }
             bindings.removeValue(forKey: id)
         } else {
+            guard bindings[id] != list else { return }
             bindings[id] = list
         }
     }

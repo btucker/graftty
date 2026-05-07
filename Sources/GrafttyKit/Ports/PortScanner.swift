@@ -4,8 +4,6 @@ import os
 
 /// @spec PORTS-1.1: When a pane's foreground process is non-shell, the application shall scan that process subtree's TCP listening sockets every 2 seconds.
 //
-/// @spec PORTS-1.2: While a pane's foreground process is the shell, the application shall not invoke `lsof` for that pane.
-//
 /// @spec PORTS-4.3: When a pane is dragged to another worktree, the application shall preserve its registration and binding snapshot (`TerminalID` is stable).
 public actor PortScanner {
     private let runner: LsofRunner
@@ -13,11 +11,11 @@ public actor PortScanner {
     private var registrations: [TerminalID: pid_t] = [:]
     private var snapshots: [TerminalID: [PortBinding]] = [:]
     private var inFlight = false
-    private let log = Logger(subsystem: "graftty", category: "PortScanner")
+    private let log = Logger(subsystem: "com.btucker.graftty", category: "PortScanner")
 
     /// Closure invoked on the main actor whenever a pane's binding set
     /// changes. Wired by `GrafttyApp` to push into `PortBindingsModel`.
-    public var onChange: (@MainActor @Sendable (TerminalID, [PortBinding]) -> Void)?
+    public private(set) var onChange: (@MainActor @Sendable (TerminalID, [PortBinding]) -> Void)?
 
     public init(runner: LsofRunner, walker: any ProcessTreeWalking) {
         self.runner = runner
@@ -49,21 +47,23 @@ public actor PortScanner {
         inFlight = true
         defer { inFlight = false }
 
+        let roots = Array(registrations.values)
+        let descendantsByRoot = walker.descendants(rootedAt: roots)
         var paneToPIDs: [TerminalID: Set<pid_t>] = [:]
         var allPIDs: Set<pid_t> = []
         for (id, shell) in registrations {
-            let descendants = Set(walker.descendants(of: shell))
+            let descendants = Set(descendantsByRoot[shell] ?? [])
             paneToPIDs[id] = descendants
             allPIDs.formUnion(descendants)
         }
         guard !allPIDs.isEmpty else {
-            await applyEmpty()
+            applyEmpty()
             return
         }
         let joined = allPIDs.sorted().map(String.init).joined(separator: ",")
         guard let raw = await runner.run(pids: joined) else {
             log.error("lsof failed; treating snapshot as empty")
-            await applyEmpty()
+            applyEmpty()
             return
         }
         let rows = LsofOutputParser.parse(raw)
@@ -74,7 +74,7 @@ public actor PortScanner {
         }
     }
 
-    private func applyEmpty() async {
+    private func applyEmpty() {
         for id in registrations.keys {
             updateSnapshot(id: id, bindings: [])
         }

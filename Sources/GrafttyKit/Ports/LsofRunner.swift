@@ -13,19 +13,15 @@ public struct SystemLsofRunner: LsofRunner {
 
     public func run(pids: String) async -> String? {
         guard !pids.isEmpty else { return "" }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        process.arguments = ["-nP", "-iTCP", "-sTCP:LISTEN", "-p", pids]
-        let stdout = Pipe()
-        process.standardOutput = stdout
-        process.standardError = Pipe()
         do {
-            try process.run()
-            process.waitUntilExit()
+            let output = try await CLIRunner().capture(
+                command: "lsof",
+                args: ["-nP", "-iTCP", "-sTCP:LISTEN", "-p", pids],
+                at: "/"
+            )
+            return output.stdout
         } catch {
             return nil
         }
-        let data = stdout.fileHandleForReading.readDataToEndOfFile()
-        return String(data: data, encoding: .utf8)
     }
 }

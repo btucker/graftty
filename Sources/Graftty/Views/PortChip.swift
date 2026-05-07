@@ -22,7 +22,7 @@ struct PortChip: View {
             }
         } label: {
             HStack(spacing: 3) {
-                Image(systemName: iconName)
+                Image(systemName: Self.iconName(for: binding))
                     .font(.system(size: 9))
                     .foregroundColor(theme.foreground.opacity(0.85))
                 Text(":\(binding.port)")
@@ -44,8 +44,6 @@ struct PortChip: View {
         .accessibilityLabel(Self.accessibilityLabel(for: binding))
     }
 
-    private var iconName: String { Self.iconNameForTesting(for: binding) }
-
     static func url(for binding: PortBinding) -> URL? {
         URL(string: "http://localhost:\(binding.port)/")
     }
@@ -59,9 +57,8 @@ struct PortChip: View {
         return "Open \(binding.processName) on port \(binding.port) (\(scopeWord))"
     }
 
-    /// Maps a binding's scope to its SF Symbol name. Used by `iconName`
-    /// and exposed as a static seam for tests.
-    static func iconNameForTesting(for binding: PortBinding) -> String {
+    /// Maps a binding's scope to its SF Symbol name.
+    static func iconName(for binding: PortBinding) -> String {
         switch binding.scope {
         case .loopback: return "personalhotspot"
         case .lan:      return "globe"

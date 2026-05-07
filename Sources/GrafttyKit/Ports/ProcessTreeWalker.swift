@@ -3,7 +3,23 @@ import Foundation
 import Darwin
 
 public protocol ProcessTreeWalking: Sendable {
+    /// All PIDs in the subtree rooted at `root`, inclusive. Returns
+    /// `[root]` if no descendants. Returns `[]` if `root` is not a live PID.
     func descendants(of root: pid_t) -> [pid_t]
+
+    /// Bulk variant: returns descendants for many roots at once. Concrete
+    /// implementations should share the parent-table build across roots.
+    func descendants(rootedAt roots: [pid_t]) -> [pid_t: [pid_t]]
+}
+
+public extension ProcessTreeWalking {
+    /// Default: call `descendants(of:)` per root. Concrete walkers can
+    /// override for shared-cost batching.
+    func descendants(rootedAt roots: [pid_t]) -> [pid_t: [pid_t]] {
+        var result: [pid_t: [pid_t]] = [:]
+        for root in roots { result[root] = descendants(of: root) }
+        return result
+    }
 }
 
 public struct ProcessTreeWalker: ProcessTreeWalking, Sendable {
@@ -25,6 +41,30 @@ public struct ProcessTreeWalker: ProcessTreeWalking, Sendable {
                 result.append(child)
                 queue.append(child)
             }
+        }
+        return result
+    }
+
+    public func descendants(rootedAt roots: [pid_t]) -> [pid_t: [pid_t]] {
+        let parents = parentTable()
+        var children: [pid_t: [pid_t]] = [:]
+        var known: Set<pid_t> = []
+        for (pid, ppid) in parents {
+            children[ppid, default: []].append(pid)
+            known.insert(pid)
+        }
+        var result: [pid_t: [pid_t]] = [:]
+        for root in roots {
+            guard known.contains(root) else { result[root] = []; continue }
+            var subtree: [pid_t] = [root]
+            var queue: [pid_t] = [root]
+            while let next = queue.popLast() {
+                for child in children[next, default: []] {
+                    subtree.append(child)
+                    queue.append(child)
+                }
+            }
+            result[root] = subtree
         }
         return result
     }

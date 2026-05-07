@@ -179,7 +179,7 @@ struct GrafttyApp: App {
     /// Observable proxy for per-pane port bindings. Mutated by the
     /// `PortScanner` `onChange` callback; injected into the SwiftUI
     /// environment so `SidebarView` can render port chips on each row.
-    private let portBindingsModel = PortBindingsModel()
+    @StateObject private var portBindingsModel = PortBindingsModel()
 
     /// Polls `lsof` against each registered pane's process subtree to
     /// detect listening sockets. Wired into `TerminalManager` so pane

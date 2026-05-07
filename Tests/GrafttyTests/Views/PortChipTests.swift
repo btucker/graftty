@@ -22,7 +22,7 @@ struct PortChipTests {
     func iconNameByScope() {
         let loop = PortBinding(port: 3000, scope: .loopback, processName: "n", pid: 1)
         let lan  = PortBinding(port: 5000, scope: .lan,      processName: "n", pid: 1)
-        #expect(PortChip.iconNameForTesting(for: loop) == "personalhotspot")
-        #expect(PortChip.iconNameForTesting(for: lan)  == "globe")
+        #expect(PortChip.iconName(for: loop) == "personalhotspot")
+        #expect(PortChip.iconName(for: lan)  == "globe")
     }
 }
