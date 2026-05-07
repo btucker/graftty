@@ -66,7 +66,7 @@ public actor IdleDeliveryService {
             log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_no_pending"); return
         }
 
-        let text = TeamHookRenderer.format(messages: pending) + "\r"
+        let text = TeamHookRenderer.format(messages: pending)
         await nudgeSender.send(paneID: paneID, message: text, messageIDs: pending.map(\.id))
         do {
             try inbox.advanceZmxWatermark(teamID: team, worktree: worktree, runtime: runtime, to: lastMessage.id)
@@ -101,7 +101,7 @@ public final class ZmxNudgeSender: NudgeSender, @unchecked Sendable {
     }
     public func send(paneID: UUID, message: String, messageIDs: [String]) async {
         let session = ZmxLauncher.sessionName(for: paneID)
-        do { try await writer.write(sessionName: session, text: message) }
+        do { try await writer.write(sessionName: session, text: message, submit: true) }
         catch { NSLog("[Graftty] zmx send failed for %@: %@", session, "\(error)") }
     }
 }

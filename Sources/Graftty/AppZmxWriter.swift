@@ -18,7 +18,7 @@ enum AppZmxWriterError: Error {
 struct AppZmxWriter: ZmxWriter {
     weak var terminalManager: TerminalManager?
 
-    nonisolated func write(sessionName: String, text: String) async throws {
+    nonisolated func write(sessionName: String, text: String, submit: Bool) async throws {
         try await MainActor.run {
             guard let terminalManager else {
                 throw AppZmxWriterError.terminalManagerUnavailable
@@ -27,6 +27,7 @@ struct AppZmxWriter: ZmxWriter {
                 throw AppZmxWriterError.noSurfaceForSession(sessionName)
             }
             handle.typeText(text)
+            if submit { handle.pressReturn() }
         }
     }
 }

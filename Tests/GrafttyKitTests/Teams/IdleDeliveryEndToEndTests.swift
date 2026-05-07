@@ -4,7 +4,7 @@ import Testing
 
 @Suite("Idle delivery end-to-end — Stop hook → state → zmx-send")
 struct IdleDeliveryEndToEndTests {
-    @Test("Stop hook + idle state + pending message → zmx writer receives formatted text + \\r.")
+    @Test("Stop hook + idle state + pending message → zmx writer receives formatted text and submit:true.")
     func stopFiresZmxSend() async throws {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-e2e-\(UUID().uuidString)")
@@ -31,15 +31,15 @@ struct IdleDeliveryEndToEndTests {
         await service.onStop(team: team, worktree: worktree, runtime: "codex", paneID: pane)
 
         #expect(writer.writes.count == 1)
-        #expect(writer.writes[0].text.hasSuffix("\r"))
+        #expect(writer.writes[0].submit == true)
         #expect(writer.writes[0].sessionName == ZmxLauncher.sessionName(for: pane))
     }
 
     final class StubWriter: ZmxWriter, @unchecked Sendable {
-        struct W { let sessionName: String; let text: String }
+        struct W { let sessionName: String; let text: String; let submit: Bool }
         var writes: [W] = []
-        func write(sessionName: String, text: String) async throws {
-            writes.append(.init(sessionName: sessionName, text: text))
+        func write(sessionName: String, text: String, submit: Bool) async throws {
+            writes.append(.init(sessionName: sessionName, text: text, submit: submit))
         }
     }
 }

@@ -294,6 +294,29 @@ final class SurfaceHandle {
         }
     }
 
+    /// Synthesize a Return keypress (press + release) via
+    /// `ghostty_surface_key`, mirroring what `SurfaceNSView.keyDown`
+    /// does for a real Enter key event but constructed without an
+    /// `NSEvent`. Used by the agent-teams idle-delivery nudge to
+    /// commit a typed-in message: `typeText` alone leaves a `\r` byte
+    /// in the PTY that TUI receivers (Codex / Claude in raw mode)
+    /// don't treat as a submit trigger.
+    func pressReturn() {
+        var keyEvent = ghostty_input_key_s()
+        keyEvent.mods = ghostty_input_mods_e(0)
+        keyEvent.consumed_mods = ghostty_input_mods_e(0)
+        keyEvent.keycode = 36  // kVK_Return
+        keyEvent.unshifted_codepoint = 0x0D  // CR — control char, lets libghostty encode
+        keyEvent.composing = false
+        keyEvent.text = nil
+
+        keyEvent.action = GHOSTTY_ACTION_PRESS
+        _ = ghostty_surface_key(surface, keyEvent)
+
+        keyEvent.action = GHOSTTY_ACTION_RELEASE
+        _ = ghostty_surface_key(surface, keyEvent)
+    }
+
     func requestClose() {
         ghostty_surface_request_close(surface)
     }
