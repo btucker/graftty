@@ -104,15 +104,13 @@ public struct WorktreePickerView: View {
     }
 }
 
-/// `.creating` rows are non-tappable: their on-disk path may not
-/// exist yet, so navigating in would race the in-flight `git
-/// worktree add`.
 private struct WorktreeBlock: View {
     let worktree: WorktreePanes
     let onSelect: () -> Void
 
     var body: some View {
         if worktree.state == .creating {
+            // Non-tappable: on-disk path may not exist yet.
             WorktreeRowContent(worktree: worktree)
         } else {
             Button(action: onSelect) {
@@ -285,10 +283,6 @@ private struct PRBadgeLabel: View {
         .accessibilityLabel("Pull request \(badge.number)")
     }
 
-    /// System-color mapping of `PRBadgeStyle.Tone`. The macOS sidebar
-    /// uses `PRInfo.State.statusColor` extensions in `PRButton.swift`;
-    /// those depend on AppKit-only theming so iOS reuses the tone but
-    /// keeps colors simple.
     private func color(for tone: PRBadgeStyle.Tone) -> Color {
         switch tone {
         case .open: return .green
