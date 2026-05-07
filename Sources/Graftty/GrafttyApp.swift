@@ -176,6 +176,25 @@ struct GrafttyApp: App {
     @StateObject private var updaterController: UpdaterController
     private let services: AppServices
 
+    /// Observable proxy for per-pane port bindings. Mutated by the
+    /// `PortScanner` `onChange` callback; injected into the SwiftUI
+    /// environment so `SidebarView` can render port chips on each row.
+    private let portBindingsModel = PortBindingsModel()
+
+    /// Polls `lsof` against each registered pane's process subtree to
+    /// detect listening sockets. Wired into `TerminalManager` so pane
+    /// add/close flows propagate registration; tick cadence is driven
+    /// by `portsTicker`.
+    private let portScanner = PortScanner(
+        runner: SystemLsofRunner(),
+        walker: ProcessTreeWalker()
+    )
+
+    /// 2s cadence for `portScanner.tick()`. A user starting `npm run
+    /// dev` should see the chip appear within a couple seconds without
+    /// the chip noticeably flickering on/off across rebuilds.
+    private let portsTicker = PollingTicker(interval: .seconds(2))
+
     // SwiftUI re-fires `.onAppear` on dock-reopen and File → New Window
     // because the WindowGroup content closure reruns; `startup()` is
     // one-time-per-launch (ghostty_init, pollers, observers). LAYOUT-5.3.
@@ -273,6 +292,7 @@ struct GrafttyApp: App {
             )
                 .environmentObject(webController)
                 .environmentObject(updaterController)
+                .environmentObject(portBindingsModel)
                 .onAppear {
                     guard !didStartup else { return }
                     didStartup = true
@@ -432,6 +452,24 @@ struct GrafttyApp: App {
         try? FileManager.default.createDirectory(at: zmxDir, withIntermediateDirectories: true)
         let zmxLauncher = ZmxLauncher(executable: zmxBinary, zmxDir: zmxDir)
         terminalManager.zmxLauncher = zmxLauncher
+
+        // Hand the scanner to TerminalManager so pane add/close flows
+        // propagate registration, then wire the scanner's onChange into
+        // PortBindingsModel so SidebarView re-renders chips when a
+        // pane's listening sockets change.
+        terminalManager.portScanner = portScanner
+        Task {
+            await portScanner.setOnChange { [weak portBindingsModel] id, list in
+                portBindingsModel?.set(id, list)
+            }
+        }
+
+        // 2s cadence for port-binding scans. Cheap (one batched lsof
+        // across all registered shell PIDs per tick) and only meaningful
+        // while the app is up; pause when inactive is the default.
+        portsTicker.start { [portScanner] in
+            await portScanner.tick()
+        }
 
         // Wrappers always go on PATH; the Agent Teams toggle is read inside
         // the wrapper at request time.
