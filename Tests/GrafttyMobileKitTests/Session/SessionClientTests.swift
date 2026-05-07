@@ -238,11 +238,11 @@ struct SessionClientTests {
             cellWidthPixels: 12, cellHeightPixels: 24
         ))
         try await Task.sleep(nanoseconds: 100_000_000)
-        let textFrames = ws.sent.filter { frame in
-            if case .text = frame { return true }
-            return false
+        let resizeFrames = ws.sent.compactMap { frame -> String? in
+            if case .text(let t) = frame, t.contains("\"type\":\"resize\"") { return t }
+            return nil
         }
-        #expect(textFrames.isEmpty)
+        #expect(resizeFrames.isEmpty)
     }
 
     @Test
@@ -257,11 +257,11 @@ struct SessionClientTests {
         ))
         client.session.sendInput(Data([0x68]))
         try await Task.sleep(nanoseconds: 100_000_000)
-        let textFrames = ws.sent.filter { frame in
-            if case .text = frame { return true }
-            return false
+        let resizeFrames = ws.sent.compactMap { frame -> String? in
+            if case .text(let t) = frame, t.contains("\"type\":\"resize\"") { return t }
+            return nil
         }
-        #expect(!textFrames.isEmpty)
+        #expect(!resizeFrames.isEmpty)
     }
 }
 #endif

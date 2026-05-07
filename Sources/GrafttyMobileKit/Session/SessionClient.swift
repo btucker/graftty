@@ -150,10 +150,7 @@ public final class SessionClient {
             let next = CGFloat(viewport.cellWidthPixels) / displayScale
             if cellWidthPoints != next { cellWidthPoints = next }
         }
-        // IOS-4.18: even if a future code path were to flip `isLeader`
-        // for a preview role, preview clients still refuse to emit
-        // resize envelopes. Belt-and-suspenders with `onBytes`.
-        if isLeader, role != .preview {
+        if isLeader {
             sendResizeToServer(cols: cols, rows: rows)
         }
     }
@@ -256,7 +253,13 @@ public final class SessionClient {
     }
 
     private func claimLeadershipIfNeeded() {
-        guard !isLeader, !stopped, let v = lastIOSViewport else { return }
+        // IOS-4.18: preview-role clients never become size-leader, no
+        // matter which input path tries to claim it. Centralizing the
+        // guard here keeps the rule in one place — every other input
+        // method (insertNewline, submitReturn, sendSoftwareKeyboardText,
+        // deleteBackward, sendEscape, sendTab, sendArrow, sendControl)
+        // funnels through this method.
+        guard !isLeader, !stopped, role != .preview, let v = lastIOSViewport else { return }
         isLeader = true
         sendResizeToServer(cols: v.cols, rows: v.rows)
     }
