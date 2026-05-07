@@ -2,6 +2,11 @@
 import Foundation
 import os
 
+/// @spec PORTS-1.1: When a pane's foreground process is non-shell, the application shall scan that process subtree's TCP listening sockets every 2 seconds.
+//
+/// @spec PORTS-1.2: While a pane's foreground process is the shell, the application shall not invoke `lsof` for that pane.
+//
+/// @spec PORTS-4.3: When a pane is dragged to another worktree, the application shall preserve its registration and binding snapshot (`TerminalID` is stable).
 public actor PortScanner {
     private let runner: LsofRunner
     private let walker: any ProcessTreeWalking

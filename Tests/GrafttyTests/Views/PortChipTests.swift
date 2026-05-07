@@ -17,4 +17,12 @@ struct PortChipTests {
         let binding = PortBinding(port: 5000, scope: .lan, processName: "flask", pid: 1)
         #expect(PortChip.tooltip(for: binding) == "Open http://localhost:5000/")
     }
+
+    @Test("@spec PORTS-3.2: PortChip icon name is `personalhotspot` for .loopback, `globe` for .lan")
+    func iconNameByScope() {
+        let loop = PortBinding(port: 3000, scope: .loopback, processName: "n", pid: 1)
+        let lan  = PortBinding(port: 5000, scope: .lan,      processName: "n", pid: 1)
+        #expect(PortChip.iconNameForTesting(for: loop) == "personalhotspot")
+        #expect(PortChip.iconNameForTesting(for: lan)  == "globe")
+    }
 }

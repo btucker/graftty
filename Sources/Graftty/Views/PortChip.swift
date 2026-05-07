@@ -44,12 +44,7 @@ struct PortChip: View {
         .accessibilityLabel(Self.accessibilityLabel(for: binding))
     }
 
-    private var iconName: String {
-        switch binding.scope {
-        case .loopback: return "personalhotspot"
-        case .lan:      return "globe"
-        }
-    }
+    private var iconName: String { Self.iconNameForTesting(for: binding) }
 
     static func url(for binding: PortBinding) -> URL? {
         URL(string: "http://localhost:\(binding.port)/")
@@ -62,5 +57,14 @@ struct PortChip: View {
     static func accessibilityLabel(for binding: PortBinding) -> String {
         let scopeWord = binding.scope == .lan ? "LAN-reachable" : "localhost-only"
         return "Open \(binding.processName) on port \(binding.port) (\(scopeWord))"
+    }
+
+    /// Maps a binding's scope to its SF Symbol name. Used by `iconName`
+    /// and exposed as a static seam for tests.
+    static func iconNameForTesting(for binding: PortBinding) -> String {
+        switch binding.scope {
+        case .loopback: return "personalhotspot"
+        case .lan:      return "globe"
+        }
     }
 }

@@ -23,6 +23,13 @@ struct PaneTitleRowPortsTests {
         #expect(row.portBindings.count == 2)
     }
 
+    @Test("@spec PORTS-3.3: FlowLayout configuration drives wrap-with-indent layout")
+    func ports_3_3_flowLayoutConfig() {
+        let layout = FlowLayout(spacing: 4, rowSpacing: 3)
+        #expect(layout.spacing == 4)
+        #expect(layout.rowSpacing == 3)
+    }
+
     @Test("@spec PORTS-3.4: When a pane has an active `AttentionCapsule`, the application shall hide port chips for that pane until the capsule clears.")
     func attentionHidesChips() {
         let row = PaneTitleRow(

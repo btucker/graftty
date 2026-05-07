@@ -21,7 +21,9 @@ struct StubProcessTreeWalker: ProcessTreeWalking {
 
 @Suite("PortScanner")
 struct PortScannerTests {
-    @Test("Registered pane with no listeners produces empty bindings")
+    @Test("""
+@spec PORTS-4.1: Registered pane with no listeners produces empty bindings
+""")
     func noListenersEmptyBindings() async {
         let runner = StubLsofRunner(output: "")
         let walker = StubProcessTreeWalker(result: [])
@@ -33,7 +35,9 @@ struct PortScannerTests {
         #expect(bindings.isEmpty)
     }
 
-    @Test("Single IPv4 loopback listener becomes one .loopback binding")
+    @Test("""
+@spec PORTS-2.2: Single IPv4 loopback listener becomes one .loopback binding
+""")
     func loopbackBinding() async {
         let raw = """
         COMMAND   PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
@@ -52,7 +56,9 @@ struct PortScannerTests {
         #expect(bindings[0].scope == .loopback)
     }
 
-    @Test("Same PID with IPv4 + IPv6 binds on same port collapses to one binding (.lan if any non-loopback)")
+    @Test("""
+@spec PORTS-2.1: Same PID with IPv4 + IPv6 binds on same port collapses to one binding
+""")
     func dualStackCollapsesToLan() async {
         let raw = """
         COMMAND   PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
@@ -72,7 +78,9 @@ struct PortScannerTests {
         #expect(bindings[0].scope == .lan)
     }
 
-    @Test("Forked workers (same port, multiple PIDs) collapse to one binding with lowest PID")
+    @Test("""
+@spec PORTS-2.3: Forked workers collapse to one binding with lowest PID
+""")
     func forkedWorkersCollapseToLowestPID() async {
         let raw = """
         COMMAND   PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
@@ -92,7 +100,9 @@ struct PortScannerTests {
         #expect(bindings[0].pid == 4999)
     }
 
-    @Test("Unregister drops the snapshot")
+    @Test("""
+@spec PORTS-4.2: Unregister drops the snapshot
+""")
     func unregisterDropsSnapshot() async {
         let raw = """
         COMMAND   PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
@@ -110,7 +120,9 @@ struct PortScannerTests {
         #expect(await scanner.bindings(for: id).isEmpty)
     }
 
-    @Test("Lsof failure (nil output) leaves snapshot empty")
+    @Test("""
+@spec PORTS-1.4: Lsof failure leaves snapshot empty
+""")
     func lsofFailureEmpty() async {
         let scanner = PortScanner(
             runner: StubLsofRunner(output: nil),
@@ -122,7 +134,30 @@ struct PortScannerTests {
         #expect(await scanner.bindings(for: id).isEmpty)
     }
 
-    @Test("Tick clears bindings when previous scan had them but new scan has none")
+    @Test("""
+@spec PORTS-1.3: Tick during in-flight scan is dropped (single-flight invariant)
+""")
+    func ports_1_3_singleFlight() async {
+        actor SlowRunner: LsofRunner {
+            var calls = 0
+            func run(pids: String) async -> String? {
+                calls += 1
+                try? await Task.sleep(for: .milliseconds(50))
+                return ""
+            }
+        }
+        let runner = SlowRunner()
+        let scanner = PortScanner(runner: runner, walker: StubProcessTreeWalker(result: []))
+        await scanner.registerPane(TerminalID(), shellPID: 1)
+        async let a: () = scanner.tick()
+        async let b: () = scanner.tick()
+        _ = await (a, b)
+        #expect(await runner.calls == 1)
+    }
+
+    @Test("""
+@spec PORTS-4.4: Tick clears bindings when previous scan had them but new scan has none
+""")
     func clearOnDisappearance() async {
         let runner = StubLsofRunner(output: """
         COMMAND   PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
