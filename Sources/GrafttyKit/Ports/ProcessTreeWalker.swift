@@ -28,21 +28,7 @@ public struct ProcessTreeWalker: ProcessTreeWalking, Sendable {
     /// All PIDs in the subtree rooted at `root`, inclusive. Returns
     /// `[root]` if no descendants. Returns `[]` if `root` is not a live PID.
     public func descendants(of root: pid_t) -> [pid_t] {
-        guard isLive(pid: root) else { return [] }
-        let parents = parentTable()
-        var children: [pid_t: [pid_t]] = [:]
-        for (pid, ppid) in parents {
-            children[ppid, default: []].append(pid)
-        }
-        var result: [pid_t] = [root]
-        var queue: [pid_t] = [root]
-        while let next = queue.popLast() {
-            for child in children[next, default: []] {
-                result.append(child)
-                queue.append(child)
-            }
-        }
-        return result
+        descendants(rootedAt: [root])[root] ?? []
     }
 
     public func descendants(rootedAt roots: [pid_t]) -> [pid_t: [pid_t]] {
@@ -88,9 +74,4 @@ public struct ProcessTreeWalker: ProcessTreeWalking, Sendable {
         }
     }
 
-    private func isLive(pid: pid_t) -> Bool {
-        var info = proc_bsdinfo()
-        let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
-        return proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size
-    }
 }
