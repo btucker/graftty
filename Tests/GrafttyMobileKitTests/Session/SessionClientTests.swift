@@ -203,21 +203,15 @@ struct SessionClientTests {
         #expect(client.cellWidthPoints == 7.0)
     }
 
-    /// IOS-4.18: a preview-role client must not forward libghostty's
-    /// internal bytes (terminal answerback / cursor queries / etc.) to
-    /// the server. Forwarding them would call `claimLeadershipIfNeeded`,
-    /// which in turn would emit `WebControlEnvelope.resize` frames on
-    /// every libghostty viewport tick and create a feedback loop that
-    /// renegotiates the server's PTY width.
     @Test("@spec IOS-4.18: While a `SessionClient` is operating as a worktree-detail pane preview (`IOS-4.10`, `IOS-4.12`), the application shall not claim PTY size-leadership. Bytes emitted by libghostty in the preview controller shall be discarded rather than forwarded to the server, and layout-driven resize callbacks shall not produce `WebControlEnvelope.resize` frames. Size-leadership remains a property exclusive to the focused fullscreen pane (`IOS-6.5`).")
     func previewRoleDoesNotForwardLibghosttyBytes() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocket: ws, role: .preview)
         defer { client.stop() }
-        // Simulate libghostty surface emitting bytes (e.g., answerback).
         client.session.sendInput(Data([0x68, 0x69]))
         try await Task.sleep(nanoseconds: 100_000_000)
-        #expect(!ws.sent.contains(.binary(Data([0x68, 0x69]))))
+        let anyBinary = ws.sent.contains { if case .binary = $0 { return true } else { return false } }
+        #expect(!anyBinary)
     }
 
     @Test
@@ -238,11 +232,10 @@ struct SessionClientTests {
             cellWidthPixels: 12, cellHeightPixels: 24
         ))
         try await Task.sleep(nanoseconds: 100_000_000)
-        let resizeFrames = ws.sent.compactMap { frame -> String? in
-            if case .text(let t) = frame, t.contains("\"type\":\"resize\"") { return t }
-            return nil
-        }
-        #expect(resizeFrames.isEmpty)
+        // sendText is only called from sendResizeToServer, so any text
+        // frame would be a resize envelope.
+        let anyText = ws.sent.contains { if case .text = $0 { return true } else { return false } }
+        #expect(!anyText)
     }
 
     @Test
@@ -257,11 +250,8 @@ struct SessionClientTests {
         ))
         client.session.sendInput(Data([0x68]))
         try await Task.sleep(nanoseconds: 100_000_000)
-        let resizeFrames = ws.sent.compactMap { frame -> String? in
-            if case .text(let t) = frame, t.contains("\"type\":\"resize\"") { return t }
-            return nil
-        }
-        #expect(!resizeFrames.isEmpty)
+        let expected = WebControlEnvelope.resize(cols: 80, rows: 24).encoded()
+        #expect(ws.sent.contains(.text(expected)))
     }
 }
 #endif

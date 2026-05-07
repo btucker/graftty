@@ -113,10 +113,6 @@ public final class SessionClient {
         // "submit" rather than "insert newline."
         box.onBytes = { [weak self] data in
             guard let self else { return }
-            // IOS-4.18: preview clients must not forward libghostty's
-            // internal bytes (answerback / cursor queries / theme
-            // probes) upstream — doing so would claim leadership and
-            // start the resize feedback loop with the server.
             if self.role == .preview { return }
             let isSoftReturn = data.count == 1 && data.first == 0x0A
             self.sendBinary(isSoftReturn ? Self.cr : data)
@@ -253,12 +249,6 @@ public final class SessionClient {
     }
 
     private func claimLeadershipIfNeeded() {
-        // IOS-4.18: preview-role clients never become size-leader, no
-        // matter which input path tries to claim it. Centralizing the
-        // guard here keeps the rule in one place — every other input
-        // method (insertNewline, submitReturn, sendSoftwareKeyboardText,
-        // deleteBackward, sendEscape, sendTab, sendArrow, sendControl)
-        // funnels through this method.
         guard !isLeader, !stopped, role != .preview, let v = lastIOSViewport else { return }
         isLeader = true
         sendResizeToServer(cols: v.cols, rows: v.rows)
