@@ -909,10 +909,22 @@ struct GrafttyApp: App {
                 let newMessages = Array(messages[prev..<curr])
                 let byWorktree = Dictionary(grouping: newMessages, by: { $0.to.worktree })
                 guard let service = idleService else { return }
+                NSLog(
+                    "[Graftty] inbox-observer fire: team=%@ prev=%d curr=%d new_recipients=%d",
+                    teamID, prev, curr, byWorktree.count
+                )
                 for (recipientWorktree, recipientMessages) in byWorktree {
                     let runtime = recipientMessages.last?.to.runtime ?? "codex"
+                    NSLog(
+                        "[Graftty] dispatching onMessageArrival: worktree=%@ runtime=%@ msgs=%d",
+                        recipientWorktree, runtime, recipientMessages.count
+                    )
                     Task { @MainActor in
                         let paneID = resolvePaneID(recipientWorktree)
+                        NSLog(
+                            "[Graftty] resolved paneID=%@ for %@",
+                            paneID?.uuidString ?? "nil", recipientWorktree
+                        )
                         await service.onMessageArrival(
                             team: teamID,
                             worktree: recipientWorktree,
