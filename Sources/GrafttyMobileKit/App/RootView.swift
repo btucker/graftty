@@ -485,16 +485,8 @@ struct SingleSessionView: View {
 }
 
 extension PaneLayoutNode {
-    /// Walk the tree to find the title of the leaf whose `sessionName`
-    /// matches. Used by SessionStep construction so the terminal view
-    /// shows a human title (falls back to session name on miss).
     func title(for sessionName: String) -> String? {
-        switch self {
-        case let .leaf(name, title):
-            return name == sessionName ? title : nil
-        case let .split(_, _, left, right):
-            return left.title(for: sessionName) ?? right.title(for: sessionName)
-        }
+        leaves.first { $0.sessionName == sessionName }?.title
     }
 }
 #endif

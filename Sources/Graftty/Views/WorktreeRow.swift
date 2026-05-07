@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import GrafttyKit
+import GrafttyProtocol
 
 /// Red pill used by both `WorktreeRow` (worktree-scoped CLI notify) and
 /// `PaneTitleRow` (pane-scoped shell-integration pings). Centralized so

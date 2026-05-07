@@ -1,4 +1,5 @@
 import XCTest
+import GrafttyProtocol
 @testable import GrafttyKit
 
 @MainActor

@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 import Testing
 @testable import GrafttyKit
 

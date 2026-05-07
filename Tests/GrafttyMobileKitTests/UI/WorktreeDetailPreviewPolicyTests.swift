@@ -6,7 +6,7 @@ import GrafttyProtocol
 struct WorktreeDetailSinglePaneTests {
     @Test
     func leafIsRecognizedAsSinglePane() {
-        #expect(PaneLayoutNode.leaf(sessionName: "only", title: "Only").isLeaf)
+        #expect(PaneLayoutNode.leaf(sessionName: "only", title: "Only", attentionText: nil).isLeaf)
     }
 
     @Test
@@ -14,8 +14,8 @@ struct WorktreeDetailSinglePaneTests {
         let layout = PaneLayoutNode.split(
             direction: .horizontal,
             ratio: 0.5,
-            left: .leaf(sessionName: "left", title: "Left"),
-            right: .leaf(sessionName: "right", title: "Right")
+            left: .leaf(sessionName: "left", title: "Left", attentionText: nil),
+            right: .leaf(sessionName: "right", title: "Right", attentionText: nil)
         )
         #expect(!layout.isLeaf)
     }

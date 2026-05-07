@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 
 /// Snapshot of all PRs/MRs that can be associated with the worktrees
 /// of a single repo. Keyed by head-branch name (the same value

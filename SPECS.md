@@ -1126,6 +1126,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.15** When the fetched Ghostty config specifies a single `theme =` value (not a `light:X,dark:Y` pair), the application shall force `overrideUserInterfaceStyle` on the terminal container view to match that theme's appearance so that libghostty-spm's `traitCollectionDidChange` → `setColorScheme` path never substitutes the system-default appearance over the user's explicit choice.
 
+**IOS-4.16** When the mobile client decodes a `WorktreePanes` payload from a server that predates the sidebar-mirror fields (state, branch, isMainCheckout, prBadge, stats, attentionText), the application shall fall back to safe defaults — empty branch, `.running` state, no PR badge, no stats, no attention — rather than fail decoding, so a version mismatch in either direction keeps the mobile picker functional.
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.1** On iPad (regular `horizontalSizeClass`), the application shall render a `NavigationSplitView` sidebar + detail layout. The sidebar shall show saved hosts; tapping a host reveals the session picker; tapping a session renders the detail as a terminal pane.

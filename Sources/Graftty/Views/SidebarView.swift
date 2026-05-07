@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 import GrafttyKit
+import GrafttyProtocol
 
 struct SidebarView: View {
     @Binding var appState: AppState

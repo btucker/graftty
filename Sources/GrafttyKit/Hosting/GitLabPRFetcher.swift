@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 
 /// Per-repo `glab mr list` fetcher. The listing call returns every
 /// MR for the repo plus `has_conflicts`. Pipeline status isn't in

@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 import SwiftUI
 import Testing
 import GrafttyKit
