@@ -32,12 +32,12 @@ struct PanePreviewClientPoolTests {
         let layout = PaneLayoutNode.split(
             direction: .horizontal,
             ratio: 0.5,
-            left: .leaf(sessionName: "left", title: "Left"),
+            left: .leaf(sessionName: "left", title: "Left", attentionText: nil),
             right: .split(
                 direction: .vertical,
                 ratio: 0.5,
-                left: .leaf(sessionName: "top", title: "Top"),
-                right: .leaf(sessionName: "bottom", title: "Bottom")
+                left: .leaf(sessionName: "top", title: "Top", attentionText: nil),
+                right: .leaf(sessionName: "bottom", title: "Bottom", attentionText: nil)
             )
         )
 
@@ -46,7 +46,7 @@ struct PanePreviewClientPoolTests {
         #expect(made.map(\.sessionName) == ["left", "top"])
         #expect(made.allSatisfy { $0.startCount == 1 })
 
-        pool.update(layout: .leaf(sessionName: "top", title: "Top"), maxLivePreviews: 2)
+        pool.update(layout: .leaf(sessionName: "top", title: "Top", attentionText: nil), maxLivePreviews: 2)
 
         #expect(made.first { $0.sessionName == "top" }?.stopCount == 0)
         #expect(made.first { $0.sessionName == "left" }?.stopCount == 1)
@@ -65,8 +65,8 @@ struct PanePreviewClientPoolTests {
         pool.update(layout: .split(
             direction: .horizontal,
             ratio: 0.5,
-            left: .leaf(sessionName: "one", title: ""),
-            right: .leaf(sessionName: "two", title: "")
+            left: .leaf(sessionName: "one", title: "", attentionText: nil),
+            right: .leaf(sessionName: "two", title: "", attentionText: nil)
         ))
 
         pool.stopAll()

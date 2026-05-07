@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 
 /// Per-repo `gh pr list` fetcher. One CLI call returns every open
 /// and recently-merged PR for the repo with `statusCheckRollup`

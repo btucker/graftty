@@ -1,4 +1,5 @@
 import Testing
+import GrafttyProtocol
 @testable import GrafttyKit
 
 @Suite("WorktreeRowIcon")

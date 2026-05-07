@@ -20,7 +20,7 @@ public final class PanePreviewClientPool<Client: PanePreviewClienting> {
     }
 
     public func update(layout: PaneLayoutNode, maxLivePreviews: Int = .max) {
-        let wantedSessionNames = Array(layout.sessionNames.prefix(max(0, maxLivePreviews)))
+        let wantedSessionNames = layout.leaves.prefix(max(0, maxLivePreviews)).map(\.sessionName)
         let wanted = Set(wantedSessionNames)
 
         let removed = clients.keys.filter { !wanted.contains($0) }
@@ -41,17 +41,6 @@ public final class PanePreviewClientPool<Client: PanePreviewClienting> {
             client.stop()
         }
         clients.removeAll()
-    }
-}
-
-private extension PaneLayoutNode {
-    var sessionNames: [String] {
-        switch self {
-        case let .leaf(sessionName, _):
-            return [sessionName]
-        case let .split(_, _, left, right):
-            return left.sessionNames + right.sessionNames
-        }
     }
 }
 

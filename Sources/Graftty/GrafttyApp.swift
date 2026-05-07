@@ -1075,22 +1075,42 @@ struct GrafttyApp: App {
         }
 
         // IOS-4.10: per-worktree pane trees + titles for the mobile
-        // client's worktree→pane drilldown. Only running worktrees
-        // with at least one pane are returned.
+        // client's sidebar mirror. Includes non-running worktrees so
+        // closed/stale/creating rows render their state via icon +
+        // color, same as on macOS.
         let terminalManager = tm
+        let panesStatsStore = services.statsStore
+        let panesPRStore = services.prStatusStore
         webController.setWorktreePanesProvider {
             await MainActor.run { () -> [WorktreePanes] in
                 var out: [WorktreePanes] = []
                 for repo in appStateBinding.wrappedValue.repos {
-                    let siblingPaths = repo.worktrees.map(\.path)
-                    for wt in repo.worktrees where wt.state == .running {
-                        guard let root = wt.splitTree.root else { continue }
-                        let layout = paneLayoutNode(from: root, titles: terminalManager.titles)
+                    let labels = SidebarWorktreeLabel.texts(
+                        for: repo.worktrees,
+                        inRepoAtPath: repo.path
+                    )
+                    for wt in repo.worktrees {
+                        let stats = wt.state.hasOnDiskWorktree
+                            ? panesStatsStore.stats[wt.path]
+                            : nil
                         out.append(WorktreePanes(
                             path: wt.path,
-                            displayName: wt.displayName(amongSiblingPaths: siblingPaths),
+                            displayName: labels[wt.id] ?? "",
                             repoDisplayName: repo.displayName,
-                            layout: layout
+                            displayBranch: wt.displayBranch,
+                            state: WorktreeWireState(wt.state),
+                            isMainCheckout: wt.path == repo.path,
+                            prBadge: panesPRStore.infos[wt.path].map(PRBadge.init(from:)),
+                            stats: stats?.toWire(),
+                            attentionText: wt.attention?.text,
+                            layout: (wt.state == .running ? wt.splitTree.root : nil)
+                                .map {
+                                    paneLayoutNode(
+                                        from: $0,
+                                        titles: terminalManager.titles,
+                                        paneAttention: wt.paneAttention
+                                    )
+                                }
                         ))
                     }
                 }
@@ -3012,26 +3032,44 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
 }
 
 /// Convert the Mac-side `SplitTree.Node` into the wire-format
-/// `PaneLayoutNode`. Leaves carry the ZMX session name + the pane's
-/// current title (or an empty string if libghostty hasn't emitted one
-/// yet). Splits preserve direction + ratio + children.
+/// `PaneLayoutNode`. Leaves carry the ZMX session name, the pane's
+/// current title (or the empty string if libghostty hasn't emitted
+/// one yet), and the pane-scoped attention text from the worktree's
+/// `paneAttention`.
 @MainActor
 private func paneLayoutNode(
     from node: SplitTree.Node,
-    titles: [TerminalID: String]
+    titles: [TerminalID: String],
+    paneAttention: [TerminalID: Attention]
 ) -> PaneLayoutNode {
     switch node {
     case let .leaf(id):
         return .leaf(
             sessionName: ZmxLauncher.sessionName(for: id.id),
-            title: titles[id] ?? ""
+            title: titles[id] ?? "",
+            attentionText: paneAttention[id]?.text
         )
     case let .split(s):
         return .split(
             direction: s.direction == .horizontal ? .horizontal : .vertical,
             ratio: s.ratio,
-            left: paneLayoutNode(from: s.left, titles: titles),
-            right: paneLayoutNode(from: s.right, titles: titles)
+            left: paneLayoutNode(from: s.left, titles: titles, paneAttention: paneAttention),
+            right: paneLayoutNode(from: s.right, titles: titles, paneAttention: paneAttention)
         )
+    }
+}
+
+extension WorktreeWireState {
+    /// Exhaustive bridge from the persistence-side `WorktreeState` (in
+    /// GrafttyKit, whose `encode(to:)` coerces `.creating → .closed`)
+    /// to the wire enum. A `switch` rather than `rawValue` round-trip
+    /// so a future `WorktreeState` case is a compile error here.
+    init(_ state: WorktreeState) {
+        switch state {
+        case .closed: self = .closed
+        case .running: self = .running
+        case .stale: self = .stale
+        case .creating: self = .creating
+        }
     }
 }

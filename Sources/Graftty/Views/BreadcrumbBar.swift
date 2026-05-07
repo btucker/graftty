@@ -1,5 +1,6 @@
 import SwiftUI
 import GrafttyKit
+import GrafttyProtocol
 
 /// The row that sits at the very top of the detail column. Shows:
 /// `{repo} / {worktree-display-name} ({branch})` on the left and, when

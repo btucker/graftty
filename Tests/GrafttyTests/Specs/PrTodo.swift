@@ -5,6 +5,7 @@
 // scripts/generate-specs.py.
 
 import Testing
+import GrafttyProtocol
 
 @Suite("PR — pending specs")
 struct PrTodo {

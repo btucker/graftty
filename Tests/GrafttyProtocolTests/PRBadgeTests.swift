@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import GrafttyKit
+@testable import GrafttyProtocol
 
 @Suite("PRBadge")
 struct PRBadgeTests {

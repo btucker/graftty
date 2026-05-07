@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import GrafttyKit
+import GrafttyProtocol
 
 struct PRButton: View {
     let info: PRInfo

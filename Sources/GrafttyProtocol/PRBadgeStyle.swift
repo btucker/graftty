@@ -4,10 +4,11 @@ import Foundation
 /// should use, given a worktree's PR state, CI verdict, and
 /// mergeable state.
 ///
-/// Lives in `GrafttyKit` (no SwiftUI dependency) so the decision is
-/// unit-testable without touching the UI layer; the `Graftty` view
-/// maps the returned `Tone` to a concrete `Color` and applies the
-/// pulse modifier when `tone.pulses` is true.
+/// Lives in `GrafttyProtocol` (no SwiftUI dependency) so the
+/// decision is unit-testable without touching the UI layer and is
+/// shared between the macOS and iOS render paths. Each platform's
+/// view code maps the returned `Tone` to a concrete `Color` and
+/// applies a pulse modifier when `tone.pulses` is true.
 ///
 /// Priority is most-actionable first: merged > CI failure > CI
 /// pending > merge conflict > open. CI signals win over a conflict
