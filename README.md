@@ -27,6 +27,32 @@ indicator appears in the window titlebar when a new version is
 available, and clicking it installs the update. You can also trigger a
 check manually from `Graftty → Check for Updates…`.
 
+## CLI
+
+The bundled `graftty` CLI lets a process inside a Graftty pane drive the app, and lets one agent control panes in another worktree.
+
+```sh
+graftty notify "tests passing"               # set a sidebar attention badge
+graftty pane list                            # panes in the current worktree
+graftty pane add --command "claude"          # split + run a command
+graftty pane close 2                         # close pane 2
+
+# Cross-worktree pane control:
+graftty pane list drag-files                 # list panes in another worktree
+graftty pane show drag-files:1               # last 100 lines of that pane's output
+graftty pane show drag-files:1 --lines 500   # more scrollback
+graftty pane send drag-files:1 "pnpm test"   # type the command and press Enter
+graftty pane send drag-files:1 "y" --no-enter  # type without committing
+
+# Team coordination across worktrees:
+graftty team list                            # registered teammates
+graftty team send drag-files "ready"         # cooperative inbox message
+```
+
+`<addr>` is `<id>` (current worktree, that pane), `<worktree>` (worktree's only pane), or `<worktree>:<id>`. Worktree names match what `graftty team list` prints. Run `graftty pane <verb> --help` for examples on every subcommand.
+
+`graftty pane send` writes raw bytes to the addressed pane's PTY — there's no inbox or consent layer, so the keystrokes land in whatever process is reading that pane's stdin. Use `graftty team send` for cooperative messaging where the receiving agent decides what to do.
+
 ## Building
 
 Requires Xcode 15+ and macOS 14 Sonoma or later.
