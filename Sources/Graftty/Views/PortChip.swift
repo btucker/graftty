@@ -11,6 +11,7 @@ import GrafttyKit
 /// @spec PORTS-3.2
 /// @spec PORTS-3.5
 /// @spec PORTS-3.6
+/// @spec PORTS-3.7
 struct PortChip: View {
     let binding: PortBinding
     let theme: GhosttyTheme
@@ -25,7 +26,7 @@ struct PortChip: View {
                 Image(systemName: Self.iconName(for: binding))
                     .font(.system(size: 9))
                     .foregroundColor(theme.foreground.opacity(0.85))
-                Text(":\(binding.port)")
+                Text(Self.label(for: binding))
                     .font(.system(size: 10.5, weight: .medium, design: .default))
                     .monospacedDigit()
                     .foregroundColor(theme.foreground)
@@ -42,6 +43,13 @@ struct PortChip: View {
         .buttonStyle(.plain)
         .help(Self.tooltip(for: binding))
         .accessibilityLabel(Self.accessibilityLabel(for: binding))
+    }
+
+    /// Visible chip text. Returns a non-localized `String` (rather than relying
+    /// on SwiftUI's `LocalizedStringKey` interpolation) so the port digits
+    /// don't pick up locale grouping separators — e.g., `:8080`, not `:8,080`.
+    static func label(for binding: PortBinding) -> String {
+        ":\(binding.port)"
     }
 
     static func url(for binding: PortBinding) -> URL? {
