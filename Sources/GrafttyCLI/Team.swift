@@ -279,11 +279,14 @@ struct TeamRegister: ParsableCommand {
         }
         let storage = TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
         let teamID = TeamLookup.id(of: team)
+        let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
+            env: ProcessInfo.processInfo.environment
+        )
         let record = TeamPresenceRecord(
             teamID: teamID,
             worktree: worktreeName,
             runtime: runtimeValue,
-            paneSessionName: nil,
+            paneSessionName: paneSessionName,
             pid: ProcessInfo.processInfo.processIdentifier,
             registeredAt: Date()
         )
@@ -293,6 +296,7 @@ struct TeamRegister: ParsableCommand {
                 "worktree": worktreeName,
                 "runtime": runtimeValue.rawValue,
                 "pid": String(record.pid),
+                "pane_session_name": paneSessionName ?? "",
             ])
         )
     }
