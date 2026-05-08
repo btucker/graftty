@@ -152,7 +152,8 @@ struct TeamHook: ParsableCommand {
                     callerWorktree: worktreePath,
                     runtime: runtime,
                     event: event,
-                    sessionID: resolvedSessionID
+                    sessionID: resolvedSessionID,
+                    paneSessionName: nil
                 )
             )
             switch response {

@@ -34,7 +34,7 @@ public enum NotificationMessage: Sendable, Equatable {
     case teamMessage(callerWorktree: String, recipient: String, text: String)
     case teamSend(callerWorktree: String, recipient: String, text: String, priority: TeamInboxPriority)
     case teamBroadcast(callerWorktree: String, text: String, priority: TeamInboxPriority)
-    case teamHook(callerWorktree: String, runtime: TeamHookRuntime, event: TeamHookEvent, sessionID: String?)
+    case teamHook(callerWorktree: String, runtime: TeamHookRuntime, event: TeamHookEvent, sessionID: String?, paneSessionName: String?)
     case teamInbox(callerWorktree: String?, worktree: String?, repo: String?, member: String?, unread: Bool, all: Bool)
     case teamMembers(callerWorktree: String?, worktree: String?, repo: String?)
     case teamList(callerWorktree: String)
@@ -46,6 +46,7 @@ extension NotificationMessage: Codable {
         case callerWorktree = "caller_worktree"
         case recipient, priority, runtime, event, worktree, repo, member, unread, all
         case sessionID = "session_id"
+        case paneSessionName = "pane_session_name"
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -87,12 +88,13 @@ extension NotificationMessage: Codable {
             try container.encode(path, forKey: .callerWorktree)
             try container.encode(text, forKey: .text)
             try container.encode(priority, forKey: .priority)
-        case .teamHook(let path, let runtime, let event, let sessionID):
+        case .teamHook(let path, let runtime, let event, let sessionID, let paneSessionName):
             try container.encode("team_hook", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
             try container.encode(runtime, forKey: .runtime)
             try container.encode(event, forKey: .event)
             try container.encodeIfPresent(sessionID, forKey: .sessionID)
+            try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
         case .teamInbox(let callerWorktree, let worktree, let repo, let member, let unread, let all):
             try container.encode("team_inbox", forKey: .type)
             try container.encodeIfPresent(callerWorktree, forKey: .callerWorktree)
@@ -157,7 +159,9 @@ extension NotificationMessage: Codable {
             let runtime = try container.decode(TeamHookRuntime.self, forKey: .runtime)
             let event = try container.decode(TeamHookEvent.self, forKey: .event)
             let sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
-            self = .teamHook(callerWorktree: path, runtime: runtime, event: event, sessionID: sessionID)
+            let paneSessionName = try container.decodeIfPresent(String.self, forKey: .paneSessionName)
+            self = .teamHook(callerWorktree: path, runtime: runtime, event: event,
+                             sessionID: sessionID, paneSessionName: paneSessionName)
         case "team_inbox":
             let callerWorktree = try container.decodeIfPresent(String.self, forKey: .callerWorktree)
             let worktree = try container.decodeIfPresent(String.self, forKey: .worktree)

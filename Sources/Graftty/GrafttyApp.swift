@@ -1703,7 +1703,7 @@ struct GrafttyApp: App {
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
             )
-        case .teamHook(let callerPath, let runtime, let event, let sessionID):
+        case .teamHook(let callerPath, let runtime, let event, let sessionID, _):
             return handleTeamHook(
                 callerPath: callerPath,
                 runtime: runtime,
