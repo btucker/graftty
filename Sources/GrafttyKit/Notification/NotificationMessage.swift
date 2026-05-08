@@ -31,6 +31,8 @@ public enum NotificationMessage: Sendable, Equatable {
     case listPanes(path: String)
     case addPane(path: String, direction: PaneSplit, command: String?)
     case closePane(path: String, index: Int)
+    case showPane(path: String, index: Int, lines: Int)
+    case sendPane(path: String, index: Int, text: String, pressEnter: Bool)
     case teamMessage(callerWorktree: String, recipient: String, text: String)
     case teamSend(callerWorktree: String, recipient: String, text: String, priority: TeamInboxPriority)
     case teamBroadcast(callerWorktree: String, text: String, priority: TeamInboxPriority)
@@ -42,10 +44,11 @@ public enum NotificationMessage: Sendable, Equatable {
 
 extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, path, text, clearAfter, direction, command, index
+        case type, path, text, clearAfter, direction, command, index, lines
         case callerWorktree = "caller_worktree"
         case recipient, priority, runtime, event, worktree, repo, member, unread, all
         case sessionID = "session_id"
+        case pressEnter = "press_enter"
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -71,6 +74,17 @@ extension NotificationMessage: Codable {
             try container.encode("close_pane", forKey: .type)
             try container.encode(path, forKey: .path)
             try container.encode(index, forKey: .index)
+        case .showPane(let path, let index, let lines):
+            try container.encode("show_pane", forKey: .type)
+            try container.encode(path, forKey: .path)
+            try container.encode(index, forKey: .index)
+            try container.encode(lines, forKey: .lines)
+        case .sendPane(let path, let index, let text, let pressEnter):
+            try container.encode("send_pane", forKey: .type)
+            try container.encode(path, forKey: .path)
+            try container.encode(index, forKey: .index)
+            try container.encode(text, forKey: .text)
+            try container.encode(pressEnter, forKey: .pressEnter)
         case .teamMessage(let path, let recipient, let text):
             try container.encode("team_message", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
@@ -136,6 +150,17 @@ extension NotificationMessage: Codable {
             let path = try container.decode(String.self, forKey: .path)
             let index = try container.decode(Int.self, forKey: .index)
             self = .closePane(path: path, index: index)
+        case "show_pane":
+            let path = try container.decode(String.self, forKey: .path)
+            let index = try container.decode(Int.self, forKey: .index)
+            let lines = try container.decode(Int.self, forKey: .lines)
+            self = .showPane(path: path, index: index, lines: lines)
+        case "send_pane":
+            let path = try container.decode(String.self, forKey: .path)
+            let index = try container.decode(Int.self, forKey: .index)
+            let text = try container.decode(String.self, forKey: .text)
+            let pressEnter = try container.decode(Bool.self, forKey: .pressEnter)
+            self = .sendPane(path: path, index: index, text: text, pressEnter: pressEnter)
         case "team_message":
             let path = try container.decode(String.self, forKey: .callerWorktree)
             let recipient = try container.decode(String.self, forKey: .recipient)
@@ -253,6 +278,7 @@ public enum ResponseMessage: Sendable, Equatable {
     case ok
     case error(String)
     case paneList([PaneInfo])
+    case paneShow(String)
     case teamList(teamName: String, members: [TeamListMember])
     case teamHookOutput(String)
     case teamInbox([TeamInboxMessage])
@@ -260,7 +286,7 @@ public enum ResponseMessage: Sendable, Equatable {
 
 extension ResponseMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, message, panes, output, messages
+        case type, message, panes, output, messages, text
         case teamName = "team_name"
         case members
     }
@@ -276,6 +302,9 @@ extension ResponseMessage: Codable {
         case .paneList(let panes):
             try container.encode("pane_list", forKey: .type)
             try container.encode(panes, forKey: .panes)
+        case .paneShow(let text):
+            try container.encode("pane_show", forKey: .type)
+            try container.encode(text, forKey: .text)
         case .teamList(let teamName, let members):
             try container.encode("team_list", forKey: .type)
             try container.encode(teamName, forKey: .teamName)
@@ -301,6 +330,9 @@ extension ResponseMessage: Codable {
         case "pane_list":
             let panes = try container.decode([PaneInfo].self, forKey: .panes)
             self = .paneList(panes)
+        case "pane_show":
+            let text = try container.decode(String.self, forKey: .text)
+            self = .paneShow(text)
         case "team_list":
             let teamName = try container.decode(String.self, forKey: .teamName)
             let members = try container.decode([TeamListMember].self, forKey: .members)

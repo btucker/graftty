@@ -69,6 +69,9 @@ struct PaneList: ParsableCommand {
         case .ok:
             CLIEnv.printError("Unexpected ok response for list")
             throw ExitCode(1)
+        case .paneShow:
+            CLIEnv.printError("Unexpected pane_show response for list")
+            throw ExitCode(1)
         case .teamList:
             CLIEnv.printError("Unexpected team_list response for list")
             throw ExitCode(1)
@@ -166,6 +169,9 @@ enum CLIEnv {
             throw ExitCode(1)
         case .paneList:
             printError("Unexpected pane_list response")
+            throw ExitCode(1)
+        case .paneShow:
+            printError("Unexpected pane_show response")
             throw ExitCode(1)
         case .teamList:
             printError("Unexpected team_list response")

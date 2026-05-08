@@ -1645,7 +1645,7 @@ struct GrafttyApp: App {
                     }
                 }
             }
-        case .listPanes, .addPane, .closePane, .teamMessage, .teamSend,
+        case .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend,
              .teamBroadcast, .teamHook, .teamInbox, .teamMembers, .teamList:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
@@ -1675,6 +1675,10 @@ struct GrafttyApp: App {
         case .closePane(let path, let index):
             return closePaneByIndex(path: path, index: index,
                                     appState: appState, terminalManager: terminalManager)
+        case .showPane:
+            return .error("not implemented")
+        case .sendPane:
+            return .error("not implemented")
         case .teamMessage(let callerPath, let recipient, let text):
             return handleTeamSend(
                 callerPath: callerPath,
