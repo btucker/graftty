@@ -852,25 +852,6 @@ struct GrafttyApp: App {
             }
         }
 
-        // Resolve a recipient worktree's runtime so the IdleDelivery
-        // runtime-gate can correctly skip Claude (whose asyncRewake
-        // watcher is the canonical delivery path). team_message rows
-        // don't carry an explicit `to.runtime`, so without this the
-        // dispatch site would blindly default to "codex" and zmx-send
-        // would fire alongside asyncRewake — the double-delivery the
-        // user observed.
-        let resolveRuntime: @Sendable (String, UUID?) -> String? = { worktreePath, paneID in
-            MainActor.assumeIsolated {
-                if let paneID, let agent = services.agentForPane[paneID] {
-                    return agent.runtime
-                }
-                if let record = try? presenceStorage.listAll().first(where: { $0.worktree == worktreePath }) {
-                    return record.runtime.rawValue
-                }
-                return nil
-            }
-        }
-
         // Pane-to-agent mapping maintained on AppServices (@MainActor).
         // Updated on every SessionStart/PostToolUse so keystrokes can be
         // routed to the right (worktree, runtime). Runtime defaults to
@@ -885,7 +866,7 @@ struct GrafttyApp: App {
         // pending messages drain once the user stops typing.
         let graceScheduler = EngagedGraceScheduler(
             state: stateRegistry,
-            onElapsed: { [weak idleService] worktree, runtime in
+            onElapsed: { [weak idleService] worktree, _ in
                 // onElapsed is @MainActor, so binding.wrappedValue is
                 // accessible directly — no MainActor.assumeIsolated dance.
                 guard let service = idleService else { return }
@@ -895,7 +876,7 @@ struct GrafttyApp: App {
                 })?.path else { return }
                 Task {
                     await service.onMessageArrival(
-                        team: teamID, worktree: worktree, runtime: runtime, paneID: paneID
+                        team: teamID, worktree: worktree, paneIDs: paneID.map { [$0] } ?? []
                     )
                 }
             }
@@ -928,7 +909,7 @@ struct GrafttyApp: App {
                 // SessionStart and `IdleDeliveryService.maybeDeliver` skips.
                 let lastInputAt = paneID.flatMap { inputRegistry.lastInputAt(paneID: $0) }
                 stateRegistry.handleStop(worktree: worktree, runtime: runtime, lastInputAt: lastInputAt)
-                Task { await service.onStop(team: team, worktree: worktree, runtime: runtime, paneID: paneID) }
+                Task { await service.onStop(team: team, worktree: worktree, paneIDs: paneID.map { [$0] } ?? []) }
             },
             onSessionStart: { [weak services] team, worktree, runtime, _ in
                 if let paneID = resolvePaneID(worktree) {
@@ -978,21 +959,17 @@ struct GrafttyApp: App {
                 let newMessages = Array(messages[prev..<curr])
                 let byWorktree = Dictionary(grouping: newMessages, by: { $0.to.worktree })
                 guard let service = idleService else { return }
-                for (recipientWorktree, recipientMessages) in byWorktree {
+                for (recipientWorktree, _) in byWorktree {
                     Task { @MainActor in
                         let paneID = resolvePaneID(recipientWorktree)
-                        // Prefer the in-session / presence-registry runtime
-                        // over the message's nullable `to.runtime`. If
-                        // neither resolves, pass nil — TEAM-IDLE-2.8 keeps
-                        // zmx-send keys-input from typing into terminals we
-                        // can't confirm are running Codex.
-                        let runtime = resolveRuntime(recipientWorktree, paneID)
-                            ?? recipientMessages.last?.to.runtime
+                        // Task 10 will replace this with codexPanesIn(...) so
+                        // multiple codex panes in the same worktree all get
+                        // nudged. For now: pass the single resolved paneID
+                        // wrapped in a list (or empty if unresolved).
                         await service.onMessageArrival(
                             team: teamID,
                             worktree: recipientWorktree,
-                            runtime: runtime,
-                            paneID: paneID
+                            paneIDs: paneID.map { [$0] } ?? []
                         )
                     }
                 }

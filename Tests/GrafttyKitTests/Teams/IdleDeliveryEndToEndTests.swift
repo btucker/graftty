@@ -28,7 +28,7 @@ struct IdleDeliveryEndToEndTests {
 
         state.handleSessionStart(worktree: worktree, runtime: "codex")
         state.handleStop(worktree: worktree, runtime: "codex", lastInputAt: nil)
-        await service.onStop(team: team, worktree: worktree, runtime: "codex", paneID: pane)
+        await service.onStop(team: team, worktree: worktree, paneIDs: [pane])
 
         #expect(writer.writes.count == 1)
         #expect(writer.writes[0].submit == true)

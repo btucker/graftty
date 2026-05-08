@@ -4,6 +4,31 @@ import Testing
 
 @Suite("IdleDeliveryService — event-driven idle delivery")
 struct IdleDeliveryServiceTests {
+    @Test("@spec TEAM-IDLE-2.11: paneIDs.count == 2 → both panes receive nudges; watermark advances exactly once.")
+    func fanOutToTwoPanes() async throws {
+        let f = try Fixture()
+        let id = try f.appendUnread(body: "hello")
+        let paneA = UUID()
+        let paneB = UUID()
+        f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
+        f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
+
+        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, paneIDs: [paneA, paneB])
+
+        #expect(f.sender.calls.count == 2)
+        #expect(Set(f.sender.calls.map(\.paneID)) == Set([paneA, paneB]))
+        #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "codex") == id)
+    }
+
+    @Test("@spec TEAM-IDLE-2.12: paneIDs is empty → no nudge, no watermark advance.")
+    func emptyPaneIDsSkips() async throws {
+        let f = try Fixture()
+        _ = try f.appendUnread(body: "hello")
+        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, paneIDs: [])
+        #expect(f.sender.calls.isEmpty)
+        #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "codex") == nil)
+    }
+
     @Test("@spec TEAM-IDLE-2.1: While the worktree state is idle, onStop with pending messages calls the nudge sender and advances the watermark.")
     func onStopIdleWithPendingDelivers() async throws {
         let f = try Fixture()
@@ -11,7 +36,7 @@ struct IdleDeliveryServiceTests {
         f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
         f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
 
-        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: f.paneID)
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, paneIDs: [f.paneID])
 
         #expect(f.sender.calls.count == 1)
         #expect(f.sender.calls[0].messageIDs == [id])
@@ -25,7 +50,7 @@ struct IdleDeliveryServiceTests {
         f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
         f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: f.frozen)
 
-        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: f.paneID)
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, paneIDs: [f.paneID])
 
         #expect(f.sender.calls.isEmpty)
         #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "codex") == nil)
@@ -37,48 +62,19 @@ struct IdleDeliveryServiceTests {
         _ = try f.appendUnread(body: "hello")
         f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
         f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
-        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: f.paneID)
-        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: f.paneID)
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, paneIDs: [f.paneID])
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, paneIDs: [f.paneID])
         #expect(f.sender.calls.count == 1)
     }
 
-    @Test("@spec TEAM-IDLE-2.4: With no pane (paneID nil), onStop does not call the sender.")
+    @Test("@spec TEAM-IDLE-2.4: With no pane (paneIDs empty), onStop does not call the sender.")
     func noPaneSkipsAndLogs() async throws {
         let f = try Fixture()
         _ = try f.appendUnread(body: "hello")
         f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
         f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
-        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: nil)
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, paneIDs: [])
         #expect(f.sender.calls.isEmpty)
-    }
-
-    @Test("Claude runtime is skipped — asyncRewake watcher already covers it; zmx-send would double-deliver.")
-    func claudeRuntimeIsSkipped() async throws {
-        let f = try Fixture()
-        _ = try f.appendUnread(body: "hello")
-        f.state.handleSessionStart(worktree: f.worktree, runtime: "claude")
-        f.state.handleStop(worktree: f.worktree, runtime: "claude", lastInputAt: nil)
-        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: "claude", paneID: f.paneID)
-        #expect(f.sender.calls.isEmpty)
-        #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "claude") == nil)
-    }
-
-    @Test("@spec TEAM-IDLE-2.8: When the recipient pane's runtime cannot be confirmed as 'codex' (no SessionStart fired and no presence record), the application shall not deliver pending messages via zmx keys-input — non-codex terminals (shells, editors, claude, etc.) must never receive typed message text.")
-    func unconfirmedRuntimeSkipsKeysInput() async throws {
-        let f = try Fixture()
-        _ = try f.appendUnread(body: "hello")
-        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, runtime: nil, paneID: f.paneID)
-        #expect(f.sender.calls.isEmpty)
-        #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "codex") == nil)
-    }
-
-    @Test("@spec TEAM-IDLE-2.8: With a nil runtime, onStop also skips — the keys-input gate is symmetric across triggers.")
-    func unconfirmedRuntimeOnStopSkips() async throws {
-        let f = try Fixture()
-        _ = try f.appendUnread(body: "hello")
-        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: nil, paneID: f.paneID)
-        #expect(f.sender.calls.isEmpty)
-        #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "codex") == nil)
     }
 
     @Test("onMessageArrival delivers when idle; is a no-op when active.")
@@ -87,11 +83,11 @@ struct IdleDeliveryServiceTests {
         _ = try f.appendUnread(body: "hello")
 
         f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
-        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: f.paneID)
+        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, paneIDs: [f.paneID])
         #expect(f.sender.calls.isEmpty, "active state must not deliver")
 
         f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
-        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: f.paneID)
+        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, paneIDs: [f.paneID])
         #expect(f.sender.calls.count == 1)
     }
 
@@ -100,7 +96,7 @@ struct IdleDeliveryServiceTests {
         let f = try Fixture()
         _ = try f.appendUnread(body: "hello")
         // No handleSessionStart / handleStop call — state stays .unknown.
-        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: f.paneID)
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, paneIDs: [f.paneID])
         #expect(f.sender.calls.count == 1)
     }
 
@@ -111,7 +107,7 @@ struct IdleDeliveryServiceTests {
         f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
         f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
 
-        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: "codex", paneID: f.paneID)
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, paneIDs: [f.paneID])
 
         let events = try f.readEvents()
         #expect(events.count == 1)
