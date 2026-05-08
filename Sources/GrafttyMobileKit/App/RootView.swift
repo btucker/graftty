@@ -18,7 +18,16 @@ public struct RootView: View {
                 HostPickerView(store: hostStore)
                     .navigationDestination(for: Host.self) { host in
                         WorktreePickerView(host: host) { wt in
-                            navigationPath.append(WorktreeStep(host: host, worktree: wt))
+                            switch MobileNavigationDecision.decide(layout: wt.layout) {
+                            case let .session(sessionName, title):
+                                navigationPath.append(SessionStep(
+                                    host: host,
+                                    sessionName: sessionName,
+                                    title: title
+                                ))
+                            case .worktreeDetail:
+                                navigationPath.append(WorktreeStep(host: host, worktree: wt))
+                            }
                         }
                     }
                     .navigationDestination(for: WorktreeStep.self) { step in

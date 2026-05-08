@@ -1128,6 +1128,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.16** When the mobile client decodes a `WorktreePanes` payload from a server that predates the sidebar-mirror fields (state, branch, isMainCheckout, prBadge, stats, attentionText), the application shall fall back to safe defaults — empty branch, `.running` state, no PR badge, no stats, no attention — rather than fail decoding, so a version mismatch in either direction keeps the mobile picker functional.
 
+**IOS-4.17** When the user selects a worktree from the picker (`IOS-4.1`) and that worktree's pane layout is a single leaf, the application shall push the fullscreen terminal for that pane directly onto the navigation stack, bypassing the worktree-detail screen (`IOS-4.10`). The system edge-swipe-back gesture and the in-app back button (`IOS-5.5`) shall return the user to the worktree picker.
+
+**IOS-4.18** While a `SessionClient` is operating as a worktree-detail pane preview (`IOS-4.10`, `IOS-4.12`), the application shall not claim PTY size-leadership. Bytes emitted by libghostty in the preview controller shall be discarded rather than forwarded to the server, and layout-driven resize callbacks shall not produce `WebControlEnvelope.resize` frames. Size-leadership remains a property exclusive to the focused fullscreen pane (`IOS-6.5`).
+
 ### IOS-5.x — Multi-pane layout
 
 **IOS-5.1** On iPad (regular `horizontalSizeClass`), the application shall render a `NavigationSplitView` sidebar + detail layout. The sidebar shall show saved hosts; tapping a host reveals the session picker; tapping a session renders the detail as a terminal pane.

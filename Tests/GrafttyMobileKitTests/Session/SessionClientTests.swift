@@ -202,5 +202,56 @@ struct SessionClientTests {
         ))
         #expect(client.cellWidthPoints == 7.0)
     }
+
+    @Test("@spec IOS-4.18: While a `SessionClient` is operating as a worktree-detail pane preview (`IOS-4.10`, `IOS-4.12`), the application shall not claim PTY size-leadership. Bytes emitted by libghostty in the preview controller shall be discarded rather than forwarded to the server, and layout-driven resize callbacks shall not produce `WebControlEnvelope.resize` frames. Size-leadership remains a property exclusive to the focused fullscreen pane (`IOS-6.5`).")
+    func previewRoleDoesNotForwardLibghosttyBytes() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocket: ws, role: .preview)
+        defer { client.stop() }
+        client.session.sendInput(Data([0x68, 0x69]))
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let anyBinary = ws.sent.contains { if case .binary = $0 { return true } else { return false } }
+        #expect(!anyBinary)
+    }
+
+    @Test
+    func previewRoleDoesNotEmitResizeOnViewportOrFirstByte() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocket: ws, role: .preview)
+        defer { client.stop() }
+        client.handleViewport(InMemoryTerminalViewport(
+            columns: 80, rows: 24,
+            widthPixels: 0, heightPixels: 0,
+            cellWidthPixels: 12, cellHeightPixels: 24
+        ))
+        client.session.sendInput(Data([0x68]))
+        try await Task.sleep(nanoseconds: 100_000_000)
+        client.handleViewport(InMemoryTerminalViewport(
+            columns: 60, rows: 24,
+            widthPixels: 0, heightPixels: 0,
+            cellWidthPixels: 12, cellHeightPixels: 24
+        ))
+        try await Task.sleep(nanoseconds: 100_000_000)
+        // sendText is only called from sendResizeToServer, so any text
+        // frame would be a resize envelope.
+        let anyText = ws.sent.contains { if case .text = $0 { return true } else { return false } }
+        #expect(!anyText)
+    }
+
+    @Test
+    func fullscreenRoleStillClaimsLeadershipAndEmitsResize() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocket: ws)
+        defer { client.stop() }
+        client.handleViewport(InMemoryTerminalViewport(
+            columns: 80, rows: 24,
+            widthPixels: 0, heightPixels: 0,
+            cellWidthPixels: 12, cellHeightPixels: 24
+        ))
+        client.session.sendInput(Data([0x68]))
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let expected = WebControlEnvelope.resize(cols: 80, rows: 24).encoded()
+        #expect(ws.sent.contains(.text(expected)))
+    }
 }
 #endif
