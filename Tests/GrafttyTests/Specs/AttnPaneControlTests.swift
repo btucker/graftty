@@ -22,10 +22,32 @@ struct PaneShowHandlerTests {
         #expect(lines.first == "line151")
         #expect(lines.last == "line200")
     }
-}
 
-final class StubZmxHistoryReader: ZmxHistoryReader, @unchecked Sendable {
-    let output: String
-    init(output: String) { self.output = output }
-    func history(sessionName: String) throws -> String { output }
+    @Test("Large scrollback (>64KB) does not deadlock the stub+tail path")
+    @MainActor
+    func largeScrollbackNoDeadlock() async throws {
+        // Each line is ~100 bytes; 1000 lines ≈ 100KB, well past the macOS
+        // pipe buffer. This exercises only the stub reader, so the actual
+        // deadlock fix in `ZmxHistorySubprocessReader` isn't directly
+        // covered here — but the test pins down that the stub+tail
+        // integration handles large bodies cleanly.
+        let body = (1...1000)
+            .map { String(repeating: "x", count: 100) + "\($0)" }
+            .joined(separator: "\n")
+        let stub = StubZmxHistoryReader(output: body)
+        let response = GrafttyApp.handleShowPane_forTesting(
+            path: "/wt", index: 1, lines: 50, reader: stub
+        )
+        guard case .paneShow(let text) = response else {
+            Issue.record("expected .paneShow, got \(response)")
+            return
+        }
+        #expect(text.split(separator: "\n").count == 50)
+    }
+
+    private final class StubZmxHistoryReader: ZmxHistoryReader, @unchecked Sendable {
+        let output: String
+        init(output: String) { self.output = output }
+        func history(sessionName: String) throws -> String { output }
+    }
 }
