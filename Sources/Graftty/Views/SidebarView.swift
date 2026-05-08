@@ -129,6 +129,14 @@ struct SidebarView: View {
                     // width of the icon column on the repo header.
                     .listRowInsets(EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0))
             }
+            .onMove { fromOffsets, toOffset in
+                appState.moveWorktrees(
+                    inRepoID: repo.id,
+                    fromOffsets: fromOffsets,
+                    toOffset: toOffset
+                )
+                appState.moveStaleWorktreesToBottom(inRepoID: repo.id)
+            }
         } label: {
             // No leading glyph — the top level is always projects, so
             // a folder icon would be tautological noise. The disclosure

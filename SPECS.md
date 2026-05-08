@@ -60,6 +60,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.21** When a terminal title action sanitizes to a rendered sidebar title equal to the current fallback title, the application shall store the raw title without publishing a sidebar invalidation.
 
+**LAYOUT-2.22** When the user drags worktree rows within a repository section, the application shall reorder only that repository's persisted `worktrees` array so the order survives state save/load.
+
+**LAYOUT-2.23** When a worktree enters the stale/yellow state, the application shall permanently move stale worktrees to the bottom of that repository's persisted `worktrees` array while preserving relative order within stale and non-stale groups.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

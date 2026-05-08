@@ -30,6 +30,24 @@ struct WorktreeReconcilerTests {
         #expect(r.newlyStale[0].path == "/r/gone")
     }
 
+    @Test func newlyStaleEntriesMoveAfterNonStaleSiblings() {
+        let existing = [
+            wt("/r/gone-a", "gone-a", state: .closed),
+            wt("/r/live-a", "live-a", state: .running),
+            wt("/r/gone-b", "gone-b", state: .closed),
+            wt("/r/live-b", "live-b", state: .closed),
+        ]
+        let discovered = [
+            DiscoveredWorktree(path: "/r/live-a", branch: "live-a"),
+            DiscoveredWorktree(path: "/r/live-b", branch: "live-b"),
+        ]
+
+        let r = WorktreeReconciler.reconcile(existing: existing, discovered: discovered)
+
+        #expect(r.merged.map(\.branch) == ["live-a", "live-b", "gone-a", "gone-b"])
+        #expect(r.merged.suffix(2).allSatisfy { $0.state == .stale })
+    }
+
     @Test func alreadyStaleIsNotCountedAsNewlyStale() {
         let existing = [wt("/r/gone", "feat", state: .stale)]
         let r = WorktreeReconciler.reconcile(existing: existing, discovered: [])
