@@ -104,16 +104,6 @@ struct AttnTodo {
     func attn_1_19() async throws { }
 
     @Test("""
-@spec ATTN-1.20: When `pane show` is invoked against a pane whose `--lines` argument is non-positive or exceeds the pane's available scrollback, the application shall clamp non-positive values to the pane's full scrollback and clamp excessive values to the available scrollback length.
-""", .disabled("not yet implemented"))
-    func attn_1_20() async throws { }
-
-    @Test("""
-@spec ATTN-1.21: When the CLI is invoked with an unknown subcommand at any level, the application shall append a `Did you mean '<closest>'?` suggestion to the error message whenever a registered subcommand name is within Levenshtein distance 2 of the input.
-""", .disabled("not yet implemented"))
-    func attn_1_21() async throws { }
-
-    @Test("""
 @spec ATTN-1.22: When `pane show` or `pane send` errors out due to ambiguity (`ATTN-1.19`), unknown worktree (`ATTN-1.17`), or missing-current-worktree, the error text shall include the literal next-step invocation the caller should run (a `graftty …` command line, copy-pasteable as-is).
 """, .disabled("not yet implemented"))
     func attn_1_22() async throws { }
