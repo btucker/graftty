@@ -8,9 +8,9 @@ struct TeamInboxRequestHandlerTests {
         inbox: TeamInbox,
         templateProvider: @escaping () -> String = { "" },
         sessionPromptRenderer: ((TeamView, TeamMember) -> String?)? = nil,
-        onStop: (@Sendable (String, String, String) -> Void)? = nil,
-        onSessionStart: (@Sendable (String, String, String) -> Void)? = nil,
-        onPostToolUse: (@Sendable (String, String, String) -> Void)? = nil
+        onStop: (@Sendable (String, String, String, String?) -> Void)? = nil,
+        onSessionStart: (@Sendable (String, String, String, String?) -> Void)? = nil,
+        onPostToolUse: (@Sendable (String, String, String, String?) -> Void)? = nil
     ) -> TeamInboxRequestHandler {
         TeamInboxRequestHandler(
             inbox: inbox,
@@ -101,6 +101,7 @@ struct TeamInboxRequestHandlerTests {
             runtime: .codex,
             event: .sessionStart,
             sessionID: "session-1",
+            paneSessionName: nil,
             repos: [repo],
             teamsEnabled: true
         )
@@ -138,6 +139,7 @@ struct TeamInboxRequestHandlerTests {
             runtime: .codex,
             event: .postToolUse,
             sessionID: "session-1",
+            paneSessionName: nil,
             repos: [repo],
             teamsEnabled: true
         )
@@ -157,6 +159,7 @@ struct TeamInboxRequestHandlerTests {
             runtime: .codex,
             event: .stop,
             sessionID: "session-1",
+            paneSessionName: nil,
             repos: [repo],
             teamsEnabled: true
         )
@@ -183,7 +186,7 @@ struct TeamInboxRequestHandlerTests {
         let recorder = OnStopCallRecorder()
         let handler = Self.makeHandler(
             inbox: inbox,
-            onStop: { team, worktree, runtime in
+            onStop: { team, worktree, runtime, _ in
                 recorder.append(team: team, worktree: worktree, runtime: runtime)
             }
         )
@@ -194,7 +197,8 @@ struct TeamInboxRequestHandlerTests {
         )
         let stopOutput = try handler.hook(
             callerWorktree: "/repo/.worktrees/alice", runtime: .codex,
-            event: .stop, sessionID: "s-1", repos: [repo], teamsEnabled: true
+            event: .stop, sessionID: "s-1", paneSessionName: nil,
+            repos: [repo], teamsEnabled: true
         )
 
         #expect(stopOutput == "{}")
@@ -211,7 +215,8 @@ struct TeamInboxRequestHandlerTests {
         let handler = Self.makeHandler(inbox: inbox)
         let stopOutput = try handler.hook(
             callerWorktree: "/repo/.worktrees/alice", runtime: .codex,
-            event: .stop, sessionID: "s-1", repos: [repo], teamsEnabled: true
+            event: .stop, sessionID: "s-1", paneSessionName: nil,
+            repos: [repo], teamsEnabled: true
         )
         #expect(stopOutput == "{}")
     }
@@ -224,14 +229,15 @@ struct TeamInboxRequestHandlerTests {
         let recorder = OnStopCallRecorder()
         let handler = Self.makeHandler(
             inbox: inbox,
-            onSessionStart: { team, worktree, runtime in
+            onSessionStart: { team, worktree, runtime, _ in
                 recorder.append(team: team, worktree: worktree, runtime: runtime)
             }
         )
 
         let output = try handler.hook(
             callerWorktree: "/repo/.worktrees/alice", runtime: .codex,
-            event: .sessionStart, sessionID: "s-1", repos: [repo], teamsEnabled: true
+            event: .sessionStart, sessionID: "s-1", paneSessionName: nil,
+            repos: [repo], teamsEnabled: true
         )
 
         // Callback fired exactly once with correct coordinates.
@@ -251,14 +257,15 @@ struct TeamInboxRequestHandlerTests {
         let recorder = OnStopCallRecorder()
         let handler = Self.makeHandler(
             inbox: inbox,
-            onPostToolUse: { team, worktree, runtime in
+            onPostToolUse: { team, worktree, runtime, _ in
                 recorder.append(team: team, worktree: worktree, runtime: runtime)
             }
         )
 
         let output = try handler.hook(
             callerWorktree: "/repo/.worktrees/alice", runtime: .codex,
-            event: .postToolUse, sessionID: "s-1", repos: [repo], teamsEnabled: true
+            event: .postToolUse, sessionID: "s-1", paneSessionName: nil,
+            repos: [repo], teamsEnabled: true
         )
 
         // Callback fired exactly once with correct coordinates.
@@ -269,6 +276,35 @@ struct TeamInboxRequestHandlerTests {
         // Rendered output is unchanged — callback is a side-effect only.
         // No urgent messages in inbox, so output is the "nothing pending" response.
         #expect(!output.isEmpty)
+    }
+
+    @Test("@spec TEAM-IDLE-2.9: hook(...) forwards paneSessionName into the onStop callback.")
+    func hookForwardsPaneSessionNameToOnStop() throws {
+        final class Captured: @unchecked Sendable {
+            var paneSessionName: String? = "<unset>"
+        }
+        let captured = Captured()
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
+        let handler = Self.makeHandler(
+            inbox: inbox,
+            onStop: { _, _, _, paneSessionName in
+                captured.paneSessionName = paneSessionName
+            }
+        )
+
+        _ = try handler.hook(
+            callerWorktree: "/repo/.worktrees/alice",
+            runtime: .codex,
+            event: .stop,
+            sessionID: nil,
+            paneSessionName: "graftty-abc12345",
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        #expect(captured.paneSessionName == "graftty-abc12345")
     }
 
     private static let fixedDate = Date(timeIntervalSince1970: 1_800_000_000)
