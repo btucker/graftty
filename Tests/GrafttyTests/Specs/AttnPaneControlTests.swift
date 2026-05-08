@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import Graftty
+@testable import GrafttyCLI
 @testable import GrafttyKit
 
 @Suite("@spec ATTN-1.15: When `pane show <addr>` is invoked against a running pane, the application shall return the last `--lines` lines (default 100) of that pane's `zmx` scrollback as plain text on the CLI's stdout.")
@@ -119,18 +120,159 @@ struct WorktreeNameResolutionTests {
                 == "/tmp/wt-feature"
         )
     }
+}
 
-    private func makeTempStateWithWorktree(branch: String, path: String) throws -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-test-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        var state = AppState()
-        state.addRepo(RepoEntry(
-            path: "/tmp/repo",
-            displayName: "repo",
-            worktrees: [WorktreeEntry(path: path, branch: branch)]
-        ))
-        try state.save(to: dir)
-        return dir
+@Suite("""
+@spec ATTN-1.19: When `pane show` or `pane send` is invoked against a worktree that has more than one pane and the address omits the `<id>` part, the application shall print the equivalent of `pane list <wt>` to stderr, append a 'specify a pane' hint, and exit non-zero. With exactly one pane, the bare-worktree form shall target that pane.
+""")
+struct PaneShowAmbiguityTests {
+    @Test("Bare worktree with >1 panes triggers list-and-error")
+    func multiPaneBareWt() throws {
+        let stateDir = try makeTempStateWithWorktree(branch: "drag-files", path: "/tmp/wt-drag-files")
+        defer { try? FileManager.default.removeItem(at: stateDir) }
+        let transport = StubSocketTransport()
+        transport.queue = [
+            .paneList([
+                PaneInfo(id: 1, title: "zsh", focused: true),
+                PaneInfo(id: 2, title: "claude", focused: false),
+            ])
+        ]
+        let stdout = CapturingTextSink()
+        let stderr = CapturingTextSink()
+        let exit = PaneShowDispatcher.run(
+            address: "drag-files",
+            lines: 100,
+            transport: transport,
+            stdout: stdout,
+            stderr: stderr,
+            stateDirectory: stateDir
+        )
+        #expect(exit == 1)
+        #expect(stderr.text.contains("specify a pane"))
+        // The full list should be embedded — the equivalent of `pane list`.
+        #expect(stderr.text.contains("zsh"))
+        #expect(stderr.text.contains("claude"))
     }
+
+    @Test("Bare worktree with 1 pane targets it (no error)")
+    func singlePaneBareWt() throws {
+        let stateDir = try makeTempStateWithWorktree(branch: "drag-files", path: "/tmp/wt-drag-files")
+        defer { try? FileManager.default.removeItem(at: stateDir) }
+        let transport = StubSocketTransport()
+        transport.queue = [
+            .paneList([PaneInfo(id: 1, title: "zsh", focused: true)]),
+            .paneShow("history-output\n"),
+        ]
+        let stdout = CapturingTextSink()
+        let stderr = CapturingTextSink()
+        let exit = PaneShowDispatcher.run(
+            address: "drag-files",
+            lines: 100,
+            transport: transport,
+            stdout: stdout,
+            stderr: stderr,
+            stateDirectory: stateDir
+        )
+        #expect(exit == 0)
+        #expect(stdout.text.contains("history-output"))
+        #expect(stderr.text.isEmpty)
+    }
+}
+
+@Suite("""
+@spec ATTN-1.18: When `pane show` or `pane send` is invoked against a worktree that is not in the `running` state, the application shall fail with a `worktree not running` error rather than auto-launch the worktree's panes.
+""")
+struct PaneShowClosedWorktreeTests {
+    @Test("Server `.error(\"worktree not running\")` is surfaced verbatim")
+    func surfacesWorktreeNotRunning() throws {
+        // The CLI sees a `.paneList` request return `.error("worktree not running")`
+        // when the worktree is closed (per the app handler from Task 4); surface
+        // the message verbatim and exit 1 — don't fall back to auto-launching.
+        let stateDir = try makeTempStateWithWorktree(branch: "drag-files", path: "/tmp/wt-drag-files")
+        defer { try? FileManager.default.removeItem(at: stateDir) }
+        let transport = StubSocketTransport()
+        transport.queue = [.error("worktree not running")]
+        let stderr = CapturingTextSink()
+        let exit = PaneShowDispatcher.run(
+            address: "drag-files",
+            lines: 100,
+            transport: transport,
+            stdout: CapturingTextSink(),
+            stderr: stderr,
+            stateDirectory: stateDir
+        )
+        #expect(exit == 1)
+        #expect(stderr.text.contains("worktree not running"))
+    }
+}
+
+@Suite("@spec ATTN-1.22: When `pane show` or `pane send` errors out due to ambiguity, unknown worktree, or missing-current-worktree, the error text shall include the literal next-step invocation the caller should run.")
+struct PaneShowNextStepHintTests {
+    @Test("Ambiguity hint includes the literal next command")
+    func ambiguityIncludesNextCommand() throws {
+        let stateDir = try makeTempStateWithWorktree(branch: "drag-files", path: "/tmp/wt-drag-files")
+        defer { try? FileManager.default.removeItem(at: stateDir) }
+        let transport = StubSocketTransport()
+        transport.queue = [.paneList([
+            PaneInfo(id: 1, title: "zsh", focused: true),
+            PaneInfo(id: 2, title: "claude", focused: false),
+        ])]
+        let stderr = CapturingTextSink()
+        _ = PaneShowDispatcher.run(
+            address: "drag-files",
+            lines: 100,
+            transport: transport,
+            stdout: CapturingTextSink(),
+            stderr: stderr,
+            stateDirectory: stateDir
+        )
+        #expect(stderr.text.contains("graftty pane show drag-files:<id>"))
+    }
+
+    @Test("Unknown-worktree error includes a 'graftty team list' next step")
+    func unknownWorktreeIncludesNextCommand() throws {
+        let stateDir = try makeTempStateWithWorktree(branch: "drag-files", path: "/tmp/wt-drag-files")
+        defer { try? FileManager.default.removeItem(at: stateDir) }
+        let stderr = CapturingTextSink()
+        let exit = PaneShowDispatcher.run(
+            address: "no-such-wt",
+            lines: 100,
+            transport: StubSocketTransport(), // not consulted; resolution fails first
+            stdout: CapturingTextSink(),
+            stderr: stderr,
+            stateDirectory: stateDir
+        )
+        #expect(exit == 1)
+        #expect(stderr.text.contains("unknown worktree 'no-such-wt'"))
+        #expect(stderr.text.contains("graftty team list"))
+    }
+}
+
+private func makeTempStateWithWorktree(branch: String, path: String) throws -> URL {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("graftty-test-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    var state = AppState()
+    state.addRepo(RepoEntry(
+        path: "/tmp/repo",
+        displayName: "repo",
+        worktrees: [WorktreeEntry(path: path, branch: branch)]
+    ))
+    try state.save(to: dir)
+    return dir
+}
+
+final class StubSocketTransport: SocketTransport, @unchecked Sendable {
+    var queue: [ResponseMessage] = []
+    func send(_ message: NotificationMessage) -> ResponseMessage {
+        guard !queue.isEmpty else {
+            fatalError("StubSocketTransport: queue empty for \(message)")
+        }
+        return queue.removeFirst()
+    }
+}
+
+final class CapturingTextSink: TextSink, @unchecked Sendable {
+    private(set) var text: String = ""
+    func write(_ text: String) { self.text += text }
 }

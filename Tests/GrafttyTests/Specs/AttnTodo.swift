@@ -79,21 +79,6 @@ struct AttnTodo {
     func attn_4_1() async throws { }
 
     @Test("""
-@spec ATTN-1.18: When `pane show` or `pane send` is invoked against a worktree that is not in the `running` state, the application shall fail with a `worktree not running` error rather than auto-launch the worktree's panes.
-""", .disabled("not yet implemented"))
-    func attn_1_18() async throws { }
-
-    @Test("""
-@spec ATTN-1.19: When `pane show` or `pane send` is invoked against a worktree that has more than one pane and the address omits the `<id>` part, the application shall print the equivalent of `pane list <wt>` to stderr, append a "specify a pane" hint, and exit non-zero. With exactly one pane, the bare-worktree form shall target that pane.
-""", .disabled("not yet implemented"))
-    func attn_1_19() async throws { }
-
-    @Test("""
-@spec ATTN-1.22: When `pane show` or `pane send` errors out due to ambiguity (`ATTN-1.19`), unknown worktree (`ATTN-1.17`), or missing-current-worktree, the error text shall include the literal next-step invocation the caller should run (a `graftty …` command line, copy-pasteable as-is).
-""", .disabled("not yet implemented"))
-    func attn_1_22() async throws { }
-
-    @Test("""
 @spec ATTN-1.23: When the team session-start hook renders the team protocol primer, the application shall include a brief block describing the `pane list` / `pane show` / `pane send` commands and the `<worktree>:<id>` address grammar, with a pointer to `graftty pane <verb> --help` for full examples.
 """, .disabled("not yet implemented"))
     func attn_1_23() async throws { }

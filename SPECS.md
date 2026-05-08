@@ -408,13 +408,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ATTN-1.18** When `pane show` or `pane send` is invoked against a worktree that is not in the `running` state, the application shall fail with a `worktree not running` error rather than auto-launch the worktree's panes.
 
-**ATTN-1.19** When `pane show` or `pane send` is invoked against a worktree that has more than one pane and the address omits the `<id>` part, the application shall print the equivalent of `pane list <wt>` to stderr, append a "specify a pane" hint, and exit non-zero. With exactly one pane, the bare-worktree form shall target that pane.
+**ATTN-1.19** When `pane show` or `pane send` is invoked against a worktree that has more than one pane and the address omits the `<id>` part, the application shall print the equivalent of `pane list <wt>` to stderr, append a 'specify a pane' hint, and exit non-zero. With exactly one pane, the bare-worktree form shall target that pane.
 
 **ATTN-1.20** When `pane show` is invoked against a pane whose `--lines` argument is non-positive or exceeds the pane's available scrollback, the application shall clamp non-positive values to the pane's full scrollback and clamp excessive values to the available scrollback length.
 
 **ATTN-1.21** When the CLI is invoked with an unknown subcommand at any level, the application shall append a `Did you mean '<closest>'?` suggestion to the error message whenever a registered subcommand name is within Levenshtein distance 2 of the input.
 
-**ATTN-1.22** When `pane show` or `pane send` errors out due to ambiguity (`ATTN-1.19`), unknown worktree (`ATTN-1.17`), or missing-current-worktree, the error text shall include the literal next-step invocation the caller should run (a `graftty …` command line, copy-pasteable as-is).
+**ATTN-1.22** When `pane show` or `pane send` errors out due to ambiguity, unknown worktree, or missing-current-worktree, the error text shall include the literal next-step invocation the caller should run.
 
 **ATTN-1.23** When the team session-start hook renders the team protocol primer, the application shall include a brief block describing the `pane list` / `pane show` / `pane send` commands and the `<worktree>:<id>` address grammar, with a pointer to `graftty pane <verb> --help` for full examples.
 
