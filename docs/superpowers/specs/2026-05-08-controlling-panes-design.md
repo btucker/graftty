@@ -138,14 +138,14 @@ Existing `pane add --command` already calls `typeText`. It currently appends `\n
 
 New IDs under `ATTN-1.x`, where the other CLI pane-subcommand specs already live (`ATTN-1.11` etc.).
 
-- **`ATTN-1.13`**: When `pane show <addr>` is invoked against a running pane, the application shall return the last `--lines` lines (default 100) of that pane's `zmx` scrollback as plain text on the CLI's stdout.
-- **`ATTN-1.14`**: When `pane send <addr> <text>` is invoked, the application shall inject `text` into the addressed pane's PTY via `ghostty_surface_text`, and unless `--no-enter` is set, shall additionally synthesize a Return key event via `ghostty_surface_key` (matching `SurfaceHandle.pressReturn`) so TUI consumers in raw mode (Codex, Claude) treat the input as committed.
+- **`ATTN-1.15`**: When `pane show <addr>` is invoked against a running pane, the application shall return the last `--lines` lines (default 100) of that pane's `zmx` scrollback as plain text on the CLI's stdout.
+- **`ATTN-1.16`**: When `pane send <addr> <text>` is invoked, the application shall inject `text` into the addressed pane's PTY via `ghostty_surface_text`, and unless `--no-enter` is set, shall additionally synthesize a Return key event via `ghostty_surface_key` (matching `SurfaceHandle.pressReturn`) so TUI consumers in raw mode (Codex, Claude) treat the input as committed.
 - **`ATTN-1.15`**: When any `pane` subcommand (`list`/`add`/`close`/`show`/`send`) is invoked with a `<wt>` or `<wt>:<id>` address, the application shall resolve the worktree by branch name (using the same lookup `graftty team msg` uses, against the `team list` registry) and operate on that worktree regardless of the caller's current working directory; an unknown name shall produce a stderr error and a non-zero exit.
 - **`ATTN-1.16`**: When `pane show` or `pane send` is invoked against a worktree that is not in the `running` state, the application shall fail with a `worktree not running` error rather than auto-launch the worktree's panes.
 - **`ATTN-1.17`**: When `pane show` or `pane send` is invoked against a worktree that has more than one pane and the address omits the `<id>` part, the application shall print the equivalent of `pane list <wt>` to stderr, append a "specify a pane" hint, and exit non-zero. With exactly one pane, the bare-worktree form shall target that pane.
 - **`ATTN-1.18`**: When `pane show` is invoked against a pane whose `--lines` argument is non-positive or exceeds the pane's available scrollback, the application shall clamp non-positive values to the pane's full scrollback and clamp excessive values to the available scrollback length.
 
-`ATTN-1.13`–`ATTN-1.17` are real `@Test` entries (red → green). `ATTN-1.18` is a small clamping rule that gets a unit test on a pure helper.
+`ATTN-1.15`–`ATTN-1.17` are real `@Test` entries (red → green). `ATTN-1.20` is a small clamping rule that gets a unit test on a pure helper.
 
 ## Agent-friendly help and errors
 
@@ -222,18 +222,18 @@ This goes into `teamProtocolPrimer()` (universal, every team agent sees it) rath
 Modified:
 
 - `Sources/GrafttyKit/Notification/NotificationMessage.swift` — add `showPane`, `sendPane`; add `paneShow` to `ResponseMessage`; codable round-trips.
-- `Sources/GrafttyCLI/CLI.swift` — add `PaneShow` and `PaneSend`. Refactor existing `PaneList`/`PaneAdd`/`PaneClose` to share a small `<addr>` parser helper. Add `discussion:` text on `Pane`, `PaneList`, `PaneAdd`, `PaneClose`, `PaneShow`, `PaneSend` (`ATTN-1.19`/`ATTN-1.20` ergonomics).
+- `Sources/GrafttyCLI/CLI.swift` — add `PaneShow` and `PaneSend`. Refactor existing `PaneList`/`PaneAdd`/`PaneClose` to share a small `<addr>` parser helper. Add `discussion:` text on `Pane`, `PaneList`, `PaneAdd`, `PaneClose`, `PaneShow`, `PaneSend` (`ATTN-1.21`/`ATTN-1.22` ergonomics).
 - `Sources/GrafttyCLI/WorktreeResolver.swift` — extend with a `resolveWorktreeName(_:) -> String` helper that maps a branch name → worktree path, using the same logic the team subcommands already use to address teammates.
 - `Sources/Graftty/GrafttyApp.swift` — handle the two new cases in `handleNotification`. The `show` branch shells out to `zmx history` (small Process wrapper); the `send` branch is a 3-line call into existing `SurfaceHandle` methods.
-- `Sources/GrafttyKit/Teams/TeamHookRenderer.swift` — append the pane-control bullets to `teamProtocolPrimer()` (`ATTN-1.21`).
+- `Sources/GrafttyKit/Teams/TeamHookRenderer.swift` — append the pane-control bullets to `teamProtocolPrimer()` (`ATTN-1.23`).
 
 New:
 
-- `Sources/GrafttyCLI/SubcommandSuggestions.swift` — Levenshtein-≤2 "did you mean" helper, wired into `GrafttyCLI`'s top-level error handler (`ATTN-1.19`).
+- `Sources/GrafttyCLI/SubcommandSuggestions.swift` — Levenshtein-≤2 "did you mean" helper, wired into `GrafttyCLI`'s top-level error handler (`ATTN-1.21`).
 
 New (test-only):
 
-- `Tests/GrafttyTests/Specs/AttnTests.swift` (or extend the existing one if present) — `@Test` entries for `ATTN-1.13` through `ATTN-1.17`.
+- `Tests/GrafttyTests/Specs/AttnTests.swift` (or extend the existing one if present) — `@Test` entries for `ATTN-1.15` through `ATTN-1.17`.
 - `Tests/GrafttyKitTests/PaneAddressParserTests.swift` — pure-Swift parsing of `<addr>` grammar (no socket / no app).
 
 `SPECS.md` is regenerated by `scripts/generate-specs.py` after the new `@spec` entries are in.
@@ -249,8 +249,8 @@ Unit tests (no live app):
 
 Behavioral tests (Swift Testing, may need a stub server):
 
-- `ATTN-1.13` — given a fake zmx output of 200 lines, `pane show --lines 50` returns the last 50.
-- `ATTN-1.14` — `pane send` with default flag calls `typeText` *and* `pressReturn`; with `--no-enter` calls only `typeText`. Asserted via test doubles on `SurfaceHandle`.
+- `ATTN-1.15` — given a fake zmx output of 200 lines, `pane show --lines 50` returns the last 50.
+- `ATTN-1.16` — `pane send` with default flag calls `typeText` *and* `pressReturn`; with `--no-enter` calls only `typeText`. Asserted via test doubles on `SurfaceHandle`.
 - `ATTN-1.15` — unknown worktree name → exits non-zero with stderr error; known name → resolves to the right path before dispatch.
 - `ATTN-1.16` — closed worktree → "worktree not running"; running → ok.
 - `ATTN-1.17` — multi-pane bare-`<wt>` → emits pane list to stderr, exits non-zero; single-pane bare-`<wt>` → succeeds.
