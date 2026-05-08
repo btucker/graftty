@@ -146,6 +146,9 @@ struct TeamHook: ParsableCommand {
         let resolvedSessionID = sessionID
             ?? stdinSessionID
             ?? ProcessInfo.processInfo.environment["GRAFTTY_AGENT_SESSION_ID"]
+        let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
+            env: ProcessInfo.processInfo.environment
+        )
         do {
             let response = try SocketClient.sendExpectingResponse(
                 .teamHook(
@@ -153,7 +156,7 @@ struct TeamHook: ParsableCommand {
                     runtime: runtime,
                     event: event,
                     sessionID: resolvedSessionID,
-                    paneSessionName: nil
+                    paneSessionName: paneSessionName
                 )
             )
             switch response {
