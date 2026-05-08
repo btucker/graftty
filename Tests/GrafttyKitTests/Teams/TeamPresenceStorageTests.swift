@@ -48,4 +48,63 @@ struct TeamPresenceStorageTests {
         let loaded = try #require(storage.listAll().first)
         #expect(loaded.paneSessionName == nil)
     }
+
+    @Test("@spec TEAM-IDLE-2.13: Two records with the same (worktree, runtime) but different paneSessionName coexist.")
+    func sameWorktreeRuntimeDifferentPanesCoexist() throws {
+        let storage = try makeStorage()
+        let registeredAt = Date(timeIntervalSince1970: 1_700_000_000)
+        try storage.write(.init(
+            teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
+            paneSessionName: "graftty-aaaaaaaa", pid: 1, registeredAt: registeredAt
+        ))
+        try storage.write(.init(
+            teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
+            paneSessionName: "graftty-bbbbbbbb", pid: 2, registeredAt: registeredAt
+        ))
+        let all = try storage.listAll().sorted { $0.pid < $1.pid }
+        #expect(all.count == 2)
+        #expect(all.map(\.paneSessionName) == ["graftty-aaaaaaaa", "graftty-bbbbbbbb"])
+    }
+
+    @Test("@spec TEAM-IDLE-2.13: Delete by paneSessionName removes only the matching record.")
+    func deleteByPaneSessionNameIsTargeted() throws {
+        let storage = try makeStorage()
+        let registeredAt = Date(timeIntervalSince1970: 1_700_000_000)
+        try storage.write(.init(
+            teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
+            paneSessionName: "graftty-aaaaaaaa", pid: 1, registeredAt: registeredAt
+        ))
+        try storage.write(.init(
+            teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
+            paneSessionName: "graftty-bbbbbbbb", pid: 2, registeredAt: registeredAt
+        ))
+        try storage.delete(
+            teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
+            paneSessionName: "graftty-aaaaaaaa"
+        )
+        let all = try storage.listAll()
+        #expect(all.count == 1)
+        #expect(all.first?.paneSessionName == "graftty-bbbbbbbb")
+    }
+
+    @Test("Delete with paneSessionName == nil removes only the worktree-only record.")
+    func deleteNilPaneOnlyTouchesWorktreeRecord() throws {
+        let storage = try makeStorage()
+        let registeredAt = Date(timeIntervalSince1970: 1_700_000_000)
+        try storage.write(.init(
+            teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
+            paneSessionName: nil, pid: 1, registeredAt: registeredAt
+        ))
+        try storage.write(.init(
+            teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
+            paneSessionName: "graftty-bbbbbbbb", pid: 2, registeredAt: registeredAt
+        ))
+        try storage.delete(
+            teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
+            paneSessionName: nil
+        )
+        let all = try storage.listAll()
+        #expect(all.count == 1)
+        #expect(all.first?.paneSessionName == "graftty-bbbbbbbb")
+    }
 }

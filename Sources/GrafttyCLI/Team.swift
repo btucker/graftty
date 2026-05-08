@@ -321,12 +321,14 @@ struct TeamUnregister: ParsableCommand {
         let priorRecord = try? storage.read(
             teamID: teamID,
             worktree: worktreeName,
-            runtime: runtimeValue
+            runtime: runtimeValue,
+            paneSessionName: nil
         )
         try storage.delete(
             teamID: teamID,
             worktree: worktreeName,
-            runtime: runtimeValue
+            runtime: runtimeValue,
+            paneSessionName: nil
         )
         if priorRecord != nil {
             try? TeamEventLog.defaultLog().append(

@@ -19,8 +19,18 @@ struct PresenceMonitorTests {
             eventLog: TeamEventLog(rootDirectory: tmpRoot.appendingPathComponent("events", isDirectory: true))
         )
 
-        let alive = try storage.read(teamID: "team-abc", worktree: "alive", runtime: .claude)
-        let dead = try storage.read(teamID: "team-abc", worktree: "dead", runtime: .claude)
+        let alive = try storage.read(
+            teamID: "team-abc",
+            worktree: "alive",
+            runtime: .claude,
+            paneSessionName: nil
+        )
+        let dead = try storage.read(
+            teamID: "team-abc",
+            worktree: "dead",
+            runtime: .claude,
+            paneSessionName: nil
+        )
         #expect(alive != nil)
         #expect(dead == nil)
     }

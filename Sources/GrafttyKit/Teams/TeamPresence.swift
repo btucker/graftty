@@ -49,7 +49,12 @@ public struct TeamPresenceStorage: Sendable {
     public func write(_ record: TeamPresenceRecord) throws {
         let dir = presenceDirectory(teamID: record.teamID)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let url = filePath(teamID: record.teamID, worktree: record.worktree, runtime: record.runtime)
+        let url = filePath(
+            teamID: record.teamID,
+            worktree: record.worktree,
+            runtime: record.runtime,
+            paneSessionName: record.paneSessionName
+        )
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
@@ -57,8 +62,18 @@ public struct TeamPresenceStorage: Sendable {
         try data.write(to: url, options: .atomic)
     }
 
-    public func read(teamID: String, worktree: String, runtime: TeamHookRuntime) throws -> TeamPresenceRecord? {
-        let url = filePath(teamID: teamID, worktree: worktree, runtime: runtime)
+    public func read(
+        teamID: String,
+        worktree: String,
+        runtime: TeamHookRuntime,
+        paneSessionName: String?
+    ) throws -> TeamPresenceRecord? {
+        let url = filePath(
+            teamID: teamID,
+            worktree: worktree,
+            runtime: runtime,
+            paneSessionName: paneSessionName
+        )
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let data = try Data(contentsOf: url)
         let decoder = JSONDecoder()
@@ -66,8 +81,18 @@ public struct TeamPresenceStorage: Sendable {
         return try decoder.decode(TeamPresenceRecord.self, from: data)
     }
 
-    public func delete(teamID: String, worktree: String, runtime: TeamHookRuntime) throws {
-        let url = filePath(teamID: teamID, worktree: worktree, runtime: runtime)
+    public func delete(
+        teamID: String,
+        worktree: String,
+        runtime: TeamHookRuntime,
+        paneSessionName: String?
+    ) throws {
+        let url = filePath(
+            teamID: teamID,
+            worktree: worktree,
+            runtime: runtime,
+            paneSessionName: paneSessionName
+        )
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         try FileManager.default.removeItem(at: url)
     }
@@ -101,8 +126,14 @@ public struct TeamPresenceStorage: Sendable {
             .appendingPathComponent("presence", isDirectory: true)
     }
 
-    private func filePath(teamID: String, worktree: String, runtime: TeamHookRuntime) -> URL {
-        let leaf = TeamInbox.fileComponent("\(worktree).\(runtime.rawValue)") + ".json"
+    private func filePath(
+        teamID: String,
+        worktree: String,
+        runtime: TeamHookRuntime,
+        paneSessionName: String?
+    ) -> URL {
+        let paneSegment = paneSessionName ?? "_no_pane"
+        let leaf = TeamInbox.fileComponent("\(worktree).\(runtime.rawValue).\(paneSegment)") + ".json"
         return presenceDirectory(teamID: teamID).appendingPathComponent(leaf)
     }
 }
@@ -122,7 +153,12 @@ public enum TeamPresenceMonitor {
         let records = (try? storage.listAll()) ?? []
         for record in records where !isAlive(record.pid) {
             do {
-                try storage.delete(teamID: record.teamID, worktree: record.worktree, runtime: record.runtime)
+                try storage.delete(
+                    teamID: record.teamID,
+                    worktree: record.worktree,
+                    runtime: record.runtime,
+                    paneSessionName: record.paneSessionName
+                )
                 try? eventLog?.append(
                     .init(teamID: record.teamID, kind: .unregistered, detail: [
                         "worktree": record.worktree,
