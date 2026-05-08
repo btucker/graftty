@@ -320,25 +320,22 @@ struct TeamUnregister: ParsableCommand {
         }
         let storage = TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
         let teamID = TeamLookup.id(of: team)
-        // Only emit `unregistered` if there was actually a record to clear,
-        // so repeat-invocations from a wrapper script don't spam the log.
-        let priorRecord = try? storage.read(
+        let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
+            env: ProcessInfo.processInfo.environment
+        )
+        let prior = try TeamUnregisterCore.unregister(
+            storage: storage,
             teamID: teamID,
             worktree: worktreeName,
             runtime: runtimeValue,
-            paneSessionName: nil
+            paneSessionName: paneSessionName
         )
-        try storage.delete(
-            teamID: teamID,
-            worktree: worktreeName,
-            runtime: runtimeValue,
-            paneSessionName: nil
-        )
-        if priorRecord != nil {
+        if prior != nil {
             try? TeamEventLog.defaultLog().append(
                 .init(teamID: teamID, kind: .unregistered, detail: [
                     "worktree": worktreeName,
                     "runtime": runtimeValue.rawValue,
+                    "pane_session_name": paneSessionName ?? "",
                 ])
             )
         }
