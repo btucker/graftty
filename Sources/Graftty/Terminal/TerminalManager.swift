@@ -239,9 +239,9 @@ final class TerminalManager: ObservableObject {
     var inputActivityObserver: PaneInputActivityObserver?
 
     /// Fires once per surface destruction so the idle-delivery pipeline
-    /// can evict per-pane registry entries (`agentForPane`,
-    /// PaneInputActivityRegistry stamps, WorktreeAgentStateRegistry
-    /// states keyed off the pane's resolved agent identity). Wired by
+    /// can evict per-pane registry entries (PaneInputActivityRegistry
+    /// stamps, WorktreeAgentStateRegistry states, and TeamPresenceStorage
+    /// records keyed off the pane's session name). Wired by
     /// `GrafttyApp.startup()` after the pipeline is constructed.
     var paneClosed: ((UUID) -> Void)?
 

@@ -100,10 +100,6 @@ final class AppServices {
     var agentStateRegistry: WorktreeAgentStateRegistry?
     var inputActivityRegistry: PaneInputActivityRegistry?
     var graceScheduler: EngagedGraceScheduler?
-    /// Pane → (worktree, runtime) map. Updated from SessionStart/PostToolUse
-    /// callbacks so the keystroke observer can route keystrokes to the right
-    /// agent. All access is on the main actor (AppServices is @MainActor).
-    var agentForPane: [UUID: (worktree: String, runtime: String)] = [:]
     /// Holds the `TeamInboxObserver` cancellables so the observers stay
     /// active for the lifetime of the app (one observer per team-ID started
     /// at launch for each known repo).
@@ -902,48 +898,52 @@ struct GrafttyApp: App {
         )
 
         // Wire the keystroke observer. The onKeystroke closure resolves
-        // pane → (worktree, runtime) from AppServices.agentForPane map and
-        // drives the state registry + grace timer. Fires on MainActor.
+        // pane → (worktree, runtime) by reading TeamPresenceStorage and
+        // matching the pane's session name, then drives the state registry +
+        // grace timer. Fires on MainActor.
         let inputObserver = PaneInputActivityObserver(
             registry: inputRegistry,
-            onKeystroke: { [weak graceScheduler, weak services] paneID in
+            onKeystroke: { [weak graceScheduler, presenceStorage] paneID in
                 // SurfaceNSView.keyDown fires on main thread. Use
                 // assumeIsolated so we can read MainActor-isolated state.
                 MainActor.assumeIsolated {
-                    guard let agent = services?.agentForPane[paneID] else { return }
-                    stateRegistry.handleKeystroke(worktree: agent.worktree, runtime: agent.runtime)
-                    graceScheduler?.bump(worktree: agent.worktree, runtime: agent.runtime)
+                    let sessionName = ZmxLauncher.sessionName(for: paneID)
+                    let records = (try? presenceStorage.listAll()) ?? []
+                    guard let agent = records.first(where: { $0.paneSessionName == sessionName }) else {
+                        return
+                    }
+                    stateRegistry.handleKeystroke(worktree: agent.worktree, runtime: agent.runtime.rawValue)
+                    graceScheduler?.bump(worktree: agent.worktree, runtime: agent.runtime.rawValue)
                 }
             }
         )
 
         // Wire the three hook callbacks.
         // These fire from handleTeamHook, which runs inside MainActor.assumeIsolated.
+        // Registration is owned by `graftty team register`; hooks are pure
+        // event signals that update the state machine.
         let hookCallbacks = TeamHookCallbacks(
-            onStop: { [weak idleService] team, worktree, runtime, _ in
-                guard let service = idleService else { return }
-                let paneID = resolvePaneID(worktree)
+            onStop: { [weak idleService, tm] team, worktree, runtime, paneSessionName in
+                let paneID: UUID? = MainActor.assumeIsolated {
+                    paneSessionName.flatMap { tm.paneID(forSessionName: $0) }
+                }
                 // Flip the state machine before the delivery evaluator runs.
                 // Without this, state stays `.active` from the prior
                 // SessionStart and `IdleDeliveryService.maybeDeliver` skips.
                 let lastInputAt = paneID.flatMap { inputRegistry.lastInputAt(paneID: $0) }
                 stateRegistry.handleStop(worktree: worktree, runtime: runtime, lastInputAt: lastInputAt)
-                Task { await service.onStop(team: team, worktree: worktree, paneIDs: paneID.map { [$0] } ?? []) }
+                // TEAM-IDLE-2.14: only codex's Stop event drives idle delivery.
+                // Claude's Stop is fired even when the pane isn't accepting
+                // keystrokes (Plan-mode review screens), so it must not arm
+                // the inbox-drain pipeline.
+                guard runtime == TeamHookRuntime.codex.rawValue else { return }
+                guard let paneID, let service = idleService else { return }
+                Task { await service.onStop(team: team, worktree: worktree, paneIDs: [paneID]) }
             },
-            onSessionStart: { [weak services] team, worktree, runtime, _ in
-                if let paneID = resolvePaneID(worktree) {
-                    MainActor.assumeIsolated {
-                        services?.agentForPane[paneID] = (worktree: worktree, runtime: runtime)
-                    }
-                }
+            onSessionStart: { team, worktree, runtime, _ in
                 stateRegistry.handleSessionStart(worktree: worktree, runtime: runtime)
             },
-            onPostToolUse: { [weak services] team, worktree, runtime, _ in
-                if let paneID = resolvePaneID(worktree) {
-                    MainActor.assumeIsolated {
-                        services?.agentForPane[paneID] = (worktree: worktree, runtime: runtime)
-                    }
-                }
+            onPostToolUse: { team, worktree, runtime, _ in
                 stateRegistry.handlePostToolUse(worktree: worktree, runtime: runtime)
             }
         )
@@ -1005,17 +1005,26 @@ struct GrafttyApp: App {
         // creation time.
         terminalManager.inputActivityObserver = inputObserver
 
-        // Evict per-pane registry entries when a pane is destroyed so
-        // agentForPane / input-stamps / agent-state don't grow unbounded
-        // across the app's lifetime. Lookup of the agent identity has to
-        // happen BEFORE removing the agentForPane entry so the
-        // (worktree, runtime) for state cleanup is still resolvable.
-        terminalManager.paneClosed = { [weak services, stateRegistry, inputRegistry] paneID in
-            let agent = services?.agentForPane[paneID]
-            services?.agentForPane.removeValue(forKey: paneID)
+        // TEAM-IDLE-2.15: when a pane is destroyed, sweep any
+        // TeamPresenceRecord whose paneSessionName matches the closing pane
+        // and clear the matching agent-state entry. The agent's own
+        // `team unregister` cleanup hook is the primary path; this fallback
+        // covers the SIGKILL / hard-quit case where the pane went away
+        // without the registered process getting a chance to clean up.
+        // input-stamp eviction stays on the same trigger so the per-pane
+        // registries don't grow unbounded across the app's lifetime.
+        terminalManager.paneClosed = { [stateRegistry, inputRegistry, presenceStorage] paneID in
             inputRegistry.removeStamp(paneID: paneID)
-            if let agent {
-                stateRegistry.removeState(worktree: agent.worktree, runtime: agent.runtime)
+            let sessionName = ZmxLauncher.sessionName(for: paneID)
+            let records = (try? presenceStorage.listAll()) ?? []
+            for record in records where record.paneSessionName == sessionName {
+                try? presenceStorage.delete(
+                    teamID: record.teamID,
+                    worktree: record.worktree,
+                    runtime: record.runtime,
+                    paneSessionName: record.paneSessionName
+                )
+                stateRegistry.removeState(worktree: record.worktree, runtime: record.runtime.rawValue)
             }
         }
 
