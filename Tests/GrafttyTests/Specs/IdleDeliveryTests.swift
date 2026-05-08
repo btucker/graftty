@@ -63,6 +63,24 @@ struct IdleDeliveryServiceTests {
         #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "claude") == nil)
     }
 
+    @Test("@spec TEAM-IDLE-2.8: When the recipient pane's runtime cannot be confirmed as 'codex' (no SessionStart fired and no presence record), the application shall not deliver pending messages via zmx keys-input — non-codex terminals (shells, editors, claude, etc.) must never receive typed message text.")
+    func unconfirmedRuntimeSkipsKeysInput() async throws {
+        let f = try Fixture()
+        _ = try f.appendUnread(body: "hello")
+        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, runtime: nil, paneID: f.paneID)
+        #expect(f.sender.calls.isEmpty)
+        #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "codex") == nil)
+    }
+
+    @Test("@spec TEAM-IDLE-2.8: With a nil runtime, onStop also skips — the keys-input gate is symmetric across triggers.")
+    func unconfirmedRuntimeOnStopSkips() async throws {
+        let f = try Fixture()
+        _ = try f.appendUnread(body: "hello")
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, runtime: nil, paneID: f.paneID)
+        #expect(f.sender.calls.isEmpty)
+        #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "codex") == nil)
+    }
+
     @Test("onMessageArrival delivers when idle; is a no-op when active.")
     func onMessageArrivalGatedByState() async throws {
         let f = try Fixture()

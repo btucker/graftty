@@ -11,6 +11,7 @@ public protocol NudgeSender: Sendable {
 /// @spec TEAM-IDLE-2.4
 /// @spec TEAM-IDLE-2.5
 /// @spec TEAM-IDLE-2.6
+/// @spec TEAM-IDLE-2.8
 /// Event-driven Codex idle-delivery dispatcher. Receives Stop and
 /// new-message-arrival signals, queries the agent-state registry,
 /// and on `idle` sends pending messages via NudgeSender then
@@ -36,22 +37,23 @@ public actor IdleDeliveryService {
         self.now = now
     }
 
-    public func onStop(team: String, worktree: String, runtime: String, paneID: UUID?) async {
+    public func onStop(team: String, worktree: String, runtime: String?, paneID: UUID?) async {
         await maybeDeliver(team: team, worktree: worktree, runtime: runtime, paneID: paneID, trigger: "stop")
     }
 
-    public func onMessageArrival(team: String, worktree: String, runtime: String, paneID: UUID?) async {
+    public func onMessageArrival(team: String, worktree: String, runtime: String?, paneID: UUID?) async {
         await maybeDeliver(team: team, worktree: worktree, runtime: runtime, paneID: paneID, trigger: "messageArrival")
     }
 
-    private func maybeDeliver(team: String, worktree: String, runtime: String, paneID: UUID?, trigger: String) async {
-        // zmx-send is the Codex equivalent of Claude's asyncRewake
-        // watcher. Claude already receives unread messages via the
-        // watcher's stderr-on-exit path, so dispatching zmx-send here
-        // would deliver every event twice. Gate at the runtime
-        // boundary.
-        guard runtime == "codex" else {
-            log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_runtime_\(runtime)")
+    private func maybeDeliver(team: String, worktree: String, runtime: String?, paneID: UUID?, trigger: String) async {
+        // zmx-send writes message text into the pane's PTY as if the
+        // user typed it. That's only safe for Codex — for any other
+        // process (Claude, a shell, an editor, an unknown agent) the
+        // text would land in the wrong place. nil/unknown runtime is
+        // treated the same as a non-codex runtime: skip.
+        guard let runtime, runtime == "codex" else {
+            let label = runtime ?? "unknown"
+            log(team: team, worktree: worktree, runtime: label, outcome: "skipped_runtime_\(label)")
             return
         }
         // .idle: agent fired Stop with no recent typing — clear deliver.

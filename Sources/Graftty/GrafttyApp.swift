@@ -982,13 +982,12 @@ struct GrafttyApp: App {
                     Task { @MainActor in
                         let paneID = resolvePaneID(recipientWorktree)
                         // Prefer the in-session / presence-registry runtime
-                        // over the message's nullable `to.runtime`. Falling
-                        // back to "codex" is the safe default only when we
-                        // genuinely can't tell — the runtime-gate inside
-                        // maybeDeliver will skip Claude either way.
+                        // over the message's nullable `to.runtime`. If
+                        // neither resolves, pass nil — TEAM-IDLE-2.8 keeps
+                        // zmx-send keys-input from typing into terminals we
+                        // can't confirm are running Codex.
                         let runtime = resolveRuntime(recipientWorktree, paneID)
                             ?? recipientMessages.last?.to.runtime
-                            ?? "codex"
                         await service.onMessageArrival(
                             team: teamID,
                             worktree: recipientWorktree,
