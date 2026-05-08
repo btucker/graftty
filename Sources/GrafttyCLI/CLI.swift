@@ -2,13 +2,101 @@ import ArgumentParser
 import Foundation
 import GrafttyKit
 
+/// `ATTN-1.21`: top-level entry point that intercepts swift-argument-parser
+/// errors, walks the registered command tree against `CommandLine.arguments`
+/// to find the level at which parsing failed, and uses
+/// `SubcommandSuggestions` to append a `Did you mean '<closest>'?` hint to
+/// the rendered error before exiting. Replaces a bare `@main` on the root
+/// `GrafttyCLI` so we control the error path; the happy path still parses
+/// and runs through swift-argument-parser unchanged.
 @main
+enum GrafttyCLIEntryPoint {
+    static func main() {
+        do {
+            var command = try GrafttyCLI.parseAsRoot()
+            try command.run()
+        } catch {
+            let baseMessage = GrafttyCLI.fullMessage(for: error)
+            let stuck = unknownSubcommandLevel(args: CommandLine.arguments)
+            let enriched: String
+            if let stuck {
+                enriched = GrafttyCLIErrorEnricher.enrich(
+                    baseMessage,
+                    attemptedSubcommand: stuck.token,
+                    knownAtThatLevel: stuck.candidates
+                )
+            } else {
+                enriched = baseMessage
+            }
+            // Avoid swift-argument-parser's `exit(withError:)` printing the
+            // same message itself — write our enriched copy to stderr (or
+            // stdout for clean-exit help paths), then exit with the parser's
+            // computed exit code.
+            let exitCode = GrafttyCLI.exitCode(for: error)
+            if !enriched.isEmpty {
+                if exitCode == .success {
+                    FileHandle.standardOutput.write(Data((enriched + "\n").utf8))
+                } else {
+                    FileHandle.standardError.write(Data((enriched + "\n").utf8))
+                }
+            }
+            exit(exitCode.rawValue)
+        }
+    }
+}
+
 struct GrafttyCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "graftty",
         abstract: "Graftty terminal multiplexer CLI",
         subcommands: [Notify.self, Pane.self, Team.self, InternalGroup.self]
     )
+}
+
+/// `ATTN-1.21`: append a "Did you mean '<closest>'?" hint when the
+/// attempted subcommand is within Levenshtein distance 2 of one of the
+/// `knownAtThatLevel` candidates. Pulled out of the wrapper so unit tests
+/// can drive it without invoking swift-argument-parser.
+public enum GrafttyCLIErrorEnricher {
+    public static func enrich(
+        _ errorText: String,
+        attemptedSubcommand: String,
+        knownAtThatLevel: [String]
+    ) -> String {
+        guard let closest = SubcommandSuggestions.suggest(attemptedSubcommand, from: knownAtThatLevel) else {
+            return errorText
+        }
+        return errorText + "\nDid you mean '\(closest)'?"
+    }
+}
+
+/// `ATTN-1.21`: walk `CommandLine.arguments` against the root subcommand
+/// tree to find the first user token that doesn't match a registered
+/// subcommand at its level. Returns the unknown token together with the
+/// valid candidate names at that level, or nil when parsing failed for
+/// some other reason (bad option, missing value, the typo lands at a leaf
+/// with no further subcommands, etc.) — cases where a "did you mean"
+/// hint would be misleading.
+func unknownSubcommandLevel(args: [String]) -> (token: String, candidates: [String])? {
+    var currentLevel: [any ParsableCommand.Type] = GrafttyCLI.configuration.subcommands
+    // args[0] is the binary name; skip it.
+    for arg in args.dropFirst() {
+        // Flags/options aren't subcommand candidates; stop scanning.
+        if arg.hasPrefix("-") { return nil }
+        if currentLevel.isEmpty { return nil }
+        if let child = currentLevel.first(where: { commandName(for: $0) == arg }) {
+            currentLevel = child.configuration.subcommands
+            continue
+        }
+        return (arg, currentLevel.map { commandName(for: $0) })
+    }
+    return nil
+}
+
+/// Helper to derive the command name even when `commandName` is nil
+/// (swift-argument-parser falls back to the type name lowercased).
+private func commandName(for type: any ParsableCommand.Type) -> String {
+    type.configuration.commandName ?? "\(type)".lowercased()
 }
 
 struct Notify: ParsableCommand {

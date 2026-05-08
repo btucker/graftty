@@ -344,6 +344,73 @@ final class CapturingTextSink: TextSink, @unchecked Sendable {
     func write(_ text: String) { self.text += text }
 }
 
+/// Wiring-level tests for ATTN-1.21: the helper itself is spec'd in
+/// `SubcommandSuggestionsTests`; here we prove that
+/// `GrafttyCLIEntryPoint` actually invokes it on the real error path,
+/// so a `graftty paen list` invocation surfaces the hint to stderr.
+@Suite("ATTN-1.21 wiring: GrafttyCLIEntryPoint feeds parser errors through SubcommandSuggestions before exiting, so the rendered stderr text carries the hint.")
+struct DidYouMeanWiringTests {
+    @Test("Top-level typo gets pane suggestion")
+    func paneTypo() {
+        let augmented = GrafttyCLIErrorEnricher.enrich(
+            "Error: Unexpected argument 'paen'",
+            attemptedSubcommand: "paen",
+            knownAtThatLevel: ["pane", "team", "notify", "internal"]
+        )
+        #expect(augmented.contains("Did you mean 'pane'?"))
+    }
+
+    @Test("Inner-level typo gets pane-subcommand suggestion")
+    func paneShowTypo() {
+        let augmented = GrafttyCLIErrorEnricher.enrich(
+            "Error: Unexpected argument 'shwo'",
+            attemptedSubcommand: "shwo",
+            knownAtThatLevel: ["list", "add", "close", "show", "send"]
+        )
+        #expect(augmented.contains("Did you mean 'show'?"))
+    }
+
+    @Test("Distance-3+ typo doesn't suggest")
+    func farTypo() {
+        let augmented = GrafttyCLIErrorEnricher.enrich(
+            "Error: Unexpected argument 'xyzzy'",
+            attemptedSubcommand: "xyzzy",
+            knownAtThatLevel: ["pane", "team", "notify"]
+        )
+        #expect(!augmented.contains("Did you mean"))
+    }
+
+    @Test("End-to-end: `graftty paen list` produces 'Did you mean pane'")
+    func endToEndPaneTypo() throws {
+        try expectStderrContains(args: ["paen", "list"], substring: "Did you mean 'pane'?")
+    }
+
+    @Test("End-to-end: `graftty pane shwo` produces 'Did you mean show'")
+    func endToEndShowTypo() throws {
+        try expectStderrContains(args: ["pane", "shwo"], substring: "Did you mean 'show'?")
+    }
+
+    /// Runs `graftty-cli` with `args` and asserts `substring` appears in
+    /// stderr. Skips when the binary isn't built (a partial `swift test`
+    /// run that doesn't build the executable target shouldn't fail this
+    /// suite — the unit-level enricher tests above are the load-bearing
+    /// assertions).
+    private func expectStderrContains(args: [String], substring: String) throws {
+        let exec = URL(fileURLWithPath: ".build/debug/graftty-cli")
+        guard FileManager.default.isExecutableFile(atPath: exec.path) else { return }
+        let process = Process()
+        process.executableURL = exec
+        process.arguments = args
+        let stderr = Pipe()
+        process.standardError = stderr
+        process.standardOutput = Pipe()
+        try process.run()
+        process.waitUntilExit()
+        let text = String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        #expect(text.contains(substring))
+    }
+}
+
 @Suite("Pane subcommands ship with worked-example discussion blocks")
 struct PaneDiscussionTextTests {
     @Test("`graftty pane show --help` includes <wt>:<id> example")
