@@ -838,16 +838,6 @@ struct GrafttyApp: App {
             nudgeSender: ZmxNudgeSender(writer: AppZmxWriter(terminalManager: terminalManager))
         )
 
-        // Shared helper for the five pane-resolution sites in this
-        // wiring block. Hops onto MainActor (callers are @Sendable
-        // closures that may be invoked off the main thread) and looks
-        // up the worktree's primary pane via the existing extension.
-        let resolvePaneID: @Sendable (String) -> UUID? = { worktreePath in
-            MainActor.assumeIsolated {
-                binding.wrappedValue.worktree(forPath: worktreePath)?.firstPane?.id
-            }
-        }
-
         // Resolve the current set of registered codex panes for a worktree.
         // Reads TeamPresenceStorage on the main actor (file count is bounded
         // by active-agent count — typically <20) and reverse-resolves each
@@ -885,13 +875,13 @@ struct GrafttyApp: App {
                 // onElapsed is @MainActor, so binding.wrappedValue is
                 // accessible directly — no MainActor.assumeIsolated dance.
                 guard let service = idleService else { return }
-                let paneID = resolvePaneID(worktree)
+                let paneIDs = codexPanesIn(worktree)
                 guard let teamID = binding.wrappedValue.repos.first(where: {
                     $0.worktrees.contains(where: { $0.path == worktree })
                 })?.path else { return }
                 Task {
                     await service.onMessageArrival(
-                        team: teamID, worktree: worktree, paneIDs: paneID.map { [$0] } ?? []
+                        team: teamID, worktree: worktree, paneIDs: paneIDs
                     )
                 }
             }
