@@ -248,6 +248,73 @@ struct PaneShowNextStepHintTests {
     }
 }
 
+@Suite("pane send applies same ambiguity rules as pane show")
+struct PaneSendAmbiguityTests {
+    @Test("Bare worktree with >1 panes prints list and exits 1")
+    func multiPaneBareWtSend() throws {
+        let stateDir = try makeTempStateWithWorktree(branch: "drag-files", path: "/tmp/wt-drag-files")
+        defer { try? FileManager.default.removeItem(at: stateDir) }
+        let transport = StubSocketTransport()
+        transport.queue = [.paneList([
+            PaneInfo(id: 1, title: "zsh", focused: true),
+            PaneInfo(id: 2, title: "claude", focused: false),
+        ])]
+        let stderr = CapturingTextSink()
+        let exit = PaneSendDispatcher.run(
+            address: "drag-files",
+            text: "pnpm test",
+            pressEnter: true,
+            transport: transport,
+            stderr: stderr,
+            stateDirectory: stateDir
+        )
+        #expect(exit == 1)
+        #expect(stderr.text.contains("specify a pane"))
+        #expect(stderr.text.contains("graftty pane send drag-files:<id>"))
+    }
+
+    @Test("Single pane bare-wt sends ok")
+    func singlePaneBareWtSend() throws {
+        let stateDir = try makeTempStateWithWorktree(branch: "drag-files", path: "/tmp/wt-drag-files")
+        defer { try? FileManager.default.removeItem(at: stateDir) }
+        let transport = StubSocketTransport()
+        transport.queue = [
+            .paneList([PaneInfo(id: 1, title: "zsh", focused: true)]),
+            .ok,
+        ]
+        let stderr = CapturingTextSink()
+        let exit = PaneSendDispatcher.run(
+            address: "drag-files",
+            text: "pnpm test",
+            pressEnter: true,
+            transport: transport,
+            stderr: stderr,
+            stateDirectory: stateDir
+        )
+        #expect(exit == 0)
+        #expect(stderr.text.isEmpty)
+    }
+
+    @Test("Worktree-not-running error from app is surfaced verbatim")
+    func sendSurfacesWorktreeNotRunning() throws {
+        let stateDir = try makeTempStateWithWorktree(branch: "drag-files", path: "/tmp/wt-drag-files")
+        defer { try? FileManager.default.removeItem(at: stateDir) }
+        let transport = StubSocketTransport()
+        transport.queue = [.error("worktree not running")]
+        let stderr = CapturingTextSink()
+        let exit = PaneSendDispatcher.run(
+            address: "drag-files",
+            text: "ls",
+            pressEnter: true,
+            transport: transport,
+            stderr: stderr,
+            stateDirectory: stateDir
+        )
+        #expect(exit == 1)
+        #expect(stderr.text.contains("worktree not running"))
+    }
+}
+
 private func makeTempStateWithWorktree(branch: String, path: String) throws -> URL {
     let dir = FileManager.default.temporaryDirectory
         .appendingPathComponent("graftty-test-\(UUID().uuidString)", isDirectory: true)

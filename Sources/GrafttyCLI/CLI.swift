@@ -45,7 +45,7 @@ struct Notify: ParsableCommand {
 struct Pane: ParsableCommand {
     static let configuration = CommandConfiguration(
         abstract: "Add, remove, or list panes in the current worktree",
-        subcommands: [PaneList.self, PaneAdd.self, PaneClose.self, PaneShow.self]
+        subcommands: [PaneList.self, PaneAdd.self, PaneClose.self, PaneShow.self, PaneSend.self]
     )
 }
 
@@ -210,6 +210,99 @@ enum PaneShowDispatcher {
         switch transport.send(.showPane(path: resolved.path, index: paneID, lines: lines)) {
         case .paneShow(let body):
             stdout.write(body)
+            return 0
+        case .error(let msg):
+            stderr.write("graftty: \(msg)\n")
+            return 1
+        default:
+            stderr.write("graftty: unexpected response\n")
+            return 1
+        }
+    }
+}
+
+struct PaneSend: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "send",
+        abstract: "Inject text into a pane's PTY",
+        discussion: """
+        Bytes you pass go straight to the pane's PTY — there is no inbox or
+        consent layer; whatever process is reading that pane's stdin will
+        receive them as if you had typed at the keyboard. By default, a
+        Return key event is synthesized after the text so the pane's shell
+        (or TUI consumer like Codex/Claude in raw mode) treats the input
+        as committed. Use --no-enter to suppress.
+
+        For cooperative messaging where the receiving agent decides what
+        to do, prefer 'graftty team send' instead.
+        """
+    )
+
+    @Argument(help: "Pane address: omit, '<id>', '<worktree>', or '<worktree>:<id>'")
+    var address: String?
+
+    @Argument(help: "Text to inject into the pane")
+    var text: String
+
+    @Flag(name: .long, help: "Skip the trailing Return after the text")
+    var noEnter: Bool = false
+
+    func run() throws {
+        let exit = PaneSendDispatcher.run(
+            address: address,
+            text: text,
+            pressEnter: !noEnter,
+            transport: SocketTransportClient.shared,
+            stderr: StandardErrSink()
+        )
+        if exit != 0 { throw ExitCode(exit) }
+    }
+}
+
+/// `ATTN-1.16 / ATTN-1.18 / ATTN-1.19 / ATTN-1.22`: Mirror of
+/// `PaneShowDispatcher` for `pane send`. Same address grammar, same
+/// multi-pane disambiguation, same testable seams. Extracted from
+/// `PaneSend.run()` so tests can drive it via stub seams without
+/// spinning up the app or opening a socket.
+enum PaneSendDispatcher {
+    static func run(
+        address: String?,
+        text: String,
+        pressEnter: Bool,
+        transport: SocketTransport,
+        stderr: TextSink = StandardErrSink(),
+        stateDirectory: URL = AppState.defaultDirectory
+    ) -> Int32 {
+        let resolved: (path: String, paneID: Int?)
+        do {
+            resolved = try CLIEnv.resolveAddress(address, stderr: stderr, stateDirectory: stateDirectory)
+        } catch {
+            return 1
+        }
+
+        let paneID: Int
+        if let id = resolved.paneID {
+            paneID = id
+        } else {
+            switch transport.send(.listPanes(path: resolved.path)) {
+            case .paneList(let panes) where panes.count == 1:
+                paneID = panes[0].id
+            case .paneList(let panes):
+                stderr.write(formatAmbiguityHint(verb: "send", address: address, panes: panes))
+                return 1
+            case .error(let msg):
+                stderr.write("graftty: \(msg)\n")
+                return 1
+            default:
+                stderr.write("graftty: unexpected response from list\n")
+                return 1
+            }
+        }
+
+        switch transport.send(.sendPane(
+            path: resolved.path, index: paneID, text: text, pressEnter: pressEnter
+        )) {
+        case .ok:
             return 0
         case .error(let msg):
             stderr.write("graftty: \(msg)\n")
