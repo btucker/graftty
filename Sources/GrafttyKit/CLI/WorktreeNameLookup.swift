@@ -1,16 +1,17 @@
 import Foundation
 import GrafttyProtocol
 
-/// `ATTN-1.17`: resolve a worktree by the user-facing name printed by
+/// Resolve a worktree by the user-facing name printed by
 /// `graftty team list` (the sanitized branch name) to its persisted
 /// path, scanning every repo in `repos`. Pure function for testability;
 /// the CLI wrapper at `WorktreeResolver.resolveWorktreeName(_:)` loads
 /// `state.json` and delegates here.
 ///
-/// Matches the same lookup `graftty team msg` performs server-side
-/// (`TeamView.memberNamed`), so a name accepted by `team msg` is also
-/// accepted by every `pane` subcommand. Returns `nil` for an unknown
-/// name; the caller renders the stderr error and exits non-zero.
+/// Uses the same `WorktreeNameSanitizer.sanitize` as the team-msg path,
+/// so a name accepted by `team msg` is also accepted by every `pane`
+/// subcommand. Unlike `TeamLookup.member(named:)` this also resolves
+/// solo-worktree repos (which have no team), so `pane *` works on a
+/// non-team repo. Returns `nil` for an unknown name.
 public enum WorktreeNameLookup {
     public static func lookup(name: String, in repos: [RepoEntry]) -> WorktreeEntry? {
         repos

@@ -40,11 +40,11 @@ enum WorktreeResolver {
         return state.worktree(forPath: path) != nil
     }
 
-    /// `ATTN-1.17`: resolve a worktree branch name (as printed by
-    /// `graftty team list`) to its persisted path. Returns nil for an
-    /// unknown name. Reads the same `state.json` `isTracked` does and
-    /// delegates the matching to `WorktreeNameLookup` so a name
-    /// accepted by `graftty team msg` is also accepted here.
+    /// Resolve a worktree branch name (as printed by `graftty team list`)
+    /// to its persisted path. Returns nil for an unknown name. Reads the
+    /// same `state.json` `isTracked` does and delegates the matching to
+    /// `WorktreeNameLookup` so a name accepted by `graftty team msg` is
+    /// also accepted here.
     static func resolveWorktreeName(
         _ name: String,
         stateDirectory: URL = AppState.defaultDirectory

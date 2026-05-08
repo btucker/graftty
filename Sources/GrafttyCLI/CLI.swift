@@ -2,13 +2,13 @@ import ArgumentParser
 import Foundation
 import GrafttyKit
 
-/// `ATTN-1.21`: top-level entry point that intercepts swift-argument-parser
-/// errors, walks the registered command tree against `CommandLine.arguments`
-/// to find the level at which parsing failed, and uses
-/// `SubcommandSuggestions` to append a `Did you mean '<closest>'?` hint to
-/// the rendered error before exiting. Replaces a bare `@main` on the root
-/// `GrafttyCLI` so we control the error path; the happy path still parses
-/// and runs through swift-argument-parser unchanged.
+/// Top-level entry point that intercepts swift-argument-parser errors,
+/// walks the registered command tree against `CommandLine.arguments`
+/// to find the level at which parsing failed, and appends a
+/// `Did you mean '<closest>'?` hint to the rendered error before
+/// exiting. Replaces a bare `@main` on the root `GrafttyCLI` so we
+/// control the error path; the happy path still parses and runs
+/// through swift-argument-parser unchanged.
 @main
 enum GrafttyCLIEntryPoint {
     static func main() {
@@ -53,10 +53,10 @@ struct GrafttyCLI: ParsableCommand {
     )
 }
 
-/// `ATTN-1.21`: append a "Did you mean '<closest>'?" hint when the
-/// attempted subcommand is within Levenshtein distance 2 of one of the
-/// `knownAtThatLevel` candidates. Pulled out of the wrapper so unit tests
-/// can drive it without invoking swift-argument-parser.
+/// Append a "Did you mean '<closest>'?" hint when the attempted
+/// subcommand is within Levenshtein distance 2 of one of the
+/// `knownAtThatLevel` candidates. Pulled out of the wrapper so unit
+/// tests can drive it without invoking swift-argument-parser.
 public enum GrafttyCLIErrorEnricher {
     public static func enrich(
         _ errorText: String,
@@ -70,14 +70,14 @@ public enum GrafttyCLIErrorEnricher {
     }
 }
 
-/// `ATTN-1.21`: walk `CommandLine.arguments` against the root subcommand
-/// tree to find the first user token that doesn't match a registered
-/// subcommand at its level. Returns the unknown token together with the
-/// valid candidate names at that level, or nil when parsing failed for
-/// some other reason (bad option, missing value, the typo lands at a leaf
+/// Walk `CommandLine.arguments` against the root subcommand tree to
+/// find the first user token that doesn't match a registered subcommand
+/// at its level. Returns the unknown token together with the valid
+/// candidate names at that level, or nil when parsing failed for some
+/// other reason (bad option, missing value, the typo lands at a leaf
 /// with no further subcommands, etc.) — cases where a "did you mean"
 /// hint would be misleading.
-func unknownSubcommandLevel(args: [String]) -> (token: String, candidates: [String])? {
+private func unknownSubcommandLevel(args: [String]) -> (token: String, candidates: [String])? {
     var currentLevel: [any ParsableCommand.Type] = GrafttyCLI.configuration.subcommands
     // args[0] is the binary name; skip it.
     for arg in args.dropFirst() {
@@ -291,11 +291,6 @@ struct PaneShow: ParsableCommand {
     }
 }
 
-/// `ATTN-1.18 / ATTN-1.19 / ATTN-1.22`: Resolve the address, disambiguate
-/// the pane (auto-targeting when there's exactly one), then dispatch
-/// `showPane` and surface either the scrollback or a copy-pasteable
-/// error. Extracted from `PaneShow.run()` so tests can drive it via
-/// stub seams without spinning up the app or opening a socket.
 enum PaneShowDispatcher {
     static func run(
         address: String?,
@@ -305,41 +300,21 @@ enum PaneShowDispatcher {
         stderr: TextSink = StandardErrSink(),
         stateDirectory: URL = AppState.defaultDirectory
     ) -> Int32 {
-        let resolved: (path: String, paneID: Int?)
-        do {
-            resolved = try CLIEnv.resolveAddress(address, stderr: stderr, stateDirectory: stateDirectory)
-        } catch {
+        guard let resolved = resolveTargetPane(
+            verb: .show, address: address, transport: transport,
+            stderr: stderr, stateDirectory: stateDirectory
+        ) else {
             return 1
         }
-
-        let paneID: Int
-        if let id = resolved.paneID {
-            paneID = id
-        } else {
-            switch transport.send(.listPanes(path: resolved.path)) {
-            case .paneList(let panes) where panes.count == 1:
-                paneID = panes[0].id
-            case .paneList(let panes):
-                stderr.write(formatAmbiguityHint(verb: "show", address: address, panes: panes))
-                return 1
-            case .error(let msg):
-                stderr.write("graftty: \(msg)\n")
-                return 1
-            default:
-                stderr.write("graftty: unexpected response from list\n")
-                return 1
-            }
-        }
-
-        switch transport.send(.showPane(path: resolved.path, index: paneID, lines: lines)) {
+        switch transport.send(.showPane(path: resolved.path, index: resolved.paneID, lines: lines)) {
         case .paneShow(let body):
             stdout.write(body)
             return 0
         case .error(let msg):
-            stderr.write("graftty: \(msg)\n")
+            emit(msg, to: stderr)
             return 1
         default:
-            stderr.write("graftty: unexpected response\n")
+            emit("unexpected response", to: stderr)
             return 1
         }
     }
@@ -383,11 +358,6 @@ struct PaneSend: ParsableCommand {
     }
 }
 
-/// `ATTN-1.16 / ATTN-1.18 / ATTN-1.19 / ATTN-1.22`: Mirror of
-/// `PaneShowDispatcher` for `pane send`. Same address grammar, same
-/// multi-pane disambiguation, same testable seams. Extracted from
-/// `PaneSend.run()` so tests can drive it via stub seams without
-/// spinning up the app or opening a socket.
 enum PaneSendDispatcher {
     static func run(
         address: String?,
@@ -397,63 +367,83 @@ enum PaneSendDispatcher {
         stderr: TextSink = StandardErrSink(),
         stateDirectory: URL = AppState.defaultDirectory
     ) -> Int32 {
-        let resolved: (path: String, paneID: Int?)
-        do {
-            resolved = try CLIEnv.resolveAddress(address, stderr: stderr, stateDirectory: stateDirectory)
-        } catch {
+        guard let resolved = resolveTargetPane(
+            verb: .send, address: address, transport: transport,
+            stderr: stderr, stateDirectory: stateDirectory
+        ) else {
             return 1
         }
-
-        let paneID: Int
-        if let id = resolved.paneID {
-            paneID = id
-        } else {
-            switch transport.send(.listPanes(path: resolved.path)) {
-            case .paneList(let panes) where panes.count == 1:
-                paneID = panes[0].id
-            case .paneList(let panes):
-                stderr.write(formatAmbiguityHint(verb: "send", address: address, panes: panes))
-                return 1
-            case .error(let msg):
-                stderr.write("graftty: \(msg)\n")
-                return 1
-            default:
-                stderr.write("graftty: unexpected response from list\n")
-                return 1
-            }
-        }
-
         switch transport.send(.sendPane(
-            path: resolved.path, index: paneID, text: text, pressEnter: pressEnter
+            path: resolved.path, index: resolved.paneID, text: text, pressEnter: pressEnter
         )) {
         case .ok:
             return 0
         case .error(let msg):
-            stderr.write("graftty: \(msg)\n")
+            emit(msg, to: stderr)
             return 1
         default:
-            stderr.write("graftty: unexpected response\n")
+            emit("unexpected response", to: stderr)
             return 1
         }
     }
 }
 
-/// `ATTN-1.19 / ATTN-1.22`: format the multi-pane disambiguation message
-/// shown when a bare-worktree `pane show` / `pane send` lands on a
-/// worktree with >1 panes. Includes a literal copy-pasteable next-step
-/// invocation: when the caller passed a `<wt>` address, show
-/// `graftty pane <verb> <wt>:<id>`; when they omitted the address (PWD
-/// resolution), show the shorter `graftty pane <verb> <id>` form they
-/// should use instead.
-func formatAmbiguityHint(verb: String, address: String?, panes: [PaneInfo]) -> String {
+/// One of the verbs that share the `<addr>` grammar and multi-pane
+/// disambiguation. Carries its CLI keyword for use in error hints.
+enum PaneVerb: String {
+    case show, send
+}
+
+/// Resolve `address` to a concrete `(path, paneID)` for `pane show` /
+/// `pane send`. Returns nil after writing a copy-pasteable error to
+/// stderr when the address is unknown, ambiguous, or invalid; on
+/// ambiguity, prints the worktree's `pane list` followed by a
+/// `graftty pane <verb> <wt>:<id>` next-step hint.
+private func resolveTargetPane(
+    verb: PaneVerb,
+    address: String?,
+    transport: SocketTransport,
+    stderr: TextSink,
+    stateDirectory: URL
+) -> (path: String, paneID: Int)? {
+    let resolved: (path: String, paneID: Int?)
+    do {
+        resolved = try CLIEnv.resolveAddress(address, stderr: stderr, stateDirectory: stateDirectory)
+    } catch {
+        return nil
+    }
+    if let id = resolved.paneID {
+        return (resolved.path, id)
+    }
+    switch transport.send(.listPanes(path: resolved.path)) {
+    case .paneList(let panes) where panes.count == 1:
+        return (resolved.path, panes[0].id)
+    case .paneList(let panes):
+        stderr.write(formatAmbiguityHint(verb: verb, address: address, panes: panes))
+        return nil
+    case .error(let msg):
+        emit(msg, to: stderr)
+        return nil
+    default:
+        emit("unexpected response from list", to: stderr)
+        return nil
+    }
+}
+
+/// Multi-pane disambiguation message shown when a bare-worktree
+/// `pane show` / `pane send` lands on a worktree with >1 panes. Includes
+/// a literal copy-pasteable next-step invocation: when the caller passed
+/// a `<wt>` address, show `graftty pane <verb> <wt>:<id>`; when they
+/// omitted it, show the shorter `graftty pane <verb> <id>` form.
+func formatAmbiguityHint(verb: PaneVerb, address: String?, panes: [PaneInfo]) -> String {
     let header: String
     let nextStep: String
     if let address {
         header = "graftty: '\(address)' has \(panes.count) panes — specify a pane:"
-        nextStep = "Use 'graftty pane \(verb) \(address):<id>' to target one."
+        nextStep = "Use 'graftty pane \(verb.rawValue) \(address):<id>' to target one."
     } else {
         header = "graftty: current worktree has \(panes.count) panes — specify a pane:"
-        nextStep = "Use 'graftty pane \(verb) <id>' to target one."
+        nextStep = "Use 'graftty pane \(verb.rawValue) <id>' to target one."
     }
     var out = header + "\n"
     for p in panes { out += "  " + p.formattedLine() + "\n" }
@@ -461,7 +451,14 @@ func formatAmbiguityHint(verb: String, address: String?, panes: [PaneInfo]) -> S
     return out
 }
 
-// MARK: - Test seams (ATTN-1.18 / ATTN-1.19 / ATTN-1.22)
+/// Write a `graftty: <msg>` line to `sink` (newline included). Mirror
+/// of `CLIEnv.printError` but goes through the injected sink so tests
+/// can capture the output.
+private func emit(_ msg: String, to sink: TextSink) {
+    sink.write("graftty: \(msg)\n")
+}
+
+// MARK: - Test seams
 
 /// Test seam for stderr/stdout output from CLI commands. Production
 /// binds to `StandardErrSink` / `StandardOutSink`; tests inject
@@ -560,18 +557,14 @@ enum CLIEnv {
         FileHandle.standardError.write(Data("graftty: \(msg)\n".utf8))
     }
 
-    /// `ATTN-1.17`: resolve the optional `<addr>` positional shared by
-    /// every `graftty pane *` subcommand to a `(worktree path, optional
+    /// Resolve the optional `<addr>` positional shared by every
+    /// `graftty pane *` subcommand to a `(worktree path, optional
     /// pane id)`. Empty / `<id>` forms resolve via the current PWD just
     /// like `resolveWorktree()`; `<wt>` / `<wt>:<id>` forms look up the
-    /// worktree by sanitized branch name in the persisted state. An
-    /// unknown name or unparseable input writes a stderr error via the
-    /// injected sink and throws `ExitCode(1)`.
-    ///
-    /// `ATTN-1.22`: the missing-current-worktree, unknown-worktree, and
-    /// invalid-address branches all surface a copy-pasteable next-step
-    /// hint so an agent that hits the error knows the literal command
-    /// to retry with.
+    /// worktree by sanitized branch name in the persisted state. The
+    /// missing-current-worktree, unknown-worktree, and invalid-address
+    /// branches all surface a copy-pasteable next-step hint via the
+    /// injected sink and throw `ExitCode(1)`.
     static func resolveAddress(
         _ raw: String?,
         stderr: TextSink = StandardErrSink(),
@@ -592,10 +585,10 @@ enum CLIEnv {
         }
     }
 
-    /// `ATTN-1.22`: PWD-resolution failure on a `pane *` command needs
-    /// the longer next-step hint so the agent can fix it without reading
-    /// the docs. The bare `resolveWorktree()` (used by `notify`) keeps
-    /// its short historical message.
+    /// PWD-resolution failure on a `pane *` command needs the longer
+    /// next-step hint so the agent can fix it without reading the docs.
+    /// The bare `resolveWorktree()` (used by `notify`) keeps its short
+    /// historical message.
     private static func resolveCurrentWorktreeForPaneCommand(stderr: TextSink) throws -> String {
         do {
             return try WorktreeResolver.resolve()

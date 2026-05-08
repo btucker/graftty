@@ -15,8 +15,7 @@ struct TeamHookCallbacks {
 }
 
 /// Seam for `handleShowPane` so tests can inject a canned scrollback
-/// without spawning a `zmx` subprocess. Production binds to
-/// `ZmxHistorySubprocessReader` below.
+/// without spawning a `zmx` subprocess.
 protocol ZmxHistoryReader: Sendable {
     func history(sessionName: String) throws -> String
 }
@@ -24,66 +23,24 @@ protocol ZmxHistoryReader: Sendable {
 struct ZmxHistorySubprocessReader: ZmxHistoryReader {
     let launcher: ZmxLauncher
 
-    /// Lets the background drain thread publish its result to the calling
-    /// thread without crossing Sendable boundaries on `Data` directly. The
-    /// semaphore handshake in `history(sessionName:)` provides the
-    /// happens-before guarantee — only the background queue writes `data`
-    /// before signaling, only the caller reads it after waiting.
-    private final class StderrBox: @unchecked Sendable {
-        var data: Data = Data()
-    }
-
     func history(sessionName: String) throws -> String {
-        let process = Process()
-        process.executableURL = launcher.executable
-        process.arguments = ["history", sessionName]
-        process.environment = ProcessInfo.processInfo.environment
-            .merging(["ZMX_DIR": launcher.zmxDir.path]) { _, new in new }
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-
-        try process.run()
-
-        // Drain both pipes to EOF *before* `waitUntilExit()`. If we waited
-        // first, a child writing more than the pipe buffer (~16–64 KB on
-        // macOS — easy to exceed with modest scrollback) would block on
-        // `write` while we block on `waitUntilExit`, deadlocking forever.
-        // `readDataToEndOfFile()` returns when the writer closes its FD,
-        // which happens on child exit; `waitUntilExit()` then just reaps.
-        //
-        // Drain stderr on a background queue so that *both* pipes drain
-        // concurrently. Otherwise a child that writes a large stderr while
-        // stdout is small or already closed would block on stderr's pipe
-        // buffer before we ever start reading it.
-        // (See `CLIRunner` for the more elaborate readabilityHandler-based
-        // variant — overkill here since we only need each stream's full text.)
-        let stderrBox = StderrBox()
-        let stderrDone = DispatchSemaphore(value: 0)
-        DispatchQueue.global(qos: .userInitiated).async {
-            stderrBox.data = stderr.fileHandleForReading.readDataToEndOfFile()
-            stderrDone.signal()
-        }
-        let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
-        stderrDone.wait()
-        let stderrData = stderrBox.data
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            let stderrText = String(data: stderrData, encoding: .utf8) ?? ""
-            let trimmed = stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let result = try ZmxRunner.captureAll(
+            executable: launcher.executable,
+            args: ["history", sessionName],
+            env: launcher.subprocessEnv(from: ProcessInfo.processInfo.environment)
+        )
+        guard result.exitCode == 0 else {
+            let trimmed = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             let message = trimmed.isEmpty
                 ? "zmx history failed"
                 : "zmx history failed: \(trimmed)"
             throw NSError(
                 domain: "ZmxHistorySubprocessReader",
-                code: Int(process.terminationStatus),
+                code: Int(result.exitCode),
                 userInfo: [NSLocalizedDescriptionKey: message]
             )
         }
-        return String(data: stdoutData, encoding: .utf8) ?? ""
+        return result.stdout
     }
 }
 
