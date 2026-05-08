@@ -53,10 +53,18 @@ graftty team broadcast "<text>"          # message everyone on the team
 graftty team inbox                       # read your incoming messages
 ```
 
-Inbox deliveries wait for the recipient agent to go idle, so they don't
-interrupt a running tool call. *Window → Team Activity Log* opens a
-unified transcript of every team event and inter-agent message for the
-focused worktree's team.
+Delivery is hook-driven. Graftty installs `claude` and `codex` shims on
+each agent's `PATH` that wire `SessionStart` and `Stop` hooks into the
+runtime. `SessionStart` primes the agent with team context and your
+session prompt; `Stop` triggers inbox delivery at the end of each turn.
+For Claude Code, a `Stop`-spawned watcher wakes the agent on stderr
+when a new message arrives; for Codex, a graftty-side service types the
+message text into the pane's PTY via zmx. Both paths defer while the
+pane shows recent user typing, so a teammate's message can't interrupt
+you mid-edit.
+
+*Window → Team Activity Log* opens a unified transcript of every team
+event and inter-agent message for the focused worktree's team.
 
 In progress on the `allow-controlling-panes` branch: keystroke-level
 pane control across worktrees (`graftty pane show` / `graftty pane
