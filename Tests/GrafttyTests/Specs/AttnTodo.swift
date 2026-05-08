@@ -79,11 +79,6 @@ struct AttnTodo {
     func attn_4_1() async throws { }
 
     @Test("""
-@spec ATTN-1.17: When any `pane` subcommand (`list`/`add`/`close`/`show`/`send`) is invoked with a `<wt>` or `<wt>:<id>` address, the application shall resolve the worktree by branch name (using the same lookup `graftty team msg` uses, against the `team list` registry) and operate on that worktree regardless of the caller's current working directory; an unknown name shall produce a stderr error and a non-zero exit.
-""", .disabled("not yet implemented"))
-    func attn_1_17() async throws { }
-
-    @Test("""
 @spec ATTN-1.18: When `pane show` or `pane send` is invoked against a worktree that is not in the `running` state, the application shall fail with a `worktree not running` error rather than auto-launch the worktree's panes.
 """, .disabled("not yet implemented"))
     func attn_1_18() async throws { }

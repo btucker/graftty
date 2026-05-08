@@ -52,12 +52,19 @@ struct Pane: ParsableCommand {
 struct PaneList: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "list",
-        abstract: "List panes in the current worktree"
+        abstract: "List panes in a worktree (default: current)"
     )
 
+    @Argument(help: "Worktree name (defaults to current worktree)")
+    var address: String?
+
     func run() throws {
-        let worktreePath = try CLIEnv.resolveWorktree()
-        let response = try CLIEnv.sendRequest(.listPanes(path: worktreePath))
+        let (path, paneID) = try CLIEnv.resolveAddress(address)
+        if paneID != nil {
+            CLIEnv.printError("pane list takes a worktree name, not a pane id")
+            throw ExitCode(1)
+        }
+        let response = try CLIEnv.sendRequest(.listPanes(path: path))
         switch response {
         case .paneList(let panes):
             for pane in panes {
@@ -88,8 +95,11 @@ struct PaneList: ParsableCommand {
 struct PaneAdd: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "add",
-        abstract: "Add a new pane by splitting the focused pane in the current worktree"
+        abstract: "Add a new pane by splitting the focused pane in a worktree (default: current)"
     )
+
+    @Argument(help: "Worktree name (defaults to current worktree)")
+    var address: String?
 
     @Option(name: .long, help: "Split direction: right (default), left, up, or down")
     var direction: String = "right"
@@ -104,9 +114,13 @@ struct PaneAdd: ParsableCommand {
     }
 
     func run() throws {
-        let worktreePath = try CLIEnv.resolveWorktree()
+        let (path, paneID) = try CLIEnv.resolveAddress(address)
+        if paneID != nil {
+            CLIEnv.printError("pane add takes a worktree name, not a pane id")
+            throw ExitCode(1)
+        }
         let dir = PaneSplit(rawValue: direction)!
-        let response = try CLIEnv.sendRequest(.addPane(path: worktreePath, direction: dir, command: command))
+        let response = try CLIEnv.sendRequest(.addPane(path: path, direction: dir, command: command))
         try CLIEnv.expectOk(response)
     }
 }
@@ -117,12 +131,16 @@ struct PaneClose: ParsableCommand {
         abstract: "Close a pane by its 1-based ID as shown by `pane list`"
     )
 
-    @Argument(help: "Pane ID from `graftty pane list`")
-    var id: Int
+    @Argument(help: "Pane address: '<id>' or '<worktree>:<id>'")
+    var address: String
 
     func run() throws {
-        let worktreePath = try CLIEnv.resolveWorktree()
-        let response = try CLIEnv.sendRequest(.closePane(path: worktreePath, index: id))
+        let (path, paneID) = try CLIEnv.resolveAddress(address)
+        guard let id = paneID else {
+            CLIEnv.printError("pane close requires a pane id (e.g., 'graftty pane close 2' or 'graftty pane close drag-files:2')")
+            throw ExitCode(1)
+        }
+        let response = try CLIEnv.sendRequest(.closePane(path: path, index: id))
         try CLIEnv.expectOk(response)
     }
 }
@@ -187,5 +205,36 @@ enum CLIEnv {
 
     static func printError(_ msg: String) {
         FileHandle.standardError.write(Data("graftty: \(msg)\n".utf8))
+    }
+
+    /// `ATTN-1.17`: resolve the optional `<addr>` positional shared by
+    /// every `graftty pane *` subcommand to a `(worktree path, optional
+    /// pane id)`. Empty / `<id>` forms resolve via the current PWD just
+    /// like `resolveWorktree()`; `<wt>` / `<wt>:<id>` forms look up the
+    /// worktree by sanitized branch name in the persisted state. An
+    /// unknown name or unparseable input prints a stderr error and
+    /// throws `ExitCode(1)`.
+    static func resolveAddress(_ raw: String?) throws -> (path: String, paneID: Int?) {
+        switch PaneAddress.parse(raw) {
+        case .currentWorktreeAnyPane:
+            return (try resolveWorktree(), nil)
+        case .currentWorktreeID(let id):
+            return (try resolveWorktree(), id)
+        case .namedWorktreeAnyPane(let name):
+            return (try resolveNamedWorktree(name), nil)
+        case .namedWorktreeID(let name, let id):
+            return (try resolveNamedWorktree(name), id)
+        case .invalid(let raw):
+            printError("invalid pane address '\(raw)'. Examples: '2', 'drag-files', 'drag-files:1'.")
+            throw ExitCode(1)
+        }
+    }
+
+    private static func resolveNamedWorktree(_ name: String) throws -> String {
+        guard let path = WorktreeResolver.resolveWorktreeName(name) else {
+            printError("unknown worktree '\(name)'. Run 'graftty team list' to see registered worktrees.")
+            throw ExitCode(1)
+        }
+        return path
     }
 }

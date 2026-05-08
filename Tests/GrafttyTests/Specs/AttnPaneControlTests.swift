@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Graftty
 @testable import GrafttyKit
@@ -83,5 +84,53 @@ struct PaneSendHandlerTests {
         var returnPresses: Int = 0
         func typeText(_ text: String) { typedText.append(text) }
         func pressReturn() { returnPresses += 1 }
+    }
+}
+
+@Suite("@spec ATTN-1.17: When any `pane` subcommand (`list`/`add`/`close`/`show`/`send`) is invoked with a `<wt>` or `<wt>:<id>` address, the application shall resolve the worktree by branch name (using the same lookup `graftty team msg` uses, against the `team list` registry) and operate on that worktree regardless of the caller's current working directory; an unknown name shall produce a stderr error and a non-zero exit.")
+struct WorktreeNameResolutionTests {
+    @Test("Resolves branch name to tracked worktree path")
+    func resolvesBranchName() throws {
+        let stateDir = try makeTempStateWithWorktree(branch: "drag-files", path: "/tmp/wt-drag-files")
+        defer { try? FileManager.default.removeItem(at: stateDir) }
+        let resolved = WorktreeNameLookup.resolvePath(name: "drag-files", stateDirectory: stateDir)
+        #expect(resolved == "/tmp/wt-drag-files")
+    }
+
+    @Test("Returns nil for unknown branch name")
+    func unknownNameNil() throws {
+        let stateDir = try makeTempStateWithWorktree(branch: "drag-files", path: "/tmp/wt-drag-files")
+        defer { try? FileManager.default.removeItem(at: stateDir) }
+        #expect(WorktreeNameLookup.resolvePath(name: "nope", stateDirectory: stateDir) == nil)
+    }
+
+    @Test("Matches sanitized branch name (the same form `team list` prints)")
+    func matchesSanitizedName() throws {
+        // `feature/drag files` sanitizes to `feature/drag-files`; the user
+        // types the sanitized form (matching `team list` output) and the
+        // lookup must find it against the raw branch.
+        let stateDir = try makeTempStateWithWorktree(
+            branch: "feature/drag files",
+            path: "/tmp/wt-feature"
+        )
+        defer { try? FileManager.default.removeItem(at: stateDir) }
+        #expect(
+            WorktreeNameLookup.resolvePath(name: "feature/drag-files", stateDirectory: stateDir)
+                == "/tmp/wt-feature"
+        )
+    }
+
+    private func makeTempStateWithWorktree(branch: String, path: String) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        var state = AppState()
+        state.addRepo(RepoEntry(
+            path: "/tmp/repo",
+            displayName: "repo",
+            worktrees: [WorktreeEntry(path: path, branch: branch)]
+        ))
+        try state.save(to: dir)
+        return dir
     }
 }
