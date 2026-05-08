@@ -857,15 +857,6 @@ struct GrafttyApp: App {
             }
         }
 
-        // Pane-to-agent mapping maintained on AppServices (@MainActor).
-        // Updated on every SessionStart/PostToolUse so keystrokes can be
-        // routed to the right (worktree, runtime). Runtime defaults to
-        // "codex" for panes with no recorded agent identity (v1 heuristic).
-        //
-        // All callbacks fire from handleTeamHook → TeamInboxRequestHandler.hook,
-        // which runs inside MainActor.assumeIsolated. Using assumeIsolated here
-        // lets us read/write MainActor state without crossing an actor boundary.
-
         // Build the engaged-grace scheduler. Its onElapsed fires after
         // 60s of no keystrokes and triggers onMessageArrival so any
         // pending messages drain once the user stops typing.
@@ -898,8 +889,7 @@ struct GrafttyApp: App {
                 // assumeIsolated so we can read MainActor-isolated state.
                 MainActor.assumeIsolated {
                     let sessionName = ZmxLauncher.sessionName(for: paneID)
-                    let records = (try? presenceStorage.listAll()) ?? []
-                    guard let agent = records.first(where: { $0.paneSessionName == sessionName }) else {
+                    guard let agent = presenceStorage.records(forPaneSessionName: sessionName).first else {
                         return
                     }
                     stateRegistry.handleKeystroke(worktree: agent.worktree, runtime: agent.runtime.rawValue)
@@ -1006,8 +996,7 @@ struct GrafttyApp: App {
         terminalManager.paneClosed = { [stateRegistry, inputRegistry, presenceStorage] paneID in
             inputRegistry.removeStamp(paneID: paneID)
             let sessionName = ZmxLauncher.sessionName(for: paneID)
-            let records = (try? presenceStorage.listAll()) ?? []
-            for record in records where record.paneSessionName == sessionName {
+            for record in presenceStorage.records(forPaneSessionName: sessionName) {
                 try? presenceStorage.delete(
                     teamID: record.teamID,
                     worktree: record.worktree,

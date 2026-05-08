@@ -120,6 +120,14 @@ public struct TeamPresenceStorage: Sendable {
         return records
     }
 
+    /// All records whose `paneSessionName` matches `sessionName`. Returns `[]`
+    /// when storage can't be read. Used by keystroke routing and pane-close
+    /// cleanup to find the agent(s) associated with a graftty pane.
+    public func records(forPaneSessionName sessionName: String) -> [TeamPresenceRecord] {
+        let all = (try? listAll()) ?? []
+        return all.filter { $0.paneSessionName == sessionName }
+    }
+
     private func presenceDirectory(teamID: String) -> URL {
         rootDirectory
             .appendingPathComponent(TeamInbox.fileComponent(teamID), isDirectory: true)
