@@ -14,6 +14,42 @@ struct TeamHookCallbacks {
     let onPostToolUse: @Sendable (String, String, String) -> Void
 }
 
+/// Seam for `handleShowPane` so tests can inject a canned scrollback
+/// without spawning a `zmx` subprocess. Production binds to
+/// `ZmxHistorySubprocessReader` below.
+protocol ZmxHistoryReader: Sendable {
+    func history(sessionName: String) throws -> String
+}
+
+struct ZmxHistorySubprocessReader: ZmxHistoryReader {
+    let launcher: ZmxLauncher
+
+    func history(sessionName: String) throws -> String {
+        let process = Process()
+        process.executableURL = launcher.executable
+        process.arguments = ["history", sessionName]
+        process.environment = ProcessInfo.processInfo.environment
+            .merging(["ZMX_DIR": launcher.zmxDir.path]) { _, new in new }
+
+        let stdout = Pipe()
+        process.standardOutput = stdout
+        process.standardError = Pipe()
+
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            throw NSError(
+                domain: "ZmxHistorySubprocessReader",
+                code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: "zmx history failed"]
+            )
+        }
+        let data = stdout.fileHandleForReading.readDataToEndOfFile()
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+}
+
 final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate {
     static let shared = AgentNotificationRouter()
 
@@ -1675,8 +1711,16 @@ struct GrafttyApp: App {
         case .closePane(let path, let index):
             return closePaneByIndex(path: path, index: index,
                                     appState: appState, terminalManager: terminalManager)
-        case .showPane:
-            return .error("not implemented")
+        case .showPane(let path, let index, let lines):
+            guard let launcher = terminalManager.zmxLauncher else {
+                return .error("zmx unavailable")
+            }
+            let reader = ZmxHistorySubprocessReader(launcher: launcher)
+            return handleShowPane(
+                path: path, index: index, lines: lines,
+                appState: appState, terminalManager: terminalManager,
+                reader: reader
+            )
         case .sendPane:
             return .error("not implemented")
         case .teamMessage(let callerPath, let recipient, let text):
@@ -2068,6 +2112,50 @@ struct GrafttyApp: App {
             userInitiated: true
         )
         return .ok
+    }
+
+    @MainActor
+    fileprivate static func handleShowPane(
+        path: String,
+        index: Int,
+        lines: Int,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager,
+        reader: ZmxHistoryReader
+    ) -> ResponseMessage {
+        guard let wt = appState.wrappedValue.worktree(forPath: path) else {
+            return .error("not tracked")
+        }
+        guard wt.state == .running else {
+            return .error("worktree not running")
+        }
+        guard let terminalID = wt.splitTree.leaf(atPaneID: index) else {
+            return .error("no pane with id \(index) in this worktree")
+        }
+        let session = ZmxLauncher.sessionName(for: terminalID.id)
+        do {
+            let body = try reader.history(sessionName: session)
+            return .paneShow(ScrollbackTail.tail(body, lines: lines))
+        } catch {
+            return .error("zmx history failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Test seam: lets the spec test exercise `handleShowPane` without
+    /// constructing a full `AppState`. Skips worktree lookup / state checks
+    /// and goes straight to the reader so we exercise the read+tail logic
+    /// in isolation.
+    @MainActor
+    internal static func handleShowPane_forTesting(
+        path: String, index: Int, lines: Int,
+        reader: ZmxHistoryReader
+    ) -> ResponseMessage {
+        do {
+            let body = try reader.history(sessionName: "graftty-stub")
+            return .paneShow(ScrollbackTail.tail(body, lines: lines))
+        } catch {
+            return .error("zmx history failed")
+        }
     }
 
     private func splitFocusedPane(direction: SplitDirection) {

@@ -79,11 +79,6 @@ struct AttnTodo {
     func attn_4_1() async throws { }
 
     @Test("""
-@spec ATTN-1.15: When `pane show <addr>` is invoked against a running pane, the application shall return the last `--lines` lines (default 100) of that pane's `zmx` scrollback as plain text on the CLI's stdout.
-""", .disabled("not yet implemented"))
-    func attn_1_15() async throws { }
-
-    @Test("""
 @spec ATTN-1.16: When `pane send <addr> <text>` is invoked, the application shall inject `text` into the addressed pane's PTY via `ghostty_surface_text`, and unless `--no-enter` is set, shall additionally synthesize a Return key event via `ghostty_surface_key` (matching `SurfaceHandle.pressReturn`) so TUI consumers in raw mode (Codex, Claude) treat the input as committed.
 """, .disabled("not yet implemented"))
     func attn_1_16() async throws { }
