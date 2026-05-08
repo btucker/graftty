@@ -411,6 +411,29 @@ struct DidYouMeanWiringTests {
     }
 }
 
+@Suite("@spec ATTN-1.23: When the team session-start hook renders the team protocol primer, the application shall include a brief block describing the `pane list` / `pane show` / `pane send` commands and the `<worktree>:<id>` address grammar, with a pointer to `graftty pane <verb> --help` for full examples.")
+struct TeamPrimerPaneBulletsTests {
+    @Test("Primer text includes pane control commands")
+    func primerHasPaneBullets() throws {
+        let primer = TeamHookRenderer.teamProtocolPrimer_forTesting
+        #expect(primer.contains("graftty pane list"))
+        #expect(primer.contains("graftty pane show"))
+        #expect(primer.contains("graftty pane send"))
+        #expect(primer.contains("<worktree>:<id>"))
+        #expect(primer.contains("--help"))
+    }
+
+    @Test("Primer flags lack of consent layer for pane send")
+    func primerWarnsAboutPaneSend() throws {
+        let primer = TeamHookRenderer.teamProtocolPrimer_forTesting
+        #expect(
+            primer.contains("no inbox") ||
+            primer.contains("consent layer") ||
+            primer.contains("straight to the PTY")
+        )
+    }
+}
+
 @Suite("Pane subcommands ship with worked-example discussion blocks")
 struct PaneDiscussionTextTests {
     @Test("`graftty pane show --help` includes <wt>:<id> example")

@@ -78,9 +78,4 @@ struct AttnTodo {
 """, .disabled("not yet implemented"))
     func attn_4_1() async throws { }
 
-    @Test("""
-@spec ATTN-1.23: When the team session-start hook renders the team protocol primer, the application shall include a brief block describing the `pane list` / `pane show` / `pane send` commands and the `<worktree>:<id>` address grammar, with a pointer to `graftty pane <verb> --help` for full examples.
-""", .disabled("not yet implemented"))
-    func attn_1_23() async throws { }
-
 }
