@@ -60,6 +60,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.21** When a terminal title action sanitizes to a rendered sidebar title equal to the current fallback title, the application shall store the raw title without publishing a sidebar invalidation.
 
+**LAYOUT-2.22** When a PaneTitleRow's pane title would render wider than the row's available width, the row's reported intrinsic size shall remain bounded by that width so the enclosing worktree block's `.listRowInsets(leading: -20)` outdent is preserved and the WorktreeRow above does not appear indented.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
