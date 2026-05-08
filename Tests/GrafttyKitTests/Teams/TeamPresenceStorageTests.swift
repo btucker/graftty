@@ -87,6 +87,31 @@ struct TeamPresenceStorageTests {
         #expect(all.first?.paneSessionName == "graftty-bbbbbbbb")
     }
 
+    @Test("@spec TEAM-IDLE-2.15: Deleting by paneSessionName mirrors a pane-close cleanup sweep.")
+    func paneCloseSweepRemovesMatchingRecord() throws {
+        let storage = try makeStorage()
+        let registeredAt = Date(timeIntervalSince1970: 1_700_000_000)
+        try storage.write(.init(
+            teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
+            paneSessionName: "graftty-aaaaaaaa", pid: 1, registeredAt: registeredAt
+        ))
+        try storage.write(.init(
+            teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
+            paneSessionName: "graftty-bbbbbbbb", pid: 2, registeredAt: registeredAt
+        ))
+        // Mimic the GrafttyApp pane-close cleanup loop.
+        let closingSessionName = "graftty-aaaaaaaa"
+        for record in try storage.listAll() where record.paneSessionName == closingSessionName {
+            try storage.delete(
+                teamID: record.teamID, worktree: record.worktree,
+                runtime: record.runtime, paneSessionName: record.paneSessionName
+            )
+        }
+        let surviving = try storage.listAll()
+        #expect(surviving.count == 1)
+        #expect(surviving.first?.paneSessionName == "graftty-bbbbbbbb")
+    }
+
     @Test("Delete with paneSessionName == nil removes only the worktree-only record.")
     func deleteNilPaneOnlyTouchesWorktreeRecord() throws {
         let storage = try makeStorage()
