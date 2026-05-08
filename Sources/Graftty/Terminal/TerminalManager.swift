@@ -619,6 +619,13 @@ final class TerminalManager: ObservableObject {
         surfaces.first(where: { ZmxLauncher.sessionName(for: $0.key.id) == sessionName })?.value
     }
 
+    /// Reverse-lookup of the pane UUID whose pane derives the given
+    /// zmx session name. Returns nil if no surface matches (e.g. pane
+    /// closed). O(n) over the surface set, same cost class as `handle`.
+    func paneID(forSessionName sessionName: String) -> UUID? {
+        surfaces.first(where: { ZmxLauncher.sessionName(for: $0.key.id) == sessionName })?.key.id
+    }
+
     /// Tell libghostty whether a surface is currently visible. On visible,
     /// force a repaint so a re-shown pane presents a clean full frame.
     func setVisible(_ visible: Bool, for terminalID: TerminalID) {
