@@ -1360,6 +1360,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PORTS-3.6** When a `PortChip` is hovered, the application shall display a tooltip reading `Open http://localhost:<port>/`.
 
+**PORTS-3.7** When a `PortChip` renders a port number, the application shall display the digits without locale grouping separators (e.g., `:8080`, not `:8,080`).
+
 ### PORTS-4.x
 
 **PORTS-4.1** Registered pane with no listeners produces empty bindings

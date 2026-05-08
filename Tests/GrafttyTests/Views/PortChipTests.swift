@@ -25,4 +25,12 @@ struct PortChipTests {
         #expect(PortChip.iconName(for: loop) == "personalhotspot")
         #expect(PortChip.iconName(for: lan)  == "globe")
     }
+
+    @Test("@spec PORTS-3.7: When a `PortChip` renders a port number, the application shall display the digits without locale grouping separators (e.g., `:8080`, not `:8,080`).")
+    func labelHasNoGroupingSeparator() {
+        let four = PortBinding(port: 8080, scope: .loopback, processName: "n", pid: 1)
+        let five = PortBinding(port: 53000, scope: .loopback, processName: "n", pid: 1)
+        #expect(PortChip.label(for: four) == ":8080")
+        #expect(PortChip.label(for: five) == ":53000")
+    }
 }
