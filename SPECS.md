@@ -250,6 +250,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-9.2** When the user activates "Open Ghostty Settings"
 
+### TERM-10.x
+
+**TERM-10.1** When the user drops one or more file URLs onto a terminal pane, the application shall insert each file's POSIX path at the cursor position. Paths that contain shell-special characters shall be POSIX-single-quoted (internal `'` rendered as `'\''`) so the inserted text can be passed unchanged to bash/zsh; paths made entirely of shell-safe characters shall be inserted verbatim. Multiple paths shall be joined with a single space, matching how Ghostty.app, Terminal.app, and iTerm2 render multi-file drops.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
