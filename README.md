@@ -27,6 +27,42 @@ indicator appears in the window titlebar when a new version is
 available, and clicking it installs the update. You can also trigger a
 check manually from `Graftty → Check for Updates…`.
 
+## Agent teams
+
+When a repo has more than one worktree open, Graftty treats it as an
+*agent team*. AI coding agents (Claude Code, Codex, etc.) running inside
+each worktree can register their presence, message each other through a
+per-worktree inbox, and react to PR/CI events that affect the team —
+useful when you've got one agent per branch grinding through PRs and
+want them to coordinate.
+
+Enable it under **Settings → Agent Teams**. From there you choose which
+events (PR state, merges, CI conclusion, mergability) get routed to the
+root agent, the per-worktree agent, peer worktrees, or any combination,
+and customize the templated session and per-event prompts each agent
+receives.
+
+Each agent's session-start hook is decorated with team context plus the
+CLI surface for coordination:
+
+```sh
+graftty team register --runtime claude   # announce presence at session start
+graftty team list                        # see teammates, roles, and running state
+graftty team send <member> "<text>"      # direct message a teammate's inbox
+graftty team broadcast "<text>"          # message everyone on the team
+graftty team inbox                       # read your incoming messages
+```
+
+Inbox deliveries wait for the recipient agent to go idle, so they don't
+interrupt a running tool call. *Window → Team Activity Log* opens a
+unified transcript of every team event and inter-agent message for the
+focused worktree's team.
+
+In progress on the `allow-controlling-panes` branch: keystroke-level
+pane control across worktrees (`graftty pane show` / `graftty pane
+send`), so a lead agent can read and drive a teammate's pane directly
+when an inbox message isn't enough.
+
 ## Building
 
 Requires Xcode 15+ and macOS 14 Sonoma or later.
