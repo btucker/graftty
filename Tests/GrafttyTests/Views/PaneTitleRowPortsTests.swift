@@ -1,6 +1,7 @@
 // Tests/GrafttyTests/Views/PaneTitleRowPortsTests.swift
 import Testing
 import SwiftUI
+import AppKit
 import GrafttyKit
 @testable import Graftty
 
@@ -43,5 +44,27 @@ struct PaneTitleRowPortsTests {
             ]
         )
         #expect(!row.shouldRenderPortChips)
+    }
+
+    @MainActor
+    @Test("@spec LAYOUT-2.22: When a PaneTitleRow's pane title would render wider than the row's available width, the row's reported intrinsic size shall remain bounded by that width so the enclosing worktree block's `.listRowInsets(leading: -20)` outdent is preserved and the WorktreeRow above does not appear indented.")
+    func paneTitleRowSizeBoundedByContainer() {
+        let containerWidth: CGFloat = 220
+        let row = PaneTitleRow(
+            title: String(repeating: "really-long-pane-title-segment-", count: 6),
+            isActiveWorktree: true,
+            isFocusedPane: true,
+            theme: .fallback,
+            attentionText: nil,
+            portBindings: [
+                PortBinding(port: 3000, scope: .loopback, processName: "node", pid: 1)
+            ]
+        )
+        // `sizeThatFits(in:)` proposes a constrained width down the view
+        // tree; `fittingSize` would query with `.infinity` and miss the
+        // overflow this test guards against.
+        let host = NSHostingController(rootView: row)
+        let preferred = host.sizeThatFits(in: CGSize(width: containerWidth, height: 1000))
+        #expect(preferred.width <= containerWidth + 0.5)
     }
 }

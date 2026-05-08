@@ -117,19 +117,24 @@ struct PaneTitleRow: View {
 /// Minimal flow layout: wraps subviews to next line at container width
 /// while preserving inline layout on each row. Used by `PaneTitleRow` so
 /// wrapped port chips align under the title text rather than flush to
-/// the row's leading edge (PORTS-3.3).
+/// the row's leading edge (PORTS-3.3). Subviews are queried with the
+/// row's available width (not `.unspecified`) so a `Text` with
+/// `.lineLimit(1)` truncates instead of reporting its unwrapped natural
+/// width — that overflow is what would otherwise clip the enclosing
+/// worktree block's `.listRowInsets` outdent (LAYOUT-2.22).
 struct FlowLayout: Layout {
     var spacing: CGFloat = 4
     var rowSpacing: CGFloat = 3
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let maxWidth = proposal.width ?? .infinity
+        let childProposal = ProposedViewSize(width: maxWidth, height: nil)
         var rowWidth: CGFloat = 0
         var rowHeight: CGFloat = 0
         var totalHeight: CGFloat = 0
         var maxRowWidth: CGFloat = 0
         for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
+            let size = subview.sizeThatFits(childProposal)
             if rowWidth + size.width > maxWidth, rowWidth > 0 {
                 totalHeight += rowHeight + rowSpacing
                 maxRowWidth = max(maxRowWidth, rowWidth - spacing)
@@ -145,11 +150,12 @@ struct FlowLayout: Layout {
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let childProposal = ProposedViewSize(width: bounds.width, height: nil)
         var x = bounds.minX
         var y = bounds.minY
         var rowHeight: CGFloat = 0
         for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
+            let size = subview.sizeThatFits(childProposal)
             if x + size.width > bounds.maxX, x > bounds.minX {
                 x = bounds.minX
                 y += rowHeight + rowSpacing
