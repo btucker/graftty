@@ -343,3 +343,44 @@ final class CapturingTextSink: TextSink, @unchecked Sendable {
     private(set) var text: String = ""
     func write(_ text: String) { self.text += text }
 }
+
+@Suite("Pane subcommands ship with worked-example discussion blocks")
+struct PaneDiscussionTextTests {
+    @Test("`graftty pane show --help` includes <wt>:<id> example")
+    func showHelpHasExamples() throws {
+        let help = PaneShow.helpMessage()
+        #expect(help.contains("drag-files:1"))
+        #expect(help.contains("Examples:"))
+    }
+
+    @Test("`graftty pane send --help` warns about no consent layer")
+    func sendHelpWarns() throws {
+        let help = PaneSend.helpMessage()
+        #expect(help.contains("no inbox") || help.contains("consent"))
+    }
+
+    @Test("`graftty pane list --help` documents the optional <wt>")
+    func listHelpExtended() throws {
+        let help = PaneList.helpMessage()
+        #expect(help.contains("worktree") || help.contains("<worktree>"))
+    }
+
+    @Test("`graftty pane --help` shows the address grammar")
+    func paneHelpShowsGrammar() throws {
+        let help = Pane.helpMessage()
+        #expect(help.contains("<worktree>:<id>") || help.contains("worktree>:<id"))
+    }
+
+    @Test("`graftty pane add --help` includes a worktree-name example")
+    func addHelpHasExample() throws {
+        let help = PaneAdd.helpMessage()
+        #expect(help.contains("drag-files") || help.contains("<worktree>"))
+    }
+
+    @Test("`graftty pane close --help` includes both id forms")
+    func closeHelpHasExamples() throws {
+        let help = PaneClose.helpMessage()
+        #expect(help.contains("graftty pane close 2") || help.contains("close 2"))
+        #expect(help.contains("drag-files:2") || help.contains("<worktree>:<id>"))
+    }
+}

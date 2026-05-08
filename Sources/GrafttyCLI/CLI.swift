@@ -44,7 +44,16 @@ struct Notify: ParsableCommand {
 
 struct Pane: ParsableCommand {
     static let configuration = CommandConfiguration(
-        abstract: "Add, remove, or list panes in the current worktree",
+        abstract: "Add, remove, list, show, or send to panes — in any worktree",
+        discussion: """
+        Address forms (shared by every subcommand):
+          (omitted)         current worktree's only pane
+          <id>              current worktree, pane <id>
+          <worktree>        named worktree's only pane (errors if multiple)
+          <worktree>:<id>   named worktree, pane <id>
+
+        Worktree names match what `graftty team list` prints.
+        """,
         subcommands: [PaneList.self, PaneAdd.self, PaneClose.self, PaneShow.self, PaneSend.self]
     )
 }
@@ -52,7 +61,12 @@ struct Pane: ParsableCommand {
 struct PaneList: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "list",
-        abstract: "List panes in a worktree (default: current)"
+        abstract: "List panes in a worktree (default: current)",
+        discussion: """
+        Examples:
+          graftty pane list                     # this worktree's panes
+          graftty pane list drag-files          # drag-files' panes
+        """
     )
 
     @Argument(help: "Worktree name (defaults to current worktree)")
@@ -95,7 +109,14 @@ struct PaneList: ParsableCommand {
 struct PaneAdd: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "add",
-        abstract: "Add a new pane by splitting the focused pane in a worktree (default: current)"
+        abstract: "Add a new pane by splitting the focused pane in a worktree (default: current)",
+        discussion: """
+        Examples:
+          graftty pane add                                    # split this worktree
+          graftty pane add drag-files                         # split drag-files
+          graftty pane add drag-files --command "pnpm test"   # split + run command
+          graftty pane add --direction down                   # vertical split below
+        """
     )
 
     @Argument(help: "Worktree name (defaults to current worktree)")
@@ -128,7 +149,14 @@ struct PaneAdd: ParsableCommand {
 struct PaneClose: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "close",
-        abstract: "Close a pane by its 1-based ID as shown by `pane list`"
+        abstract: "Close a pane by its 1-based ID as shown by `pane list`",
+        discussion: """
+        Examples:
+          graftty pane close 2                  # this worktree, pane 2
+          graftty pane close drag-files:1       # drag-files, pane 1
+
+        Use `graftty pane list` to find ids.
+        """
     )
 
     @Argument(help: "Pane address: '<id>' or '<worktree>:<id>'")
@@ -148,7 +176,15 @@ struct PaneClose: ParsableCommand {
 struct PaneShow: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "show",
-        abstract: "Print the last lines of a pane's terminal output"
+        abstract: "Print the last lines of a pane's terminal output",
+        discussion: """
+        Examples:
+          graftty pane show                     # this worktree's only pane
+          graftty pane show 2                   # this worktree, pane 2
+          graftty pane show drag-files          # drag-files' only pane (errors if >1)
+          graftty pane show drag-files:1        # drag-files, pane 1
+          graftty pane show drag-files:1 --lines 500
+        """
     )
 
     @Argument(help: "Pane address: omit, '<id>', '<worktree>', or '<worktree>:<id>'")
