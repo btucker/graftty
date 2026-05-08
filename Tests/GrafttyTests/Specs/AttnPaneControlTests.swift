@@ -51,3 +51,37 @@ struct PaneShowHandlerTests {
         func history(sessionName: String) throws -> String { output }
     }
 }
+
+@Suite("@spec ATTN-1.16: When `pane send <addr> <text>` is invoked, the application shall inject `text` into the addressed pane's PTY via `ghostty_surface_text`, and unless `--no-enter` is set, shall additionally synthesize a Return key event via `ghostty_surface_key` (matching `SurfaceHandle.pressReturn`) so TUI consumers in raw mode (Codex, Claude) treat the input as committed.")
+struct PaneSendHandlerTests {
+    @Test("Default flag types text and presses Return")
+    @MainActor
+    func sendsAndCommits() async throws {
+        let sink = RecordingPaneInputSink()
+        let response = GrafttyApp.handleSendPane_forTesting(
+            text: "pnpm test", pressEnter: true, sink: sink
+        )
+        #expect(response == .ok)
+        #expect(sink.typedText == ["pnpm test"])
+        #expect(sink.returnPresses == 1)
+    }
+
+    @Test("--no-enter types text only")
+    @MainActor
+    func noEnterTypesOnly() async throws {
+        let sink = RecordingPaneInputSink()
+        let response = GrafttyApp.handleSendPane_forTesting(
+            text: "y", pressEnter: false, sink: sink
+        )
+        #expect(response == .ok)
+        #expect(sink.typedText == ["y"])
+        #expect(sink.returnPresses == 0)
+    }
+
+    private final class RecordingPaneInputSink: PaneInputSink {
+        var typedText: [String] = []
+        var returnPresses: Int = 0
+        func typeText(_ text: String) { typedText.append(text) }
+        func pressReturn() { returnPresses += 1 }
+    }
+}

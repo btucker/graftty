@@ -87,6 +87,22 @@ struct ZmxHistorySubprocessReader: ZmxHistoryReader {
     }
 }
 
+/// Seam for `handleSendPane`: production binds to a thin wrapper over
+/// `SurfaceHandle.typeText` / `SurfaceHandle.pressReturn`. Tests inject
+/// a recording stub so we can assert keystroke ordering without
+/// driving a libghostty surface.
+protocol PaneInputSink: AnyObject {
+    func typeText(_ text: String)
+    func pressReturn()
+}
+
+private final class SurfaceHandlePaneInputSink: PaneInputSink {
+    let handle: SurfaceHandle
+    init(handle: SurfaceHandle) { self.handle = handle }
+    func typeText(_ text: String) { handle.typeText(text) }
+    func pressReturn() { handle.pressReturn() }
+}
+
 final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate {
     static let shared = AgentNotificationRouter()
 
@@ -1758,8 +1774,11 @@ struct GrafttyApp: App {
                 appState: appState, terminalManager: terminalManager,
                 reader: reader
             )
-        case .sendPane:
-            return .error("not implemented")
+        case .sendPane(let path, let index, let text, let pressEnter):
+            return handleSendPane(
+                path: path, index: index, text: text, pressEnter: pressEnter,
+                appState: appState, terminalManager: terminalManager
+            )
         case .teamMessage(let callerPath, let recipient, let text):
             return handleTeamSend(
                 callerPath: callerPath,
@@ -2193,6 +2212,49 @@ struct GrafttyApp: App {
         } catch {
             return .error("zmx history failed: \(error.localizedDescription)")
         }
+    }
+
+    @MainActor
+    fileprivate static func handleSendPane(
+        path: String,
+        index: Int,
+        text: String,
+        pressEnter: Bool,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager
+    ) -> ResponseMessage {
+        guard let wt = appState.wrappedValue.worktree(forPath: path) else {
+            return .error("not tracked")
+        }
+        guard wt.state == .running else {
+            return .error("worktree not running")
+        }
+        guard let terminalID = wt.splitTree.leaf(atPaneID: index) else {
+            return .error("no pane with id \(index) in this worktree")
+        }
+        guard let handle = terminalManager.handle(for: terminalID) else {
+            return .error("pane has no surface")
+        }
+        return handleSendPane_forTesting(
+            text: text,
+            pressEnter: pressEnter,
+            sink: SurfaceHandlePaneInputSink(handle: handle)
+        )
+    }
+
+    /// Test seam: lets the spec test exercise the typeText/pressReturn
+    /// ordering without driving a libghostty surface. Production callers
+    /// go through `handleSendPane` which performs worktree/pane validation
+    /// before constructing a `SurfaceHandlePaneInputSink`.
+    @MainActor
+    internal static func handleSendPane_forTesting(
+        text: String,
+        pressEnter: Bool,
+        sink: PaneInputSink
+    ) -> ResponseMessage {
+        sink.typeText(text)
+        if pressEnter { sink.pressReturn() }
+        return .ok
     }
 
     private func splitFocusedPane(direction: SplitDirection) {
