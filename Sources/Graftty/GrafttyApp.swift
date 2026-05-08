@@ -852,6 +852,25 @@ struct GrafttyApp: App {
             }
         }
 
+        // Resolve the current set of registered codex panes for a worktree.
+        // Reads TeamPresenceStorage on the main actor (file count is bounded
+        // by active-agent count — typically <20) and reverse-resolves each
+        // recorded paneSessionName via TerminalManager. Captures `tm` (the
+        // already-locally-bound TerminalManager from line 711) to avoid
+        // colliding with the `let terminalManager = tm` shadow declared
+        // later in this same function.
+        let codexPanesIn: @Sendable (String) -> [UUID] = { [tm] worktreePath in
+            MainActor.assumeIsolated {
+                let records = (try? presenceStorage.listAll()) ?? []
+                let codexSessions = records
+                    .filter { $0.worktree == worktreePath && $0.runtime == .codex }
+                    .compactMap { $0.paneSessionName }
+                return codexSessions.compactMap { sessionName in
+                    tm.paneID(forSessionName: sessionName)
+                }
+            }
+        }
+
         // Pane-to-agent mapping maintained on AppServices (@MainActor).
         // Updated on every SessionStart/PostToolUse so keystrokes can be
         // routed to the right (worktree, runtime). Runtime defaults to
@@ -961,15 +980,11 @@ struct GrafttyApp: App {
                 guard let service = idleService else { return }
                 for (recipientWorktree, _) in byWorktree {
                     Task { @MainActor in
-                        let paneID = resolvePaneID(recipientWorktree)
-                        // Task 10 will replace this with codexPanesIn(...) so
-                        // multiple codex panes in the same worktree all get
-                        // nudged. For now: pass the single resolved paneID
-                        // wrapped in a list (or empty if unresolved).
+                        let paneIDs = codexPanesIn(recipientWorktree)
                         await service.onMessageArrival(
                             team: teamID,
                             worktree: recipientWorktree,
-                            paneIDs: paneID.map { [$0] } ?? []
+                            paneIDs: paneIDs
                         )
                     }
                 }
