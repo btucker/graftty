@@ -14,6 +14,7 @@ struct TeamPresenceTests {
             teamID: "team-abc",
             worktree: "feature-foo",
             runtime: .claude,
+            paneSessionName: nil,
             pid: 4242,
             registeredAt: Date(timeIntervalSince1970: 1_780_000_000)
         )
@@ -45,6 +46,7 @@ struct TeamPresenceTests {
             teamID: "team-abc",
             worktree: "feature-foo",
             runtime: .claude,
+            paneSessionName: nil,
             pid: 4242,
             registeredAt: Date()
         )

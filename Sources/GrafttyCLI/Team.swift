@@ -283,6 +283,7 @@ struct TeamRegister: ParsableCommand {
             teamID: teamID,
             worktree: worktreeName,
             runtime: runtimeValue,
+            paneSessionName: nil,
             pid: ProcessInfo.processInfo.processIdentifier,
             registeredAt: Date()
         )
