@@ -28,10 +28,14 @@ extension SessionClient {
     /// pair. Both `SingleSessionView` (initial / re-dial) and
     /// `WorktreeDetailView` (preview pool) need the same triplet — URL
     /// composition + WS construction + SessionClient binding.
-    static func live(baseURL: URL, sessionName: String) -> SessionClient {
+    static func live(
+        baseURL: URL,
+        sessionName: String,
+        role: Role = .fullscreen
+    ) -> SessionClient {
         let wsURL = RootView.makeWebSocketURL(base: baseURL, session: sessionName)
         let ws = URLSessionWebSocketClient(url: wsURL)
-        return SessionClient(sessionName: sessionName, webSocket: ws)
+        return SessionClient(sessionName: sessionName, webSocket: ws, role: role)
     }
 }
 #endif

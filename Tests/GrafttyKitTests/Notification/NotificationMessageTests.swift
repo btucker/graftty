@@ -259,6 +259,31 @@ struct NotificationMessageTests {
         #expect(decoded == original)
     }
 
+    @Test func showPaneRoundTrip() throws {
+        let original: NotificationMessage = .showPane(path: "/wt", index: 2, lines: 100)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(NotificationMessage.self, from: data)
+        #expect(decoded == original)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(json?["type"] as? String == "show_pane")
+    }
+
+    @Test func sendPaneRoundTrip() throws {
+        let original: NotificationMessage = .sendPane(path: "/wt", index: 1, text: "ls\n", pressEnter: true)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(NotificationMessage.self, from: data)
+        #expect(decoded == original)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(json?["type"] as? String == "send_pane")
+    }
+
+    @Test func paneShowResponseRoundTrip() throws {
+        let original: ResponseMessage = .paneShow("hello\nworld\n")
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(ResponseMessage.self, from: data)
+        #expect(decoded == original)
+    }
+
     @Test func teamInboxResponseRoundTripsMessages() throws {
         let message = TeamInboxMessage(
             id: "0001",
