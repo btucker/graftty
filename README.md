@@ -66,10 +66,31 @@ you mid-edit.
 *Window → Team Activity Log* opens a unified transcript of every team
 event and inter-agent message for the focused worktree's team.
 
-In progress on the `allow-controlling-panes` branch: keystroke-level
-pane control across worktrees (`graftty pane show` / `graftty pane
-send`), so a lead agent can read and drive a teammate's pane directly
-when an inbox message isn't enough.
+When inbox messages aren't enough, a lead agent can drive a teammate's
+pane directly — see **CLI** below for `graftty pane show` (read another
+worktree's terminal) and `graftty pane send` (inject keystrokes).
+
+## CLI
+
+The bundled `graftty` CLI lets a process inside a Graftty pane drive the app, and lets one agent control panes in another worktree.
+
+```sh
+graftty notify "tests passing"               # set a sidebar attention badge
+graftty pane list                            # panes in the current worktree
+graftty pane add --command "claude"          # split + run a command
+graftty pane close 2                         # close pane 2
+
+# Cross-worktree pane control:
+graftty pane list drag-files                 # list panes in another worktree
+graftty pane show drag-files:1               # last 100 lines of that pane's output
+graftty pane show drag-files:1 --lines 500   # more scrollback
+graftty pane send drag-files:1 "pnpm test"   # type the command and press Enter
+graftty pane send drag-files:1 "y" --no-enter  # type without committing
+```
+
+`<addr>` is `<id>` (current worktree, that pane), `<worktree>` (worktree's only pane), or `<worktree>:<id>`. Worktree names match what `graftty team list` prints. Run `graftty pane <verb> --help` for examples on every subcommand.
+
+`graftty pane send` writes raw bytes to the addressed pane's PTY — there's no inbox or consent layer, so the keystrokes land in whatever process is reading that pane's stdin. Use `graftty team send` for cooperative messaging where the receiving agent decides what to do.
 
 ## Building
 
