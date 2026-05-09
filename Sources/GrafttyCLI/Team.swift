@@ -146,13 +146,17 @@ struct TeamHook: ParsableCommand {
         let resolvedSessionID = sessionID
             ?? stdinSessionID
             ?? ProcessInfo.processInfo.environment["GRAFTTY_AGENT_SESSION_ID"]
+        let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
+            env: ProcessInfo.processInfo.environment
+        )
         do {
             let response = try SocketClient.sendExpectingResponse(
                 .teamHook(
                     callerWorktree: worktreePath,
                     runtime: runtime,
                     event: event,
-                    sessionID: resolvedSessionID
+                    sessionID: resolvedSessionID,
+                    paneSessionName: paneSessionName
                 )
             )
             switch response {
@@ -279,10 +283,14 @@ struct TeamRegister: ParsableCommand {
         }
         let storage = TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
         let teamID = TeamLookup.id(of: team)
+        let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
+            env: ProcessInfo.processInfo.environment
+        )
         let record = TeamPresenceRecord(
             teamID: teamID,
             worktree: worktreeName,
             runtime: runtimeValue,
+            paneSessionName: paneSessionName,
             pid: ProcessInfo.processInfo.processIdentifier,
             registeredAt: Date()
         )
@@ -292,6 +300,7 @@ struct TeamRegister: ParsableCommand {
                 "worktree": worktreeName,
                 "runtime": runtimeValue.rawValue,
                 "pid": String(record.pid),
+                "pane_session_name": paneSessionName ?? "",
             ])
         )
     }
@@ -315,23 +324,22 @@ struct TeamUnregister: ParsableCommand {
         }
         let storage = TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
         let teamID = TeamLookup.id(of: team)
-        // Only emit `unregistered` if there was actually a record to clear,
-        // so repeat-invocations from a wrapper script don't spam the log.
-        let priorRecord = try? storage.read(
+        let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
+            env: ProcessInfo.processInfo.environment
+        )
+        let prior = try TeamUnregisterCore.unregister(
+            storage: storage,
             teamID: teamID,
             worktree: worktreeName,
-            runtime: runtimeValue
+            runtime: runtimeValue,
+            paneSessionName: paneSessionName
         )
-        try storage.delete(
-            teamID: teamID,
-            worktree: worktreeName,
-            runtime: runtimeValue
-        )
-        if priorRecord != nil {
+        if prior != nil {
             try? TeamEventLog.defaultLog().append(
                 .init(teamID: teamID, kind: .unregistered, detail: [
                     "worktree": worktreeName,
                     "runtime": runtimeValue.rawValue,
+                    "pane_session_name": paneSessionName ?? "",
                 ])
             )
         }

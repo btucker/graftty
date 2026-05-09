@@ -9,9 +9,9 @@ import GrafttyProtocol
 /// stored on `AppServices` so the static `handleTeamHook` path can pick
 /// them up without requiring an instance reference.
 struct TeamHookCallbacks {
-    let onStop: @Sendable (String, String, String) -> Void
-    let onSessionStart: @Sendable (String, String, String) -> Void
-    let onPostToolUse: @Sendable (String, String, String) -> Void
+    let onStop: @Sendable (String, String, String, String?) -> Void
+    let onSessionStart: @Sendable (String, String, String, String?) -> Void
+    let onPostToolUse: @Sendable (String, String, String, String?) -> Void
 }
 
 /// Seam for `handleShowPane` so tests can inject a canned scrollback
@@ -146,10 +146,6 @@ final class AppServices {
     var agentStateRegistry: WorktreeAgentStateRegistry?
     var inputActivityRegistry: PaneInputActivityRegistry?
     var graceScheduler: EngagedGraceScheduler?
-    /// Pane → (worktree, runtime) map. Updated from SessionStart/PostToolUse
-    /// callbacks so the keystroke observer can route keystrokes to the right
-    /// agent. All access is on the main actor (AppServices is @MainActor).
-    var agentForPane: [UUID: (worktree: String, runtime: String)] = [:]
     /// Holds the `TeamInboxObserver` cancellables so the observers stay
     /// active for the lifetime of the app (one observer per team-ID started
     /// at launch for each known repo).
@@ -888,108 +884,92 @@ struct GrafttyApp: App {
             nudgeSender: ZmxNudgeSender(writer: AppZmxWriter(terminalManager: terminalManager))
         )
 
-        // Shared helper for the five pane-resolution sites in this
-        // wiring block. Hops onto MainActor (callers are @Sendable
-        // closures that may be invoked off the main thread) and looks
-        // up the worktree's primary pane via the existing extension.
-        let resolvePaneID: @Sendable (String) -> UUID? = { worktreePath in
+        // Resolve the current set of registered codex panes for a worktree.
+        // Reads TeamPresenceStorage on the main actor (file count is bounded
+        // by active-agent count — typically <20) and reverse-resolves each
+        // recorded paneSessionName via TerminalManager. Captures `tm` (the
+        // already-locally-bound TerminalManager from line 711) to avoid
+        // colliding with the `let terminalManager = tm` shadow declared
+        // later in this same function.
+        let codexPanesIn: @Sendable (String) -> [UUID] = { [tm] worktreePath in
             MainActor.assumeIsolated {
-                binding.wrappedValue.worktree(forPath: worktreePath)?.firstPane?.id
+                let records = (try? presenceStorage.listAll()) ?? []
+                let codexSessions = records
+                    .filter { $0.worktree == worktreePath && $0.runtime == .codex }
+                    .compactMap { $0.paneSessionName }
+                return codexSessions.compactMap { sessionName in
+                    tm.paneID(forSessionName: sessionName)
+                }
             }
         }
-
-        // Resolve a recipient worktree's runtime so the IdleDelivery
-        // runtime-gate can correctly skip Claude (whose asyncRewake
-        // watcher is the canonical delivery path). team_message rows
-        // don't carry an explicit `to.runtime`, so without this the
-        // dispatch site would blindly default to "codex" and zmx-send
-        // would fire alongside asyncRewake — the double-delivery the
-        // user observed.
-        let resolveRuntime: @Sendable (String, UUID?) -> String? = { worktreePath, paneID in
-            MainActor.assumeIsolated {
-                if let paneID, let agent = services.agentForPane[paneID] {
-                    return agent.runtime
-                }
-                if let record = try? presenceStorage.listAll().first(where: { $0.worktree == worktreePath }) {
-                    return record.runtime.rawValue
-                }
-                return nil
-            }
-        }
-
-        // Pane-to-agent mapping maintained on AppServices (@MainActor).
-        // Updated on every SessionStart/PostToolUse so keystrokes can be
-        // routed to the right (worktree, runtime). Runtime defaults to
-        // "codex" for panes with no recorded agent identity (v1 heuristic).
-        //
-        // All callbacks fire from handleTeamHook → TeamInboxRequestHandler.hook,
-        // which runs inside MainActor.assumeIsolated. Using assumeIsolated here
-        // lets us read/write MainActor state without crossing an actor boundary.
 
         // Build the engaged-grace scheduler. Its onElapsed fires after
         // 60s of no keystrokes and triggers onMessageArrival so any
         // pending messages drain once the user stops typing.
         let graceScheduler = EngagedGraceScheduler(
             state: stateRegistry,
-            onElapsed: { [weak idleService] worktree, runtime in
+            onElapsed: { [weak idleService] worktree, _ in
                 // onElapsed is @MainActor, so binding.wrappedValue is
                 // accessible directly — no MainActor.assumeIsolated dance.
                 guard let service = idleService else { return }
-                let paneID = resolvePaneID(worktree)
+                let paneIDs = codexPanesIn(worktree)
                 guard let teamID = binding.wrappedValue.repos.first(where: {
                     $0.worktrees.contains(where: { $0.path == worktree })
                 })?.path else { return }
                 Task {
                     await service.onMessageArrival(
-                        team: teamID, worktree: worktree, runtime: runtime, paneID: paneID
+                        team: teamID, worktree: worktree, paneIDs: paneIDs
                     )
                 }
             }
         )
 
         // Wire the keystroke observer. The onKeystroke closure resolves
-        // pane → (worktree, runtime) from AppServices.agentForPane map and
-        // drives the state registry + grace timer. Fires on MainActor.
+        // pane → (worktree, runtime) by reading TeamPresenceStorage and
+        // matching the pane's session name, then drives the state registry +
+        // grace timer. Fires on MainActor.
         let inputObserver = PaneInputActivityObserver(
             registry: inputRegistry,
-            onKeystroke: { [weak graceScheduler, weak services] paneID in
+            onKeystroke: { [weak graceScheduler, presenceStorage] paneID in
                 // SurfaceNSView.keyDown fires on main thread. Use
                 // assumeIsolated so we can read MainActor-isolated state.
                 MainActor.assumeIsolated {
-                    guard let agent = services?.agentForPane[paneID] else { return }
-                    stateRegistry.handleKeystroke(worktree: agent.worktree, runtime: agent.runtime)
-                    graceScheduler?.bump(worktree: agent.worktree, runtime: agent.runtime)
+                    let sessionName = ZmxLauncher.sessionName(for: paneID)
+                    guard let agent = presenceStorage.records(forPaneSessionName: sessionName).first else {
+                        return
+                    }
+                    stateRegistry.handleKeystroke(worktree: agent.worktree, runtime: agent.runtime.rawValue)
+                    graceScheduler?.bump(worktree: agent.worktree, runtime: agent.runtime.rawValue)
                 }
             }
         )
 
         // Wire the three hook callbacks.
         // These fire from handleTeamHook, which runs inside MainActor.assumeIsolated.
+        // Registration is owned by `graftty team register`; hooks are pure
+        // event signals that update the state machine.
         let hookCallbacks = TeamHookCallbacks(
-            onStop: { [weak idleService] team, worktree, runtime in
-                guard let service = idleService else { return }
-                let paneID = resolvePaneID(worktree)
+            onStop: { [weak idleService, tm] team, worktree, runtime, paneSessionName in
+                let paneID: UUID? = MainActor.assumeIsolated {
+                    paneSessionName.flatMap { tm.paneID(forSessionName: $0) }
+                }
                 // Flip the state machine before the delivery evaluator runs.
                 // Without this, state stays `.active` from the prior
                 // SessionStart and `IdleDeliveryService.maybeDeliver` skips.
                 let lastInputAt = paneID.flatMap { inputRegistry.lastInputAt(paneID: $0) }
                 stateRegistry.handleStop(worktree: worktree, runtime: runtime, lastInputAt: lastInputAt)
-                Task { await service.onStop(team: team, worktree: worktree, runtime: runtime, paneID: paneID) }
+                // TEAM-IDLE-2.14: only codex's Stop event drives idle delivery.
+                // Claude's Stop is fired even when the pane isn't accepting
+                // keystrokes (Plan-mode review screens), so it must not arm
+                // the inbox-drain pipeline.
+                guard runtime == TeamHookRuntime.codex.rawValue else { return }
+                guard let paneID, let service = idleService else { return }
+                Task { await service.onStop(team: team, worktree: worktree, paneIDs: [paneID]) }
             },
-            onSessionStart: { [weak services] team, worktree, runtime in
-                if let paneID = resolvePaneID(worktree) {
-                    MainActor.assumeIsolated {
-                        services?.agentForPane[paneID] = (worktree: worktree, runtime: runtime)
-                    }
-                }
+            onSessionStart: { team, worktree, runtime, _ in
                 stateRegistry.handleSessionStart(worktree: worktree, runtime: runtime)
             },
-            onPostToolUse: { [weak services] team, worktree, runtime in
-                if let paneID = resolvePaneID(worktree) {
-                    MainActor.assumeIsolated {
-                        services?.agentForPane[paneID] = (worktree: worktree, runtime: runtime)
-                    }
-                }
+            onPostToolUse: { team, worktree, runtime, _ in
                 stateRegistry.handlePostToolUse(worktree: worktree, runtime: runtime)
             }
         )
@@ -1024,22 +1004,13 @@ struct GrafttyApp: App {
                 let newMessages = Array(messages[prev..<curr])
                 let byWorktree = Dictionary(grouping: newMessages, by: { $0.to.worktree })
                 guard let service = idleService else { return }
-                for (recipientWorktree, recipientMessages) in byWorktree {
+                for (recipientWorktree, _) in byWorktree {
                     Task { @MainActor in
-                        let paneID = resolvePaneID(recipientWorktree)
-                        // Prefer the in-session / presence-registry runtime
-                        // over the message's nullable `to.runtime`. Falling
-                        // back to "codex" is the safe default only when we
-                        // genuinely can't tell — the runtime-gate inside
-                        // maybeDeliver will skip Claude either way.
-                        let runtime = resolveRuntime(recipientWorktree, paneID)
-                            ?? recipientMessages.last?.to.runtime
-                            ?? "codex"
+                        let paneIDs = codexPanesIn(recipientWorktree)
                         await service.onMessageArrival(
                             team: teamID,
                             worktree: recipientWorktree,
-                            runtime: runtime,
-                            paneID: paneID
+                            paneIDs: paneIDs
                         )
                     }
                 }
@@ -1060,17 +1031,25 @@ struct GrafttyApp: App {
         // creation time.
         terminalManager.inputActivityObserver = inputObserver
 
-        // Evict per-pane registry entries when a pane is destroyed so
-        // agentForPane / input-stamps / agent-state don't grow unbounded
-        // across the app's lifetime. Lookup of the agent identity has to
-        // happen BEFORE removing the agentForPane entry so the
-        // (worktree, runtime) for state cleanup is still resolvable.
-        terminalManager.paneClosed = { [weak services, stateRegistry, inputRegistry] paneID in
-            let agent = services?.agentForPane[paneID]
-            services?.agentForPane.removeValue(forKey: paneID)
+        // TEAM-IDLE-2.15: when a pane is destroyed, sweep any
+        // TeamPresenceRecord whose paneSessionName matches the closing pane
+        // and clear the matching agent-state entry. The agent's own
+        // `team unregister` cleanup hook is the primary path; this fallback
+        // covers the SIGKILL / hard-quit case where the pane went away
+        // without the registered process getting a chance to clean up.
+        // input-stamp eviction stays on the same trigger so the per-pane
+        // registries don't grow unbounded across the app's lifetime.
+        terminalManager.paneClosed = { [stateRegistry, inputRegistry, presenceStorage] paneID in
             inputRegistry.removeStamp(paneID: paneID)
-            if let agent {
-                stateRegistry.removeState(worktree: agent.worktree, runtime: agent.runtime)
+            let sessionName = ZmxLauncher.sessionName(for: paneID)
+            for record in presenceStorage.records(forPaneSessionName: sessionName) {
+                try? presenceStorage.delete(
+                    teamID: record.teamID,
+                    worktree: record.worktree,
+                    runtime: record.runtime,
+                    paneSessionName: record.paneSessionName
+                )
+                stateRegistry.removeState(worktree: record.worktree, runtime: record.runtime.rawValue)
             }
         }
 
@@ -1765,12 +1744,13 @@ struct GrafttyApp: App {
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
             )
-        case .teamHook(let callerPath, let runtime, let event, let sessionID):
+        case .teamHook(let callerPath, let runtime, let event, let sessionID, let paneSessionName):
             return handleTeamHook(
                 callerPath: callerPath,
                 runtime: runtime,
                 event: event,
                 sessionID: sessionID,
+                paneSessionName: paneSessionName,
                 appState: appState,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher,
@@ -1872,6 +1852,7 @@ struct GrafttyApp: App {
         runtime: TeamHookRuntime,
         event: TeamHookEvent,
         sessionID: String?,
+        paneSessionName: String?,
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher,
@@ -1887,6 +1868,7 @@ struct GrafttyApp: App {
                 runtime: runtime,
                 event: event,
                 sessionID: sessionID,
+                paneSessionName: paneSessionName,
                 repos: appState.wrappedValue.repos,
                 teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
             )
