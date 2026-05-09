@@ -18,7 +18,16 @@ public struct RootView: View {
                 HostPickerView(store: hostStore)
                     .navigationDestination(for: Host.self) { host in
                         WorktreePickerView(host: host) { wt in
-                            navigationPath.append(WorktreeStep(host: host, worktree: wt))
+                            switch MobileNavigationDecision.decide(layout: wt.layout) {
+                            case let .session(sessionName, title):
+                                navigationPath.append(SessionStep(
+                                    host: host,
+                                    sessionName: sessionName,
+                                    title: title
+                                ))
+                            case .worktreeDetail:
+                                navigationPath.append(WorktreeStep(host: host, worktree: wt))
+                            }
                         }
                     }
                     .navigationDestination(for: WorktreeStep.self) { step in
@@ -111,8 +120,6 @@ struct SingleSessionView: View {
     /// once the fetch lands.
     @State private var controller: TerminalController?
     @State private var preferredStyle: UIUserInterfaceStyle = .unspecified
-    /// Actual system state (driven by keyboardWillShow/Hide).
-    @State private var isKeyboardVisible: Bool = false
     /// User-controlled: false after the user taps "Hide keyboard". A
     /// stray tap that tries to re-summon the keyboard is immediately
     /// dismissed; the only way back on is the "Show keyboard" button.
@@ -121,6 +128,12 @@ struct SingleSessionView: View {
     /// becomeFirstResponder() on next update. Used to summon the
     /// keyboard programmatically from the show-keyboard button.
     @State private var focusRequestCount: Int = 0
+    /// Height (pts) of the keyboard's overlap with the screen, used
+    /// as an explicit bottom padding on the fullscreen layout
+    /// (`IOS-6.9`). Populated from `keyboardWillChangeFrame`.
+    @State private var keyboardBottomInset: CGFloat = 0
+
+    private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
 
     enum ConnectionState: Equatable {
         case connecting
@@ -147,13 +160,16 @@ struct SingleSessionView: View {
                 endedBanner
             }
         }
-        // Fill the container edges (notch, home indicator, landscape
-        // side-bands) — but .container not .all, so SwiftUI still
-        // respects the `.keyboard` safe-area region and pushes the
-        // terminal up when the software keyboard rises. libghostty
-        // paints its background color behind its view; the unsafe
-        // regions outside our `.container` inherit that color.
-        .ignoresSafeArea(.container, edges: .all)
+        // IOS-6.9: explicit bottom padding lifts the terminal above
+        // the keyboard. SwiftUI's automatic `.keyboard` safe-area
+        // avoidance is unreliable when the focused responder is the
+        // UIKeyInput proxy from IOS-6.6, so we drive it ourselves.
+        .padding(.bottom, keyboardBottomInset)
+        // IOS-4.8: fill every edge — top (under the notch), bottom
+        // (under the home indicator), and the landscape side-bands.
+        // libghostty paints its background color behind its view; the
+        // unsafe regions inherit that color.
+        .ignoresSafeArea()
         .toolbar(.hidden, for: .navigationBar)
             .overlay(alignment: .topLeading) {
                 backButton
@@ -163,26 +179,30 @@ struct SingleSessionView: View {
             .overlay(alignment: .bottom) {
                 if connection == .live { terminalChrome }
             }
-            .animation(.easeInOut(duration: 0.15), value: isKeyboardVisible)
+            .animation(.easeInOut(duration: 0.25), value: keyboardBottomInset)
             .animation(.easeInOut(duration: 0.15), value: keyboardAllowed)
             .onReceive(NotificationCenter.default.publisher(
-                for: UIResponder.keyboardWillShowNotification
-            )) { _ in
-                isKeyboardVisible = true
+                for: UIResponder.keyboardWillChangeFrameNotification
+            )) { notification in
+                guard let value = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue else { return }
+                let newInset = KeyboardFrameInset.bottomInset(
+                    keyboardEndFrame: value.cgRectValue,
+                    screenBounds: UIScreen.main.bounds
+                )
+                if newInset != keyboardBottomInset {
+                    keyboardBottomInset = newInset
+                }
                 // If the user had explicitly hidden the keyboard, a stray
                 // tap on the terminal can make UITerminalView ask for
                 // first-responder again. Immediately dismiss — brief
                 // flicker (one frame) but honours the user's intent.
-                if !keyboardAllowed {
+                if isKeyboardVisible && !keyboardAllowed {
                     UIApplication.shared.sendAction(
                         #selector(UIResponder.resignFirstResponder),
                         to: nil, from: nil, for: nil
                     )
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(
-                for: UIResponder.keyboardWillHideNotification
-            )) { _ in isKeyboardVisible = false }
             // Reads gate?.state inside `dialKey` so the @Observable
             // gate's unlock triggers re-evaluation. `connection` is
             // deliberately *not* in the key — it's the state-machine's

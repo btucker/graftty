@@ -14,6 +14,52 @@ struct TeamHookCallbacks {
     let onPostToolUse: @Sendable (String, String, String) -> Void
 }
 
+/// Seam for `handleShowPane` so tests can inject a canned scrollback
+/// without spawning a `zmx` subprocess.
+protocol ZmxHistoryReader: Sendable {
+    func history(sessionName: String) throws -> String
+}
+
+struct ZmxHistorySubprocessReader: ZmxHistoryReader {
+    let launcher: ZmxLauncher
+
+    func history(sessionName: String) throws -> String {
+        let result = try ZmxRunner.captureAll(
+            executable: launcher.executable,
+            args: ["history", sessionName],
+            env: launcher.subprocessEnv(from: ProcessInfo.processInfo.environment)
+        )
+        guard result.exitCode == 0 else {
+            let trimmed = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            let message = trimmed.isEmpty
+                ? "zmx history failed"
+                : "zmx history failed: \(trimmed)"
+            throw NSError(
+                domain: "ZmxHistorySubprocessReader",
+                code: Int(result.exitCode),
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
+        }
+        return result.stdout
+    }
+}
+
+/// Seam for `handleSendPane`: production binds to a thin wrapper over
+/// `SurfaceHandle.typeText` / `SurfaceHandle.pressReturn`. Tests inject
+/// a recording stub so we can assert keystroke ordering without
+/// driving a libghostty surface.
+protocol PaneInputSink: AnyObject {
+    func typeText(_ text: String)
+    func pressReturn()
+}
+
+private final class SurfaceHandlePaneInputSink: PaneInputSink {
+    let handle: SurfaceHandle
+    init(handle: SurfaceHandle) { self.handle = handle }
+    func typeText(_ text: String) { handle.typeText(text) }
+    func pressReturn() { handle.pressReturn() }
+}
+
 final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate {
     static let shared = AgentNotificationRouter()
 
@@ -1645,7 +1691,7 @@ struct GrafttyApp: App {
                     }
                 }
             }
-        case .listPanes, .addPane, .closePane, .teamMessage, .teamSend,
+        case .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend,
              .teamBroadcast, .teamHook, .teamInbox, .teamMembers, .teamList:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
@@ -1675,6 +1721,21 @@ struct GrafttyApp: App {
         case .closePane(let path, let index):
             return closePaneByIndex(path: path, index: index,
                                     appState: appState, terminalManager: terminalManager)
+        case .showPane(let path, let index, let lines):
+            guard let launcher = terminalManager.zmxLauncher else {
+                return .error("zmx unavailable")
+            }
+            let reader = ZmxHistorySubprocessReader(launcher: launcher)
+            return handleShowPane(
+                path: path, index: index, lines: lines,
+                appState: appState, terminalManager: terminalManager,
+                reader: reader
+            )
+        case .sendPane(let path, let index, let text, let pressEnter):
+            return handleSendPane(
+                path: path, index: index, text: text, pressEnter: pressEnter,
+                appState: appState, terminalManager: terminalManager
+            )
         case .teamMessage(let callerPath, let recipient, let text):
             return handleTeamSend(
                 callerPath: callerPath,
@@ -2063,6 +2124,93 @@ struct GrafttyApp: App {
             targetID: targetID,
             userInitiated: true
         )
+        return .ok
+    }
+
+    @MainActor
+    fileprivate static func handleShowPane(
+        path: String,
+        index: Int,
+        lines: Int,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager,
+        reader: ZmxHistoryReader
+    ) -> ResponseMessage {
+        guard let wt = appState.wrappedValue.worktree(forPath: path) else {
+            return .error("not tracked")
+        }
+        guard wt.state == .running else {
+            return .error("worktree not running")
+        }
+        guard let terminalID = wt.splitTree.leaf(atPaneID: index) else {
+            return .error("no pane with id \(index) in this worktree")
+        }
+        let session = ZmxLauncher.sessionName(for: terminalID.id)
+        do {
+            let body = try reader.history(sessionName: session)
+            return .paneShow(ScrollbackTail.tail(body, lines: lines))
+        } catch {
+            return .error("zmx history failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Test seam: lets the spec test exercise `handleShowPane` without
+    /// constructing a full `AppState`. Skips worktree lookup / state checks
+    /// and goes straight to the reader so we exercise the read+tail logic
+    /// in isolation.
+    @MainActor
+    internal static func handleShowPane_forTesting(
+        path: String, index: Int, lines: Int,
+        reader: ZmxHistoryReader
+    ) -> ResponseMessage {
+        do {
+            let body = try reader.history(sessionName: "graftty-stub")
+            return .paneShow(ScrollbackTail.tail(body, lines: lines))
+        } catch {
+            return .error("zmx history failed: \(error.localizedDescription)")
+        }
+    }
+
+    @MainActor
+    fileprivate static func handleSendPane(
+        path: String,
+        index: Int,
+        text: String,
+        pressEnter: Bool,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager
+    ) -> ResponseMessage {
+        guard let wt = appState.wrappedValue.worktree(forPath: path) else {
+            return .error("not tracked")
+        }
+        guard wt.state == .running else {
+            return .error("worktree not running")
+        }
+        guard let terminalID = wt.splitTree.leaf(atPaneID: index) else {
+            return .error("no pane with id \(index) in this worktree")
+        }
+        guard let handle = terminalManager.handle(for: terminalID) else {
+            return .error("pane has no surface")
+        }
+        return handleSendPane_forTesting(
+            text: text,
+            pressEnter: pressEnter,
+            sink: SurfaceHandlePaneInputSink(handle: handle)
+        )
+    }
+
+    /// Test seam: lets the spec test exercise the typeText/pressReturn
+    /// ordering without driving a libghostty surface. Production callers
+    /// go through `handleSendPane` which performs worktree/pane validation
+    /// before constructing a `SurfaceHandlePaneInputSink`.
+    @MainActor
+    internal static func handleSendPane_forTesting(
+        text: String,
+        pressEnter: Bool,
+        sink: PaneInputSink
+    ) -> ResponseMessage {
+        sink.typeText(text)
+        if pressEnter { sink.pressReturn() }
         return .ok
     }
 

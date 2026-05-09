@@ -37,7 +37,7 @@ struct AppStateTests {
     }
 
     @Test("""
-    @spec LAYOUT-2.22: When the user drags worktree rows within a repository section, the application shall reorder only that repository's persisted `worktrees` array so the order survives state save/load.
+    @spec LAYOUT-2.23: When the user drags worktree rows within a repository section, the application shall reorder only that repository's persisted `worktrees` array so the order survives state save/load.
     """)
     func moveWorktreesWithinRepoRewritesPersistedOrder() throws {
         let dir = try makeTempDir()
@@ -73,7 +73,7 @@ struct AppStateTests {
     }
 
     @Test("""
-    @spec LAYOUT-2.23: When a worktree enters the stale/yellow state, the application shall permanently move stale worktrees to the bottom of that repository's persisted `worktrees` array while preserving relative order within stale and non-stale groups.
+    @spec LAYOUT-2.24: When a worktree enters the stale/yellow state, the application shall permanently move stale worktrees to the bottom of that repository's persisted `worktrees` array while preserving relative order within stale and non-stale groups.
     """)
     func moveStaleWorktreesToBottomPreservesRelativeOrder() {
         let repo = RepoEntry(path: "/tmp/repo", displayName: "repo", worktrees: [

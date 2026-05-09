@@ -27,6 +27,71 @@ indicator appears in the window titlebar when a new version is
 available, and clicking it installs the update. You can also trigger a
 check manually from `Graftty → Check for Updates…`.
 
+## Agent teams
+
+When a repo has more than one worktree open, Graftty treats it as an
+*agent team*. AI coding agents (Claude Code, Codex, etc.) running inside
+each worktree can register their presence, message each other through a
+per-worktree inbox, and react to PR/CI events that affect the team —
+useful when you've got one agent per branch grinding through PRs and
+want them to coordinate.
+
+Enable it under **Settings → Agent Teams**. From there you choose which
+events (PR state, merges, CI conclusion, mergability) get routed to the
+root agent, the per-worktree agent, peer worktrees, or any combination,
+and customize the templated session and per-event prompts each agent
+receives.
+
+Each agent's session-start hook is decorated with team context plus the
+CLI surface for coordination:
+
+```sh
+graftty team register --runtime claude   # announce presence at session start
+graftty team list                        # see teammates, roles, and running state
+graftty team send <member> "<text>"      # direct message a teammate's inbox
+graftty team broadcast "<text>"          # message everyone on the team
+graftty team inbox                       # read your incoming messages
+```
+
+Delivery is hook-driven. Graftty installs `claude` and `codex` shims on
+each agent's `PATH` that wire `SessionStart` and `Stop` hooks into the
+runtime. `SessionStart` primes the agent with team context and your
+session prompt; `Stop` triggers inbox delivery at the end of each turn.
+For Claude Code, a `Stop`-spawned watcher wakes the agent on stderr
+when a new message arrives; for Codex, a graftty-side service types the
+message text into the pane's PTY via zmx. Both paths defer while the
+pane shows recent user typing, so a teammate's message can't interrupt
+you mid-edit.
+
+*Window → Team Activity Log* opens a unified transcript of every team
+event and inter-agent message for the focused worktree's team.
+
+When inbox messages aren't enough, a lead agent can drive a teammate's
+pane directly — see **CLI** below for `graftty pane show` (read another
+worktree's terminal) and `graftty pane send` (inject keystrokes).
+
+## CLI
+
+The bundled `graftty` CLI lets a process inside a Graftty pane drive the app, and lets one agent control panes in another worktree.
+
+```sh
+graftty notify "tests passing"               # set a sidebar attention badge
+graftty pane list                            # panes in the current worktree
+graftty pane add --command "claude"          # split + run a command
+graftty pane close 2                         # close pane 2
+
+# Cross-worktree pane control:
+graftty pane list drag-files                 # list panes in another worktree
+graftty pane show drag-files:1               # last 100 lines of that pane's output
+graftty pane show drag-files:1 --lines 500   # more scrollback
+graftty pane send drag-files:1 "pnpm test"   # type the command and press Enter
+graftty pane send drag-files:1 "y" --no-enter  # type without committing
+```
+
+`<addr>` is `<id>` (current worktree, that pane), `<worktree>` (worktree's only pane), or `<worktree>:<id>`. Worktree names match what `graftty team list` prints. Run `graftty pane <verb> --help` for examples on every subcommand.
+
+`graftty pane send` writes raw bytes to the addressed pane's PTY — there's no inbox or consent layer, so the keystrokes land in whatever process is reading that pane's stdin. Use `graftty team send` for cooperative messaging where the receiving agent decides what to do.
+
 ## Building
 
 Requires Xcode 15+ and macOS 14 Sonoma or later.

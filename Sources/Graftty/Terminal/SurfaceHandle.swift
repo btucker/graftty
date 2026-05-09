@@ -378,6 +378,7 @@ final class SurfaceNSView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+        registerForDraggedTypes([.fileURL])
     }
 
     /// When this surface view joins a window (app launch, worktree switch,
@@ -736,5 +737,34 @@ final class SurfaceNSView: NSView {
             ghostty_surface_set_focus(surface, false)
         }
         return super.resignFirstResponder()
+    }
+
+    // MARK: - File drop (TERM-10.1)
+
+    /// `.urlReadingFileURLsOnly` filters Safari/web link drags out so we
+    /// never type `https://…` into the shell on a tab drop.
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        fileURLs(from: sender).isEmpty ? [] : .copy
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = fileURLs(from: sender)
+        guard !urls.isEmpty,
+              let terminalID,
+              let handle = terminalManager?.handle(for: terminalID)
+        else { return false }
+        markVisibleForInput()
+        handle.typeText(FileDropFormatter.format(paths: urls.map(\.path)))
+        return true
+    }
+
+    private func fileURLs(from sender: NSDraggingInfo) -> [URL] {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [
+            .urlReadingFileURLsOnly: true
+        ]
+        return sender.draggingPasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: options
+        ) as? [URL] ?? []
     }
 }

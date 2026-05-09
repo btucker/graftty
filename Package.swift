@@ -123,7 +123,7 @@ let package = Package(
         ),
         .testTarget(
             name: "GrafttyTests",
-            dependencies: ["Graftty"],
+            dependencies: ["Graftty", "GrafttyCLI"],
             swiftSettings: strictWarnings
         ),
     ]

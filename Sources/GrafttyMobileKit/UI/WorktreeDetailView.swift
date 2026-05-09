@@ -89,7 +89,11 @@ public struct WorktreeDetailView: View {
         }
         if previews == nil {
             previews = PanePreviewClientPool { sessionName in
-                SessionClient.live(baseURL: host.baseURL, sessionName: sessionName)
+                SessionClient.live(
+                    baseURL: host.baseURL,
+                    sessionName: sessionName,
+                    role: .preview
+                )
             }
         }
         previews?.update(layout: layout, maxLivePreviews: maxLivePanePreviews)
