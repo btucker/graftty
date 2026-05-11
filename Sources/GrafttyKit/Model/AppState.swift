@@ -34,6 +34,41 @@ public struct AppState: Codable, Sendable, Equatable {
         repos.append(repo)
     }
 
+    /// Reorders worktrees inside a single repository and reapplies the
+    /// stale-last invariant before publishing the new array.
+    ///
+    /// Returns false for an unknown repo, invalid move, or no-op order.
+    @discardableResult
+    public mutating func moveWorktrees(
+        inRepoID repoID: RepoEntry.ID,
+        movingWorktreeIDs: [WorktreeEntry.ID],
+        toIndex: Int
+    ) -> Bool {
+        guard let repoIdx = repos.firstIndex(where: { $0.id == repoID }) else { return false }
+        guard let reordered = WorktreeOrdering.move(
+            repos[repoIdx].worktrees,
+            movingIDs: movingWorktreeIDs,
+            toIndex: toIndex
+        ) else { return false }
+        guard reordered != repos[repoIdx].worktrees else { return false }
+        repos[repoIdx].worktrees = reordered
+        return true
+    }
+
+    /// Permanently moves stale/yellow worktrees to the bottom of a repo's
+    /// saved order, preserving relative order within the non-stale and
+    /// stale groups.
+    ///
+    /// Returns false for an unknown repo or already-normalized order.
+    @discardableResult
+    public mutating func moveStaleWorktreesToBottom(inRepoID repoID: RepoEntry.ID) -> Bool {
+        guard let repoIdx = repos.firstIndex(where: { $0.id == repoID }) else { return false }
+        let reordered = WorktreeOrdering.staleLast(repos[repoIdx].worktrees)
+        guard reordered != repos[repoIdx].worktrees else { return false }
+        repos[repoIdx].worktrees = reordered
+        return true
+    }
+
     /// Repository-lifecycle primitive that removes the repo at `path` and
     /// preserves the "selection never points at a vanished worktree"
     /// invariant by clearing `selectedWorktreePath` when it lives under
