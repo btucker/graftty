@@ -130,12 +130,12 @@ struct SidebarView: View {
                     .listRowInsets(EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0))
             }
             .onMove { fromOffsets, toOffset in
+                guard fromOffsets.allSatisfy({ repo.worktrees.indices.contains($0) }) else { return }
                 appState.moveWorktrees(
                     inRepoID: repo.id,
-                    fromOffsets: fromOffsets,
-                    toOffset: toOffset
+                    movingWorktreeIDs: fromOffsets.map { repo.worktrees[$0].id },
+                    toIndex: toOffset
                 )
-                appState.moveStaleWorktreesToBottom(inRepoID: repo.id)
             }
         } label: {
             // No leading glyph — the top level is always projects, so

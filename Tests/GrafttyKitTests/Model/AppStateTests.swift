@@ -51,7 +51,11 @@ struct AppStateTests {
         let repoID = repo.id
         var state = AppState(repos: [repo])
 
-        state.moveWorktrees(inRepoID: repoID, fromOffsets: IndexSet(integer: 2), toOffset: 0)
+        state.moveWorktrees(
+            inRepoID: repoID,
+            movingWorktreeIDs: [repo.worktrees[2].id],
+            toIndex: 0
+        )
 
         #expect(state.repos[0].worktrees.map(\.branch) == ["b", "main", "a"])
 
@@ -67,9 +71,32 @@ struct AppStateTests {
         ])
         var state = AppState(repos: [repo])
 
-        state.moveWorktrees(inRepoID: UUID(), fromOffsets: IndexSet(integer: 1), toOffset: 0)
+        state.moveWorktrees(
+            inRepoID: UUID(),
+            movingWorktreeIDs: [repo.worktrees[1].id],
+            toIndex: 0
+        )
 
         #expect(state.repos[0].worktrees.map(\.branch) == ["main", "a"])
+    }
+
+    @Test func moveWorktreesAppliesStaleBottomInSingleModelMutation() {
+        let repo = RepoEntry(path: "/tmp/repo", displayName: "repo", worktrees: [
+            WorktreeEntry(path: "/tmp/repo/.worktrees/open-a", branch: "open-a", state: .closed),
+            WorktreeEntry(path: "/tmp/repo/.worktrees/stale", branch: "stale", state: .stale),
+            WorktreeEntry(path: "/tmp/repo/.worktrees/open-b", branch: "open-b", state: .closed),
+        ])
+        let repoID = repo.id
+        var state = AppState(repos: [repo])
+
+        let changed = state.moveWorktrees(
+            inRepoID: repoID,
+            movingWorktreeIDs: [repo.worktrees[1].id],
+            toIndex: 0
+        )
+
+        #expect(changed)
+        #expect(state.repos[0].worktrees.map(\.branch) == ["open-a", "open-b", "stale"])
     }
 
     @Test("""
@@ -85,11 +112,26 @@ struct AppStateTests {
         let repoID = repo.id
         var state = AppState(repos: [repo])
 
-        state.moveStaleWorktreesToBottom(inRepoID: repoID)
+        let changed = state.moveStaleWorktreesToBottom(inRepoID: repoID)
 
+        #expect(changed)
         #expect(state.repos[0].worktrees.map(\.branch) == [
             "open-a", "open-b", "stale-a", "stale-b",
         ])
+    }
+
+    @Test func moveStaleWorktreesToBottomReturnsFalseWhenOrderIsUnchanged() {
+        let repo = RepoEntry(path: "/tmp/repo", displayName: "repo", worktrees: [
+            WorktreeEntry(path: "/tmp/repo/.worktrees/open", branch: "open", state: .closed),
+            WorktreeEntry(path: "/tmp/repo/.worktrees/stale", branch: "stale", state: .stale),
+        ])
+        let repoID = repo.id
+        var state = AppState(repos: [repo])
+
+        let changed = state.moveStaleWorktreesToBottom(inRepoID: repoID)
+
+        #expect(!changed)
+        #expect(state.repos[0].worktrees.map(\.branch) == ["open", "stale"])
     }
 
     @Test func removeRepo() {

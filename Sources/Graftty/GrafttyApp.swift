@@ -1464,7 +1464,7 @@ struct GrafttyApp: App {
         for d in discovered where !carriedPaths.contains(d.path) {
             newWorktrees.append(WorktreeEntry(path: d.path, branch: d.branch))
         }
-        appState.wrappedValue.repos[repoIdx].worktrees = AppState.staleLast(newWorktrees)
+        appState.wrappedValue.repos[repoIdx].worktrees = WorktreeOrdering.staleLast(newWorktrees)
 
         // (i) Update selection to the relocated path (decision already
         // mapped old→new or nil'd it when the selected worktree went
@@ -3085,7 +3085,9 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
 
             if let indices = binding.wrappedValue.indices(forWorktreePath: worktreePath) {
                 let repoID = binding.wrappedValue.repos[indices.repo].id
-                binding.wrappedValue.repos[indices.repo].worktrees[indices.worktree].state = .stale
+                if binding.wrappedValue.repos[indices.repo].worktrees[indices.worktree].state != .stale {
+                    binding.wrappedValue.repos[indices.repo].worktrees[indices.worktree].state = .stale
+                }
                 binding.wrappedValue.moveStaleWorktreesToBottom(inRepoID: repoID)
             }
             store.clear(worktreePath: worktreePath)

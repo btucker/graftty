@@ -34,44 +34,39 @@ public struct AppState: Codable, Sendable, Equatable {
         repos.append(repo)
     }
 
-    /// Reorders worktrees inside a single repository. The `fromOffsets` /
-    /// `toOffset` shape matches SwiftUI `ForEach.onMove`, so sidebar row
-    /// drags can persist directly into `RepoEntry.worktrees`.
+    /// Reorders worktrees inside a single repository and reapplies the
+    /// stale-last invariant before publishing the new array.
     ///
-    /// Silent no-op for an unknown repo ID.
+    /// Returns false for an unknown repo, invalid move, or no-op order.
+    @discardableResult
     public mutating func moveWorktrees(
         inRepoID repoID: RepoEntry.ID,
-        fromOffsets: IndexSet,
-        toOffset: Int
-    ) {
-        guard let repoIdx = repos.firstIndex(where: { $0.id == repoID }) else { return }
-        guard !fromOffsets.isEmpty else { return }
-        var worktrees = repos[repoIdx].worktrees
-        guard toOffset >= 0 && toOffset <= worktrees.count else { return }
-        guard fromOffsets.allSatisfy({ worktrees.indices.contains($0) }) else { return }
-
-        let moving = fromOffsets.map { worktrees[$0] }
-        for index in fromOffsets.sorted(by: >) {
-            worktrees.remove(at: index)
-        }
-        let removedBeforeDestination = fromOffsets.filter { $0 < toOffset }.count
-        let insertionIndex = toOffset - removedBeforeDestination
-        worktrees.insert(contentsOf: moving, at: insertionIndex)
-        repos[repoIdx].worktrees = worktrees
+        movingWorktreeIDs: [WorktreeEntry.ID],
+        toIndex: Int
+    ) -> Bool {
+        guard let repoIdx = repos.firstIndex(where: { $0.id == repoID }) else { return false }
+        guard let reordered = WorktreeOrdering.move(
+            repos[repoIdx].worktrees,
+            movingIDs: movingWorktreeIDs,
+            toIndex: toIndex
+        ) else { return false }
+        guard reordered != repos[repoIdx].worktrees else { return false }
+        repos[repoIdx].worktrees = reordered
+        return true
     }
 
     /// Permanently moves stale/yellow worktrees to the bottom of a repo's
     /// saved order, preserving relative order within the non-stale and
     /// stale groups.
     ///
-    /// Silent no-op for an unknown repo ID.
-    public mutating func moveStaleWorktreesToBottom(inRepoID repoID: RepoEntry.ID) {
-        guard let repoIdx = repos.firstIndex(where: { $0.id == repoID }) else { return }
-        repos[repoIdx].worktrees = Self.staleLast(repos[repoIdx].worktrees)
-    }
-
-    public static func staleLast(_ worktrees: [WorktreeEntry]) -> [WorktreeEntry] {
-        worktrees.filter { $0.state != .stale } + worktrees.filter { $0.state == .stale }
+    /// Returns false for an unknown repo or already-normalized order.
+    @discardableResult
+    public mutating func moveStaleWorktreesToBottom(inRepoID repoID: RepoEntry.ID) -> Bool {
+        guard let repoIdx = repos.firstIndex(where: { $0.id == repoID }) else { return false }
+        let reordered = WorktreeOrdering.staleLast(repos[repoIdx].worktrees)
+        guard reordered != repos[repoIdx].worktrees else { return false }
+        repos[repoIdx].worktrees = reordered
+        return true
     }
 
     /// Repository-lifecycle primitive that removes the repo at `path` and
