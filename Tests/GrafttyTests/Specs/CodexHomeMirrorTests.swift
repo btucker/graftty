@@ -73,7 +73,7 @@ struct CodexHomeMirrorTests {
         #expect(sessionStart2.count == 2)
     }
 
-    @Test("config.toml gains [features].codex_hooks=true while preserving other keys.")
+    @Test("config.toml gains [features].hooks=true while preserving other keys.")
     func configFeatureFlagMerge() throws {
         let (src, dst) = try makeMirrorSandbox()
         defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
@@ -88,7 +88,8 @@ struct CodexHomeMirrorTests {
         try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
 
         let merged = try String(contentsOf: dst.appendingPathComponent("config.toml"))
-        #expect(merged.contains("codex_hooks = true"))
+        #expect(merged.contains("\nhooks = true"))
+        #expect(!merged.contains("codex_hooks"))
         #expect(merged.contains("model = \"o3\""))
         #expect(merged.contains("some_other_feature = true"))
     }
@@ -122,7 +123,8 @@ struct CodexHomeMirrorTests {
         let dstConfig = dst.appendingPathComponent("config.toml")
         let contents = try String(contentsOf: dstConfig)
         #expect(contents.contains("[features]"))
-        #expect(contents.contains("codex_hooks = true"))
+        #expect(contents.contains("\nhooks = true"))
+        #expect(!contents.contains("codex_hooks"))
     }
 
     private func makeMirrorSandbox() throws -> (URL, URL) {
