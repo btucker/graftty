@@ -33,9 +33,14 @@ extension SessionClient {
         sessionName: String,
         role: Role = .fullscreen
     ) -> SessionClient {
-        let wsURL = RootView.makeWebSocketURL(base: baseURL, session: sessionName)
-        let ws = URLSessionWebSocketClient(url: wsURL)
-        return SessionClient(sessionName: sessionName, webSocket: ws, role: role)
+        SessionClient(
+            sessionName: sessionName,
+            webSocketFactory: {
+                let wsURL = RootView.makeWebSocketURL(base: baseURL, session: sessionName)
+                return URLSessionWebSocketClient(url: wsURL)
+            },
+            role: role
+        )
     }
 }
 #endif

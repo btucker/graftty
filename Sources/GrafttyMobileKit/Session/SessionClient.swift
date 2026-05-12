@@ -45,7 +45,10 @@ public final class SessionClient {
     @ObservationIgnored
     internal var displayScale: CGFloat = UIScreen.main.scale
 
-    nonisolated private let ws: WebSocketClient
+    nonisolated private let webSocketFactory: @Sendable () -> WebSocketClient
+    nonisolated internal let clock: any Clock
+    nonisolated internal let backoffSchedule: [TimeInterval]
+    nonisolated(unsafe) private var ws: WebSocketClient?
     private var receiveTask: Task<Void, Never>?
     private var stopped = false
     /// Last (cols, rows) libghostty reported for the iOS-side view.
@@ -90,11 +93,15 @@ public final class SessionClient {
 
     public init(
         sessionName: String,
-        webSocket: WebSocketClient,
+        webSocketFactory: @Sendable @escaping () -> WebSocketClient,
+        clock: any Clock = SystemClock(),
+        backoffSchedule: [TimeInterval] = HostController.backoffSchedule(attempts: 6),
         role: Role = .fullscreen
     ) {
         self.sessionName = sessionName
-        self.ws = webSocket
+        self.webSocketFactory = webSocketFactory
+        self.clock = clock
+        self.backoffSchedule = backoffSchedule
         self.role = role
 
         final class Box {
@@ -132,6 +139,19 @@ public final class SessionClient {
         }
     }
 
+    /// Backward-compatible convenience for tests that pass a single WS instance.
+    public convenience init(
+        sessionName: String,
+        webSocket: WebSocketClient,
+        role: Role = .fullscreen
+    ) {
+        self.init(
+            sessionName: sessionName,
+            webSocketFactory: { webSocket },
+            role: role
+        )
+    }
+
     @MainActor
     internal func handleViewport(_ viewport: InMemoryTerminalViewport) {
         guard !stopped else { return }
@@ -153,9 +173,12 @@ public final class SessionClient {
 
     public func start() {
         receiveTask = Task { @MainActor [weak self] in
-            while let self, !self.stopped {
+            guard let self else { return }
+            self.ws = self.webSocketFactory()
+            while !self.stopped {
+                guard let ws = self.ws else { break }
                 do {
-                    let frame = try await self.ws.receive()
+                    let frame = try await ws.receive()
                     switch frame {
                     case .binary(let data):
                         self.session.receive(data)
@@ -245,7 +268,8 @@ public final class SessionClient {
         stopped = true
         receiveTask?.cancel()
         receiveTask = nil
-        ws.close()
+        ws?.close()
+        ws = nil
     }
 
     private func claimLeadershipIfNeeded() {
@@ -259,11 +283,11 @@ public final class SessionClient {
     }
 
     nonisolated private func sendBinary(_ data: Data) {
-        Task { [ws] in try? await ws.send(.binary(data)) }
+        Task { [ws] in try? await ws?.send(.binary(data)) }
     }
 
     nonisolated private func sendText(_ text: String) {
-        Task { [ws] in try? await ws.send(.text(text)) }
+        Task { [ws] in try? await ws?.send(.text(text)) }
     }
 
     private func handleTextFrame(_ text: String) {
