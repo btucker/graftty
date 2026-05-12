@@ -113,6 +113,30 @@ struct SurfaceHandleHostManagedTests {
         #expect(harness.textWrites == [Data("abc".utf8)])
     }
 
+    @Test func hostManagedBackspaceWritesDELDirectlyToBackend() throws {
+        let view = SurfaceNSView()
+        view.surface = fakeSurface()
+        var writes: [Data] = []
+        view.hostManagedInputWriter = { writes.append($0) }
+
+        let event = try #require(Self.keyEvent(
+            keyCode: 0x33,
+            characters: "\u{7F}"
+        ))
+
+        view.keyDown(with: event)
+
+        #expect(writes == [Data([0x7F])])
+    }
+
+    @Test func hostManagedDirectInputSkipsCommandControlAndOptionModifiedKeys() {
+        #expect(SurfaceNSView.hostManagedDirectInput(forKeyCode: 0x33, modifierFlags: []) == Data([0x7F]))
+        #expect(SurfaceNSView.hostManagedDirectInput(forKeyCode: 0x7B, modifierFlags: []) == Data("\u{1B}[D".utf8))
+        #expect(SurfaceNSView.hostManagedDirectInput(forKeyCode: 0x33, modifierFlags: [.command]) == nil)
+        #expect(SurfaceNSView.hostManagedDirectInput(forKeyCode: 0x33, modifierFlags: [.control]) == nil)
+        #expect(SurfaceNSView.hostManagedDirectInput(forKeyCode: 0x33, modifierFlags: [.option]) == nil)
+    }
+
     @Test func surfaceNewFailureDoesNotStartBackendAndReleasesBackendState() {
         let backend = FakeSurfaceHandleZmxBackend()
         let harness = SurfaceHandleTestHarness(surface: nil)
@@ -209,6 +233,25 @@ struct SurfaceHandleHostManagedTests {
             ghosttyResourcesDir: nil,
             agentHooksDisabled: true,
             agentHooksRoot: URL(fileURLWithPath: "/tmp/hooks", isDirectory: true)
+        )
+    }
+
+    private static func keyEvent(
+        keyCode: UInt16,
+        characters: String,
+        modifierFlags: NSEvent.ModifierFlags = []
+    ) -> NSEvent? {
+        NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: modifierFlags,
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: characters,
+            charactersIgnoringModifiers: characters,
+            isARepeat: false,
+            keyCode: keyCode
         )
     }
 }

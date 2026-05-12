@@ -114,6 +114,11 @@ final class SurfaceHandle {
         surfaceView.terminalID = terminalID
         surfaceView.terminalManager = terminalManager
         surfaceView.inputActivityObserver = inputActivityObserver
+        if let backend {
+            surfaceView.hostManagedInputWriter = { [weak backend] data in
+                try? backend?.write(data)
+            }
+        }
         // NB: the original impl used a `defer` here to bind
         // `surfaceView.surface = self.surface` after all exit paths. That
         // was fine for a non-failable init, but failable-init's nil-return
@@ -425,6 +430,14 @@ final class SurfaceNSView: NSView {
     /// `PaneInputActivityRegistry`. Nil-safe — missing observer is a no-op.
     var inputActivityObserver: PaneInputActivityObserver?
 
+    /// Direct PTY-input path for host-managed backends. Ghostty's own
+    /// host-managed AppKit frontend bypasses `ghostty_surface_key` for
+    /// hardware control keys (Backspace, arrows, etc.) and writes their byte
+    /// sequences directly to the session; zmx-backed native panes need the
+    /// same path.
+    var hostManagedInputWriter: ((Data) -> Void)?
+    private var hostManagedDirectInputKeyCodes = Set<UInt16>()
+
     /// Cursor to display when the mouse is over this surface. libghostty
     /// drives this via `GHOSTTY_ACTION_MOUSE_SHAPE` (e.g., pointer when
     /// over a link, text beam over normal cells). Defaults to the text
@@ -675,6 +688,14 @@ final class SurfaceNSView: NSView {
             inputActivityObserver?.recordKeystroke(paneID: paneID)
         }
         markVisibleForInput()
+        if let directInput = Self.hostManagedDirectInput(
+            forKeyCode: event.keyCode,
+            modifierFlags: event.modifierFlags
+        ), let hostManagedInputWriter {
+            hostManagedDirectInputKeyCodes.insert(event.keyCode)
+            hostManagedInputWriter(directInput)
+            return
+        }
         // Forward ALL keys to libghostty — including Cmd-modified ones —
         // so its default keybinds (Cmd+C → copy, Cmd+V → paste, Cmd+A →
         // select all, etc.) fire. App-level menu shortcuts (Cmd+D split,
@@ -695,6 +716,9 @@ final class SurfaceNSView: NSView {
     override func keyUp(with event: NSEvent) {
         guard surface != nil else {
             super.keyUp(with: event)
+            return
+        }
+        if hostManagedDirectInputKeyCodes.remove(event.keyCode) != nil {
             return
         }
         _ = sendKeyEvent(event, action: GHOSTTY_ACTION_RELEASE)
@@ -777,6 +801,28 @@ final class SurfaceNSView: NSView {
             if v >= 0xF700 && v <= 0xF8FF { return nil }
         }
         return chars
+    }
+
+    static func hostManagedDirectInput(
+        forKeyCode keyCode: UInt16,
+        modifierFlags flags: NSEvent.ModifierFlags
+    ) -> Data? {
+        guard flags.intersection([.command, .control, .option]).isEmpty else {
+            return nil
+        }
+        switch keyCode {
+        case 0x33: return Data([0x7F])
+        case 0x75: return Data("\u{1B}[3~".utf8)
+        case 0x73: return Data("\u{1B}[H".utf8)
+        case 0x77: return Data("\u{1B}[F".utf8)
+        case 0x74: return Data("\u{1B}[5~".utf8)
+        case 0x79: return Data("\u{1B}[6~".utf8)
+        case 0x7B: return Data("\u{1B}[D".utf8)
+        case 0x7C: return Data("\u{1B}[C".utf8)
+        case 0x7D: return Data("\u{1B}[B".utf8)
+        case 0x7E: return Data("\u{1B}[A".utf8)
+        default: return nil
+        }
     }
 
     /// Translate an NSEvent modifier mask into libghostty's mod bitfield.
