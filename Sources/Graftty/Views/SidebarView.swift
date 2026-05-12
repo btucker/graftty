@@ -361,11 +361,13 @@ struct SidebarView: View {
             }
         }
         if case let .listening(_, port) = webController.status,
-           let host = webController.serverHostname {
+           let host = webController.serverHostname,
+           let indices = appState.indicesOfWorktreeContaining(terminalID: terminalID),
+           let sessionID = appState.repos[indices.repo].worktrees[indices.worktree].paneSessions[terminalID] {
             menu.addItem(.separator())
             menu.addItem(ClosureMenuItem(title: "Copy web URL") {
                 Pasteboard.copy(WebURLComposer.url(
-                    session: ZmxLauncher.sessionName(for: terminalID.id),
+                    session: ZmxLauncher.sessionName(for: sessionID),
                     host: host,
                     port: port
                 ))

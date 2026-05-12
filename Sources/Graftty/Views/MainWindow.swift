@@ -328,6 +328,9 @@ struct MainWindow: View {
                     }
 
                     let splitTree = appState.repos[repoIdx].worktrees[wtIdx].splitTree
+                    for leafID in splitTree.allLeaves {
+                        appState.repos[repoIdx].worktrees[wtIdx].ensurePaneSession(for: leafID)
+                    }
                     // Mark every leaf as a first-pane candidate *before*
                     // createSurfaces — the first PWD event could arrive
                     // immediately after the surface spawns, and
@@ -338,14 +341,25 @@ struct MainWindow: View {
                     for leafID in splitTree.allLeaves {
                         terminalManager.markFirstPane(leafID)
                     }
-                    _ = terminalManager.createSurfaces(for: splitTree, worktreePath: path)
+                    _ = terminalManager.createSurfaces(
+                        for: splitTree,
+                        paneSessions: appState.repos[repoIdx].worktrees[wtIdx].paneSessions,
+                        worktreePath: path
+                    )
 
                     appState.repos[repoIdx].worktrees[wtIdx].state = .running
                 } else if appState.repos[repoIdx].worktrees[wtIdx].state == .running {
                     let splitTree = appState.repos[repoIdx].worktrees[wtIdx].splitTree
                     let missingSurface = splitTree.allLeaves.contains { terminalManager.handle(for: $0) == nil }
                     if missingSurface {
-                        _ = terminalManager.createSurfaces(for: splitTree, worktreePath: path)
+                        for leafID in splitTree.allLeaves {
+                            appState.repos[repoIdx].worktrees[wtIdx].ensurePaneSession(for: leafID)
+                        }
+                        _ = terminalManager.createSurfaces(
+                            for: splitTree,
+                            paneSessions: appState.repos[repoIdx].worktrees[wtIdx].paneSessions,
+                            worktreePath: path
+                        )
                     }
                 }
             }

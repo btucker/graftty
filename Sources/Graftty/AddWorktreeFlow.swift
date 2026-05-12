@@ -191,15 +191,24 @@ enum AddWorktreeFlow {
 
         let splitTree = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree
         for leafID in splitTree.allLeaves {
+            appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].ensurePaneSession(for: leafID)
+        }
+        for leafID in splitTree.allLeaves {
             terminalManager.markFirstPane(leafID)
         }
-        _ = terminalManager.createSurfaces(for: splitTree, worktreePath: worktreePath)
+        _ = terminalManager.createSurfaces(
+            for: splitTree,
+            paneSessions: appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].paneSessions,
+            worktreePath: worktreePath
+        )
         appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .running
 
         guard let firstLeaf = splitTree.allLeaves.first else {
             return .failure(.discoveryFailed("split tree produced no leaves"))
         }
-        let sessionName = ZmxLauncher.sessionName(for: firstLeaf.id)
+        let firstSessionID = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+            .ensurePaneSession(for: firstLeaf)
+        let sessionName = ZmxLauncher.sessionName(for: firstSessionID)
         return .success(Result(sessionName: sessionName, worktreePath: worktreePath))
     }
 

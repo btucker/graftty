@@ -880,33 +880,18 @@ struct GrafttyApp: App {
             nudgeSender: ZmxNudgeSender(writer: AppZmxWriter(terminalManager: terminalManager))
         )
 
-        // Resolve the current set of registered codex session names for a worktree.
-        // Presence files identify candidate zmx sessions, then
-        // TeamDeliveryPaneResolver verifies that the current pane's shell
-        // process tree still contains a codex process. That second gate is
-        // important because the recorded presence PID belongs to the short-
-        // lived `graftty team register` helper, and stale presence for a
-        // reused/restored zmx session must not make ordinary shells receive
-        // team-message keystrokes.
-        let deliveryPaneResolver = TeamDeliveryPaneResolver(
-            processTree: ProcessTreeWalker(),
-            commandReader: ProcessCommandReader()
-        )
+        // Resolve the current set of registered codex zmx sessions for a worktree.
+        // Presence records already carry the authoritative zmx session names;
+        // TerminalManager is only a live-session gate here.
         let codexSessionNamesIn: @Sendable (String) -> [String] = { [tm] worktreePath in
             MainActor.assumeIsolated {
-                let records = (try? presenceStorage.listAll()) ?? []
-                let paneIDs = deliveryPaneResolver.paneIDs(
-                    records: records,
-                    worktree: worktreePath,
-                    runtime: .codex,
-                    paneIDForSessionName: { sessionName in
-                        tm.paneID(forSessionName: sessionName)
-                    },
-                    shellPIDForPaneID: { paneID in
-                        tm.lookupShellPID(for: TerminalID(id: paneID))
+                ((try? presenceStorage.listAll()) ?? [])
+                    .filter { record in
+                        record.worktree == worktreePath &&
+                        record.runtime == .codex &&
+                        record.paneSessionName.map { tm.handle(forSessionName: $0) != nil } == true
                     }
-                )
-                return paneIDs.map { ZmxLauncher.sessionName(for: $0) }
+                    .compactMap(\.paneSessionName)
             }
         }
 
@@ -1046,9 +1031,9 @@ struct GrafttyApp: App {
         // without the registered process getting a chance to clean up.
         // input-stamp eviction stays on the same trigger so the per-pane
         // registries don't grow unbounded across the app's lifetime.
-        terminalManager.paneClosed = { [stateRegistry, inputRegistry, presenceStorage] paneID in
+        terminalManager.paneClosed = { [stateRegistry, inputRegistry, presenceStorage] paneID, sessionName in
             inputRegistry.removeStamp(paneID: paneID)
-            let sessionName = ZmxLauncher.sessionName(for: paneID)
+            guard let sessionName else { return }
             for record in presenceStorage.records(forPaneSessionName: sessionName) {
                 try? presenceStorage.delete(
                     teamID: record.teamID,
@@ -1075,7 +1060,8 @@ struct GrafttyApp: App {
                     let siblingPaths = repo.worktrees.map(\.path)
                     for wt in repo.worktrees where wt.state == .running {
                         for leafID in wt.splitTree.allLeaves {
-                            let sessionName = ZmxLauncher.sessionName(for: leafID.id)
+                            guard let sessionID = wt.paneSessions[leafID] else { continue }
+                            let sessionName = ZmxLauncher.sessionName(for: sessionID)
                             sessions.append(SessionInfo(
                                 name: sessionName,
                                 worktreePath: wt.path,
@@ -1097,7 +1083,7 @@ struct GrafttyApp: App {
                 for repo in appStateBinding.wrappedValue.repos {
                     for wt in repo.worktrees where wt.state == .running {
                         for leafID in wt.splitTree.allLeaves
-                        where ZmxLauncher.sessionName(for: leafID.id) == sessionName {
+                        where wt.paneSessions[leafID].map(ZmxLauncher.sessionName(for:)) == sessionName {
                             return wt.path
                         }
                     }
@@ -1139,6 +1125,7 @@ struct GrafttyApp: App {
                                 .map {
                                     paneLayoutNode(
                                         from: $0,
+                                        paneSessions: wt.paneSessions,
                                         titles: terminalManager.titles,
                                         paneAttention: wt.paneAttention
                                     )
@@ -1537,6 +1524,7 @@ struct GrafttyApp: App {
                         let id = TerminalID()
                         appState.repos[repoIdx].worktrees[wtIdx].splitTree = SplitTree(root: .leaf(id))
                     }
+                    appState.repos[repoIdx].worktrees[wtIdx].ensurePaneSessionsForRunningRestore()
                     // Mark every restored leaf as rehydrated *before*
                     // surface creation so the first-PWD event (which
                     // triggers onShellReady) finds wasRehydrated == true
@@ -1550,6 +1538,7 @@ struct GrafttyApp: App {
                     guard wt.path == selectedPath else { continue }
                     _ = terminalManager.createSurfaces(
                         for: appState.repos[repoIdx].worktrees[wtIdx].splitTree,
+                        paneSessions: appState.repos[repoIdx].worktrees[wtIdx].paneSessions,
                         worktreePath: wt.path
                     )
                 }
@@ -2134,7 +2123,10 @@ struct GrafttyApp: App {
         guard let terminalID = wt.splitTree.leaf(atPaneID: index) else {
             return .error("no pane with id \(index) in this worktree")
         }
-        let session = ZmxLauncher.sessionName(for: terminalID.id)
+        guard let sessionID = wt.paneSessions[terminalID] else {
+            return .error("pane has no session")
+        }
+        let session = ZmxLauncher.sessionName(for: sessionID)
         do {
             let body = try reader.history(sessionName: session)
             return .paneShow(ScrollbackTail.tail(body, lines: lines))
@@ -2255,6 +2247,8 @@ struct GrafttyApp: App {
                     newTree = wt.splitTree.insertingBefore(newID, at: targetID, direction: direction)
                 }
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
+                let paneSessionID = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                    .ensurePaneSession(for: newID)
                 // TERM-5.5: createSurface can now fail gracefully
                 // (libghostty returned null). Roll back the split-tree
                 // mutation so we don't leave a dangling leaf that renders
@@ -2263,10 +2257,12 @@ struct GrafttyApp: App {
                 // readable socket `.error`.
                 guard terminalManager.createSurface(
                     terminalID: newID,
+                    paneSessionID: paneSessionID,
                     worktreePath: wt.path,
                     extraInitialInput: extraInitialInput
                 ) != nil else {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = wt.splitTree
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].clearPaneSession(for: newID)
                     return nil
                 }
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = newID
@@ -3176,13 +3172,14 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
 @MainActor
 private func paneLayoutNode(
     from node: SplitTree.Node,
+    paneSessions: [PaneSlotID: PaneSessionID],
     titles: [TerminalID: String],
     paneAttention: [TerminalID: Attention]
 ) -> PaneLayoutNode {
     switch node {
     case let .leaf(id):
         return .leaf(
-            sessionName: ZmxLauncher.sessionName(for: id.id),
+            sessionName: paneSessions[id].map(ZmxLauncher.sessionName(for:)) ?? "",
             title: titles[id] ?? "",
             attentionText: paneAttention[id]?.text
         )
@@ -3190,8 +3187,18 @@ private func paneLayoutNode(
         return .split(
             direction: s.direction == .horizontal ? .horizontal : .vertical,
             ratio: s.ratio,
-            left: paneLayoutNode(from: s.left, titles: titles, paneAttention: paneAttention),
-            right: paneLayoutNode(from: s.right, titles: titles, paneAttention: paneAttention)
+            left: paneLayoutNode(
+                from: s.left,
+                paneSessions: paneSessions,
+                titles: titles,
+                paneAttention: paneAttention
+            ),
+            right: paneLayoutNode(
+                from: s.right,
+                paneSessions: paneSessions,
+                titles: titles,
+                paneAttention: paneAttention
+            )
         )
     }
 }

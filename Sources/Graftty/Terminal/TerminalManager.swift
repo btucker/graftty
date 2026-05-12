@@ -46,6 +46,7 @@ final class TerminalManager: ObservableObject {
     private var ghosttyApp: GhosttyApp?
     private var ghosttyConfig: GhosttyConfig?
     private var surfaces: [TerminalID: SurfaceHandle] = [:]
+    private var paneSessionIDs: [TerminalID: PaneSessionID] = [:]
 
     var ptyDeviceAvailability: () -> PtyDeviceAvailability = {
         PtyDeviceAvailability.live()
@@ -243,7 +244,7 @@ final class TerminalManager: ObservableObject {
     /// stamps, WorktreeAgentStateRegistry states, and TeamPresenceStorage
     /// records keyed off the pane's session name). Wired by
     /// `GrafttyApp.startup()` after the pipeline is constructed.
-    var paneClosed: ((UUID) -> Void)?
+    var paneClosed: ((UUID, String?) -> Void)?
 
     /// Fired when cmd-click resolves to a CLI editor; owner spawns a new
     /// pane split-right of the source with `initialInput` as the command.
@@ -355,7 +356,7 @@ final class TerminalManager: ObservableObject {
     func lookupShellPID(for id: TerminalID) -> pid_t? {
         if let cached = cachedShellPIDs[id] { return cached }
         guard let launcher = zmxLauncher, launcher.isAvailable else { return nil }
-        let sessionName = launcher.sessionName(for: id.id)
+        guard let sessionName = sessionName(for: id) else { return nil }
         guard let pid = ZmxPIDLookup.shellPID(
             logFile: launcher.logFile(forSession: sessionName),
             sessionName: sessionName
@@ -423,6 +424,7 @@ final class TerminalManager: ObservableObject {
     @discardableResult
     func createSurfaces(
         for splitTree: SplitTree,
+        paneSessions: [PaneSlotID: PaneSessionID],
         worktreePath: String
     ) -> [TerminalID: SurfaceHandle] {
         guard let app = ghosttyApp?.app else { return [:] }
@@ -440,13 +442,17 @@ final class TerminalManager: ObservableObject {
 
         var created: [TerminalID: SurfaceHandle] = [:]
         for terminalID in splitTree.allLeaves where surfaces[terminalID] == nil {
+            guard let paneSessionID = paneSessions[terminalID] else { continue }
             guard canAllocatePTY(for: terminalID) else { continue }
+            paneSessionIDs[terminalID] = paneSessionID
             clearRehydratedIfDaemonGone(
                 terminalID,
+                paneSessionID: paneSessionID,
                 sessionSnapshot: liveSessionsIfNeeded(for: terminalID)
             )
             let zmxSpawnConfiguration = resolveZmxSpawnConfiguration(
                 for: terminalID,
+                paneSessionID: paneSessionID,
                 worktreePath: worktreePath
             )
             // TERM-5.5: SurfaceHandle.init is failable now — ghostty_surface_new
@@ -461,7 +467,10 @@ final class TerminalManager: ObservableObject {
                 zmxSpawnConfiguration: zmxSpawnConfiguration,
                 terminalManager: self,
                 inputActivityObserver: inputActivityObserver
-            ) else { continue }
+            ) else {
+                paneSessionIDs.removeValue(forKey: terminalID)
+                continue
+            }
             surfaces[terminalID] = handle
             created[terminalID] = handle
             if let scanner = portScanner, let pid = lookupShellPID(for: terminalID) {
@@ -474,6 +483,7 @@ final class TerminalManager: ObservableObject {
     /// Create a single surface, or return the existing one for this `TerminalID`.
     func createSurface(
         terminalID: TerminalID,
+        paneSessionID: PaneSessionID,
         worktreePath: String,
         extraInitialInput: String? = nil
     ) -> SurfaceHandle? {
@@ -483,10 +493,12 @@ final class TerminalManager: ObservableObject {
         }
 
         guard canAllocatePTY(for: terminalID) else { return nil }
-        clearRehydratedIfDaemonGone(terminalID, sessionSnapshot: nil)
+        paneSessionIDs[terminalID] = paneSessionID
+        clearRehydratedIfDaemonGone(terminalID, paneSessionID: paneSessionID, sessionSnapshot: nil)
 
         let zmxSpawnConfiguration = resolveZmxSpawnConfiguration(
             for: terminalID,
+            paneSessionID: paneSessionID,
             worktreePath: worktreePath
         )
         // TERM-5.5: failable init returns nil on libghostty rejection;
@@ -500,7 +512,10 @@ final class TerminalManager: ObservableObject {
             extraInitialInput: extraInitialInput,
             terminalManager: self,
             inputActivityObserver: inputActivityObserver
-        ) else { return nil }
+        ) else {
+            paneSessionIDs.removeValue(forKey: terminalID)
+            return nil
+        }
         surfaces[terminalID] = handle
         if let scanner = portScanner, let pid = lookupShellPID(for: terminalID) {
             Task { await scanner.registerPane(terminalID, shellPID: pid) }
@@ -523,11 +538,12 @@ final class TerminalManager: ObservableObject {
     /// leaves; pass `nil` to fall back to a per-call check.
     private func clearRehydratedIfDaemonGone(
         _ terminalID: TerminalID,
+        paneSessionID: PaneSessionID,
         sessionSnapshot: ZmxSessionSnapshot?
     ) {
         guard rehydratedSurfaces.contains(terminalID),
               let launcher = zmxLauncher else { return }
-        let name = launcher.sessionName(for: terminalID.id)
+        let name = launcher.sessionName(for: paneSessionID)
         let missing: Bool
         switch sessionSnapshot {
         case .live(let sessions):
@@ -553,7 +569,7 @@ final class TerminalManager: ObservableObject {
         }
         shellReadyFired.remove(terminalID)
         cachedShellPIDs.removeValue(forKey: terminalID)
-        paneClosed?(terminalID.id)
+        paneClosed?(terminalID.id, sessionName(for: terminalID))
     }
 
     /// The rendered sidebar label for a pane. Chains in priority order:
@@ -608,10 +624,6 @@ final class TerminalManager: ObservableObject {
         surfaces[terminalID]
     }
 
-    /// Look up the `SurfaceHandle` whose zmx session name matches `sessionName`.
-    /// Used by `AppZmxWriter` to route an idle-delivery nudge to the correct
-    /// pane. Session names are derived from `ZmxLauncher.sessionName(for:)`.
-    ///
     /// Reverse-lookup of the surface handle whose pane derives the given
     /// session name (`graftty-<8hex>`). O(n) over the surface set —
     /// acceptable for typical pane counts (1–20). Used by `AppZmxWriter`
@@ -620,14 +632,14 @@ final class TerminalManager: ObservableObject {
     /// nudges become a hot path, replace with a dictionary maintained
     /// in the surface-create/destroy hooks.
     func handle(forSessionName sessionName: String) -> SurfaceHandle? {
-        surfaces.first(where: { ZmxLauncher.sessionName(for: $0.key.id) == sessionName })?.value
+        surfaces.first(where: { self.sessionName(for: $0.key) == sessionName })?.value
     }
 
     /// Reverse-lookup of the pane UUID whose pane derives the given
     /// zmx session name. Returns nil if no surface matches (e.g. pane
     /// closed). O(n) over the surface set, same cost class as `handle`.
     func paneID(forSessionName sessionName: String) -> UUID? {
-        surfaces.first(where: { ZmxLauncher.sessionName(for: $0.key.id) == sessionName })?.key.id
+        surfaces.first(where: { self.sessionName(for: $0.key) == sessionName })?.key.id
     }
 
     /// Tell libghostty whether a surface is currently visible. On visible,
@@ -739,14 +751,16 @@ final class TerminalManager: ObservableObject {
         shellReadyFired.remove(terminalID)
         firstPaneMarkers.remove(terminalID)
         rehydratedSurfaces.remove(terminalID)
+        paneSessionIDs.removeValue(forKey: terminalID)
     }
 
     /// Resolve the per-surface zmx spawn parameters for a terminal pane.
     /// Returns nil when no launcher is configured or the binary is
     /// missing — in which case `SurfaceHandle` falls back to libghostty's
     /// default `$SHELL` spawn (existing pre-zmx behavior).
-    private func resolveZmxSpawnConfiguration(
+    func resolveZmxSpawnConfiguration(
         for terminalID: TerminalID,
+        paneSessionID: PaneSessionID,
         worktreePath: String
     ) -> ZmxSpawnConfiguration? {
         guard let launcher = zmxLauncher, launcher.isAvailable else {
@@ -755,7 +769,7 @@ final class TerminalManager: ObservableObject {
         let processEnv = ProcessInfo.processInfo.environment
         return ZmxSpawnConfiguration.make(
             launcher: launcher,
-            paneSessionID: PaneSessionID(id: terminalID.id),
+            paneSessionID: paneSessionID,
             worktreePath: worktreePath,
             socketPath: socketPath,
             processEnv: processEnv,
@@ -772,10 +786,15 @@ final class TerminalManager: ObservableObject {
     /// an already-gone session is the success outcome.
     private func killZmxSession(for terminalID: TerminalID) {
         guard let launcher = zmxLauncher, launcher.isAvailable else { return }
-        let name = launcher.sessionName(for: terminalID.id)
+        guard let name = sessionName(for: terminalID) else { return }
         DispatchQueue.global(qos: .utility).async {
             launcher.kill(sessionName: name)
         }
+    }
+
+    private func sessionName(for terminalID: TerminalID) -> String? {
+        guard let sessionID = paneSessionIDs[terminalID] else { return nil }
+        return ZmxLauncher.sessionName(for: sessionID)
     }
 
     /// If `GHOSTTY_RESOURCES_DIR` isn't already set and Ghostty.app is

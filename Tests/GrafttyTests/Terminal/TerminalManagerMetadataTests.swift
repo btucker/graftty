@@ -112,4 +112,23 @@ struct TerminalManagerMetadataTests {
 
         _ = cancellable
     }
+
+    @Test func zmxSpawnConfigurationUsesPaneSessionIDNotSlotID() throws {
+        let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        manager.zmxLauncher = ZmxLauncher(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            zmxDir: URL(fileURLWithPath: "/tmp/zmx-dir", isDirectory: true)
+        )
+        let slotID = PaneSlotID(id: UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!)
+        let sessionID = PaneSessionID(id: UUID(uuidString: "01234567-89AB-CDEF-FEDC-BA9876543210")!)
+
+        let config = try #require(manager.resolveZmxSpawnConfiguration(
+            for: slotID,
+            paneSessionID: sessionID,
+            worktreePath: "/tmp/worktree"
+        ))
+
+        #expect(config.sessionName == "graftty-01234567")
+        #expect(config.argv[2] == "graftty-01234567")
+    }
 }
