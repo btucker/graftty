@@ -201,17 +201,32 @@ public final class SessionClient {
     public func start() {
         lastActivityAt = clock.now
         startIdleWatchdog()
+        ws = webSocketFactory()
         receiveTask = Task { @MainActor [weak self] in
             guard let self else { return }
             var attempt = 0
             while !self.stopped {
-                self.ws = self.webSocketFactory()
                 if self.connectionState != .live {
                     self.connectionState = .live
                 }
-                attempt = 0
                 do {
-                    try await self.runReceiveLoop()
+                    guard let ws = self.ws else {
+                        throw URLError(.cannotConnectToHost)
+                    }
+                    while !self.stopped {
+                        let frame = try await ws.receive()
+                        // Receiving a frame means we're truly connected;
+                        // reset the backoff counter so the next failure
+                        // starts again at the schedule's first entry.
+                        attempt = 0
+                        self.recordActivity()
+                        switch frame {
+                        case .binary(let data):
+                            self.session.receive(data)
+                        case .text(let text):
+                            self.handleTextFrame(text)
+                        }
+                    }
                 } catch is CancellationError {
                     return
                 } catch {
@@ -227,23 +242,7 @@ public final class SessionClient {
                 } catch {
                     return
                 }
-            }
-        }
-    }
-
-    @MainActor
-    private func runReceiveLoop() async throws {
-        guard let ws = self.ws else {
-            throw URLError(.cannotConnectToHost)
-        }
-        while !self.stopped {
-            let frame = try await ws.receive()
-            self.recordActivity()
-            switch frame {
-            case .binary(let data):
-                self.session.receive(data)
-            case .text(let text):
-                self.handleTextFrame(text)
+                self.ws = self.webSocketFactory()
             }
         }
     }

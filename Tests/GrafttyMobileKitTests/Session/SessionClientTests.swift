@@ -175,6 +175,7 @@ struct SessionClientTests {
     func stopClosesWebSocket() {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
         client.stop()
         #expect(ws.closed)
     }
