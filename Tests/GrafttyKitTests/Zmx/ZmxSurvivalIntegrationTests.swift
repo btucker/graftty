@@ -293,12 +293,10 @@ struct ZmxSurvivalIntegrationTests {
 
     // MARK: PWD-follow regression — Ghostty zsh integration across zmx
 
-    /// End-to-end proof that the zsh ZDOTDIR re-injection in
-    /// `attachInitialInput` keeps Ghostty's shell integration alive in the
-    /// inner shell. Without the re-injection, the outer shell's ZDOTDIR is
-    /// the user's original (restored by Ghostty's .zshenv), so the inner
-    /// shell zmx spawns never sources the integration and `cd` emits no
-    /// OSC 7 — which is exactly how PWD-follow broke when zmx arrived.
+    /// End-to-end proof that the host-managed zmx attach environment keeps
+    /// Ghostty's zsh integration alive in the inner shell. Without the
+    /// direct ZDOTDIR env construction, the shell zmx spawns never sources
+    /// the integration and `cd` emits no OSC 7.
     ///
     /// Requires an installed Ghostty.app for its shell-integration dir;
     /// skipped cleanly on machines that don't have one.
@@ -321,15 +319,9 @@ struct ZmxSurvivalIntegrationTests {
             }
 
             let session = launcher.sessionName(for: UUID())
-            let initial = launcher.attachInitialInput(
-                sessionName: session,
-                userShell: "/bin/zsh",
-                ghosttyResourcesDir: ghosttyRes
-            )
 
-            // Outer zsh env mirrors what libghostty would inject at spawn:
-            // ZDOTDIR → Ghostty integration dir; GHOSTTY_ZSH_ZDOTDIR carries
-            // the user's original so integration's .zshenv can restore it.
+            // Host-managed native panes pass Ghostty's zsh integration env
+            // directly to the zmx attach client that spawns the inner shell.
             var env = launcher.subprocessEnv(from: [:])
             env["HOME"] = fakeHome
             env["PATH"] = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
@@ -338,20 +330,15 @@ struct ZmxSurvivalIntegrationTests {
             env["GHOSTTY_ZSH_ZDOTDIR"] = fakeHome
 
             let pty = try Self.spawnShellWithEnv(
-                executable: "/bin/zsh", args: ["-i"], env: env
+                executable: launcher.executable.path,
+                args: ["attach", session, "/bin/zsh"],
+                env: env
             )
             defer {
                 pty.terminate()
                 launcher.kill(sessionName: session)
             }
 
-            // Let the outer shell come up and source .zshenv (which sources
-            // Ghostty integration in the outer shell).
-            _ = Self.readUntil(marker: "", from: pty, deadline: 1.0)
-
-            // Simulate libghostty's initial_input → outer shell execs zmx
-            // attach, zmx spawns the inner shell via its daemon.
-            try pty.write(initial)
             // zmx attach's first output is the VT clear (ESC [ 2J). That's
             // our "inner shell is attached" signal.
             _ = Self.readUntil(marker: "\u{001B}[2J", from: pty, deadline: 5)

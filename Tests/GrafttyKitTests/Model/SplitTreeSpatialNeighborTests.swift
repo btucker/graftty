@@ -15,8 +15,8 @@ SplitTree spatial navigation
 struct SplitTreeSpatialNeighborTests {
 
     @Test func rightInSimpleHorizontalSplit() {
-        let a = TerminalID()
-        let b = TerminalID()
+        let a = PaneSlotID()
+        let b = PaneSlotID()
         let tree = SplitTree(root: .split(.init(
             direction: .horizontal, ratio: 0.5,
             left: .leaf(a), right: .leaf(b)
@@ -30,8 +30,8 @@ struct SplitTreeSpatialNeighborTests {
     }
 
     @Test func downInVerticalSplit() {
-        let a = TerminalID()
-        let b = TerminalID()
+        let a = PaneSlotID()
+        let b = PaneSlotID()
         let tree = SplitTree(root: .split(.init(
             direction: .vertical, ratio: 0.5,
             left: .leaf(a), right: .leaf(b)
@@ -53,9 +53,9 @@ struct SplitTreeSpatialNeighborTests {
     ///
     /// Root is horizontal. Right subtree is a vertical split (B on top, C below).
     @Test func navigationIntoNestedVerticalFromLeftOfHorizontal() {
-        let a = TerminalID()
-        let b = TerminalID()
-        let c = TerminalID()
+        let a = PaneSlotID()
+        let b = PaneSlotID()
+        let c = PaneSlotID()
         let rightSubtree: SplitTree.Node = .split(.init(
             direction: .vertical, ratio: 0.5,
             left: .leaf(b), right: .leaf(c)
@@ -99,9 +99,9 @@ struct SplitTreeSpatialNeighborTests {
     ///
     /// Root is vertical. Top subtree is a horizontal split.
     @Test func navigationAcrossMixedSplitTypes() {
-        let a = TerminalID()
-        let b = TerminalID()
-        let c = TerminalID()
+        let a = PaneSlotID()
+        let b = PaneSlotID()
+        let c = PaneSlotID()
         let topSubtree: SplitTree.Node = .split(.init(
             direction: .horizontal, ratio: 0.5,
             left: .leaf(a), right: .leaf(b)
@@ -128,7 +128,7 @@ struct SplitTreeSpatialNeighborTests {
     }
 
     @Test func singleLeafHasNoNeighborsInAnyDirection() {
-        let a = TerminalID()
+        let a = PaneSlotID()
         let tree = SplitTree(root: .leaf(a))
         for direction: SplitTree.SpatialDirection in [.left, .right, .up, .down] {
             #expect(tree.spatialNeighbor(of: a, direction: direction) == nil)
@@ -137,12 +137,12 @@ struct SplitTreeSpatialNeighborTests {
 
     @Test func emptyTreeReturnsNil() {
         let tree = SplitTree(root: nil)
-        #expect(tree.spatialNeighbor(of: TerminalID(), direction: .right) == nil)
+        #expect(tree.spatialNeighbor(of: PaneSlotID(), direction: .right) == nil)
     }
 
     @Test func unknownTerminalReturnsNil() {
-        let present = TerminalID()
-        let absent = TerminalID()
+        let present = PaneSlotID()
+        let absent = PaneSlotID()
         let tree = SplitTree(root: .leaf(present))
         #expect(tree.spatialNeighbor(of: absent, direction: .right) == nil)
     }

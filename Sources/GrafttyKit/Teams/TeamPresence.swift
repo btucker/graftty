@@ -3,11 +3,11 @@ import Foundation
 /// @spec TEAM-PRESENCE-1.2
 /// @spec TEAM-IDLE-2.9
 /// @spec TEAM-IDLE-2.10
-/// Per-(team, worktree, runtime, pane) liveness record. Distinct from
-/// worktree existence: a record means a runtime is alive AND has
-/// registered itself. `paneSessionName` is set when the registering
-/// process saw a `ZMX_SESSION` env var (i.e. inside a graftty-launched
-/// zmx pane); nil otherwise.
+/// Per-(team, worktree, runtime, pane) presence record. Distinct from
+/// worktree existence: a record means a runtime registered itself, but
+/// callers that need liveness must still validate `pid`. `paneSessionName`
+/// is set when the registering process saw a `ZMX_SESSION` env var
+/// (i.e. inside a graftty-launched zmx pane); nil otherwise.
 public struct TeamPresenceRecord: Codable, Equatable, Sendable {
     public let teamID: String
     public let worktree: String
@@ -120,14 +120,6 @@ public struct TeamPresenceStorage: Sendable {
         return records
     }
 
-    /// All records whose `paneSessionName` matches `sessionName`. Returns `[]`
-    /// when storage can't be read. Used by keystroke routing and pane-close
-    /// cleanup to find the agent(s) associated with a graftty pane.
-    public func records(forPaneSessionName sessionName: String) -> [TeamPresenceRecord] {
-        let all = (try? listAll()) ?? []
-        return all.filter { $0.paneSessionName == sessionName }
-    }
-
     private func presenceDirectory(teamID: String) -> URL {
         rootDirectory
             .appendingPathComponent(TeamInbox.fileComponent(teamID), isDirectory: true)
@@ -143,6 +135,66 @@ public struct TeamPresenceStorage: Sendable {
         let paneSegment = paneSessionName ?? "_no_pane"
         let leaf = TeamInbox.fileComponent("\(worktree).\(runtime.rawValue).\(paneSegment)") + ".json"
         return presenceDirectory(teamID: teamID).appendingPathComponent(leaf)
+    }
+}
+
+/// In-memory view of presence files for hot paths such as key handling.
+/// The CLI owns writes to `TeamPresenceStorage`, so the app refreshes this
+/// index at event boundaries and on the stale-presence ticker.
+public final class TeamPresenceIndex: @unchecked Sendable {
+    private let lock = NSLock()
+    private var records: [TeamPresenceRecord] = []
+    private var recordsByPaneSessionName: [String: [TeamPresenceRecord]] = [:]
+
+    public init(records: [TeamPresenceRecord] = []) {
+        replace(with: records)
+    }
+
+    public func replace(with records: [TeamPresenceRecord]) {
+        lock.lock()
+        self.records = records
+        self.recordsByPaneSessionName = Self.groupByPaneSessionName(records)
+        lock.unlock()
+    }
+
+    public func allRecords() -> [TeamPresenceRecord] {
+        lock.lock()
+        defer { lock.unlock() }
+        return records
+    }
+
+    public func records(forPaneSessionName sessionName: String) -> [TeamPresenceRecord] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordsByPaneSessionName[sessionName] ?? []
+    }
+
+    public func remove(
+        teamID: String,
+        worktree: String,
+        runtime: TeamHookRuntime,
+        paneSessionName: String?
+    ) {
+        lock.lock()
+        records = records.filter { record in
+            !(record.teamID == teamID &&
+              record.worktree == worktree &&
+              record.runtime == runtime &&
+              record.paneSessionName == paneSessionName)
+        }
+        recordsByPaneSessionName = Self.groupByPaneSessionName(records)
+        lock.unlock()
+    }
+
+    private static func groupByPaneSessionName(
+        _ records: [TeamPresenceRecord]
+    ) -> [String: [TeamPresenceRecord]] {
+        Dictionary(grouping: records.compactMap { record -> (String, TeamPresenceRecord)? in
+            guard let sessionName = record.paneSessionName else { return nil }
+            return (sessionName, record)
+        }, by: { $0.0 }).mapValues { pairs in
+            pairs.map(\.1)
+        }
     }
 }
 

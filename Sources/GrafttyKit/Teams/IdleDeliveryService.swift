@@ -3,7 +3,7 @@ import Foundation
 /// Pluggable target for `IdleDeliveryService` nudges. Production wires
 /// this to a zmx PTY writer; tests record invocations.
 public protocol NudgeSender: Sendable {
-    func send(paneID: UUID, message: String, messageIDs: [String]) async
+    func send(sessionName: String, message: String, messageIDs: [String]) async
 }
 
 /// @spec TEAM-IDLE-2.1
@@ -38,36 +38,35 @@ public actor IdleDeliveryService {
         self.now = now
     }
 
-    public func onStop(team: String, worktree: String, paneIDs: [UUID]) async {
-        await maybeDeliver(team: team, worktree: worktree, paneIDs: paneIDs, trigger: "stop")
+    public func onStop(team: String, worktree: String, sessionNames: [String]) async {
+        await maybeDeliver(team: team, worktree: worktree, sessionNames: sessionNames, trigger: "stop")
     }
 
-    public func onMessageArrival(team: String, worktree: String, paneIDs: [UUID]) async {
-        await maybeDeliver(team: team, worktree: worktree, paneIDs: paneIDs, trigger: "messageArrival")
+    public func onMessageArrival(team: String, worktree: String, sessionNames: [String]) async {
+        await maybeDeliver(team: team, worktree: worktree, sessionNames: sessionNames, trigger: "messageArrival")
     }
 
     private func maybeDeliver(
         team: String,
         worktree: String,
-        paneIDs: [UUID],
+        sessionNames: [String],
         trigger: String
     ) async {
         // The service is implicitly codex-only by construction:
-        // - inbox-observer dispatch passes only codex paneIDs (filtered upstream);
+        // - inbox-observer dispatch passes only codex session names (filtered upstream);
         // - the Stop-hook callback only invokes us for runtime == .codex.
         let runtime = TeamHookRuntime.codex.rawValue
-        guard !paneIDs.isEmpty else {
+        guard !sessionNames.isEmpty else {
             log(team: team, worktree: worktree, runtime: runtime,
-                outcome: "skipped_no_codex_panes")
+                outcome: "skipped_no_codex_sessions")
             return
         }
         // .idle: agent fired Stop with no recent typing — clear deliver.
         // .unknown: no SessionStart observed since graftty started, but
-        //   if the worktree has a pane the agent is presumably running
-        //   (e.g. an existing session that predates graftty's restart).
-        //   Better to deliver and let the message land in the input
-        //   buffer than to silently hold it forever waiting for a
-        //   SessionStart that may never come.
+        //   upstream only supplies session names after live-pane and
+        //   runtime-PID gates. Deliver so existing sessions that predate
+        //   graftty's restart are not stuck waiting for a SessionStart
+        //   that may never come.
         // .active / .user_engaged: skip — pretty clear the agent is
         //   busy or the user is typing.
         let s = state.state(worktree: worktree, runtime: runtime)
@@ -93,8 +92,8 @@ public actor IdleDeliveryService {
             return
         }
         let text = TeamHookRenderer.format(messages: pending)
-        for paneID in paneIDs {
-            await nudgeSender.send(paneID: paneID, message: text, messageIDs: pending.map(\.id))
+        for sessionName in sessionNames {
+            await nudgeSender.send(sessionName: sessionName, message: text, messageIDs: pending.map(\.id))
         }
         do {
             try inbox.advanceZmxWatermark(teamID: team, worktree: worktree,
@@ -121,7 +120,7 @@ public actor IdleDeliveryService {
 
 /// @spec TEAM-IDLE-2.6
 /// Production NudgeSender that writes pending-message text into the
-/// recipient pane's zmx PTY via a `ZmxWriter` adapter. Tests inject
+/// recipient zmx session's PTY via a `ZmxWriter` adapter. Tests inject
 /// a stub writer; production uses `AppZmxWriter` (Sources/Graftty)
 /// which calls `typeText` on the pane's `SurfaceHandle`.
 public final class ZmxNudgeSender: NudgeSender, @unchecked Sendable {
@@ -129,9 +128,8 @@ public final class ZmxNudgeSender: NudgeSender, @unchecked Sendable {
     public init(writer: ZmxWriter) {
         self.writer = writer
     }
-    public func send(paneID: UUID, message: String, messageIDs: [String]) async {
-        let session = ZmxLauncher.sessionName(for: paneID)
-        do { try await writer.write(sessionName: session, text: message, submit: true) }
-        catch { NSLog("[Graftty] zmx send failed for %@: %@", session, "\(error)") }
+    public func send(sessionName: String, message: String, messageIDs: [String]) async {
+        do { try await writer.write(sessionName: sessionName, text: message, submit: true) }
+        catch { NSLog("[Graftty] zmx send failed for %@: %@", sessionName, "\(error)") }
     }
 }

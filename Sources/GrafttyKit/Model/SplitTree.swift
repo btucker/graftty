@@ -22,15 +22,15 @@ public struct SplitTree: Codable, Sendable, Equatable {
     /// - `removing(target:)` returns with `zoomed = (zoomed == target) ? nil : zoomed`.
     ///   Closing the zoomed pane auto-unzooms; closing a sibling preserves zoom.
     /// - `resizing(...)` always returns with `zoomed: nil`.
-    public let zoomed: TerminalID?
+    public let zoomed: PaneSlotID?
 
-    public init(root: Node?, zoomed: TerminalID? = nil) {
+    public init(root: Node?, zoomed: PaneSlotID? = nil) {
         self.root = root
         self.zoomed = zoomed
     }
 
     public indirect enum Node: Codable, Sendable, Equatable {
-        case leaf(TerminalID)
+        case leaf(PaneSlotID)
         case split(Split)
 
         public struct Split: Codable, Sendable, Equatable {
@@ -67,7 +67,7 @@ public struct SplitTree: Codable, Sendable, Equatable {
         return root.leafCount
     }
 
-    public var allLeaves: [TerminalID] {
+    public var allLeaves: [PaneSlotID] {
         guard let root else { return [] }
         return root.allLeaves
     }
@@ -75,15 +75,15 @@ public struct SplitTree: Codable, Sendable, Equatable {
     /// O(depth) membership check that short-circuits on the first match.
     /// Prefer over `allLeaves.contains(_:)` in hot paths — `allLeaves`
     /// allocates the full array.
-    public func containsLeaf(_ id: TerminalID) -> Bool {
+    public func containsLeaf(_ id: PaneSlotID) -> Bool {
         root?.containsLeaf(id) ?? false
     }
 
     /// Resolve a user-facing 1-based pane ID (as printed by `graftty
-    /// pane list`) to its underlying `TerminalID`, or nil if the ID is
+    /// pane list`) to its underlying `PaneSlotID`, or nil if the ID is
     /// out of range. Uses `allLeaves` order — the same order `list`
     /// displays.
-    public func leaf(atPaneID paneID: Int) -> TerminalID? {
+    public func leaf(atPaneID paneID: Int) -> PaneSlotID? {
         // Pane IDs are 1-based. Any non-positive value is out of range
         // and returns nil — matters for `paneID == Int.min`, which
         // otherwise overflows `paneID - 1` and traps the process. An
@@ -99,7 +99,7 @@ public struct SplitTree: Codable, Sendable, Equatable {
 
     // MARK: - Mutations (return new trees)
 
-    public func inserting(_ newLeaf: TerminalID, at target: TerminalID, direction: SplitDirection) -> SplitTree {
+    public func inserting(_ newLeaf: PaneSlotID, at target: PaneSlotID, direction: SplitDirection) -> SplitTree {
         guard let root else { return self }
         return SplitTree(root: root.inserting(newLeaf, at: target, direction: direction), zoomed: nil)
     }
@@ -107,18 +107,18 @@ public struct SplitTree: Codable, Sendable, Equatable {
     /// Like `inserting`, but the new leaf becomes the *left/top* child rather
     /// than the *right/bottom*. Used by "Split Left" / "Split Up" from the
     /// context menu — same split, opposite placement.
-    public func insertingBefore(_ newLeaf: TerminalID, at target: TerminalID, direction: SplitDirection) -> SplitTree {
+    public func insertingBefore(_ newLeaf: PaneSlotID, at target: PaneSlotID, direction: SplitDirection) -> SplitTree {
         guard let root else { return self }
         return SplitTree(root: root.insertingBefore(newLeaf, at: target, direction: direction), zoomed: nil)
     }
 
-    public func removing(_ target: TerminalID) -> SplitTree {
+    public func removing(_ target: PaneSlotID) -> SplitTree {
         guard let root else { return self }
         let newZoomed = (zoomed == target) ? nil : zoomed
         return SplitTree(root: root.removing(target), zoomed: newZoomed)
     }
 
-    /// Compute the new `focusedTerminalID` for a worktree after a pane
+    /// Compute the new `focusedPaneSlotID` for a worktree after a pane
     /// has been removed from its split tree (`TERM-5.6`).
     ///
     /// Contract:
@@ -135,10 +135,10 @@ public struct SplitTree: Codable, Sendable, Equatable {
     /// UX bug. This helper is the pure policy seam callers use so the
     /// rule is testable without a live TerminalManager.
     public static func focusAfterRemoving(
-        currentFocus: TerminalID?,
-        removed: TerminalID,
+        currentFocus: PaneSlotID?,
+        removed: PaneSlotID,
         remainingTree: SplitTree
-    ) -> TerminalID? {
+    ) -> PaneSlotID? {
         guard remainingTree.root != nil else { return nil }
         guard let currentFocus else { return nil }
         if currentFocus == removed {
@@ -188,14 +188,14 @@ public struct SplitTree: Codable, Sendable, Equatable {
     /// keypress or loop around. Upstream Ghostty's convention is "ignore,"
     /// so the call site mirrors that.
     public func spatialNeighbor(
-        of terminalID: TerminalID,
+        of terminalID: PaneSlotID,
         direction: SpatialDirection
-    ) -> TerminalID? {
+    ) -> PaneSlotID? {
         guard let root else { return nil }
         return root.findSpatialNeighbor(of: terminalID, direction: direction)
     }
 
-    public func updatingRatio(for target: TerminalID, ratio: Double) -> SplitTree {
+    public func updatingRatio(for target: PaneSlotID, ratio: Double) -> SplitTree {
         guard let root else { return self }
         return SplitTree(root: root.updatingRatio(for: target, ratio: ratio), zoomed: zoomed)
     }
@@ -206,7 +206,7 @@ public struct SplitTree: Codable, Sendable, Equatable {
     /// owns by `(left.allLeaves.first, direction)`, which stays stable
     /// across the brief window of a drag even for nested splits.
     public func updatingRatio(
-        leftAnchor: TerminalID,
+        leftAnchor: PaneSlotID,
         direction: SplitDirection,
         ratio: Double
     ) -> SplitTree {
@@ -216,7 +216,7 @@ public struct SplitTree: Codable, Sendable, Equatable {
 
     /// Returns a copy with `zoomed` set to `id` (pass nil to unzoom). Leaves
     /// `root` untouched.
-    public func withZoom(_ id: TerminalID?) -> SplitTree {
+    public func withZoom(_ id: PaneSlotID?) -> SplitTree {
         SplitTree(root: root, zoomed: id)
     }
 
@@ -224,7 +224,7 @@ public struct SplitTree: Codable, Sendable, Equatable {
     /// - If `leaf == zoomed`, unzooms (`zoomed: nil`).
     /// - Else if the tree has more than one leaf AND contains `leaf`, zoom that leaf.
     /// - Else (lone-leaf tree or unknown leaf), return self unchanged.
-    public func togglingZoom(at leaf: TerminalID) -> SplitTree {
+    public func togglingZoom(at leaf: PaneSlotID) -> SplitTree {
         guard containsLeaf(leaf), leafCount > 1 else {
             return self
         }
@@ -252,12 +252,12 @@ public struct SplitTree: Codable, Sendable, Equatable {
     /// `anchorID` is picked as `allLeaves.first` of the original sibling
     /// subtree so it remains a useful anchor even if that subtree has
     /// itself been restructured since the leaf left.
-    public func position(of terminalID: TerminalID) -> LeafPosition? {
+    public func position(of terminalID: PaneSlotID) -> LeafPosition? {
         root?.position(of: terminalID)
     }
 
     public struct LeafPosition: Equatable, Sendable {
-        public let anchorID: TerminalID
+        public let anchorID: PaneSlotID
         public let direction: SplitDirection
         public let placement: Placement
 
@@ -268,7 +268,7 @@ public struct SplitTree: Codable, Sendable, Equatable {
             case after
         }
 
-        public init(anchorID: TerminalID, direction: SplitDirection, placement: Placement) {
+        public init(anchorID: PaneSlotID, direction: SplitDirection, placement: Placement) {
             self.anchorID = anchorID
             self.direction = direction
             self.placement = placement
@@ -288,7 +288,7 @@ extension SplitTree {
     /// Throws `SplitTreeError.noMatchingAncestor` when no such ancestor
     /// exists (matches upstream Ghostty's `BaseTerminalController.swift:715-717`).
     public func resizing(
-        target: TerminalID,
+        target: PaneSlotID,
         direction: ResizeDirection,
         pixels: UInt16,
         ancestorBounds: CGRect
@@ -308,7 +308,7 @@ extension SplitTree {
 
     /// The ratio of the innermost split containing `leaf`. Used by tests
     /// and by the split-container view's resize call site.
-    public func ratioOfSplit(containing leaf: TerminalID) -> Double {
+    public func ratioOfSplit(containing leaf: PaneSlotID) -> Double {
         root?.ratioOfSplit(containing: leaf) ?? 0
     }
 
@@ -330,7 +330,7 @@ extension SplitTree.Node {
         }
     }
 
-    public var allLeaves: [TerminalID] {
+    public var allLeaves: [PaneSlotID] {
         switch self {
         case .leaf(let id):
             return [id]
@@ -339,7 +339,7 @@ extension SplitTree.Node {
         }
     }
 
-    func containsLeaf(_ id: TerminalID) -> Bool {
+    func containsLeaf(_ id: PaneSlotID) -> Bool {
         switch self {
         case .leaf(let leafID):
             return leafID == id
@@ -353,9 +353,9 @@ extension SplitTree.Node {
     /// source subtree side matches this split and matches the required
     /// split direction — hand back the near-edge leaf of the opposite side.
     func findSpatialNeighbor(
-        of terminalID: TerminalID,
+        of terminalID: PaneSlotID,
         direction: SplitTree.SpatialDirection
-    ) -> TerminalID? {
+    ) -> PaneSlotID? {
         guard case let .split(split) = self else { return nil }
 
         if split.left.containsLeaf(terminalID) {
@@ -393,7 +393,7 @@ extension SplitTree.Node {
     /// children of the split share the boundary edge equally. Convention:
     /// pick the left/top child ("reading order"), matching upstream
     /// Ghostty's `SplitTree.spatialNeighbor` behavior.
-    fileprivate func nearEdgeLeaf(movingFrom direction: SplitTree.SpatialDirection) -> TerminalID {
+    fileprivate func nearEdgeLeaf(movingFrom direction: SplitTree.SpatialDirection) -> PaneSlotID {
         switch self {
         case .leaf(let id):
             return id
@@ -411,7 +411,7 @@ extension SplitTree.Node {
         }
     }
 
-    func inserting(_ newLeaf: TerminalID, at target: TerminalID, direction: SplitDirection) -> SplitTree.Node {
+    func inserting(_ newLeaf: PaneSlotID, at target: PaneSlotID, direction: SplitDirection) -> SplitTree.Node {
         switch self {
         case .leaf(let id):
             if id == target {
@@ -433,7 +433,7 @@ extension SplitTree.Node {
         }
     }
 
-    func insertingBefore(_ newLeaf: TerminalID, at target: TerminalID, direction: SplitDirection) -> SplitTree.Node {
+    func insertingBefore(_ newLeaf: PaneSlotID, at target: PaneSlotID, direction: SplitDirection) -> SplitTree.Node {
         switch self {
         case .leaf(let id):
             if id == target {
@@ -455,7 +455,7 @@ extension SplitTree.Node {
         }
     }
 
-    func removing(_ target: TerminalID) -> SplitTree.Node? {
+    func removing(_ target: PaneSlotID) -> SplitTree.Node? {
         switch self {
         case .leaf(let id):
             return id == target ? nil : self
@@ -473,7 +473,7 @@ extension SplitTree.Node {
         }
     }
 
-    func position(of terminalID: TerminalID) -> SplitTree.LeafPosition? {
+    func position(of terminalID: PaneSlotID) -> SplitTree.LeafPosition? {
         guard case .split(let s) = self else { return nil }
 
         // Direct hit: `terminalID` is a leaf one level below. The *other*
@@ -496,7 +496,7 @@ extension SplitTree.Node {
     }
 
     func updatingRatio(
-        leftAnchor: TerminalID,
+        leftAnchor: PaneSlotID,
         direction targetDirection: SplitDirection,
         ratio: Double
     ) -> SplitTree.Node {
@@ -521,7 +521,7 @@ extension SplitTree.Node {
         }
     }
 
-    func updatingRatio(for target: TerminalID, ratio: Double) -> SplitTree.Node {
+    func updatingRatio(for target: PaneSlotID, ratio: Double) -> SplitTree.Node {
         switch self {
         case .leaf:
             return self
@@ -539,7 +539,7 @@ extension SplitTree.Node {
     }
 
     func resizingAncestor(
-        of leaf: TerminalID,
+        of leaf: PaneSlotID,
         orientation: SplitDirection,
         delta: Double
     ) throws -> SplitTree.Node {
@@ -568,7 +568,7 @@ extension SplitTree.Node {
         }
     }
 
-    func ratioOfSplit(containing leaf: TerminalID) -> Double {
+    func ratioOfSplit(containing leaf: PaneSlotID) -> Double {
         switch self {
         case .leaf:
             return 0

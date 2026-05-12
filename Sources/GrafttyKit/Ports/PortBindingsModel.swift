@@ -4,11 +4,11 @@ import Combine
 
 @MainActor
 public final class PortBindingsModel: ObservableObject {
-    @Published public private(set) var bindings: [TerminalID: [PortBinding]] = [:]
+    @Published public private(set) var bindings: [PaneSlotID: [PortBinding]] = [:]
 
     public init() {}
 
-    public func set(_ id: TerminalID, _ list: [PortBinding]) {
+    public func set(_ id: PaneSlotID, _ list: [PortBinding]) {
         if list.isEmpty {
             guard bindings[id] != nil else { return }
             bindings.removeValue(forKey: id)

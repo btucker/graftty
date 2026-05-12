@@ -5,7 +5,9 @@ import GrafttyKit
 struct TerminalContentView: View {
     @ObservedObject var terminalManager: TerminalManager
     let splitTree: Binding<SplitTree>
-    let onFocusTerminal: (TerminalID) -> Void
+    let focusedPaneSlotID: PaneSlotID?
+    let theme: GhosttyTheme
+    let onFocusTerminal: (PaneSlotID) -> Void
 
     var body: some View {
         // Zoom fast-path: if one pane is zoomed, render only its leaf full-bleed.
@@ -36,11 +38,14 @@ struct TerminalContentView: View {
         }
     }
 
-    private func leafView(_ terminalID: TerminalID) -> AnyView {
+    private func leafView(_ terminalID: PaneSlotID) -> AnyView {
+        let isUnfocused = focusedPaneSlotID != nil && terminalID != focusedPaneSlotID
+        let dimmingStyle = theme.paneFocusDimmingStyle(isUnfocused: isUnfocused)
         if let nsView = terminalManager.view(for: terminalID) {
             let tm = terminalManager
             return AnyView(
                 SurfaceViewWrapper(nsView: nsView)
+                    .paneFocusDimming(fill: theme.unfocusedSplitFill, style: dimmingStyle)
                     // Force a distinct SwiftUI identity per terminal. Without
                     // this, when the split tree swaps one terminalID for
                     // another at the same structural position (e.g., the user
@@ -64,6 +69,7 @@ struct TerminalContentView: View {
                         ProgressView()
                             .controlSize(.small)
                     )
+                    .paneFocusDimming(fill: theme.unfocusedSplitFill, style: dimmingStyle)
                     .id(terminalID)
             )
         }
@@ -93,6 +99,28 @@ struct TerminalContentView: View {
                 }
             )
         )
+    }
+}
+
+private struct PaneFocusDimmingModifier: ViewModifier {
+    let fill: Color
+    let style: PaneFocusDimmingStyle
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            if style.isVisible {
+                Rectangle()
+                    .fill(fill.opacity(style.overlayOpacity))
+                    .clipped()
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+}
+
+private extension View {
+    func paneFocusDimming(fill: Color, style: PaneFocusDimmingStyle) -> some View {
+        modifier(PaneFocusDimmingModifier(fill: fill, style: style))
     }
 }
 

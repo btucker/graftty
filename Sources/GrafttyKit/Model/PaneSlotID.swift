@@ -1,6 +1,6 @@
 import Foundation
 
-public struct TerminalID: Hashable, Codable, Identifiable, Sendable {
+public struct PaneSlotID: Hashable, Codable, Identifiable, Sendable {
     public let id: UUID
 
     public init() {

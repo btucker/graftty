@@ -257,14 +257,10 @@ struct GrafttyApp: App {
 
         // ZMX-7.4: If Graftty.app was launched from a terminal that
         // was itself inside a zmx session, `ZMX_SESSION=<parent-name>`
-        // is in the app's env — and libghostty inherits it when
-        // spawning every new pane's shell. That shell's
-        // `exec zmx attach 'graftty-<new-hex>' <shell>` then hits zmx
-        // with $ZMX_SESSION set, which zmx prefers over the positional
-        // arg, so the new pane attaches to the PARENT's session
-        // instead. User-reported as "created a new worktree, its
-        // Claude swapped out for an older worktree's Claude". Strip
-        // before any surface spawns.
+        // is in the app's env. Host-managed native panes now route zmx
+        // attach through `ZmxSpawnConfiguration`, which strips this per
+        // spawn, but the app also launches other subprocesses. Strip the
+        // leaky key globally before any surface or helper process spawns.
         ZmxLauncher.sanitizeProcessEnvironment()
 
         // Must run before any @AppStorage binding reads `teamEventRoutingPreferences`
@@ -869,8 +865,15 @@ struct GrafttyApp: App {
         let presenceStorage = TeamPresenceStorage(
             rootDirectory: TeamPresenceStorage.defaultRoot()
         )
+        let presenceIndex = TeamPresenceIndex(
+            records: (try? presenceStorage.listAll()) ?? []
+        )
+        func refreshPresenceIndex() {
+            presenceIndex.replace(with: (try? presenceStorage.listAll()) ?? [])
+        }
         presenceTicker.start {
             TeamPresenceMonitor.cleanupStale(storage: presenceStorage)
+            refreshPresenceIndex()
         }
 
         // TEAM-IDLE-2.1 / TEAM-IDLE-2.2 / TEAM-IDLE-2.4 / TEAM-IDLE-2.5:
@@ -884,22 +887,18 @@ struct GrafttyApp: App {
             nudgeSender: ZmxNudgeSender(writer: AppZmxWriter(terminalManager: terminalManager))
         )
 
-        // Resolve the current set of registered codex panes for a worktree.
-        // Reads TeamPresenceStorage on the main actor (file count is bounded
-        // by active-agent count — typically <20) and reverse-resolves each
-        // recorded paneSessionName via TerminalManager. Captures `tm` (the
-        // already-locally-bound TerminalManager from line 711) to avoid
-        // colliding with the `let terminalManager = tm` shadow declared
-        // later in this same function.
-        let codexPanesIn: @Sendable (String) -> [UUID] = { [tm] worktreePath in
+        // Resolve registered codex zmx sessions for a worktree. Presence
+        // records carry the authoritative session names; TerminalManager
+        // proves the pane session is current, and the recorded PID proves
+        // the registered runtime is still running.
+        let codexSessionNamesIn: @Sendable (String) -> [String] = { [tm] worktreePath in
             MainActor.assumeIsolated {
-                let records = (try? presenceStorage.listAll()) ?? []
-                let codexSessions = records
-                    .filter { $0.worktree == worktreePath && $0.runtime == .codex }
-                    .compactMap { $0.paneSessionName }
-                return codexSessions.compactMap { sessionName in
-                    tm.paneID(forSessionName: sessionName)
-                }
+                refreshPresenceIndex()
+                return TeamDeliverySessionResolution.codexSessionNames(
+                    in: worktreePath,
+                    records: presenceIndex.allRecords(),
+                    isLiveSession: { tm.handle(forSessionName: $0) != nil }
+                )
             }
         }
 
@@ -912,34 +911,34 @@ struct GrafttyApp: App {
                 // onElapsed is @MainActor, so binding.wrappedValue is
                 // accessible directly — no MainActor.assumeIsolated dance.
                 guard let service = idleService else { return }
-                let paneIDs = codexPanesIn(worktree)
+                let sessionNames = codexSessionNamesIn(worktree)
                 guard let teamID = binding.wrappedValue.repos.first(where: {
                     $0.worktrees.contains(where: { $0.path == worktree })
                 })?.path else { return }
                 Task {
                     await service.onMessageArrival(
-                        team: teamID, worktree: worktree, paneIDs: paneIDs
+                        team: teamID, worktree: worktree, sessionNames: sessionNames
                     )
                 }
             }
         )
 
-        // Wire the keystroke observer. The onKeystroke closure resolves
-        // pane → (worktree, runtime) by reading TeamPresenceStorage and
-        // matching the pane's session name, then drives the state registry +
-        // grace timer. Fires on MainActor.
+        // Wire the keystroke observer. The callback stays memory-only:
+        // presence files are indexed at event/ticker boundaries so keyDown
+        // never scans disk.
         let inputObserver = PaneInputActivityObserver(
             registry: inputRegistry,
-            onKeystroke: { [weak graceScheduler, presenceStorage] paneID in
+            onKeystroke: { [weak graceScheduler, tm = terminalManager] paneID in
                 // SurfaceNSView.keyDown fires on main thread. Use
                 // assumeIsolated so we can read MainActor-isolated state.
                 MainActor.assumeIsolated {
-                    let sessionName = ZmxLauncher.sessionName(for: paneID)
-                    guard let agent = presenceStorage.records(forPaneSessionName: sessionName).first else {
+                    guard let sessionName = tm.zmxSessionName(for: PaneSlotID(id: paneID)) else {
                         return
                     }
-                    stateRegistry.handleKeystroke(worktree: agent.worktree, runtime: agent.runtime.rawValue)
-                    graceScheduler?.bump(worktree: agent.worktree, runtime: agent.runtime.rawValue)
+                    for agent in presenceIndex.records(forPaneSessionName: sessionName) {
+                        stateRegistry.handleKeystroke(worktree: agent.worktree, runtime: agent.runtime.rawValue)
+                        graceScheduler?.bump(worktree: agent.worktree, runtime: agent.runtime.rawValue)
+                    }
                 }
             }
         )
@@ -950,8 +949,16 @@ struct GrafttyApp: App {
         // event signals that update the state machine.
         let hookCallbacks = TeamHookCallbacks(
             onStop: { [weak idleService, tm] team, worktree, runtime, paneSessionName in
+                MainActor.assumeIsolated { refreshPresenceIndex() }
+                let liveSessionName: String? = MainActor.assumeIsolated {
+                    TeamDeliverySessionResolution.stopSessionName(
+                        runtime: runtime,
+                        paneSessionName: paneSessionName,
+                        isLiveSession: { tm.handle(forSessionName: $0) != nil }
+                    )
+                }
                 let paneID: UUID? = MainActor.assumeIsolated {
-                    paneSessionName.flatMap { tm.paneID(forSessionName: $0) }
+                    liveSessionName.flatMap { tm.paneID(forSessionName: $0) }
                 }
                 // Flip the state machine before the delivery evaluator runs.
                 // Without this, state stays `.active` from the prior
@@ -963,13 +970,15 @@ struct GrafttyApp: App {
                 // keystrokes (Plan-mode review screens), so it must not arm
                 // the inbox-drain pipeline.
                 guard runtime == TeamHookRuntime.codex.rawValue else { return }
-                guard let paneID, let service = idleService else { return }
-                Task { await service.onStop(team: team, worktree: worktree, paneIDs: [paneID]) }
+                guard let sessionName = liveSessionName, let service = idleService else { return }
+                Task { await service.onStop(team: team, worktree: worktree, sessionNames: [sessionName]) }
             },
             onSessionStart: { team, worktree, runtime, _ in
+                MainActor.assumeIsolated { refreshPresenceIndex() }
                 stateRegistry.handleSessionStart(worktree: worktree, runtime: runtime)
             },
             onPostToolUse: { team, worktree, runtime, _ in
+                MainActor.assumeIsolated { refreshPresenceIndex() }
                 stateRegistry.handlePostToolUse(worktree: worktree, runtime: runtime)
             }
         )
@@ -1006,11 +1015,11 @@ struct GrafttyApp: App {
                 guard let service = idleService else { return }
                 for (recipientWorktree, _) in byWorktree {
                     Task { @MainActor in
-                        let paneIDs = codexPanesIn(recipientWorktree)
+                        let sessionNames = codexSessionNamesIn(recipientWorktree)
                         await service.onMessageArrival(
                             team: teamID,
                             worktree: recipientWorktree,
-                            paneIDs: paneIDs
+                            sessionNames: sessionNames
                         )
                     }
                 }
@@ -1039,11 +1048,17 @@ struct GrafttyApp: App {
         // without the registered process getting a chance to clean up.
         // input-stamp eviction stays on the same trigger so the per-pane
         // registries don't grow unbounded across the app's lifetime.
-        terminalManager.paneClosed = { [stateRegistry, inputRegistry, presenceStorage] paneID in
-            inputRegistry.removeStamp(paneID: paneID)
-            let sessionName = ZmxLauncher.sessionName(for: paneID)
-            for record in presenceStorage.records(forPaneSessionName: sessionName) {
+        terminalManager.paneClosed = { [stateRegistry, inputRegistry, presenceStorage] paneSlotID, sessionName in
+            inputRegistry.removeStamp(paneID: paneSlotID.id)
+            guard let sessionName else { return }
+            for record in presenceIndex.records(forPaneSessionName: sessionName) {
                 try? presenceStorage.delete(
+                    teamID: record.teamID,
+                    worktree: record.worktree,
+                    runtime: record.runtime,
+                    paneSessionName: record.paneSessionName
+                )
+                presenceIndex.remove(
                     teamID: record.teamID,
                     worktree: record.worktree,
                     runtime: record.runtime,
@@ -1068,7 +1083,8 @@ struct GrafttyApp: App {
                     let siblingPaths = repo.worktrees.map(\.path)
                     for wt in repo.worktrees where wt.state == .running {
                         for leafID in wt.splitTree.allLeaves {
-                            let sessionName = ZmxLauncher.sessionName(for: leafID.id)
+                            guard let sessionID = wt.paneSessions[leafID] else { continue }
+                            let sessionName = ZmxLauncher.sessionName(for: sessionID)
                             sessions.append(SessionInfo(
                                 name: sessionName,
                                 worktreePath: wt.path,
@@ -1090,7 +1106,7 @@ struct GrafttyApp: App {
                 for repo in appStateBinding.wrappedValue.repos {
                     for wt in repo.worktrees where wt.state == .running {
                         for leafID in wt.splitTree.allLeaves
-                        where ZmxLauncher.sessionName(for: leafID.id) == sessionName {
+                        where wt.paneSessions[leafID].map(ZmxLauncher.sessionName(for:)) == sessionName {
                             return wt.path
                         }
                     }
@@ -1132,6 +1148,7 @@ struct GrafttyApp: App {
                                 .map {
                                     paneLayoutNode(
                                         from: $0,
+                                        paneSessions: wt.paneSessions,
                                         titles: terminalManager.titles,
                                         paneAttention: wt.paneAttention
                                     )
@@ -1415,7 +1432,7 @@ struct GrafttyApp: App {
         // (h) Build the new worktrees array:
         //  - Carried-forward: mutate path (and latest branch label)
         //    in place on the `pre` copy, preserving id / splitTree /
-        //    state / attention / paneAttention / focusedTerminalID /
+        //    state / attention / paneAttention / focusedPaneSlotID /
         //    offeredDeleteForResolvedPR.
         //  - Gone-stale: preserve the full entry, flip state to `.stale`
         //    so the sidebar can still offer a Dismiss action.
@@ -1527,9 +1544,10 @@ struct GrafttyApp: App {
                 let wt = appState.repos[repoIdx].worktrees[wtIdx]
                 if wt.state == .running {
                     if wt.splitTree.root == nil {
-                        let id = TerminalID()
+                        let id = PaneSlotID()
                         appState.repos[repoIdx].worktrees[wtIdx].splitTree = SplitTree(root: .leaf(id))
                     }
+                    appState.repos[repoIdx].worktrees[wtIdx].ensurePaneSessionsForRunningRestore()
                     // Mark every restored leaf as rehydrated *before*
                     // surface creation so the first-PWD event (which
                     // triggers onShellReady) finds wasRehydrated == true
@@ -1543,6 +1561,7 @@ struct GrafttyApp: App {
                     guard wt.path == selectedPath else { continue }
                     _ = terminalManager.createSurfaces(
                         for: appState.repos[repoIdx].worktrees[wtIdx].splitTree,
+                        paneSessions: appState.repos[repoIdx].worktrees[wtIdx].paneSessions,
                         worktreePath: wt.path
                     )
                 }
@@ -2044,7 +2063,7 @@ struct GrafttyApp: App {
             return PaneInfo(
                 id: i + 1,
                 title: display.isEmpty ? nil : display,
-                focused: terminalID == wt.focusedTerminalID
+                focused: terminalID == wt.focusedPaneSlotID
             )
         }
         return .paneList(panes)
@@ -2127,7 +2146,10 @@ struct GrafttyApp: App {
         guard let terminalID = wt.splitTree.leaf(atPaneID: index) else {
             return .error("no pane with id \(index) in this worktree")
         }
-        let session = ZmxLauncher.sessionName(for: terminalID.id)
+        guard let sessionID = wt.paneSessions[terminalID] else {
+            return .error("pane has no session")
+        }
+        let session = ZmxLauncher.sessionName(for: sessionID)
         do {
             let body = try reader.history(sessionName: session)
             return .paneShow(ScrollbackTail.tail(body, lines: lines))
@@ -2229,17 +2251,17 @@ struct GrafttyApp: App {
     fileprivate static func splitPane(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
-        targetID: TerminalID,
+        targetID: PaneSlotID,
         split: PaneSplit,
         extraInitialInput: String? = nil
-    ) -> TerminalID? {
+    ) -> PaneSlotID? {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                 guard wt.state == .running, wt.splitTree.containsLeaf(targetID) else { continue }
 
                 let direction: SplitDirection = (split == .right || split == .left) ? .horizontal : .vertical
-                let newID = TerminalID()
+                let newID = PaneSlotID()
                 let newTree: SplitTree
                 switch split {
                 case .right, .down:
@@ -2248,6 +2270,8 @@ struct GrafttyApp: App {
                     newTree = wt.splitTree.insertingBefore(newID, at: targetID, direction: direction)
                 }
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
+                let paneSessionID = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                    .ensurePaneSession(for: newID)
                 // TERM-5.5: createSurface can now fail gracefully
                 // (libghostty returned null). Roll back the split-tree
                 // mutation so we don't leave a dangling leaf that renders
@@ -2256,13 +2280,15 @@ struct GrafttyApp: App {
                 // readable socket `.error`.
                 guard terminalManager.createSurface(
                     terminalID: newID,
+                    paneSessionID: paneSessionID,
                     worktreePath: wt.path,
                     extraInitialInput: extraInitialInput
                 ) != nil else {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = wt.splitTree
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].clearPaneSession(for: newID)
                     return nil
                 }
-                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = newID
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = newID
                 terminalManager.setFocus(newID)
                 return newID
             }
@@ -2281,7 +2307,7 @@ struct GrafttyApp: App {
     @MainActor
     fileprivate static func setAttentionForTerminal(
         appState: Binding<AppState>,
-        terminalID: TerminalID,
+        terminalID: PaneSlotID,
         text: String,
         clearAfter: TimeInterval
     ) {
@@ -2326,7 +2352,7 @@ struct GrafttyApp: App {
     static func reassignPaneByPWD(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
-        terminalID: TerminalID,
+        terminalID: PaneSlotID,
         newPWD: String
     ) {
         // Find the currently-hosting worktree (by scanning splitTrees) so
@@ -2371,12 +2397,23 @@ struct GrafttyApp: App {
         // target worktree has its own separate attention state.
         appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx]
             .paneAttention[terminalID] = nil
+        var sessionSource = appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx]
+        var sessionTarget = appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx]
+        _ = sessionSource.movePaneSession(for: terminalID, to: &sessionTarget)
+        appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].paneSessions =
+            sessionSource.paneSessions
+        appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].paneSessions =
+            sessionTarget.paneSessions
         if sourceTree.root == nil {
             appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].state = .closed
-            appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].focusedTerminalID = nil
-        } else if sourceWt.focusedTerminalID == terminalID {
-            appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].focusedTerminalID =
-                sourceTree.allLeaves.first
+            appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].focusedPaneSlotID = nil
+        } else {
+            appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].focusedPaneSlotID =
+                SplitTree.focusAfterRemoving(
+                    currentFocus: sourceWt.focusedPaneSlotID,
+                    removed: terminalID,
+                    remainingTree: sourceTree
+                )
         }
 
         // Graft onto the target tree. Prefer a previously-remembered
@@ -2414,7 +2451,7 @@ struct GrafttyApp: App {
         }
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].splitTree = targetTree
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].state = .running
-        appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].focusedTerminalID = terminalID
+        appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].focusedPaneSlotID = terminalID
 
         // Follow the pane with the UI ONLY when the reassigned pane was the
         // user's active typing target — i.e. the focused pane of the
@@ -2427,8 +2464,8 @@ struct GrafttyApp: App {
         let follow = PWDReassignmentPolicy.shouldFollowToDestination(
             selectedWorktreePath: appState.wrappedValue.selectedWorktreePath,
             sourceWorktreePath: sourceWt.path,
-            sourceFocusedTerminalID: sourceWt.focusedTerminalID,
-            reassignedTerminalID: terminalID
+            sourceFocusedPaneSlotID: sourceWt.focusedPaneSlotID,
+            reassignedPaneSlotID: terminalID
         )
         if follow {
             appState.wrappedValue.selectedWorktreePath = targetPath
@@ -2448,7 +2485,7 @@ struct GrafttyApp: App {
     fileprivate static func navigatePane(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
-        from terminalID: TerminalID,
+        from terminalID: PaneSlotID,
         direction: NavigationDirection
     ) {
         for repoIdx in appState.wrappedValue.repos.indices {
@@ -2469,7 +2506,7 @@ struct GrafttyApp: App {
                         : wt.splitTree.withZoom(nil)
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
                 }
-                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nextID
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = nextID
                 terminalManager.setFocus(nextID)
                 return
             }
@@ -2486,7 +2523,7 @@ struct GrafttyApp: App {
     fileprivate static func navigatePaneInTreeOrder(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
-        from terminalID: TerminalID,
+        from terminalID: PaneSlotID,
         forward: Bool
     ) {
         for repoIdx in appState.wrappedValue.repos.indices {
@@ -2505,7 +2542,7 @@ struct GrafttyApp: App {
                         : wt.splitTree.withZoom(nil)
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
                 }
-                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nextID
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = nextID
                 terminalManager.setFocus(nextID)
                 return
             }
@@ -2513,7 +2550,7 @@ struct GrafttyApp: App {
     }
 
     @MainActor
-    fileprivate static func toggleZoom(appState: Binding<AppState>, on terminalID: TerminalID) {
+    fileprivate static func toggleZoom(appState: Binding<AppState>, on terminalID: PaneSlotID) {
         mutateWorktreeContaining(appState: appState, leaf: terminalID) { wt in
             var copy = wt
             copy.splitTree = wt.splitTree.togglingZoom(at: terminalID)
@@ -2522,7 +2559,7 @@ struct GrafttyApp: App {
     }
 
     @MainActor
-    fileprivate static func equalizeSplits(appState: Binding<AppState>, around terminalID: TerminalID) {
+    fileprivate static func equalizeSplits(appState: Binding<AppState>, around terminalID: PaneSlotID) {
         mutateWorktreeContaining(appState: appState, leaf: terminalID) { wt in
             var copy = wt
             copy.splitTree = wt.splitTree.equalizing()
@@ -2533,7 +2570,7 @@ struct GrafttyApp: App {
     @MainActor
     fileprivate static func resizeSplit(
         appState: Binding<AppState>,
-        target: TerminalID,
+        target: PaneSlotID,
         direction: ResizeDirection,
         pixels: UInt16
     ) {
@@ -2565,7 +2602,7 @@ struct GrafttyApp: App {
     @MainActor
     private static func mutateWorktreeContaining(
         appState: Binding<AppState>,
-        leaf: TerminalID,
+        leaf: PaneSlotID,
         transform: (WorktreeEntry) -> WorktreeEntry
     ) {
         for repoIdx in appState.wrappedValue.repos.indices {
@@ -2595,7 +2632,7 @@ struct GrafttyApp: App {
     fileprivate static func closePane(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
-        targetID: TerminalID,
+        targetID: PaneSlotID,
         userInitiated: Bool = false
     ) {
         for repoIdx in appState.wrappedValue.repos.indices {
@@ -2624,23 +2661,25 @@ struct GrafttyApp: App {
                 // terminal doesn't leak a badge entry into the model.
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                     .paneAttention[targetID] = nil
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                    .clearPaneSession(for: targetID)
 
                 if newTree.root == nil {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
-                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nil
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = nil
                 } else {
                     // TERM-5.6: only promote focus when the CLOSED pane
                     // was the focused one. Pre-fix, this branch always
                     // reassigned focus to `newTree.allLeaves.first`,
                     // silently jumping focus away from whatever pane the
                     // user was typing in if they closed a different pane.
-                    let previousFocus = wt.focusedTerminalID
+                    let previousFocus = wt.focusedPaneSlotID
                     let newFocus = SplitTree.focusAfterRemoving(
                         currentFocus: previousFocus,
                         removed: targetID,
                         remainingTree: newTree
                     )
-                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = newFocus
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = newFocus
                     // Only push focus to libghostty if it actually
                     // changed — otherwise we're re-raising the same
                     // surface for no reason.
@@ -2661,7 +2700,7 @@ struct GrafttyApp: App {
     @MainActor
     fileprivate static func maybeRunDefaultCommand(
         terminalManager: TerminalManager,
-        terminalID: TerminalID
+        terminalID: PaneSlotID
     ) {
         let defaults = UserDefaults.standard
         let command = defaults.string(forKey: SettingsKeys.defaultCommand) ?? ""
@@ -2688,7 +2727,7 @@ struct GrafttyApp: App {
     // MARK: - Focused-pane helpers for menu actions
 
     /// The terminal currently holding focus in the selected worktree.
-    private var focusedTerminalID: TerminalID? {
+    private var focusedPaneSlotID: PaneSlotID? {
         guard let path = appState.selectedWorktreePath else { return nil }
         for repo in appState.repos {
             for wt in repo.worktrees where wt.path == path && wt.state == .running {
@@ -2699,32 +2738,32 @@ struct GrafttyApp: App {
     }
 
     private func handleSplit(_ split: PaneSplit) {
-        guard let id = focusedTerminalID else { return }
+        guard let id = focusedPaneSlotID else { return }
         _ = Self.splitPane(appState: $appState, terminalManager: terminalManager, targetID: id, split: split)
     }
 
     private func handleNavigate(_ dir: NavigationDirection) {
-        guard let id = focusedTerminalID else { return }
+        guard let id = focusedPaneSlotID else { return }
         Self.navigatePane(appState: $appState, terminalManager: terminalManager, from: id, direction: dir)
     }
 
     private func handleNavigateTreeOrder(forward: Bool) {
-        guard let id = focusedTerminalID else { return }
+        guard let id = focusedPaneSlotID else { return }
         Self.navigatePaneInTreeOrder(appState: $appState, terminalManager: terminalManager, from: id, forward: forward)
     }
 
     private func handleToggleZoom() {
-        guard let id = focusedTerminalID else { return }
+        guard let id = focusedPaneSlotID else { return }
         Self.toggleZoom(appState: $appState, on: id)
     }
 
     private func handleEqualizeSplits() {
-        guard let id = focusedTerminalID else { return }
+        guard let id = focusedPaneSlotID else { return }
         Self.equalizeSplits(appState: $appState, around: id)
     }
 
     private func handleClosePane() {
-        guard let id = focusedTerminalID else { return }
+        guard let id = focusedPaneSlotID else { return }
         Self.closePane(
             appState: $appState,
             terminalManager: terminalManager,
@@ -2751,7 +2790,7 @@ struct GrafttyApp: App {
         struct RunningEntry {
             let repoIdx: Int
             let worktreeIdx: Int
-            let terminalIDs: [TerminalID]
+            let terminalIDs: [PaneSlotID]
         }
         var running: [RunningEntry] = []
         var totalPanes = 0
@@ -3171,13 +3210,14 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
 @MainActor
 private func paneLayoutNode(
     from node: SplitTree.Node,
-    titles: [TerminalID: String],
-    paneAttention: [TerminalID: Attention]
+    paneSessions: [PaneSlotID: PaneSessionID],
+    titles: [PaneSlotID: String],
+    paneAttention: [PaneSlotID: Attention]
 ) -> PaneLayoutNode {
     switch node {
     case let .leaf(id):
         return .leaf(
-            sessionName: ZmxLauncher.sessionName(for: id.id),
+            sessionName: paneSessions[id].map(ZmxLauncher.sessionName(for:)) ?? "",
             title: titles[id] ?? "",
             attentionText: paneAttention[id]?.text
         )
@@ -3185,8 +3225,18 @@ private func paneLayoutNode(
         return .split(
             direction: s.direction == .horizontal ? .horizontal : .vertical,
             ratio: s.ratio,
-            left: paneLayoutNode(from: s.left, titles: titles, paneAttention: paneAttention),
-            right: paneLayoutNode(from: s.right, titles: titles, paneAttention: paneAttention)
+            left: paneLayoutNode(
+                from: s.left,
+                paneSessions: paneSessions,
+                titles: titles,
+                paneAttention: paneAttention
+            ),
+            right: paneLayoutNode(
+                from: s.right,
+                paneSessions: paneSessions,
+                titles: titles,
+                paneAttention: paneAttention
+            )
         )
     }
 }

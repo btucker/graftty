@@ -28,7 +28,7 @@ struct PortScannerTests {
         let runner = StubLsofRunner(output: "")
         let walker = StubProcessTreeWalker(result: [])
         let scanner = PortScanner(runner: runner, walker: walker)
-        let id = TerminalID()
+        let id = PaneSlotID()
         await scanner.registerPane(id, shellPID: 1234)
         await scanner.tick()
         let bindings = await scanner.bindings(for: id)
@@ -47,7 +47,7 @@ struct PortScannerTests {
             runner: StubLsofRunner(output: raw),
             walker: StubProcessTreeWalker(result: [])
         )
-        let id = TerminalID()
+        let id = PaneSlotID()
         await scanner.registerPane(id, shellPID: 1234)
         await scanner.tick()
         let bindings = await scanner.bindings(for: id)
@@ -69,7 +69,7 @@ struct PortScannerTests {
             runner: StubLsofRunner(output: raw),
             walker: StubProcessTreeWalker(result: [])
         )
-        let id = TerminalID()
+        let id = PaneSlotID()
         await scanner.registerPane(id, shellPID: 1234)
         await scanner.tick()
         let bindings = await scanner.bindings(for: id)
@@ -92,7 +92,7 @@ struct PortScannerTests {
             runner: StubLsofRunner(output: raw),
             walker: StubProcessTreeWalker(result: [4999, 5000, 5001])
         )
-        let id = TerminalID()
+        let id = PaneSlotID()
         await scanner.registerPane(id, shellPID: 1234)
         await scanner.tick()
         let bindings = await scanner.bindings(for: id)
@@ -112,7 +112,7 @@ struct PortScannerTests {
             runner: StubLsofRunner(output: raw),
             walker: StubProcessTreeWalker(result: [])
         )
-        let id = TerminalID()
+        let id = PaneSlotID()
         await scanner.registerPane(id, shellPID: 1234)
         await scanner.tick()
         #expect(await scanner.bindings(for: id).count == 1)
@@ -128,7 +128,7 @@ struct PortScannerTests {
             runner: StubLsofRunner(output: nil),
             walker: StubProcessTreeWalker(result: [])
         )
-        let id = TerminalID()
+        let id = PaneSlotID()
         await scanner.registerPane(id, shellPID: 1234)
         await scanner.tick()
         #expect(await scanner.bindings(for: id).isEmpty)
@@ -148,7 +148,7 @@ struct PortScannerTests {
         }
         let runner = SlowRunner()
         let scanner = PortScanner(runner: runner, walker: StubProcessTreeWalker(result: []))
-        await scanner.registerPane(TerminalID(), shellPID: 1)
+        await scanner.registerPane(PaneSlotID(), shellPID: 1)
         async let a: () = scanner.tick()
         async let b: () = scanner.tick()
         _ = await (a, b)
@@ -167,7 +167,7 @@ struct PortScannerTests {
             runner: runner,
             walker: StubProcessTreeWalker(result: [])
         )
-        let id = TerminalID()
+        let id = PaneSlotID()
         await scanner.registerPane(id, shellPID: 1234)
         await scanner.tick()
         #expect(await scanner.bindings(for: id).count == 1)

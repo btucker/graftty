@@ -4,27 +4,27 @@ import Testing
 
 @Suite("IdleDeliveryService — event-driven idle delivery")
 struct IdleDeliveryServiceTests {
-    @Test("@spec TEAM-IDLE-2.11: paneIDs.count == 2 → both panes receive nudges; watermark advances exactly once.")
-    func fanOutToTwoPanes() async throws {
+    @Test("@spec TEAM-IDLE-2.11: sessionNames.count == 2 → both sessions receive nudges; watermark advances exactly once.")
+    func fanOutToTwoSessions() async throws {
         let f = try Fixture()
         let id = try f.appendUnread(body: "hello")
-        let paneA = UUID()
-        let paneB = UUID()
+        let sessionA = "graftty-sessiona"
+        let sessionB = "graftty-sessionb"
         f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
         f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
 
-        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, paneIDs: [paneA, paneB])
+        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, sessionNames: [sessionA, sessionB])
 
         #expect(f.sender.calls.count == 2)
-        #expect(Set(f.sender.calls.map(\.paneID)) == Set([paneA, paneB]))
+        #expect(Set(f.sender.calls.map(\.sessionName)) == Set([sessionA, sessionB]))
         #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "codex") == id)
     }
 
-    @Test("@spec TEAM-IDLE-2.12: paneIDs is empty → no nudge, no watermark advance.")
-    func emptyPaneIDsSkips() async throws {
+    @Test("@spec TEAM-IDLE-2.12: sessionNames is empty → no nudge, no watermark advance.")
+    func emptySessionNamesSkips() async throws {
         let f = try Fixture()
         _ = try f.appendUnread(body: "hello")
-        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, paneIDs: [])
+        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, sessionNames: [])
         #expect(f.sender.calls.isEmpty)
         #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "codex") == nil)
     }
@@ -36,7 +36,7 @@ struct IdleDeliveryServiceTests {
         f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
         f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
 
-        await f.service.onStop(team: f.teamID, worktree: f.worktree, paneIDs: [f.paneID])
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, sessionNames: [f.sessionName])
 
         #expect(f.sender.calls.count == 1)
         #expect(f.sender.calls[0].messageIDs == [id])
@@ -50,7 +50,7 @@ struct IdleDeliveryServiceTests {
         f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
         f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: f.frozen)
 
-        await f.service.onStop(team: f.teamID, worktree: f.worktree, paneIDs: [f.paneID])
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, sessionNames: [f.sessionName])
 
         #expect(f.sender.calls.isEmpty)
         #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "codex") == nil)
@@ -62,18 +62,18 @@ struct IdleDeliveryServiceTests {
         _ = try f.appendUnread(body: "hello")
         f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
         f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
-        await f.service.onStop(team: f.teamID, worktree: f.worktree, paneIDs: [f.paneID])
-        await f.service.onStop(team: f.teamID, worktree: f.worktree, paneIDs: [f.paneID])
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, sessionNames: [f.sessionName])
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, sessionNames: [f.sessionName])
         #expect(f.sender.calls.count == 1)
     }
 
-    @Test("@spec TEAM-IDLE-2.4: With no pane (paneIDs empty), onStop does not call the sender.")
-    func noPaneSkipsAndLogs() async throws {
+    @Test("@spec TEAM-IDLE-2.4: With no target session, onStop does not call the sender.")
+    func noSessionSkipsAndLogs() async throws {
         let f = try Fixture()
         _ = try f.appendUnread(body: "hello")
         f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
         f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
-        await f.service.onStop(team: f.teamID, worktree: f.worktree, paneIDs: [])
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, sessionNames: [])
         #expect(f.sender.calls.isEmpty)
     }
 
@@ -83,11 +83,11 @@ struct IdleDeliveryServiceTests {
         _ = try f.appendUnread(body: "hello")
 
         f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
-        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, paneIDs: [f.paneID])
+        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, sessionNames: [f.sessionName])
         #expect(f.sender.calls.isEmpty, "active state must not deliver")
 
         f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
-        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, paneIDs: [f.paneID])
+        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree, sessionNames: [f.sessionName])
         #expect(f.sender.calls.count == 1)
     }
 
@@ -96,7 +96,7 @@ struct IdleDeliveryServiceTests {
         let f = try Fixture()
         _ = try f.appendUnread(body: "hello")
         // No handleSessionStart / handleStop call — state stays .unknown.
-        await f.service.onStop(team: f.teamID, worktree: f.worktree, paneIDs: [f.paneID])
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, sessionNames: [f.sessionName])
         #expect(f.sender.calls.count == 1)
     }
 
@@ -107,7 +107,7 @@ struct IdleDeliveryServiceTests {
         f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
         f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
 
-        await f.service.onStop(team: f.teamID, worktree: f.worktree, paneIDs: [f.paneID])
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, sessionNames: [f.sessionName])
 
         let events = try f.readEvents()
         #expect(events.count == 1)
@@ -117,17 +117,17 @@ struct IdleDeliveryServiceTests {
     }
 
     final class StubSender: NudgeSender, @unchecked Sendable {
-        struct Call { let paneID: UUID; let text: String; let messageIDs: [String] }
+        struct Call { let sessionName: String; let text: String; let messageIDs: [String] }
         var calls: [Call] = []
-        func send(paneID: UUID, message: String, messageIDs: [String]) async {
-            calls.append(.init(paneID: paneID, text: message, messageIDs: messageIDs))
+        func send(sessionName: String, message: String, messageIDs: [String]) async {
+            calls.append(.init(sessionName: sessionName, text: message, messageIDs: messageIDs))
         }
     }
 
     struct Fixture {
         let teamID = "/repo"
         let worktree = "/repo/.worktrees/alice"
-        let paneID = UUID()
+        let sessionName = "graftty-session"
         let sender = StubSender()
         let state: WorktreeAgentStateRegistry
         let inbox: TeamInbox
@@ -169,7 +169,7 @@ struct IdleDeliveryServiceTests {
     struct FixtureWithEventLog {
         let teamID = "/repo"
         let worktree = "/repo/.worktrees/alice"
-        let paneID = UUID()
+        let sessionName = "graftty-session"
         let sender = StubSender()
         let state: WorktreeAgentStateRegistry
         let inbox: TeamInbox

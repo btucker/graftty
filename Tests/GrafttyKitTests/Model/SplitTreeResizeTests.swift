@@ -5,10 +5,10 @@ import CoreGraphics
 
 @Suite("SplitTree — resizing")
 struct SplitTreeResizeTests {
-    private func horizontalTree() -> (SplitTree, TerminalID, TerminalID) {
+    private func horizontalTree() -> (SplitTree, PaneSlotID, PaneSlotID) {
         // a | b, 50/50 horizontal split (left / right). `.horizontal`
         // direction = vertical divider separating left/right children.
-        let a = TerminalID(); let b = TerminalID()
+        let a = PaneSlotID(); let b = PaneSlotID()
         let tree = SplitTree(root: .leaf(a))
             .inserting(b, at: a, direction: .horizontal)
         return (tree, a, b)
@@ -77,7 +77,7 @@ struct SplitTreeResizeTests {
         // Build: horizontal(a | vertical(b / c)).
         // Resizing `b` with .right should adjust the outer horizontal split's
         // ratio, not the inner vertical.
-        let a = TerminalID(); let b = TerminalID(); let c = TerminalID()
+        let a = PaneSlotID(); let b = PaneSlotID(); let c = PaneSlotID()
         var tree = SplitTree(root: .leaf(a))
             .inserting(b, at: a, direction: .horizontal)
         tree = tree.inserting(c, at: b, direction: .vertical)

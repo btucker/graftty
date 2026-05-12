@@ -20,7 +20,7 @@ struct SidebarAttentionLayoutTests {
         // Panes present but none with their own pane-scoped attention —
         // the key surface for the bug: N pane rows must not mean N
         // visible capsules.
-        entry.splitTree = SplitTree(root: .leaf(TerminalID()))
+        entry.splitTree = SplitTree(root: .leaf(PaneSlotID()))
         let layout = SidebarAttentionLayout.layout(for: entry)
 
         #expect(layout.worktreeCapsule == "build failed")
@@ -33,8 +33,8 @@ struct SidebarAttentionLayoutTests {
     """)
     func paneScopedAttentionRendersOnlyOnItsOwnPane() {
         var entry = WorktreeEntry(path: "/w", branch: "main", state: .running)
-        let t1 = TerminalID()
-        let t2 = TerminalID()
+        let t1 = PaneSlotID()
+        let t2 = PaneSlotID()
         entry.paneAttention[t1] = Attention(text: "✗", timestamp: Date())
         let layout = SidebarAttentionLayout.layout(for: entry)
 
@@ -45,7 +45,7 @@ struct SidebarAttentionLayoutTests {
 
     @Test func bothScopesRenderIndependentlyInTheirOwnSlots() {
         var entry = WorktreeEntry(path: "/w", branch: "main", state: .running)
-        let t1 = TerminalID()
+        let t1 = PaneSlotID()
         entry.attention = Attention(text: "deploying", timestamp: Date())
         entry.paneAttention[t1] = Attention(text: "✗", timestamp: Date())
         let layout = SidebarAttentionLayout.layout(for: entry)

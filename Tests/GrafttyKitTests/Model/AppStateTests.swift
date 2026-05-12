@@ -357,39 +357,39 @@ struct AppStateTests {
     // Before this helper existed, the TerminalContentView's
     // `onFocusTerminal` callback called only `TerminalManager.setFocus`
     // (the libghostty / SwiftUI side) and never touched the model —
-    // `focusedTerminalID` drifted to whatever was last written by
+    // `focusedPaneSlotID` drifted to whatever was last written by
     // sidebar clicks / pane splits / pane closes. The model shape has a
     // dedicated mutator so every focus-change site updates the persisted
     // truth in one call.
 
     @Test func setFocusedTerminalUpdatesTheMatchingWorktree() {
-        let pane1 = TerminalID()
-        let pane2 = TerminalID()
+        let pane1 = PaneSlotID()
+        let pane2 = PaneSlotID()
         let wt = WorktreeEntry(path: "/tmp/wt", branch: "main")
         let repo = RepoEntry(path: "/tmp/wt", displayName: "repo", worktrees: [wt])
         var state = AppState(repos: [repo])
 
         state.setFocusedTerminal(pane1, forWorktreePath: "/tmp/wt")
-        #expect(state.worktree(forPath: "/tmp/wt")?.focusedTerminalID == pane1)
+        #expect(state.worktree(forPath: "/tmp/wt")?.focusedPaneSlotID == pane1)
 
         state.setFocusedTerminal(pane2, forWorktreePath: "/tmp/wt")
-        #expect(state.worktree(forPath: "/tmp/wt")?.focusedTerminalID == pane2)
+        #expect(state.worktree(forPath: "/tmp/wt")?.focusedPaneSlotID == pane2)
     }
 
     @Test func setFocusedTerminalToNilClearsFocus() {
-        let pane1 = TerminalID()
+        let pane1 = PaneSlotID()
         var wt = WorktreeEntry(path: "/tmp/wt", branch: "main")
-        wt.focusedTerminalID = pane1
+        wt.focusedPaneSlotID = pane1
         let repo = RepoEntry(path: "/tmp/wt", displayName: "repo", worktrees: [wt])
         var state = AppState(repos: [repo])
 
         state.setFocusedTerminal(nil, forWorktreePath: "/tmp/wt")
-        #expect(state.worktree(forPath: "/tmp/wt")?.focusedTerminalID == nil)
+        #expect(state.worktree(forPath: "/tmp/wt")?.focusedPaneSlotID == nil)
     }
 
     @Test func setFocusedTerminalOnlyTouchesTheMatchingWorktree() {
-        let paneA = TerminalID()
-        let paneB = TerminalID()
+        let paneA = PaneSlotID()
+        let paneB = PaneSlotID()
         let wtA = WorktreeEntry(path: "/tmp/a", branch: "main")
         let wtB = WorktreeEntry(path: "/tmp/b", branch: "main")
         let repoA = RepoEntry(path: "/tmp/a", displayName: "A", worktrees: [wtA])
@@ -399,18 +399,18 @@ struct AppStateTests {
         state.setFocusedTerminal(paneA, forWorktreePath: "/tmp/a")
         state.setFocusedTerminal(paneB, forWorktreePath: "/tmp/b")
 
-        #expect(state.worktree(forPath: "/tmp/a")?.focusedTerminalID == paneA)
-        #expect(state.worktree(forPath: "/tmp/b")?.focusedTerminalID == paneB)
+        #expect(state.worktree(forPath: "/tmp/a")?.focusedPaneSlotID == paneA)
+        #expect(state.worktree(forPath: "/tmp/b")?.focusedPaneSlotID == paneB)
     }
 
     @Test func setFocusedTerminalOnUnknownPathIsANoOp() {
-        let pane = TerminalID()
+        let pane = PaneSlotID()
         let wt = WorktreeEntry(path: "/tmp/wt", branch: "main")
         let repo = RepoEntry(path: "/tmp/wt", displayName: "repo", worktrees: [wt])
         var state = AppState(repos: [repo])
 
         state.setFocusedTerminal(pane, forWorktreePath: "/tmp/nonexistent")
-        #expect(state.worktree(forPath: "/tmp/wt")?.focusedTerminalID == nil)
+        #expect(state.worktree(forPath: "/tmp/wt")?.focusedPaneSlotID == nil)
     }
 
     // MARK: removeWorktree — Delete / Dismiss shared primitive (GIT-4.10)
@@ -532,7 +532,7 @@ struct AppStateTests {
     // used by the Move-to-worktree menu builders (PWD-1.4 / TERM-8.10).
 
     @Test func indicesOfWorktreeContaining_findsHostingWorktree() {
-        let pane = TerminalID()
+        let pane = PaneSlotID()
         let state = AppState(repos: [
             RepoEntry(path: "/r", displayName: "r", worktrees: [
                 WorktreeEntry(path: "/r", branch: "main"),
@@ -554,7 +554,7 @@ struct AppStateTests {
                 WorktreeEntry(path: "/r", branch: "main"),
             ]),
         ])
-        #expect(state.indicesOfWorktreeContaining(terminalID: TerminalID()) == nil)
+        #expect(state.indicesOfWorktreeContaining(terminalID: PaneSlotID()) == nil)
     }
 
     @Test func worktreeIndicesMatching_searchesAcrossRepos() {

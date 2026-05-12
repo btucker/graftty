@@ -13,7 +13,7 @@ struct TerminalManagerMetadataTests {
 """)
     func rawPWDUpdatesWithoutPublishingWhenRenderedTitleIsUnchanged() {
         let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
-        let terminalID = TerminalID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+        let terminalID = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
         var publishCount = 0
         let cancellable = manager.paneTitleInvalidations.objectWillChange.sink { publishCount += 1 }
 
@@ -37,7 +37,7 @@ struct TerminalManagerMetadataTests {
 """)
     func pwdUpdatesUnderProgramTitleDoNotPublishSidebarTitleChanges() {
         let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
-        let terminalID = TerminalID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
+        let terminalID = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
         var publishCount = 0
         let cancellable = manager.paneTitleInvalidations.objectWillChange.sink { publishCount += 1 }
 
@@ -60,7 +60,7 @@ struct TerminalManagerMetadataTests {
 """)
     func whitespaceTitleStoresWithoutPublishingWhenFallbackTitleIsUnchanged() {
         let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
-        let terminalID = TerminalID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!)
+        let terminalID = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!)
         var publishCount = 0
         let cancellable = manager.paneTitleInvalidations.objectWillChange.sink { publishCount += 1 }
 
@@ -83,7 +83,7 @@ struct TerminalManagerMetadataTests {
 """)
     func paneTitleChangesDoNotPublishTerminalManagerObjectWillChange() {
         let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
-        let terminalID = TerminalID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!)
+        let terminalID = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!)
         var managerPublishCount = 0
         let cancellable = manager.objectWillChange.sink { managerPublishCount += 1 }
 
@@ -99,7 +99,7 @@ struct TerminalManagerMetadataTests {
 """)
     func paneTitleInvalidationsCoalesce() {
         let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
-        let terminalID = TerminalID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000005")!)
+        let terminalID = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000005")!)
         var publishCount = 0
         let cancellable = manager.paneTitleInvalidations.objectWillChange.sink { publishCount += 1 }
 
@@ -111,5 +111,48 @@ struct TerminalManagerMetadataTests {
         #expect(manager.displayTitle(for: terminalID) == "three")
 
         _ = cancellable
+    }
+
+    @Test func zmxSpawnConfigurationUsesPaneSessionIDNotSlotID() throws {
+        let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        manager.zmxLauncher = ZmxLauncher(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            zmxDir: URL(fileURLWithPath: "/tmp/zmx-dir", isDirectory: true)
+        )
+        let slotID = PaneSlotID(id: UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!)
+        let sessionID = PaneSessionID(id: UUID(uuidString: "01234567-89AB-CDEF-FEDC-BA9876543210")!)
+
+        let config = try #require(manager.resolveZmxSpawnConfiguration(
+            for: slotID,
+            paneSessionID: sessionID,
+            worktreePath: "/tmp/worktree"
+        ))
+
+        #expect(config.sessionName == "graftty-01234567")
+        #expect(config.argv[2] == "graftty-01234567")
+    }
+
+    @Test func liveZmxSessionNameUsesRecordedPaneSessionIDNotSlotID() {
+        let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        let slotID = PaneSlotID(id: UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!)
+        let sessionID = PaneSessionID(id: UUID(uuidString: "01234567-89AB-CDEF-FEDC-BA9876543210")!)
+
+        manager.recordPaneSession(sessionID, for: slotID)
+
+        #expect(manager.zmxSessionName(for: slotID) == "graftty-01234567")
+    }
+
+    @Test func currentSessionNameChangesWhenSlotGetsNewSession() {
+        let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        let slot = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+        let first = PaneSessionID(id: UUID(uuidString: "AAAAAAAA-0000-0000-0000-000000000000")!)
+        let second = PaneSessionID(id: UUID(uuidString: "BBBBBBBB-0000-0000-0000-000000000000")!)
+
+        manager.recordPaneSession(first, for: slot)
+        #expect(manager.paneID(forSessionName: "graftty-aaaaaaaa") == slot.id)
+
+        manager.recordPaneSession(second, for: slot)
+        #expect(manager.paneID(forSessionName: "graftty-aaaaaaaa") == nil)
+        #expect(manager.paneID(forSessionName: "graftty-bbbbbbbb") == slot.id)
     }
 }

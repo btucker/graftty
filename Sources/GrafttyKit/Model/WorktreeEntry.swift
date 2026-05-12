@@ -56,14 +56,15 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// specific pane. Rendered on the worktree's own sidebar row
     /// (STATE-2.3), independent of the pane rows beneath it.
     public var attention: Attention?
-    /// Pane-scoped attention slots keyed by pane `TerminalID`. Driven by
+    /// Pane-scoped attention slots keyed by pane `PaneSlotID`. Driven by
     /// shell-integration events (`COMMAND_FINISHED`) that are emitted by
     /// one specific pane — so the ping must land on that pane's sidebar
     /// row and leave its siblings untouched. The two scopes render in
     /// different rows and do not fall back onto one another.
-    public var paneAttention: [TerminalID: Attention]
+    public var paneAttention: [PaneSlotID: Attention]
+    public var paneSessions: [PaneSlotID: PaneSessionID]
     public var splitTree: SplitTree
-    public var focusedTerminalID: TerminalID?
+    public var focusedPaneSlotID: PaneSlotID?
     /// PR number for which the "PR resolved — delete worktree?" offer
     /// dialog has already been presented (the PR has either merged or
     /// been closed without merging — GIT-4.7). Persisted so that a
@@ -85,19 +86,22 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.state = state
         self.attention = attention
         self.paneAttention = [:]
+        self.paneSessions = [:]
         self.splitTree = splitTree
-        self.focusedTerminalID = nil
+        self.focusedPaneSlotID = nil
         self.offeredDeleteForResolvedPR = nil
     }
 
-    // Custom Decodable so `paneAttention` and `offeredDeleteForResolvedPR`
-    // (added after the initial release) are optional on disk. Pre-fix
+    // Custom Decodable so `paneAttention`, `paneSessions`, and
+    // `offeredDeleteForResolvedPR` (added after the initial release) are
+    // optional on disk. Pre-fix
     // persisted blobs don't carry those keys; defaulting lets existing
     // users keep their saved split trees across upgrades rather than
     // failing to decode and silently losing everything.
     private enum CodingKeys: String, CodingKey {
         case id, path, branch, state, attention, paneAttention,
-             splitTree, focusedTerminalID, offeredDeleteForResolvedPR
+             paneSessions, splitTree, offeredDeleteForResolvedPR
+        case focusedPaneSlotID = "focusedTerminalID"
     }
 
     /// Legacy key honored on decode only — state blobs persisted by
@@ -117,13 +121,17 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.state = try container.decode(WorktreeState.self, forKey: .state)
         self.attention = try container.decodeIfPresent(Attention.self, forKey: .attention)
         self.paneAttention = try container.decodeIfPresent(
-            [TerminalID: Attention].self,
+            [PaneSlotID: Attention].self,
             forKey: .paneAttention
         ) ?? [:]
+        self.paneSessions = try container.decodeIfPresent(
+            [PaneSlotID: PaneSessionID].self,
+            forKey: .paneSessions
+        ) ?? [:]
         self.splitTree = try container.decode(SplitTree.self, forKey: .splitTree)
-        self.focusedTerminalID = try container.decodeIfPresent(
-            TerminalID.self,
-            forKey: .focusedTerminalID
+        self.focusedPaneSlotID = try container.decodeIfPresent(
+            PaneSlotID.self,
+            forKey: .focusedPaneSlotID
         )
         let resolved = try container.decodeIfPresent(
             Int.self, forKey: .offeredDeleteForResolvedPR
@@ -151,22 +159,68 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// than the worktree slot.
     public mutating func clearPaneAttentionIfTimestamp(
         _ timestamp: Date,
-        for terminalID: TerminalID
+        for terminalID: PaneSlotID
     ) {
         if paneAttention[terminalID]?.timestamp == timestamp {
             paneAttention[terminalID] = nil
         }
     }
 
+    @discardableResult
+    public mutating func ensurePaneSession(for slot: PaneSlotID) -> PaneSessionID {
+        if let existing = paneSessions[slot] {
+            return existing
+        }
+
+        let session = PaneSessionID()
+        paneSessions[slot] = session
+        return session
+    }
+
+    public mutating func ensurePaneSessionsForRunningRestore() {
+        guard state == .running else { return }
+
+        for slot in splitTree.allLeaves where paneSessions[slot] == nil {
+            paneSessions[slot] = .migratedFromLegacySlot(slot)
+        }
+    }
+
+    public mutating func clearPaneSession(for slot: PaneSlotID) {
+        paneSessions[slot] = nil
+    }
+
+    @discardableResult
+    public mutating func takePaneSession(for slot: PaneSlotID) -> PaneSessionID? {
+        paneSessions.removeValue(forKey: slot)
+    }
+
+    public mutating func recordPaneSession(_ session: PaneSessionID, for slot: PaneSlotID) {
+        paneSessions[slot] = session
+    }
+
+    @discardableResult
+    public mutating func movePaneSession(
+        for slot: PaneSlotID,
+        to target: inout WorktreeEntry
+    ) -> PaneSessionID? {
+        guard let session = takePaneSession(for: slot) else { return nil }
+        target.recordPaneSession(session, for: slot)
+        return session
+    }
+
+    public mutating func clearAllPaneSessions() {
+        paneSessions.removeAll()
+    }
+
     /// Transitions this entry from `.stale` back to `.closed`, returning
-    /// the list of leaf `TerminalID`s whose surfaces the caller MUST
+    /// the list of leaf `PaneSlotID`s whose surfaces the caller MUST
     /// destroy via `TerminalManager.destroySurfaces(terminalIDs:)` before
     /// the UI re-creates the worktree (`GIT-3.9`).
     ///
     /// When a worktree went stale *while running* (`GIT-3.4` keeps its
     /// Ghostty surfaces alive across the stale transition), those
     /// surfaces are still registered in `TerminalManager`. The resurrect
-    /// path then creates a *new* `TerminalID` and a *new* surface, which
+    /// path then creates a *new* `PaneSlotID` and a *new* surface, which
     /// leaves the old surfaces orphan: their render/io/kqueue threads
     /// keep running forever. On macOS this has been observed to corrupt
     /// libghostty's internal `os_unfair_lock` during window resize and
@@ -177,16 +231,17 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// deliberately drop them — silently clearing the tree in-place (the
     /// pre-`GIT-3.9` shape) is no longer spellable from the outside.
     @discardableResult
-    public mutating func prepareForResurrection() -> [TerminalID] {
+    public mutating func prepareForResurrection() -> [PaneSlotID] {
         let oldLeaves = splitTree.allLeaves
         state = .closed
         splitTree = SplitTree(root: nil)
-        focusedTerminalID = nil
+        focusedPaneSlotID = nil
         paneAttention.removeAll()
+        clearAllPaneSessions()
         return oldLeaves
     }
 
-    /// Returns the leaf `TerminalID`s whose surfaces the caller MUST
+    /// Returns the leaf `PaneSlotID`s whose surfaces the caller MUST
     /// destroy via `TerminalManager.destroySurfaces(terminalIDs:)` before
     /// removing this entry from the model (`GIT-3.10`). Same orphan-
     /// surfaces concern as `prepareForResurrection` (`GIT-3.9`), but via
@@ -199,24 +254,25 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// forever. Same corruption path that SIGKILL'd the app under
     /// window resize pre-`GIT-3.9`.
     ///
-    /// Clearing `splitTree` / `focusedTerminalID` / `paneAttention`
+    /// Clearing `splitTree` / `focusedPaneSlotID` / `paneAttention`
     /// here is largely symbolic since the caller is about to drop the
     /// whole entry, but it ensures a caller that ignores the return
     /// value leaves a visibly-empty entry rather than a sidebar row
     /// that still looks populated.
     @discardableResult
-    public mutating func prepareForDismissal() -> [TerminalID] {
+    public mutating func prepareForDismissal() -> [PaneSlotID] {
         let leaves = splitTree.allLeaves
         splitTree = SplitTree(root: nil)
-        focusedTerminalID = nil
+        focusedPaneSlotID = nil
         paneAttention.removeAll()
+        clearAllPaneSessions()
         return leaves
     }
 
     /// Transitions the entry from `.running` to `.closed` as part of the
     /// Stop menu action, dropping `paneAttention` for every pane (all
     /// panes are being destroyed; their pane-scoped badges must go per
-    /// `STATE-2.11`). Leaves `splitTree` and `focusedTerminalID` alone
+    /// `STATE-2.11`). Leaves `splitTree` and `focusedPaneSlotID` alone
     /// so re-open recreates the exact same layout at the same leaf IDs
     /// (`TERM-1.2`), and leaves the worktree-level `attention` slot
     /// alone since a CLI-notify ping is a worktree-level concern
@@ -224,6 +280,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public mutating func prepareForStop() {
         state = .closed
         paneAttention.removeAll()
+        clearAllPaneSessions()
     }
 
     /// User-facing label for the worktree *in the context of its siblings*.
