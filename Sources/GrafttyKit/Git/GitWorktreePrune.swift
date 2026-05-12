@@ -18,6 +18,7 @@ import Foundation
 public enum GitWorktreePrune {
 
     public enum Error: Swift.Error, Equatable {
+        /// Non-zero exit from git, with stderr included for display.
         case gitFailed(exitCode: Int32, stderr: String)
     }
 
