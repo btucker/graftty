@@ -91,6 +91,17 @@ public final class SessionClient {
 
     public let role: Role
 
+    public enum ConnectionState: Equatable, Sendable {
+        case live
+        case reconnecting(attempt: Int)
+    }
+
+    /// @spec IOS-7.4
+    /// Whether the WebSocket is currently connected and exchanging frames,
+    /// or in a reconnect-backoff cycle. The view layer renders a banner
+    /// when this is `.reconnecting`.
+    public private(set) var connectionState: ConnectionState = .live
+
     public init(
         sessionName: String,
         webSocketFactory: @Sendable @escaping () -> WebSocketClient,
