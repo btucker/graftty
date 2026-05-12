@@ -81,6 +81,151 @@ struct NativePtySessionTests {
         #expect(maxActiveWriters.value() == 1)
     }
 
+    @Test func concurrentStartSpawnsAtMostOnceAndOnlyOneCallerSucceeds() throws {
+        let spawnAttempts = LockedCounter()
+        let startedSpawning = DispatchSemaphore(value: 0)
+        let releaseSpawner = DispatchSemaphore(value: 0)
+        let session = NativePtySession(
+            argv: ["/bin/sh", "-c", "sleep 2"],
+            env: [:],
+            workingDirectory: nil,
+            writeToSurface: { _ in },
+            processExited: { _, _ in },
+            spawnFailed: { _ in },
+            spawner: { argv, env, currentDirectory, initialSize in
+                _ = spawnAttempts.increment()
+                startedSpawning.signal()
+                _ = releaseSpawner.wait(timeout: .now() + 2)
+                return try PtyProcess.spawn(
+                    argv: argv,
+                    env: env,
+                    currentDirectory: currentDirectory,
+                    initialSize: initialSize
+                )
+            }
+        )
+
+        let outcomes = LockedRecorder<Bool>()
+        let group = DispatchGroup()
+        group.enter()
+        DispatchQueue.global().async {
+            outcomes.append((try? session.start()) != nil)
+            group.leave()
+        }
+
+        #expect(startedSpawning.wait(timeout: .now() + 2) == .success)
+
+        group.enter()
+        DispatchQueue.global().async {
+            outcomes.append((try? session.start()) != nil)
+            group.leave()
+        }
+
+        Thread.sleep(forTimeInterval: 0.1)
+        releaseSpawner.signal()
+
+        #expect(group.wait(timeout: .now() + 5) == .success)
+        defer { session.close() }
+
+        #expect(spawnAttempts.value() == 1)
+        #expect(outcomes.values().filter { $0 }.count == 1)
+        #expect(outcomes.values().filter { !$0 }.count == 1)
+    }
+
+    @Test func closeWaitsForInFlightWriteBeforeClosingFD() throws {
+        let writerEntered = DispatchSemaphore(value: 0)
+        let allowWriterToFinish = DispatchSemaphore(value: 0)
+        let closeStartedDuringWrite = LockedCounter()
+        let session = NativePtySession(
+            argv: ["/bin/sh", "-c", "sleep 2"],
+            env: [:],
+            workingDirectory: nil,
+            writeToSurface: { _ in },
+            processExited: { _, _ in },
+            spawnFailed: { _ in },
+            writer: { _, _, _ in
+                writerEntered.signal()
+                _ = allowWriterToFinish.wait(timeout: .now() + 2)
+            },
+            closer: { spawned in
+                _ = closeStartedDuringWrite.increment()
+                Self.terminate(spawned)
+            }
+        )
+
+        try session.start()
+
+        let writeGroup = DispatchGroup()
+        writeGroup.enter()
+        DispatchQueue.global().async {
+            try? session.write(Data("x".utf8))
+            writeGroup.leave()
+        }
+
+        #expect(writerEntered.wait(timeout: .now() + 2) == .success)
+
+        let closeGroup = DispatchGroup()
+        closeGroup.enter()
+        DispatchQueue.global().async {
+            session.close()
+            closeGroup.leave()
+        }
+
+        Thread.sleep(forTimeInterval: 0.1)
+        #expect(closeStartedDuringWrite.value() == 0)
+        allowWriterToFinish.signal()
+
+        #expect(writeGroup.wait(timeout: .now() + 2) == .success)
+        #expect(closeGroup.wait(timeout: .now() + 2) == .success)
+    }
+
+    @Test func closeWaitsForInFlightResizeBeforeClosingFD() throws {
+        let resizeEntered = DispatchSemaphore(value: 0)
+        let allowResizeToFinish = DispatchSemaphore(value: 0)
+        let closeStartedDuringResize = LockedCounter()
+        let session = NativePtySession(
+            argv: ["/bin/sh", "-c", "sleep 2"],
+            env: [:],
+            workingDirectory: nil,
+            writeToSurface: { _ in },
+            processExited: { _, _ in },
+            spawnFailed: { _ in },
+            resizer: { _, _, _ in
+                resizeEntered.signal()
+                _ = allowResizeToFinish.wait(timeout: .now() + 2)
+            },
+            closer: { spawned in
+                _ = closeStartedDuringResize.increment()
+                Self.terminate(spawned)
+            }
+        )
+
+        try session.start()
+
+        let resizeGroup = DispatchGroup()
+        resizeGroup.enter()
+        DispatchQueue.global().async {
+            try? session.resize(cols: 80, rows: 24)
+            resizeGroup.leave()
+        }
+
+        #expect(resizeEntered.wait(timeout: .now() + 2) == .success)
+
+        let closeGroup = DispatchGroup()
+        closeGroup.enter()
+        DispatchQueue.global().async {
+            session.close()
+            closeGroup.leave()
+        }
+
+        Thread.sleep(forTimeInterval: 0.1)
+        #expect(closeStartedDuringResize.value() == 0)
+        allowResizeToFinish.signal()
+
+        #expect(resizeGroup.wait(timeout: .now() + 2) == .success)
+        #expect(closeGroup.wait(timeout: .now() + 2) == .success)
+    }
+
     @Test func resizeChangesSttySize() throws {
         let recorder = LockedRecorder<Data>()
         let session = NativePtySession(
@@ -184,6 +329,16 @@ struct NativePtySessionTests {
             Thread.sleep(forTimeInterval: 0.02)
         }
         #expect(condition(), "waitUntil timed out")
+    }
+
+    private static func terminate(_ spawned: PtyProcess.Spawned) {
+        _ = kill(spawned.pid, SIGTERM)
+        close(spawned.masterFD)
+        var status: Int32 = 0
+        for _ in 0..<10 {
+            if waitpid(spawned.pid, &status, WNOHANG) != 0 { break }
+            usleep(50_000)
+        }
     }
 }
 
