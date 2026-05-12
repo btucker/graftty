@@ -96,3 +96,30 @@ struct AddWithoutGitTests {
         #expect(repo.worktrees[0].branch == "main")
     }
 }
+
+@Suite("@spec PROJECT-1.1: While a repository is not git-tracked, the application shall hide Add Worktree, Delete Worktree, and the PR-merged delete-offer affordance from its context menus.")
+struct NonGitMenuVisibilityTests {
+    @Test("Add Worktree affordance hidden for non-git repos")
+    func addWorktreeHiddenForNonGit() {
+        let nonGit = RepoEntry(path: "/tmp/x", displayName: "x", isGitTracked: false)
+        #expect(SidebarMenuVisibility.showsAddWorktree(repo: nonGit) == false)
+    }
+
+    @Test("Add Worktree affordance shown for git-tracked repos")
+    func addWorktreeShownForGit() {
+        let git = RepoEntry(path: "/tmp/y", displayName: "y", isGitTracked: true)
+        #expect(SidebarMenuVisibility.showsAddWorktree(repo: git) == true)
+    }
+
+    @Test("Delete Worktree hidden for the synthetic worktree of a non-git repo")
+    func deleteWorktreeHiddenForSynthetic() {
+        let nonGit = RepoEntry(
+            path: "/tmp/x",
+            displayName: "x",
+            worktrees: [WorktreeEntry(path: "/tmp/x", branch: "main")],
+            isGitTracked: false
+        )
+        let wt = nonGit.worktrees[0]
+        #expect(SidebarMenuVisibility.showsDeleteWorktree(worktree: wt, repo: nonGit) == false)
+    }
+}

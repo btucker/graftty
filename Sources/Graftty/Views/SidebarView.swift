@@ -149,17 +149,19 @@ struct SidebarView: View {
                     .foregroundColor(theme.foreground)
                     .fontWeight(.semibold)
                 Spacer()
-                Button {
-                    pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: "")
-                } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.foreground.opacity(0.6))
-                        .frame(width: 18, height: 18)
-                        .contentShape(Rectangle())
+                if SidebarMenuVisibility.showsAddWorktree(repo: repo) {
+                    Button {
+                        pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: "")
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(theme.foreground.opacity(0.6))
+                            .frame(width: 18, height: 18)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Add worktree to \(repo.displayName)")
                 }
-                .buttonStyle(.plain)
-                .help("Add worktree to \(repo.displayName)")
             }
             .contextMenu {
                 Button("Remove Repository") {
@@ -316,7 +318,8 @@ struct SidebarView: View {
         }
         // git refuses to remove the main checkout, so hiding the item
         // there avoids a guaranteed error path.
-        if worktree.path != repo.path && worktree.state != .stale {
+        if SidebarMenuVisibility.showsDeleteWorktree(worktree: worktree, repo: repo)
+            && worktree.state != .stale {
             menu.addItem(ClosureMenuItem(title: "Delete Worktree") { [self] in
                 onDeleteWorktree(worktree.path)
             })
