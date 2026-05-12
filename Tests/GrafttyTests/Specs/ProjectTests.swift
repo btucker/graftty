@@ -124,6 +124,46 @@ struct NonGitMenuVisibilityTests {
     }
 }
 
+@Suite("@spec PROJECT-1.2: While a repository is not git-tracked, the application shall skip PR-status, remote-branch, and git-status polling for it.")
+struct NonGitPollingGateTests {
+    @Test("RemoteBranchStore tick skips non-git repos")
+    @MainActor
+    func remoteBranchTickSkipsNonGit() async {
+        let counter = ListCallCounter()
+        let store = RemoteBranchStore { repoPath in
+            await counter.bump(repoPath: repoPath)
+            return []
+        }
+        let ticker = ManualPollingTicker()
+        let repos: [RepoEntry] = [
+            RepoEntry(path: "/tmp/git-ok", displayName: "git", isGitTracked: true),
+            RepoEntry(path: "/tmp/non-git", displayName: "ng", isGitTracked: false),
+        ]
+        store.start(ticker: ticker, getRepos: { repos })
+        await ticker.fire()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        let calls = await counter.snapshot()
+        #expect(calls == ["/tmp/git-ok"])
+        store.stop()
+    }
+}
+
+private actor ListCallCounter {
+    private var calls: [String] = []
+    func bump(repoPath: String) { calls.append(repoPath) }
+    func snapshot() -> [String] { calls }
+}
+
+// Test-only manual ticker. Mirrors `PollingTickerLike` shape from GrafttyKit.
+@MainActor
+private final class ManualPollingTicker: PollingTickerLike {
+    private var onTick: (@MainActor () async -> Void)?
+    func start(onTick: @MainActor @escaping () async -> Void) { self.onTick = onTick }
+    func stop() { onTick = nil }
+    func pulse() {}
+    func fire() async { await onTick?() }
+}
+
 @Suite("@spec PROJECT-1.3: When the user selects Initialize Git Repository on a non-git repo's row, the application shall run `git init` + `git commit --allow-empty`, set `isGitTracked` to true, and rediscover its worktrees via `git worktree list --porcelain`.")
 struct PromoteToGitTests {
     @Test("After GitInit + flag flip, WorktreeDiscovery returns real porcelain output")

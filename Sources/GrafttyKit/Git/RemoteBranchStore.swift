@@ -49,7 +49,7 @@ public final class RemoteBranchStore {
         self.getRepos = getRepos
         ticker.start { [weak self] in
             guard let self else { return }
-            for repo in self.getRepos() {
+            for repo in self.getRepos() where repo.isGitTracked {
                 self.refresh(repoPath: repo.path)
             }
         }
