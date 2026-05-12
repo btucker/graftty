@@ -287,6 +287,7 @@ private struct PRBadgeLabel: View {
         switch tone {
         case .open: return .green
         case .merged: return .purple
+        case .closed: return .red
         case .ciFailure: return .red
         case .ciPending: return .yellow
         case .conflicting: return .red

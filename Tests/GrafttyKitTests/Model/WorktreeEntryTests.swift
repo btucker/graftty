@@ -350,17 +350,17 @@ struct WorktreeEntryTests {
         #expect(decoded.path == "/tmp/worktree")
     }
 
-    @Test func offeredDeleteForMergedPRDefaultsToNil() {
+    @Test func offeredDeleteForResolvedPRDefaultsToNil() {
         let entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
-        #expect(entry.offeredDeleteForMergedPR == nil)
+        #expect(entry.offeredDeleteForResolvedPR == nil)
     }
 
-    @Test func offeredDeleteForMergedPRSurvivesCodableRoundTrip() throws {
+    @Test func offeredDeleteForResolvedPRSurvivesCodableRoundTrip() throws {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
-        entry.offeredDeleteForMergedPR = 123
+        entry.offeredDeleteForResolvedPR = 123
         let data = try JSONEncoder().encode(entry)
         let decoded = try JSONDecoder().decode(WorktreeEntry.self, from: data)
-        #expect(decoded.offeredDeleteForMergedPR == 123)
+        #expect(decoded.offeredDeleteForResolvedPR == 123)
     }
 
     @Test func decodesLegacyStateWithoutOfferedDeleteField() throws {
@@ -378,7 +378,27 @@ struct WorktreeEntryTests {
         """
         let data = Data(legacyJSON.utf8)
         let decoded = try JSONDecoder().decode(WorktreeEntry.self, from: data)
-        #expect(decoded.offeredDeleteForMergedPR == nil)
+        #expect(decoded.offeredDeleteForResolvedPR == nil)
+    }
+
+    @Test func decodesLegacyOfferedDeleteForMergedPRKey() throws {
+        // Field renamed when GIT-4.7 broadened from merged-only to
+        // include closed-without-merging — pre-rename state blobs
+        // carry the old key, and re-prompting users for already-
+        // dismissed merged PRs would be a regression.
+        let legacyJSON = """
+        {
+          "id": "\(UUID().uuidString)",
+          "path": "/tmp/worktree",
+          "branch": "main",
+          "state": "closed",
+          "splitTree": {"root": null},
+          "offeredDeleteForMergedPR": 77
+        }
+        """
+        let data = Data(legacyJSON.utf8)
+        let decoded = try JSONDecoder().decode(WorktreeEntry.self, from: data)
+        #expect(decoded.offeredDeleteForResolvedPR == 77)
     }
 
     @Test func splitTreeDefaultsToNil() {

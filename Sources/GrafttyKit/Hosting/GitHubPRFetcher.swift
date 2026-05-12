@@ -45,14 +45,15 @@ public struct GitHubPRFetcher: PRFetcher {
                 title: BidiOverrides.stripping(pr.title),
                 url: pr.url,
                 state: state,
-                checks: state == .merged ? .none : Self.rollup(pr.statusCheckRollup ?? []),
-                mergeable: state == .merged ? .unknown : Self.mapMergeable(pr.mergeable),
+                checks: state.isTerminal ? .none : Self.rollup(pr.statusCheckRollup ?? []),
+                mergeable: state.isTerminal ? .unknown : Self.mapMergeable(pr.mergeable),
                 fetchedAt: fetched
             )
 
-            // Prefer open over merged when both exist for a branch.
+            // Prefer open over a terminal (merged/closed) PR for the
+            // same branch — the open one is the live attempt.
             if let existing = byBranch[pr.headRefName] {
-                if existing.state == .merged && info.state == .open {
+                if existing.state.isTerminal && info.state == .open {
                     byBranch[pr.headRefName] = info
                 }
             } else {
@@ -102,7 +103,7 @@ public struct GitHubPRFetcher: PRFetcher {
         switch raw.uppercased() {
         case "OPEN": return .open
         case "MERGED": return .merged
-        // Closed-unmerged is intentionally dropped to match the prior fetcher.
+        case "CLOSED": return .closed
         default: return nil
         }
     }
