@@ -452,7 +452,8 @@ extension PRStatusStore {
     private func tick() async {
         let repos = getRepos()
         pruneStaleRepoState(currentRepoPaths: Set(repos.map(\.path)))
-        for repo in repos where repo.worktrees.contains(where: { $0.state.hasOnDiskWorktree }) {
+        for repo in repos where repo.isGitTracked
+                && repo.worktrees.contains(where: { $0.state.hasOnDiskWorktree }) {
             dispatchRepoFetch(repoPath: repo.path, force: false)
         }
     }

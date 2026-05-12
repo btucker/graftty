@@ -1388,7 +1388,7 @@ struct GrafttyApp: App {
         // reconcile / FSEvents delete, so this is a recoverable state.
         var discovered: [DiscoveredWorktree]
         do {
-            discovered = try await GitWorktreeDiscovery.discover(repoPath: newRepoPath)
+            discovered = try await WorktreeDiscovery.discover(repo: appState.wrappedValue.repos[repoIdx])
         } catch {
             NSLog("[Graftty] relocateRepo: discover failed at %@: %@",
                   newRepoPath, String(describing: error))
@@ -1411,7 +1411,7 @@ struct GrafttyApp: App {
                     repoPath: newRepoPath,
                     worktreePaths: firstDecision.repairCandidatePaths
                 )
-                discovered = try await GitWorktreeDiscovery.discover(repoPath: newRepoPath)
+                discovered = try await WorktreeDiscovery.discover(repo: appState.wrappedValue.repos[repoIdx])
             } catch {
                 NSLog("[Graftty] relocateRepo: repair/rediscover failed at %@: %@",
                       newRepoPath, String(describing: error))
@@ -1502,7 +1502,7 @@ struct GrafttyApp: App {
                 let repoPath = binding.wrappedValue.repos[repoIdx].path
                 let discovered: [DiscoveredWorktree]
                 do {
-                    discovered = try await GitWorktreeDiscovery.discover(repoPath: repoPath)
+                    discovered = try await WorktreeDiscovery.discover(repo: binding.wrappedValue.repos[repoIdx])
                 } catch {
                     NSLog("[Graftty] reconcileOnLaunch: discover failed for %@: %@",
                           repoPath, String(describing: error))
@@ -3014,9 +3014,10 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         // manifestation: intermittent ~1s input/render hangs under fs/
         // indexing pressure).
         Task { @MainActor in
+            guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }) else { return }
             let discovered: [DiscoveredWorktree]
             do {
-                discovered = try await GitWorktreeDiscovery.discover(repoPath: repoPath)
+                discovered = try await WorktreeDiscovery.discover(repo: repo)
             } catch {
                 NSLog("[Graftty] worktreeMonitorDidDetectChange: discover failed for %@: %@",
                       repoPath, String(describing: error))
@@ -3172,12 +3173,13 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         // main actor — the async version does that naturally. Scope the
         // discover call to the owning repo only, not every tracked repo.
         Task { @MainActor in
-            guard let repoPath = binding.wrappedValue.repos.first(where: { repo in
+            guard let repo = binding.wrappedValue.repos.first(where: { repo in
                 repo.worktrees.contains(where: { $0.path == worktreePath })
-            })?.path else { return }
+            }) else { return }
+            let repoPath = repo.path
             let discovered: [DiscoveredWorktree]
             do {
-                discovered = try await GitWorktreeDiscovery.discover(repoPath: repoPath)
+                discovered = try await WorktreeDiscovery.discover(repo: repo)
             } catch {
                 NSLog("[Graftty] worktreeMonitorDidDetectBranchChange: discover failed for %@: %@",
                       repoPath, String(describing: error))

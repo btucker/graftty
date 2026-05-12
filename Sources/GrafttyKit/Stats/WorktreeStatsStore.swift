@@ -345,7 +345,7 @@ public final class WorktreeStatsStore {
 
     private func pollTick(repos: [RepoEntry]) async {
         let now = Date()
-        for repo in repos {
+        for repo in repos where repo.isGitTracked {
             // Gate A: network `git fetch` on the repo-level cadence
             // (DIVERGE-4.3). On success, performRepoFetch also kicks
             // per-worktree refreshes, so we don't double-fire them in

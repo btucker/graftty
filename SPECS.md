@@ -272,6 +272,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-1.4** When `GitRepoDetector.detect(path:)` reads a linked worktree's `.git` file and finds a `gitdir: <path>` entry, it shall resolve a relative `<path>` against the worktree directory (the directory containing the `.git` file) rather than feeding it verbatim to `realpath(3)`. Git ≥ 2.52 with `worktree.useRelativePaths=true` writes entries like `gitdir: ../repo/.git/worktrees/name`; passing that to `realpath` resolves against the process cwd — usually unrelated to the worktree dir — so the returned `repoPath` was wrong and the "Add Repository" flow attached a dragged worktree to the wrong repo (or none at all). The absolute-gitdir case (older git and the default config) is unaffected. Mirrors `GIT-3.14`'s same-class fix in `WorktreeMonitor.resolveHeadLogPath`.
 
+**GIT-1.5** When the user selects via Add Repository a folder containing no .git entry up to the filesystem root, the application shall present a three-button choice — Initialize Git Repository, Add Without Git, Cancel — instead of the prior \
+
+**GIT-1.6** When the user chooses Initialize Git Repository at add-time, the application shall run `git init` followed by `git commit --allow-empty -m \
+
+**GIT-1.7** When the user chooses Add Without Git, the application shall register a repository entry whose isGitTracked is false and whose worktree list contains exactly one entry with path equal to the folder path and branch equal to \
+
 ### GIT-2.x — Filesystem Monitoring
 
 **GIT-2.1** While a repository is in the sidebar, the application shall watch the repository's `.git/worktrees/` directory for changes using FSEvents.
@@ -1405,3 +1411,19 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PORTS-4.3** When a pane is dragged to another worktree, the application shall preserve its registration and binding snapshot (`TerminalID` is stable).
 
 **PORTS-4.4** Tick clears bindings when previous scan had them but new scan has none
+
+## PROJECT — PROJECT
+
+### PROJECT-1.x
+
+**PROJECT-1.0** Each repository entry shall record whether its on-disk path is tracked by git.
+
+**PROJECT-1.1** While a repository is not git-tracked, the application shall hide Add Worktree, Delete Worktree, and the PR-merged delete-offer affordance from its context menus.
+
+**PROJECT-1.2** While a repository is not git-tracked, the application shall skip PR-status, remote-branch, and git-status polling for it.
+
+**PROJECT-1.3** When the user selects Initialize Git Repository on a non-git repo's row, the application shall run `git init` + `git commit --allow-empty`, set `isGitTracked` to true, and rediscover its worktrees via `git worktree list --porcelain`.
+
+**PROJECT-1.4** When WorktreeDiscovery.discover is invoked with a non-git-tracked repository, the application shall return exactly one synthesized DiscoveredWorktree with path equal to the repo path and branch \
+
+**PROJECT-1.5** When decoding a repository entry that lacks the isGitTracked key, the application shall default it to true so pre-feature state.json blobs load unchanged.

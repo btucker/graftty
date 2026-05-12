@@ -43,6 +43,7 @@ struct MainWindow: View {
                 onAddRepo: addRepository,
                 onAddPath: addPath,
                 onRemoveRepo: removeRepoWithConfirmation,
+                onInitializeGit: initializeGitRepositoryInPlace,
                 onStopWorktree: stopWorktreeWithConfirmation,
                 onDeleteWorktree: deleteWorktreeWithConfirmation,
                 onMovePane: movePane,
@@ -532,10 +533,44 @@ struct MainWindow: View {
             addRepoFromPath(repoPath, selectWorktree: worktreePath)
         case .notARepo:
             let alert = NSAlert()
-            alert.messageText = "Not a Git Repository"
-            alert.informativeText = "\(path) is not a git repository or worktree."
-            alert.alertStyle = .warning
-            alert.runModal()
+            alert.messageText = "\(URL(fileURLWithPath: path).lastPathComponent) isn't a git repository"
+            alert.informativeText = "Initialize git in this folder, or add it as a non-git project."
+            alert.alertStyle = .informational
+            for title in AddRepositoryAlert.buttons {
+                alert.addButton(withTitle: title)
+            }
+            switch AddRepositoryAlert.choice(for: alert.runModal()) {
+            case .cancel:
+                return
+            case .initializeGit:
+                Task { @MainActor in
+                    do {
+                        try await GitInit.run(at: path)
+                    } catch {
+                        AddRepositoryAlert.presentGitInitFailure(path: path, error: error)
+                        return
+                    }
+                    // Re-enter the standard add path so discovery, bookmark
+                    // mint, and reconciler all run unchanged. GitInit ran in
+                    // the folder so the next detect() returns .repoRoot.
+                    self.addPath(path)
+                }
+            case .addWithoutGit:
+                let displayName = URL(fileURLWithPath: path).lastPathComponent
+                let bookmark = try? RepoBookmark.mint(atPath: path)
+                if bookmark == nil {
+                    NSLog("[Graftty] addPath: bookmark mint failed for %@; rename-recovery disabled for this entry", path)
+                }
+                let repo = AddRepositoryAlert.makeNonGitRepoEntry(
+                    atPath: path,
+                    displayName: displayName,
+                    bookmark: bookmark
+                )
+                appState.addRepo(repo)
+                if let first = repo.worktrees.first {
+                    self.selectWorktree(first.path)
+                }
+            }
         }
     }
 
@@ -602,6 +637,14 @@ struct MainWindow: View {
         guard let (repoIdx, wtIdx) = appState.indices(forWorktreePath: worktreePath) else { return }
         let wt = appState.repos[repoIdx].worktrees[wtIdx]
         let repoPath = appState.repos[repoIdx].path
+
+        // PROJECT-1.1 defense-in-depth: `git worktree remove` would error
+        // on a folder with no `.git`. UI affordances are gated, but a
+        // programmatic caller would otherwise hit a guaranteed git error.
+        guard appState.repos[repoIdx].isGitTracked else {
+            NSLog("[Graftty] performDeleteWorktree: refused for non-git repo at %@", repoPath)
+            return
+        }
 
         // Run git first so a refusal (e.g. dirty worktree) leaves the
         // running terminals intact — tearing them down before we know
@@ -754,6 +797,42 @@ struct MainWindow: View {
                     return
                 }
             }
+        }
+    }
+
+    /// PROJECT-1.3. Runs `GitInit.run` in the repo folder, flips
+    /// `isGitTracked` to true, then rediscovers worktrees so the
+    /// synthetic single-worktree entry is replaced by the real
+    /// `git worktree list --porcelain` result. Surfaces failures via
+    /// the same alert style as `addPath`'s init branch.
+    private func initializeGitRepositoryInPlace(_ repo: RepoEntry) {
+        Task { @MainActor in
+            do {
+                try await GitInit.run(at: repo.path)
+            } catch {
+                AddRepositoryAlert.presentGitInitFailure(path: repo.path, error: error)
+                return
+            }
+            // `appState.repos` can mutate during `await` (the user could
+            // remove the repo, or a relocate cascade could rewrite paths),
+            // so each post-await mutation re-resolves the index by id.
+            guard let idx = appState.repos.firstIndex(where: { $0.id == repo.id }) else { return }
+            appState.repos[idx].isGitTracked = true
+
+            let updatedRepo = appState.repos[idx]
+            let discovered: [DiscoveredWorktree]
+            do {
+                discovered = try await WorktreeDiscovery.discover(repo: updatedRepo)
+            } catch {
+                NSLog("[Graftty] initializeGitRepositoryInPlace: discover failed for %@: %@",
+                      repo.path, String(describing: error))
+                return
+            }
+            guard let idx2 = appState.repos.firstIndex(where: { $0.id == repo.id }) else { return }
+            appState.repos[idx2].worktrees = discovered.map {
+                WorktreeEntry(path: $0.path, branch: $0.branch)
+            }
+            remoteBranchStore.refresh(repoPath: repo.path)
         }
     }
 
