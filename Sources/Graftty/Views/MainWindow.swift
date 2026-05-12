@@ -518,10 +518,48 @@ struct MainWindow: View {
             addRepoFromPath(repoPath, selectWorktree: worktreePath)
         case .notARepo:
             let alert = NSAlert()
-            alert.messageText = "Not a Git Repository"
-            alert.informativeText = "\(path) is not a git repository or worktree."
-            alert.alertStyle = .warning
-            alert.runModal()
+            alert.messageText = "\(URL(fileURLWithPath: path).lastPathComponent) isn't a git repository"
+            alert.informativeText = "Initialize git in this folder, or add it as a non-git project."
+            alert.alertStyle = .informational
+            for title in AddRepositoryAlert.buttons {
+                alert.addButton(withTitle: title)
+            }
+            switch AddRepositoryAlert.choice(for: alert.runModal()) {
+            case .cancel:
+                return
+            case .initializeGit:
+                Task { @MainActor in
+                    do {
+                        try await GitInit.run(at: path)
+                    } catch {
+                        let err = NSAlert()
+                        err.messageText = "Could not initialize git repository"
+                        err.informativeText = "\(path)\n\n\(String(describing: error))"
+                        err.alertStyle = .warning
+                        err.runModal()
+                        return
+                    }
+                    // Re-enter the standard add path so discovery, bookmark
+                    // mint, and reconciler all run unchanged. GitInit ran in
+                    // the folder so the next detect() returns .repoRoot.
+                    self.addPath(path)
+                }
+            case .addWithoutGit:
+                let displayName = URL(fileURLWithPath: path).lastPathComponent
+                let bookmark = try? RepoBookmark.mint(atPath: path)
+                if bookmark == nil {
+                    NSLog("[Graftty] addPath: bookmark mint failed for %@; rename-recovery disabled for this entry", path)
+                }
+                let repo = AddRepositoryAlert.makeNonGitRepoEntry(
+                    atPath: path,
+                    displayName: displayName,
+                    bookmark: bookmark
+                )
+                appState.addRepo(repo)
+                if let first = repo.worktrees.first {
+                    self.selectWorktree(first.path)
+                }
+            }
         }
     }
 

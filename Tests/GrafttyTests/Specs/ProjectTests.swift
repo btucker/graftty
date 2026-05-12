@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import Graftty
 @testable import GrafttyKit
 
 @Suite("@spec PROJECT-1.0: Each repository entry shall record whether its on-disk path is tracked by git.")
@@ -62,5 +63,36 @@ struct WorktreeDiscoveryFacadeTests {
         #expect(results.count == 1)
         #expect(results[0].path == "/tmp/example")
         #expect(results[0].branch == "main")
+    }
+}
+
+@Suite("@spec GIT-1.5: When the user selects via Add Repository a folder containing no .git entry up to the filesystem root, the application shall present a three-button choice — Initialize Git Repository, Add Without Git, Cancel — instead of the prior \"Not a Git Repository\" warning.")
+struct AddRepositoryAlertTests {
+    @Test("Three buttons in the documented order")
+    func threeButtonsInOrder() {
+        let buttons = AddRepositoryAlert.buttons
+        #expect(buttons == ["Initialize Git Repository", "Add Without Git", "Cancel"])
+    }
+
+    @Test("Initialize Git Repository is the default")
+    func initIsDefault() {
+        #expect(AddRepositoryAlert.defaultButtonIndex == 0)
+    }
+}
+
+@Suite("@spec GIT-1.7: When the user chooses Add Without Git, the application shall register a repository entry whose isGitTracked is false and whose worktree list contains exactly one entry with path equal to the folder path and branch equal to \"main\".")
+struct AddWithoutGitTests {
+    @Test("Builder produces a non-git RepoEntry with a single main worktree")
+    func buildsNonGitRepoEntry() {
+        let repo = AddRepositoryAlert.makeNonGitRepoEntry(
+            atPath: "/tmp/proj",
+            displayName: "proj",
+            bookmark: nil
+        )
+        #expect(repo.isGitTracked == false)
+        #expect(repo.path == "/tmp/proj")
+        #expect(repo.worktrees.count == 1)
+        #expect(repo.worktrees[0].path == "/tmp/proj")
+        #expect(repo.worktrees[0].branch == "main")
     }
 }
