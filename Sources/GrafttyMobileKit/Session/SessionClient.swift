@@ -48,7 +48,7 @@ public final class SessionClient {
     nonisolated private let webSocketFactory: @Sendable () -> WebSocketClient
     nonisolated internal let clock: any Clock
     nonisolated internal let backoffSchedule: [TimeInterval]
-    nonisolated(unsafe) private var ws: WebSocketClient?
+    nonisolated private var ws: WebSocketClient?
     private var receiveTask: Task<Void, Never>?
     private var stopped = false
     /// Last (cols, rows) libghostty reported for the iOS-side view.

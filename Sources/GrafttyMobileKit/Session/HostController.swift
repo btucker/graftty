@@ -70,7 +70,7 @@ public final class HostController {
     }
 
     /// Exponential backoff schedule for reconnect attempts (1s → 30s cap).
-    public static func backoffSchedule(attempts: Int) -> [TimeInterval] {
+    nonisolated public static func backoffSchedule(attempts: Int) -> [TimeInterval] {
         (0..<attempts).map { n in
             min(30, pow(2.0, Double(n)))
         }
