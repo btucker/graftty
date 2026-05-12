@@ -880,18 +880,17 @@ struct GrafttyApp: App {
             nudgeSender: ZmxNudgeSender(writer: AppZmxWriter(terminalManager: terminalManager))
         )
 
-        // Resolve the current set of registered codex zmx sessions for a worktree.
-        // Presence records already carry the authoritative zmx session names;
-        // TerminalManager is only a live-session gate here.
+        // Resolve registered codex zmx sessions for a worktree. Presence
+        // records carry the authoritative session names; TerminalManager
+        // proves the pane session is current, and the recorded PID proves
+        // the registered runtime is still running.
         let codexSessionNamesIn: @Sendable (String) -> [String] = { [tm] worktreePath in
             MainActor.assumeIsolated {
-                ((try? presenceStorage.listAll()) ?? [])
-                    .filter { record in
-                        record.worktree == worktreePath &&
-                        record.runtime == .codex &&
-                        record.paneSessionName.map { tm.handle(forSessionName: $0) != nil } == true
-                    }
-                    .compactMap(\.paneSessionName)
+                TeamDeliverySessionResolution.codexSessionNames(
+                    in: worktreePath,
+                    records: (try? presenceStorage.listAll()) ?? [],
+                    isLiveSession: { tm.handle(forSessionName: $0) != nil }
+                )
             }
         }
 
@@ -944,8 +943,15 @@ struct GrafttyApp: App {
         // event signals that update the state machine.
         let hookCallbacks = TeamHookCallbacks(
             onStop: { [weak idleService, tm] team, worktree, runtime, paneSessionName in
+                let liveSessionName: String? = MainActor.assumeIsolated {
+                    TeamDeliverySessionResolution.stopSessionName(
+                        runtime: runtime,
+                        paneSessionName: paneSessionName,
+                        isLiveSession: { tm.handle(forSessionName: $0) != nil }
+                    )
+                }
                 let paneID: UUID? = MainActor.assumeIsolated {
-                    paneSessionName.flatMap { tm.paneID(forSessionName: $0) }
+                    liveSessionName.flatMap { tm.paneID(forSessionName: $0) }
                 }
                 // Flip the state machine before the delivery evaluator runs.
                 // Without this, state stays `.active` from the prior
@@ -957,7 +963,7 @@ struct GrafttyApp: App {
                 // keystrokes (Plan-mode review screens), so it must not arm
                 // the inbox-drain pipeline.
                 guard runtime == TeamHookRuntime.codex.rawValue else { return }
-                guard let sessionName = paneSessionName, paneID != nil, let service = idleService else { return }
+                guard let sessionName = liveSessionName, let service = idleService else { return }
                 Task { await service.onStop(team: team, worktree: worktree, sessionNames: [sessionName]) }
             },
             onSessionStart: { team, worktree, runtime, _ in

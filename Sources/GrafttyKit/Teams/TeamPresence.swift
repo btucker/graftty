@@ -3,11 +3,11 @@ import Foundation
 /// @spec TEAM-PRESENCE-1.2
 /// @spec TEAM-IDLE-2.9
 /// @spec TEAM-IDLE-2.10
-/// Per-(team, worktree, runtime, pane) liveness record. Distinct from
-/// worktree existence: a record means a runtime is alive AND has
-/// registered itself. `paneSessionName` is set when the registering
-/// process saw a `ZMX_SESSION` env var (i.e. inside a graftty-launched
-/// zmx pane); nil otherwise.
+/// Per-(team, worktree, runtime, pane) presence record. Distinct from
+/// worktree existence: a record means a runtime registered itself, but
+/// callers that need liveness must still validate `pid`. `paneSessionName`
+/// is set when the registering process saw a `ZMX_SESSION` env var
+/// (i.e. inside a graftty-launched zmx pane); nil otherwise.
 public struct TeamPresenceRecord: Codable, Equatable, Sendable {
     public let teamID: String
     public let worktree: String

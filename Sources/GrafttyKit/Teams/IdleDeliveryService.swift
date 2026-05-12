@@ -63,11 +63,10 @@ public actor IdleDeliveryService {
         }
         // .idle: agent fired Stop with no recent typing — clear deliver.
         // .unknown: no SessionStart observed since graftty started, but
-        //   if the worktree has a pane the agent is presumably running
-        //   (e.g. an existing session that predates graftty's restart).
-        //   Better to deliver and let the message land in the input
-        //   buffer than to silently hold it forever waiting for a
-        //   SessionStart that may never come.
+        //   upstream only supplies session names after live-pane and
+        //   runtime-PID gates. Deliver so existing sessions that predate
+        //   graftty's restart are not stuck waiting for a SessionStart
+        //   that may never come.
         // .active / .user_engaged: skip — pretty clear the agent is
         //   busy or the user is typing.
         let s = state.state(worktree: worktree, runtime: runtime)
