@@ -189,6 +189,55 @@ struct WorktreeEntryTests {
         #expect(entry.paneAttention.isEmpty)
     }
 
+    @Test func ensurePaneSessionsAssignsFreshSessionsForSlots() {
+        var entry = WorktreeEntry(path: "/repo/wt", branch: "feature")
+        let slot = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+        entry.splitTree = SplitTree(root: .leaf(slot))
+
+        let first = entry.ensurePaneSession(for: slot)
+        let second = entry.ensurePaneSession(for: slot)
+
+        #expect(first == second)
+        #expect(entry.paneSessions[slot] == first)
+    }
+
+    @Test func runningWorktreeWithoutPaneSessionsMigratesFromOldSlotIDs() {
+        var entry = WorktreeEntry(path: "/repo/wt", branch: "feature", state: .running)
+        let slot = PaneSlotID(id: UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!)
+        entry.splitTree = SplitTree(root: .leaf(slot))
+
+        entry.ensurePaneSessionsForRunningRestore()
+
+        #expect(entry.paneSessions[slot]?.id == slot.id)
+    }
+
+    @Test func legacyStateWithoutPaneSessionsDecodesWithEmptyDictionary() throws {
+        let legacyJSON = """
+        {
+          "id": "\(UUID().uuidString)",
+          "path": "/tmp/worktree",
+          "branch": "main",
+          "state": "closed",
+          "splitTree": {"root": null}
+        }
+        """
+        let data = Data(legacyJSON.utf8)
+        let decoded = try JSONDecoder().decode(WorktreeEntry.self, from: data)
+        #expect(decoded.paneSessions.isEmpty)
+    }
+
+    @Test func paneSessionsCodableRoundTrip() throws {
+        var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
+        let slot = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+        let session = PaneSessionID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
+        entry.paneSessions[slot] = session
+
+        let data = try JSONEncoder().encode(entry)
+        let decoded = try JSONDecoder().decode(WorktreeEntry.self, from: data)
+
+        #expect(decoded.paneSessions[slot] == session)
+    }
+
     @Test func settingOnePaneDoesNotAffectOtherPanesOrWorktreeSlot() {
         // The reported bug in plain model form: two panes in one
         // worktree, a command-finished ping lands on pane A, and pane B
@@ -365,6 +414,8 @@ struct WorktreeEntryTests {
         entry.state = .stale
         entry.focusedTerminalID = leaf1
         entry.paneAttention[leaf1] = Attention(text: "!", timestamp: Date())
+        entry.ensurePaneSession(for: leaf1)
+        entry.ensurePaneSession(for: leaf2)
 
         let toDestroy = entry.prepareForResurrection()
 
@@ -373,6 +424,7 @@ struct WorktreeEntryTests {
         #expect(entry.splitTree.root == nil)
         #expect(entry.focusedTerminalID == nil)
         #expect(entry.paneAttention.isEmpty)
+        #expect(entry.paneSessions.isEmpty)
     }
 
     @Test func prepareForResurrectionReturnsEmptyWhenNoLeaves() {
@@ -413,6 +465,8 @@ struct WorktreeEntryTests {
         entry.state = .stale
         entry.focusedTerminalID = leafA
         entry.paneAttention[leafA] = Attention(text: "!", timestamp: Date())
+        entry.ensurePaneSession(for: leafA)
+        entry.ensurePaneSession(for: leafB)
 
         let toDestroy = entry.prepareForDismissal()
 
@@ -420,6 +474,7 @@ struct WorktreeEntryTests {
         #expect(entry.splitTree.root == nil)
         #expect(entry.focusedTerminalID == nil)
         #expect(entry.paneAttention.isEmpty)
+        #expect(entry.paneSessions.isEmpty)
     }
 
     @Test func prepareForDismissalOnEmptyTreeReturnsEmpty() {
@@ -485,6 +540,19 @@ struct WorktreeEntryTests {
         // TERM-1.2: re-open after Stop recreates the same layout.
         #expect(entry.splitTree.allLeaves == [paneA])
         #expect(entry.focusedTerminalID == paneA)
+    }
+
+    @Test func prepareForStopClearsPaneSessionsButPreservesSlots() {
+        var entry = WorktreeEntry(path: "/repo/wt", branch: "feature")
+        let slot = PaneSlotID()
+        entry.splitTree = SplitTree(root: .leaf(slot))
+        let session = entry.ensurePaneSession(for: slot)
+
+        entry.prepareForStop()
+
+        #expect(entry.splitTree.allLeaves == [slot])
+        #expect(entry.paneSessions.isEmpty)
+        #expect(entry.ensurePaneSession(for: slot) != session)
     }
 
     @Test func prepareForStopPreservesWorktreeLevelAttention() {

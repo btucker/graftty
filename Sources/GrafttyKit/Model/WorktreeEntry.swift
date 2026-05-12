@@ -62,6 +62,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// row and leave its siblings untouched. The two scopes render in
     /// different rows and do not fall back onto one another.
     public var paneAttention: [PaneSlotID: Attention]
+    public var paneSessions: [PaneSlotID: PaneSessionID]
     public var splitTree: SplitTree
     public var focusedTerminalID: PaneSlotID?
     /// PR number for which the "PR merged — delete worktree?" offer
@@ -84,19 +85,22 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.state = state
         self.attention = attention
         self.paneAttention = [:]
+        self.paneSessions = [:]
         self.splitTree = splitTree
         self.focusedTerminalID = nil
         self.offeredDeleteForMergedPR = nil
     }
 
-    // Custom Decodable so `paneAttention` and `offeredDeleteForMergedPR`
-    // (both added after the initial release) are optional on disk.
+    // Custom Decodable so `paneAttention`, `paneSessions`, and
+    // `offeredDeleteForMergedPR` (all added after the initial release)
+    // are optional on disk.
     // Pre-fix persisted state blobs don't carry those keys; defaulting
     // lets existing users keep their saved split trees across upgrades
     // rather than failing to decode and silently losing everything.
     private enum CodingKeys: String, CodingKey {
         case id, path, branch, state, attention, paneAttention,
-             splitTree, focusedTerminalID, offeredDeleteForMergedPR
+             paneSessions, splitTree, focusedTerminalID,
+             offeredDeleteForMergedPR
     }
 
     public init(from decoder: Decoder) throws {
@@ -109,6 +113,10 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.paneAttention = try container.decodeIfPresent(
             [PaneSlotID: Attention].self,
             forKey: .paneAttention
+        ) ?? [:]
+        self.paneSessions = try container.decodeIfPresent(
+            [PaneSlotID: PaneSessionID].self,
+            forKey: .paneSessions
         ) ?? [:]
         self.splitTree = try container.decode(SplitTree.self, forKey: .splitTree)
         self.focusedTerminalID = try container.decodeIfPresent(
@@ -146,6 +154,31 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         }
     }
 
+    @discardableResult
+    public mutating func ensurePaneSession(for slot: PaneSlotID) -> PaneSessionID {
+        if let existing = paneSessions[slot] {
+            return existing
+        }
+
+        let session = PaneSessionID()
+        paneSessions[slot] = session
+        return session
+    }
+
+    public mutating func ensurePaneSessionsForRunningRestore() {
+        for slot in splitTree.allLeaves where paneSessions[slot] == nil {
+            paneSessions[slot] = .migratedFromLegacySlot(slot)
+        }
+    }
+
+    public mutating func clearPaneSession(for slot: PaneSlotID) {
+        paneSessions[slot] = nil
+    }
+
+    public mutating func clearAllPaneSessions() {
+        paneSessions.removeAll()
+    }
+
     /// Transitions this entry from `.stale` back to `.closed`, returning
     /// the list of leaf `PaneSlotID`s whose surfaces the caller MUST
     /// destroy via `TerminalManager.destroySurfaces(terminalIDs:)` before
@@ -171,6 +204,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         splitTree = SplitTree(root: nil)
         focusedTerminalID = nil
         paneAttention.removeAll()
+        clearAllPaneSessions()
         return oldLeaves
     }
 
@@ -198,6 +232,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         splitTree = SplitTree(root: nil)
         focusedTerminalID = nil
         paneAttention.removeAll()
+        clearAllPaneSessions()
         return leaves
     }
 
@@ -212,6 +247,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public mutating func prepareForStop() {
         state = .closed
         paneAttention.removeAll()
+        clearAllPaneSessions()
     }
 
     /// User-facing label for the worktree *in the context of its siblings*.
