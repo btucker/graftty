@@ -681,33 +681,44 @@ struct MainWindow: View {
                 return
             }
 
-            if wt.state == .running {
-                terminalManager.destroySurfaces(terminalIDs: wt.splitTree.allLeaves)
-            }
-            // GIT-4.10: drop per-path caches BEFORE removing the model
-            // entry. Same reason `dismissWorktree` (GIT-3.6) does: orphan
-            // cache entries survive indefinitely and bleed into a future
-            // same-path re-add (rare but cheap — path-keyed caches aren't
-            // inode-scoped). Runs unconditionally; clear on a never-cached
-            // path is a no-op.
-            prStatusStore.clear(worktreePath: worktreePath)
-            statsStore.clear(worktreePath: worktreePath)
-            // Capture the branch before the entry is removed so
-            // `fireLeft` can build the member name from it.
-            let leaverBranch = wt.branch
-            appState.removeWorktree(atPath: worktreePath)
-            // TEAM-5.3: notify the lead that a worktree left. The repo
-            // state is read AFTER removal so the lead-present guard works.
-            if let repo = appState.repo(forWorktreePath: repoPath) {
-                TeamMembershipEvents.fireLeft(
-                    repo: repo,
-                    leaverBranch: leaverBranch,
-                    leaverPath: worktreePath,
-                    reason: .removed,
-                    teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
-                    dispatcher: teamEventDispatcher
-                )
-            }
+            finishWorktreeRemoval(worktree: wt, worktreePath: worktreePath, repoPath: repoPath)
+        }
+    }
+
+    /// Shared post-remove teardown used by both the normal success path
+    /// and the GIT-4.13 stale-registry recovery branch. Tears down live
+    /// terminal surfaces, clears per-path caches, drops the model entry,
+    /// then fires the TEAM-5.3 `left` event so the lead is notified the
+    /// worktree is gone. Runs on the MainActor.
+    @MainActor
+    private func finishWorktreeRemoval(
+        worktree wt: WorktreeEntry,
+        worktreePath: String,
+        repoPath: String
+    ) {
+        if wt.state == .running {
+            terminalManager.destroySurfaces(terminalIDs: wt.splitTree.allLeaves)
+        }
+        // GIT-4.10: drop per-path caches BEFORE removing the model entry.
+        // Same reason `dismissWorktree` (GIT-3.6) does: orphan cache entries
+        // survive indefinitely and bleed into a future same-path re-add.
+        prStatusStore.clear(worktreePath: worktreePath)
+        statsStore.clear(worktreePath: worktreePath)
+        // Capture the branch before the entry is removed so `fireLeft` can
+        // build the member name from it.
+        let leaverBranch = wt.branch
+        appState.removeWorktree(atPath: worktreePath)
+        // TEAM-5.3: notify the lead that a worktree left. The repo state is
+        // read AFTER removal so the lead-present guard works.
+        if let repo = appState.repo(forWorktreePath: repoPath) {
+            TeamMembershipEvents.fireLeft(
+                repo: repo,
+                leaverBranch: leaverBranch,
+                leaverPath: worktreePath,
+                reason: .removed,
+                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
+                dispatcher: teamEventDispatcher
+            )
         }
     }
 
