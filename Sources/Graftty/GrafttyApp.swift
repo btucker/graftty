@@ -215,14 +215,10 @@ struct GrafttyApp: App {
 
         // ZMX-7.4: If Graftty.app was launched from a terminal that
         // was itself inside a zmx session, `ZMX_SESSION=<parent-name>`
-        // is in the app's env — and libghostty inherits it when
-        // spawning every new pane's shell. That shell's
-        // `exec zmx attach 'graftty-<new-hex>' <shell>` then hits zmx
-        // with $ZMX_SESSION set, which zmx prefers over the positional
-        // arg, so the new pane attaches to the PARENT's session
-        // instead. User-reported as "created a new worktree, its
-        // Claude swapped out for an older worktree's Claude". Strip
-        // before any surface spawns.
+        // is in the app's env. Host-managed native panes now route zmx
+        // attach through `ZmxSpawnConfiguration`, which strips this per
+        // spawn, but the app also launches other subprocesses. Strip the
+        // leaky key globally before any surface or helper process spawns.
         ZmxLauncher.sanitizeProcessEnvironment()
 
         // Must run before any @AppStorage binding reads `teamEventRoutingPreferences`

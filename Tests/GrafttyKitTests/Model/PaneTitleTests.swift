@@ -10,19 +10,15 @@ struct PaneTitleEnvAssignmentTests {
         #expect(PaneTitle.isLikelyEnvAssignment("GHOSTTY_ZSH_ZDOTDIR=/path/to/dir ZDOTDIR=/other"))
     }
 
-    @Test("the post-ZMX-6.4 conditional bootstrap leak is filtered")
+    @Test("the legacy post-ZMX-6.4 conditional bootstrap leak is filtered")
     func filtersZmxBootstrapLeak() {
-        // After ZMX-6.4 (PR #35), the prefix changed shape from a naked
-        // `GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR" ZDOTDIR=…` (which the original
-        // uppercase-env-name heuristic caught) to a full shell conditional
-        // `if [ -n "$ZDOTDIR" ]; then export GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR"; fi; ZDOTDIR=…`.
-        // The new form starts with lowercase `if` and snuck past the
-        // uppercase-prefix filter — the entire 200+ char bootstrap string
-        // then showed up as the pane title in the sidebar, crowding out
-        // any real label. Caught live in cycle 79 dogfood. Title contains
-        // the literal `GHOSTTY_ZSH_ZDOTDIR` marker in both old and new
-        // shapes, so widening the filter to match either prefix OR that
-        // literal lets both forms land cleanly.
+        // The old native zmx bootstrap once changed shape from a naked
+        // `GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR" ZDOTDIR=...` assignment to a full
+        // shell conditional. The conditional starts with lowercase `if`, so
+        // the uppercase-prefix filter missed it and the full bootstrap command
+        // could become the sidebar title. Host-managed native panes removed
+        // this bootstrap path, but the title filter still rejects the legacy
+        // marker for stale events and future regressions.
         let leak = #"if [ -n "$ZDOTDIR" ]; then export GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR"; fi; ZDOTDIR='/Applications/Ghostty.app/Contents/Resources/ghostty/shell-integration/zsh' exec '/Applications/Graftty.app/Contents/Helpers/zmx' attach 'graftty-deadbeef' '/bin/zsh'"#
         #expect(PaneTitle.isLikelyEnvAssignment(leak))
     }

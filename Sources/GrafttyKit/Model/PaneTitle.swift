@@ -6,14 +6,15 @@ import Foundation
 /// are the policy glue that decides which one renders.
 public enum PaneTitle {
 
-    /// Titles that are command-echo leaks from a shell-integration
-    /// `preexec` hook. When the outer zsh runs Graftty's injected
-    /// bootstrap line — `… GHOSTTY_ZSH_ZDOTDIR=… ZDOTDIR=… exec zmx attach …`
-    /// — ghostty's preexec emits an OSC 2 whose payload IS that command.
-    /// The inner shell spawned by `zmx attach` doesn't push a new title
-    /// until the user's first prompt, so the leak sits in the sidebar
-    /// until then. Rejecting these at intake keeps the leak out of the
-    /// title store; the view falls back to the PWD basename.
+    /// Titles that are command-echo leaks from shell-integration `preexec`
+    /// hooks. The old native zmx bootstrap typed a line such as
+    /// `… GHOSTTY_ZSH_ZDOTDIR=… ZDOTDIR=… exec zmx attach …` through an
+    /// outer shell, and Ghostty's preexec could emit that command as an OSC 2
+    /// title before the inner shell had a chance to push its own title.
+    /// Native panes are now host-managed, but rejecting this legacy shape at
+    /// intake keeps restored/stale title events and future bootstrap-like
+    /// regressions out of the title store; the view falls back to the PWD
+    /// basename.
     ///
     /// Two shapes to catch (`LAYOUT-2.13`):
     ///   1. **Pre-`ZMX-6.4` form**: starts with an uppercase identifier

@@ -213,20 +213,14 @@ struct ZmxLauncherUnitTests {
     // attached the new pane's Claude session to an OLDER worktree's
     // still-running zmx session. Root cause: Graftty.app was launched
     // from a terminal that already lived inside a zmx session, so the
-    // app process inherited `ZMX_SESSION=<old-name>`. libghostty
-    // spawns each new pane's shell with Graftty.app's env + the small
-    // overlay `ghostty_surface_config_s.env_vars` carries. That env
-    // overlay doesn't strip ZMX_SESSION, so the spawned shell's
-    // `exec zmx attach 'graftty-<new-hex>' <shell>` line hit zmx with
-    // `$ZMX_SESSION = <old-name>`, and zmx prefers the env var over
-    // the positional arg — attaching to the OLD session.
+    // app process inherited `ZMX_SESSION=<old-name>`. zmx prefers the
+    // env var over the positional arg, so any attach path that inherits
+    // it can target the OLD session instead of the pane's session.
     //
-    // `subprocessEnv` already solves this for inline subprocess spawns
-    // (CLI uses `ProcessInfo.processInfo.environment`), but surface
-    // spawns use libghostty's env overlay which Graftty can't feed
-    // through `subprocessEnv` before the spawn. Cleanest fix:
-    // `unsetenv("ZMX_SESSION")` in `GrafttyApp.init()` so NOTHING
-    // downstream sees it, regardless of spawn mechanism.
+    // Native panes now use `ZmxSpawnConfiguration` for host-managed
+    // attach env and `subprocessEnv` still protects inline zmx commands.
+    // The global app-start sweep remains a defense for any future helper
+    // subprocess that reads `ProcessInfo.processInfo.environment`.
     //
     // `sanitizeProcessEnvironment()` calls `unsetenv` for the names
     // in `leakyEnvKeysToStrip`. Test surface: verify the key list
