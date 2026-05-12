@@ -81,14 +81,14 @@ struct ZmxSpawnConfigurationTests {
         #expect(config.env["PATH"] == sanitizedPath)
     }
 
-    @Test func disabledHooksRemoveInheritedHookOwnedEnv() throws {
+    @Test func disabledHooksReplaceInheritedZDOTDIRAndRemoveAgentHookEnv() throws {
         let config = makeConfig(
             processEnv: staleHookEnv(shell: "/bin/zsh"),
             agentHooksDisabled: true
         )
 
         #expect(config.env["GRAFTTY_AGENT_HOOKS_BIN"] == nil)
-        #expect(config.env["ZDOTDIR"] == nil)
+        #expect(config.env["ZDOTDIR"] == "\(ghosttyResourcesDir)/shell-integration/zsh")
         #expect(config.env["GHOSTTY_ZSH_ZDOTDIR"] == nil)
     }
 

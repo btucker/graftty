@@ -45,14 +45,15 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
             ? AgentHookInstaller.wrappedUserShell(rawUserShell, rootDirectory: agentHooksRoot)
             : rawUserShell
 
-        if hooksEnabled,
-           let ghosttyResourcesDir, !ghosttyResourcesDir.isEmpty,
+        if let ghosttyResourcesDir, !ghosttyResourcesDir.isEmpty,
            (rawUserShell as NSString).lastPathComponent == "zsh" {
             env["ZDOTDIR"] = (ghosttyResourcesDir as NSString)
                 .appendingPathComponent("shell-integration/zsh")
-            env["GHOSTTY_ZSH_ZDOTDIR"] = AgentHookInstaller
-                .zshInitDirectory(rootDirectory: agentHooksRoot)
-                .path
+            if hooksEnabled {
+                env["GHOSTTY_ZSH_ZDOTDIR"] = AgentHookInstaller
+                    .zshInitDirectory(rootDirectory: agentHooksRoot)
+                    .path
+            }
         }
 
         return ZmxSpawnConfiguration(
