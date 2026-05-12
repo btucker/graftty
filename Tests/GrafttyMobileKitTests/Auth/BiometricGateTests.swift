@@ -10,6 +10,9 @@ struct BiometricGateTests {
     final class FakeClock: Clock, @unchecked Sendable {
         var now: Date
         init(_ start: Date) { self.now = start }
+        func sleep(for duration: TimeInterval) async throws {
+            try await Task.sleep(nanoseconds: UInt64(max(0, duration) * 1_000_000_000))
+        }
     }
 
     final class FakeAuthenticator: BiometricAuthenticator, @unchecked Sendable {

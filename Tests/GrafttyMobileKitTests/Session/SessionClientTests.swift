@@ -29,7 +29,7 @@ struct SessionClientTests {
     @Test
     func sendingBytesFromTerminalGoesOutAsBinary() async throws {
         let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocket: ws)
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         defer { client.stop() }
         // Simulate libghostty surface emitting bytes.
         client.session.sendInput(Data([0x68, 0x69]))   // "hi"
@@ -47,7 +47,7 @@ struct SessionClientTests {
     """)
     func softKeyboardReturnLFIsTranslatedToCR() async throws {
         let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocket: ws)
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         defer { client.stop() }
         client.session.sendInput(Data([0x0A]))
         try await Task.sleep(nanoseconds: 100_000_000)
@@ -63,7 +63,7 @@ struct SessionClientTests {
     """)
     func insertNewlineSendsLiteralLF() async throws {
         let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocket: ws)
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         defer { client.stop() }
         client.insertNewline()
         try await Task.sleep(nanoseconds: 100_000_000)
@@ -75,7 +75,7 @@ struct SessionClientTests {
     @Test
     func submitReturnSendsCR() async throws {
         let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocket: ws)
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         defer { client.stop() }
         client.submitReturn()
         try await Task.sleep(nanoseconds: 100_000_000)
@@ -85,7 +85,7 @@ struct SessionClientTests {
     @Test
     func softwareKeyboardTextSendsRawUTF8WithoutPasteWrappers() async throws {
         let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocket: ws)
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         defer { client.stop() }
         client.sendSoftwareKeyboardText("abc")
         try await Task.sleep(nanoseconds: 100_000_000)
@@ -97,7 +97,7 @@ struct SessionClientTests {
     @Test
     func softwareKeyboardNewlineSubmitsAsCR() async throws {
         let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocket: ws)
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         defer { client.stop() }
         client.sendSoftwareKeyboardText("\n")
         try await Task.sleep(nanoseconds: 100_000_000)
@@ -108,7 +108,7 @@ struct SessionClientTests {
     @Test
     func softwareKeyboardDeleteSendsDEL() async throws {
         let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocket: ws)
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         defer { client.stop() }
         client.deleteBackward()
         try await Task.sleep(nanoseconds: 100_000_000)
@@ -118,7 +118,7 @@ struct SessionClientTests {
     @Test
     func terminalControlKeysSendExpectedEscapeSequences() async throws {
         let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocket: ws)
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         defer { client.stop() }
         client.sendEscape()
         client.sendTab()
@@ -138,7 +138,7 @@ struct SessionClientTests {
     @Test
     func terminalControlCharactersSendControlBytes() async throws {
         let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocket: ws)
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         defer { client.stop() }
         client.sendControl(.c)
         client.sendControl(.d)
@@ -153,7 +153,7 @@ struct SessionClientTests {
     @Test
     func multiByteBufferWithEmbeddedLFIsNotTranslated() async throws {
         let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocket: ws)
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         defer { client.stop() }
         let paste = Data([0x68, 0x0A, 0x69])   // "h\ni"
         client.session.sendInput(paste)
@@ -164,14 +164,14 @@ struct SessionClientTests {
     @Test
     func stopClosesWebSocket() {
         let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocket: ws)
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.stop()
         #expect(ws.closed)
     }
 
     @Test
     func handleViewportCapturesCellSizeInPoints() {
-        let client = SessionClient(sessionName: "s", webSocket: FakeWS())
+        let client = SessionClient(sessionName: "s", webSocketFactory: { FakeWS() })
         defer { client.stop() }
         client.displayScale = 3.0
         client.handleViewport(InMemoryTerminalViewport(
@@ -186,7 +186,7 @@ struct SessionClientTests {
     func handleViewportIgnoresZeroCellPixelsToAvoidClobberingPriorValue() {
         // Pre-lifecycle ticks arrive with cellWidthPixels == 0. Keep the
         // last known non-zero value rather than clobbering it with noise.
-        let client = SessionClient(sessionName: "s", webSocket: FakeWS())
+        let client = SessionClient(sessionName: "s", webSocketFactory: { FakeWS() })
         defer { client.stop() }
         client.displayScale = 2.0
         client.handleViewport(InMemoryTerminalViewport(
@@ -206,7 +206,7 @@ struct SessionClientTests {
     @Test("@spec IOS-4.18: While a `SessionClient` is operating as a worktree-detail pane preview (`IOS-4.10`, `IOS-4.12`), the application shall not claim PTY size-leadership. Bytes emitted by libghostty in the preview controller shall be discarded rather than forwarded to the server, and layout-driven resize callbacks shall not produce `WebControlEnvelope.resize` frames. Size-leadership remains a property exclusive to the focused fullscreen pane (`IOS-6.5`).")
     func previewRoleDoesNotForwardLibghosttyBytes() async throws {
         let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocket: ws, role: .preview)
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, role: .preview)
         defer { client.stop() }
         client.session.sendInput(Data([0x68, 0x69]))
         try await Task.sleep(nanoseconds: 100_000_000)
@@ -217,7 +217,7 @@ struct SessionClientTests {
     @Test
     func previewRoleDoesNotEmitResizeOnViewportOrFirstByte() async throws {
         let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocket: ws, role: .preview)
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, role: .preview)
         defer { client.stop() }
         client.handleViewport(InMemoryTerminalViewport(
             columns: 80, rows: 24,
@@ -241,7 +241,7 @@ struct SessionClientTests {
     @Test
     func fullscreenRoleStillClaimsLeadershipAndEmitsResize() async throws {
         let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocket: ws)
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         defer { client.stop() }
         client.handleViewport(InMemoryTerminalViewport(
             columns: 80, rows: 24,

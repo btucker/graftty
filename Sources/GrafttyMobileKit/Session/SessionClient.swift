@@ -97,9 +97,6 @@ public final class SessionClient {
     }
 
     /// @spec IOS-7.4
-    /// Whether the WebSocket is currently connected and exchanging frames,
-    /// or in a reconnect-backoff cycle. The view layer renders a banner
-    /// when this is `.reconnecting`.
     public private(set) var connectionState: ConnectionState = .live
 
     public enum RenderActivity: Equatable, Sendable {
@@ -108,16 +105,9 @@ public final class SessionClient {
     }
 
     /// @spec IOS-10.3
-    /// `.active` while libghostty is mounted and rendering at full rate.
-    /// `.idle` once `idleThreshold` has elapsed with no PTY bytes or user
-    /// input — the view layer swaps in a static snapshot, which detaches
-    /// the UITerminalView and stops the display link.
     public private(set) var renderActivity: RenderActivity = .active
 
     /// @spec IOS-10.4
-    /// Last live frame captured by the view layer just before transitioning
-    /// to `.idle`. Nil before the first snapshot is taken; the
-    /// `IdleSnapshotView` falls back to a stylized placeholder when nil.
     public private(set) var idleSnapshot: UIImage?
 
     public func setIdleSnapshot(_ image: UIImage?) {
@@ -171,7 +161,9 @@ public final class SessionClient {
             let isSoftReturn = data.count == 1 && data.first == 0x0A
             self.sendBinary(isSoftReturn ? Self.cr : data)
             Task { @MainActor [weak self] in
-                self?.claimLeadershipIfNeeded()
+                guard let self else { return }
+                self.recordActivity()
+                self.claimLeadershipIfNeeded()
             }
         }
         // Layout path: libghostty tells us "the iOS view is now N×M".
@@ -184,19 +176,6 @@ public final class SessionClient {
                 self?.handleViewport(viewport)
             }
         }
-    }
-
-    /// Backward-compatible convenience for tests that pass a single WS instance.
-    public convenience init(
-        sessionName: String,
-        webSocket: WebSocketClient,
-        role: Role = .fullscreen
-    ) {
-        self.init(
-            sessionName: sessionName,
-            webSocketFactory: { webSocket },
-            role: role
-        )
     }
 
     @MainActor
@@ -226,14 +205,16 @@ public final class SessionClient {
             var attempt = 0
             while !self.stopped {
                 self.ws = self.webSocketFactory()
-                self.connectionState = .live
+                if self.connectionState != .live {
+                    self.connectionState = .live
+                }
                 attempt = 0
                 do {
                     try await self.runReceiveLoop()
                 } catch is CancellationError {
                     return
                 } catch {
-                    // fall through to backoff
+                    // network error — fall through to backoff
                 }
                 if self.stopped { return }
                 let delayIndex = min(attempt, self.backoffSchedule.count - 1)
@@ -243,7 +224,7 @@ public final class SessionClient {
                 do {
                     try await self.clock.sleep(for: delay)
                 } catch {
-                    return  // cancelled mid-sleep
+                    return
                 }
             }
         }
@@ -270,16 +251,17 @@ public final class SessionClient {
     private func startIdleWatchdog() {
         idleWatchdogTask?.cancel()
         idleWatchdogTask = Task { @MainActor [weak self] in
-            while let self, !self.stopped {
-                do {
-                    try await self.clock.sleep(for: self.idleCheckInterval)
-                } catch {
+            while let self, !self.stopped, self.renderActivity == .active {
+                let elapsed = self.clock.now.timeIntervalSince(self.lastActivityAt)
+                let remaining = self.idleThreshold - elapsed
+                if remaining <= 0 {
+                    self.renderActivity = .idle
                     return
                 }
-                if self.stopped { return }
-                let elapsed = self.clock.now.timeIntervalSince(self.lastActivityAt)
-                if self.renderActivity == .active, elapsed >= self.idleThreshold {
-                    self.renderActivity = .idle
+                do {
+                    try await self.clock.sleep(for: remaining)
+                } catch {
+                    return
                 }
             }
         }
@@ -290,29 +272,30 @@ public final class SessionClient {
         lastActivityAt = clock.now
         if renderActivity == .idle {
             renderActivity = .active
+            startIdleWatchdog()
         }
     }
 
-    /// Called from the idle-snapshot view's tap handler to wake the
-    /// renderer without delivering a stray keystroke to the shell.
-    /// See IOS-10.4 / IOS-10.5.
     public func wakeRenderer() {
         recordActivity()
     }
 
+    @MainActor
+    private func sendInput(_ data: Data) {
+        recordActivity()
+        sendBinary(data)
+        claimLeadershipIfNeeded()
+    }
+
     /// IOS-6.4: send literal LF, bypassing the IOS-6.3 translation.
     public func insertNewline() {
-        recordActivity()
-        sendBinary(Self.lf)
-        claimLeadershipIfNeeded()
+        sendInput(Self.lf)
     }
 
     /// Send a Return/Enter submit keystroke. PTYs conventionally receive
     /// CR for Return; this is distinct from inserting a literal LF.
     public func submitReturn() {
-        recordActivity()
-        sendBinary(Self.cr)
-        claimLeadershipIfNeeded()
+        sendInput(Self.cr)
     }
 
     /// Send text from the iOS software keyboard as ordinary PTY input
@@ -326,31 +309,22 @@ public final class SessionClient {
             submitReturn()
             return
         }
-        recordActivity()
-        sendBinary(Data(text.utf8))
-        claimLeadershipIfNeeded()
+        sendInput(Data(text.utf8))
     }
 
     public func deleteBackward() {
-        recordActivity()
-        sendBinary(Data([0x7F]))
-        claimLeadershipIfNeeded()
+        sendInput(Data([0x7F]))
     }
 
     public func sendEscape() {
-        recordActivity()
-        sendBinary(Data([0x1B]))
-        claimLeadershipIfNeeded()
+        sendInput(Data([0x1B]))
     }
 
     public func sendTab() {
-        recordActivity()
-        sendBinary(Data([0x09]))
-        claimLeadershipIfNeeded()
+        sendInput(Data([0x09]))
     }
 
     public func sendArrow(_ direction: ArrowDirection) {
-        recordActivity()
         let sequence: String
         switch direction {
         case .up:
@@ -362,12 +336,10 @@ public final class SessionClient {
         case .right:
             sequence = "\u{1B}[C"
         }
-        sendBinary(Data(sequence.utf8))
-        claimLeadershipIfNeeded()
+        sendInput(Data(sequence.utf8))
     }
 
     public func sendControl(_ character: ControlCharacter) {
-        recordActivity()
         let byte: UInt8
         switch character {
         case .c:
@@ -375,8 +347,7 @@ public final class SessionClient {
         case .d:
             byte = 0x04
         }
-        sendBinary(Data([byte]))
-        claimLeadershipIfNeeded()
+        sendInput(Data([byte]))
     }
 
     public func stop() {

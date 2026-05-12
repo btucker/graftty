@@ -8,11 +8,7 @@ import GrafttyProtocol
 @MainActor
 struct SessionReconnectTests {
 
-    /// A WebSocketClient whose `receive()` throws immediately. Models a
-    /// hard network failure between frames.
     final class FailingWS: WebSocketClient, @unchecked Sendable {
-        let id: Int
-        init(id: Int) { self.id = id }
         func send(_ frame: WebSocketFrame) async throws {}
         func receive() async throws -> WebSocketFrame {
             throw URLError(.networkConnectionLost)
@@ -20,11 +16,7 @@ struct SessionReconnectTests {
         func close() {}
     }
 
-    /// A WebSocketClient whose `receive()` parks forever. Models a healthy
-    /// open connection that simply hasn't sent us anything yet.
     final class IdleWS: WebSocketClient, @unchecked Sendable {
-        let id: Int
-        init(id: Int) { self.id = id }
         func send(_ frame: WebSocketFrame) async throws {}
         func receive() async throws -> WebSocketFrame {
             try await Task.sleep(nanoseconds: 60_000_000_000)
@@ -37,11 +29,11 @@ struct SessionReconnectTests {
         private let lock = NSLock()
         private var _creations = 0
         var creations: Int { lock.withLock { _creations } }
-        var nextProvider: @Sendable (Int) -> WebSocketClient = { id in IdleWS(id: id) }
+        var nextProvider: @Sendable () -> WebSocketClient = { IdleWS() }
         func make() -> WebSocketClient {
             lock.withLock {
                 _creations += 1
-                return nextProvider(_creations)
+                return nextProvider()
             }
         }
     }
@@ -58,7 +50,7 @@ struct SessionReconnectTests {
     func receiveErrorTransitionsToReconnecting() async throws {
         let clock = VirtualClock()
         let factory = FactoryRecorder()
-        factory.nextProvider = { id in FailingWS(id: id) }
+        factory.nextProvider = { FailingWS() }
         let client = SessionClient(
             sessionName: "s",
             webSocketFactory: factory.make,
@@ -76,7 +68,7 @@ struct SessionReconnectTests {
     func backoffEscalatesAcrossRepeatedFailures() async throws {
         let clock = VirtualClock()
         let factory = FactoryRecorder()
-        factory.nextProvider = { _ in FailingWS(id: 0) }
+        factory.nextProvider = { FailingWS() }
         let client = SessionClient(
             sessionName: "s",
             webSocketFactory: factory.make,
@@ -104,9 +96,9 @@ struct SessionReconnectTests {
         let clock = VirtualClock()
         let factory = FactoryRecorder()
         var calls = 0
-        factory.nextProvider = { id in
+        factory.nextProvider = {
             calls += 1
-            return calls == 1 ? FailingWS(id: id) : IdleWS(id: id)
+            return calls == 1 ? FailingWS() : IdleWS()
         }
         let client = SessionClient(
             sessionName: "s",
@@ -128,7 +120,7 @@ struct SessionReconnectTests {
     func forceReconnectNowCancelsBackoffSleep() async throws {
         let clock = VirtualClock()
         let factory = FactoryRecorder()
-        factory.nextProvider = { _ in FailingWS(id: 0) }
+        factory.nextProvider = { FailingWS() }
         let client = SessionClient(
             sessionName: "s",
             webSocketFactory: factory.make,
@@ -149,7 +141,7 @@ struct SessionReconnectTests {
     func stopDuringBackoffCancelsCleanly() async throws {
         let clock = VirtualClock()
         let factory = FactoryRecorder()
-        factory.nextProvider = { _ in FailingWS(id: 0) }
+        factory.nextProvider = { FailingWS() }
         let client = SessionClient(
             sessionName: "s",
             webSocketFactory: factory.make,
