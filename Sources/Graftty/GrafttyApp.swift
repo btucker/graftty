@@ -922,11 +922,13 @@ struct GrafttyApp: App {
         // grace timer. Fires on MainActor.
         let inputObserver = PaneInputActivityObserver(
             registry: inputRegistry,
-            onKeystroke: { [weak graceScheduler, presenceStorage] paneID in
+            onKeystroke: { [weak graceScheduler, presenceStorage, tm = terminalManager] paneID in
                 // SurfaceNSView.keyDown fires on main thread. Use
                 // assumeIsolated so we can read MainActor-isolated state.
                 MainActor.assumeIsolated {
-                    let sessionName = ZmxLauncher.sessionName(for: paneID)
+                    guard let sessionName = tm.zmxSessionName(for: PaneSlotID(id: paneID)) else {
+                        return
+                    }
                     guard let agent = presenceStorage.records(forPaneSessionName: sessionName).first else {
                         return
                     }
@@ -2374,6 +2376,9 @@ struct GrafttyApp: App {
         // target worktree has its own separate attention state.
         appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx]
             .paneAttention[terminalID] = nil
+        let movedPaneSession = appState.wrappedValue.repos[currentRepoIdx]
+            .worktrees[currentWorktreeIdx]
+            .takePaneSession(for: terminalID)
         if sourceTree.root == nil {
             appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].state = .closed
             appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].focusedTerminalID = nil
@@ -2418,6 +2423,10 @@ struct GrafttyApp: App {
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].splitTree = targetTree
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].state = .running
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].focusedTerminalID = terminalID
+        if let movedPaneSession {
+            appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx]
+                .recordPaneSession(movedPaneSession, for: terminalID)
+        }
 
         // Follow the pane with the UI ONLY when the reassigned pane was the
         // user's active typing target — i.e. the focused pane of the
@@ -2627,6 +2636,8 @@ struct GrafttyApp: App {
                 // terminal doesn't leak a badge entry into the model.
                 appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                     .paneAttention[targetID] = nil
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                    .clearPaneSession(for: targetID)
 
                 if newTree.root == nil {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed

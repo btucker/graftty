@@ -356,7 +356,7 @@ final class TerminalManager: ObservableObject {
     func lookupShellPID(for id: TerminalID) -> pid_t? {
         if let cached = cachedShellPIDs[id] { return cached }
         guard let launcher = zmxLauncher, launcher.isAvailable else { return nil }
-        guard let sessionName = sessionName(for: id) else { return nil }
+        guard let sessionName = zmxSessionName(for: id) else { return nil }
         guard let pid = ZmxPIDLookup.shellPID(
             logFile: launcher.logFile(forSession: sessionName),
             sessionName: sessionName
@@ -444,7 +444,7 @@ final class TerminalManager: ObservableObject {
         for terminalID in splitTree.allLeaves where surfaces[terminalID] == nil {
             guard let paneSessionID = paneSessions[terminalID] else { continue }
             guard canAllocatePTY(for: terminalID) else { continue }
-            paneSessionIDs[terminalID] = paneSessionID
+            recordPaneSession(paneSessionID, for: terminalID)
             clearRehydratedIfDaemonGone(
                 terminalID,
                 paneSessionID: paneSessionID,
@@ -493,7 +493,7 @@ final class TerminalManager: ObservableObject {
         }
 
         guard canAllocatePTY(for: terminalID) else { return nil }
-        paneSessionIDs[terminalID] = paneSessionID
+        recordPaneSession(paneSessionID, for: terminalID)
         clearRehydratedIfDaemonGone(terminalID, paneSessionID: paneSessionID, sessionSnapshot: nil)
 
         let zmxSpawnConfiguration = resolveZmxSpawnConfiguration(
@@ -569,7 +569,7 @@ final class TerminalManager: ObservableObject {
         }
         shellReadyFired.remove(terminalID)
         cachedShellPIDs.removeValue(forKey: terminalID)
-        paneClosed?(terminalID.id, sessionName(for: terminalID))
+        paneClosed?(terminalID.id, zmxSessionName(for: terminalID))
     }
 
     /// The rendered sidebar label for a pane. Chains in priority order:
@@ -632,14 +632,14 @@ final class TerminalManager: ObservableObject {
     /// nudges become a hot path, replace with a dictionary maintained
     /// in the surface-create/destroy hooks.
     func handle(forSessionName sessionName: String) -> SurfaceHandle? {
-        surfaces.first(where: { self.sessionName(for: $0.key) == sessionName })?.value
+        surfaces.first(where: { self.zmxSessionName(for: $0.key) == sessionName })?.value
     }
 
     /// Reverse-lookup of the pane UUID whose pane derives the given
     /// zmx session name. Returns nil if no surface matches (e.g. pane
     /// closed). O(n) over the surface set, same cost class as `handle`.
     func paneID(forSessionName sessionName: String) -> UUID? {
-        surfaces.first(where: { self.sessionName(for: $0.key) == sessionName })?.key.id
+        surfaces.first(where: { self.zmxSessionName(for: $0.key) == sessionName })?.key.id
     }
 
     /// Tell libghostty whether a surface is currently visible. On visible,
@@ -786,13 +786,17 @@ final class TerminalManager: ObservableObject {
     /// an already-gone session is the success outcome.
     private func killZmxSession(for terminalID: TerminalID) {
         guard let launcher = zmxLauncher, launcher.isAvailable else { return }
-        guard let name = sessionName(for: terminalID) else { return }
+        guard let name = zmxSessionName(for: terminalID) else { return }
         DispatchQueue.global(qos: .utility).async {
             launcher.kill(sessionName: name)
         }
     }
 
-    private func sessionName(for terminalID: TerminalID) -> String? {
+    func recordPaneSession(_ paneSessionID: PaneSessionID, for terminalID: TerminalID) {
+        paneSessionIDs[terminalID] = paneSessionID
+    }
+
+    func zmxSessionName(for terminalID: TerminalID) -> String? {
         guard let sessionID = paneSessionIDs[terminalID] else { return nil }
         return ZmxLauncher.sessionName(for: sessionID)
     }

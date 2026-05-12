@@ -177,6 +177,25 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         paneSessions[slot] = nil
     }
 
+    @discardableResult
+    public mutating func takePaneSession(for slot: PaneSlotID) -> PaneSessionID? {
+        paneSessions.removeValue(forKey: slot)
+    }
+
+    public mutating func recordPaneSession(_ session: PaneSessionID, for slot: PaneSlotID) {
+        paneSessions[slot] = session
+    }
+
+    @discardableResult
+    public mutating func movePaneSession(
+        for slot: PaneSlotID,
+        to target: inout WorktreeEntry
+    ) -> PaneSessionID? {
+        guard let session = takePaneSession(for: slot) else { return nil }
+        target.recordPaneSession(session, for: slot)
+        return session
+    }
+
     public mutating func clearAllPaneSessions() {
         paneSessions.removeAll()
     }

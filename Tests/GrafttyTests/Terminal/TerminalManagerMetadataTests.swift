@@ -131,4 +131,14 @@ struct TerminalManagerMetadataTests {
         #expect(config.sessionName == "graftty-01234567")
         #expect(config.argv[2] == "graftty-01234567")
     }
+
+    @Test func liveZmxSessionNameUsesRecordedPaneSessionIDNotSlotID() {
+        let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        let slotID = PaneSlotID(id: UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!)
+        let sessionID = PaneSessionID(id: UUID(uuidString: "01234567-89AB-CDEF-FEDC-BA9876543210")!)
+
+        manager.recordPaneSession(sessionID, for: slotID)
+
+        #expect(manager.zmxSessionName(for: slotID) == "graftty-01234567")
+    }
 }

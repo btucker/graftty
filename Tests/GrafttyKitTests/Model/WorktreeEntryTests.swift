@@ -248,6 +248,35 @@ struct WorktreeEntryTests {
         #expect(decoded.paneSessions[slot] == session)
     }
 
+    @Test func movingPaneSessionPreservesSessionInTargetAndRemovesSource() {
+        var source = WorktreeEntry(path: "/repo/source", branch: "source")
+        var target = WorktreeEntry(path: "/repo/target", branch: "target")
+        let slot = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000010")!)
+        let session = PaneSessionID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000020")!)
+        source.paneSessions[slot] = session
+
+        let moved = source.movePaneSession(for: slot, to: &target)
+
+        #expect(moved == session)
+        #expect(source.paneSessions[slot] == nil)
+        #expect(target.paneSessions[slot] == session)
+    }
+
+    @Test func clearPaneSessionRemovesClosedSlotSessionOnly() {
+        var entry = WorktreeEntry(path: "/repo/wt", branch: "feature")
+        let closedSlot = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000011")!)
+        let survivorSlot = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000012")!)
+        let closedSession = PaneSessionID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000021")!)
+        let survivorSession = PaneSessionID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000022")!)
+        entry.paneSessions[closedSlot] = closedSession
+        entry.paneSessions[survivorSlot] = survivorSession
+
+        entry.clearPaneSession(for: closedSlot)
+
+        #expect(entry.paneSessions[closedSlot] == nil)
+        #expect(entry.paneSessions[survivorSlot] == survivorSession)
+    }
+
     @Test func settingOnePaneDoesNotAffectOtherPanesOrWorktreeSlot() {
         // The reported bug in plain model form: two panes in one
         // worktree, a command-finished ping lands on pane A, and pane B
