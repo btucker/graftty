@@ -445,7 +445,10 @@ final class TerminalManager: ObservableObject {
                 terminalID,
                 sessionSnapshot: liveSessionsIfNeeded(for: terminalID)
             )
-            let (zmxInitialInput, zmxDir) = resolveZmxSpawn(for: terminalID)
+            let zmxSpawnConfiguration = resolveZmxSpawnConfiguration(
+                for: terminalID,
+                worktreePath: worktreePath
+            )
             // TERM-5.5: SurfaceHandle.init is failable now — ghostty_surface_new
             // can return null under libghostty resource exhaustion. Skip the
             // leaf rather than crash the app; the pane renders the Color.black
@@ -455,8 +458,7 @@ final class TerminalManager: ObservableObject {
                 app: app,
                 worktreePath: worktreePath,
                 socketPath: socketPath,
-                zmxInitialInput: zmxInitialInput,
-                zmxDir: zmxDir,
+                zmxSpawnConfiguration: zmxSpawnConfiguration,
                 terminalManager: self,
                 inputActivityObserver: inputActivityObserver
             ) else { continue }
@@ -483,7 +485,10 @@ final class TerminalManager: ObservableObject {
         guard canAllocatePTY(for: terminalID) else { return nil }
         clearRehydratedIfDaemonGone(terminalID, sessionSnapshot: nil)
 
-        let (zmxInitialInput, zmxDir) = resolveZmxSpawn(for: terminalID)
+        let zmxSpawnConfiguration = resolveZmxSpawnConfiguration(
+            for: terminalID,
+            worktreePath: worktreePath
+        )
         // TERM-5.5: failable init returns nil on libghostty rejection;
         // propagate that to the caller instead of crashing.
         guard let handle = SurfaceHandle(
@@ -491,9 +496,8 @@ final class TerminalManager: ObservableObject {
             app: app,
             worktreePath: worktreePath,
             socketPath: socketPath,
-            zmxInitialInput: zmxInitialInput,
+            zmxSpawnConfiguration: zmxSpawnConfiguration,
             extraInitialInput: extraInitialInput,
-            zmxDir: zmxDir,
             terminalManager: self,
             inputActivityObserver: inputActivityObserver
         ) else { return nil }
@@ -731,52 +735,27 @@ final class TerminalManager: ObservableObject {
     }
 
     /// Resolve the per-surface zmx spawn parameters for a terminal pane.
-    /// Returns (nil, nil) when no launcher is configured or the binary is
+    /// Returns nil when no launcher is configured or the binary is
     /// missing — in which case `SurfaceHandle` falls back to libghostty's
     /// default `$SHELL` spawn (existing pre-zmx behavior).
-    ///
-    /// When available, we return the `initial_input` bytes for libghostty
-    /// to write into the PTY right after it spawns the user's default
-    /// shell. Those bytes are an `exec zmx attach …` line that replaces
-    /// the shell with the zmx client — see `ZmxLauncher.attachInitialInput`
-    /// for why we use initial_input rather than `config.command`.
-    private func resolveZmxSpawn(for terminalID: TerminalID) -> (initialInput: String?, dir: String?) {
+    private func resolveZmxSpawnConfiguration(
+        for terminalID: TerminalID,
+        worktreePath: String
+    ) -> ZmxSpawnConfiguration? {
         guard let launcher = zmxLauncher, launcher.isAvailable else {
-            return (nil, nil)
+            return nil
         }
-        let session = launcher.sessionName(for: terminalID.id)
-        // Resolve the user's shell once from the app-launch environment.
-        // This is the same SHELL libghostty will spawn when config.command
-        // is nil; we hand it back to zmx as the inner process so the
-        // attached session runs the user's real shell.
-        let rawUserShell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/sh"
-        // When the user's shell is bash, substitute graftty's bash-launcher
-        // (which exec's `bash --rcfile <shim>`) so the inner bash sources
-        // a graftty-managed .bashrc that re-prepends the wrapper bin to
-        // PATH after the user's own .bashrc has had its say. Bash has no
-        // ZDOTDIR-style env-var redirect; --rcfile is the only way in.
-        // GRAFTTY_DISABLE_AGENT_HOOKS=1 falls through to the original shell.
-        let userShell: String
-        if ProcessInfo.processInfo.environment["GRAFTTY_DISABLE_AGENT_HOOKS"] == "1" {
-            userShell = rawUserShell
-        } else {
-            userShell = AgentHookInstaller.wrappedUserShell(
-                rawUserShell,
-                rootDirectory: AgentHookInstaller.rootDirectory()
-            )
-        }
-        // Pass GHOSTTY_RESOURCES_DIR through so the launcher can re-inject
-        // ZDOTDIR for zsh users. Without this, Ghostty's shell integration
-        // never loads in the inner shell zmx spawns, and chpwd-driven OSC 7
-        // (the signal behind PWD-follow) goes silent.
-        let ghosttyResources = ProcessInfo.processInfo.environment["GHOSTTY_RESOURCES_DIR"]
-        return (
-            launcher.attachInitialInput(
-                sessionName: session,
-                userShell: userShell,
-                ghosttyResourcesDir: ghosttyResources
-            ),
-            launcher.zmxDir.path
+        let processEnv = ProcessInfo.processInfo.environment
+        return ZmxSpawnConfiguration.make(
+            launcher: launcher,
+            paneID: terminalID.id,
+            worktreePath: worktreePath,
+            socketPath: socketPath,
+            processEnv: processEnv,
+            bundleURL: Bundle.main.bundleURL,
+            ghosttyResourcesDir: processEnv["GHOSTTY_RESOURCES_DIR"],
+            agentHooksDisabled: processEnv["GRAFTTY_DISABLE_AGENT_HOOKS"] == "1",
+            agentHooksRoot: AgentHookInstaller.rootDirectory()
         )
     }
 

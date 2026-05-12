@@ -7,8 +7,8 @@ import GrafttyKit
 /// # Ownership
 /// - Owns the `ghostty_surface_t` — freed in `deinit`.
 /// - The backing `SurfaceNSView` is retained directly on `view`.
-/// - The `userdata` pointer passed to libghostty is an unretained reference to `self`;
-///   the surface is freed before `self` deallocates, so the pointer never dangles.
+/// - The `userdata` pointer passed to libghostty is a retained
+///   `SurfaceUserdataBox`; the surface is freed before the box is released.
 /// - All C strings passed through the config (working directory, env var key/value)
 ///   are freed immediately after `ghostty_surface_new` returns, since libghostty
 ///   copies the config contents.
@@ -31,6 +31,28 @@ final class SurfaceUserdataBox {
     }
 }
 
+protocol SurfaceHandleZmxBackend: AnyObject {
+    func configure(_ config: inout ghostty_surface_config_s)
+    func start(surface: ghostty_surface_t) throws
+    func write(_ data: Data) throws
+    func close()
+    func releaseReceiveUserdataAfterSurfaceFree()
+}
+
+extension HostManagedZmxBackend: SurfaceHandleZmxBackend {}
+
+struct SurfaceHandleGhosttySurfaceFactory {
+    var create: (ghostty_app_t, UnsafeMutablePointer<ghostty_surface_config_s>) -> ghostty_surface_t?
+    var free: (ghostty_surface_t) -> Void
+    var text: (ghostty_surface_t, UnsafePointer<CChar>, UInt) -> Void
+
+    static let live = SurfaceHandleGhosttySurfaceFactory(
+        create: { app, config in ghostty_surface_new(app, config) },
+        free: { surface in ghostty_surface_free(surface) },
+        text: { surface, ptr, count in ghostty_surface_text(surface, ptr, count) }
+    )
+}
+
 final class SurfaceHandle {
     let terminalID: TerminalID
     let surface: ghostty_surface_t
@@ -41,6 +63,8 @@ final class SurfaceHandle {
     /// keeps a copy of the pointer in its surface struct and passes it back
     /// through callbacks that want per-surface identity.
     private let userdataPointer: UnsafeMutableRawPointer
+    private let surfaceFactory: SurfaceHandleGhosttySurfaceFactory
+    private let zmxBackend: SurfaceHandleZmxBackend?
 
     /// Failable because `ghostty_surface_new` can return null — e.g. under
     /// resource exhaustion or internal libghostty state the app can't
@@ -53,14 +77,18 @@ final class SurfaceHandle {
         app: ghostty_app_t,
         worktreePath: String,
         socketPath: String,
-        zmxInitialInput: String? = nil,
+        zmxSpawnConfiguration: ZmxSpawnConfiguration? = nil,
         extraInitialInput: String? = nil,
-        zmxDir: String? = nil,
         terminalManager: TerminalManager? = nil,
-        inputActivityObserver: PaneInputActivityObserver? = nil
+        inputActivityObserver: PaneInputActivityObserver? = nil,
+        surfaceFactory: SurfaceHandleGhosttySurfaceFactory = .live,
+        zmxBackendFactory: (ZmxSpawnConfiguration) -> SurfaceHandleZmxBackend = {
+            HostManagedZmxBackend(spawnConfiguration: $0)
+        }
     ) {
         self.terminalID = terminalID
         self.worktreePath = worktreePath
+        self.surfaceFactory = surfaceFactory
 
         let userdataBox = SurfaceUserdataBox(
             terminalID: terminalID,
@@ -68,6 +96,8 @@ final class SurfaceHandle {
         )
         let userdataPtr = Unmanaged.passRetained(userdataBox).toOpaque()
         self.userdataPointer = userdataPtr
+        let backend = zmxSpawnConfiguration.map(zmxBackendFactory)
+        self.zmxBackend = backend
 
         let surfaceView = SurfaceNSView()
         self.view = surfaceView
@@ -84,66 +114,78 @@ final class SurfaceHandle {
         // Allocate C strings up front so we can free them deterministically.
         let cwdCStr = strdup(worktreePath)
 
-        // Optional: when ZmxLauncher is available, these are the bytes
-        // libghostty will write into the PTY as soon as the user's
-        // default $SHELL starts — an `exec <zmx> attach <session>
-        // <shell>\n` line that replaces the shell with `zmx attach`.
-        //
-        // We deliberately avoid `config.command` here: upstream Ghostty
-        // auto-enables `wait-after-command = true` whenever `command` is
-        // set (see `src/apprt/embedded.zig`), which would keep panes
-        // open after the shell exits and show a "Press any key to close"
-        // overlay. For Graftty we want the opposite — exit should
-        // close the pane — so we leave `command` nil and use
-        // `initial_input` instead. See `ZmxLauncher.attachInitialInput`.
-        // zmx-attach must run first so the inner shell is attached before any
-        // caller-supplied command (e.g. an editor invocation) executes.
-        let combinedInput = [zmxInitialInput, extraInitialInput].compactMap { $0 }.joined()
-        let initialInputCStr: UnsafeMutablePointer<CChar>? = combinedInput.isEmpty
-            ? nil
-            : strdup(combinedInput)
-
-        // PATH is overridden to dodge the case-insensitive `Graftty` /
-        // `graftty` collision — libghostty's bundle-self-locating logic
-        // puts `Contents/MacOS` (where the GUI binary lives) on PATH; on
-        // macOS APFS that hijacks `which graftty` to the GUI binary, which
-        // silently exits 0. `BundlePathSanitizer` strips it and prepends
-        // `Contents/Helpers` (where the CLI actually lives).
-        let sanitizedPath = BundlePathSanitizer.sanitized(
-            currentPath: ProcessInfo.processInfo.environment["PATH"] ?? "",
-            bundleURL: Bundle.main.bundleURL
-        )
-        let agentHookBin = Self.agentHookPathPrefix()
-        let path = agentHookBin.map { "\($0):\(sanitizedPath)" } ?? sanitizedPath
-        var envPairs: [(key: String, value: String)] = [
-            ("GRAFTTY_SOCK", socketPath),
-            ("PATH", path),
-        ]
-        // Hand the wrapper bin path to the user's shell init via env so
-        // the ZDOTDIR shim's `.zshrc` can re-prepend it AFTER the user's
-        // own PATH manipulations run. Without this, .zshrc lines like
-        // `export PATH="$BUN_INSTALL/bin:$PATH"` push graftty's surface-
-        // env-injected prepend behind the user's claude / codex
-        // installations and the wrapper never gets invoked.
-        if let agentHookBin {
-            envPairs.append(("GRAFTTY_AGENT_HOOKS_BIN", agentHookBin))
-            envPairs.append(("ZDOTDIR", AgentHookInstaller
-                .zshInitDirectory(rootDirectory: AgentHookInstaller.rootDirectory())
-                .path))
+        let directShellInitialInput = zmxSpawnConfiguration == nil ? extraInitialInput : nil
+        let initialInputCStr: UnsafeMutablePointer<CChar>?
+        if let directShellInitialInput, !directShellInitialInput.isEmpty {
+            initialInputCStr = strdup(directShellInitialInput)
+        } else {
+            initialInputCStr = nil
         }
-        if let zmxDir {
-            envPairs.append(("ZMX_DIR", zmxDir))
+
+        let envPairs: [(key: String, value: String)]
+        if zmxSpawnConfiguration == nil {
+            // PATH is overridden to dodge the case-insensitive `Graftty` /
+            // `graftty` collision — libghostty's bundle-self-locating logic
+            // puts `Contents/MacOS` (where the GUI binary lives) on PATH; on
+            // macOS APFS that hijacks `which graftty` to the GUI binary, which
+            // silently exits 0. `BundlePathSanitizer` strips it and prepends
+            // `Contents/Helpers` (where the CLI actually lives).
+            let sanitizedPath = BundlePathSanitizer.sanitized(
+                currentPath: ProcessInfo.processInfo.environment["PATH"] ?? "",
+                bundleURL: Bundle.main.bundleURL
+            )
+            let agentHookBin = Self.agentHookPathPrefix()
+            let path = agentHookBin.map { "\($0):\(sanitizedPath)" } ?? sanitizedPath
+            var pairs: [(key: String, value: String)] = [
+                ("GRAFTTY_SOCK", socketPath),
+                ("PATH", path),
+            ]
+            // Hand the wrapper bin path to the user's shell init via env so
+            // the ZDOTDIR shim's `.zshrc` can re-prepend it AFTER the user's
+            // own PATH manipulations run. Without this, .zshrc lines like
+            // `export PATH="$BUN_INSTALL/bin:$PATH"` push graftty's surface-
+            // env-injected prepend behind the user's claude / codex
+            // installations and the wrapper never gets invoked.
+            if let agentHookBin {
+                pairs.append(("GRAFTTY_AGENT_HOOKS_BIN", agentHookBin))
+                pairs.append(("ZDOTDIR", AgentHookInstaller
+                    .zshInitDirectory(rootDirectory: AgentHookInstaller.rootDirectory())
+                    .path))
+            }
+            envPairs = pairs
+        } else {
+            envPairs = []
         }
         let envCStrings = envPairs.map { (strdup($0.key), strdup($0.value)) }
         let envCount = envCStrings.count
 
         // env_vars needs a stable pointer during ghostty_surface_new; libghostty
         // copies the contents before returning.
-        let envVarsPtr = UnsafeMutablePointer<ghostty_env_var_s>.allocate(capacity: envCount)
-        for (i, (key, value)) in envCStrings.enumerated() {
-            envVarsPtr.advanced(by: i).initialize(
-                to: ghostty_env_var_s(key: key, value: value)
-            )
+        let envVarsPtr: UnsafeMutablePointer<ghostty_env_var_s>?
+        if envCount > 0 {
+            let ptr = UnsafeMutablePointer<ghostty_env_var_s>.allocate(capacity: envCount)
+            for (i, (key, value)) in envCStrings.enumerated() {
+                ptr.advanced(by: i).initialize(
+                    to: ghostty_env_var_s(key: key, value: value)
+                )
+            }
+            envVarsPtr = ptr
+        } else {
+            envVarsPtr = nil
+        }
+
+        func freeCreateInputs() {
+            if let envVarsPtr {
+                envVarsPtr.deinitialize(count: envCount)
+                envVarsPtr.deallocate()
+            }
+            free(cwdCStr)
+            for (k, v) in envCStrings { free(k); free(v) }
+            if let initialInputCStr { free(initialInputCStr) }
+        }
+
+        func releaseSurfaceUserdata() {
+            Unmanaged<SurfaceUserdataBox>.fromOpaque(userdataPtr).release()
         }
 
         var config = ghostty_surface_config_new()
@@ -158,22 +200,39 @@ final class SurfaceHandle {
         config.env_vars = envVarsPtr
         config.env_var_count = envCount
         config.context = GHOSTTY_SURFACE_CONTEXT_WINDOW
+        backend?.configure(&config)
 
-        guard let newSurface = ghostty_surface_new(app, &config) else {
+        guard let newSurface = surfaceFactory.create(app, &config) else {
             // Free everything we allocated, then fail gracefully. `self`
             // is not yet fully initialized, so `deinit` won't run —
             // release owned allocations explicitly before returning nil.
             // `TERM-5.5`: previous behavior was `fatalError`, which
             // crashed the entire app mid-`graftty pane add` when
             // libghostty rejected the config for any reason.
-            envVarsPtr.deinitialize(count: envCount)
-            envVarsPtr.deallocate()
-            free(cwdCStr)
-            for (k, v) in envCStrings { free(k); free(v) }
-            if let initialInputCStr { free(initialInputCStr) }
-            Unmanaged<SurfaceUserdataBox>.fromOpaque(userdataPtr).release()
+            backend?.close()
+            backend?.releaseReceiveUserdataAfterSurfaceFree()
+            freeCreateInputs()
+            releaseSurfaceUserdata()
             return nil
         }
+
+        if let backend {
+            do {
+                try backend.start(surface: newSurface)
+                if let extraInitialInput,
+                   let data = extraInitialInput.data(using: .utf8) {
+                    try? backend.write(data)
+                }
+            } catch {
+                backend.close()
+                surfaceFactory.free(newSurface)
+                backend.releaseReceiveUserdataAfterSurfaceFree()
+                freeCreateInputs()
+                releaseSurfaceUserdata()
+                return nil
+            }
+        }
+
         self.surface = newSurface
         // Bind the surface to the view now that ghostty_surface_new succeeded.
         // The view weakly references the surface via this unmanaged handle;
@@ -195,11 +254,7 @@ final class SurfaceHandle {
         // dictionary by terminalID.
 
         // Free the C strings now that libghostty has copied them internally.
-        envVarsPtr.deinitialize(count: envCount)
-        envVarsPtr.deallocate()
-        free(cwdCStr)
-        for (k, v) in envCStrings { free(k); free(v) }
-        if let initialInputCStr { free(initialInputCStr) }
+        freeCreateInputs()
     }
 
     private static func agentHookPathPrefix() -> String? {
@@ -228,7 +283,9 @@ final class SurfaceHandle {
             surfaceView.setCursorHidden(false)
             surfaceView.surface = nil
         }
-        ghostty_surface_free(surface)
+        zmxBackend?.close()
+        surfaceFactory.free(surface)
+        zmxBackend?.releaseReceiveUserdataAfterSurfaceFree()
         // Surface is gone, so libghostty won't fire further callbacks against
         // our userdata pointer — safe to release the box.
         Unmanaged<SurfaceUserdataBox>.fromOpaque(userdataPointer).release()
@@ -287,10 +344,14 @@ final class SurfaceHandle {
     /// sibling used for non-key-event writes.)
     func typeText(_ text: String) {
         guard let data = text.data(using: .utf8) else { return }
+        if let zmxBackend {
+            try? zmxBackend.write(data)
+            return
+        }
         data.withUnsafeBytes { raw in
             guard let base = raw.baseAddress else { return }
             let ptr = base.assumingMemoryBound(to: CChar.self)
-            ghostty_surface_text(surface, ptr, UInt(raw.count))
+            surfaceFactory.text(surface, ptr, UInt(raw.count))
         }
     }
 
