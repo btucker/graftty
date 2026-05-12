@@ -660,6 +660,14 @@ struct MainWindow: View {
                     force: force
                 )
             } catch GitWorktreeRemove.Error.gitFailed(_, let stderr) {
+                // GIT-4.13: directory is gone but the admin entry survives.
+                // --force can't bypass git's path validation, so the Force
+                // Delete dialog is a dead end here.
+                if !FileManager.default.fileExists(atPath: worktreePath) {
+                    try? await GitWorktreePrune.run(repoPath: repoPath)
+                    finishWorktreeRemoval(worktree: wt, repoPath: repoPath)
+                    return
+                }
                 if force {
                     // Already attempted with --force; nothing left to
                     // offer. Match the original GIT-4.4 single-button
@@ -697,33 +705,34 @@ struct MainWindow: View {
                 return
             }
 
-            if wt.state == .running {
-                terminalManager.destroySurfaces(terminalIDs: wt.splitTree.allLeaves)
-            }
-            // GIT-4.10: drop per-path caches BEFORE removing the model
-            // entry. Same reason `dismissWorktree` (GIT-3.6) does: orphan
-            // cache entries survive indefinitely and bleed into a future
-            // same-path re-add (rare but cheap — path-keyed caches aren't
-            // inode-scoped). Runs unconditionally; clear on a never-cached
-            // path is a no-op.
-            prStatusStore.clear(worktreePath: worktreePath)
-            statsStore.clear(worktreePath: worktreePath)
-            // Capture the branch before the entry is removed so
-            // `fireLeft` can build the member name from it.
-            let leaverBranch = wt.branch
-            appState.removeWorktree(atPath: worktreePath)
-            // TEAM-5.3: notify the lead that a worktree left. The repo
-            // state is read AFTER removal so the lead-present guard works.
-            if let repo = appState.repo(forWorktreePath: repoPath) {
-                TeamMembershipEvents.fireLeft(
-                    repo: repo,
-                    leaverBranch: leaverBranch,
-                    leaverPath: worktreePath,
-                    reason: .removed,
-                    teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
-                    dispatcher: teamEventDispatcher
-                )
-            }
+            finishWorktreeRemoval(worktree: wt, repoPath: repoPath)
+        }
+    }
+
+    /// Post-remove teardown: destroy live surfaces, clear per-path caches
+    /// (GIT-4.10 ordering: BEFORE removing the model entry, so orphan
+    /// cache entries don't bleed into a future same-path re-add), drop
+    /// the entry, then fire TEAM-5.3 `left`. The TEAM-5.3 lookup uses
+    /// `repoPath` rather than `wt.path` because the worktree is gone
+    /// from `appState` by the time the lookup runs.
+    @MainActor
+    private func finishWorktreeRemoval(worktree wt: WorktreeEntry, repoPath: String) {
+        if wt.state == .running {
+            terminalManager.destroySurfaces(terminalIDs: wt.splitTree.allLeaves)
+        }
+        prStatusStore.clear(worktreePath: wt.path)
+        statsStore.clear(worktreePath: wt.path)
+        let leaverBranch = wt.branch
+        appState.removeWorktree(atPath: wt.path)
+        if let repo = appState.repo(forWorktreePath: repoPath) {
+            TeamMembershipEvents.fireLeft(
+                repo: repo,
+                leaverBranch: leaverBranch,
+                leaverPath: wt.path,
+                reason: .removed,
+                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
+                dispatcher: teamEventDispatcher
+            )
         }
     }
 
