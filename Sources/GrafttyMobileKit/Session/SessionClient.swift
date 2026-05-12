@@ -185,20 +185,44 @@ public final class SessionClient {
     public func start() {
         receiveTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            self.ws = self.webSocketFactory()
+            var attempt = 0
             while !self.stopped {
-                guard let ws = self.ws else { break }
+                self.ws = self.webSocketFactory()
+                self.connectionState = .live
+                attempt = 0
                 do {
-                    let frame = try await ws.receive()
-                    switch frame {
-                    case .binary(let data):
-                        self.session.receive(data)
-                    case .text(let text):
-                        self.handleTextFrame(text)
-                    }
+                    try await self.runReceiveLoop()
+                } catch is CancellationError {
+                    return
                 } catch {
-                    break
+                    // fall through to backoff
                 }
+                if self.stopped { return }
+                let delayIndex = min(attempt, self.backoffSchedule.count - 1)
+                let delay = self.backoffSchedule[delayIndex]
+                attempt += 1
+                self.connectionState = .reconnecting(attempt: attempt)
+                do {
+                    try await self.clock.sleep(for: delay)
+                } catch {
+                    return  // cancelled mid-sleep
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func runReceiveLoop() async throws {
+        guard let ws = self.ws else {
+            throw URLError(.cannotConnectToHost)
+        }
+        while !self.stopped {
+            let frame = try await ws.receive()
+            switch frame {
+            case .binary(let data):
+                self.session.receive(data)
+            case .text(let text):
+                self.handleTextFrame(text)
             }
         }
     }
