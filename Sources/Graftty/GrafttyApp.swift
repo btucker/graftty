@@ -881,21 +881,31 @@ struct GrafttyApp: App {
         )
 
         // Resolve the current set of registered codex panes for a worktree.
-        // Reads TeamPresenceStorage on the main actor (file count is bounded
-        // by active-agent count — typically <20) and reverse-resolves each
-        // recorded paneSessionName via TerminalManager. Captures `tm` (the
-        // already-locally-bound TerminalManager from line 711) to avoid
-        // colliding with the `let terminalManager = tm` shadow declared
-        // later in this same function.
+        // Presence files identify candidate zmx sessions, then
+        // TeamDeliveryPaneResolver verifies that the current pane's shell
+        // process tree still contains a codex process. That second gate is
+        // important because the recorded presence PID belongs to the short-
+        // lived `graftty team register` helper, and stale presence for a
+        // reused/restored zmx session must not make ordinary shells receive
+        // team-message keystrokes.
+        let deliveryPaneResolver = TeamDeliveryPaneResolver(
+            processTree: ProcessTreeWalker(),
+            commandReader: ProcessCommandReader()
+        )
         let codexPanesIn: @Sendable (String) -> [UUID] = { [tm] worktreePath in
             MainActor.assumeIsolated {
                 let records = (try? presenceStorage.listAll()) ?? []
-                let codexSessions = records
-                    .filter { $0.worktree == worktreePath && $0.runtime == .codex }
-                    .compactMap { $0.paneSessionName }
-                return codexSessions.compactMap { sessionName in
-                    tm.paneID(forSessionName: sessionName)
-                }
+                return deliveryPaneResolver.paneIDs(
+                    records: records,
+                    worktree: worktreePath,
+                    runtime: .codex,
+                    paneIDForSessionName: { sessionName in
+                        tm.paneID(forSessionName: sessionName)
+                    },
+                    shellPIDForPaneID: { paneID in
+                        tm.lookupShellPID(for: TerminalID(id: paneID))
+                    }
+                )
             }
         }
 
