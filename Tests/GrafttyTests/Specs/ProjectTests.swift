@@ -48,3 +48,19 @@ struct RepoEntryIsGitTrackedDecodeTests {
         #expect(decoded.displayName == original.displayName)
     }
 }
+
+@Suite("@spec PROJECT-1.4: When WorktreeDiscovery.discover is invoked with a non-git-tracked repository, the application shall return exactly one synthesized DiscoveredWorktree with path equal to the repo path and branch \"main\", without invoking git.")
+struct WorktreeDiscoveryFacadeTests {
+    @Test("Non-git repo synthesizes a single main worktree")
+    func nonGitReturnsSyntheticWorktree() async throws {
+        let repo = RepoEntry(
+            path: "/tmp/example",
+            displayName: "example",
+            isGitTracked: false
+        )
+        let results = try await WorktreeDiscovery.discover(repo: repo)
+        #expect(results.count == 1)
+        #expect(results[0].path == "/tmp/example")
+        #expect(results[0].branch == "main")
+    }
+}
