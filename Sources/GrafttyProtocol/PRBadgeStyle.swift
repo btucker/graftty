@@ -10,17 +10,19 @@ import Foundation
 /// view code maps the returned `Tone` to a concrete `Color` and
 /// applies a pulse modifier when `tone.pulses` is true.
 ///
-/// Priority is most-actionable first: merged > CI failure > CI
+/// Priority is most-actionable first: merged/closed > CI failure > CI
 /// pending > merge conflict > open. CI signals win over a conflict
 /// because they're tighter feedback on the user's current change;
 /// once CI is clean, the conflict tone surfaces and tells the user
-/// to rebase.
+/// to rebase. `.closed` is a terminal state alongside `.merged` —
+/// CI status on a dead PR is stale, same reason `.merged` wins.
 ///
 /// @spec PR-8.20
 public enum PRBadgeStyle {
     public enum Tone: Sendable, Equatable {
         case open
         case merged
+        case closed
         case ciFailure
         case ciPending
         case conflicting
@@ -36,6 +38,8 @@ public enum PRBadgeStyle {
         switch state {
         case .merged:
             return .merged
+        case .closed:
+            return .closed
         case .open:
             switch checks {
             case .failure: return .ciFailure

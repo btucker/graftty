@@ -1416,7 +1416,7 @@ struct GrafttyApp: App {
         //  - Carried-forward: mutate path (and latest branch label)
         //    in place on the `pre` copy, preserving id / splitTree /
         //    state / attention / paneAttention / focusedTerminalID /
-        //    offeredDeleteForMergedPR.
+        //    offeredDeleteForResolvedPR.
         //  - Gone-stale: preserve the full entry, flip state to `.stale`
         //    so the sidebar can still offer a Dismiss action.
         //  - Fresh: discovered branches that didn't match any existing

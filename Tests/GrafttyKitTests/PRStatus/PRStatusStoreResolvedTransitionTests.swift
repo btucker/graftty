@@ -3,8 +3,8 @@ import GrafttyProtocol
 import Foundation
 @testable import GrafttyKit
 
-@Suite("PRStatusStore merged-transition callback")
-struct PRStatusStoreMergedTransitionTests {
+@Suite("PRStatusStore resolved-transition callback")
+struct PRStatusStoreResolvedTransitionTests {
 
     /// Programmable fetcher — returns whatever snapshot is set at
     /// the moment `fetch` is called, and bumps an invocation
@@ -30,11 +30,13 @@ struct PRStatusStoreMergedTransitionTests {
         }
     }
 
-    /// Collects `(worktreePath, prNumber)` fires so tests can
+    /// Collects `(worktreePath, prNumber, state)` fires so tests can
     /// assert both count and arguments.
     actor EventSink {
-        private(set) var events: [(String, Int)] = []
-        func record(_ path: String, _ number: Int) { events.append((path, number)) }
+        private(set) var events: [(String, Int, PRInfo.State)] = []
+        func record(_ path: String, _ number: Int, _ state: PRInfo.State) {
+            events.append((path, number, state))
+        }
         func count() -> Int { events.count }
     }
 
@@ -96,13 +98,16 @@ struct PRStatusStoreMergedTransitionTests {
         return await store.infos[path]
     }
 
-    @Test func firesOnNilToMergedTransition() async throws {
-        let fetcher = ScriptedFetcher(initial: Self.snapshot(number: 42, state: .merged))
+    /// Parameterized so the invariant "merged and closed-without-merging
+    /// fire the callback identically" is enforced rather than implied.
+    @Test(arguments: [PRInfo.State.merged, .closed])
+    func firesOnNilToResolvedTransition(state: PRInfo.State) async throws {
+        let fetcher = ScriptedFetcher(initial: Self.snapshot(number: 42, state: state))
         let (store, _) = await Self.makeStore(fetcher: fetcher)
         let sink = EventSink()
         await MainActor.run {
-            store.onPRMerged = { path, num in
-                Task { await sink.record(path, num) }
+            store.onPRResolved = { path, num, state in
+                Task { await sink.record(path, num, state) }
             }
         }
 
@@ -116,27 +121,29 @@ struct PRStatusStoreMergedTransitionTests {
         #expect(events.count == 1)
         #expect(events.first?.0 == "/wt")
         #expect(events.first?.1 == 42)
+        #expect(events.first?.2 == state)
         await MainActor.run { store.stop() }
     }
 
-    @Test func firesOnOpenToMergedTransition() async throws {
+    @Test(arguments: [PRInfo.State.merged, .closed])
+    func firesOnOpenToResolvedTransition(state: PRInfo.State) async throws {
         let fetcher = ScriptedFetcher(initial: Self.snapshot(number: 7, state: .open))
         let (store, _) = await Self.makeStore(fetcher: fetcher)
         let sink = EventSink()
         await MainActor.run {
-            store.onPRMerged = { path, num in
-                Task { await sink.record(path, num) }
+            store.onPRResolved = { path, num, state in
+                Task { await sink.record(path, num, state) }
             }
         }
 
         await store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "feat")
         _ = try await Self.waitForInfo(store: store, path: "/wt") { $0?.state == .open }
-        #expect(await sink.count() == 0, "open fetch must not fire the merged callback")
+        #expect(await sink.count() == 0, "open fetch must not fire the resolved callback")
 
-        await fetcher.setSnapshot(Self.snapshot(number: 7, state: .merged))
+        await fetcher.setSnapshot(Self.snapshot(number: 7, state: state))
         await MainActor.run { Self.clearInFlight(store) }
         await store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "feat")
-        _ = try await Self.waitForInfo(store: store, path: "/wt") { $0?.state == .merged }
+        _ = try await Self.waitForInfo(store: store, path: "/wt") { $0?.state == state }
 
         for _ in 0..<20 where await sink.count() == 0 {
             try await Task.sleep(for: .milliseconds(20))
@@ -144,21 +151,23 @@ struct PRStatusStoreMergedTransitionTests {
         let events = await sink.events
         #expect(events.count == 1)
         #expect(events.first?.1 == 7)
+        #expect(events.first?.2 == state)
         await MainActor.run { store.stop() }
     }
 
-    @Test func doesNotReFireForIdempotentMergedRefetch() async throws {
-        let fetcher = ScriptedFetcher(initial: Self.snapshot(number: 99, state: .merged))
+    @Test(arguments: [PRInfo.State.merged, .closed])
+    func doesNotReFireForIdempotentResolvedRefetch(state: PRInfo.State) async throws {
+        let fetcher = ScriptedFetcher(initial: Self.snapshot(number: 99, state: state))
         let (store, _) = await Self.makeStore(fetcher: fetcher)
         let sink = EventSink()
         await MainActor.run {
-            store.onPRMerged = { path, num in
-                Task { await sink.record(path, num) }
+            store.onPRResolved = { path, num, state in
+                Task { await sink.record(path, num, state) }
             }
         }
 
         await store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "feat")
-        _ = try await Self.waitForInfo(store: store, path: "/wt") { $0?.state == .merged }
+        _ = try await Self.waitForInfo(store: store, path: "/wt") { $0?.state == state }
         for _ in 0..<20 where await sink.count() == 0 {
             try await Task.sleep(for: .milliseconds(20))
         }
@@ -166,19 +175,20 @@ struct PRStatusStoreMergedTransitionTests {
 
         await MainActor.run { Self.clearInFlight(store) }
         await store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "feat")
-        _ = try await Self.waitForInfo(store: store, path: "/wt") { $0?.state == .merged }
+        _ = try await Self.waitForInfo(store: store, path: "/wt") { $0?.state == state }
         try await Task.sleep(for: .milliseconds(100))
-        #expect(await sink.count() == 1, "merged→merged for same PR must not re-fire")
+        #expect(await sink.count() == 1, "\(state)→\(state) for same PR must not re-fire")
         await MainActor.run { store.stop() }
     }
 
-    @Test func firesAgainForDifferentMergedPRNumber() async throws {
-        let fetcher = ScriptedFetcher(initial: Self.snapshot(number: 1, state: .merged))
+    @Test(arguments: [PRInfo.State.merged, .closed])
+    func firesAgainForDifferentResolvedPRNumber(state: PRInfo.State) async throws {
+        let fetcher = ScriptedFetcher(initial: Self.snapshot(number: 1, state: state))
         let (store, _) = await Self.makeStore(fetcher: fetcher)
         let sink = EventSink()
         await MainActor.run {
-            store.onPRMerged = { path, num in
-                Task { await sink.record(path, num) }
+            store.onPRResolved = { path, num, state in
+                Task { await sink.record(path, num, state) }
             }
         }
 
@@ -189,7 +199,7 @@ struct PRStatusStoreMergedTransitionTests {
         }
         #expect(await sink.count() == 1)
 
-        await fetcher.setSnapshot(Self.snapshot(number: 2, state: .merged))
+        await fetcher.setSnapshot(Self.snapshot(number: 2, state: state))
         await MainActor.run { Self.clearInFlight(store) }
         await store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "feat")
         _ = try await Self.waitForInfo(store: store, path: "/wt") { $0?.number == 2 }
@@ -202,4 +212,3 @@ struct PRStatusStoreMergedTransitionTests {
         await MainActor.run { store.stop() }
     }
 }
-
