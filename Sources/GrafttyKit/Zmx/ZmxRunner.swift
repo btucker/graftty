@@ -160,9 +160,9 @@ public enum ZmxRunner {
         closeIfOpen(&stderrWrite)
 
         let exitCode = try waitForExit(pid: pid, timeout: timeout)
-        let out = String(data: readAll(from: stdoutRead), encoding: .utf8) ?? ""
+        let out = String(data: readAvailable(from: stdoutRead), encoding: .utf8) ?? ""
         let err = captureStderr
-            ? String(data: readAll(from: stderrRead), encoding: .utf8) ?? ""
+            ? String(data: readAvailable(from: stderrRead), encoding: .utf8) ?? ""
             : ""
         return (stdout: out, stderr: err, exitCode: exitCode)
     }
@@ -217,7 +217,12 @@ public enum ZmxRunner {
         return 128 + signal
     }
 
-    private static func readAll(from fd: Int32) -> Data {
+    private static func readAvailable(from fd: Int32) -> Data {
+        let flags = fcntl(fd, F_GETFL)
+        if flags >= 0 {
+            _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+        }
+
         var data = Data()
         var buffer = [UInt8](repeating: 0, count: 4096)
         while true {
@@ -228,6 +233,8 @@ public enum ZmxRunner {
                 data.append(contentsOf: buffer.prefix(Int(count)))
             } else if count < 0 && errno == EINTR {
                 continue
+            } else if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
+                break
             } else {
                 break
             }

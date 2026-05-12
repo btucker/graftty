@@ -51,6 +51,29 @@ struct ZmxRunnerTests {
         #expect(result.exitCode == 2)
     }
 
+    @Test func captureDoesNotWaitForDescendantHoldingStdoutOpen() throws {
+        let pidFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-zmx-runner-descendant-\(UUID().uuidString).pid")
+        defer { try? FileManager.default.removeItem(at: pidFile) }
+
+        let start = Date()
+        let result = try ZmxRunner.capture(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            args: ["-c", "/bin/sleep 2 & echo $! > \"$PID_FILE\"; echo ready"],
+            env: ["PID_FILE": pidFile.path],
+            timeout: 1.0
+        )
+        let elapsed = Date().timeIntervalSince(start)
+
+        #expect(result.stdout == "ready\n")
+        #expect(result.exitCode == 0)
+        #expect(elapsed < 1.0)
+
+        if let childPID = try? Self.pid(from: pidFile) {
+            _ = kill(childPID, SIGTERM)
+        }
+    }
+
     @Test("""
 @spec ZMX-4.5: When the application invokes synchronous zmx maintenance commands such as `zmx list --short` or `zmx kill --force <session>`, the subprocess wrapper shall apply a bounded timeout and terminate the command if it does not exit promptly. Cleanup paths, including test teardown, shall not block indefinitely on a degraded zmx daemon, because a wedged cleanup can leave `zmx attach` clients and their PTYs orphaned.
 """, .timeLimit(.minutes(1)))
@@ -68,9 +91,7 @@ struct ZmxRunnerTests {
             )
         }
 
-        let pidText = try String(contentsOf: pidFile, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let childPID = try #require(Int32(pidText))
+        let childPID = try Self.pid(from: pidFile)
         let deadline = Date().addingTimeInterval(1.0)
         while Self.processExists(childPID), Date() < deadline {
             Thread.sleep(forTimeInterval: 0.02)
@@ -85,6 +106,12 @@ struct ZmxRunnerTests {
             env: ["ZMX_TEST_VAR": "marker"]
         )
         #expect(result == "marker\n")
+    }
+
+    private static func pid(from file: URL) throws -> Int32 {
+        let pidText = try String(contentsOf: file, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return try #require(Int32(pidText))
     }
 
     private static func processExists(_ pid: Int32) -> Bool {
