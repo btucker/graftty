@@ -132,8 +132,8 @@ struct GhosttyTheme: Equatable {
     func paneFocusHaloStyle(isFocused: Bool, isWindowKey: Bool) -> PaneFocusHaloStyle {
         guard isFocused else { return .hidden }
         return isWindowKey
-            ? PaneFocusHaloStyle(strokeOpacity: 0.34, glowOpacity: 0.14, glowRadius: 7)
-            : PaneFocusHaloStyle(strokeOpacity: 0.18, glowOpacity: 0.06, glowRadius: 5)
+            ? PaneFocusHaloStyle(glowOpacity: 0.14, glowRadius: 7)
+            : PaneFocusHaloStyle(glowOpacity: 0.06, glowRadius: 5)
     }
 
     /// NSAppearance matching the theme's light/dark-ness. Applied to the
@@ -176,18 +176,16 @@ struct GhosttyTheme: Equatable {
 }
 
 struct PaneFocusHaloStyle: Equatable {
-    let strokeOpacity: Double
     let glowOpacity: Double
     let glowRadius: CGFloat
 
     static let hidden = PaneFocusHaloStyle(
-        strokeOpacity: 0,
         glowOpacity: 0,
         glowRadius: 0
     )
 
     var isVisible: Bool {
-        strokeOpacity > 0 || glowOpacity > 0
+        glowOpacity > 0
     }
 }
 

@@ -23,7 +23,6 @@ struct PaneFocusHaloStyleTests {
 
         #expect(active.isVisible)
         #expect(inactive.isVisible)
-        #expect(active.strokeOpacity > inactive.strokeOpacity)
         #expect(active.glowOpacity > inactive.glowOpacity)
         #expect(active.glowRadius > inactive.glowRadius)
     }

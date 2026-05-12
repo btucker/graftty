@@ -113,15 +113,11 @@ private struct PaneFocusHaloModifier: ViewModifier {
     func body(content: Content) -> some View {
         content.overlay {
             if style.isVisible {
-                ZStack {
-                    Rectangle()
-                        .stroke(color.opacity(style.glowOpacity), lineWidth: 8)
-                        .blur(radius: style.glowRadius)
-                    Rectangle()
-                        .strokeBorder(color.opacity(style.strokeOpacity), lineWidth: 1)
-                }
-                .clipped()
-                .allowsHitTesting(false)
+                Rectangle()
+                    .stroke(color.opacity(style.glowOpacity), lineWidth: 8)
+                    .blur(radius: style.glowRadius)
+                    .clipped()
+                    .allowsHitTesting(false)
             }
         }
     }
