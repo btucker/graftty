@@ -176,6 +176,14 @@ struct SingleSessionView: View {
                     .padding(.leading, 12)
                     .padding(.top, 12)
             }
+            .overlay(alignment: .top) {
+                if let client, client.connectionState != .live {
+                    reconnectBanner(client: client)
+                        .padding(.top, 64)
+                        .padding(.horizontal, 16)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
             .overlay(alignment: .bottom) {
                 if connection == .live { terminalChrome }
             }
@@ -325,6 +333,36 @@ struct SingleSessionView: View {
         if !navigationPath.isEmpty {
             navigationPath.removeLast()
         }
+    }
+
+    @ViewBuilder
+    private func reconnectBanner(client: SessionClient) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "wifi.exclamationmark")
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Reconnecting…")
+                    .font(.subheadline.weight(.semibold))
+                if case .reconnecting(let attempt) = client.connectionState {
+                    Text("Attempt \(attempt)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Button("Reconnect") { client.forceReconnectNow() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            Button("Back") { popToParent() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(.separator.opacity(0.35), lineWidth: 0.5)
+        )
     }
 
     @ViewBuilder
