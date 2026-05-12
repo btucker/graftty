@@ -126,6 +126,16 @@ struct GhosttyTheme: Equatable {
         return luminance < 0.5
     }
 
+    /// Subtle focused-pane halo values derived from the terminal foreground.
+    /// The color itself stays theme-owned; only opacity/radius change when
+    /// the host window loses key status.
+    func paneFocusHaloStyle(isFocused: Bool, isWindowKey: Bool) -> PaneFocusHaloStyle {
+        guard isFocused else { return .hidden }
+        return isWindowKey
+            ? PaneFocusHaloStyle(strokeOpacity: 0.34, glowOpacity: 0.14, glowRadius: 7)
+            : PaneFocusHaloStyle(strokeOpacity: 0.18, glowOpacity: 0.06, glowRadius: 5)
+    }
+
     /// NSAppearance matching the theme's light/dark-ness. Applied to the
     /// host NSWindow so system-rendered chrome (traffic lights, sidebar
     /// toggle icon, context menus, alert dialogs) picks the right
@@ -162,6 +172,22 @@ struct GhosttyTheme: Equatable {
 
     private func color(_ rgb: RGB) -> Color {
         Color(.sRGB, red: rgb.r, green: rgb.g, blue: rgb.b, opacity: 1)
+    }
+}
+
+struct PaneFocusHaloStyle: Equatable {
+    let strokeOpacity: Double
+    let glowOpacity: Double
+    let glowRadius: CGFloat
+
+    static let hidden = PaneFocusHaloStyle(
+        strokeOpacity: 0,
+        glowOpacity: 0,
+        glowRadius: 0
+    )
+
+    var isVisible: Bool {
+        strokeOpacity > 0 || glowOpacity > 0
     }
 }
 

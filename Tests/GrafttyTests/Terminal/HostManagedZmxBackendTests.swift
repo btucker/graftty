@@ -133,7 +133,7 @@ struct HostManagedZmxBackendTests {
 
         let group = DispatchGroup()
         group.enter()
-        DispatchQueue.global().async {
+        Self.runOnDedicatedThread {
             try? backend.start(surface: Self.fakeSurface())
             group.leave()
         }
@@ -171,7 +171,7 @@ struct HostManagedZmxBackendTests {
 
         let startFinished = DispatchSemaphore(value: 0)
         let outcomes = LockedRecorder<Bool>()
-        DispatchQueue.global().async {
+        Self.runOnDedicatedThread {
             outcomes.append((try? backend.start(surface: Self.fakeSurface())) != nil)
             startFinished.signal()
         }
@@ -216,7 +216,7 @@ struct HostManagedZmxBackendTests {
 
         let startFinished = DispatchSemaphore(value: 0)
         let outcomes = LockedRecorder<Bool>()
-        DispatchQueue.global().async {
+        Self.runOnDedicatedThread {
             outcomes.append((try? backend.start(surface: Self.fakeSurface())) != nil)
             startFinished.signal()
         }
@@ -286,6 +286,13 @@ struct HostManagedZmxBackendTests {
 
     private static func fakeSurface() -> ghostty_surface_t {
         UnsafeMutableRawPointer(bitPattern: 0x1234)!
+    }
+
+    @discardableResult
+    private static func runOnDedicatedThread(_ body: @escaping () -> Void) -> Thread {
+        let thread = Thread(block: body)
+        thread.start()
+        return thread
     }
 }
 

@@ -71,7 +71,7 @@ struct NativePtySessionTests {
         let group = DispatchGroup()
         for byte in ["a", "b"] {
             group.enter()
-            DispatchQueue.global().async {
+            Self.runOnDedicatedThread {
                 try? session.write(Data(byte.utf8))
                 group.leave()
             }
@@ -108,7 +108,7 @@ struct NativePtySessionTests {
         let outcomes = LockedRecorder<Bool>()
         let group = DispatchGroup()
         group.enter()
-        DispatchQueue.global().async {
+        Self.runOnDedicatedThread {
             outcomes.append((try? session.start()) != nil)
             group.leave()
         }
@@ -116,7 +116,7 @@ struct NativePtySessionTests {
         #expect(startedSpawning.wait(timeout: .now() + 2) == .success)
 
         group.enter()
-        DispatchQueue.global().async {
+        Self.runOnDedicatedThread {
             outcomes.append((try? session.start()) != nil)
             group.leave()
         }
@@ -228,7 +228,7 @@ struct NativePtySessionTests {
 
         let writeGroup = DispatchGroup()
         writeGroup.enter()
-        DispatchQueue.global().async {
+        Self.runOnDedicatedThread {
             try? session.write(Data("x".utf8))
             writeGroup.leave()
         }
@@ -237,7 +237,7 @@ struct NativePtySessionTests {
 
         let closeGroup = DispatchGroup()
         closeGroup.enter()
-        DispatchQueue.global().async {
+        Self.runOnDedicatedThread {
             session.close()
             closeGroup.leave()
         }
@@ -275,7 +275,7 @@ struct NativePtySessionTests {
 
         let resizeGroup = DispatchGroup()
         resizeGroup.enter()
-        DispatchQueue.global().async {
+        Self.runOnDedicatedThread {
             try? session.resize(cols: 80, rows: 24)
             resizeGroup.leave()
         }
@@ -284,7 +284,7 @@ struct NativePtySessionTests {
 
         let closeGroup = DispatchGroup()
         closeGroup.enter()
-        DispatchQueue.global().async {
+        Self.runOnDedicatedThread {
             session.close()
             closeGroup.leave()
         }
@@ -439,6 +439,13 @@ struct NativePtySessionTests {
             if waitpid(spawned.pid, &status, WNOHANG) != 0 { break }
             usleep(50_000)
         }
+    }
+
+    @discardableResult
+    private static func runOnDedicatedThread(_ body: @escaping () -> Void) -> Thread {
+        let thread = Thread(block: body)
+        thread.start()
+        return thread
     }
 }
 

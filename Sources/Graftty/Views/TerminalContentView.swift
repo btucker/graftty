@@ -5,7 +5,11 @@ import GrafttyKit
 struct TerminalContentView: View {
     @ObservedObject var terminalManager: TerminalManager
     let splitTree: Binding<SplitTree>
+    let focusedPaneSlotID: PaneSlotID?
+    let theme: GhosttyTheme
     let onFocusTerminal: (PaneSlotID) -> Void
+
+    @Environment(\.controlActiveState) private var controlActiveState
 
     var body: some View {
         // Zoom fast-path: if one pane is zoomed, render only its leaf full-bleed.
@@ -37,10 +41,15 @@ struct TerminalContentView: View {
     }
 
     private func leafView(_ terminalID: PaneSlotID) -> AnyView {
+        let haloStyle = theme.paneFocusHaloStyle(
+            isFocused: terminalID == focusedPaneSlotID,
+            isWindowKey: controlActiveState == .key
+        )
         if let nsView = terminalManager.view(for: terminalID) {
             let tm = terminalManager
             return AnyView(
                 SurfaceViewWrapper(nsView: nsView)
+                    .paneFocusHalo(color: theme.foreground, style: haloStyle)
                     // Force a distinct SwiftUI identity per terminal. Without
                     // this, when the split tree swaps one terminalID for
                     // another at the same structural position (e.g., the user
@@ -64,6 +73,7 @@ struct TerminalContentView: View {
                         ProgressView()
                             .controlSize(.small)
                     )
+                    .paneFocusHalo(color: theme.foreground, style: haloStyle)
                     .id(terminalID)
             )
         }
@@ -93,6 +103,33 @@ struct TerminalContentView: View {
                 }
             )
         )
+    }
+}
+
+private struct PaneFocusHaloModifier: ViewModifier {
+    let color: Color
+    let style: PaneFocusHaloStyle
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            if style.isVisible {
+                ZStack {
+                    Rectangle()
+                        .stroke(color.opacity(style.glowOpacity), lineWidth: 8)
+                        .blur(radius: style.glowRadius)
+                    Rectangle()
+                        .strokeBorder(color.opacity(style.strokeOpacity), lineWidth: 1)
+                }
+                .clipped()
+                .allowsHitTesting(false)
+            }
+        }
+    }
+}
+
+private extension View {
+    func paneFocusHalo(color: Color, style: PaneFocusHaloStyle) -> some View {
+        modifier(PaneFocusHaloModifier(color: color, style: style))
     }
 }
 

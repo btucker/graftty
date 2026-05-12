@@ -81,6 +81,8 @@ struct MainWindow: View {
                             get: { worktree.wrappedValue.splitTree },
                             set: { worktree.wrappedValue.splitTree = $0 }
                         ),
+                        focusedPaneSlotID: worktree.wrappedValue.focusedPaneSlotID,
+                        theme: terminalManager.theme,
                         onFocusTerminal: { terminalID in
                             // Persist the focus change on the model BEFORE
                             // routing to libghostty: `TERM-2.3`'s focus-

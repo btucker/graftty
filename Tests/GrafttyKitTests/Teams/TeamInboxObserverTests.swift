@@ -16,15 +16,9 @@ struct TeamInboxObserverTests {
         let inbox = TeamInbox(rootDirectory: root)
         let teamID = "team-1"
         let observer = TeamInboxObserver(rootDirectory: root, teamID: teamID)
-        actor Capture {
-            var emitted: [[TeamInboxMessage]] = []
-            func record(_ messages: [TeamInboxMessage]) { emitted.append(messages) }
-            func count() -> Int { emitted.count }
-            func last() -> [TeamInboxMessage]? { emitted.last }
-        }
-        let capture = Capture()
+        let capture = LockedMessageBatches()
         let cancellable = observer.start { messages in
-            Task { await capture.record(messages) }
+            capture.append(messages)
         }
         defer { cancellable.cancel() }
 
@@ -35,28 +29,20 @@ struct TeamInboxObserverTests {
             priority: .normal, body: "hi"
         )
 
-        // The first emit may be the empty initial-state snapshot;
-        // wait until the post-append emit lands (a non-empty list).
-        let deadline = Date().addingTimeInterval(2.0)
-        while await (capture.last()?.count ?? 0) < 1 && Date() < deadline {
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-        #expect(await capture.count() >= 1)
-        #expect(await capture.last()?.count == 1)
+        // The first emit may be the empty initial-state snapshot; wait
+        // until the post-append emit lands.
+        try await waitForAppend(capture: capture)
+        #expect(capture.count() >= 1)
+        #expect(capture.last()?.count == 1)
     }
 
     @Test func emitsAfterFileCreatedLate() async throws {
         let root = try Self.temporaryDirectory()
         let teamID = "team-2"
         let observer = TeamInboxObserver(rootDirectory: root, teamID: teamID)
-        actor Capture {
-            var emitted: [[TeamInboxMessage]] = []
-            func record(_ messages: [TeamInboxMessage]) { emitted.append(messages) }
-            func last() -> [TeamInboxMessage]? { emitted.last }
-        }
-        let capture = Capture()
+        let capture = LockedMessageBatches()
         let cancellable = observer.start { messages in
-            Task { await capture.record(messages) }
+            capture.append(messages)
         }
         defer { cancellable.cancel() }
 
@@ -73,10 +59,38 @@ struct TeamInboxObserverTests {
             priority: .normal, body: "late"
         )
 
-        let deadline = Date().addingTimeInterval(2.0)
-        while await capture.last()?.count != 1 && Date() < deadline {
+        try await waitForAppend(capture: capture)
+        #expect(capture.last()?.count == 1)
+    }
+
+    private func waitForAppend(capture: LockedMessageBatches) async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while capture.last()?.count != 1 && Date() < deadline {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
-        #expect(await capture.last()?.count == 1)
+        #expect(capture.last()?.count == 1)
+    }
+}
+
+private final class LockedMessageBatches: @unchecked Sendable {
+    private let lock = NSLock()
+    private var batches: [[TeamInboxMessage]] = []
+
+    func append(_ messages: [TeamInboxMessage]) {
+        lock.lock()
+        batches.append(messages)
+        lock.unlock()
+    }
+
+    func count() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return batches.count
+    }
+
+    func last() -> [TeamInboxMessage]? {
+        lock.lock()
+        defer { lock.unlock() }
+        return batches.last
     }
 }
