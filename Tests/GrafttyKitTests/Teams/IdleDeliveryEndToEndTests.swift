@@ -15,7 +15,7 @@ struct IdleDeliveryEndToEndTests {
         let service = IdleDeliveryService(
             inbox: inbox, state: state, nudgeSender: ZmxNudgeSender(writer: writer)
         )
-        let pane = UUID()
+        let sessionName = "graftty-live0001"
         let worktree = "/repo/.worktrees/alice"
         let team = "/repo"
 
@@ -28,11 +28,11 @@ struct IdleDeliveryEndToEndTests {
 
         state.handleSessionStart(worktree: worktree, runtime: "codex")
         state.handleStop(worktree: worktree, runtime: "codex", lastInputAt: nil)
-        await service.onStop(team: team, worktree: worktree, paneIDs: [pane])
+        await service.onStop(team: team, worktree: worktree, sessionNames: [sessionName])
 
         #expect(writer.writes.count == 1)
         #expect(writer.writes[0].submit == true)
-        #expect(writer.writes[0].sessionName == ZmxLauncher.sessionName(for: pane))
+        #expect(writer.writes[0].sessionName == sessionName)
     }
 
     @Test("@spec TEAM-IDLE-2.14: A registered claude pane does not produce keys-input.")
@@ -58,8 +58,8 @@ struct IdleDeliveryEndToEndTests {
 
         state.handleSessionStart(worktree: worktree, runtime: "claude")
         state.handleStop(worktree: worktree, runtime: "claude", lastInputAt: nil)
-        // Upstream filter (in GrafttyApp callback) excludes claude — paneIDs is empty.
-        await service.onStop(team: team, worktree: worktree, paneIDs: [])
+        // Upstream filter (in GrafttyApp callback) excludes claude — sessionNames is empty.
+        await service.onStop(team: team, worktree: worktree, sessionNames: [])
 
         #expect(writer.writes.isEmpty)
     }

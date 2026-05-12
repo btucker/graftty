@@ -225,7 +225,7 @@ struct SurfaceHandleHostManagedTests {
                 executable: URL(fileURLWithPath: "/tmp/zmx"),
                 zmxDir: URL(fileURLWithPath: "/tmp/zmx-dir", isDirectory: true)
             ),
-            paneID: Self.terminalID().id,
+            paneSessionID: PaneSessionID(id: Self.terminalID().id),
             worktreePath: "/tmp/worktree",
             socketPath: "/tmp/graftty.sock",
             processEnv: ["SHELL": "/bin/zsh", "PATH": "/usr/bin"],

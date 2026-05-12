@@ -10,7 +10,7 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
 
     public static func make(
         launcher: ZmxLauncher,
-        paneID: UUID,
+        paneSessionID: PaneSessionID,
         worktreePath: String,
         socketPath: String,
         processEnv: [String: String],
@@ -19,7 +19,7 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
         agentHooksDisabled: Bool,
         agentHooksRoot: URL
     ) -> ZmxSpawnConfiguration {
-        let sessionName = launcher.sessionName(for: paneID)
+        let sessionName = launcher.sessionName(for: paneSessionID)
         let rawUserShell = processEnv["SHELL"] ?? "/bin/sh"
         let hooksEnabled = !agentHooksDisabled
 

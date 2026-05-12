@@ -52,13 +52,27 @@ public final class ZmxLauncher: Sendable {
             .appendingPathComponent("\(sessionName).log")
     }
 
-    /// Deterministic mapping from a pane UUID to a zmx session name.
+    /// Deterministic mapping from a pane session ID to a zmx session name.
     /// **Do not change this mapping** without a migration strategy —
     /// changing it orphans every existing user's daemons.
     ///
     /// Returns `"graftty-" + first-8-hex-of-uuid`. 32 bits of namespace
     /// uniqueness within a single user's `ZMX_DIR` is ample for the
     /// expected concurrent-pane count (dozens, not millions).
+    public static func sessionName(for sessionID: PaneSessionID) -> String {
+        let hex = sessionID.id.uuidString
+            .replacingOccurrences(of: "-", with: "")
+            .lowercased()
+        return "graftty-\(hex.prefix(8))"
+    }
+
+    /// Instance overload for callers that already hold a launcher.
+    public func sessionName(for sessionID: PaneSessionID) -> String {
+        ZmxLauncher.sessionName(for: sessionID)
+    }
+
+    /// Temporary compatibility overload for integration tests and callers
+    /// not yet migrated to `PaneSessionID`.
     public static func sessionName(for paneID: UUID) -> String {
         let hex = paneID.uuidString
             .replacingOccurrences(of: "-", with: "")

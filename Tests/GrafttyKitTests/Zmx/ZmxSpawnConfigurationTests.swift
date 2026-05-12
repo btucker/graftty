@@ -4,7 +4,7 @@ import Testing
 
 @Suite("ZmxSpawnConfiguration — pure logic")
 struct ZmxSpawnConfigurationTests {
-    private let paneID = UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!
+    private let paneSessionID = PaneSessionID(id: UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!)
     private let launcher = ZmxLauncher(
         executable: URL(fileURLWithPath: "/tmp/zmx"),
         zmxDir: URL(fileURLWithPath: "/tmp/zmx-dir", isDirectory: true)
@@ -148,7 +148,7 @@ struct ZmxSpawnConfigurationTests {
     ) -> ZmxSpawnConfiguration {
         ZmxSpawnConfiguration.make(
             launcher: launcher,
-            paneID: paneID,
+            paneSessionID: paneSessionID,
             worktreePath: "/repo/wt",
             socketPath: "/tmp/graftty.sock",
             processEnv: processEnv,

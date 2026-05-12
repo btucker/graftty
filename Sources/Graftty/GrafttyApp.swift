@@ -880,7 +880,7 @@ struct GrafttyApp: App {
             nudgeSender: ZmxNudgeSender(writer: AppZmxWriter(terminalManager: terminalManager))
         )
 
-        // Resolve the current set of registered codex panes for a worktree.
+        // Resolve the current set of registered codex session names for a worktree.
         // Presence files identify candidate zmx sessions, then
         // TeamDeliveryPaneResolver verifies that the current pane's shell
         // process tree still contains a codex process. That second gate is
@@ -892,10 +892,10 @@ struct GrafttyApp: App {
             processTree: ProcessTreeWalker(),
             commandReader: ProcessCommandReader()
         )
-        let codexPanesIn: @Sendable (String) -> [UUID] = { [tm] worktreePath in
+        let codexSessionNamesIn: @Sendable (String) -> [String] = { [tm] worktreePath in
             MainActor.assumeIsolated {
                 let records = (try? presenceStorage.listAll()) ?? []
-                return deliveryPaneResolver.paneIDs(
+                let paneIDs = deliveryPaneResolver.paneIDs(
                     records: records,
                     worktree: worktreePath,
                     runtime: .codex,
@@ -906,6 +906,7 @@ struct GrafttyApp: App {
                         tm.lookupShellPID(for: TerminalID(id: paneID))
                     }
                 )
+                return paneIDs.map { ZmxLauncher.sessionName(for: $0) }
             }
         }
 
@@ -918,13 +919,13 @@ struct GrafttyApp: App {
                 // onElapsed is @MainActor, so binding.wrappedValue is
                 // accessible directly — no MainActor.assumeIsolated dance.
                 guard let service = idleService else { return }
-                let paneIDs = codexPanesIn(worktree)
+                let sessionNames = codexSessionNamesIn(worktree)
                 guard let teamID = binding.wrappedValue.repos.first(where: {
                     $0.worktrees.contains(where: { $0.path == worktree })
                 })?.path else { return }
                 Task {
                     await service.onMessageArrival(
-                        team: teamID, worktree: worktree, paneIDs: paneIDs
+                        team: teamID, worktree: worktree, sessionNames: sessionNames
                     )
                 }
             }
@@ -969,8 +970,8 @@ struct GrafttyApp: App {
                 // keystrokes (Plan-mode review screens), so it must not arm
                 // the inbox-drain pipeline.
                 guard runtime == TeamHookRuntime.codex.rawValue else { return }
-                guard let paneID, let service = idleService else { return }
-                Task { await service.onStop(team: team, worktree: worktree, paneIDs: [paneID]) }
+                guard let sessionName = paneSessionName, paneID != nil, let service = idleService else { return }
+                Task { await service.onStop(team: team, worktree: worktree, sessionNames: [sessionName]) }
             },
             onSessionStart: { team, worktree, runtime, _ in
                 stateRegistry.handleSessionStart(worktree: worktree, runtime: runtime)
@@ -1012,11 +1013,11 @@ struct GrafttyApp: App {
                 guard let service = idleService else { return }
                 for (recipientWorktree, _) in byWorktree {
                     Task { @MainActor in
-                        let paneIDs = codexPanesIn(recipientWorktree)
+                        let sessionNames = codexSessionNamesIn(recipientWorktree)
                         await service.onMessageArrival(
                             team: teamID,
                             worktree: recipientWorktree,
-                            paneIDs: paneIDs
+                            sessionNames: sessionNames
                         )
                     }
                 }

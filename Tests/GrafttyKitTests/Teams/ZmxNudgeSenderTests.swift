@@ -2,16 +2,15 @@ import Foundation
 import Testing
 @testable import GrafttyKit
 
-@Suite("ZmxNudgeSender — pane-targeted in-process zmx-send")
+@Suite("ZmxNudgeSender — session-targeted in-process zmx-send")
 struct ZmxNudgeSenderTests {
-    @Test("@spec TEAM-IDLE-2.6: send invokes the writer with the resolved session name, the message text, and submit=true.")
-    func writesToResolvedSession() async {
+    @Test("@spec TEAM-IDLE-2.6: send invokes the writer with the provided session name, the message text, and submit=true.")
+    func writesToProvidedSession() async {
         let stubWriter = StubZmxWriter()
         let sender = ZmxNudgeSender(writer: stubWriter)
-        let paneID = UUID()
-        await sender.send(paneID: paneID, message: "hello", messageIDs: ["m-1"])
+        await sender.send(sessionName: "graftty-explicit", message: "hello", messageIDs: ["m-1"])
         #expect(stubWriter.writes.count == 1)
-        #expect(stubWriter.writes[0].sessionName == ZmxLauncher.sessionName(for: paneID))
+        #expect(stubWriter.writes[0].sessionName == "graftty-explicit")
         #expect(stubWriter.writes[0].text == "hello")
         // submit:true tells AppZmxWriter to dispatch a real Return key
         // event after the text. The `\r` byte alone doesn't trigger TUI

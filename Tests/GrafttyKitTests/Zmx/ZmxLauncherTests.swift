@@ -32,6 +32,11 @@ struct ZmxLauncherUnitTests {
         #expect(launcher.sessionName(for: id) == "graftty-01234567")
     }
 
+    @Test func sessionNameUsesPaneSessionID() {
+        let sessionID = PaneSessionID(id: UUID(uuidString: "01234567-89AB-CDEF-FEDC-BA9876543210")!)
+        #expect(ZmxLauncher.sessionName(for: sessionID) == "graftty-01234567")
+    }
+
     @Test func sessionNameDiffersForDifferentUUIDs() throws {
         let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/dev/null"))
         let a = launcher.sessionName(for: UUID())

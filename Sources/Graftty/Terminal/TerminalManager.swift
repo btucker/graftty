@@ -755,7 +755,7 @@ final class TerminalManager: ObservableObject {
         let processEnv = ProcessInfo.processInfo.environment
         return ZmxSpawnConfiguration.make(
             launcher: launcher,
-            paneID: terminalID.id,
+            paneSessionID: PaneSessionID(id: terminalID.id),
             worktreePath: worktreePath,
             socketPath: socketPath,
             processEnv: processEnv,
