@@ -8,7 +8,10 @@ import Testing
 @MainActor
 @Suite("SurfaceHandle host-managed zmx cutover")
 struct SurfaceHandleHostManagedTests {
-    @Test func zmxAvailableUsesHostManagedBackendWithoutCommandOrInitialInput() throws {
+    @Test("""
+    @spec ZMX-4.1: When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned `zmx attach graftty-<short-id> <user-shell>` PTY client only after `ghostty_surface_new` succeeds. This avoids libghostty's automatic `wait-after-command` behavior while keeping shell exit wired to `close_surface_cb` through `ghostty_surface_process_exit`.
+    """)
+    func zmxAvailableUsesHostManagedBackendWithoutCommandOrInitialInput() throws {
         let backend = FakeSurfaceHandleZmxBackend()
         let harness = SurfaceHandleTestHarness(surface: fakeSurface())
 
@@ -161,6 +164,31 @@ struct SurfaceHandleHostManagedTests {
         #expect(harness.processExitCalls == [
             ProcessExitCall(surface: surface, exitCode: 1)
         ])
+    }
+
+    @Test("""
+    @spec ZMX-4.4: When the application quits, it shall close each native host-managed `zmx attach` client and shall not invoke `zmx kill` — detaching the short-lived client while leaving zmx daemons and their shells alive is the desired survival behavior.
+    """)
+    func deinitClosesNativeAttachClientWithoutZmxKillPath() throws {
+        let backend = FakeSurfaceHandleZmxBackend()
+        let surface = fakeSurface()
+        let harness = SurfaceHandleTestHarness(surface: surface)
+        var handle: SurfaceHandle? = SurfaceHandle(
+            terminalID: Self.terminalID(),
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: Self.spawnConfiguration(),
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _ in backend }
+        )
+        _ = try #require(handle)
+
+        handle = nil
+
+        #expect(backend.closeCount == 1)
+        #expect(backend.releaseCount == 1)
+        #expect(harness.freeCalls == [surface])
     }
 
     private static func terminalID() -> TerminalID {

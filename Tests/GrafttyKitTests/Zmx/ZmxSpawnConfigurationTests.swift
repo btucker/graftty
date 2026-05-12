@@ -13,7 +13,10 @@ struct ZmxSpawnConfigurationTests {
     private let ghosttyResourcesDir = "/Applications/Ghostty.app/Contents/Resources/ghostty"
     private let agentHooksRoot = URL(fileURLWithPath: "/tmp/hooks", isDirectory: true)
 
-    @Test func buildsAttachArgvForWrappedShellAndRequiredEnv() throws {
+    @Test("""
+    @spec ZMX-6.2: The `GRAFTTY_SOCK` environment variable shall continue to be set in the spawned shell's environment per `ATTN-2.4`. For zmx-backed native panes, this shall be passed in the host-managed `zmx attach` process environment rather than relying on libghostty surface-spawn env.
+    """)
+    func buildsAttachArgvForWrappedShellAndRequiredEnv() throws {
         let config = makeConfig(processEnv: [
             "SHELL": "/bin/zsh",
             "PATH": "/usr/bin",
@@ -30,7 +33,10 @@ struct ZmxSpawnConfigurationTests {
         #expect(config.workingDirectory.path == "/repo/wt")
     }
 
-    @Test func zshWithGhosttyResourcesSetsIntegrationEnvAndHookZDOTDIR() throws {
+    @Test("""
+    @spec ZMX-6.3: If `GHOSTTY_RESOURCES_DIR` is set (per `CONFIG-2.1`) and the user's shell basename is `zsh`, the host-managed `zmx attach` environment shall set `ZDOTDIR=<ghostty-resources>/shell-integration/zsh` so the inner shell zmx spawns sources Ghostty's zsh integration directly. Without this env construction, precmd hooks do not run, no OSC 7 / OSC 133 sequences are emitted, and `PWD-x.x`, the default-command first-PWD trigger, and shell-integration-driven attention badges go silent.
+    """)
+    func zshWithGhosttyResourcesSetsIntegrationEnvAndHookZDOTDIR() throws {
         let config = makeConfig(processEnv: [
             "SHELL": "/bin/zsh",
             "PATH": "/usr/bin",
@@ -81,7 +87,10 @@ struct ZmxSpawnConfigurationTests {
         #expect(config.env["PATH"] == sanitizedPath)
     }
 
-    @Test func disabledHooksReplaceInheritedZDOTDIRAndRemoveAgentHookEnv() throws {
+    @Test("""
+    @spec ZMX-6.4: When agent hooks are enabled for a zsh shell, the host-managed `zmx attach` environment shall set `GHOSTTY_ZSH_ZDOTDIR` to Graftty's agent-hook zsh init directory so Ghostty's zsh integration can restore that directory after loading. When hooks are disabled, `GHOSTTY_ZSH_ZDOTDIR` shall be omitted.
+    """)
+    func disabledHooksReplaceInheritedZDOTDIRAndRemoveAgentHookEnv() throws {
         let config = makeConfig(
             processEnv: staleHookEnv(shell: "/bin/zsh"),
             agentHooksDisabled: true

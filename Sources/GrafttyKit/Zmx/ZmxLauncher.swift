@@ -92,9 +92,9 @@ public final class ZmxLauncher: Sendable {
     ///
     /// Resolves `$SHELL` at call time because there is no shell in the
     /// pipeline to expand it — `execve` passes argv verbatim, and zmx
-    /// doesn't re-expand shell metacharacters in the command arg. Phase 1's
-    /// `attachCommand` can use the literal `$SHELL` because its caller
-    /// (the pane-spawn path) pipes the string through an outer shell.
+    /// doesn't re-expand shell metacharacters in the command arg. Native
+    /// panes reach this through `ZmxSpawnConfiguration`; `attachCommand`
+    /// remains only for shell-based tests and survival checks.
     public func attachArgv(sessionName: String,
                            userShell: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/bash") -> [String] {
         [executable.path, "attach", sessionName, userShell]
