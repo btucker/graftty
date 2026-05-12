@@ -132,6 +132,44 @@ struct NativePtySessionTests {
         #expect(outcomes.values().filter { !$0 }.count == 1)
     }
 
+    @Test func closeImmediatelyAfterStartDoesNotCloseFDBeforeReaderOwnsIt() throws {
+        let allowReaderToStart = DispatchSemaphore(value: 0)
+        let readerObservedOpenFD = LockedRecorder<Bool>()
+        let fdCloses = LockedCounter()
+        let session = NativePtySession(
+            argv: ["/bin/sh", "-c", "sleep 2"],
+            env: [:],
+            workingDirectory: nil,
+            writeToSurface: { _ in },
+            processExited: { _, _ in },
+            spawnFailed: { _ in },
+            closer: { spawned in
+                Self.terminateChildOnly(spawned)
+            },
+            fdCloser: { fd in
+                _ = fdCloses.increment()
+                close(fd)
+            },
+            readerWillStart: { fd in
+                _ = allowReaderToStart.wait(timeout: .now() + 2)
+                readerObservedOpenFD.append(fcntl(fd, F_GETFD) != -1)
+            }
+        )
+
+        try session.start()
+        session.close()
+        #expect(fdCloses.value() == 0)
+        allowReaderToStart.signal()
+
+        try Self.waitUntil {
+            readerObservedOpenFD.values().isEmpty == false
+        }
+        #expect(readerObservedOpenFD.values() == [true])
+        try Self.waitUntil {
+            fdCloses.value() == 1
+        }
+    }
+
     @Test func closeWaitsForInFlightWriteBeforeClosingFD() throws {
         let writerEntered = DispatchSemaphore(value: 0)
         let allowWriterToFinish = DispatchSemaphore(value: 0)
@@ -149,7 +187,7 @@ struct NativePtySessionTests {
             },
             closer: { spawned in
                 _ = closeStartedDuringWrite.increment()
-                Self.terminate(spawned)
+                Self.terminateChildOnly(spawned)
             }
         )
 
@@ -196,7 +234,7 @@ struct NativePtySessionTests {
             },
             closer: { spawned in
                 _ = closeStartedDuringResize.increment()
-                Self.terminate(spawned)
+                Self.terminateChildOnly(spawned)
             }
         )
 
@@ -305,6 +343,36 @@ struct NativePtySessionTests {
         #expect(failures.values().count == 1)
     }
 
+    @Test func spawnFailureIsTerminalAndDoesNotRetryOrRecallFailureCallback() throws {
+        struct ForcedFailure: Error {}
+
+        let failures = LockedRecorder<String>()
+        let attempts = LockedCounter()
+        let session = NativePtySession(
+            argv: ["/bin/sh"],
+            env: [:],
+            workingDirectory: nil,
+            writeToSurface: { _ in },
+            processExited: { _, _ in },
+            spawnFailed: { _ in failures.append("failed") },
+            spawner: { _, _, _, _ in
+                _ = attempts.increment()
+                throw ForcedFailure()
+            }
+        )
+
+        #expect(throws: Error.self) {
+            try session.start()
+        }
+        #expect(throws: Error.self) {
+            try session.start()
+        }
+
+        #expect(attempts.value() == 1)
+        #expect(failures.values().count == 1)
+        #expect(session.activeMasterFDForTesting == nil)
+    }
+
     @Test func ghosttySurfaceInitializerIsAvailableAtCompileTime() {
         func makeSession(surface: ghostty_surface_t) -> NativePtySession {
             NativePtySession(
@@ -331,9 +399,8 @@ struct NativePtySessionTests {
         #expect(condition(), "waitUntil timed out")
     }
 
-    private static func terminate(_ spawned: PtyProcess.Spawned) {
+    private static func terminateChildOnly(_ spawned: PtyProcess.Spawned) {
         _ = kill(spawned.pid, SIGTERM)
-        close(spawned.masterFD)
         var status: Int32 = 0
         for _ in 0..<10 {
             if waitpid(spawned.pid, &status, WNOHANG) != 0 { break }

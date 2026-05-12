@@ -21,6 +21,7 @@ final class NativePtySession {
         _ rows: UInt16
     ) throws -> Void
     typealias Closer = (_ spawned: PtyProcess.Spawned) -> Void
+    typealias FDCloser = (_ fd: Int32) -> Void
 
     enum Error: Swift.Error {
         case alreadyStarted
@@ -29,10 +30,11 @@ final class NativePtySession {
         case spawnFailed(Swift.Error)
     }
 
-    private enum Lifecycle: Equatable {
+    private enum Lifecycle {
         case idle
         case starting
         case running
+        case failed(Swift.Error)
         case closed
     }
 
@@ -44,6 +46,8 @@ final class NativePtySession {
     private let writer: Writer
     private let resizer: Resizer
     private let closer: Closer
+    private let fdCloser: FDCloser
+    private let readerWillStart: ((Int32) -> Void)?
     private let stateLock = NSLock()
     private let ioLock = NSLock()
 
@@ -74,7 +78,9 @@ final class NativePtySession {
         },
         writer: @escaping Writer = SocketIO.writeAll,
         resizer: @escaping Resizer = PtyProcess.resize,
-        closer: @escaping Closer = NativePtySession.defaultClose
+        closer: @escaping Closer = NativePtySession.defaultTerminate,
+        fdCloser: @escaping FDCloser = { fd in _ = Darwin.close(fd) },
+        readerWillStart: ((Int32) -> Void)? = nil
     ) {
         self.argv = argv
         self.env = env
@@ -87,6 +93,8 @@ final class NativePtySession {
         self.writer = writer
         self.resizer = resizer
         self.closer = closer
+        self.fdCloser = fdCloser
+        self.readerWillStart = readerWillStart
     }
 
     convenience init(
@@ -145,6 +153,9 @@ final class NativePtySession {
         case .idle:
             lifecycle = .starting
             stateLock.unlock()
+        case .failed(let error):
+            stateLock.unlock()
+            throw Error.spawnFailed(error)
         case .starting, .running:
             stateLock.unlock()
             throw Error.alreadyStarted
@@ -155,18 +166,17 @@ final class NativePtySession {
             newSpawn = try spawner(argv, env, workingDirectory, initialSize)
         } catch {
             stateLock.lock()
-            if lifecycle == .starting {
-                lifecycle = .idle
-            }
+            if case .starting = lifecycle { lifecycle = .failed(error) }
             stateLock.unlock()
             notifySpawnFailure(error)
             throw Error.spawnFailed(error)
         }
 
         stateLock.lock()
-        if lifecycle == .closed {
+        if case .closed = lifecycle {
             stateLock.unlock()
-            terminateAndClose(newSpawn)
+            closer(newSpawn)
+            fdCloser(newSpawn.masterFD)
             throw Error.closed
         }
         spawned = newSpawn
@@ -199,13 +209,12 @@ final class NativePtySession {
 
     func close() {
         stateLock.lock()
-        if lifecycle == .closed {
+        if case .closed = lifecycle {
             stateLock.unlock()
             return
         }
         lifecycle = .closed
         let currentSpawn = spawned
-        spawned = nil
         writeToSurface = nil
         processExited = nil
         spawnFailed = nil
@@ -227,13 +236,14 @@ final class NativePtySession {
     private func activeMasterFD() throws -> Int32 {
         stateLock.lock()
         defer { stateLock.unlock() }
-        guard lifecycle != .closed else { throw Error.closed }
+        if case .closed = lifecycle { throw Error.closed }
         guard let spawned else { throw Error.notStarted }
         return spawned.masterFD
     }
 
     private func startReaderThread(fd: Int32, pid: pid_t) {
         let thread = Thread { [weak self] in
+            self?.readerWillStart?(fd)
             var buffer = [UInt8](repeating: 0, count: 8192)
             while true {
                 let count = buffer.withUnsafeMutableBufferPointer {
@@ -299,6 +309,10 @@ final class NativePtySession {
         ioLock.lock()
         defer { ioLock.unlock() }
 
+        // The reader owns closing the master fd once it has been spawned.
+        // `close()` only terminates the child; closing here avoids the race
+        // where `close()` closes/reuses the fd before a just-created reader
+        // thread has entered its read loop.
         stateLock.lock()
         guard let current = spawned, current.masterFD == fd, current.pid == pid else {
             stateLock.unlock()
@@ -307,7 +321,7 @@ final class NativePtySession {
         spawned = nil
         stateLock.unlock()
 
-        Darwin.close(fd)
+        fdCloser(fd)
     }
 
     private func terminateAndClose(_ spawned: PtyProcess.Spawned) {
@@ -325,9 +339,8 @@ final class NativePtySession {
         return nil
     }
 
-    private static func defaultClose(_ spawned: PtyProcess.Spawned) {
+    private static func defaultTerminate(_ spawned: PtyProcess.Spawned) {
         _ = kill(spawned.pid, SIGTERM)
-        Darwin.close(spawned.masterFD)
         var status: Int32 = 0
         for _ in 0..<10 {
             if waitpid(spawned.pid, &status, WNOHANG) != 0 { break }
