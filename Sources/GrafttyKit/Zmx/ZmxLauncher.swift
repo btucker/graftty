@@ -60,10 +60,7 @@ public final class ZmxLauncher: Sendable {
     /// uniqueness within a single user's `ZMX_DIR` is ample for the
     /// expected concurrent-pane count (dozens, not millions).
     public static func sessionName(for sessionID: PaneSessionID) -> String {
-        let hex = sessionID.id.uuidString
-            .replacingOccurrences(of: "-", with: "")
-            .lowercased()
-        return "graftty-\(hex.prefix(8))"
+        sessionName(for: sessionID.id)
     }
 
     /// Instance overload for callers that already hold a launcher.

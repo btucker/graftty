@@ -865,8 +865,15 @@ struct GrafttyApp: App {
         let presenceStorage = TeamPresenceStorage(
             rootDirectory: TeamPresenceStorage.defaultRoot()
         )
+        let presenceIndex = TeamPresenceIndex(
+            records: (try? presenceStorage.listAll()) ?? []
+        )
+        func refreshPresenceIndex() {
+            presenceIndex.replace(with: (try? presenceStorage.listAll()) ?? [])
+        }
         presenceTicker.start {
             TeamPresenceMonitor.cleanupStale(storage: presenceStorage)
+            refreshPresenceIndex()
         }
 
         // TEAM-IDLE-2.1 / TEAM-IDLE-2.2 / TEAM-IDLE-2.4 / TEAM-IDLE-2.5:
@@ -886,9 +893,10 @@ struct GrafttyApp: App {
         // the registered runtime is still running.
         let codexSessionNamesIn: @Sendable (String) -> [String] = { [tm] worktreePath in
             MainActor.assumeIsolated {
-                TeamDeliverySessionResolution.codexSessionNames(
+                refreshPresenceIndex()
+                return TeamDeliverySessionResolution.codexSessionNames(
                     in: worktreePath,
-                    records: (try? presenceStorage.listAll()) ?? [],
+                    records: presenceIndex.allRecords(),
                     isLiveSession: { tm.handle(forSessionName: $0) != nil }
                 )
             }
@@ -915,24 +923,22 @@ struct GrafttyApp: App {
             }
         )
 
-        // Wire the keystroke observer. The onKeystroke closure resolves
-        // pane → (worktree, runtime) by reading TeamPresenceStorage and
-        // matching the pane's session name, then drives the state registry +
-        // grace timer. Fires on MainActor.
+        // Wire the keystroke observer. The callback stays memory-only:
+        // presence files are indexed at event/ticker boundaries so keyDown
+        // never scans disk.
         let inputObserver = PaneInputActivityObserver(
             registry: inputRegistry,
-            onKeystroke: { [weak graceScheduler, presenceStorage, tm = terminalManager] paneID in
+            onKeystroke: { [weak graceScheduler, tm = terminalManager] paneID in
                 // SurfaceNSView.keyDown fires on main thread. Use
                 // assumeIsolated so we can read MainActor-isolated state.
                 MainActor.assumeIsolated {
                     guard let sessionName = tm.zmxSessionName(for: PaneSlotID(id: paneID)) else {
                         return
                     }
-                    guard let agent = presenceStorage.records(forPaneSessionName: sessionName).first else {
-                        return
+                    for agent in presenceIndex.records(forPaneSessionName: sessionName) {
+                        stateRegistry.handleKeystroke(worktree: agent.worktree, runtime: agent.runtime.rawValue)
+                        graceScheduler?.bump(worktree: agent.worktree, runtime: agent.runtime.rawValue)
                     }
-                    stateRegistry.handleKeystroke(worktree: agent.worktree, runtime: agent.runtime.rawValue)
-                    graceScheduler?.bump(worktree: agent.worktree, runtime: agent.runtime.rawValue)
                 }
             }
         )
@@ -943,6 +949,7 @@ struct GrafttyApp: App {
         // event signals that update the state machine.
         let hookCallbacks = TeamHookCallbacks(
             onStop: { [weak idleService, tm] team, worktree, runtime, paneSessionName in
+                MainActor.assumeIsolated { refreshPresenceIndex() }
                 let liveSessionName: String? = MainActor.assumeIsolated {
                     TeamDeliverySessionResolution.stopSessionName(
                         runtime: runtime,
@@ -967,9 +974,11 @@ struct GrafttyApp: App {
                 Task { await service.onStop(team: team, worktree: worktree, sessionNames: [sessionName]) }
             },
             onSessionStart: { team, worktree, runtime, _ in
+                MainActor.assumeIsolated { refreshPresenceIndex() }
                 stateRegistry.handleSessionStart(worktree: worktree, runtime: runtime)
             },
             onPostToolUse: { team, worktree, runtime, _ in
+                MainActor.assumeIsolated { refreshPresenceIndex() }
                 stateRegistry.handlePostToolUse(worktree: worktree, runtime: runtime)
             }
         )
@@ -1042,8 +1051,14 @@ struct GrafttyApp: App {
         terminalManager.paneClosed = { [stateRegistry, inputRegistry, presenceStorage] paneSlotID, sessionName in
             inputRegistry.removeStamp(paneID: paneSlotID.id)
             guard let sessionName else { return }
-            for record in presenceStorage.records(forPaneSessionName: sessionName) {
+            for record in presenceIndex.records(forPaneSessionName: sessionName) {
                 try? presenceStorage.delete(
+                    teamID: record.teamID,
+                    worktree: record.worktree,
+                    runtime: record.runtime,
+                    paneSessionName: record.paneSessionName
+                )
+                presenceIndex.remove(
                     teamID: record.teamID,
                     worktree: record.worktree,
                     runtime: record.runtime,
@@ -2382,15 +2397,23 @@ struct GrafttyApp: App {
         // target worktree has its own separate attention state.
         appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx]
             .paneAttention[terminalID] = nil
-        let movedPaneSession = appState.wrappedValue.repos[currentRepoIdx]
-            .worktrees[currentWorktreeIdx]
-            .takePaneSession(for: terminalID)
+        var sessionSource = appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx]
+        var sessionTarget = appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx]
+        _ = sessionSource.movePaneSession(for: terminalID, to: &sessionTarget)
+        appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].paneSessions =
+            sessionSource.paneSessions
+        appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].paneSessions =
+            sessionTarget.paneSessions
         if sourceTree.root == nil {
             appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].state = .closed
             appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].focusedPaneSlotID = nil
-        } else if sourceWt.focusedPaneSlotID == terminalID {
+        } else {
             appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].focusedPaneSlotID =
-                sourceTree.allLeaves.first
+                SplitTree.focusAfterRemoving(
+                    currentFocus: sourceWt.focusedPaneSlotID,
+                    removed: terminalID,
+                    remainingTree: sourceTree
+                )
         }
 
         // Graft onto the target tree. Prefer a previously-remembered
@@ -2429,10 +2452,6 @@ struct GrafttyApp: App {
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].splitTree = targetTree
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].state = .running
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].focusedPaneSlotID = terminalID
-        if let movedPaneSession {
-            appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx]
-                .recordPaneSession(movedPaneSession, for: terminalID)
-        }
 
         // Follow the pane with the UI ONLY when the reassigned pane was the
         // user's active typing target — i.e. the focused pane of the

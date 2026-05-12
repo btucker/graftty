@@ -47,6 +47,7 @@ final class TerminalManager: ObservableObject {
     private var ghosttyConfig: GhosttyConfig?
     private var surfaces: [PaneSlotID: SurfaceHandle] = [:]
     private var paneSessionIDs: [PaneSlotID: PaneSessionID] = [:]
+    private var paneSlotIDsBySessionName: [String: PaneSlotID] = [:]
 
     var ptyDeviceAvailability: () -> PtyDeviceAvailability = {
         PtyDeviceAvailability.live()
@@ -468,7 +469,7 @@ final class TerminalManager: ObservableObject {
                 terminalManager: self,
                 inputActivityObserver: inputActivityObserver
             ) else {
-                paneSessionIDs.removeValue(forKey: terminalID)
+                forgetPaneSession(for: terminalID)
                 continue
             }
             surfaces[terminalID] = handle
@@ -513,7 +514,7 @@ final class TerminalManager: ObservableObject {
             terminalManager: self,
             inputActivityObserver: inputActivityObserver
         ) else {
-            paneSessionIDs.removeValue(forKey: terminalID)
+            forgetPaneSession(for: terminalID)
             return nil
         }
         surfaces[terminalID] = handle
@@ -624,15 +625,9 @@ final class TerminalManager: ObservableObject {
         surfaces[terminalID]
     }
 
-    /// Reverse-lookup of the surface handle whose pane derives the given
-    /// session name (`graftty-<8hex>`). O(n) over the surface set —
-    /// acceptable for typical pane counts (1–20). Used by `AppZmxWriter`
-    /// to route a `zmx send` payload to the right PTY without rebuilding
-    /// a session-name index. If the pane count grows large enough that
-    /// nudges become a hot path, replace with a dictionary maintained
-    /// in the surface-create/destroy hooks.
     func handle(forSessionName sessionName: String) -> SurfaceHandle? {
-        surfaces.first(where: { self.zmxSessionName(for: $0.key) == sessionName })?.value
+        guard let paneSlotID = paneSlotIDsBySessionName[sessionName] else { return nil }
+        return surfaces[paneSlotID]
     }
 
     /// Reverse-lookup of the pane UUID whose current runtime mapping
@@ -641,7 +636,7 @@ final class TerminalManager: ObservableObject {
     /// hook gates can verify session replacement without a real Ghostty
     /// surface.
     func paneID(forSessionName sessionName: String) -> UUID? {
-        paneSessionIDs.first(where: { ZmxLauncher.sessionName(for: $0.value) == sessionName })?.key.id
+        paneSlotIDsBySessionName[sessionName]?.id
     }
 
     /// Tell libghostty whether a surface is currently visible. On visible,
@@ -753,7 +748,7 @@ final class TerminalManager: ObservableObject {
         shellReadyFired.remove(terminalID)
         firstPaneMarkers.remove(terminalID)
         rehydratedSurfaces.remove(terminalID)
-        paneSessionIDs.removeValue(forKey: terminalID)
+        forgetPaneSession(for: terminalID)
     }
 
     /// Resolve the per-surface zmx spawn parameters for a terminal pane.
@@ -795,12 +790,19 @@ final class TerminalManager: ObservableObject {
     }
 
     func recordPaneSession(_ paneSessionID: PaneSessionID, for terminalID: PaneSlotID) {
+        forgetPaneSession(for: terminalID)
         paneSessionIDs[terminalID] = paneSessionID
+        paneSlotIDsBySessionName[ZmxLauncher.sessionName(for: paneSessionID)] = terminalID
     }
 
     func zmxSessionName(for terminalID: PaneSlotID) -> String? {
         guard let sessionID = paneSessionIDs[terminalID] else { return nil }
         return ZmxLauncher.sessionName(for: sessionID)
+    }
+
+    private func forgetPaneSession(for terminalID: PaneSlotID) {
+        guard let sessionID = paneSessionIDs.removeValue(forKey: terminalID) else { return }
+        paneSlotIDsBySessionName.removeValue(forKey: ZmxLauncher.sessionName(for: sessionID))
     }
 
     /// If `GHOSTTY_RESOURCES_DIR` isn't already set and Ghostty.app is

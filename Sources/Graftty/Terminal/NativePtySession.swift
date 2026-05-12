@@ -273,7 +273,7 @@ final class NativePtySession {
                 ioLock: ioLock,
                 fdCloser: fdCloser
             )
-            Self.notifyExit(pid: pid, state: state)
+            Self.notifyExit(pid: pid, state: state, ioLock: ioLock)
         }
         thread.name = "NativePtySession.reader(\(pid))"
 
@@ -303,8 +303,11 @@ final class NativePtySession {
         callback?(error)
     }
 
-    private static func notifyExit(pid: pid_t, state: State) {
+    private static func notifyExit(pid: pid_t, state: State, ioLock: NSLock) {
         let status = reap(pid: pid)
+
+        ioLock.lock()
+        defer { ioLock.unlock() }
 
         state.lock()
         let callback = state.processExited
@@ -356,11 +359,6 @@ final class NativePtySession {
 
     private static func defaultTerminate(_ spawned: PtyProcess.Spawned) {
         _ = kill(spawned.pid, SIGTERM)
-        var status: Int32 = 0
-        for _ in 0..<10 {
-            if waitpid(spawned.pid, &status, WNOHANG) != 0 { break }
-            usleep(50_000)
-        }
     }
 
     private static func exitCode(from status: Int32?) -> UInt32 {

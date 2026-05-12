@@ -112,6 +112,48 @@ struct TeamPresenceStorageTests {
         #expect(surviving.first?.paneSessionName == "graftty-bbbbbbbb")
     }
 
+    @Test("Presence index returns all records for a pane session without reading storage.")
+    func presenceIndexGroupsAllRecordsForPaneSession() {
+        let registeredAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let codex = TeamPresenceRecord(
+            teamID: "team",
+            worktree: "wt",
+            runtime: .codex,
+            paneSessionName: "graftty-aaaaaaaa",
+            pid: 1,
+            registeredAt: registeredAt
+        )
+        let claude = TeamPresenceRecord(
+            teamID: "team",
+            worktree: "wt",
+            runtime: .claude,
+            paneSessionName: "graftty-aaaaaaaa",
+            pid: 2,
+            registeredAt: registeredAt
+        )
+        let other = TeamPresenceRecord(
+            teamID: "team",
+            worktree: "wt",
+            runtime: .codex,
+            paneSessionName: "graftty-bbbbbbbb",
+            pid: 3,
+            registeredAt: registeredAt
+        )
+        let index = TeamPresenceIndex(records: [codex, claude, other])
+
+        #expect(index.records(forPaneSessionName: "graftty-aaaaaaaa") == [codex, claude])
+
+        index.remove(
+            teamID: codex.teamID,
+            worktree: codex.worktree,
+            runtime: codex.runtime,
+            paneSessionName: codex.paneSessionName
+        )
+
+        #expect(index.records(forPaneSessionName: "graftty-aaaaaaaa") == [claude])
+        #expect(index.allRecords() == [claude, other])
+    }
+
     @Test("Delete with paneSessionName == nil removes only the worktree-only record.")
     func deleteNilPaneOnlyTouchesWorktreeRecord() throws {
         let storage = try makeStorage()
