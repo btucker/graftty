@@ -1405,3 +1405,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PORTS-4.3** When a pane is dragged to another worktree, the application shall preserve its registration and binding snapshot (`TerminalID` is stable).
 
 **PORTS-4.4** Tick clears bindings when previous scan had them but new scan has none
+
+## PROJECT — PROJECT
+
+### PROJECT-1.x
+
+**PROJECT-1.0** Each repository entry shall record whether its on-disk path is tracked by git.
+
+**PROJECT-1.5** When decoding a repository entry that lacks the isGitTracked key, the application shall default it to true so pre-feature state.json blobs load unchanged.

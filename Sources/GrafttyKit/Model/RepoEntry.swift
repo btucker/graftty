@@ -1,5 +1,7 @@
 import Foundation
 
+/// @spec PROJECT-1.0
+/// Each repository entry shall record whether its on-disk path is tracked by git.
 public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
     public let id: UUID
     public var path: String
@@ -12,13 +14,18 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
     /// pre-LAYOUT-4.5 `state.json`; lazily minted on first successful path
     /// resolution after upgrade (LAYOUT-4.9).
     public var bookmark: Data?
+    /// Whether this entry's on-disk path is tracked by git.
+    /// Pre-feature `state.json` blobs lack this key — `init(from:)` defaults
+    /// it to `true` (PROJECT-1.5) so existing users load unchanged.
+    public var isGitTracked: Bool
 
     public init(
         path: String,
         displayName: String,
         isCollapsed: Bool = false,
         worktrees: [WorktreeEntry] = [],
-        bookmark: Data? = nil
+        bookmark: Data? = nil,
+        isGitTracked: Bool = true
     ) {
         self.id = UUID()
         self.path = path
@@ -26,6 +33,7 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
         self.isCollapsed = isCollapsed
         self.worktrees = worktrees
         self.bookmark = bookmark
+        self.isGitTracked = isGitTracked
     }
 
     // Custom Decodable so `bookmark` (added in LAYOUT-4.5) is optional on
@@ -34,7 +42,7 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
     // state blobs don't carry the key, `decodeIfPresent` defaults it to
     // nil, and existing users keep their state across the upgrade.
     private enum CodingKeys: String, CodingKey {
-        case id, path, displayName, isCollapsed, worktrees, bookmark
+        case id, path, displayName, isCollapsed, worktrees, bookmark, isGitTracked
     }
 
     public init(from decoder: Decoder) throws {
@@ -45,5 +53,6 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
         self.isCollapsed = try container.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false
         self.worktrees = try container.decode([WorktreeEntry].self, forKey: .worktrees)
         self.bookmark = try container.decodeIfPresent(Data.self, forKey: .bookmark)
+        self.isGitTracked = try container.decodeIfPresent(Bool.self, forKey: .isGitTracked) ?? true
     }
 }
