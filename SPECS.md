@@ -1234,6 +1234,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-9.5** While a `POST /worktrees` call is in flight, the Create button shall be replaced by an in-flight indicator, the Cancel button and both input fields shall be disabled, and the repository picker shall be disabled. Once the call resolves (success or failure) all controls shall re-enable.
 
+### IOS-10.x
+
+**IOS-10.1** While `scenePhase` is `.inactive` or `.background`, the application shall tear down active WebSocket connections and unmount live `TerminalPaneView` instances so libghostty's display link stops.
+
+**IOS-10.2** The `WorktreeDetailView` preview pool shall keep at most one live preview `SessionClient`.
+
+**IOS-10.3** When a `SessionClient` has received no PTY bytes and processed no user input for ≥ `idleThreshold` (default 30s), the application shall transition its `renderActivity` to `.idle`.
+
+**IOS-10.4** Last live frame captured by the view layer just before transitioning to `.idle`. Nil before the first snapshot is taken; the `IdleSnapshotView` falls back to a stylized placeholder when nil.
+
+**IOS-10.5** When a `SessionClient` is `.idle` and a new PTY byte is received, the application shall transition its `renderActivity` to `.active` and remount `TerminalPaneView` within one runloop tick.
+
 ## TEAM — Agent Teams
 
 ### TEAM-1.x — Settings & Enablement
