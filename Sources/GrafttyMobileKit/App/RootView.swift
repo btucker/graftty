@@ -248,7 +248,7 @@ struct SingleSessionView: View {
     }
 
     private func driveConnection() async {
-        if scenePhase == .background {
+        if LiveSessionReadiness.shouldTearDown(scene: scenePhase) {
             client?.stop()
             client = nil
             if connection != .ended { connection = .suspended }

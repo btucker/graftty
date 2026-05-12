@@ -75,7 +75,7 @@ public struct WorktreeDetailView: View {
     }
 
     private func driveLifecycle() async {
-        if scenePhase == .background {
+        if LiveSessionReadiness.shouldTearDown(scene: scenePhase) {
             previews?.stopAll()
             return
         }
