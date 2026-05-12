@@ -8,6 +8,7 @@ import Testing
 struct HostManagedZmxBackendTests {
     @Test func configureSetsHostManagedBackendAndReceiveCallbacks() {
         let backend = Self.makeBackend(session: FakeHostManagedSession())
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
 
         var config = ghostty_surface_config_new()
         backend.configure(&config)
@@ -21,6 +22,7 @@ struct HostManagedZmxBackendTests {
     @Test func receiveBufferCallbackForwardsBytesToStartedSession() throws {
         let session = FakeHostManagedSession()
         let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         try backend.start(surface: Self.fakeSurface())
 
         let bytes = Array("abc".utf8)
@@ -38,6 +40,7 @@ struct HostManagedZmxBackendTests {
     @Test func receiveResizeCallbackForwardsGridSizeToStartedSession() throws {
         let session = FakeHostManagedSession()
         let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         try backend.start(surface: Self.fakeSurface())
 
         HostManagedZmxBackend.receiveResizeCallback(
@@ -51,9 +54,35 @@ struct HostManagedZmxBackendTests {
         #expect(session.resizes() == [Resize(cols: 132, rows: 43)])
     }
 
+    @Test func resizeCallbackBeforeStartIsAppliedAfterSessionStarts() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            100,
+            31,
+            1200,
+            744
+        )
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            120,
+            40,
+            1440,
+            960
+        )
+
+        try backend.start(surface: Self.fakeSurface())
+
+        #expect(session.resizes() == [Resize(cols: 120, rows: 40)])
+    }
+
     @Test func receiveCallbacksIgnoreNilUserdataAndPointers() {
         let session = FakeHostManagedSession()
         let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
 
         HostManagedZmxBackend.receiveBufferCallback(nil, nil, 3)
         HostManagedZmxBackend.receiveResizeCallback(nil, 80, 24, 800, 600)
@@ -77,6 +106,7 @@ struct HostManagedZmxBackendTests {
                 return session
             }
         )
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
 
         try backend.start(surface: surface)
 
@@ -85,11 +115,52 @@ struct HostManagedZmxBackendTests {
         #expect(observedConfigurations.values() == [spawnConfiguration])
     }
 
+    @Test func concurrentStartCreatesAndStartsOnlyOneSession() throws {
+        let session = FakeHostManagedSession()
+        let factoryCalls = LockedCounter()
+        let factoryEntered = DispatchSemaphore(value: 0)
+        let releaseFactory = DispatchSemaphore(value: 0)
+        let backend = HostManagedZmxBackend(
+            spawnConfiguration: Self.spawnConfiguration(),
+            sessionFactory: { _, _ in
+                _ = factoryCalls.increment()
+                factoryEntered.signal()
+                _ = releaseFactory.wait(timeout: .now() + 2)
+                return session
+            }
+        )
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+
+        let group = DispatchGroup()
+        group.enter()
+        DispatchQueue.global().async {
+            try? backend.start(surface: Self.fakeSurface())
+            group.leave()
+        }
+
+        #expect(factoryEntered.wait(timeout: .now() + 2) == .success)
+
+        do {
+            try backend.start(surface: Self.fakeSurface())
+            Issue.record("concurrent start unexpectedly succeeded")
+        } catch HostManagedZmxBackend.Error.alreadyStarted {
+        } catch {
+            Issue.record("concurrent start threw \(error) instead of alreadyStarted")
+        }
+
+        releaseFactory.signal()
+
+        #expect(group.wait(timeout: .now() + 2) == .success)
+        #expect(factoryCalls.value() == 1)
+        #expect(session.startCount() == 1)
+    }
+
     @Test func startFailureClosesCreatedSessionAndRethrows() {
         struct ForcedStartFailure: Error {}
 
         let session = FakeHostManagedSession(startError: ForcedStartFailure())
         let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
 
         #expect(throws: Error.self) {
             try backend.start(surface: Self.fakeSurface())
@@ -99,9 +170,41 @@ struct HostManagedZmxBackendTests {
         #expect(session.closeCount() == 1)
     }
 
+    @Test func closeRacingWithStartClosesCreatedSessionOnce() {
+        let startEntered = DispatchSemaphore(value: 0)
+        let releaseStart = DispatchSemaphore(value: 0)
+        let session = FakeHostManagedSession(
+            startHook: {
+                startEntered.signal()
+                _ = releaseStart.wait(timeout: .now() + 2)
+            }
+        )
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+
+        let startFinished = DispatchSemaphore(value: 0)
+        let outcomes = LockedRecorder<Bool>()
+        DispatchQueue.global().async {
+            outcomes.append((try? backend.start(surface: Self.fakeSurface())) != nil)
+            startFinished.signal()
+        }
+
+        #expect(startEntered.wait(timeout: .now() + 2) == .success)
+
+        backend.close()
+        backend.close()
+        releaseStart.signal()
+
+        #expect(startFinished.wait(timeout: .now() + 2) == .success)
+        #expect(outcomes.values() == [false])
+        #expect(session.startCount() == 1)
+        #expect(session.closeCount() == 1)
+    }
+
     @Test func writeForwardsExtraInputToStartedSession() throws {
         let session = FakeHostManagedSession()
         let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         try backend.start(surface: Self.fakeSurface())
 
         try backend.write(Data("after-start\n".utf8))
@@ -112,12 +215,25 @@ struct HostManagedZmxBackendTests {
     @Test func closeIsIdempotentAndClosesOwnedSessionOnce() throws {
         let session = FakeHostManagedSession()
         let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         try backend.start(surface: Self.fakeSurface())
 
         backend.close()
         backend.close()
 
         #expect(session.closeCount() == 1)
+    }
+
+    @Test func releaseReceiveUserdataAfterSurfaceFreeIsIdempotentAndCallbacksWithNilAreSafe() {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+
+        backend.releaseReceiveUserdataAfterSurfaceFree()
+        backend.releaseReceiveUserdataAfterSurfaceFree()
+
+        #expect(backend.userdataForTesting == nil)
+        HostManagedZmxBackend.receiveBufferCallback(nil, nil, 0)
+        HostManagedZmxBackend.receiveResizeCallback(nil, 80, 24, 800, 600)
     }
 
     private static func makeBackend(session: FakeHostManagedSession) -> HostManagedZmxBackend {
@@ -149,21 +265,25 @@ private struct Resize: Equatable {
 private final class FakeHostManagedSession: HostManagedZmxSession {
     private let lock = NSLock()
     private let startError: Error?
+    private let startHook: (() -> Void)?
     private var storedWrites: [Data] = []
     private var storedResizes: [Resize] = []
     private var storedStartCount = 0
     private var storedCloseCount = 0
 
-    init(startError: Error? = nil) {
+    init(startError: Error? = nil, startHook: (() -> Void)? = nil) {
         self.startError = startError
+        self.startHook = startHook
     }
 
     func start() throws {
         lock.lock()
         storedStartCount += 1
         let error = startError
+        let hook = startHook
         lock.unlock()
 
+        hook?()
         if let error {
             throw error
         }
@@ -223,6 +343,25 @@ private final class LockedRecorder<Value> {
     }
 
     func values() -> [Value] {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
+}
+
+private final class LockedCounter {
+    private let lock = NSLock()
+    private var stored = 0
+
+    func increment() -> Int {
+        lock.lock()
+        stored += 1
+        let value = stored
+        lock.unlock()
+        return value
+    }
+
+    func value() -> Int {
         lock.lock()
         defer { lock.unlock() }
         return stored

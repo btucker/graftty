@@ -23,11 +23,26 @@ final class HostManagedZmxBackend {
         case notStarted
     }
 
+    private enum Lifecycle {
+        case idle
+        case starting
+        case running
+        case closed
+    }
+
+    private struct PendingResize {
+        let cols: UInt16
+        let rows: UInt16
+    }
+
     static let receiveBufferCallback: ghostty_surface_receive_buffer_cb = { userdata, ptr, len in
         guard let userdata, let ptr, len > 0 else { return }
         guard let backend = HostManagedZmxBackend.backend(from: userdata) else { return }
 
         let data = Data(bytes: ptr, count: len)
+        // Host-managed input that arrives before the PTY session is running is
+        // intentionally dropped. SurfaceHandle sends explicit extraInitialInput
+        // with write(_:) after start succeeds.
         try? backend.write(data)
     }
 
@@ -35,16 +50,17 @@ final class HostManagedZmxBackend {
         guard let userdata else { return }
         guard let backend = HostManagedZmxBackend.backend(from: userdata) else { return }
 
-        try? backend.resize(cols: cols, rows: rows)
+        backend.receiveResize(cols: cols, rows: rows)
     }
 
     private let spawnConfiguration: ZmxSpawnConfiguration
     private let sessionFactory: SessionFactory
-    private var userdataPointer: UnsafeMutableRawPointer!
     private let lock = NSLock()
 
+    private var lifecycle: Lifecycle = .idle
     private var session: HostManagedZmxSession?
-    private var isClosed = false
+    private var pendingResize: PendingResize?
+    private var userdataPointer: UnsafeMutableRawPointer!
 
     init(
         spawnConfiguration: ZmxSpawnConfiguration,
@@ -68,6 +84,10 @@ final class HostManagedZmxBackend {
     deinit {
         close()
         if let userdataPointer {
+            fputs(
+                "HostManagedZmxBackend receive userdata was not released after ghostty_surface_free\n",
+                stderr
+            )
             Unmanaged<HostManagedZmxBackendUserdata>
                 .fromOpaque(userdataPointer)
                 .release()
@@ -83,38 +103,56 @@ final class HostManagedZmxBackend {
 
     func start(surface: ghostty_surface_t) throws {
         lock.lock()
-        if isClosed {
+        switch lifecycle {
+        case .idle:
+            lifecycle = .starting
+            lock.unlock()
+        case .starting, .running:
+            lock.unlock()
+            throw Error.alreadyStarted
+        case .closed:
             lock.unlock()
             throw Error.closed
         }
-        if session != nil {
-            lock.unlock()
-            throw Error.alreadyStarted
-        }
-        lock.unlock()
 
         let newSession = sessionFactory(surface, spawnConfiguration)
 
         do {
             try newSession.start()
         } catch {
+            lock.lock()
+            if case .starting = lifecycle {
+                lifecycle = .closed
+            }
+            lock.unlock()
             newSession.close()
             throw error
         }
 
-        lock.lock()
-        if isClosed {
-            lock.unlock()
-            newSession.close()
-            throw Error.closed
+        while true {
+            lock.lock()
+            switch lifecycle {
+            case .closed:
+                lock.unlock()
+                newSession.close()
+                throw Error.closed
+            case .starting:
+                if let resize = pendingResize {
+                    pendingResize = nil
+                    lock.unlock()
+                    try? newSession.resize(cols: resize.cols, rows: resize.rows)
+                    continue
+                }
+                session = newSession
+                lifecycle = .running
+                lock.unlock()
+                return
+            case .idle, .running:
+                lock.unlock()
+                newSession.close()
+                throw Error.alreadyStarted
+            }
         }
-        if session != nil {
-            lock.unlock()
-            newSession.close()
-            throw Error.alreadyStarted
-        }
-        session = newSession
-        lock.unlock()
     }
 
     func write(_ data: Data) throws {
@@ -126,35 +164,69 @@ final class HostManagedZmxBackend {
 
     func close() {
         lock.lock()
-        if isClosed {
+        if case .closed = lifecycle {
             lock.unlock()
             return
         }
-        isClosed = true
+        lifecycle = .closed
         let currentSession = session
         session = nil
+        pendingResize = nil
         lock.unlock()
 
         currentSession?.close()
     }
 
-    var userdataForTesting: UnsafeMutableRawPointer {
-        userdataPointer
+    /// Releases the retained callback userdata after the owning surface has
+    /// been freed. `receive_userdata` must not be used by libghostty after this
+    /// point; callbacks are only valid until the caller completes
+    /// `ghostty_surface_free`.
+    func releaseReceiveUserdataAfterSurfaceFree() {
+        lock.lock()
+        guard let pointer = userdataPointer else {
+            lock.unlock()
+            return
+        }
+        userdataPointer = nil
+        lock.unlock()
+
+        Unmanaged<HostManagedZmxBackendUserdata>
+            .fromOpaque(pointer)
+            .release()
     }
 
-    private func resize(cols: UInt16, rows: UInt16) throws {
-        let currentSession = try activeSession()
-        try currentSession.resize(cols: cols, rows: rows)
+    var userdataForTesting: UnsafeMutableRawPointer? {
+        lock.lock()
+        defer { lock.unlock() }
+        return userdataPointer
+    }
+
+    private func receiveResize(cols: UInt16, rows: UInt16) {
+        let currentSession: HostManagedZmxSession?
+
+        lock.lock()
+        switch lifecycle {
+        case .idle, .starting:
+            pendingResize = PendingResize(cols: cols, rows: rows)
+            currentSession = nil
+        case .running:
+            currentSession = session
+        case .closed:
+            currentSession = nil
+        }
+        lock.unlock()
+
+        try? currentSession?.resize(cols: cols, rows: rows)
     }
 
     private func activeSession() throws -> HostManagedZmxSession {
         lock.lock()
         defer { lock.unlock() }
 
-        if isClosed {
+        if case .closed = lifecycle {
             throw Error.closed
         }
-        guard let session else {
+        guard case .running = lifecycle, let session else {
             throw Error.notStarted
         }
         return session
