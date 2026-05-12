@@ -59,7 +59,7 @@ struct PRStatusStoreRefreshBranchGateTests {
 
     @MainActor
     @Test func refreshWithoutLocalRemoteBranchDoesNotDetectHostOrFetch() async throws {
-        let remoteBranchStore = RemoteBranchStore(list: { _ in [] })
+        let remoteBranchStore = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(branches: []) })
         let detectCount = LockedCounter()
         let fetcher = RemoteGateCountingFetcher(response: nil)
         let store = PRStatusStore(
@@ -83,7 +83,7 @@ struct PRStatusStoreRefreshBranchGateTests {
 
     @MainActor
     @Test func refreshWithLocalRemoteBranchFetchesPRStatus() async throws {
-        let remoteBranchStore = RemoteBranchStore(list: { _ in ["feature"] })
+        let remoteBranchStore = RemoteBranchStore(list: { _ in RemoteBranchSnapshot(branches: ["feature"]) })
         remoteBranchStore.refresh(repoPath: "/repo")
         try await waitUntil(timeout: 1.0) {
             remoteBranchStore.hasRemote(repoPath: "/repo", branch: "feature")
@@ -283,8 +283,8 @@ private actor MutableRemoteBranchLister {
         self.branches = branches
     }
 
-    func list(repoPath: String) async throws -> Set<String> {
-        branches
+    func list(repoPath: String) async throws -> RemoteBranchSnapshot {
+        RemoteBranchSnapshot(branches: branches)
     }
 }
 

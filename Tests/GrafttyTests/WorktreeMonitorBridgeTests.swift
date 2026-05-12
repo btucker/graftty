@@ -191,9 +191,10 @@ private actor RecordingRemoteBranchLister {
         self.results = results
     }
 
-    func list(repoPath: String) async throws -> Set<String> {
+    func list(repoPath: String) async throws -> RemoteBranchSnapshot {
         counts[repoPath, default: 0] += 1
-        return try results[repoPath]?.get() ?? []
+        let branches = try results[repoPath]?.get() ?? []
+        return RemoteBranchSnapshot(branches: branches)
     }
 
     func invocations(for repoPath: String) -> Int {

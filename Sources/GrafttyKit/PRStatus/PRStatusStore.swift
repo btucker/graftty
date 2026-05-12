@@ -195,6 +195,10 @@ public final class PRStatusStore {
         let path: String
         let branch: String
         let hasRemote: Bool
+        /// Snapshot key for PR lookup — the branch git would push
+        /// to. Falls back to `branch` when no upstream is configured.
+        /// See `PR-8.23`.
+        let prLookupBranch: String
     }
 
     /// Worktrees for `repoPath` from the current model. Re-read at
@@ -207,10 +211,12 @@ public final class PRStatusStore {
         return repo.worktrees
             .filter { $0.state.hasOnDiskWorktree }
             .map { wt in
-                WorktreeView(
+                let upstream = remoteBranchStore?.upstreamRemoteBranch(repoPath: repoPath, branch: wt.branch)
+                return WorktreeView(
                     path: wt.path,
                     branch: wt.branch,
-                    hasRemote: hasRemoteBranch(repoPath: repoPath, branch: wt.branch)
+                    hasRemote: hasRemoteBranch(repoPath: repoPath, branch: wt.branch),
+                    prLookupBranch: upstream ?? wt.branch
                 )
             }
     }
@@ -246,7 +252,7 @@ public final class PRStatusStore {
         let branchesOfInterest = Set(
             currentWorktreeViews(repoPath: repoPath)
                 .filter { Self.isFetchableBranch($0.branch) && $0.hasRemote }
-                .map(\.branch)
+                .map(\.prLookupBranch)
         )
 
         let snapshot: RepoPRSnapshot
@@ -287,7 +293,7 @@ public final class PRStatusStore {
                 markLocallyUnpushed(wt.path)
                 continue
             }
-            guard let pr = snapshot.prsByBranch[wt.branch] else {
+            guard let pr = snapshot.prsByBranch[wt.prLookupBranch] else {
                 if infos[wt.path] != nil {
                     infos.removeValue(forKey: wt.path)
                 }
