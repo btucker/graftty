@@ -117,6 +117,14 @@ final class HostManagedZmxBackend {
 
         let newSession = sessionFactory(surface, spawnConfiguration)
 
+        lock.lock()
+        if case .closed = lifecycle {
+            lock.unlock()
+            newSession.close()
+            throw Error.closed
+        }
+        lock.unlock()
+
         do {
             try newSession.start()
         } catch {

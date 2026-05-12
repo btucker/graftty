@@ -155,6 +155,38 @@ struct HostManagedZmxBackendTests {
         #expect(session.startCount() == 1)
     }
 
+    @Test func closeWhileSessionFactoryIsRunningClosesCreatedSessionWithoutStartingIt() {
+        let session = FakeHostManagedSession()
+        let factoryEntered = DispatchSemaphore(value: 0)
+        let releaseFactory = DispatchSemaphore(value: 0)
+        let backend = HostManagedZmxBackend(
+            spawnConfiguration: Self.spawnConfiguration(),
+            sessionFactory: { _, _ in
+                factoryEntered.signal()
+                _ = releaseFactory.wait(timeout: .now() + 2)
+                return session
+            }
+        )
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+
+        let startFinished = DispatchSemaphore(value: 0)
+        let outcomes = LockedRecorder<Bool>()
+        DispatchQueue.global().async {
+            outcomes.append((try? backend.start(surface: Self.fakeSurface())) != nil)
+            startFinished.signal()
+        }
+
+        #expect(factoryEntered.wait(timeout: .now() + 2) == .success)
+
+        backend.close()
+        releaseFactory.signal()
+
+        #expect(startFinished.wait(timeout: .now() + 2) == .success)
+        #expect(outcomes.values() == [false])
+        #expect(session.startCount() == 0)
+        #expect(session.closeCount() == 1)
+    }
+
     @Test func startFailureClosesCreatedSessionAndRethrows() {
         struct ForcedStartFailure: Error {}
 
