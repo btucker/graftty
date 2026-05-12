@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import GhosttyKit
 import GrafttyKit
 
 final class NativePtySession {
@@ -9,6 +10,11 @@ final class NativePtySession {
         _ currentDirectory: URL?,
         _ initialSize: (cols: UInt16, rows: UInt16)?
     ) throws -> PtyProcess.Spawned
+    typealias Writer = (
+        _ fd: Int32,
+        _ bytes: UnsafePointer<UInt8>,
+        _ count: Int
+    ) throws -> Void
 
     enum Error: Swift.Error {
         case alreadyStarted
@@ -22,7 +28,9 @@ final class NativePtySession {
     private let workingDirectory: URL?
     private let initialSize: (cols: UInt16, rows: UInt16)?
     private let spawner: Spawner
+    private let writer: Writer
     private let stateLock = NSLock()
+    private let writeLock = NSLock()
 
     private var spawned: PtyProcess.Spawned?
     private var readerThread: Thread?
@@ -48,7 +56,8 @@ final class NativePtySession {
                 currentDirectory: currentDirectory,
                 initialSize: initialSize
             )
-        }
+        },
+        writer: @escaping Writer = SocketIO.writeAll
     ) {
         self.argv = argv
         self.env = env
@@ -58,6 +67,50 @@ final class NativePtySession {
         self.processExited = processExited
         self.spawnFailed = spawnFailed
         self.spawner = spawner
+        self.writer = writer
+    }
+
+    convenience init(
+        surface: ghostty_surface_t,
+        argv: [String],
+        env: [String: String],
+        workingDirectory: URL?,
+        initialSize: (cols: UInt16, rows: UInt16)? = nil,
+        spawnFailed: @escaping (Swift.Error) -> Void,
+        spawner: @escaping Spawner = { argv, env, currentDirectory, initialSize in
+            try PtyProcess.spawn(
+                argv: argv,
+                env: env,
+                currentDirectory: currentDirectory,
+                initialSize: initialSize
+            )
+        }
+    ) {
+        let startedAt = Date()
+        self.init(
+            argv: argv,
+            env: env,
+            workingDirectory: workingDirectory,
+            initialSize: initialSize,
+            writeToSurface: { data in
+                data.withUnsafeBytes { buffer in
+                    guard let base = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                        return
+                    }
+                    ghostty_surface_write_buffer(surface, base, UInt(data.count))
+                }
+            },
+            processExited: { _, status in
+                let runtimeMilliseconds = UInt64(Date().timeIntervalSince(startedAt) * 1000)
+                ghostty_surface_process_exit(
+                    surface,
+                    Self.exitCode(from: status),
+                    runtimeMilliseconds
+                )
+            },
+            spawnFailed: spawnFailed,
+            spawner: spawner
+        )
     }
 
     deinit {
@@ -98,14 +151,15 @@ final class NativePtySession {
 
     func write(_ data: Data) throws {
         guard !data.isEmpty else { return }
+        writeLock.lock()
+        defer { writeLock.unlock() }
+
         let fd = try activeMasterFD()
         try data.withUnsafeBytes { buffer in
-            guard let base = buffer.baseAddress else { return }
-            try SocketIO.writeAll(
-                fd: fd,
-                bytes: base.assumingMemoryBound(to: UInt8.self),
-                count: buffer.count
-            )
+            guard let base = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                return
+            }
+            try writer(fd, base, buffer.count)
         }
     }
 
@@ -236,5 +290,17 @@ final class NativePtySession {
             usleep(50_000)
         }
         return nil
+    }
+
+    private static func exitCode(from status: Int32?) -> UInt32 {
+        guard let status else { return 0 }
+        let waitStatus = status & 0o177
+        if waitStatus == 0 {
+            return UInt32((status >> 8) & 0x000000ff)
+        }
+        if waitStatus != 0o177 {
+            return UInt32(128 + waitStatus)
+        }
+        return 0
     }
 }

@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import GhosttyKit
 import Testing
 @testable import Graftty
 @testable import GrafttyKit
@@ -44,6 +45,40 @@ struct NativePtySessionTests {
         try Self.waitUntil {
             String(data: recorder.values().reduce(Data(), +), encoding: .utf8)?.contains("from-stdin") == true
         }
+    }
+
+    @Test func concurrentWritesAreSerialized() throws {
+        let activeWriters = LockedCounter()
+        let maxActiveWriters = LockedCounter()
+        let session = NativePtySession(
+            argv: ["/bin/sh", "-c", "sleep 2"],
+            env: [:],
+            workingDirectory: nil,
+            writeToSurface: { _ in },
+            processExited: { _, _ in },
+            spawnFailed: { _ in },
+            writer: { _, _, _ in
+                let active = activeWriters.increment()
+                maxActiveWriters.recordMax(active)
+                Thread.sleep(forTimeInterval: 0.1)
+                _ = activeWriters.decrement()
+            }
+        )
+
+        try session.start()
+        defer { session.close() }
+
+        let group = DispatchGroup()
+        for byte in ["a", "b"] {
+            group.enter()
+            DispatchQueue.global().async {
+                try? session.write(Data(byte.utf8))
+                group.leave()
+            }
+        }
+
+        #expect(group.wait(timeout: .now() + 2) == .success)
+        #expect(maxActiveWriters.value() == 1)
     }
 
     @Test func resizeChangesSttySize() throws {
@@ -125,6 +160,20 @@ struct NativePtySessionTests {
         #expect(failures.values().count == 1)
     }
 
+    @Test func ghosttySurfaceInitializerIsAvailableAtCompileTime() {
+        func makeSession(surface: ghostty_surface_t) -> NativePtySession {
+            NativePtySession(
+                surface: surface,
+                argv: ["/bin/sh"],
+                env: [:],
+                workingDirectory: nil,
+                spawnFailed: { _ in }
+            )
+        }
+
+        _ = makeSession
+    }
+
     private static func waitUntil(
         timeout: TimeInterval = 5,
         condition: @escaping () -> Bool
@@ -149,6 +198,39 @@ private final class LockedRecorder<Value> {
     }
 
     func values() -> [Value] {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
+}
+
+private final class LockedCounter {
+    private let lock = NSLock()
+    private var stored = 0
+
+    func increment() -> Int {
+        lock.lock()
+        stored += 1
+        let value = stored
+        lock.unlock()
+        return value
+    }
+
+    func decrement() -> Int {
+        lock.lock()
+        stored -= 1
+        let value = stored
+        lock.unlock()
+        return value
+    }
+
+    func recordMax(_ candidate: Int) {
+        lock.lock()
+        stored = max(stored, candidate)
+        lock.unlock()
+    }
+
+    func value() -> Int {
         lock.lock()
         defer { lock.unlock() }
         return stored
