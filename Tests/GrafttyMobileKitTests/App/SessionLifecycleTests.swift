@@ -19,6 +19,15 @@ struct LiveSessionReadinessTests {
         #expect(!LiveSessionReadiness.isActive(scene: .background, gateUnlocked: true))
         #expect(!LiveSessionReadiness.isActive(scene: .inactive, gateUnlocked: true))
     }
+
+    @Test("""
+@spec IOS-10.1: While `scenePhase` is `.inactive` or `.background`, the application shall tear down active WebSocket connections and unmount live `TerminalPaneView` instances so libghostty's display link stops.
+""")
+    func shouldTearDownOnInactiveAndBackground() {
+        #expect(!LiveSessionReadiness.shouldTearDown(scene: .active))
+        #expect(LiveSessionReadiness.shouldTearDown(scene: .inactive))
+        #expect(LiveSessionReadiness.shouldTearDown(scene: .background))
+    }
 }
 
 @Suite
