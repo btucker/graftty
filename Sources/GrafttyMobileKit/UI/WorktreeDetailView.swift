@@ -3,7 +3,8 @@ import GrafttyProtocol
 import SwiftUI
 import UIKit
 
-private let maxLivePanePreviews = 2
+/// @spec IOS-10.2
+private let maxLivePanePreviews = 1
 
 /// Second "inside a host" screen — shows the split-faithful tree of
 /// panes for the selected worktree. Tapping a pane tile pushes a
