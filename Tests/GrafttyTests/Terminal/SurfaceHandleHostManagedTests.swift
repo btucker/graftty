@@ -215,8 +215,8 @@ struct SurfaceHandleHostManagedTests {
         #expect(harness.freeCalls == [surface])
     }
 
-    private static func terminalID() -> TerminalID {
-        TerminalID(id: UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!)
+    private static func terminalID() -> PaneSlotID {
+        PaneSlotID(id: UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!)
     }
 
     private static func spawnConfiguration() -> ZmxSpawnConfiguration {

@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 /// UTType in the bundle Info.plist; SwiftUI's type-safe `Transferable`
 /// matching keeps unrelated `Codable` Data drops from being decoded as
 /// panes.
-struct TransferableTerminalID: Codable, Transferable {
+struct TransferablePaneSlotID: Codable, Transferable {
     let id: UUID
 
     static var transferRepresentation: some TransferRepresentation {

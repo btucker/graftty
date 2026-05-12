@@ -236,6 +236,32 @@ struct WorktreeEntryTests {
         #expect(decoded.paneSessions.isEmpty)
     }
 
+    @Test func focusedPaneSlotUsesLegacyStateKey() throws {
+        let slot = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-0000000000F1")!)
+        let legacyFocusKey = "focused" + "Terminal" + "ID"
+        let legacyJSON = """
+        {
+          "id": "\(UUID().uuidString)",
+          "path": "/tmp/worktree",
+          "branch": "main",
+          "state": "closed",
+          "splitTree": {"root": null},
+          "\(legacyFocusKey)": {"id": "\(slot.id.uuidString)"}
+        }
+        """
+        let data = Data(legacyJSON.utf8)
+        let decoded = try JSONDecoder().decode(WorktreeEntry.self, from: data)
+
+        #expect(decoded.focusedPaneSlotID == slot)
+
+        let encoded = try JSONEncoder().encode(decoded)
+        let object = try #require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        #expect(object[legacyFocusKey] != nil)
+        #expect(object["focusedPaneSlotID"] == nil)
+    }
+
     @Test func paneSessionsCodableRoundTrip() throws {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
         let slot = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
@@ -428,7 +454,7 @@ struct WorktreeEntryTests {
     // MARK: resurrect-from-stale contract (GIT-3.9)
     //
     // When a .stale entry is resurrected (directory still on disk), its
-    // old leaf TerminalIDs point at surfaces that are now orphan — the
+    // old leaf PaneSlotIDs point at surfaces that are now orphan — the
     // resurrect path creates a *fresh* terminal with a *new* PaneSlotID.
     // The surfaces behind the old IDs keep running render/io/kqueue
     // threads, and on macOS that's been observed to corrupt libghostty's
@@ -451,7 +477,7 @@ struct WorktreeEntryTests {
             right: .leaf(leaf2)
         )))
         entry.state = .stale
-        entry.focusedTerminalID = leaf1
+        entry.focusedPaneSlotID = leaf1
         entry.paneAttention[leaf1] = Attention(text: "!", timestamp: Date())
         entry.ensurePaneSession(for: leaf1)
         entry.ensurePaneSession(for: leaf2)
@@ -461,7 +487,7 @@ struct WorktreeEntryTests {
         #expect(Set(toDestroy) == Set([leaf1, leaf2]))
         #expect(entry.state == .closed)
         #expect(entry.splitTree.root == nil)
-        #expect(entry.focusedTerminalID == nil)
+        #expect(entry.focusedPaneSlotID == nil)
         #expect(entry.paneAttention.isEmpty)
         #expect(entry.paneSessions.isEmpty)
     }
@@ -502,7 +528,7 @@ struct WorktreeEntryTests {
             right: .leaf(leafB)
         )))
         entry.state = .stale
-        entry.focusedTerminalID = leafA
+        entry.focusedPaneSlotID = leafA
         entry.paneAttention[leafA] = Attention(text: "!", timestamp: Date())
         entry.ensurePaneSession(for: leafA)
         entry.ensurePaneSession(for: leafB)
@@ -511,7 +537,7 @@ struct WorktreeEntryTests {
 
         #expect(Set(toDestroy) == Set([leafA, leafB]))
         #expect(entry.splitTree.root == nil)
-        #expect(entry.focusedTerminalID == nil)
+        #expect(entry.focusedPaneSlotID == nil)
         #expect(entry.paneAttention.isEmpty)
         #expect(entry.paneSessions.isEmpty)
     }
@@ -531,14 +557,14 @@ struct WorktreeEntryTests {
     // pre-fix `stopWorktreeWithConfirmation` set `state = .closed` but
     // LEFT `paneAttention` untouched. Because Stop preserves `splitTree`
     // (so re-open recreates the same layout per TERM-1.2), the old leaf
-    // TerminalIDs stay — which means a stale pane attention badge from
+    // PaneSlotIDs stay — which means a stale pane attention badge from
     // *before* the Stop reappears on the fresh pane's sidebar row after
     // re-open. STATE-2.7's spirit (pane removal drops pane-scoped
     // attention) extended here: Stop removes all panes; all entries
     // must go.
     //
     // `prepareForStop()` transitions state → .closed, clears
-    // paneAttention, leaves splitTree + focusedTerminalID + the
+    // paneAttention, leaves splitTree + focusedPaneSlotID + the
     // worktree-level `attention` slot alone so the closed→running
     // re-open block can recreate the exact layout and the user still
     // sees any CLI-notify badge (which is a worktree-level concern).
@@ -557,7 +583,7 @@ struct WorktreeEntryTests {
             left: .leaf(paneA),
             right: .leaf(paneB)
         )))
-        entry.focusedTerminalID = paneA
+        entry.focusedPaneSlotID = paneA
         entry.paneAttention[paneA] = Attention(text: "✓", timestamp: Date())
         entry.paneAttention[paneB] = Attention(text: "!", timestamp: Date())
 
@@ -567,18 +593,18 @@ struct WorktreeEntryTests {
         #expect(entry.paneAttention.isEmpty)
     }
 
-    @Test func prepareForStopPreservesSplitTreeAndFocusedTerminalID() {
+    @Test func prepareForStopPreservesSplitTreeAndFocusedPaneSlotID() {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
         let paneA = PaneSlotID()
         entry.state = .running
         entry.splitTree = SplitTree(root: .leaf(paneA))
-        entry.focusedTerminalID = paneA
+        entry.focusedPaneSlotID = paneA
 
         entry.prepareForStop()
 
         // TERM-1.2: re-open after Stop recreates the same layout.
         #expect(entry.splitTree.allLeaves == [paneA])
-        #expect(entry.focusedTerminalID == paneA)
+        #expect(entry.focusedPaneSlotID == paneA)
     }
 
     @Test func prepareForStopClearsPaneSessionsButPreservesSlots() {
@@ -609,7 +635,7 @@ struct WorktreeEntryTests {
 
     // MARK: focus-after-pane-close (TERM-5.6)
     //
-    // Pre-fix, `closePane` unconditionally reset `focusedTerminalID`
+    // Pre-fix, `closePane` unconditionally reset `focusedPaneSlotID`
     // to `newTree.allLeaves.first` whenever the tree wasn't empty —
     // even when the CLOSED pane wasn't the focused one. So a user
     // typing in pane C who closed pane A via Cmd+W (or `graftty pane

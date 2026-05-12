@@ -118,7 +118,7 @@ public struct SplitTree: Codable, Sendable, Equatable {
         return SplitTree(root: root.removing(target), zoomed: newZoomed)
     }
 
-    /// Compute the new `focusedTerminalID` for a worktree after a pane
+    /// Compute the new `focusedPaneSlotID` for a worktree after a pane
     /// has been removed from its split tree (`TERM-5.6`).
     ///
     /// Contract:

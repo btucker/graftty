@@ -7,6 +7,6 @@ extension WorktreeEntry {
     /// Used by the idle-delivery pipeline to route nudges to the agent's
     /// pane and by focus / split commands that need a single target.
     var firstPane: PaneSlotID? {
-        focusedTerminalID ?? splitTree.allLeaves.first
+        focusedPaneSlotID ?? splitTree.allLeaves.first
     }
 }

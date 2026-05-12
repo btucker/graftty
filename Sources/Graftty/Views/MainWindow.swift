@@ -84,7 +84,7 @@ struct MainWindow: View {
                             // Persist the focus change on the model BEFORE
                             // routing to libghostty: `TERM-2.3`'s focus-
                             // restore after a worktree switch reads
-                            // `focusedTerminalID`, so a mouse-click that
+                            // `focusedPaneSlotID`, so a mouse-click that
                             // only called `setFocus` (the libghostty side)
                             // used to let focus snap back to the first leaf
                             // on the next return visit.
@@ -212,7 +212,7 @@ struct MainWindow: View {
         guard let repo = selectedRepo else { return nil }
         return {
             var prefill = ""
-            if let termID = selectedWorktree?.focusedTerminalID,
+            if let termID = selectedWorktree?.focusedPaneSlotID,
                let selection = terminalManager.readSelection(for: termID) {
                 prefill = WorktreeNameSanitizer.sanitizeForPrefill(selection)
             }
@@ -255,12 +255,12 @@ struct MainWindow: View {
     /// Selects a worktree *and* focuses a specific pane within it. Used by
     /// the sidebar's per-pane title rows so clicking "claude" under a
     /// worktree both activates that worktree and focuses Claude's pane.
-    private func selectPane(_ worktreePath: String, _ terminalID: TerminalID) {
+    private func selectPane(_ worktreePath: String, _ terminalID: PaneSlotID) {
         selectWorktree(worktreePath)
         for repoIdx in appState.repos.indices {
             for wtIdx in appState.repos[repoIdx].worktrees.indices {
                 if appState.repos[repoIdx].worktrees[wtIdx].path == worktreePath {
-                    appState.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = terminalID
+                    appState.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = terminalID
                 }
             }
         }
@@ -323,7 +323,7 @@ struct MainWindow: View {
                 if appState.repos[repoIdx].worktrees[wtIdx].state == .closed {
 
                     if appState.repos[repoIdx].worktrees[wtIdx].splitTree.root == nil {
-                        let id = TerminalID()
+                        let id = PaneSlotID()
                         appState.repos[repoIdx].worktrees[wtIdx].splitTree = SplitTree(root: .leaf(id))
                     }
 
@@ -389,7 +389,7 @@ struct MainWindow: View {
         // typing immediately after a sidebar click without having to also
         // click into the terminal.
         if let wt = appState.worktree(forPath: path),
-           let target = wt.focusedTerminalID ?? wt.splitTree.allLeaves.first {
+           let target = wt.focusedPaneSlotID ?? wt.splitTree.allLeaves.first {
             makePaneFirstResponder(target)
         }
 
@@ -427,7 +427,7 @@ struct MainWindow: View {
     /// because the view may have just been created by `createSurfaces` and
     /// SwiftUI hasn't attached it to the window hierarchy yet — you can't
     /// `makeFirstResponder` a view that isn't in a window.
-    private func makePaneFirstResponder(_ terminalID: TerminalID) {
+    private func makePaneFirstResponder(_ terminalID: PaneSlotID) {
         let tm = terminalManager
         DispatchQueue.main.async {
             guard let view = tm.view(for: terminalID),
@@ -712,7 +712,7 @@ struct MainWindow: View {
         performDeleteWorktree(worktreePath)
     }
 
-    private func movePane(_ terminalID: TerminalID, to newPWD: String) {
+    private func movePane(_ terminalID: PaneSlotID, to newPWD: String) {
         GrafttyApp.reassignPaneByPWD(
             appState: $appState,
             terminalManager: terminalManager,

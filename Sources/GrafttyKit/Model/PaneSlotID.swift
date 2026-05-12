@@ -11,5 +11,3 @@ public struct PaneSlotID: Hashable, Codable, Identifiable, Sendable {
         self.id = id
     }
 }
-
-public typealias TerminalID = PaneSlotID

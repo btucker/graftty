@@ -6,7 +6,7 @@ import CoreGraphics
 @Suite("SplitTree — equalizing")
 struct SplitTreeEqualizeTests {
     @Test func equalizeResetsAllSplitRatiosToHalf() throws {
-        let a = TerminalID(); let b = TerminalID(); let c = TerminalID()
+        let a = PaneSlotID(); let b = PaneSlotID(); let c = PaneSlotID()
         var tree = SplitTree(root: .leaf(a))
             .inserting(b, at: a, direction: .horizontal)
             .inserting(c, at: b, direction: .vertical)
@@ -22,7 +22,7 @@ struct SplitTreeEqualizeTests {
     }
 
     @Test func equalizeClearsZoom() {
-        let a = TerminalID(); let b = TerminalID()
+        let a = PaneSlotID(); let b = PaneSlotID()
         let tree = SplitTree(root: .leaf(a))
             .inserting(b, at: a, direction: .horizontal)
             .withZoom(a)
@@ -30,7 +30,7 @@ struct SplitTreeEqualizeTests {
     }
 
     @Test func equalizeIsNoOpForSingleLeaf() {
-        let a = TerminalID()
+        let a = PaneSlotID()
         let tree = SplitTree(root: .leaf(a))
         // No splits to equalize; just a no-op.
         let next = tree.equalizing()

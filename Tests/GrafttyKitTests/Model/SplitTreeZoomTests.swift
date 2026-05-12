@@ -5,19 +5,19 @@ import Foundation
 @Suite("SplitTree — zoom state")
 struct SplitTreeZoomTests {
     @Test func newTreeHasNoZoom() {
-        let id = TerminalID()
+        let id = PaneSlotID()
         let tree = SplitTree(root: .leaf(id))
         #expect(tree.zoomed == nil)
     }
 
     @Test func initWithZoomedSetsZoomedField() {
-        let id = TerminalID()
+        let id = PaneSlotID()
         let tree = SplitTree(root: .leaf(id), zoomed: id)
         #expect(tree.zoomed == id)
     }
 
     @Test func codableRoundTripPreservesZoom() throws {
-        let id = TerminalID()
+        let id = PaneSlotID()
         let tree = SplitTree(root: .leaf(id), zoomed: id)
         let data = try JSONEncoder().encode(tree)
         let decoded = try JSONDecoder().decode(SplitTree.self, from: data)
@@ -35,21 +35,21 @@ struct SplitTreeZoomTests {
     }
 
     @Test func insertingUnzooms() {
-        let a = TerminalID(); let b = TerminalID()
+        let a = PaneSlotID(); let b = PaneSlotID()
         let tree = SplitTree(root: .leaf(a), zoomed: a)
         let next = tree.inserting(b, at: a, direction: .horizontal)
         #expect(next.zoomed == nil, "insert must clear zoom")
     }
 
     @Test func insertingBeforeUnzooms() {
-        let a = TerminalID(); let b = TerminalID()
+        let a = PaneSlotID(); let b = PaneSlotID()
         let tree = SplitTree(root: .leaf(a), zoomed: a)
         let next = tree.insertingBefore(b, at: a, direction: .horizontal)
         #expect(next.zoomed == nil)
     }
 
     @Test func removingZoomedLeafAutoUnzooms() {
-        let a = TerminalID(); let b = TerminalID()
+        let a = PaneSlotID(); let b = PaneSlotID()
         let tree = SplitTree(root: .leaf(a))
             .inserting(b, at: a, direction: .horizontal)
             .withZoom(a)    // re-zoom after insert cleared it
@@ -58,7 +58,7 @@ struct SplitTreeZoomTests {
     }
 
     @Test func removingSiblingPreservesZoomOnSurvivor() {
-        let a = TerminalID(); let b = TerminalID()
+        let a = PaneSlotID(); let b = PaneSlotID()
         let tree = SplitTree(root: .leaf(a))
             .inserting(b, at: a, direction: .horizontal)
             .withZoom(a)
@@ -67,7 +67,7 @@ struct SplitTreeZoomTests {
     }
 
     @Test func togglingZoomOnSplitLeafZoomsThatLeaf() {
-        let a = TerminalID(); let b = TerminalID()
+        let a = PaneSlotID(); let b = PaneSlotID()
         let tree = SplitTree(root: .leaf(a))
             .inserting(b, at: a, direction: .horizontal)
         let next = tree.togglingZoom(at: a)
@@ -75,7 +75,7 @@ struct SplitTreeZoomTests {
     }
 
     @Test func togglingZoomOnCurrentlyZoomedLeafUnzooms() {
-        let a = TerminalID(); let b = TerminalID()
+        let a = PaneSlotID(); let b = PaneSlotID()
         let tree = SplitTree(root: .leaf(a))
             .inserting(b, at: a, direction: .horizontal)
             .withZoom(a)
@@ -84,14 +84,14 @@ struct SplitTreeZoomTests {
     }
 
     @Test func togglingZoomOnLoneLeafIsNoOp() {
-        let a = TerminalID()
+        let a = PaneSlotID()
         let tree = SplitTree(root: .leaf(a))
         let next = tree.togglingZoom(at: a)
         #expect(next.zoomed == nil)
     }
 
     @Test func togglingZoomOnUnknownLeafIsNoOp() {
-        let a = TerminalID(); let b = TerminalID(); let c = TerminalID()
+        let a = PaneSlotID(); let b = PaneSlotID(); let c = PaneSlotID()
         let tree = SplitTree(root: .leaf(a))
             .inserting(b, at: a, direction: .horizontal)
         let next = tree.togglingZoom(at: c)

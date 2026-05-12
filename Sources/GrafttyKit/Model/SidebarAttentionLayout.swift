@@ -13,9 +13,9 @@ import Foundation
 public enum SidebarAttentionLayout {
     public struct Layout: Equatable {
         public let worktreeCapsule: String?
-        public let paneCapsules: [TerminalID: String]
+        public let paneCapsules: [PaneSlotID: String]
 
-        public init(worktreeCapsule: String?, paneCapsules: [TerminalID: String]) {
+        public init(worktreeCapsule: String?, paneCapsules: [PaneSlotID: String]) {
             self.worktreeCapsule = worktreeCapsule
             self.paneCapsules = paneCapsules
         }

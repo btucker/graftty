@@ -15,13 +15,13 @@ struct SidebarView: View {
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
     let onSelect: (String) -> Void
-    let onSelectPane: (String, TerminalID) -> Void
+    let onSelectPane: (String, PaneSlotID) -> Void
     let onAddRepo: () -> Void
     let onAddPath: (String) -> Void
     let onRemoveRepo: (RepoEntry) -> Void
     let onStopWorktree: (String) -> Void
     let onDeleteWorktree: (String) -> Void
-    let onMovePane: (TerminalID, String) -> Void
+    let onMovePane: (PaneSlotID, String) -> Void
     /// Called when the user submits the add-worktree sheet. Returns nil
     /// on success, or a user-visible error string (typically git's
     /// stderr) on failure so the sheet can display it inline.
@@ -214,12 +214,12 @@ struct SidebarView: View {
             }
             .buttonStyle(.plain)
             // PWD-1.4: same-repo drop target. Sources are sidebar pane
-            // rows wrapped in `TransferableTerminalID`. Cross-repo drops
+            // rows wrapped in `TransferablePaneSlotID`. Cross-repo drops
             // are rejected so a user can't accidentally hop a pane
             // across repos (out of scope, matches PWD-1.3).
-            .dropDestination(for: TransferableTerminalID.self) { items, _ in
+            .dropDestination(for: TransferablePaneSlotID.self) { items, _ in
                 guard let item = items.first else { return false }
-                let sourceID = TerminalID(id: item.id)
+                let sourceID = PaneSlotID(id: item.id)
                 // `.creating` placeholders have no on-disk directory
                 // and no terminal surfaces yet — moving a pane onto one
                 // would either fail in zmx attach or silently land on
@@ -254,7 +254,7 @@ struct SidebarView: View {
                             title: terminalManager.displayTitle(for: terminalID),
                             isActiveWorktree: isActive,
                             isFocusedPane: isActive
-                                && worktree.focusedTerminalID == terminalID,
+                                && worktree.focusedPaneSlotID == terminalID,
                             theme: theme,
                             attentionText: attention.paneCapsules[terminalID],
                             portBindings: portBindings.bindings[terminalID] ?? []
@@ -265,7 +265,7 @@ struct SidebarView: View {
                     // is a typed wrapper around the pane's UUID so
                     // SwiftUI's Transferable matching keeps unrelated
                     // drops from being mis-decoded as panes.
-                    .draggable(TransferableTerminalID(id: terminalID.id))
+                    .draggable(TransferablePaneSlotID(id: terminalID.id))
                     .rightClickMenu {
                         buildPaneMenu(terminalID: terminalID)
                     }
@@ -345,7 +345,7 @@ struct SidebarView: View {
     /// menu via `PaneMoveMenuBuilder`; the Copy-web-URL item is sidebar-
     /// only because the surface has no worktree-context-free way to know
     /// its session name without going through this same view tree.
-    private func buildPaneMenu(terminalID: TerminalID) -> NSMenu {
+    private func buildPaneMenu(terminalID: PaneSlotID) -> NSMenu {
         let menu = NSMenu()
         if let context = PaneMoveMenuContext.resolve(
             terminalID: terminalID,

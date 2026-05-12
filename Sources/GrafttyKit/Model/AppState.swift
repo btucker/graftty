@@ -102,14 +102,14 @@ public struct AppState: Codable, Sendable, Equatable {
     /// places like `TerminalContentView.onFocusTerminal` that don't
     /// have a handy "this worktree exists" invariant.
     public mutating func setFocusedTerminal(
-        _ terminalID: TerminalID?,
+        _ terminalID: PaneSlotID?,
         forWorktreePath path: String
     ) {
         for repoIdx in repos.indices {
             for wtIdx in repos[repoIdx].worktrees.indices
                 where repos[repoIdx].worktrees[wtIdx].path == path
             {
-                repos[repoIdx].worktrees[wtIdx].focusedTerminalID = terminalID
+                repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = terminalID
             }
         }
     }
@@ -224,7 +224,7 @@ public struct AppState: Codable, Sendable, Equatable {
 
     /// Reverse lookup from a leaf to its hosting worktree's `(repo, worktree)`
     /// indices. Returns nil when no worktree owns the pane (mid-reassignment).
-    public func indicesOfWorktreeContaining(terminalID: TerminalID) -> (repo: Int, worktree: Int)? {
+    public func indicesOfWorktreeContaining(terminalID: PaneSlotID) -> (repo: Int, worktree: Int)? {
         for (ri, repo) in repos.enumerated() {
             for (wi, wt) in repo.worktrees.enumerated()
                 where wt.splitTree.containsLeaf(terminalID) {

@@ -14,7 +14,7 @@ import GrafttyKit
 ///   copies the config contents.
 /// Small reference object we pass to libghostty as the surface's `userdata`.
 /// Lets `close_surface_cb` (and other surface-scoped libghostty callbacks)
-/// recover the Graftty-side `TerminalID` without having to scan the
+/// recover the Graftty-side `PaneSlotID` without having to scan the
 /// `TerminalManager.surfaces` map.
 ///
 /// Memory management: `SurfaceHandle` retains an `Unmanaged` reference to
@@ -23,9 +23,9 @@ import GrafttyKit
 /// `terminalManager` reference is weak to avoid a retain cycle (the manager
 /// owns the handle, which owns the box).
 final class SurfaceUserdataBox {
-    let terminalID: TerminalID
+    let terminalID: PaneSlotID
     weak var terminalManager: TerminalManager?
-    init(terminalID: TerminalID, terminalManager: TerminalManager?) {
+    init(terminalID: PaneSlotID, terminalManager: TerminalManager?) {
         self.terminalID = terminalID
         self.terminalManager = terminalManager
     }
@@ -64,7 +64,7 @@ struct SurfaceHandleGhosttySurfaceFactory {
 }
 
 final class SurfaceHandle {
-    let terminalID: TerminalID
+    let terminalID: PaneSlotID
     let surface: ghostty_surface_t
     let view: NSView
     let worktreePath: String
@@ -83,7 +83,7 @@ final class SurfaceHandle {
     /// keep the rest of the app alive. Previously a `fatalError` here
     /// brought down Graftty mid-`graftty pane add` (`TERM-5.5`).
     init?(
-        terminalID: TerminalID,
+        terminalID: PaneSlotID,
         app: ghostty_app_t,
         worktreePath: String,
         socketPath: String,
@@ -417,7 +417,7 @@ final class SurfaceNSView: NSView {
     /// terminal manager. Both are set by `SurfaceHandle` during init so
     /// the context menu and other UI paths can request actions (splits,
     /// close, etc.) that need model-layer cooperation.
-    var terminalID: TerminalID?
+    var terminalID: PaneSlotID?
     weak var terminalManager: TerminalManager?
 
     /// Mirror of libghostty's `toggle_readonly` state. Maintained from the

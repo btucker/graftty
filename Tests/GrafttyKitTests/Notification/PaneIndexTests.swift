@@ -9,7 +9,7 @@ struct PaneIndexTests {
     }
 
     @Test func singleLeafPaneID1Resolves() {
-        let id = TerminalID()
+        let id = PaneSlotID()
         let tree = SplitTree(root: .leaf(id))
         #expect(tree.leaf(atPaneID: 1) == id)
         #expect(tree.leaf(atPaneID: 0) == nil)
@@ -17,9 +17,9 @@ struct PaneIndexTests {
     }
 
     @Test func splitTreeResolvesInAllLeavesOrder() {
-        let a = TerminalID()
-        let b = TerminalID()
-        let c = TerminalID()
+        let a = PaneSlotID()
+        let b = PaneSlotID()
+        let c = PaneSlotID()
         // Tree: (a | (b / c)) — allLeaves order is [a, b, c].
         let inner = SplitTree.Node.split(.init(direction: .vertical, ratio: 0.5, left: .leaf(b), right: .leaf(c)))
         let root = SplitTree.Node.split(.init(direction: .horizontal, ratio: 0.5, left: .leaf(a), right: inner))
@@ -42,7 +42,7 @@ struct PaneIndexTests {
     /// Treat any non-positive paneID as out-of-range and return nil
     /// instead.
     @Test func intMinPaneIDReturnsNilInsteadOfTrapping() {
-        let id = TerminalID()
+        let id = PaneSlotID()
         let tree = SplitTree(root: .leaf(id))
         #expect(tree.leaf(atPaneID: Int.min) == nil)
     }

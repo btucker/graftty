@@ -28,13 +28,13 @@ enum NavigationDirection {
 /// this worktree." Used by `TerminalManager` to remember where a pane was
 /// so it can be restored if the pane returns.
 struct PaneHistoryKey: Hashable {
-    let terminalID: TerminalID
+    let terminalID: PaneSlotID
     let worktreePath: String
 }
 
 /// Central lifecycle manager for libghostty surfaces.
 ///
-/// Owns a single `ghostty_app_t` (via `GhosttyApp`) and a map from `TerminalID`
+/// Owns a single `ghostty_app_t` (via `GhosttyApp`) and a map from `PaneSlotID`
 /// to `SurfaceHandle`. Bridges the model layer to libghostty.
 ///
 /// # Threading
@@ -45,8 +45,8 @@ struct PaneHistoryKey: Hashable {
 final class TerminalManager: ObservableObject {
     private var ghosttyApp: GhosttyApp?
     private var ghosttyConfig: GhosttyConfig?
-    private var surfaces: [TerminalID: SurfaceHandle] = [:]
-    private var paneSessionIDs: [TerminalID: PaneSessionID] = [:]
+    private var surfaces: [PaneSlotID: SurfaceHandle] = [:]
+    private var paneSessionIDs: [PaneSlotID: PaneSessionID] = [:]
 
     var ptyDeviceAvailability: () -> PtyDeviceAvailability = {
         PtyDeviceAvailability.live()
@@ -54,7 +54,7 @@ final class TerminalManager: ObservableObject {
 
     /// Terminal IDs for which `onShellReady` has already fired. Used to
     /// gate the callback to exactly one invocation per pane.
-    private var shellReadyFired: Set<TerminalID> = []
+    private var shellReadyFired: Set<PaneSlotID> = []
 
     private enum ZmxSessionSnapshot {
         case live(Set<String>)
@@ -64,12 +64,12 @@ final class TerminalManager: ObservableObject {
     /// Terminal IDs that are the "first pane" of a worktree — the pane
     /// whose creation caused `.closed → .running`. Populated by
     /// `markFirstPane(_:)` from the sidebar/open-worktree path.
-    private var firstPaneMarkers: Set<TerminalID> = []
+    private var firstPaneMarkers: Set<PaneSlotID> = []
 
     /// Terminal IDs that were recreated by restore-on-launch rather than
     /// user-initiated open. Populated by `markRehydrated(_:)` from
     /// `GrafttyApp.restoreRunningWorktrees`.
-    private var rehydratedSurfaces: Set<TerminalID> = []
+    private var rehydratedSurfaces: Set<PaneSlotID> = []
 
     private var wakeupObserver: NSObjectProtocol?
 
@@ -90,7 +90,7 @@ final class TerminalManager: ObservableObject {
     /// so a one-shot lookup that re-uses the cached PID across clicks
     /// keeps that interaction snappy. Entries are dropped lazily on miss
     /// (shell exited / respawned) and via `forgetSurfaceRuntimeState`.
-    private var cachedShellPIDs: [TerminalID: Int32] = [:]
+    private var cachedShellPIDs: [PaneSlotID: Int32] = [:]
 
     /// Theme colors pulled from the ghostty config (background, foreground).
     /// Emitted post-`initialize()` once the config is read; defaults to
@@ -104,13 +104,13 @@ final class TerminalManager: ObservableObject {
     /// `destroySurface`. Not persisted — these are ephemeral runtime
     /// state that die with their shell. The sidebar reads this through
     /// `displayTitle(for:)`, which also applies the PWD-basename fallback.
-    var titles: [TerminalID: String] = [:]
+    var titles: [PaneSlotID: String] = [:]
 
     /// Per-pane last-known working directory, populated from OSC 7
     /// (`GHOSTTY_ACTION_PWD`). Used as the second tier of the sidebar
     /// label fallback chain after `titles`. Cleaned up on
     /// `destroySurface` alongside `titles`.
-    var pwds: [TerminalID: String] = [:]
+    var pwds: [PaneSlotID: String] = [:]
 
     /// Sidebar-only invalidation source for pane title changes. Keep this
     /// separate from TerminalManager's own objectWillChange because
@@ -121,7 +121,7 @@ final class TerminalManager: ObservableObject {
     /// Cached sidebar-visible pane titles. Raw `titles`/`pwds` can change
     /// frequently from shell integration; only display-equivalent changes
     /// trigger the sidebar-only invalidation source above.
-    private var renderedTitles: [TerminalID: String] = [:]
+    private var renderedTitles: [PaneSlotID: String] = [:]
 
     /// Ghostty-config-derived keybind map, built in `initialize()` from the
     /// live `ghostty_config_t` via `GhosttyTriggerAdapter.resolver`.
@@ -152,14 +152,14 @@ final class TerminalManager: ObservableObject {
     /// context menu, from libghostty action callbacks, or from future keyboard
     /// bindings). The host (GrafttyApp) wires this up to mutate AppState and
     /// spawn a new surface; without it, split requests no-op.
-    var onSplitRequest: ((TerminalID, PaneSplit) -> Void)?
+    var onSplitRequest: ((PaneSlotID, PaneSplit) -> Void)?
 
     /// Called when a terminal surface's right-click menu requests a
     /// move-to-worktree (PWD-1.1 / PWD-1.3). The host (GrafttyApp) wires
     /// this up to mutate AppState through the same `reassignPaneByPWD`
     /// path that the sidebar's pane-row menu uses. Without this wired,
     /// the menu items are no-ops.
-    var onMovePane: ((TerminalID, String) -> Void)?
+    var onMovePane: ((PaneSlotID, String) -> Void)?
 
     /// Resolves the snapshot of model state needed to build the
     /// Move-to-worktree menu items for `terminalID`. Returns nil when
@@ -167,13 +167,13 @@ final class TerminalManager: ObservableObject {
     /// race window). The host (GrafttyApp) wires this against
     /// `AppState`; the surface menu (`SurfaceContextMenu`) calls it at
     /// menu-open time so the sampled state is fresh.
-    var currentPaneMoveContext: ((TerminalID) -> PaneMoveMenuContext?)?
+    var currentPaneMoveContext: ((PaneSlotID) -> PaneMoveMenuContext?)?
 
     /// Called when libghostty asks the host to close a surface (shell exited,
     /// or user-initiated request-close that's been confirmed). The host
     /// removes the pane from the split tree and calls `destroySurface`.
     /// Without this wired, the surface lingers and the pane appears hung.
-    var onCloseRequest: ((TerminalID) -> Void)?
+    var onCloseRequest: ((PaneSlotID) -> Void)?
 
     /// Called on shell-integration "command finished" events (requires
     /// ghostty shell integration to be sourced, which our env injection
@@ -181,9 +181,9 @@ final class TerminalManager: ObservableObject {
     /// host maps this to the worktree's attention badge — errors become
     /// red badges, long successful commands become subtle pings so the
     /// user knows the pane is idle again.
-    var onCommandFinished: ((TerminalID, _ exitCode: Int16, _ duration: UInt64) -> Void)?
+    var onCommandFinished: ((PaneSlotID, _ exitCode: Int16, _ duration: UInt64) -> Void)?
 
-    /// Fired exactly once per `TerminalID` — on the first
+    /// Fired exactly once per `PaneSlotID` — on the first
     /// `GHOSTTY_ACTION_PWD` event received for that pane. This is our
     /// "shell is ready to accept typed input" signal: Ghostty's shell
     /// integration emits OSC 7 from `precmd`, which runs before every
@@ -191,35 +191,35 @@ final class TerminalManager: ObservableObject {
     /// (or the user is using an unsupported shell), this callback
     /// never fires — consumers should treat that as a silent no-op
     /// rather than fall back to time-based heuristics.
-    var onShellReady: ((TerminalID) -> Void)?
+    var onShellReady: ((PaneSlotID) -> Void)?
 
     /// Called on OSC 9;4 progress reports from programs like `git clone`
     /// or `apt` that advertise progress. The host updates the attention
     /// badge so the user can keep tabs on long-running jobs without
     /// staying on the pane.
-    var onProgressReport: ((TerminalID, ProgressReport) -> Void)?
+    var onProgressReport: ((PaneSlotID, ProgressReport) -> Void)?
 
     /// Called when libghostty dispatches `goto_split` with a spatial
     /// direction (left/right/up/down). Host navigates focus to the
     /// nearest neighbor in that direction.
-    var onGotoSplit: ((TerminalID, NavigationDirection) -> Void)?
+    var onGotoSplit: ((PaneSlotID, NavigationDirection) -> Void)?
 
     /// Called when libghostty dispatches `goto_split:previous` or
     /// `goto_split:next`. Host cycles focus in split-tree leaf order.
     /// `forward` is `true` for next, `false` for previous.
-    var onGotoSplitOrder: ((TerminalID, _ forward: Bool) -> Void)?
+    var onGotoSplitOrder: ((PaneSlotID, _ forward: Bool) -> Void)?
 
     /// Called when libghostty dispatches `toggle_split_zoom`. Host flips the
     /// `zoomed` state on the worktree containing `terminalID`.
-    var onToggleZoom: ((TerminalID) -> Void)?
+    var onToggleZoom: ((PaneSlotID) -> Void)?
 
     /// Called on `resize_split`. Host walks up the split tree for the focused
     /// worktree and applies `SplitTree.resizing(...)`.
-    var onResizeSplit: ((TerminalID, ResizeDirection, UInt16) -> Void)?
+    var onResizeSplit: ((PaneSlotID, ResizeDirection, UInt16) -> Void)?
 
     /// Called on `equalize_splits`. Host runs `SplitTree.equalizing()` on the
     /// worktree containing `terminalID`.
-    var onEqualizeSplits: ((TerminalID) -> Void)?
+    var onEqualizeSplits: ((PaneSlotID) -> Void)?
 
     /// Called on `reload_config`. Host rebuilds the keybind bridge so menu
     /// shortcuts update to match the new config.
@@ -248,7 +248,7 @@ final class TerminalManager: ObservableObject {
 
     /// Fired when cmd-click resolves to a CLI editor; owner spawns a new
     /// pane split-right of the source with `initialInput` as the command.
-    var onOpenInEditorPane: ((TerminalID, String) -> Void)?
+    var onOpenInEditorPane: ((PaneSlotID, String) -> Void)?
 
     /// Swift-native mirror of `ghostty_action_progress_report_s` so
     /// callers outside the Terminal module don't need to import
@@ -339,7 +339,7 @@ final class TerminalManager: ObservableObject {
     /// `proc_pidinfo` call (process gone). Drives the right-click "Move
     /// to current worktree" menu item — a stale or missing answer just
     /// disables that item, never breaks anything.
-    func shellCwd(for id: TerminalID) -> String? {
+    func shellCwd(for id: PaneSlotID) -> String? {
         if let cached = cachedShellPIDs[id],
            let cwd = PIDCwdReader.cwd(ofPID: cached) {
             return cwd
@@ -353,7 +353,7 @@ final class TerminalManager: ObservableObject {
     /// nil for panes whose log hasn't been written yet — call sites
     /// should re-attempt later if needed. Caches successful lookups in
     /// `cachedShellPIDs` to amortize the log read across calls.
-    func lookupShellPID(for id: TerminalID) -> pid_t? {
+    func lookupShellPID(for id: PaneSlotID) -> pid_t? {
         if let cached = cachedShellPIDs[id] { return cached }
         guard let launcher = zmxLauncher, launcher.isAvailable else { return nil }
         guard let sessionName = zmxSessionName(for: id) else { return nil }
@@ -426,11 +426,11 @@ final class TerminalManager: ObservableObject {
         for splitTree: SplitTree,
         paneSessions: [PaneSlotID: PaneSessionID],
         worktreePath: String
-    ) -> [TerminalID: SurfaceHandle] {
+    ) -> [PaneSlotID: SurfaceHandle] {
         guard let app = ghosttyApp?.app else { return [:] }
 
         var zmxSessionSnapshot: ZmxSessionSnapshot?
-        func liveSessionsIfNeeded(for terminalID: TerminalID) -> ZmxSessionSnapshot? {
+        func liveSessionsIfNeeded(for terminalID: PaneSlotID) -> ZmxSessionSnapshot? {
             guard rehydratedSurfaces.contains(terminalID),
                   let launcher = zmxLauncher else { return nil }
             if zmxSessionSnapshot == nil {
@@ -440,7 +440,7 @@ final class TerminalManager: ObservableObject {
             return zmxSessionSnapshot
         }
 
-        var created: [TerminalID: SurfaceHandle] = [:]
+        var created: [PaneSlotID: SurfaceHandle] = [:]
         for terminalID in splitTree.allLeaves where surfaces[terminalID] == nil {
             guard let paneSessionID = paneSessions[terminalID] else { continue }
             guard canAllocatePTY(for: terminalID) else { continue }
@@ -480,9 +480,9 @@ final class TerminalManager: ObservableObject {
         return created
     }
 
-    /// Create a single surface, or return the existing one for this `TerminalID`.
+    /// Create a single surface, or return the existing one for this `PaneSlotID`.
     func createSurface(
-        terminalID: TerminalID,
+        terminalID: PaneSlotID,
         paneSessionID: PaneSessionID,
         worktreePath: String,
         extraInitialInput: String? = nil
@@ -523,7 +523,7 @@ final class TerminalManager: ObservableObject {
         return handle
     }
 
-    private func canAllocatePTY(for terminalID: TerminalID) -> Bool {
+    private func canAllocatePTY(for terminalID: PaneSlotID) -> Bool {
         guard ptyDeviceAvailability() == .available else {
             NSLog("[Graftty] PTY allocation unavailable; skipping surface creation for %@", terminalID.id.uuidString)
             return false
@@ -537,7 +537,7 @@ final class TerminalManager: ObservableObject {
     /// `sessionSnapshot` lets callers batch one `zmx list` across many
     /// leaves; pass `nil` to fall back to a per-call check.
     private func clearRehydratedIfDaemonGone(
-        _ terminalID: TerminalID,
+        _ terminalID: PaneSlotID,
         paneSessionID: PaneSessionID,
         sessionSnapshot: ZmxSessionSnapshot?
     ) {
@@ -560,7 +560,7 @@ final class TerminalManager: ObservableObject {
     /// surface and shell (title, shell-ready flag, PID cache). The
     /// lifecycle labels (firstPaneMarkers, rehydratedSurfaces) outlive
     /// this and are cleaned up separately in `forgetTrackingState`.
-    private func forgetSurfaceRuntimeState(for terminalID: TerminalID) {
+    private func forgetSurfaceRuntimeState(for terminalID: PaneSlotID) {
         surfaces.removeValue(forKey: terminalID)
         titles.removeValue(forKey: terminalID)
         pwds.removeValue(forKey: terminalID)
@@ -576,14 +576,14 @@ final class TerminalManager: ObservableObject {
     /// program-set title (already filtered at intake), PWD basename,
     /// then empty — callers render the "shell" fallback on empty per
     /// LAYOUT-2.9.
-    func displayTitle(for terminalID: TerminalID) -> String {
+    func displayTitle(for terminalID: PaneSlotID) -> String {
         renderedTitles[terminalID] ?? ""
     }
 
     /// Record a sanitized program-set title and return whether the rendered
     /// sidebar title changed. Rejected titles preserve the previous title.
     @discardableResult
-    func recordTitle(_ title: String, for terminalID: TerminalID) -> Bool {
+    func recordTitle(_ title: String, for terminalID: PaneSlotID) -> Bool {
         guard let sanitized = PaneTitle.sanitize(title) else { return false }
         titles[terminalID] = sanitized
         return updateRenderedTitle(for: terminalID)
@@ -593,12 +593,12 @@ final class TerminalManager: ObservableObject {
     /// title changed. The raw PWD is retained even when the basename display
     /// is unchanged so relative editor-open handling stays accurate.
     @discardableResult
-    func recordPWD(_ pwd: String, for terminalID: TerminalID) -> Bool {
+    func recordPWD(_ pwd: String, for terminalID: PaneSlotID) -> Bool {
         pwds[terminalID] = pwd
         return updateRenderedTitle(for: terminalID)
     }
 
-    private func updateRenderedTitle(for terminalID: TerminalID) -> Bool {
+    private func updateRenderedTitle(for terminalID: PaneSlotID) -> Bool {
         let old = renderedTitles[terminalID] ?? ""
         let new = PaneTitle.display(
             storedTitle: titles[terminalID],
@@ -615,12 +615,12 @@ final class TerminalManager: ObservableObject {
     }
 
     /// Look up the `NSView` hosting a given terminal's surface.
-    func view(for terminalID: TerminalID) -> NSView? {
+    func view(for terminalID: PaneSlotID) -> NSView? {
         surfaces[terminalID]?.view
     }
 
     /// Look up the `SurfaceHandle` for a given terminal.
-    func handle(for terminalID: TerminalID) -> SurfaceHandle? {
+    func handle(for terminalID: PaneSlotID) -> SurfaceHandle? {
         surfaces[terminalID]
     }
 
@@ -646,7 +646,7 @@ final class TerminalManager: ObservableObject {
 
     /// Tell libghostty whether a surface is currently visible. On visible,
     /// force a repaint so a re-shown pane presents a clean full frame.
-    func setVisible(_ visible: Bool, for terminalID: TerminalID) {
+    func setVisible(_ visible: Bool, for terminalID: PaneSlotID) {
         guard let handle = surfaces[terminalID] else { return }
         handle.setVisible(visible)
         if visible {
@@ -655,7 +655,7 @@ final class TerminalManager: ObservableObject {
     }
 
     /// Force a full repaint for a visible or soon-to-be-visible surface.
-    func refreshSurface(for terminalID: TerminalID) {
+    func refreshSurface(for terminalID: PaneSlotID) {
         surfaces[terminalID]?.refresh()
     }
 
@@ -664,7 +664,7 @@ final class TerminalManager: ObservableObject {
     /// UTF-8 copy at 4 KB since the only caller sanitizes+truncates to
     /// 100 characters — a multi-megabyte `cat` selection would otherwise
     /// force a full UTF-8 validation and `String` copy.
-    func readSelection(for terminalID: TerminalID) -> String? {
+    func readSelection(for terminalID: PaneSlotID) -> String? {
         guard let handle = handle(for: terminalID) else { return nil }
         let surface = handle.surface
         var text = ghostty_text_s()
@@ -680,7 +680,7 @@ final class TerminalManager: ObservableObject {
     }
 
     /// Focus exactly one surface (by ID); unfocus the rest.
-    func setFocus(_ terminalID: TerminalID) {
+    func setFocus(_ terminalID: PaneSlotID) {
         for (id, handle) in surfaces {
             if id == terminalID {
                 handle.setVisible(true)
@@ -691,19 +691,19 @@ final class TerminalManager: ObservableObject {
     }
 
     /// Whether any of the given terminals has a process that requires confirmation before quit.
-    func needsConfirmQuit(terminalIDs: [TerminalID]) -> Bool {
+    func needsConfirmQuit(terminalIDs: [PaneSlotID]) -> Bool {
         terminalIDs.contains { surfaces[$0]?.needsConfirmQuit == true }
     }
 
     /// Request close on each named surface and drop our reference. The surface itself
     /// is freed when the last strong reference to the `SurfaceHandle` drops.
-    func destroySurfaces(terminalIDs: [TerminalID]) {
+    func destroySurfaces(terminalIDs: [PaneSlotID]) {
         for id in terminalIDs {
             destroySurface(terminalID: id)
         }
     }
 
-    func destroySurface(terminalID: TerminalID) {
+    func destroySurface(terminalID: PaneSlotID) {
         if let scanner = portScanner {
             Task { await scanner.unregisterPane(terminalID) }
         }
@@ -717,7 +717,7 @@ final class TerminalManager: ObservableObject {
     /// creation caused the worktree to transition from `.closed` to
     /// `.running`. Called by the sidebar "Open" action (and any other
     /// caller that triggers a `.closed → .running` transition).
-    func markFirstPane(_ terminalID: TerminalID) {
+    func markFirstPane(_ terminalID: PaneSlotID) {
         firstPaneMarkers.insert(terminalID)
     }
 
@@ -726,30 +726,30 @@ final class TerminalManager: ObservableObject {
     /// a default command — the command is presumed already running under
     /// zmx from the previous session. Called by
     /// `GrafttyApp.restoreRunningWorktrees` before creating surfaces.
-    func markRehydrated(_ terminalID: TerminalID) {
+    func markRehydrated(_ terminalID: PaneSlotID) {
         rehydratedSurfaces.insert(terminalID)
     }
 
     /// Drop the rehydration label so `defaultCommandDecision` treats a
     /// pane as fresh. Called by `clearRehydratedIfDaemonGone`.
-    func clearRehydrated(_ terminalID: TerminalID) {
+    func clearRehydrated(_ terminalID: PaneSlotID) {
         rehydratedSurfaces.remove(terminalID)
     }
 
     /// Whether a terminal was marked as the first pane of its worktree.
-    func isFirstPane(_ terminalID: TerminalID) -> Bool {
+    func isFirstPane(_ terminalID: PaneSlotID) -> Bool {
         firstPaneMarkers.contains(terminalID)
     }
 
     /// Whether a terminal was marked as rehydrated rather than user-opened.
-    func wasRehydrated(_ terminalID: TerminalID) -> Bool {
+    func wasRehydrated(_ terminalID: PaneSlotID) -> Bool {
         rehydratedSurfaces.contains(terminalID)
     }
 
     /// Clear per-terminal tracking state on destroy. Keeps the three
     /// tracking sets in sync with live surfaces so destroyed IDs don't
     /// leak memory or cause stale answers from the marker queries.
-    private func forgetTrackingState(for terminalID: TerminalID) {
+    private func forgetTrackingState(for terminalID: PaneSlotID) {
         shellReadyFired.remove(terminalID)
         firstPaneMarkers.remove(terminalID)
         rehydratedSurfaces.remove(terminalID)
@@ -761,7 +761,7 @@ final class TerminalManager: ObservableObject {
     /// missing — in which case `SurfaceHandle` falls back to libghostty's
     /// default `$SHELL` spawn (existing pre-zmx behavior).
     func resolveZmxSpawnConfiguration(
-        for terminalID: TerminalID,
+        for terminalID: PaneSlotID,
         paneSessionID: PaneSessionID,
         worktreePath: String
     ) -> ZmxSpawnConfiguration? {
@@ -786,7 +786,7 @@ final class TerminalManager: ObservableObject {
     /// the main thread because subprocess wait can take tens of ms; we
     /// don't want to block UI. Result is intentionally ignored — kill of
     /// an already-gone session is the success outcome.
-    private func killZmxSession(for terminalID: TerminalID) {
+    private func killZmxSession(for terminalID: PaneSlotID) {
         guard let launcher = zmxLauncher, launcher.isAvailable else { return }
         guard let name = zmxSessionName(for: terminalID) else { return }
         DispatchQueue.global(qos: .utility).async {
@@ -794,11 +794,11 @@ final class TerminalManager: ObservableObject {
         }
     }
 
-    func recordPaneSession(_ paneSessionID: PaneSessionID, for terminalID: TerminalID) {
+    func recordPaneSession(_ paneSessionID: PaneSessionID, for terminalID: PaneSlotID) {
         paneSessionIDs[terminalID] = paneSessionID
     }
 
-    func zmxSessionName(for terminalID: TerminalID) -> String? {
+    func zmxSessionName(for terminalID: PaneSlotID) -> String? {
         guard let sessionID = paneSessionIDs[terminalID] else { return nil }
         return ZmxLauncher.sessionName(for: sessionID)
     }
@@ -828,7 +828,7 @@ final class TerminalManager: ObservableObject {
     /// Snapshot the given leaf's position inside a worktree's tree so we
     /// can restore it later. Called just before removing the leaf.
     func rememberPosition(
-        terminalID: TerminalID,
+        terminalID: PaneSlotID,
         worktreePath: String,
         in tree: SplitTree
     ) {
@@ -840,7 +840,7 @@ final class TerminalManager: ObservableObject {
     /// if the pane fails to rejoin for any reason, the breadcrumb stays
     /// available for the next attempt.
     func rememberedPosition(
-        terminalID: TerminalID,
+        terminalID: PaneSlotID,
         worktreePath: String
     ) -> SplitTree.LeafPosition? {
         rememberedPositions[PaneHistoryKey(terminalID: terminalID, worktreePath: worktreePath)]
@@ -848,15 +848,15 @@ final class TerminalManager: ObservableObject {
 
     /// Drop the breadcrumb (optional cleanup on successful rejoin — keeps
     /// the map from growing unboundedly if a pane bounces a lot).
-    func forgetPosition(terminalID: TerminalID, worktreePath: String) {
+    func forgetPosition(terminalID: PaneSlotID, worktreePath: String) {
         rememberedPositions.removeValue(forKey: PaneHistoryKey(terminalID: terminalID, worktreePath: worktreePath))
     }
 
-    /// Resolve a libghostty `ghostty_target_s` back to an Graftty `TerminalID`
+    /// Resolve a libghostty `ghostty_target_s` back to an Graftty `PaneSlotID`
     /// via the surface's userdata box. Returns nil for app-scoped targets or
     /// when the surface pointer has no box attached (shouldn't happen for
     /// surfaces we created).
-    private func terminalID(from target: ghostty_target_s) -> TerminalID? {
+    private func terminalID(from target: ghostty_target_s) -> PaneSlotID? {
         guard target.tag == GHOSTTY_TARGET_SURFACE else { return nil }
         guard let userdata = ghostty_surface_userdata(target.target.surface) else { return nil }
         let box = Unmanaged<SurfaceUserdataBox>.fromOpaque(userdata).takeUnretainedValue()

@@ -26,11 +26,11 @@ public enum PWDReassignmentPolicy {
     public static func shouldFollowToDestination(
         selectedWorktreePath: String?,
         sourceWorktreePath: String,
-        sourceFocusedTerminalID: TerminalID?,
-        reassignedTerminalID: TerminalID
+        sourceFocusedPaneSlotID: PaneSlotID?,
+        reassignedPaneSlotID: PaneSlotID
     ) -> Bool {
         guard selectedWorktreePath == sourceWorktreePath else { return false }
-        guard sourceFocusedTerminalID == reassignedTerminalID else { return false }
+        guard sourceFocusedPaneSlotID == reassignedPaneSlotID else { return false }
         return true
     }
 }

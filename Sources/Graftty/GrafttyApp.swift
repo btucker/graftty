@@ -1417,7 +1417,7 @@ struct GrafttyApp: App {
         // (h) Build the new worktrees array:
         //  - Carried-forward: mutate path (and latest branch label)
         //    in place on the `pre` copy, preserving id / splitTree /
-        //    state / attention / paneAttention / focusedTerminalID /
+        //    state / attention / paneAttention / focusedPaneSlotID /
         //    offeredDeleteForMergedPR.
         //  - Gone-stale: preserve the full entry, flip state to `.stale`
         //    so the sidebar can still offer a Dismiss action.
@@ -1529,7 +1529,7 @@ struct GrafttyApp: App {
                 let wt = appState.repos[repoIdx].worktrees[wtIdx]
                 if wt.state == .running {
                     if wt.splitTree.root == nil {
-                        let id = TerminalID()
+                        let id = PaneSlotID()
                         appState.repos[repoIdx].worktrees[wtIdx].splitTree = SplitTree(root: .leaf(id))
                     }
                     appState.repos[repoIdx].worktrees[wtIdx].ensurePaneSessionsForRunningRestore()
@@ -2048,7 +2048,7 @@ struct GrafttyApp: App {
             return PaneInfo(
                 id: i + 1,
                 title: display.isEmpty ? nil : display,
-                focused: terminalID == wt.focusedTerminalID
+                focused: terminalID == wt.focusedPaneSlotID
             )
         }
         return .paneList(panes)
@@ -2236,17 +2236,17 @@ struct GrafttyApp: App {
     fileprivate static func splitPane(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
-        targetID: TerminalID,
+        targetID: PaneSlotID,
         split: PaneSplit,
         extraInitialInput: String? = nil
-    ) -> TerminalID? {
+    ) -> PaneSlotID? {
         for repoIdx in appState.wrappedValue.repos.indices {
             for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                 let wt = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                 guard wt.state == .running, wt.splitTree.containsLeaf(targetID) else { continue }
 
                 let direction: SplitDirection = (split == .right || split == .left) ? .horizontal : .vertical
-                let newID = TerminalID()
+                let newID = PaneSlotID()
                 let newTree: SplitTree
                 switch split {
                 case .right, .down:
@@ -2273,7 +2273,7 @@ struct GrafttyApp: App {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].clearPaneSession(for: newID)
                     return nil
                 }
-                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = newID
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = newID
                 terminalManager.setFocus(newID)
                 return newID
             }
@@ -2292,7 +2292,7 @@ struct GrafttyApp: App {
     @MainActor
     fileprivate static func setAttentionForTerminal(
         appState: Binding<AppState>,
-        terminalID: TerminalID,
+        terminalID: PaneSlotID,
         text: String,
         clearAfter: TimeInterval
     ) {
@@ -2337,7 +2337,7 @@ struct GrafttyApp: App {
     static func reassignPaneByPWD(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
-        terminalID: TerminalID,
+        terminalID: PaneSlotID,
         newPWD: String
     ) {
         // Find the currently-hosting worktree (by scanning splitTrees) so
@@ -2387,9 +2387,9 @@ struct GrafttyApp: App {
             .takePaneSession(for: terminalID)
         if sourceTree.root == nil {
             appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].state = .closed
-            appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].focusedTerminalID = nil
-        } else if sourceWt.focusedTerminalID == terminalID {
-            appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].focusedTerminalID =
+            appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].focusedPaneSlotID = nil
+        } else if sourceWt.focusedPaneSlotID == terminalID {
+            appState.wrappedValue.repos[currentRepoIdx].worktrees[currentWorktreeIdx].focusedPaneSlotID =
                 sourceTree.allLeaves.first
         }
 
@@ -2428,7 +2428,7 @@ struct GrafttyApp: App {
         }
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].splitTree = targetTree
         appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].state = .running
-        appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].focusedTerminalID = terminalID
+        appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx].focusedPaneSlotID = terminalID
         if let movedPaneSession {
             appState.wrappedValue.repos[targetRepoIdx].worktrees[targetWorktreeIdx]
                 .recordPaneSession(movedPaneSession, for: terminalID)
@@ -2445,8 +2445,8 @@ struct GrafttyApp: App {
         let follow = PWDReassignmentPolicy.shouldFollowToDestination(
             selectedWorktreePath: appState.wrappedValue.selectedWorktreePath,
             sourceWorktreePath: sourceWt.path,
-            sourceFocusedTerminalID: sourceWt.focusedTerminalID,
-            reassignedTerminalID: terminalID
+            sourceFocusedPaneSlotID: sourceWt.focusedPaneSlotID,
+            reassignedPaneSlotID: terminalID
         )
         if follow {
             appState.wrappedValue.selectedWorktreePath = targetPath
@@ -2466,7 +2466,7 @@ struct GrafttyApp: App {
     fileprivate static func navigatePane(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
-        from terminalID: TerminalID,
+        from terminalID: PaneSlotID,
         direction: NavigationDirection
     ) {
         for repoIdx in appState.wrappedValue.repos.indices {
@@ -2487,7 +2487,7 @@ struct GrafttyApp: App {
                         : wt.splitTree.withZoom(nil)
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
                 }
-                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nextID
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = nextID
                 terminalManager.setFocus(nextID)
                 return
             }
@@ -2504,7 +2504,7 @@ struct GrafttyApp: App {
     fileprivate static func navigatePaneInTreeOrder(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
-        from terminalID: TerminalID,
+        from terminalID: PaneSlotID,
         forward: Bool
     ) {
         for repoIdx in appState.wrappedValue.repos.indices {
@@ -2523,7 +2523,7 @@ struct GrafttyApp: App {
                         : wt.splitTree.withZoom(nil)
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].splitTree = newTree
                 }
-                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nextID
+                appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = nextID
                 terminalManager.setFocus(nextID)
                 return
             }
@@ -2531,7 +2531,7 @@ struct GrafttyApp: App {
     }
 
     @MainActor
-    fileprivate static func toggleZoom(appState: Binding<AppState>, on terminalID: TerminalID) {
+    fileprivate static func toggleZoom(appState: Binding<AppState>, on terminalID: PaneSlotID) {
         mutateWorktreeContaining(appState: appState, leaf: terminalID) { wt in
             var copy = wt
             copy.splitTree = wt.splitTree.togglingZoom(at: terminalID)
@@ -2540,7 +2540,7 @@ struct GrafttyApp: App {
     }
 
     @MainActor
-    fileprivate static func equalizeSplits(appState: Binding<AppState>, around terminalID: TerminalID) {
+    fileprivate static func equalizeSplits(appState: Binding<AppState>, around terminalID: PaneSlotID) {
         mutateWorktreeContaining(appState: appState, leaf: terminalID) { wt in
             var copy = wt
             copy.splitTree = wt.splitTree.equalizing()
@@ -2551,7 +2551,7 @@ struct GrafttyApp: App {
     @MainActor
     fileprivate static func resizeSplit(
         appState: Binding<AppState>,
-        target: TerminalID,
+        target: PaneSlotID,
         direction: ResizeDirection,
         pixels: UInt16
     ) {
@@ -2583,7 +2583,7 @@ struct GrafttyApp: App {
     @MainActor
     private static func mutateWorktreeContaining(
         appState: Binding<AppState>,
-        leaf: TerminalID,
+        leaf: PaneSlotID,
         transform: (WorktreeEntry) -> WorktreeEntry
     ) {
         for repoIdx in appState.wrappedValue.repos.indices {
@@ -2613,7 +2613,7 @@ struct GrafttyApp: App {
     fileprivate static func closePane(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
-        targetID: TerminalID,
+        targetID: PaneSlotID,
         userInitiated: Bool = false
     ) {
         for repoIdx in appState.wrappedValue.repos.indices {
@@ -2647,20 +2647,20 @@ struct GrafttyApp: App {
 
                 if newTree.root == nil {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
-                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = nil
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = nil
                 } else {
                     // TERM-5.6: only promote focus when the CLOSED pane
                     // was the focused one. Pre-fix, this branch always
                     // reassigned focus to `newTree.allLeaves.first`,
                     // silently jumping focus away from whatever pane the
                     // user was typing in if they closed a different pane.
-                    let previousFocus = wt.focusedTerminalID
+                    let previousFocus = wt.focusedPaneSlotID
                     let newFocus = SplitTree.focusAfterRemoving(
                         currentFocus: previousFocus,
                         removed: targetID,
                         remainingTree: newTree
                     )
-                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedTerminalID = newFocus
+                    appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = newFocus
                     // Only push focus to libghostty if it actually
                     // changed — otherwise we're re-raising the same
                     // surface for no reason.
@@ -2681,7 +2681,7 @@ struct GrafttyApp: App {
     @MainActor
     fileprivate static func maybeRunDefaultCommand(
         terminalManager: TerminalManager,
-        terminalID: TerminalID
+        terminalID: PaneSlotID
     ) {
         let defaults = UserDefaults.standard
         let command = defaults.string(forKey: SettingsKeys.defaultCommand) ?? ""
@@ -2708,7 +2708,7 @@ struct GrafttyApp: App {
     // MARK: - Focused-pane helpers for menu actions
 
     /// The terminal currently holding focus in the selected worktree.
-    private var focusedTerminalID: TerminalID? {
+    private var focusedPaneSlotID: PaneSlotID? {
         guard let path = appState.selectedWorktreePath else { return nil }
         for repo in appState.repos {
             for wt in repo.worktrees where wt.path == path && wt.state == .running {
@@ -2719,32 +2719,32 @@ struct GrafttyApp: App {
     }
 
     private func handleSplit(_ split: PaneSplit) {
-        guard let id = focusedTerminalID else { return }
+        guard let id = focusedPaneSlotID else { return }
         _ = Self.splitPane(appState: $appState, terminalManager: terminalManager, targetID: id, split: split)
     }
 
     private func handleNavigate(_ dir: NavigationDirection) {
-        guard let id = focusedTerminalID else { return }
+        guard let id = focusedPaneSlotID else { return }
         Self.navigatePane(appState: $appState, terminalManager: terminalManager, from: id, direction: dir)
     }
 
     private func handleNavigateTreeOrder(forward: Bool) {
-        guard let id = focusedTerminalID else { return }
+        guard let id = focusedPaneSlotID else { return }
         Self.navigatePaneInTreeOrder(appState: $appState, terminalManager: terminalManager, from: id, forward: forward)
     }
 
     private func handleToggleZoom() {
-        guard let id = focusedTerminalID else { return }
+        guard let id = focusedPaneSlotID else { return }
         Self.toggleZoom(appState: $appState, on: id)
     }
 
     private func handleEqualizeSplits() {
-        guard let id = focusedTerminalID else { return }
+        guard let id = focusedPaneSlotID else { return }
         Self.equalizeSplits(appState: $appState, around: id)
     }
 
     private func handleClosePane() {
-        guard let id = focusedTerminalID else { return }
+        guard let id = focusedPaneSlotID else { return }
         Self.closePane(
             appState: $appState,
             terminalManager: terminalManager,
@@ -2771,7 +2771,7 @@ struct GrafttyApp: App {
         struct RunningEntry {
             let repoIdx: Int
             let worktreeIdx: Int
-            let terminalIDs: [TerminalID]
+            let terminalIDs: [PaneSlotID]
         }
         var running: [RunningEntry] = []
         var totalPanes = 0
@@ -3190,8 +3190,8 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
 private func paneLayoutNode(
     from node: SplitTree.Node,
     paneSessions: [PaneSlotID: PaneSessionID],
-    titles: [TerminalID: String],
-    paneAttention: [TerminalID: Attention]
+    titles: [PaneSlotID: String],
+    paneAttention: [PaneSlotID: Attention]
 ) -> PaneLayoutNode {
     switch node {
     case let .leaf(id):

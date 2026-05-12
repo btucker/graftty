@@ -64,7 +64,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var paneAttention: [PaneSlotID: Attention]
     public var paneSessions: [PaneSlotID: PaneSessionID]
     public var splitTree: SplitTree
-    public var focusedTerminalID: PaneSlotID?
+    public var focusedPaneSlotID: PaneSlotID?
     /// PR number for which the "PR merged — delete worktree?" offer
     /// dialog has already been presented. Persisted so that a force-push
     /// that closes PR N and reopens as PR M is correctly treated as a
@@ -87,7 +87,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.paneAttention = [:]
         self.paneSessions = [:]
         self.splitTree = splitTree
-        self.focusedTerminalID = nil
+        self.focusedPaneSlotID = nil
         self.offeredDeleteForMergedPR = nil
     }
 
@@ -99,8 +99,9 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     // rather than failing to decode and silently losing everything.
     private enum CodingKeys: String, CodingKey {
         case id, path, branch, state, attention, paneAttention,
-             paneSessions, splitTree, focusedTerminalID,
+             paneSessions, splitTree,
              offeredDeleteForMergedPR
+        case focusedPaneSlotID = "focusedTerminalID"
     }
 
     public init(from decoder: Decoder) throws {
@@ -119,9 +120,9 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
             forKey: .paneSessions
         ) ?? [:]
         self.splitTree = try container.decode(SplitTree.self, forKey: .splitTree)
-        self.focusedTerminalID = try container.decodeIfPresent(
+        self.focusedPaneSlotID = try container.decodeIfPresent(
             PaneSlotID.self,
-            forKey: .focusedTerminalID
+            forKey: .focusedPaneSlotID
         )
         self.offeredDeleteForMergedPR = try container.decodeIfPresent(
             Int.self,
@@ -223,7 +224,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         let oldLeaves = splitTree.allLeaves
         state = .closed
         splitTree = SplitTree(root: nil)
-        focusedTerminalID = nil
+        focusedPaneSlotID = nil
         paneAttention.removeAll()
         clearAllPaneSessions()
         return oldLeaves
@@ -242,7 +243,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// forever. Same corruption path that SIGKILL'd the app under
     /// window resize pre-`GIT-3.9`.
     ///
-    /// Clearing `splitTree` / `focusedTerminalID` / `paneAttention`
+    /// Clearing `splitTree` / `focusedPaneSlotID` / `paneAttention`
     /// here is largely symbolic since the caller is about to drop the
     /// whole entry, but it ensures a caller that ignores the return
     /// value leaves a visibly-empty entry rather than a sidebar row
@@ -251,7 +252,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public mutating func prepareForDismissal() -> [PaneSlotID] {
         let leaves = splitTree.allLeaves
         splitTree = SplitTree(root: nil)
-        focusedTerminalID = nil
+        focusedPaneSlotID = nil
         paneAttention.removeAll()
         clearAllPaneSessions()
         return leaves
@@ -260,7 +261,7 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     /// Transitions the entry from `.running` to `.closed` as part of the
     /// Stop menu action, dropping `paneAttention` for every pane (all
     /// panes are being destroyed; their pane-scoped badges must go per
-    /// `STATE-2.11`). Leaves `splitTree` and `focusedTerminalID` alone
+    /// `STATE-2.11`). Leaves `splitTree` and `focusedPaneSlotID` alone
     /// so re-open recreates the exact same layout at the same leaf IDs
     /// (`TERM-1.2`), and leaves the worktree-level `attention` slot
     /// alone since a CLI-notify ping is a worktree-level concern

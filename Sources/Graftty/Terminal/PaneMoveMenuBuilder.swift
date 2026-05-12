@@ -18,7 +18,7 @@ struct PaneMoveMenuContext {
     /// race, or the pane was just removed) — callers should skip the
     /// Move section in that case.
     static func resolve(
-        terminalID: TerminalID,
+        terminalID: PaneSlotID,
         appState: AppState,
         shellCwd: String?
     ) -> PaneMoveMenuContext? {
@@ -50,9 +50,9 @@ struct PaneMoveMenuContext {
 /// owns `NSMenu` construction and any surrounding separators.
 enum PaneMoveMenuBuilder {
     static func items(
-        terminalID: TerminalID,
+        terminalID: PaneSlotID,
         context: PaneMoveMenuContext,
-        onMove: @escaping (TerminalID, String) -> Void
+        onMove: @escaping (PaneSlotID, String) -> Void
     ) -> [NSMenuItem] {
         var out: [NSMenuItem] = []
 
@@ -82,9 +82,9 @@ enum PaneMoveMenuBuilder {
     }
 
     private static func currentWorktreeItem(
-        terminalID: TerminalID,
+        terminalID: PaneSlotID,
         context: PaneMoveMenuContext,
-        onMove: @escaping (TerminalID, String) -> Void
+        onMove: @escaping (PaneSlotID, String) -> Void
     ) -> NSMenuItem {
         if let match = context.cwdMatch,
            match.worktree.id != context.currentWorktree.id {
@@ -107,10 +107,10 @@ enum PaneMoveMenuBuilder {
     }
 
     private static func siblingsSubmenu(
-        terminalID: TerminalID,
+        terminalID: PaneSlotID,
         siblings: [WorktreeEntry],
         repo: RepoEntry,
-        onMove: @escaping (TerminalID, String) -> Void
+        onMove: @escaping (PaneSlotID, String) -> Void
     ) -> NSMenuItem {
         let parent = NSMenuItem(title: "Move to worktree", action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: "Move to worktree")

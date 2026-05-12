@@ -13,7 +13,7 @@ struct TerminalManagerMetadataTests {
 """)
     func rawPWDUpdatesWithoutPublishingWhenRenderedTitleIsUnchanged() {
         let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
-        let terminalID = TerminalID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+        let terminalID = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
         var publishCount = 0
         let cancellable = manager.paneTitleInvalidations.objectWillChange.sink { publishCount += 1 }
 
@@ -37,7 +37,7 @@ struct TerminalManagerMetadataTests {
 """)
     func pwdUpdatesUnderProgramTitleDoNotPublishSidebarTitleChanges() {
         let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
-        let terminalID = TerminalID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
+        let terminalID = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!)
         var publishCount = 0
         let cancellable = manager.paneTitleInvalidations.objectWillChange.sink { publishCount += 1 }
 
@@ -60,7 +60,7 @@ struct TerminalManagerMetadataTests {
 """)
     func whitespaceTitleStoresWithoutPublishingWhenFallbackTitleIsUnchanged() {
         let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
-        let terminalID = TerminalID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!)
+        let terminalID = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!)
         var publishCount = 0
         let cancellable = manager.paneTitleInvalidations.objectWillChange.sink { publishCount += 1 }
 
@@ -83,7 +83,7 @@ struct TerminalManagerMetadataTests {
 """)
     func paneTitleChangesDoNotPublishTerminalManagerObjectWillChange() {
         let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
-        let terminalID = TerminalID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!)
+        let terminalID = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!)
         var managerPublishCount = 0
         let cancellable = manager.objectWillChange.sink { managerPublishCount += 1 }
 
@@ -99,7 +99,7 @@ struct TerminalManagerMetadataTests {
 """)
     func paneTitleInvalidationsCoalesce() {
         let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
-        let terminalID = TerminalID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000005")!)
+        let terminalID = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000005")!)
         var publishCount = 0
         let cancellable = manager.paneTitleInvalidations.objectWillChange.sink { publishCount += 1 }
 

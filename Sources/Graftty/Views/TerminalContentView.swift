@@ -5,7 +5,7 @@ import GrafttyKit
 struct TerminalContentView: View {
     @ObservedObject var terminalManager: TerminalManager
     let splitTree: Binding<SplitTree>
-    let onFocusTerminal: (TerminalID) -> Void
+    let onFocusTerminal: (PaneSlotID) -> Void
 
     var body: some View {
         // Zoom fast-path: if one pane is zoomed, render only its leaf full-bleed.
@@ -36,7 +36,7 @@ struct TerminalContentView: View {
         }
     }
 
-    private func leafView(_ terminalID: TerminalID) -> AnyView {
+    private func leafView(_ terminalID: PaneSlotID) -> AnyView {
         if let nsView = terminalManager.view(for: terminalID) {
             let tm = terminalManager
             return AnyView(
