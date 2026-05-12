@@ -628,6 +628,17 @@ struct MainWindow: View {
         let wt = appState.repos[repoIdx].worktrees[wtIdx]
         let repoPath = appState.repos[repoIdx].path
 
+        // Defense-in-depth for PROJECT-1.1. The repo-row "+" button and the
+        // worktree-row "Delete Worktree" menu item are both gated, so this
+        // function should not be reachable for a non-git repo via UI. A
+        // programmatic caller (e.g. an unrelated event-driven offer dialog)
+        // would otherwise invoke `git worktree remove` on a folder with no
+        // `.git`, producing a guaranteed git error.
+        guard appState.repos[repoIdx].isGitTracked else {
+            NSLog("[Graftty] performDeleteWorktree: refused for non-git repo at %@", repoPath)
+            return
+        }
+
         // Run git first so a refusal (e.g. dirty worktree) leaves the
         // running terminals intact — tearing them down before we know
         // whether the delete will succeed would leave the user with a
