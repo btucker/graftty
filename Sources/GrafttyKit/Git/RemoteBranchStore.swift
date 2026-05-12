@@ -2,12 +2,27 @@ import Foundation
 import Observation
 import os
 
+/// @spec PR-8.23
+/// Per-repo remote-branch snapshot. `upstreams` is keyed by the
+/// local branch name and resolves to the remote-side ref `git push`
+/// would update — populated only for origin-tracked branches, so PR
+/// lookup can ignore branches that don't map to a PR/MR head ref.
+public struct RemoteBranchSnapshot: Sendable, Equatable {
+    public let branches: Set<String>
+    public let upstreams: [String: String]
+
+    public init(branches: Set<String>, upstreams: [String: String] = [:]) {
+        self.branches = branches
+        self.upstreams = upstreams
+    }
+}
+
 @MainActor
 @Observable
 public final class RemoteBranchStore {
-    public private(set) var branchesByRepo: [String: Set<String>] = [:]
+    public private(set) var branchesByRepo: [String: RemoteBranchSnapshot] = [:]
 
-    public typealias ListFunction = @Sendable (_ repoPath: String) async throws -> Set<String>
+    public typealias ListFunction = @Sendable (_ repoPath: String) async throws -> RemoteBranchSnapshot
 
     @ObservationIgnored public var onChange: (@MainActor (_ repoPath: String, _ old: Set<String>, _ new: Set<String>) -> Void)?
     @ObservationIgnored private let list: ListFunction
@@ -23,9 +38,20 @@ public final class RemoteBranchStore {
         self.list = list
     }
 
+    /// True iff `branch` has an upstream tracked under origin, or a
+    /// same-named remote ref already exists (pushed without tracking).
     public func hasRemote(repoPath: String, branch: String) -> Bool {
         guard Self.isEligibleLocalBranch(branch) else { return false }
-        return branchesByRepo[repoPath]?.contains(branch) == true
+        guard let info = branchesByRepo[repoPath] else { return false }
+        if info.upstreams[branch] != nil { return true }
+        return info.branches.contains(branch)
+    }
+
+    /// `branch.<local>.merge` resolved to its origin-side ref name,
+    /// or nil if the branch has no origin upstream. Callers fall
+    /// back to the local branch name for PR lookup when nil.
+    public func upstreamRemoteBranch(repoPath: String, branch: String) -> String? {
+        branchesByRepo[repoPath]?.upstreams[branch]
     }
 
     public func clear(repoPath: String) {
@@ -98,8 +124,8 @@ public final class RemoteBranchStore {
         let list = self.list
         Task { [weak self] in
             do {
-                let branches = try await list(repoPath)
-                self?.apply(repoPath: repoPath, branches: branches, refreshGeneration: refreshGeneration)
+                let snapshot = try await list(repoPath)
+                self?.apply(repoPath: repoPath, snapshot: snapshot, refreshGeneration: refreshGeneration)
             } catch {
                 self?.logger.info("remote branch scan failed for \(repoPath): \(String(describing: error))")
                 self?.finish(repoPath: repoPath, refreshGeneration: refreshGeneration)
@@ -107,15 +133,18 @@ public final class RemoteBranchStore {
         }
     }
 
-    private func apply(repoPath: String, branches: Set<String>, refreshGeneration: Int) {
+    private func apply(repoPath: String, snapshot: RemoteBranchSnapshot, refreshGeneration: Int) {
         defer {
             finish(repoPath: repoPath, refreshGeneration: refreshGeneration)
         }
         guard generation[repoPath, default: 0] == refreshGeneration else { return }
-        let old = branchesByRepo[repoPath] ?? []
-        guard old != branches else { return }
-        branchesByRepo[repoPath] = branches
-        onChange?(repoPath, old, branches)
+        let oldSnapshot = branchesByRepo[repoPath]
+        let oldBranches = oldSnapshot?.branches ?? []
+        guard oldSnapshot != snapshot else { return }
+        branchesByRepo[repoPath] = snapshot
+        if oldBranches != snapshot.branches {
+            onChange?(repoPath, oldBranches, snapshot.branches)
+        }
     }
 
     private func finish(repoPath: String, refreshGeneration: Int) {
@@ -154,15 +183,45 @@ public final class RemoteBranchStore {
         })
     }
 
+    /// Parses `git for-each-ref --format=%(refname:short)\t%(upstream:short) refs/heads/`
+    /// into `[local: remoteOnOrigin]`, dropping branches with no
+    /// upstream or with a non-origin upstream.
+    nonisolated static func parseUpstreams(_ output: String) -> [String: String] {
+        var result: [String: String] = [:]
+        for raw in output.split(whereSeparator: \.isNewline) {
+            let parts = raw.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+            guard parts.count == 2 else { continue }
+            let local = String(parts[0])
+            let upstream = String(parts[1])
+            guard !local.isEmpty, upstream.hasPrefix("origin/") else { continue }
+            let remote = String(upstream.dropFirst("origin/".count))
+            guard !remote.isEmpty, remote != "HEAD" else { continue }
+            result[local] = remote
+        }
+        return result
+    }
+
     public nonisolated static let defaultList: ListFunction = { repoPath in
-        let output = try await GitRunner.run(
+        async let remotesTask = GitRunner.run(
             args: ["for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"],
             at: repoPath
         )
-        return parseRefs(output)
+        async let headsTask = GitRunner.run(
+            args: ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)", "refs/heads/"],
+            at: repoPath
+        )
+        let (remotes, heads) = try await (remotesTask, headsTask)
+        return RemoteBranchSnapshot(
+            branches: parseRefs(remotes),
+            upstreams: parseUpstreams(heads)
+        )
     }
 
     nonisolated static func parseRefsForTesting(_ output: String) -> Set<String> {
         parseRefs(output)
+    }
+
+    nonisolated static func parseUpstreamsForTesting(_ output: String) -> [String: String] {
+        parseUpstreams(output)
     }
 }
