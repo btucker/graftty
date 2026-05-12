@@ -5,8 +5,14 @@ import Testing
 @Suite("SplitTree Tests")
 struct SplitTreeTests {
 
+    @Test func splitTreeStoresPaneSlotIDs() {
+        let slot = PaneSlotID()
+        let tree = SplitTree(root: .leaf(slot))
+        #expect(tree.allLeaves == [slot])
+    }
+
     @Test func singleLeaf() {
-        let id = TerminalID()
+        let id = PaneSlotID()
         let tree = SplitTree(root: .leaf(id))
         #expect(tree.root != nil)
         if case .leaf(let leafID) = tree.root {
@@ -17,8 +23,8 @@ struct SplitTreeTests {
     }
 
     @Test func horizontalSplit() {
-        let left = TerminalID()
-        let right = TerminalID()
+        let left = PaneSlotID()
+        let right = PaneSlotID()
         let tree = SplitTree(root: .split(.init(
             direction: .horizontal,
             ratio: 0.5,
@@ -29,9 +35,9 @@ struct SplitTreeTests {
     }
 
     @Test func insertSplitAtLeaf() {
-        let original = TerminalID()
+        let original = PaneSlotID()
         let tree = SplitTree(root: .leaf(original))
-        let newID = TerminalID()
+        let newID = PaneSlotID()
         let updated = tree.inserting(newID, at: original, direction: .horizontal)
         #expect(updated.leafCount == 2)
         guard case .split(let s) = updated.root else {
@@ -45,9 +51,9 @@ struct SplitTreeTests {
     }
 
     @Test func insertBeforeSplitAtLeaf() {
-        let original = TerminalID()
+        let original = PaneSlotID()
         let tree = SplitTree(root: .leaf(original))
-        let newID = TerminalID()
+        let newID = PaneSlotID()
         let updated = tree.insertingBefore(newID, at: original, direction: .vertical)
         #expect(updated.leafCount == 2)
         guard case .split(let s) = updated.root else {
@@ -62,8 +68,8 @@ struct SplitTreeTests {
     }
 
     @Test func removeLeaf() {
-        let left = TerminalID()
-        let right = TerminalID()
+        let left = PaneSlotID()
+        let right = PaneSlotID()
         let tree = SplitTree(root: .split(.init(
             direction: .horizontal,
             ratio: 0.5,
@@ -80,16 +86,16 @@ struct SplitTreeTests {
     }
 
     @Test func removeLastLeafReturnsNilRoot() {
-        let id = TerminalID()
+        let id = PaneSlotID()
         let tree = SplitTree(root: .leaf(id))
         let updated = tree.removing(id)
         #expect(updated.root == nil)
     }
 
     @Test func allLeaves() {
-        let a = TerminalID()
-        let b = TerminalID()
-        let c = TerminalID()
+        let a = PaneSlotID()
+        let b = PaneSlotID()
+        let c = PaneSlotID()
         let tree = SplitTree(root: .split(.init(
             direction: .horizontal,
             ratio: 0.5,
@@ -109,14 +115,14 @@ struct SplitTreeTests {
     }
 
     @Test func positionOfSoleLeafIsNil() {
-        let id = TerminalID()
+        let id = PaneSlotID()
         let tree = SplitTree(root: .leaf(id))
         #expect(tree.position(of: id) == nil)
     }
 
     @Test func positionOfLeftChild() {
-        let left = TerminalID()
-        let right = TerminalID()
+        let left = PaneSlotID()
+        let right = PaneSlotID()
         let tree = SplitTree(root: .split(.init(
             direction: .horizontal,
             ratio: 0.5,
@@ -130,9 +136,9 @@ struct SplitTreeTests {
     }
 
     @Test func positionOfRightChildInNestedSplit() {
-        let a = TerminalID()
-        let b = TerminalID()
-        let c = TerminalID()
+        let a = PaneSlotID()
+        let b = PaneSlotID()
+        let c = PaneSlotID()
         // H-split: a | V-split(b over c)
         let tree = SplitTree(root: .split(.init(
             direction: .horizontal,
@@ -152,9 +158,9 @@ struct SplitTreeTests {
     }
 
     @Test func positionSurvivesRemoveAndReinsert() {
-        let a = TerminalID()
-        let b = TerminalID()
-        let c = TerminalID()
+        let a = PaneSlotID()
+        let b = PaneSlotID()
+        let c = PaneSlotID()
         let tree = SplitTree(root: .split(.init(
             direction: .horizontal,
             ratio: 0.5,
@@ -188,8 +194,8 @@ struct SplitTreeTests {
     }
 
     @Test func codableRoundTrip() throws {
-        let a = TerminalID()
-        let b = TerminalID()
+        let a = PaneSlotID()
+        let b = PaneSlotID()
         let tree = SplitTree(root: .split(.init(
             direction: .horizontal,
             ratio: 0.6,

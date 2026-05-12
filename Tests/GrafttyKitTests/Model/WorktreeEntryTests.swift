@@ -131,7 +131,7 @@ struct WorktreeEntryTests {
 
     @Test func clearPaneAttentionIfTimestampClearsMatching() {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
-        let pane = TerminalID()
+        let pane = PaneSlotID()
         let now = Date()
         entry.paneAttention[pane] = Attention(text: "A", timestamp: now, clearAfter: 3)
         entry.clearPaneAttentionIfTimestamp(now, for: pane)
@@ -140,7 +140,7 @@ struct WorktreeEntryTests {
 
     @Test func clearPaneAttentionIfTimestampIsNoopForReplaced() {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
-        let pane = TerminalID()
+        let pane = PaneSlotID()
         let t1 = Date()
         entry.paneAttention[pane] = Attention(text: "A", timestamp: t1, clearAfter: 10)
         let t2 = t1.addingTimeInterval(1)
@@ -154,8 +154,8 @@ struct WorktreeEntryTests {
 
     @Test func clearPaneAttentionIfTimestampDoesNotAffectSiblings() {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
-        let pane1 = TerminalID()
-        let pane2 = TerminalID()
+        let pane1 = PaneSlotID()
+        let pane2 = PaneSlotID()
         let t = Date()
         entry.paneAttention[pane1] = Attention(text: "A", timestamp: t, clearAfter: 3)
         entry.paneAttention[pane2] = Attention(text: "B", timestamp: t, clearAfter: 3)
@@ -166,7 +166,7 @@ struct WorktreeEntryTests {
 
     @Test func clearPaneAttentionIfTimestampIsNoopWhenAlreadyCleared() {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
-        let pane = TerminalID()
+        let pane = PaneSlotID()
         let now = Date()
         entry.paneAttention[pane] = Attention(text: "A", timestamp: now, clearAfter: 5)
         entry.paneAttention[pane] = nil
@@ -194,8 +194,8 @@ struct WorktreeEntryTests {
         // worktree, a command-finished ping lands on pane A, and pane B
         // plus the worktree-level `attention` slot must stay untouched.
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
-        let paneA = TerminalID()
-        let paneB = TerminalID()
+        let paneA = PaneSlotID()
+        let paneB = PaneSlotID()
         entry.paneAttention[paneA] = Attention(text: "✓", timestamp: Date(), clearAfter: 3)
         #expect(entry.paneAttention[paneA]?.text == "✓")
         #expect(entry.paneAttention[paneB] == nil)
@@ -207,7 +207,7 @@ struct WorktreeEntryTests {
         // round-trip through Codable anyway so it travels with the rest
         // of AppState's persisted shape without special-casing.
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
-        let paneA = TerminalID()
+        let paneA = PaneSlotID()
         entry.paneAttention[paneA] = Attention(text: "!", timestamp: Date(), clearAfter: 8)
 
         let data = try JSONEncoder().encode(entry)
@@ -305,7 +305,7 @@ struct WorktreeEntryTests {
     @Test func codableRoundTrip() throws {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "feature/bar")
         entry.state = .running
-        let id = TerminalID()
+        let id = PaneSlotID()
         entry.splitTree = SplitTree(root: .leaf(id))
 
         let data = try JSONEncoder().encode(entry)
@@ -341,7 +341,7 @@ struct WorktreeEntryTests {
     //
     // When a .stale entry is resurrected (directory still on disk), its
     // old leaf TerminalIDs point at surfaces that are now orphan — the
-    // resurrect path creates a *fresh* terminal with a *new* TerminalID.
+    // resurrect path creates a *fresh* terminal with a *new* PaneSlotID.
     // The surfaces behind the old IDs keep running render/io/kqueue
     // threads, and on macOS that's been observed to corrupt libghostty's
     // internal `os_unfair_lock` during window resize and SIGKILL the app.
@@ -354,8 +354,8 @@ struct WorktreeEntryTests {
 
     @Test func prepareForResurrectionReturnsOldLeavesToDestroy() {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
-        let leaf1 = TerminalID()
-        let leaf2 = TerminalID()
+        let leaf1 = PaneSlotID()
+        let leaf2 = PaneSlotID()
         entry.splitTree = SplitTree(root: .split(.init(
             direction: .horizontal,
             ratio: 0.5,
@@ -402,8 +402,8 @@ struct WorktreeEntryTests {
 
     @Test func prepareForDismissalReturnsOldLeavesToDestroy() {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
-        let leafA = TerminalID()
-        let leafB = TerminalID()
+        let leafA = PaneSlotID()
+        let leafB = PaneSlotID()
         entry.splitTree = SplitTree(root: .split(.init(
             direction: .vertical,
             ratio: 0.5,
@@ -450,12 +450,12 @@ struct WorktreeEntryTests {
     // sees any CLI-notify badge (which is a worktree-level concern).
 
     @Test("""
-    @spec STATE-2.11: When the user triggers Stop on a running worktree (`TERM-1.2`'s companion — tears down all panes at once while preserving the split tree for re-open), the application shall drop every pane-scoped attention entry on that worktree. Extends `STATE-2.7`'s per-pane rule to the all-panes-at-once case. Without this, a stale pane attention badge from before the Stop would reappear on the fresh pane's sidebar row when the user re-opens the worktree — same-`TerminalID` leaves are reused on re-open to preserve layout, so the attention dictionary must be cleared explicitly. The worktree-level `attention` slot (CLI-notify) is left untouched — it's a worktree-wide concern independent of which panes are alive.
+    @spec STATE-2.11: When the user triggers Stop on a running worktree (`TERM-1.2`'s companion — tears down all panes at once while preserving the split tree for re-open), the application shall drop every pane-scoped attention entry on that worktree. Extends `STATE-2.7`'s per-pane rule to the all-panes-at-once case. Without this, a stale pane attention badge from before the Stop would reappear on the fresh pane's sidebar row when the user re-opens the worktree — same-`PaneSlotID` leaves are reused on re-open to preserve layout, so the attention dictionary must be cleared explicitly. The worktree-level `attention` slot (CLI-notify) is left untouched — it's a worktree-wide concern independent of which panes are alive.
     """)
     func prepareForStopClearsPaneAttentionAndClosesState() {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
-        let paneA = TerminalID()
-        let paneB = TerminalID()
+        let paneA = PaneSlotID()
+        let paneB = PaneSlotID()
         entry.state = .running
         entry.splitTree = SplitTree(root: .split(.init(
             direction: .horizontal,
@@ -475,7 +475,7 @@ struct WorktreeEntryTests {
 
     @Test func prepareForStopPreservesSplitTreeAndFocusedTerminalID() {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "main")
-        let paneA = TerminalID()
+        let paneA = PaneSlotID()
         entry.state = .running
         entry.splitTree = SplitTree(root: .leaf(paneA))
         entry.focusedTerminalID = paneA
@@ -517,9 +517,9 @@ struct WorktreeEntryTests {
     // leave that focus alone.
 
     @Test func focusAfterRemovingKeepsSurvivorFocusWhenDifferentPaneClosed() {
-        let a = TerminalID()
-        let b = TerminalID()
-        let c = TerminalID()
+        let a = PaneSlotID()
+        let b = PaneSlotID()
+        let c = PaneSlotID()
         let tree = SplitTree(root: .split(.init(
             direction: .horizontal, ratio: 0.5,
             left: .leaf(a),
@@ -541,8 +541,8 @@ struct WorktreeEntryTests {
     }
 
     @Test func focusAfterRemovingPromotesWhenClosedWasFocused() {
-        let a = TerminalID()
-        let b = TerminalID()
+        let a = PaneSlotID()
+        let b = PaneSlotID()
         let tree = SplitTree(root: .split(.init(
             direction: .horizontal, ratio: 0.5,
             left: .leaf(a),
@@ -560,7 +560,7 @@ struct WorktreeEntryTests {
     }
 
     @Test func focusAfterRemovingReturnsNilWhenTreeIsEmpty() {
-        let a = TerminalID()
+        let a = PaneSlotID()
         let emptyTree = SplitTree(root: nil)
 
         let newFocus = SplitTree.focusAfterRemoving(
@@ -573,8 +573,8 @@ struct WorktreeEntryTests {
 
     @Test func focusAfterRemovingReturnsNilWhenCurrentFocusWasNil() {
         // Worktree was just resurrected / stopped — no focus yet.
-        let a = TerminalID()
-        let b = TerminalID()
+        let a = PaneSlotID()
+        let b = PaneSlotID()
         let tree = SplitTree(root: .split(.init(
             direction: .horizontal, ratio: 0.5,
             left: .leaf(a),
