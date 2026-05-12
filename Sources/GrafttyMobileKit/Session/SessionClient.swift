@@ -307,6 +307,13 @@ public final class SessionClient {
         ws = nil
     }
 
+    public func forceReconnectNow() {
+        guard !stopped else { return }
+        receiveTask?.cancel()
+        receiveTask = nil
+        self.start()
+    }
+
     private func claimLeadershipIfNeeded() {
         guard !isLeader, !stopped, role != .preview, let v = lastIOSViewport else { return }
         isLeader = true

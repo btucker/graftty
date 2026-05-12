@@ -17,11 +17,24 @@ final class VirtualClock: Clock, @unchecked Sendable {
     var now: Date { lock.withLock { _now } }
 
     func sleep(for duration: TimeInterval) async throws {
-        try await withCheckedThrowingContinuation { continuation in
-            lock.withLock {
-                let deadline = _now.addingTimeInterval(duration)
-                sleepers.append((deadline, continuation))
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                lock.withLock {
+                    let deadline = _now.addingTimeInterval(duration)
+                    sleepers.append((deadline, continuation))
+                }
             }
+        } onCancel: {
+            // Cannot resolve the continuation directly here because we don't
+            // know which entry to pluck. Mark all sleepers as cancelled by
+            // resuming them with CancellationError. In tests we only ever
+            // have one inflight sleep, so this is acceptable.
+            let toCancel = lock.withLock { () -> [CheckedContinuation<Void, Error>] in
+                let conts = sleepers.map(\.continuation)
+                sleepers.removeAll()
+                return conts
+            }
+            for c in toCancel { c.resume(throwing: CancellationError()) }
         }
     }
 

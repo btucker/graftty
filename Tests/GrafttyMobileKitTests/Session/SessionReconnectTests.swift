@@ -125,6 +125,27 @@ struct SessionReconnectTests {
     }
 
     @Test
+    func forceReconnectNowCancelsBackoffSleep() async throws {
+        let clock = VirtualClock()
+        let factory = FactoryRecorder()
+        factory.nextProvider = { _ in FailingWS(id: 0) }
+        let client = SessionClient(
+            sessionName: "s",
+            webSocketFactory: factory.make,
+            clock: clock,
+            backoffSchedule: [30]  // long enough we won't auto-trigger
+        )
+        defer { client.stop() }
+        client.start()
+        await quiesce()
+        #expect(client.connectionState == .reconnecting(attempt: 1))
+        let beforeForce = factory.creations
+        client.forceReconnectNow()
+        await quiesce()
+        #expect(factory.creations == beforeForce + 1)
+    }
+
+    @Test
     func stopDuringBackoffCancelsCleanly() async throws {
         let clock = VirtualClock()
         let factory = FactoryRecorder()
