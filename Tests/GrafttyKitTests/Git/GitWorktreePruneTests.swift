@@ -5,9 +5,7 @@ import Foundation
 @Suite("GitWorktreePrune Tests", .serialized)
 struct GitWorktreePruneTests {
 
-    /// @spec GIT-4.13: When the user confirms Delete Worktree on a worktree whose directory no longer exists on disk, the application shall run `git worktree prune --expire=now`, drop the worktree entry from the sidebar without prompting the user with a Force Delete alert, and tear down any running terminal surfaces for the entry.
-    ///
-    /// This test exercises the git-level half of the requirement: that
+    /// This test exercises the git-level half of GIT-4.13: that
     /// `prune --expire=now` against a repo with an orphaned
     /// `.git/worktrees/<name>` entry (directory gone but admin dir still
     /// present) successfully removes the admin dir. The UI-glue half

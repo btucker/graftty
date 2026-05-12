@@ -644,6 +644,16 @@ struct MainWindow: View {
                     force: force
                 )
             } catch GitWorktreeRemove.Error.gitFailed(_, let stderr) {
+                // GIT-4.13: directory is gone but the admin entry survives.
+                // --force can't bypass git's path validation, so the Force
+                // Delete dialog is a dead end for this case. Run prune to
+                // clean the orphaned `.git/worktrees/<name>` and drop the
+                // row via the shared teardown.
+                if !FileManager.default.fileExists(atPath: worktreePath) {
+                    try? await GitWorktreePrune.run(repoPath: repoPath)
+                    finishWorktreeRemoval(worktree: wt, worktreePath: worktreePath, repoPath: repoPath)
+                    return
+                }
                 if force {
                     // Already attempted with --force; nothing left to
                     // offer. Match the original GIT-4.4 single-button
