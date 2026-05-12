@@ -293,9 +293,9 @@ public final class SessionClient {
         }
     }
 
-    /// @spec IOS-10.4
     /// Called from the idle-snapshot view's tap handler to wake the
     /// renderer without delivering a stray keystroke to the shell.
+    /// See IOS-10.4 / IOS-10.5.
     public func wakeRenderer() {
         recordActivity()
     }

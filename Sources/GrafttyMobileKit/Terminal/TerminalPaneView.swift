@@ -38,12 +38,11 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// Pass `.unspecified` (the default) when the config uses a
     /// `light:X,dark:Y` pair and should adapt to system appearance.
     public let preferredInterfaceStyle: UIUserInterfaceStyle
-    /// @spec IOS-10.4
     /// Invoked when SwiftUI is about to remove this representable from
     /// the tree — typically because `renderActivity` flipped to `.idle`.
     /// Passes a UIImage snapshot of the live view (best-effort; may be
     /// nil if the Metal layer cannot be captured) so the SessionClient
-    /// can hand it to `IdleSnapshotView`.
+    /// can hand it to `IdleSnapshotView`. See IOS-10.4.
     public let onWillUnmount: ((UIImage?) -> Void)?
 
     public init(
