@@ -533,11 +533,7 @@ struct MainWindow: View {
                     do {
                         try await GitInit.run(at: path)
                     } catch {
-                        let err = NSAlert()
-                        err.messageText = "Could not initialize git repository"
-                        err.informativeText = "\(path)\n\n\(String(describing: error))"
-                        err.alertStyle = .warning
-                        err.runModal()
+                        AddRepositoryAlert.presentGitInitFailure(path: path, error: error)
                         return
                     }
                     // Re-enter the standard add path so discovery, bookmark
@@ -628,12 +624,9 @@ struct MainWindow: View {
         let wt = appState.repos[repoIdx].worktrees[wtIdx]
         let repoPath = appState.repos[repoIdx].path
 
-        // Defense-in-depth for PROJECT-1.1. The repo-row "+" button and the
-        // worktree-row "Delete Worktree" menu item are both gated, so this
-        // function should not be reachable for a non-git repo via UI. A
-        // programmatic caller (e.g. an unrelated event-driven offer dialog)
-        // would otherwise invoke `git worktree remove` on a folder with no
-        // `.git`, producing a guaranteed git error.
+        // PROJECT-1.1 defense-in-depth: `git worktree remove` would error
+        // on a folder with no `.git`. UI affordances are gated, but a
+        // programmatic caller would otherwise hit a guaranteed git error.
         guard appState.repos[repoIdx].isGitTracked else {
             NSLog("[Graftty] performDeleteWorktree: refused for non-git repo at %@", repoPath)
             return
@@ -803,13 +796,12 @@ struct MainWindow: View {
             do {
                 try await GitInit.run(at: repo.path)
             } catch {
-                let alert = NSAlert()
-                alert.messageText = "Could not initialize git repository"
-                alert.informativeText = "\(repo.path)\n\n\(String(describing: error))"
-                alert.alertStyle = .warning
-                alert.runModal()
+                AddRepositoryAlert.presentGitInitFailure(path: repo.path, error: error)
                 return
             }
+            // `appState.repos` can mutate during `await` (the user could
+            // remove the repo, or a relocate cascade could rewrite paths),
+            // so each post-await mutation re-resolves the index by id.
             guard let idx = appState.repos.firstIndex(where: { $0.id == repo.id }) else { return }
             appState.repos[idx].isGitTracked = true
 

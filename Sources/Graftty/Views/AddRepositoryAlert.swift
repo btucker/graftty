@@ -35,8 +35,8 @@ enum AddRepositoryAlert {
 
     /// Constructs the non-git `RepoEntry` registered when the user
     /// chooses "Add Without Git" (`GIT-1.7`). The single synthetic
-    /// worktree's path equals the repo path; its branch label is the
-    /// literal string `"main"`.
+    /// worktree's path equals the repo path; its branch label is
+    /// `WorktreeDiscovery.placeholderBranch`.
     static func makeNonGitRepoEntry(
         atPath path: String,
         displayName: String,
@@ -45,9 +45,20 @@ enum AddRepositoryAlert {
         RepoEntry(
             path: path,
             displayName: displayName,
-            worktrees: [WorktreeEntry(path: path, branch: "main")],
+            worktrees: [WorktreeEntry(path: path, branch: WorktreeDiscovery.placeholderBranch)],
             bookmark: bookmark,
             isGitTracked: false
         )
+    }
+
+    /// Shows the standard "Could not initialize git repository" warning
+    /// alert used by both the Add Repository init branch and the
+    /// promote-to-git context-menu action.
+    static func presentGitInitFailure(path: String, error: Swift.Error) {
+        let alert = NSAlert()
+        alert.messageText = "Could not initialize git repository"
+        alert.informativeText = "\(path)\n\n\(String(describing: error))"
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 }

@@ -57,7 +57,7 @@ public enum GitInit {
     /// `GitRunner.captureAll` so a non-zero exit (unset key) is observable
     /// without throwing.
     private static func hasConfiguredIdentity(at path: String) async -> Bool {
-        func probe(_ key: String) async -> Bool {
+        @Sendable func probe(_ key: String) async -> Bool {
             do {
                 let out = try await GitRunner.captureAll(
                     args: ["config", key], at: path
@@ -70,9 +70,10 @@ public enum GitInit {
                 return false
             }
         }
-        let hasEmail = await probe("user.email")
-        let hasName = await probe("user.name")
-        return hasEmail && hasName
+        async let hasEmail = probe("user.email")
+        async let hasName = probe("user.name")
+        let (email, name) = await (hasEmail, hasName)
+        return email && name
     }
 
     private static func runStep(args: [String], at path: String) async throws {
