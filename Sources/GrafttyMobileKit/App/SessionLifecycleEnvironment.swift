@@ -33,9 +33,14 @@ extension SessionClient {
         sessionName: String,
         role: Role = .fullscreen
     ) -> SessionClient {
-        let wsURL = RootView.makeWebSocketURL(base: baseURL, session: sessionName)
-        let ws = URLSessionWebSocketClient(url: wsURL)
-        return SessionClient(sessionName: sessionName, webSocket: ws, role: role)
+        SessionClient(
+            sessionName: sessionName,
+            webSocketFactory: {
+                let wsURL = RootView.makeWebSocketURL(base: baseURL, session: sessionName)
+                return URLSessionWebSocketClient(url: wsURL)
+            },
+            role: role
+        )
     }
 }
 #endif
@@ -48,6 +53,15 @@ extension SessionClient {
 public enum LiveSessionReadiness {
     public static func isActive(scene: ScenePhase, gateUnlocked: Bool) -> Bool {
         scene == .active && gateUnlocked
+    }
+
+    /// @spec IOS-10.1
+    /// Returns true when the application should release WSes and unmount
+    /// live terminal views. `.inactive` is included so that lock-screen
+    /// pulls / Control Center / app-switcher windows don't keep
+    /// libghostty's display link ticking at 120 Hz.
+    public static func shouldTearDown(scene: ScenePhase) -> Bool {
+        scene == .inactive || scene == .background
     }
 }
 

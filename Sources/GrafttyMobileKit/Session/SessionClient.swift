@@ -45,7 +45,11 @@ public final class SessionClient {
     @ObservationIgnored
     internal var displayScale: CGFloat = UIScreen.main.scale
 
-    nonisolated private let ws: WebSocketClient
+    nonisolated private let webSocketFactory: @Sendable () -> WebSocketClient
+    nonisolated internal let clock: any Clock
+    nonisolated internal let backoffSchedule: [TimeInterval]
+    @ObservationIgnored
+    nonisolated(unsafe) private var ws: WebSocketClient?
     private var receiveTask: Task<Void, Never>?
     private var stopped = false
     /// Last (cols, rows) libghostty reported for the iOS-side view.
@@ -88,14 +92,55 @@ public final class SessionClient {
 
     public let role: Role
 
+    public enum ConnectionState: Equatable, Sendable {
+        case live
+        case reconnecting(attempt: Int)
+    }
+
+    /// @spec IOS-7.4
+    public private(set) var connectionState: ConnectionState = .live
+
+    public enum RenderActivity: Equatable, Sendable {
+        case active
+        case idle
+    }
+
+    /// @spec IOS-10.3
+    public private(set) var renderActivity: RenderActivity = .active
+
+    /// @spec IOS-10.4: While a `SessionClient` is in `.idle`, the corresponding view shall display a static snapshot of the last live frame in place of `TerminalPaneView`, with a tap target that resumes `.active`.
+    public private(set) var idleSnapshot: UIImage?
+
+    public func setIdleSnapshot(_ image: UIImage?) {
+        self.idleSnapshot = image
+    }
+
+    nonisolated internal let idleThreshold: TimeInterval
+    nonisolated internal let idleCheckInterval: TimeInterval
+
+    @ObservationIgnored
+    private var lastActivityAt: Date = .distantPast
+
+    @ObservationIgnored
+    private var idleWatchdogTask: Task<Void, Never>?
+
     public init(
         sessionName: String,
-        webSocket: WebSocketClient,
+        webSocketFactory: @Sendable @escaping () -> WebSocketClient,
+        clock: any Clock = SystemClock(),
+        backoffSchedule: [TimeInterval] = HostController.backoffSchedule(attempts: 6),
+        idleThreshold: TimeInterval = 30,
+        idleCheckInterval: TimeInterval = 5,
         role: Role = .fullscreen
     ) {
         self.sessionName = sessionName
-        self.ws = webSocket
+        self.webSocketFactory = webSocketFactory
+        self.clock = clock
+        self.backoffSchedule = backoffSchedule
+        self.idleThreshold = idleThreshold
+        self.idleCheckInterval = idleCheckInterval
         self.role = role
+        self.lastActivityAt = clock.now
 
         final class Box {
             var onBytes: (@Sendable (Data) -> Void)?
@@ -117,7 +162,9 @@ public final class SessionClient {
             let isSoftReturn = data.count == 1 && data.first == 0x0A
             self.sendBinary(isSoftReturn ? Self.cr : data)
             Task { @MainActor [weak self] in
-                self?.claimLeadershipIfNeeded()
+                guard let self else { return }
+                self.recordActivity()
+                self.claimLeadershipIfNeeded()
             }
         }
         // Layout path: libghostty tells us "the iOS view is now N×M".
@@ -152,34 +199,103 @@ public final class SessionClient {
     }
 
     public func start() {
+        lastActivityAt = clock.now
+        startIdleWatchdog()
+        ws = webSocketFactory()
         receiveTask = Task { @MainActor [weak self] in
-            while let self, !self.stopped {
+            guard let self else { return }
+            var attempt = 0
+            while !self.stopped {
+                if self.connectionState != .live {
+                    self.connectionState = .live
+                }
                 do {
-                    let frame = try await self.ws.receive()
-                    switch frame {
-                    case .binary(let data):
-                        self.session.receive(data)
-                    case .text(let text):
-                        self.handleTextFrame(text)
+                    guard let ws = self.ws else {
+                        throw URLError(.cannotConnectToHost)
                     }
+                    while !self.stopped {
+                        let frame = try await ws.receive()
+                        // Receiving a frame means we're truly connected;
+                        // reset the backoff counter so the next failure
+                        // starts again at the schedule's first entry.
+                        attempt = 0
+                        self.recordActivity()
+                        switch frame {
+                        case .binary(let data):
+                            self.session.receive(data)
+                        case .text(let text):
+                            self.handleTextFrame(text)
+                        }
+                    }
+                } catch is CancellationError {
+                    return
                 } catch {
-                    break
+                    // network error — fall through to backoff
+                }
+                if self.stopped { return }
+                let delayIndex = min(attempt, self.backoffSchedule.count - 1)
+                let delay = self.backoffSchedule[delayIndex]
+                attempt += 1
+                self.connectionState = .reconnecting(attempt: attempt)
+                do {
+                    try await self.clock.sleep(for: delay)
+                } catch {
+                    return
+                }
+                self.ws = self.webSocketFactory()
+            }
+        }
+    }
+
+    @MainActor
+    private func startIdleWatchdog() {
+        idleWatchdogTask?.cancel()
+        idleWatchdogTask = Task { @MainActor [weak self] in
+            while let self, !self.stopped, self.renderActivity == .active {
+                let elapsed = self.clock.now.timeIntervalSince(self.lastActivityAt)
+                let remaining = self.idleThreshold - elapsed
+                if remaining <= 0 {
+                    self.renderActivity = .idle
+                    return
+                }
+                do {
+                    try await self.clock.sleep(for: remaining)
+                } catch {
+                    return
                 }
             }
         }
     }
 
+    @MainActor
+    private func recordActivity() {
+        lastActivityAt = clock.now
+        if renderActivity == .idle {
+            renderActivity = .active
+            startIdleWatchdog()
+        }
+    }
+
+    public func wakeRenderer() {
+        recordActivity()
+    }
+
+    @MainActor
+    private func sendInput(_ data: Data) {
+        recordActivity()
+        sendBinary(data)
+        claimLeadershipIfNeeded()
+    }
+
     /// IOS-6.4: send literal LF, bypassing the IOS-6.3 translation.
     public func insertNewline() {
-        sendBinary(Self.lf)
-        claimLeadershipIfNeeded()
+        sendInput(Self.lf)
     }
 
     /// Send a Return/Enter submit keystroke. PTYs conventionally receive
     /// CR for Return; this is distinct from inserting a literal LF.
     public func submitReturn() {
-        sendBinary(Self.cr)
-        claimLeadershipIfNeeded()
+        sendInput(Self.cr)
     }
 
     /// Send text from the iOS software keyboard as ordinary PTY input
@@ -193,23 +309,19 @@ public final class SessionClient {
             submitReturn()
             return
         }
-        sendBinary(Data(text.utf8))
-        claimLeadershipIfNeeded()
+        sendInput(Data(text.utf8))
     }
 
     public func deleteBackward() {
-        sendBinary(Data([0x7F]))
-        claimLeadershipIfNeeded()
+        sendInput(Data([0x7F]))
     }
 
     public func sendEscape() {
-        sendBinary(Data([0x1B]))
-        claimLeadershipIfNeeded()
+        sendInput(Data([0x1B]))
     }
 
     public func sendTab() {
-        sendBinary(Data([0x09]))
-        claimLeadershipIfNeeded()
+        sendInput(Data([0x09]))
     }
 
     public func sendArrow(_ direction: ArrowDirection) {
@@ -224,8 +336,7 @@ public final class SessionClient {
         case .right:
             sequence = "\u{1B}[C"
         }
-        sendBinary(Data(sequence.utf8))
-        claimLeadershipIfNeeded()
+        sendInput(Data(sequence.utf8))
     }
 
     public func sendControl(_ character: ControlCharacter) {
@@ -236,8 +347,7 @@ public final class SessionClient {
         case .d:
             byte = 0x04
         }
-        sendBinary(Data([byte]))
-        claimLeadershipIfNeeded()
+        sendInput(Data([byte]))
     }
 
     public func stop() {
@@ -245,7 +355,17 @@ public final class SessionClient {
         stopped = true
         receiveTask?.cancel()
         receiveTask = nil
-        ws.close()
+        idleWatchdogTask?.cancel()
+        idleWatchdogTask = nil
+        ws?.close()
+        ws = nil
+    }
+
+    public func forceReconnectNow() {
+        guard !stopped else { return }
+        receiveTask?.cancel()
+        receiveTask = nil
+        self.start()
     }
 
     private func claimLeadershipIfNeeded() {
@@ -259,11 +379,11 @@ public final class SessionClient {
     }
 
     nonisolated private func sendBinary(_ data: Data) {
-        Task { [ws] in try? await ws.send(.binary(data)) }
+        Task { [ws] in try? await ws?.send(.binary(data)) }
     }
 
     nonisolated private func sendText(_ text: String) {
-        Task { [ws] in try? await ws.send(.text(text)) }
+        Task { [ws] in try? await ws?.send(.text(text)) }
     }
 
     private func handleTextFrame(_ text: String) {

@@ -78,7 +78,7 @@ public struct RootView: View {
         .background(.regularMaterial)
     }
 
-    static func makeWebSocketURL(base: URL, session: String) -> URL {
+    nonisolated static func makeWebSocketURL(base: URL, session: String) -> URL {
         var components = URLComponents(url: base, resolvingAgainstBaseURL: false) ?? URLComponents()
         components.scheme = (base.scheme?.lowercased() == "https") ? "wss" : "ws"
         components.path = "/ws"
@@ -176,6 +176,14 @@ struct SingleSessionView: View {
                     .padding(.leading, 12)
                     .padding(.top, 12)
             }
+            .overlay(alignment: .top) {
+                if let client, client.connectionState != .live {
+                    reconnectBanner(client: client)
+                        .padding(.top, 64)
+                        .padding(.horizontal, 16)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
             .overlay(alignment: .bottom) {
                 if connection == .live { terminalChrome }
             }
@@ -240,7 +248,7 @@ struct SingleSessionView: View {
     }
 
     private func driveConnection() async {
-        if scenePhase == .background {
+        if LiveSessionReadiness.shouldTearDown(scene: scenePhase) {
             client?.stop()
             client = nil
             if connection != .ended { connection = .suspended }
@@ -325,6 +333,36 @@ struct SingleSessionView: View {
         if !navigationPath.isEmpty {
             navigationPath.removeLast()
         }
+    }
+
+    @ViewBuilder
+    private func reconnectBanner(client: SessionClient) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: "wifi.exclamationmark")
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Reconnecting…")
+                    .font(.subheadline.weight(.semibold))
+                if case .reconnecting(let attempt) = client.connectionState {
+                    Text("Attempt \(attempt)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Button("Reconnect") { client.forceReconnectNow() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            Button("Back") { popToParent() }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(.separator.opacity(0.35), lineWidth: 0.5)
+        )
     }
 
     @ViewBuilder
@@ -430,33 +468,50 @@ struct SingleSessionView: View {
     @ViewBuilder
     private func terminalContent(containerSize: CGSize) -> some View {
         if let controller, let client {
-            let pane = TerminalPaneView(
-                session: client.session,
-                controller: controller,
-                focusRequestCount: focusRequestCount,
-                softwareKeyboardInput: .init(
-                    insertText: { text in client.sendSoftwareKeyboardText(text) },
-                    deleteBackward: { client.deleteBackward() }
-                ),
-                preferredInterfaceStyle: preferredStyle
-            )
-            let cellWidth = client.cellWidthPoints ?? TerminalWidthLayout.fallbackCellWidth
-            let decision = TerminalWidthLayout.decide(
-                containerWidth: containerSize.width,
-                serverCols: client.serverGrid?.cols,
-                cellWidth: cellWidth
-            )
-            switch decision {
-            case .fits:
-                pane
-            case let .scrollable(frameWidth):
-                ScrollView(.horizontal, showsIndicators: true) {
-                    pane.frame(width: frameWidth, height: containerSize.height)
+            switch client.renderActivity {
+            case .active:
+                activeTerminal(client: client, controller: controller, containerSize: containerSize)
+            case .idle:
+                IdleSnapshotView(snapshot: client.idleSnapshot) {
+                    client.wakeRenderer()
                 }
             }
         } else {
             // Mac-config fetch in flight, or client not yet assigned.
             loadingPlaceholder
+        }
+    }
+
+    @ViewBuilder
+    private func activeTerminal(
+        client: SessionClient,
+        controller: TerminalController,
+        containerSize: CGSize
+    ) -> some View {
+        let pane = TerminalPaneView(
+            session: client.session,
+            controller: controller,
+            focusRequestCount: focusRequestCount,
+            softwareKeyboardInput: .init(
+                insertText: { text in client.sendSoftwareKeyboardText(text) },
+                deleteBackward: { client.deleteBackward() }
+            ),
+            preferredInterfaceStyle: preferredStyle,
+            onWillUnmount: { snapshot in client.setIdleSnapshot(snapshot) }
+        )
+        let cellWidth = client.cellWidthPoints ?? TerminalWidthLayout.fallbackCellWidth
+        let decision = TerminalWidthLayout.decide(
+            containerWidth: containerSize.width,
+            serverCols: client.serverGrid?.cols,
+            cellWidth: cellWidth
+        )
+        switch decision {
+        case .fits:
+            pane
+        case let .scrollable(frameWidth):
+            ScrollView(.horizontal, showsIndicators: true) {
+                pane.frame(width: frameWidth, height: containerSize.height)
+            }
         }
     }
 

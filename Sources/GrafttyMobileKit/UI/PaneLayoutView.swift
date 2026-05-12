@@ -152,15 +152,26 @@ private struct PaneTile: View {
     @ViewBuilder
     private func paneContent(client: SessionClient) -> some View {
         if let controller, controllerSourceConfig == baseConfig {
-            TerminalPaneView(
-                session: client.session,
-                controller: controller,
-                preferredInterfaceStyle: preferredInterfaceStyle
-            )
-                .allowsHitTesting(false)
-                .overlay(Color.black.opacity(0.08))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipped()
+            switch client.renderActivity {
+            case .active:
+                TerminalPaneView(
+                    session: client.session,
+                    controller: controller,
+                    preferredInterfaceStyle: preferredInterfaceStyle,
+                    onWillUnmount: { snapshot in client.setIdleSnapshot(snapshot) }
+                )
+                    .allowsHitTesting(false)
+                    .overlay(Color.black.opacity(0.08))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+            case .idle:
+                IdleSnapshotView(snapshot: client.idleSnapshot) {
+                    client.wakeRenderer()
+                }
+                    .allowsHitTesting(false)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+            }
         } else {
             Color.black.overlay(ProgressView().tint(.white))
         }
