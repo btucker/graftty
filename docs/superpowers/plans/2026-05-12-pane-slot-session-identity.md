@@ -110,10 +110,9 @@ public struct PaneSlotID: Hashable, Codable, Identifiable, Sendable {
 }
 ```
 
-During this task only, add this compatibility alias at the bottom of `PaneSlotID.swift` so the repo can be renamed incrementally:
+During this task only, add this non-deprecated compatibility alias at the bottom of `PaneSlotID.swift` so the repo can be renamed incrementally. Do not mark it deprecated yet: the package builds debug targets with warnings as errors, so a deprecation warning would break every still-unrenamed reference.
 
 ```swift
-@available(*, deprecated, renamed: "PaneSlotID")
 public typealias TerminalID = PaneSlotID
 ```
 
@@ -817,7 +816,6 @@ Keep historical comments only if they describe migration from old persisted data
 Delete from `PaneSlotID.swift`:
 
 ```swift
-@available(*, deprecated, renamed: "PaneSlotID")
 public typealias TerminalID = PaneSlotID
 ```
 
@@ -926,4 +924,3 @@ git commit -m "chore(panes): clean up slot session identity migration"
 - App quit/relaunch must preserve session identity for worktrees persisted as `.running`.
 - Team delivery should not inspect process names. Live session identity is the safety gate.
 - `PaneSlotID` should never be accepted by zmx APIs once the compatibility alias is removed.
-
