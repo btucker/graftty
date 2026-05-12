@@ -38,25 +38,35 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// Pass `.unspecified` (the default) when the config uses a
     /// `light:X,dark:Y` pair and should adapt to system appearance.
     public let preferredInterfaceStyle: UIUserInterfaceStyle
+    /// @spec IOS-10.4
+    /// Invoked when SwiftUI is about to remove this representable from
+    /// the tree — typically because `renderActivity` flipped to `.idle`.
+    /// Passes a UIImage snapshot of the live view (best-effort; may be
+    /// nil if the Metal layer cannot be captured) so the SessionClient
+    /// can hand it to `IdleSnapshotView`.
+    public let onWillUnmount: ((UIImage?) -> Void)?
 
     public init(
         session: InMemoryTerminalSession,
         controller: TerminalController,
         focusRequestCount: Int = 0,
         softwareKeyboardInput: SoftwareKeyboardInput? = nil,
-        preferredInterfaceStyle: UIUserInterfaceStyle = .unspecified
+        preferredInterfaceStyle: UIUserInterfaceStyle = .unspecified,
+        onWillUnmount: ((UIImage?) -> Void)? = nil
     ) {
         self.session = session
         self.controller = controller
         self.focusRequestCount = focusRequestCount
         self.softwareKeyboardInput = softwareKeyboardInput
         self.preferredInterfaceStyle = preferredInterfaceStyle
+        self.onWillUnmount = onWillUnmount
     }
 
     public func makeCoordinator() -> Coordinator { Coordinator() }
 
     public final class Coordinator {
         var lastFocusRequest: Int = 0
+        var onWillUnmount: ((UIImage?) -> Void)?
     }
 
     public func makeUIView(context: Context) -> TerminalInputContainerView {
@@ -67,6 +77,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
         context.coordinator.lastFocusRequest = focusRequestCount
+        context.coordinator.onWillUnmount = onWillUnmount
         return view
     }
 
@@ -75,11 +86,26 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
+        context.coordinator.onWillUnmount = onWillUnmount
         if context.coordinator.lastFocusRequest != focusRequestCount {
             context.coordinator.lastFocusRequest = focusRequestCount
             DispatchQueue.main.async {
                 view.focusKeyboardInput()
             }
+        }
+    }
+
+    public static func dismantleUIView(_ view: TerminalInputContainerView, coordinator: Coordinator) {
+        guard let onWillUnmount = coordinator.onWillUnmount else { return }
+        let snapshot = Self.captureSnapshot(of: view)
+        onWillUnmount(snapshot)
+    }
+
+    private static func captureSnapshot(of view: UIView) -> UIImage? {
+        guard view.bounds.width > 0, view.bounds.height > 0 else { return nil }
+        let renderer = UIGraphicsImageRenderer(bounds: view.bounds)
+        return renderer.image { ctx in
+            view.layer.render(in: ctx.cgContext)
         }
     }
 }

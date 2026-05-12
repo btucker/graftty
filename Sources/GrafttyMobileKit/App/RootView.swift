@@ -468,33 +468,50 @@ struct SingleSessionView: View {
     @ViewBuilder
     private func terminalContent(containerSize: CGSize) -> some View {
         if let controller, let client {
-            let pane = TerminalPaneView(
-                session: client.session,
-                controller: controller,
-                focusRequestCount: focusRequestCount,
-                softwareKeyboardInput: .init(
-                    insertText: { text in client.sendSoftwareKeyboardText(text) },
-                    deleteBackward: { client.deleteBackward() }
-                ),
-                preferredInterfaceStyle: preferredStyle
-            )
-            let cellWidth = client.cellWidthPoints ?? TerminalWidthLayout.fallbackCellWidth
-            let decision = TerminalWidthLayout.decide(
-                containerWidth: containerSize.width,
-                serverCols: client.serverGrid?.cols,
-                cellWidth: cellWidth
-            )
-            switch decision {
-            case .fits:
-                pane
-            case let .scrollable(frameWidth):
-                ScrollView(.horizontal, showsIndicators: true) {
-                    pane.frame(width: frameWidth, height: containerSize.height)
+            switch client.renderActivity {
+            case .active:
+                activeTerminal(client: client, controller: controller, containerSize: containerSize)
+            case .idle:
+                IdleSnapshotView(snapshot: client.idleSnapshot) {
+                    client.wakeRenderer()
                 }
             }
         } else {
             // Mac-config fetch in flight, or client not yet assigned.
             loadingPlaceholder
+        }
+    }
+
+    @ViewBuilder
+    private func activeTerminal(
+        client: SessionClient,
+        controller: TerminalController,
+        containerSize: CGSize
+    ) -> some View {
+        let pane = TerminalPaneView(
+            session: client.session,
+            controller: controller,
+            focusRequestCount: focusRequestCount,
+            softwareKeyboardInput: .init(
+                insertText: { text in client.sendSoftwareKeyboardText(text) },
+                deleteBackward: { client.deleteBackward() }
+            ),
+            preferredInterfaceStyle: preferredStyle,
+            onWillUnmount: { snapshot in client.setIdleSnapshot(snapshot) }
+        )
+        let cellWidth = client.cellWidthPoints ?? TerminalWidthLayout.fallbackCellWidth
+        let decision = TerminalWidthLayout.decide(
+            containerWidth: containerSize.width,
+            serverCols: client.serverGrid?.cols,
+            cellWidth: cellWidth
+        )
+        switch decision {
+        case .fits:
+            pane
+        case let .scrollable(frameWidth):
+            ScrollView(.horizontal, showsIndicators: true) {
+                pane.frame(width: frameWidth, height: containerSize.height)
+            }
         }
     }
 
