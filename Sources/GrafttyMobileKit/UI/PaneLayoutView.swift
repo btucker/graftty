@@ -179,22 +179,27 @@ private struct PaneTile: View {
             return
         }
 
-        let fontSize = PanePreviewFontSizing.fontSize(
-            tileWidth: Double(tileWidth),
-            serverCols: cols
+        let action = PanePreviewFontApplication.decide(
+            tileWidth: tileWidth,
+            cols: cols,
+            hasController: controller != nil,
+            sourceConfigMatches: controllerSourceConfig == baseConfig,
+            lastAppliedFontSize: lastAppliedFontSize
         )
-        if let controller, controllerSourceConfig == baseConfig {
-            guard lastAppliedFontSize != fontSize else { return }
-            controller.setTerminalConfiguration(
-                TerminalConfiguration().fontSize(fontSize)
-            )
-            lastAppliedFontSize = fontSize
-        } else {
+        switch action {
+        case .nothing:
+            return
+        case let .recreateController(fontSize):
             controller = MobileTerminalControllerFactory.makePreview(
                 configText: baseConfig,
                 fontSize: fontSize
             )
             controllerSourceConfig = baseConfig
+            lastAppliedFontSize = fontSize
+        case let .applyFont(fontSize):
+            controller?.setTerminalConfiguration(
+                TerminalConfiguration().fontSize(fontSize)
+            )
             lastAppliedFontSize = fontSize
         }
     }
