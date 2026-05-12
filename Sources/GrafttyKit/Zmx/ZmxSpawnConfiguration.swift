@@ -28,6 +28,10 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
         env.removeValue(forKey: "ZDOTDIR")
         env.removeValue(forKey: "GHOSTTY_ZSH_ZDOTDIR")
         env["GRAFTTY_SOCK"] = socketPath
+        applyTerminalCapabilities(
+            env: &env,
+            ghosttyResourcesDir: ghosttyResourcesDir
+        )
 
         let sanitizedPath = BundlePathSanitizer.sanitized(
             currentPath: processEnv["PATH"] ?? "",
@@ -62,5 +66,41 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
             env: env,
             workingDirectory: URL(fileURLWithPath: worktreePath, isDirectory: true)
         )
+    }
+
+    private static func applyTerminalCapabilities(
+        env: inout [String: String],
+        ghosttyResourcesDir: String?
+    ) {
+        let terminfoDir = ghosttyResourcesDir.flatMap(availableGhosttyTerminfoDir)
+        setDefault("TERM", in: &env, to: terminfoDir == nil ? "xterm-256color" : "xterm-ghostty")
+        setDefault("COLORTERM", in: &env, to: "truecolor")
+        setDefault("TERM_PROGRAM", in: &env, to: "ghostty")
+
+        if let terminfoDir {
+            setDefault("TERMINFO", in: &env, to: terminfoDir.path)
+        }
+    }
+
+    private static func setDefault(_ key: String, in env: inout [String: String], to value: String) {
+        guard env[key]?.isEmpty ?? true else { return }
+        env[key] = value
+    }
+
+    private static func availableGhosttyTerminfoDir(from resourcesDir: String) -> URL? {
+        let resourcesURL = URL(fileURLWithPath: resourcesDir, isDirectory: true)
+        let terminfoURL = resourcesURL
+            .deletingLastPathComponent()
+            .appendingPathComponent("terminfo", isDirectory: true)
+        let compiledEntry = terminfoURL
+            .appendingPathComponent("78", isDirectory: true)
+            .appendingPathComponent("xterm-ghostty")
+        let sourceEntry = terminfoURL.appendingPathComponent("ghostty.terminfo")
+
+        guard FileManager.default.fileExists(atPath: compiledEntry.path)
+            || FileManager.default.fileExists(atPath: sourceEntry.path) else {
+            return nil
+        }
+        return terminfoURL
     }
 }

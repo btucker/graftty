@@ -758,6 +758,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-6.4** When agent hooks are enabled for a zsh shell, the host-managed `zmx attach` environment shall set `GHOSTTY_ZSH_ZDOTDIR` to Graftty's agent-hook zsh init directory so Ghostty's zsh integration can restore that directory after loading. When hooks are disabled, `GHOSTTY_ZSH_ZDOTDIR` shall be omitted.
 
+**ZMX-6.5** Host-managed native panes shall synthesize terminal capability environment for the `zmx attach` child when launched from a macOS GUI process that lacks terminal env vars. If Ghostty terminfo is available next to `GHOSTTY_RESOURCES_DIR`, the env shall match Ghostty's local-shell defaults closely enough for color-aware tools such as Claude Code to enable color output.
+
 ### ZMX-7.x — Session-Loss Recovery
 
 **ZMX-7.1** When the application restores a worktree's split tree on launch (per `PERSIST-3.x` and `ZMX-4.2`), it shall, before creating each pane's surface, query the live zmx session set and clear the pane's rehydration label if the expected session name is absent. This ensures a freshly-created daemon (the result of `zmx attach`'s create-on-miss semantics) is not mistaken for a surviving session by `defaultCommandDecision`.

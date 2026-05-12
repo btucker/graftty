@@ -141,6 +141,60 @@ struct ZmxSpawnConfigurationTests {
         #expect(config.env["ZMX_SESSION"] == nil)
     }
 
+    @Test("""
+    @spec ZMX-6.5: Host-managed native panes shall synthesize terminal capability environment for the `zmx attach` child when launched from a macOS GUI process that lacks terminal env vars. If Ghostty terminfo is available next to `GHOSTTY_RESOURCES_DIR`, the env shall match Ghostty's local-shell defaults closely enough for color-aware tools such as Claude Code to enable color output.
+    """)
+    func missingTerminalEnvUsesGhosttyCapabilitiesWhenTerminfoIsAvailable() throws {
+        let root = try makeGhosttyResourcesFixture(hasTerminfo: true)
+        let config = makeConfig(
+            processEnv: [
+                "SHELL": "/bin/zsh",
+                "PATH": "/usr/bin",
+            ],
+            ghosttyResourcesDir: root.appendingPathComponent("ghostty").path
+        )
+
+        #expect(config.env["TERM"] == "xterm-ghostty")
+        #expect(config.env["TERMINFO"] == root.appendingPathComponent("terminfo").path)
+        #expect(config.env["COLORTERM"] == "truecolor")
+        #expect(config.env["TERM_PROGRAM"] == "ghostty")
+    }
+
+    @Test func missingGhosttyTerminfoFallsBackToWidelyAvailableTerm() throws {
+        let config = makeConfig(
+            processEnv: [
+                "SHELL": "/bin/sh",
+                "PATH": "/usr/bin",
+            ],
+            ghosttyResourcesDir: nil
+        )
+
+        #expect(config.env["TERM"] == "xterm-256color")
+        #expect(config.env["TERMINFO"] == nil)
+        #expect(config.env["COLORTERM"] == "truecolor")
+        #expect(config.env["TERM_PROGRAM"] == "ghostty")
+    }
+
+    @Test func existingTerminalCapabilityEnvWins() throws {
+        let root = try makeGhosttyResourcesFixture(hasTerminfo: true)
+        let config = makeConfig(
+            processEnv: [
+                "SHELL": "/bin/sh",
+                "PATH": "/usr/bin",
+                "TERM": "screen-256color",
+                "TERMINFO": "/custom/terminfo",
+                "COLORTERM": "24bit",
+                "TERM_PROGRAM": "CustomTerminal",
+            ],
+            ghosttyResourcesDir: root.appendingPathComponent("ghostty").path
+        )
+
+        #expect(config.env["TERM"] == "screen-256color")
+        #expect(config.env["TERMINFO"] == "/custom/terminfo")
+        #expect(config.env["COLORTERM"] == "24bit")
+        #expect(config.env["TERM_PROGRAM"] == "CustomTerminal")
+    }
+
     private func makeConfig(
         processEnv: [String: String],
         ghosttyResourcesDir: String? = "/Applications/Ghostty.app/Contents/Resources/ghostty",
@@ -157,6 +211,24 @@ struct ZmxSpawnConfigurationTests {
             agentHooksDisabled: agentHooksDisabled,
             agentHooksRoot: agentHooksRoot
         )
+    }
+
+    private func makeGhosttyResourcesFixture(hasTerminfo: Bool) throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-ghostty-resources-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: root.appendingPathComponent("ghostty"),
+            withIntermediateDirectories: true
+        )
+        if hasTerminfo {
+            let terminfoDir = root.appendingPathComponent("terminfo/78")
+            try FileManager.default.createDirectory(at: terminfoDir, withIntermediateDirectories: true)
+            FileManager.default.createFile(
+                atPath: terminfoDir.appendingPathComponent("xterm-ghostty").path,
+                contents: Data()
+            )
+        }
+        return root
     }
 
     private func staleHookEnv(shell: String) -> [String: String] {
