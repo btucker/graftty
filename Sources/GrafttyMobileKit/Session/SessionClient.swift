@@ -114,6 +114,16 @@ public final class SessionClient {
     /// the UITerminalView and stops the display link.
     public private(set) var renderActivity: RenderActivity = .active
 
+    /// @spec IOS-10.4
+    /// Last live frame captured by the view layer just before transitioning
+    /// to `.idle`. Nil before the first snapshot is taken; the
+    /// `IdleSnapshotView` falls back to a stylized placeholder when nil.
+    public private(set) var idleSnapshot: UIImage?
+
+    public func setIdleSnapshot(_ image: UIImage?) {
+        self.idleSnapshot = image
+    }
+
     nonisolated internal let idleThreshold: TimeInterval
     nonisolated internal let idleCheckInterval: TimeInterval
 
