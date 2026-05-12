@@ -164,11 +164,6 @@ struct IosTodo {
     func ios_6_6() async throws { }
 
     @Test("""
-@spec IOS-7.4: On WebSocket failure (upgrade failure, read/write error, or close frame not initiated by the app) for a pane whose session name is still listed in `/sessions`, the application shall display a per-pane "disconnected" banner with "Reconnect" and "Back to sessions" buttons. While the host view is visible, the application shall retry automatically with exponential backoff: the delay starts at 1 second, doubles after each successive failure, and is capped at 30 seconds. Each successful connect resets the delay to 1 second. When the host view is not visible, no automatic retry shall occur.
-""", .disabled("not yet implemented"))
-    func ios_7_4() async throws { }
-
-    @Test("""
 @spec IOS-8.1: The v1 iOS app shall not support connecting to non-Graftty SSH/mosh hosts.
 """, .disabled("not yet implemented"))
     func ios_8_1() async throws { }
