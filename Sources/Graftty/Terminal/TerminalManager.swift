@@ -395,6 +395,7 @@ final class TerminalManager: ObservableObject {
         ghostty_app_update_config(app, newConfig.config)
         newConfig.ownershipTransferred = true
         self.ghosttyConfig = newConfig
+        self.theme = GhosttyTheme(config: newConfig)
         rebuildKeybindBridge()
     }
 

@@ -66,6 +66,16 @@ final class GhosttyConfig {
         }
         return ok ? color : nil
     }
+
+    /// Read a floating-point value from the config by key (e.g.
+    /// "unfocused-split-opacity"). Returns nil if the key is unknown.
+    func double(forKey key: String) -> Double? {
+        var value = Double.zero
+        let ok = key.withCString { keyPtr -> Bool in
+            ghostty_config_get(config, &value, keyPtr, UInt(strlen(keyPtr)))
+        }
+        return ok ? value : nil
+    }
 }
 
 // MARK: - GhosttyTheme
@@ -87,9 +97,12 @@ struct GhosttyTheme: Equatable {
 
     let backgroundRGB: RGB
     let foregroundRGB: RGB
+    let unfocusedSplitFillRGB: RGB
+    let unfocusedSplitOpacity: Double
 
     var background: Color { color(backgroundRGB) }
     var foreground: Color { color(foregroundRGB) }
+    var unfocusedSplitFill: Color { color(unfocusedSplitFillRGB) }
 
     /// NSColor version of the background, used to tint the NSWindow so the
     /// title-bar area doesn't render as system white behind `.hiddenTitleBar`.
@@ -126,14 +139,13 @@ struct GhosttyTheme: Equatable {
         return luminance < 0.5
     }
 
-    /// Subtle focused-pane halo values derived from the terminal foreground.
-    /// The color itself stays theme-owned; only opacity/radius change when
-    /// the host window loses key status.
-    func paneFocusHaloStyle(isFocused: Bool, isWindowKey: Bool) -> PaneFocusHaloStyle {
-        guard isFocused else { return .hidden }
-        return isWindowKey
-            ? PaneFocusHaloStyle(glowOpacity: 0.14, glowRadius: 7)
-            : PaneFocusHaloStyle(glowOpacity: 0.06, glowRadius: 5)
+    /// Ghostty-style unfocused split dimming. Ghostty's config value is the
+    /// resulting content opacity, so the overlay alpha is the inverse.
+    func paneFocusDimmingStyle(isUnfocused: Bool) -> PaneFocusDimmingStyle {
+        guard isUnfocused else { return .hidden }
+        return PaneFocusDimmingStyle(
+            overlayOpacity: clamp01(1 - unfocusedSplitOpacity)
+        )
     }
 
     /// NSAppearance matching the theme's light/dark-ness. Applied to the
@@ -149,21 +161,40 @@ struct GhosttyTheme: Equatable {
     /// things don't look broken.
     static let fallback = GhosttyTheme(
         backgroundRGB: RGB(r: 0.05, g: 0.05, b: 0.1),
-        foregroundRGB: RGB(r: 0.87, g: 0.87, b: 0.87)
+        foregroundRGB: RGB(r: 0.87, g: 0.87, b: 0.87),
+        unfocusedSplitOpacity: 0.7
     )
 
     /// Read theme colors from a `GhosttyConfig`. Missing keys fall back to
     /// `.fallback` component-wise.
     init(config: GhosttyConfig) {
-        self.backgroundRGB = config.color(forKey: "background").map(Self.toRGB)
+        let backgroundRGB = config.color(forKey: "background").map(Self.toRGB)
             ?? Self.fallback.backgroundRGB
-        self.foregroundRGB = config.color(forKey: "foreground").map(Self.toRGB)
+        let foregroundRGB = config.color(forKey: "foreground").map(Self.toRGB)
             ?? Self.fallback.foregroundRGB
+        let unfocusedSplitFillRGB = config.color(forKey: "unfocused-split-fill").map(Self.toRGB)
+            ?? backgroundRGB
+        let unfocusedSplitOpacity = config.double(forKey: "unfocused-split-opacity")
+            ?? Self.fallback.unfocusedSplitOpacity
+
+        self.init(
+            backgroundRGB: backgroundRGB,
+            foregroundRGB: foregroundRGB,
+            unfocusedSplitFillRGB: unfocusedSplitFillRGB,
+            unfocusedSplitOpacity: unfocusedSplitOpacity
+        )
     }
 
-    init(backgroundRGB: RGB, foregroundRGB: RGB) {
+    init(
+        backgroundRGB: RGB,
+        foregroundRGB: RGB,
+        unfocusedSplitFillRGB: RGB? = nil,
+        unfocusedSplitOpacity: Double = 0.7
+    ) {
         self.backgroundRGB = backgroundRGB
         self.foregroundRGB = foregroundRGB
+        self.unfocusedSplitFillRGB = unfocusedSplitFillRGB ?? backgroundRGB
+        self.unfocusedSplitOpacity = Self.clampUnfocusedSplitOpacity(unfocusedSplitOpacity)
     }
 
     private static func toRGB(_ c: ghostty_config_color_s) -> RGB {
@@ -173,19 +204,19 @@ struct GhosttyTheme: Equatable {
     private func color(_ rgb: RGB) -> Color {
         Color(.sRGB, red: rgb.r, green: rgb.g, blue: rgb.b, opacity: 1)
     }
+
+    private static func clampUnfocusedSplitOpacity(_ value: Double) -> Double {
+        min(1.0, max(0.15, value))
+    }
 }
 
-struct PaneFocusHaloStyle: Equatable {
-    let glowOpacity: Double
-    let glowRadius: CGFloat
+struct PaneFocusDimmingStyle: Equatable {
+    let overlayOpacity: Double
 
-    static let hidden = PaneFocusHaloStyle(
-        glowOpacity: 0,
-        glowRadius: 0
-    )
+    static let hidden = PaneFocusDimmingStyle(overlayOpacity: 0)
 
     var isVisible: Bool {
-        glowOpacity > 0
+        overlayOpacity > 0
     }
 }
 

@@ -9,8 +9,6 @@ struct TerminalContentView: View {
     let theme: GhosttyTheme
     let onFocusTerminal: (PaneSlotID) -> Void
 
-    @Environment(\.controlActiveState) private var controlActiveState
-
     var body: some View {
         // Zoom fast-path: if one pane is zoomed, render only its leaf full-bleed.
         // All sibling surfaces remain alive in TerminalManager.surfaces — we're
@@ -41,15 +39,13 @@ struct TerminalContentView: View {
     }
 
     private func leafView(_ terminalID: PaneSlotID) -> AnyView {
-        let haloStyle = theme.paneFocusHaloStyle(
-            isFocused: terminalID == focusedPaneSlotID,
-            isWindowKey: controlActiveState == .key
-        )
+        let isUnfocused = focusedPaneSlotID != nil && terminalID != focusedPaneSlotID
+        let dimmingStyle = theme.paneFocusDimmingStyle(isUnfocused: isUnfocused)
         if let nsView = terminalManager.view(for: terminalID) {
             let tm = terminalManager
             return AnyView(
                 SurfaceViewWrapper(nsView: nsView)
-                    .paneFocusHalo(color: theme.foreground, style: haloStyle)
+                    .paneFocusDimming(fill: theme.unfocusedSplitFill, style: dimmingStyle)
                     // Force a distinct SwiftUI identity per terminal. Without
                     // this, when the split tree swaps one terminalID for
                     // another at the same structural position (e.g., the user
@@ -73,7 +69,7 @@ struct TerminalContentView: View {
                         ProgressView()
                             .controlSize(.small)
                     )
-                    .paneFocusHalo(color: theme.foreground, style: haloStyle)
+                    .paneFocusDimming(fill: theme.unfocusedSplitFill, style: dimmingStyle)
                     .id(terminalID)
             )
         }
@@ -106,16 +102,15 @@ struct TerminalContentView: View {
     }
 }
 
-private struct PaneFocusHaloModifier: ViewModifier {
-    let color: Color
-    let style: PaneFocusHaloStyle
+private struct PaneFocusDimmingModifier: ViewModifier {
+    let fill: Color
+    let style: PaneFocusDimmingStyle
 
     func body(content: Content) -> some View {
         content.overlay {
             if style.isVisible {
                 Rectangle()
-                    .stroke(color.opacity(style.glowOpacity), lineWidth: 8)
-                    .blur(radius: style.glowRadius)
+                    .fill(fill.opacity(style.overlayOpacity))
                     .clipped()
                     .allowsHitTesting(false)
             }
@@ -124,8 +119,8 @@ private struct PaneFocusHaloModifier: ViewModifier {
 }
 
 private extension View {
-    func paneFocusHalo(color: Color, style: PaneFocusHaloStyle) -> some View {
-        modifier(PaneFocusHaloModifier(color: color, style: style))
+    func paneFocusDimming(fill: Color, style: PaneFocusDimmingStyle) -> some View {
+        modifier(PaneFocusDimmingModifier(fill: fill, style: style))
     }
 }
 
