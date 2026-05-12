@@ -164,7 +164,7 @@ struct GitTodo {
     func git_4_6() async throws { }
 
     @Test("""
-@spec GIT-4.7: When the application first observes a worktree's associated pull request transition into the merged state — whether from open, from no-PR-cached, or from a different previously-merged PR number — the application shall present an informational dialog offering to delete the worktree. The dialog's message text shall cite the PR number, its informative text shall read "Delete the worktree now? This will delete the worktree but not the branch.", and its buttons shall be "Delete Worktree" and "Keep".
+@spec GIT-4.7: When the application first observes a worktree's associated pull request transition into a terminal resolved state — either merged or closed-without-merging, whether from open, from no-PR-cached, or from a different previously-resolved PR number — the application shall present an informational dialog offering to delete the worktree. The dialog's message text shall cite the PR number and the resolution word ("merged" or "closed"), its informative text shall read "Delete the worktree now? This will delete the worktree but not the branch.", and its buttons shall be "Delete Worktree" and "Keep".
 """, .disabled("not yet implemented"))
     func git_4_7() async throws { }
 
@@ -174,7 +174,7 @@ struct GitTodo {
     func git_4_8() async throws { }
 
     @Test("""
-@spec GIT-4.9: The application shall offer the dialog described in GIT-4.7 at most once per (worktree, PR-number) pair, by persisting the offered PR number on the worktree entry. On a subsequent poll that still reports the same merged PR, on an app restart that re-resolves the same already-merged PR, or if the user dismisses the dialog with "Keep", the application shall not re-offer until the worktree's PR number changes. The application shall not present this dialog for the repository's main checkout (GIT-4.1 forbids deleting it) nor for worktrees in the stale state.
+@spec GIT-4.9: The application shall offer the dialog described in GIT-4.7 at most once per (worktree, PR-number) pair, by persisting the offered PR number on the worktree entry. On a subsequent poll that still reports the same resolved PR (merged or closed), on an app restart that re-resolves the same already-resolved PR, or if the user dismisses the dialog with "Keep", the application shall not re-offer until the worktree's PR number changes. The application shall not present this dialog for the repository's main checkout (GIT-4.1 forbids deleting it) nor for worktrees in the stale state.
 """, .disabled("not yet implemented"))
     func git_4_9() async throws { }
 

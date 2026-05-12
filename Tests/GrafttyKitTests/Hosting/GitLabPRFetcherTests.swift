@@ -87,6 +87,28 @@ struct GitLabPRFetcherTests {
         #expect(mr?.checks == PRInfo.Checks.none)
     }
 
+    @Test func returnsClosedUnmergedMR() async throws {
+        let fake = FakeCLIExecutor()
+        let stdout = """
+        [
+          {"iid":77,"title":"abandoned","web_url":"https://gitlab.com/foo/bar/-/merge_requests/77","state":"closed","source_branch":"feat","source_project_id":1,"target_project_id":1,"has_conflicts":true}
+        ]
+        """
+        fake.stub(command: "glab", args: listAllArgs,
+                  output: CLIOutput(stdout: stdout, stderr: "", exitCode: 0))
+
+        let fetcher = GitLabPRFetcher(executor: fake, now: { Date() })
+        let snapshot = try await fetcher.fetch(origin: origin, branchesOfInterest: ["feat"])
+        let mr = snapshot.prsByBranch["feat"]
+        #expect(mr?.number == 77)
+        #expect(mr?.state == .closed)
+        // Pipeline status / conflict on a terminal MR are stale —
+        // and the pipeline-view subprocess must not be spawned at all.
+        #expect(mr?.checks == PRInfo.Checks.none)
+        #expect(mr?.mergeable == .unknown)
+        #expect(fake.invocations.count == 1, "no `glab mr view` for a closed-unmerged MR")
+    }
+
     @Test func pipelineViewFailureFallsBackToNoneChecks() async throws {
         let fake = FakeCLIExecutor()
         fake.stub(

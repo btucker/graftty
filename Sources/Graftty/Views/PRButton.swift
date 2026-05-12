@@ -19,10 +19,10 @@ struct PRButton: View {
                 )
                 .modifier(PulseIfPending(isPending: info.checks == .pending))
 
-            Text("#\(info.number)\(info.state == .merged ? " ✓ merged" : "")")
+            Text("#\(info.number)\(terminalSuffix)")
                 .font(.caption)
                 .fontWeight(.medium)
-                .foregroundColor(info.state == .merged ? info.state.statusColor : theme.foreground)
+                .foregroundColor(info.state.isTerminal ? info.state.statusColor : theme.foreground)
 
             Text(info.title)
                 .font(.caption)
@@ -64,9 +64,19 @@ struct PRButton: View {
     }
 
     private var background: Color {
-        info.state == .merged
-            ? Color(red: 0.64, green: 0.44, blue: 0.97, opacity: 0.15)
-            : theme.foreground.opacity(0.08)
+        switch info.state {
+        case .merged: return Color(red: 0.64, green: 0.44, blue: 0.97, opacity: 0.15)
+        case .closed: return PRInfo.State.closed.statusColor.opacity(0.15)
+        case .open:   return theme.foreground.opacity(0.08)
+        }
+    }
+
+    private var terminalSuffix: String {
+        switch info.state {
+        case .merged: return " ✓ merged"
+        case .closed: return " ✕ closed"
+        case .open:   return ""
+        }
     }
 
     private var dotColor: Color { info.checks.statusColor }
@@ -83,13 +93,14 @@ struct PRButton: View {
 
 extension PRInfo.State {
     /// Color representing this PR's state. Green for open, purple for
-    /// merged. Shared between the sidebar badge (foreground color of
-    /// `#<number>`) and the breadcrumb pill (foreground color when
-    /// merged). A future `.closed` case maps to red here.
+    /// merged, red for closed-without-merging. Shared between the
+    /// sidebar badge (foreground color of `#<number>`) and the
+    /// breadcrumb pill (foreground color when merged/closed).
     var statusColor: Color {
         switch self {
         case .open:   return Color(red: 0.25, green: 0.73, blue: 0.31)
         case .merged: return Color(red: 0.82, green: 0.66, blue: 1.0)
+        case .closed: return Color(red: 0.83, green: 0.33, blue: 0.31)
         }
     }
 }

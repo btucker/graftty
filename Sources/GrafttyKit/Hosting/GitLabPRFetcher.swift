@@ -80,9 +80,9 @@ public struct GitLabPRFetcher: PRFetcher {
         var byBranch: [String: PRInfo] = [:]
         for (branch, mr) in primaryByBranch {
             let state = Self.mapState(mr.state)!
-            let checks: PRInfo.Checks = state == .merged ? .none : (pipelineByIID[mr.iid] ?? .none)
+            let checks: PRInfo.Checks = state.isTerminal ? .none : (pipelineByIID[mr.iid] ?? .none)
             let mergeable: PRInfo.Mergeable
-            if state == .merged {
+            if state.isTerminal {
                 mergeable = .unknown
             } else if let conflict = mr.has_conflicts {
                 mergeable = conflict ? .conflicting : .mergeable
@@ -160,6 +160,7 @@ public struct GitLabPRFetcher: PRFetcher {
         switch raw.lowercased() {
         case "opened": return .open
         case "merged": return .merged
+        case "closed": return .closed
         default: return nil
         }
     }

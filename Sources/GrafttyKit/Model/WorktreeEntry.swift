@@ -64,12 +64,13 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     public var paneAttention: [TerminalID: Attention]
     public var splitTree: SplitTree
     public var focusedTerminalID: TerminalID?
-    /// PR number for which the "PR merged — delete worktree?" offer
-    /// dialog has already been presented. Persisted so that a force-push
-    /// that closes PR N and reopens as PR M is correctly treated as a
-    /// fresh transition (the numbers differ), while a steady poll of
-    /// the same merged PR stays quiet.
-    public var offeredDeleteForMergedPR: Int?
+    /// PR number for which the "PR resolved — delete worktree?" offer
+    /// dialog has already been presented (the PR has either merged or
+    /// been closed without merging — GIT-4.7). Persisted so that a
+    /// force-push that closes PR N and reopens as PR M is correctly
+    /// treated as a fresh transition (the numbers differ), while a
+    /// steady poll of the same resolved PR stays quiet.
+    public var offeredDeleteForResolvedPR: Int?
 
     public init(
         path: String,
@@ -86,17 +87,26 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.paneAttention = [:]
         self.splitTree = splitTree
         self.focusedTerminalID = nil
-        self.offeredDeleteForMergedPR = nil
+        self.offeredDeleteForResolvedPR = nil
     }
 
-    // Custom Decodable so `paneAttention` and `offeredDeleteForMergedPR`
-    // (both added after the initial release) are optional on disk.
-    // Pre-fix persisted state blobs don't carry those keys; defaulting
-    // lets existing users keep their saved split trees across upgrades
-    // rather than failing to decode and silently losing everything.
+    // Custom Decodable so `paneAttention` and `offeredDeleteForResolvedPR`
+    // (added after the initial release) are optional on disk. Pre-fix
+    // persisted blobs don't carry those keys; defaulting lets existing
+    // users keep their saved split trees across upgrades rather than
+    // failing to decode and silently losing everything.
     private enum CodingKeys: String, CodingKey {
         case id, path, branch, state, attention, paneAttention,
-             splitTree, focusedTerminalID, offeredDeleteForMergedPR
+             splitTree, focusedTerminalID, offeredDeleteForResolvedPR
+    }
+
+    /// Legacy key honored on decode only — state blobs persisted by
+    /// the build that knew only `.merged` PRs (before GIT-4.7 broadened
+    /// to include closed-without-merging) carry this name. Read in
+    /// `init(from:)` as a fallback so users upgrading from that build
+    /// don't get re-prompted for merged PRs they've already dismissed.
+    private enum LegacyCodingKeys: String, CodingKey {
+        case offeredDeleteForMergedPR
     }
 
     public init(from decoder: Decoder) throws {
@@ -115,10 +125,12 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
             TerminalID.self,
             forKey: .focusedTerminalID
         )
-        self.offeredDeleteForMergedPR = try container.decodeIfPresent(
-            Int.self,
-            forKey: .offeredDeleteForMergedPR
+        let resolved = try container.decodeIfPresent(
+            Int.self, forKey: .offeredDeleteForResolvedPR
         )
+        let legacyMerged = try decoder.container(keyedBy: LegacyCodingKeys.self)
+            .decodeIfPresent(Int.self, forKey: .offeredDeleteForMergedPR)
+        self.offeredDeleteForResolvedPR = resolved ?? legacyMerged
     }
 
     /// Clears the worktree-scoped attention overlay iff it still has the

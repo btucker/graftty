@@ -137,8 +137,8 @@ struct MainWindow: View {
             // Wired here rather than in GrafttyApp.startup() so the
             // closure captures MainWindow's `$appState` binding — both
             // NSAlert presentation and the "offered" write-back need it.
-            prStatusStore.onPRMerged = { worktreePath, prNumber in
-                offerDeleteForMergedPR(worktreePath: worktreePath, prNumber: prNumber)
+            prStatusStore.onPRResolved = { worktreePath, prNumber, state in
+                offerDeleteForResolvedPR(worktreePath: worktreePath, prNumber: prNumber, state: state)
             }
         }
         .focusedSceneValue(\.addWorktreeAction, addWorktreeAction)
@@ -711,13 +711,9 @@ struct MainWindow: View {
         }
     }
 
-    /// Called by `PRStatusStore.onPRMerged` on the first observed
-    /// transition of a worktree's PR cache into `.merged`. Presents the
-    /// offer dialog iff this is a linked (non-main, non-stale) worktree
-    /// and we haven't already offered for this PR number. The "offered"
-    /// marker is persisted via `AppState.onChange` so Keep is sticky
-    /// across restarts, not just across polls.
-    private func offerDeleteForMergedPR(worktreePath: String, prNumber: Int) {
+    /// GIT-4.7. The "offered" marker is persisted via `AppState.onChange`
+    /// so Keep is sticky across restarts, not just across polls.
+    private func offerDeleteForResolvedPR(worktreePath: String, prNumber: Int, state: PRInfo.State) {
         guard let (repoIdx, wtIdx) = appState.indices(forWorktreePath: worktreePath) else { return }
         let repo = appState.repos[repoIdx]
         let wt = repo.worktrees[wtIdx]
@@ -725,14 +721,15 @@ struct MainWindow: View {
         // Mirrors GIT-4.1: git refuses to remove the main checkout, and
         // a stale entry has no live worktree to remove.
         guard wt.path != repo.path, wt.state != .stale else { return }
-        guard wt.offeredDeleteForMergedPR != prNumber else { return }
+        guard wt.offeredDeleteForResolvedPR != prNumber else { return }
+        guard let resolutionWord = state.resolutionWord else { return }
 
         // Mark as offered *before* presenting the modal so a user who
         // clicks Keep doesn't get re-prompted on the next poll.
-        appState.repos[repoIdx].worktrees[wtIdx].offeredDeleteForMergedPR = prNumber
+        appState.repos[repoIdx].worktrees[wtIdx].offeredDeleteForResolvedPR = prNumber
 
         let alert = NSAlert()
-        alert.messageText = "Pull request #\(prNumber) merged"
+        alert.messageText = "Pull request #\(prNumber) \(resolutionWord)"
         alert.informativeText = "Delete the worktree now? This will delete the worktree but not the branch."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Delete Worktree")

@@ -181,6 +181,45 @@ struct GitHubPRFetcherTests {
         #expect(snapshot.prsByBranch["feat"]?.number == 100)
         #expect(snapshot.prsByBranch["feat"]?.state == .open)
     }
+
+    @Test func returnsClosedUnmergedPR() async throws {
+        let fake = FakeCLIExecutor()
+        let stdout = """
+        [
+          {"number":55,"title":"abandoned","url":"https://github.com/btucker/graftty/pull/55","state":"CLOSED","headRefName":"feat","headRepositoryOwner":{"login":"btucker"},"statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}],"mergeable":"CONFLICTING"}
+        ]
+        """
+        fake.stub(command: "gh", args: Self.listArgs,
+                  output: CLIOutput(stdout: stdout, stderr: "", exitCode: 0))
+
+        let fetcher = GitHubPRFetcher(executor: fake, now: { Date() })
+        let snapshot = try await fetcher.fetch(origin: origin, branchesOfInterest: [])
+        let pr = snapshot.prsByBranch["feat"]
+        #expect(pr?.number == 55)
+        #expect(pr?.state == .closed)
+        // CI / mergeable on a terminal PR are stale (`isTerminal`
+        // branch in the fetcher) — checks roll up FAILURE and
+        // mergeable is CONFLICTING in the stub, both must collapse.
+        #expect(pr?.checks == PRInfo.Checks.none)
+        #expect(pr?.mergeable == .unknown)
+    }
+
+    @Test func openPRWinsOverClosedForSameBranch() async throws {
+        let fake = FakeCLIExecutor()
+        let stdout = """
+        [
+          {"number":201,"title":"old","url":"https://github.com/btucker/graftty/pull/201","state":"CLOSED","headRefName":"feat","headRepositoryOwner":{"login":"btucker"},"statusCheckRollup":[],"mergeable":"UNKNOWN"},
+          {"number":202,"title":"new","url":"https://github.com/btucker/graftty/pull/202","state":"OPEN","headRefName":"feat","headRepositoryOwner":{"login":"btucker"},"statusCheckRollup":[],"mergeable":"MERGEABLE"}
+        ]
+        """
+        fake.stub(command: "gh", args: Self.listArgs,
+                  output: CLIOutput(stdout: stdout, stderr: "", exitCode: 0))
+
+        let fetcher = GitHubPRFetcher(executor: fake, now: { Date() })
+        let snapshot = try await fetcher.fetch(origin: origin, branchesOfInterest: [])
+        #expect(snapshot.prsByBranch["feat"]?.number == 202)
+        #expect(snapshot.prsByBranch["feat"]?.state == .open)
+    }
 }
 
 @Suite("GitHubPRFetcher.rollup")

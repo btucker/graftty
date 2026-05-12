@@ -299,6 +299,7 @@ struct WorktreeRow: View {
         switch tone {
         case .open:        return PRInfo.State.open.statusColor
         case .merged:      return PRInfo.State.merged.statusColor
+        case .closed:      return PRInfo.State.closed.statusColor
         case .ciFailure:   return PRInfo.Checks.failure.statusColor
         case .ciPending:   return PRInfo.Checks.pending.statusColor
         case .conflicting: return PRInfo.Mergeable.conflicting.statusColor
@@ -310,13 +311,14 @@ struct WorktreeRow: View {
         switch badge.state {
         case .open:   stateWord = "open"
         case .merged: stateWord = "merged"
+        case .closed: stateWord = "closed"
         }
         let suffix: String
         switch tone {
         case .ciFailure:   suffix = ", CI failing"
         case .ciPending:   suffix = ", CI running"
         case .conflicting: suffix = ", merge conflict"
-        case .open, .merged: suffix = ""
+        case .open, .merged, .closed: suffix = ""
         }
         return "Pull request \(badge.number), \(stateWord)\(suffix). Click to open in browser."
     }

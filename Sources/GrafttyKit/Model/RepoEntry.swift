@@ -38,7 +38,7 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
 
     // Custom Decodable so `bookmark` (added in LAYOUT-4.5) is optional on
     // disk. Matches the pattern `WorktreeEntry.init(from:)` uses for
-    // `paneAttention` / `offeredDeleteForMergedPR` — pre-fix persisted
+    // `paneAttention` / `offeredDeleteForResolvedPR` — pre-fix persisted
     // state blobs don't carry the key, `decodeIfPresent` defaults it to
     // nil, and existing users keep their state across the upgrade.
     private enum CodingKeys: String, CodingKey {
