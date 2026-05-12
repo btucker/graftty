@@ -78,7 +78,7 @@ public struct RootView: View {
         .background(.regularMaterial)
     }
 
-    static func makeWebSocketURL(base: URL, session: String) -> URL {
+    nonisolated static func makeWebSocketURL(base: URL, session: String) -> URL {
         var components = URLComponents(url: base, resolvingAgainstBaseURL: false) ?? URLComponents()
         components.scheme = (base.scheme?.lowercased() == "https") ? "wss" : "ws"
         components.path = "/ws"
