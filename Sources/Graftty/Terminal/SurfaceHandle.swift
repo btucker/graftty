@@ -45,11 +45,17 @@ struct SurfaceHandleGhosttySurfaceFactory {
     var create: (ghostty_app_t, UnsafeMutablePointer<ghostty_surface_config_s>) -> ghostty_surface_t?
     var free: (ghostty_surface_t) -> Void
     var text: (ghostty_surface_t, UnsafePointer<CChar>, UInt) -> Void
+    var writeBuffer: (ghostty_surface_t, UnsafePointer<UInt8>, UInt) -> Void
+    var processExit: (ghostty_surface_t, UInt32, UInt64) -> Void
 
     static let live = SurfaceHandleGhosttySurfaceFactory(
         create: { app, config in ghostty_surface_new(app, config) },
         free: { surface in ghostty_surface_free(surface) },
-        text: { surface, ptr, count in ghostty_surface_text(surface, ptr, count) }
+        text: { surface, ptr, count in ghostty_surface_text(surface, ptr, count) },
+        writeBuffer: { surface, ptr, count in ghostty_surface_write_buffer(surface, ptr, count) },
+        processExit: { surface, exitCode, runtimeMilliseconds in
+            ghostty_surface_process_exit(surface, exitCode, runtimeMilliseconds)
+        }
     )
 }
 
@@ -216,6 +222,12 @@ final class SurfaceHandle {
             return nil
         }
 
+        self.surface = newSurface
+        // Bind the surface to the view now that ghostty_surface_new succeeded.
+        // The view weakly references the surface via this unmanaged handle;
+        // it forwards keystrokes/mouse events back into libghostty.
+        surfaceView.surface = newSurface
+
         if let backend {
             do {
                 try backend.start(surface: newSurface)
@@ -225,19 +237,9 @@ final class SurfaceHandle {
                 }
             } catch {
                 backend.close()
-                surfaceFactory.free(newSurface)
-                backend.releaseReceiveUserdataAfterSurfaceFree()
-                freeCreateInputs()
-                releaseSurfaceUserdata()
-                return nil
+                reportZmxBackendStartFailure(error, surface: newSurface)
             }
         }
-
-        self.surface = newSurface
-        // Bind the surface to the view now that ghostty_surface_new succeeded.
-        // The view weakly references the surface via this unmanaged handle;
-        // it forwards keystrokes/mouse events back into libghostty.
-        surfaceView.surface = newSurface
 
         // userdata is set after construction so we can pass a valid `self`.
         // libghostty does not use userdata until after callbacks fire, so setting
@@ -255,6 +257,17 @@ final class SurfaceHandle {
 
         // Free the C strings now that libghostty has copied them internally.
         freeCreateInputs()
+    }
+
+    private func reportZmxBackendStartFailure(_ error: Error, surface: ghostty_surface_t) {
+        let message = "[Graftty] zmx attach failed: \(error)\r\n"
+        Data(message.utf8).withUnsafeBytes { buffer in
+            guard let base = buffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else {
+                return
+            }
+            surfaceFactory.writeBuffer(surface, base, UInt(buffer.count))
+        }
+        surfaceFactory.processExit(surface, 1, 0)
     }
 
     private static func agentHookPathPrefix() -> String? {

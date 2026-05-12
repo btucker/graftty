@@ -696,13 +696,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### ZMX-4.x — Lifecycle Mapping
 
-**ZMX-4.1** When the application creates a new terminal pane, it shall leave the libghostty surface configuration's `command` field unset and instead write `exec '<bundled-zmx-path>' attach graftty-<short-id> '<user-shell>'\n` into the surface's `initial_input` field, with each substituted path single-quoted to defend against spaces. The leading `exec` replaces the default shell with `zmx attach` so that when the inner shell ends, the PTY child dies and libghostty's `close_surface_cb` fires. Setting `command` instead would trigger libghostty's automatic `wait-after-command` enablement (see upstream `src/apprt/embedded.zig`), which would keep panes open after `exit` and show a "Press any key to close" overlay.
+**ZMX-4.1** When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned `zmx attach graftty-<short-id> <user-shell>` PTY client only after `ghostty_surface_new` succeeds. This avoids libghostty's automatic `wait-after-command` behavior while keeping shell exit wired to `close_surface_cb` through `ghostty_surface_process_exit`.
 
 **ZMX-4.2** When the application restores a worktree's split tree on launch (per `PERSIST-3.x`), each restored pane's surface shall be created with the same session name derived from the persisted pane UUID, so reattach to a surviving daemon is automatic.
 
 **ZMX-4.3** When the application destroys a terminal surface (user-initiated close, automatic close on shell exit, or worktree stop), it shall asynchronously invoke `zmx kill --force <session>` for the matching session.
 
-**ZMX-4.4** When the application quits, it shall not invoke `zmx kill` — pending PTY teardown by the OS is the desired detach signal that lets daemons survive.
+**ZMX-4.4** When the application quits, it shall close each native host-managed `zmx attach` client and shall not invoke `zmx kill` — detaching the short-lived client while leaving zmx daemons and their shells alive is the desired survival behavior.
 
 **ZMX-4.5** When the application invokes synchronous zmx maintenance commands such as `zmx list --short` or `zmx kill --force <session>`, the subprocess wrapper shall apply a bounded timeout and terminate the command if it does not exit promptly. Cleanup paths, including test teardown, shall not block indefinitely on a degraded zmx daemon, because a wedged cleanup can leave `zmx attach` clients and their PTYs orphaned.
 
@@ -718,11 +718,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-6.1** Shell-integration OSC sequences (OSC 7 working directory, OSC 9 desktop notification, OSC 133 prompt marks, OSC 9;4 progress reports) shall continue to flow from the inner shell through `zmx` to libghostty unchanged. The `PWD-x.x`, `NOTIF-x.x`, and `KEY-x.x` requirements remain in force regardless of whether `zmx` is mediating the PTY.
 
-**ZMX-6.2** The `GRAFTTY_SOCK` environment variable shall continue to be set in the spawned shell's environment per `ATTN-2.4`. Because `zmx` inherits its child shell's env from the spawning process, this is satisfied by setting it on the libghostty surface as today.
+**ZMX-6.2** The `GRAFTTY_SOCK` environment variable shall continue to be set in the spawned shell's environment per `ATTN-2.4`. For zmx-backed native panes, this shall be passed in the host-managed `zmx attach` process environment rather than relying on libghostty surface-spawn env.
 
-**ZMX-6.3** If `GHOSTTY_RESOURCES_DIR` is set (per `CONFIG-2.1`) and the user's shell basename is `zsh`, the `initial_input` written per `ZMX-4.1` shall prefix the `exec` line with `if [ -n "$ZDOTDIR" ]; then export GHOSTTY_ZSH_ZDOTDIR="$ZDOTDIR"; fi; ZDOTDIR='<ghostty-resources>/shell-integration/zsh'` so the inner shell zmx spawns re-sources Ghostty's zsh integration. Without this re-injection, Ghostty's integration `.zshenv` in the outer shell has already restored `ZDOTDIR` to the user's original value, so the post-`exec` inner shell sources only the user's plain rc files — precmd hooks do not run, no OSC 7 / OSC 133 sequences are emitted, and `PWD-x.x`, the default-command first-PWD trigger, and shell-integration-driven attention badges all go silent.
+**ZMX-6.3** If `GHOSTTY_RESOURCES_DIR` is set (per `CONFIG-2.1`) and the user's shell basename is `zsh`, the host-managed `zmx attach` environment shall set `ZDOTDIR=<ghostty-resources>/shell-integration/zsh` so the inner shell zmx spawns sources Ghostty's zsh integration directly. Without this env construction, precmd hooks do not run, no OSC 7 / OSC 133 sequences are emitted, and `PWD-x.x`, the default-command first-PWD trigger, and shell-integration-driven attention badges go silent.
 
-**ZMX-6.4** If the outer shell's `ZDOTDIR` is unset or empty, the `GHOSTTY_ZSH_ZDOTDIR` assignment in `ZMX-6.3` shall not execute. Ghostty's integration `.zshenv` gates its restore branch on `${GHOSTTY_ZSH_ZDOTDIR+X}` (which matches empty-string-set), and zsh's dotfile lookup uses `${ZDOTDIR-$HOME}` (falls back to `$HOME` only when *unset*, not when empty) — so an unguarded assignment would export `ZDOTDIR=""` into the inner shell and cause it to silently skip the user's `.zshenv`/`.zprofile`/`.zshrc`/`.zlogin`. Guarding keeps `GHOSTTY_ZSH_ZDOTDIR` unset so the integration's `else: unset ZDOTDIR` branch fires and dotfile lookup defaults to `$HOME`.
+**ZMX-6.4** When agent hooks are enabled for a zsh shell, the host-managed `zmx attach` environment shall set `GHOSTTY_ZSH_ZDOTDIR` to Graftty's agent-hook zsh init directory so Ghostty's zsh integration can restore that directory after loading. When hooks are disabled, `GHOSTTY_ZSH_ZDOTDIR` shall be omitted.
 
 ### ZMX-7.x — Session-Loss Recovery
 

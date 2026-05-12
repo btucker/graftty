@@ -131,7 +131,7 @@ struct SurfaceHandleHostManagedTests {
         #expect(harness.freeCalls.isEmpty)
     }
 
-    @Test func backendStartFailureFreesSurfaceAndReleasesBackendState() {
+    @Test func backendStartFailureReportsDiagnosticAndNonzeroExitWithoutImmediateFree() {
         struct ForcedStartFailure: Error {}
 
         let backend = FakeSurfaceHandleZmxBackend(startError: ForcedStartFailure())
@@ -148,11 +148,19 @@ struct SurfaceHandleHostManagedTests {
             zmxBackendFactory: { _ in backend }
         )
 
-        #expect(handle == nil)
+        #expect(handle != nil)
         #expect(backend.startCount == 1)
         #expect(backend.closeCount == 1)
-        #expect(backend.releaseCount == 1)
-        #expect(harness.freeCalls == [surface])
+        #expect(backend.releaseCount == 0)
+        #expect(harness.freeCalls.isEmpty)
+        #expect(harness.writeBufferCalls.count == 1)
+        #expect(
+            String(data: harness.writeBufferCalls[0].data, encoding: .utf8)?
+                .contains("zmx attach failed") == true
+        )
+        #expect(harness.processExitCalls == [
+            ProcessExitCall(surface: surface, exitCode: 1)
+        ])
     }
 
     private static func terminalID() -> TerminalID {
@@ -183,6 +191,8 @@ private final class SurfaceHandleTestHarness {
     var capturedConfigs: [CapturedSurfaceConfig] = []
     var freeCalls: [ghostty_surface_t] = []
     var textWrites: [Data] = []
+    var writeBufferCalls: [SurfaceWriteBufferCall] = []
+    var processExitCalls: [ProcessExitCall] = []
 
     init(surface: ghostty_surface_t?) {
         self.surface = surface
@@ -199,9 +209,32 @@ private final class SurfaceHandleTestHarness {
             },
             text: { [weak self] _, ptr, count in
                 self?.textWrites.append(Data(bytes: ptr, count: Int(count)))
+            },
+            writeBuffer: { [weak self] surface, ptr, count in
+                self?.writeBufferCalls.append(
+                    SurfaceWriteBufferCall(
+                        surface: surface,
+                        data: Data(bytes: ptr, count: Int(count))
+                    )
+                )
+            },
+            processExit: { [weak self] surface, exitCode, _ in
+                self?.processExitCalls.append(
+                    ProcessExitCall(surface: surface, exitCode: exitCode)
+                )
             }
         )
     }
+}
+
+private struct SurfaceWriteBufferCall: Equatable {
+    let surface: ghostty_surface_t
+    let data: Data
+}
+
+private struct ProcessExitCall: Equatable {
+    let surface: ghostty_surface_t
+    let exitCode: UInt32
 }
 
 private struct CapturedSurfaceConfig {
