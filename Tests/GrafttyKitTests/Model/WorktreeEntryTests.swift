@@ -211,6 +211,16 @@ struct WorktreeEntryTests {
         #expect(entry.paneSessions[slot]?.id == slot.id)
     }
 
+    @Test func closedWorktreeRestoreDoesNotCreatePaneSessions() {
+        var entry = WorktreeEntry(path: "/repo/wt", branch: "feature", state: .closed)
+        let slot = PaneSlotID(id: UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!)
+        entry.splitTree = SplitTree(root: .leaf(slot))
+
+        entry.ensurePaneSessionsForRunningRestore()
+
+        #expect(entry.paneSessions.isEmpty)
+    }
+
     @Test func legacyStateWithoutPaneSessionsDecodesWithEmptyDictionary() throws {
         let legacyJSON = """
         {

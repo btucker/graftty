@@ -166,6 +166,8 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     }
 
     public mutating func ensurePaneSessionsForRunningRestore() {
+        guard state == .running else { return }
+
         for slot in splitTree.allLeaves where paneSessions[slot] == nil {
             paneSessions[slot] = .migratedFromLegacySlot(slot)
         }
