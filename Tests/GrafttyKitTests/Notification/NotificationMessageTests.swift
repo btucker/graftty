@@ -118,7 +118,8 @@ struct NotificationMessageTests {
             callerWorktree: "/r/a",
             runtime: .codex,
             event: .postToolUse,
-            sessionID: "codex:a:123"
+            sessionID: "codex:a:123",
+            paneSessionName: nil
         )
         let data = try JSONEncoder().encode(original)
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
@@ -130,6 +131,40 @@ struct NotificationMessageTests {
 
         let decoded = try JSONDecoder().decode(NotificationMessage.self, from: data)
         #expect(decoded == original)
+    }
+
+    @Test("@spec TEAM-IDLE-2.9: .teamHook encodes and decodes paneSessionName when present.")
+    func teamHookRoundTripsPaneSessionName() throws {
+        let original: NotificationMessage = .teamHook(
+            callerWorktree: "/repo/.worktrees/alice",
+            runtime: .codex,
+            event: .stop,
+            sessionID: "codex-internal-id",
+            paneSessionName: "graftty-abc12345"
+        )
+        let encoded = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(NotificationMessage.self, from: encoded)
+        guard case let .teamHook(_, _, _, _, paneSessionName) = decoded else {
+            Issue.record("expected .teamHook"); return
+        }
+        #expect(paneSessionName == "graftty-abc12345")
+    }
+
+    @Test("Old .teamHook payload (no pane_session_name) decodes paneSessionName as nil.")
+    func teamHookOldPayloadDecodesNil() throws {
+        let oldJSON = """
+        {
+          "type": "team_hook",
+          "caller_worktree": "/repo/.worktrees/alice",
+          "runtime": "codex",
+          "event": "stop"
+        }
+        """
+        let decoded = try JSONDecoder().decode(NotificationMessage.self, from: oldJSON.data(using: .utf8)!)
+        guard case let .teamHook(_, _, _, _, paneSessionName) = decoded else {
+            Issue.record("expected .teamHook"); return
+        }
+        #expect(paneSessionName == nil)
     }
 
     @Test func teamInboxRoundTripsDiagnosticFilters() throws {
@@ -220,6 +255,31 @@ struct NotificationMessageTests {
         #expect(json["type"] as? String == "team_hook_output")
         #expect(json["output"] as? String == #"{"hookSpecificOutput":{}}"#)
 
+        let decoded = try JSONDecoder().decode(ResponseMessage.self, from: data)
+        #expect(decoded == original)
+    }
+
+    @Test func showPaneRoundTrip() throws {
+        let original: NotificationMessage = .showPane(path: "/wt", index: 2, lines: 100)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(NotificationMessage.self, from: data)
+        #expect(decoded == original)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(json?["type"] as? String == "show_pane")
+    }
+
+    @Test func sendPaneRoundTrip() throws {
+        let original: NotificationMessage = .sendPane(path: "/wt", index: 1, text: "ls\n", pressEnter: true)
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(NotificationMessage.self, from: data)
+        #expect(decoded == original)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(json?["type"] as? String == "send_pane")
+    }
+
+    @Test func paneShowResponseRoundTrip() throws {
+        let original: ResponseMessage = .paneShow("hello\nworld\n")
+        let data = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(ResponseMessage.self, from: data)
         #expect(decoded == original)
     }

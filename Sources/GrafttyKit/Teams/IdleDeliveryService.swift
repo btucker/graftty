@@ -11,6 +11,8 @@ public protocol NudgeSender: Sendable {
 /// @spec TEAM-IDLE-2.4
 /// @spec TEAM-IDLE-2.5
 /// @spec TEAM-IDLE-2.6
+/// @spec TEAM-IDLE-2.11
+/// @spec TEAM-IDLE-2.12
 /// Event-driven Codex idle-delivery dispatcher. Receives Stop and
 /// new-message-arrival signals, queries the agent-state registry,
 /// and on `idle` sends pending messages via NudgeSender then
@@ -36,22 +38,27 @@ public actor IdleDeliveryService {
         self.now = now
     }
 
-    public func onStop(team: String, worktree: String, runtime: String, paneID: UUID?) async {
-        await maybeDeliver(team: team, worktree: worktree, runtime: runtime, paneID: paneID, trigger: "stop")
+    public func onStop(team: String, worktree: String, paneIDs: [UUID]) async {
+        await maybeDeliver(team: team, worktree: worktree, paneIDs: paneIDs, trigger: "stop")
     }
 
-    public func onMessageArrival(team: String, worktree: String, runtime: String, paneID: UUID?) async {
-        await maybeDeliver(team: team, worktree: worktree, runtime: runtime, paneID: paneID, trigger: "messageArrival")
+    public func onMessageArrival(team: String, worktree: String, paneIDs: [UUID]) async {
+        await maybeDeliver(team: team, worktree: worktree, paneIDs: paneIDs, trigger: "messageArrival")
     }
 
-    private func maybeDeliver(team: String, worktree: String, runtime: String, paneID: UUID?, trigger: String) async {
-        // zmx-send is the Codex equivalent of Claude's asyncRewake
-        // watcher. Claude already receives unread messages via the
-        // watcher's stderr-on-exit path, so dispatching zmx-send here
-        // would deliver every event twice. Gate at the runtime
-        // boundary.
-        guard runtime == "codex" else {
-            log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_runtime_\(runtime)")
+    private func maybeDeliver(
+        team: String,
+        worktree: String,
+        paneIDs: [UUID],
+        trigger: String
+    ) async {
+        // The service is implicitly codex-only by construction:
+        // - inbox-observer dispatch passes only codex paneIDs (filtered upstream);
+        // - the Stop-hook callback only invokes us for runtime == .codex.
+        let runtime = TeamHookRuntime.codex.rawValue
+        guard !paneIDs.isEmpty else {
+            log(team: team, worktree: worktree, runtime: runtime,
+                outcome: "skipped_no_codex_panes")
             return
         }
         // .idle: agent fired Stop with no recent typing — clear deliver.
@@ -65,31 +72,36 @@ public actor IdleDeliveryService {
         //   busy or the user is typing.
         let s = state.state(worktree: worktree, runtime: runtime)
         guard s == .idle || s == .unknown else {
-            log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_state_\(s.rawValue)")
-            return
-        }
-        guard let paneID else {
-            log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_no_pane")
+            log(team: team, worktree: worktree, runtime: runtime,
+                outcome: "skipped_state_\(s.rawValue)")
             return
         }
         let watermark: String?
         do { watermark = try inbox.zmxWatermark(teamID: team, worktree: worktree, runtime: runtime) }
-        catch { log(team: team, worktree: worktree, runtime: runtime, outcome: "error_watermark_read"); return }
-
+        catch {
+            log(team: team, worktree: worktree, runtime: runtime, outcome: "error_watermark_read")
+            return
+        }
         let pending: [TeamInboxMessage]
         do { pending = try inbox.unreadMessages(teamID: team, recipientWorktree: worktree, after: watermark) }
-        catch { log(team: team, worktree: worktree, runtime: runtime, outcome: "error_inbox_read"); return }
-
-        guard let lastMessage = pending.last else {
-            log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_no_pending"); return
+        catch {
+            log(team: team, worktree: worktree, runtime: runtime, outcome: "error_inbox_read")
+            return
         }
-
+        guard let lastMessage = pending.last else {
+            log(team: team, worktree: worktree, runtime: runtime, outcome: "skipped_no_pending")
+            return
+        }
         let text = TeamHookRenderer.format(messages: pending)
-        await nudgeSender.send(paneID: paneID, message: text, messageIDs: pending.map(\.id))
+        for paneID in paneIDs {
+            await nudgeSender.send(paneID: paneID, message: text, messageIDs: pending.map(\.id))
+        }
         do {
-            try inbox.advanceZmxWatermark(teamID: team, worktree: worktree, runtime: runtime, to: lastMessage.id)
+            try inbox.advanceZmxWatermark(teamID: team, worktree: worktree,
+                                          runtime: runtime, to: lastMessage.id)
         } catch {
-            log(team: team, worktree: worktree, runtime: runtime, outcome: "error_watermark_write"); return
+            log(team: team, worktree: worktree, runtime: runtime, outcome: "error_watermark_write")
+            return
         }
         log(team: team, worktree: worktree, runtime: runtime,
             outcome: "sent", messageIDs: pending.map(\.id), trigger: trigger)

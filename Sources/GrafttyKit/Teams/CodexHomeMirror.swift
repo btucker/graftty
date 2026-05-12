@@ -103,12 +103,15 @@ public struct CodexHomeMirror: Sendable {
         ]
     }
 
-    /// Read user's config.toml (if any), ensure [features].codex_hooks = true,
+    /// Read user's config.toml (if any), ensure [features].hooks = true,
     /// preserve every other key/table, write merged file.
+    ///
+    /// Codex uses `hooks`; the legacy `codex_hooks` alias emits a deprecation
+    /// warning on every launch.
     private func writeMergedConfig() throws {
         let userConfigURL = sourceDirectory.appendingPathComponent("config.toml")
         let userText = (try? String(contentsOf: userConfigURL)) ?? ""
-        let merged = TomlEditor.ensureBool(userText, table: "features", key: "codex_hooks", value: true)
+        let merged = TomlEditor.ensureBool(userText, table: "features", key: "hooks", value: true)
         let outURL = mirrorDirectory.appendingPathComponent("config.toml")
         try merged.write(to: outURL, atomically: true, encoding: .utf8)
     }
@@ -118,11 +121,11 @@ public struct CodexHomeMirror: Sendable {
 /// without disturbing comments or other keys.
 ///
 /// **Limitations** (acceptable for our single-key feature-flag use case):
-/// - Does not handle inline tables (`features = { codex_hooks = true }`).
+/// - Does not handle inline tables (`features = { hooks = true }`).
 ///   If a user expresses `features` as an inline table, this editor will
 ///   produce invalid TOML by also appending a `[features]` section header.
 /// - Does not handle multiline strings spanning section boundaries.
-/// - Does not handle dotted keys (`features.codex_hooks = true` at top level).
+/// - Does not handle dotted keys (`features.hooks = true` at top level).
 ///
 /// If your use case requires any of the above, switch to a real TOML library.
 enum TomlEditor {

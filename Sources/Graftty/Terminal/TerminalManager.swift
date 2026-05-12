@@ -239,9 +239,9 @@ final class TerminalManager: ObservableObject {
     var inputActivityObserver: PaneInputActivityObserver?
 
     /// Fires once per surface destruction so the idle-delivery pipeline
-    /// can evict per-pane registry entries (`agentForPane`,
-    /// PaneInputActivityRegistry stamps, WorktreeAgentStateRegistry
-    /// states keyed off the pane's resolved agent identity). Wired by
+    /// can evict per-pane registry entries (PaneInputActivityRegistry
+    /// stamps, WorktreeAgentStateRegistry states, and TeamPresenceStorage
+    /// records keyed off the pane's session name). Wired by
     /// `GrafttyApp.startup()` after the pipeline is constructed.
     var paneClosed: ((UUID) -> Void)?
 
@@ -621,6 +621,13 @@ final class TerminalManager: ObservableObject {
     /// in the surface-create/destroy hooks.
     func handle(forSessionName sessionName: String) -> SurfaceHandle? {
         surfaces.first(where: { ZmxLauncher.sessionName(for: $0.key.id) == sessionName })?.value
+    }
+
+    /// Reverse-lookup of the pane UUID whose pane derives the given
+    /// zmx session name. Returns nil if no surface matches (e.g. pane
+    /// closed). O(n) over the surface set, same cost class as `handle`.
+    func paneID(forSessionName sessionName: String) -> UUID? {
+        surfaces.first(where: { ZmxLauncher.sessionName(for: $0.key.id) == sessionName })?.key.id
     }
 
     /// Tell libghostty whether a surface is currently visible. On visible,

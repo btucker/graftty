@@ -38,17 +38,17 @@ public final class TeamInboxRequestHandler {
     private let inbox: TeamInbox
     private let dispatcher: TeamEventDispatcher
     private let sessionPromptRenderer: ((TeamView, TeamMember) -> String?)?
-    private let onStop: (@Sendable (_ team: String, _ worktree: String, _ runtime: String) -> Void)?
-    private let onSessionStart: (@Sendable (_ team: String, _ worktree: String, _ runtime: String) -> Void)?
-    private let onPostToolUse: (@Sendable (_ team: String, _ worktree: String, _ runtime: String) -> Void)?
+    private let onStop: (@Sendable (_ team: String, _ worktree: String, _ runtime: String, _ paneSessionName: String?) -> Void)?
+    private let onSessionStart: (@Sendable (_ team: String, _ worktree: String, _ runtime: String, _ paneSessionName: String?) -> Void)?
+    private let onPostToolUse: (@Sendable (_ team: String, _ worktree: String, _ runtime: String, _ paneSessionName: String?) -> Void)?
 
     public init(
         inbox: TeamInbox,
         dispatcher: TeamEventDispatcher,
         sessionPromptRenderer: ((TeamView, TeamMember) -> String?)? = nil,
-        onStop: (@Sendable (String, String, String) -> Void)? = nil,
-        onSessionStart: (@Sendable (String, String, String) -> Void)? = nil,
-        onPostToolUse: (@Sendable (String, String, String) -> Void)? = nil
+        onStop: (@Sendable (String, String, String, String?) -> Void)? = nil,
+        onSessionStart: (@Sendable (String, String, String, String?) -> Void)? = nil,
+        onPostToolUse: (@Sendable (String, String, String, String?) -> Void)? = nil
     ) {
         self.inbox = inbox
         self.dispatcher = dispatcher
@@ -172,6 +172,7 @@ public final class TeamInboxRequestHandler {
         runtime: TeamHookRuntime,
         event: TeamHookEvent,
         sessionID: String?,
+        paneSessionName: String?,
         repos: [RepoEntry],
         teamsEnabled: Bool
     ) throws -> String {
@@ -187,14 +188,14 @@ public final class TeamInboxRequestHandler {
 
         switch event {
         case .sessionStart:
-            onSessionStart?(teamID, context.sender.worktreePath, runtime.rawValue)
+            onSessionStart?(teamID, context.sender.worktreePath, runtime.rawValue, paneSessionName)
             var text = TeamInstructionsRenderer.render(team: context.team, viewer: context.sender)
             if let renderedPrompt = sessionPromptRenderer?(context.team, context.sender) {
                 text += "\n\n\(renderedPrompt)"
             }
             return try TeamHookRenderer.sessionStart(runtime: runtime, teamContext: text)
         case .postToolUse:
-            onPostToolUse?(teamID, context.sender.worktreePath, runtime.rawValue)
+            onPostToolUse?(teamID, context.sender.worktreePath, runtime.rawValue, paneSessionName)
             let allUnread = try inbox.unreadMessages(
                 teamID: teamID,
                 recipientWorktree: context.sender.worktreePath,
@@ -221,7 +222,7 @@ public final class TeamInboxRequestHandler {
             // Claude side picks them up via the asyncRewake watcher;
             // Codex picks them up at the next SessionStart or via
             // IdleDeliveryService once production zmx-send wiring lands.
-            onStop?(teamID, context.sender.worktreePath, runtime.rawValue)
+            onStop?(teamID, context.sender.worktreePath, runtime.rawValue, paneSessionName)
             return try TeamHookRenderer.stop(runtime: runtime, messages: [])
         }
     }

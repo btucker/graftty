@@ -36,6 +36,104 @@ struct AppStateTests {
         #expect(state.repos.count == 1)
     }
 
+    @Test("""
+    @spec LAYOUT-2.23: When the user drags worktree rows within a repository section, the application shall reorder only that repository's persisted `worktrees` array so the order survives state save/load.
+    """)
+    func moveWorktreesWithinRepoRewritesPersistedOrder() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let repo = RepoEntry(path: "/tmp/repo", displayName: "repo", worktrees: [
+            WorktreeEntry(path: "/tmp/repo", branch: "main"),
+            WorktreeEntry(path: "/tmp/repo/.worktrees/a", branch: "a"),
+            WorktreeEntry(path: "/tmp/repo/.worktrees/b", branch: "b"),
+        ])
+        let repoID = repo.id
+        var state = AppState(repos: [repo])
+
+        state.moveWorktrees(
+            inRepoID: repoID,
+            movingWorktreeIDs: [repo.worktrees[2].id],
+            toIndex: 0
+        )
+
+        #expect(state.repos[0].worktrees.map(\.branch) == ["b", "main", "a"])
+
+        try state.save(to: dir)
+        let loaded = try AppState.load(from: dir)
+        #expect(loaded.repos[0].worktrees.map(\.branch) == ["b", "main", "a"])
+    }
+
+    @Test func moveWorktreesUnknownRepoIsNoOp() {
+        let repo = RepoEntry(path: "/tmp/repo", displayName: "repo", worktrees: [
+            WorktreeEntry(path: "/tmp/repo", branch: "main"),
+            WorktreeEntry(path: "/tmp/repo/.worktrees/a", branch: "a"),
+        ])
+        var state = AppState(repos: [repo])
+
+        state.moveWorktrees(
+            inRepoID: UUID(),
+            movingWorktreeIDs: [repo.worktrees[1].id],
+            toIndex: 0
+        )
+
+        #expect(state.repos[0].worktrees.map(\.branch) == ["main", "a"])
+    }
+
+    @Test func moveWorktreesAppliesStaleBottomInSingleModelMutation() {
+        let repo = RepoEntry(path: "/tmp/repo", displayName: "repo", worktrees: [
+            WorktreeEntry(path: "/tmp/repo/.worktrees/open-a", branch: "open-a", state: .closed),
+            WorktreeEntry(path: "/tmp/repo/.worktrees/stale", branch: "stale", state: .stale),
+            WorktreeEntry(path: "/tmp/repo/.worktrees/open-b", branch: "open-b", state: .closed),
+        ])
+        let repoID = repo.id
+        var state = AppState(repos: [repo])
+
+        let changed = state.moveWorktrees(
+            inRepoID: repoID,
+            movingWorktreeIDs: [repo.worktrees[1].id],
+            toIndex: 0
+        )
+
+        #expect(changed)
+        #expect(state.repos[0].worktrees.map(\.branch) == ["open-a", "open-b", "stale"])
+    }
+
+    @Test("""
+    @spec LAYOUT-2.24: When a worktree enters the stale/yellow state, the application shall permanently move stale worktrees to the bottom of that repository's persisted `worktrees` array while preserving relative order within stale and non-stale groups.
+    """)
+    func moveStaleWorktreesToBottomPreservesRelativeOrder() {
+        let repo = RepoEntry(path: "/tmp/repo", displayName: "repo", worktrees: [
+            WorktreeEntry(path: "/tmp/repo/.worktrees/stale-a", branch: "stale-a", state: .stale),
+            WorktreeEntry(path: "/tmp/repo/.worktrees/open-a", branch: "open-a", state: .closed),
+            WorktreeEntry(path: "/tmp/repo/.worktrees/stale-b", branch: "stale-b", state: .stale),
+            WorktreeEntry(path: "/tmp/repo/.worktrees/open-b", branch: "open-b", state: .running),
+        ])
+        let repoID = repo.id
+        var state = AppState(repos: [repo])
+
+        let changed = state.moveStaleWorktreesToBottom(inRepoID: repoID)
+
+        #expect(changed)
+        #expect(state.repos[0].worktrees.map(\.branch) == [
+            "open-a", "open-b", "stale-a", "stale-b",
+        ])
+    }
+
+    @Test func moveStaleWorktreesToBottomReturnsFalseWhenOrderIsUnchanged() {
+        let repo = RepoEntry(path: "/tmp/repo", displayName: "repo", worktrees: [
+            WorktreeEntry(path: "/tmp/repo/.worktrees/open", branch: "open", state: .closed),
+            WorktreeEntry(path: "/tmp/repo/.worktrees/stale", branch: "stale", state: .stale),
+        ])
+        let repoID = repo.id
+        var state = AppState(repos: [repo])
+
+        let changed = state.moveStaleWorktreesToBottom(inRepoID: repoID)
+
+        #expect(!changed)
+        #expect(state.repos[0].worktrees.map(\.branch) == ["open", "stale"])
+    }
+
     @Test func removeRepo() {
         var state = AppState()
         let repo = RepoEntry(path: "/tmp/repo", displayName: "repo")

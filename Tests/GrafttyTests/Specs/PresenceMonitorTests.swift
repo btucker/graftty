@@ -10,8 +10,8 @@ struct PresenceMonitorTests {
         defer { try? FileManager.default.removeItem(at: tmpRoot) }
         let storage = TeamPresenceStorage(rootDirectory: tmpRoot)
 
-        try storage.write(.init(teamID: "team-abc", worktree: "alive", runtime: .claude, pid: 1, registeredAt: Date()))
-        try storage.write(.init(teamID: "team-abc", worktree: "dead", runtime: .claude, pid: 999_999, registeredAt: Date()))
+        try storage.write(.init(teamID: "team-abc", worktree: "alive", runtime: .claude, paneSessionName: nil, pid: 1, registeredAt: Date()))
+        try storage.write(.init(teamID: "team-abc", worktree: "dead", runtime: .claude, paneSessionName: nil, pid: 999_999, registeredAt: Date()))
 
         TeamPresenceMonitor.cleanupStale(
             storage: storage,
@@ -19,8 +19,18 @@ struct PresenceMonitorTests {
             eventLog: TeamEventLog(rootDirectory: tmpRoot.appendingPathComponent("events", isDirectory: true))
         )
 
-        let alive = try storage.read(teamID: "team-abc", worktree: "alive", runtime: .claude)
-        let dead = try storage.read(teamID: "team-abc", worktree: "dead", runtime: .claude)
+        let alive = try storage.read(
+            teamID: "team-abc",
+            worktree: "alive",
+            runtime: .claude,
+            paneSessionName: nil
+        )
+        let dead = try storage.read(
+            teamID: "team-abc",
+            worktree: "dead",
+            runtime: .claude,
+            paneSessionName: nil
+        )
         #expect(alive != nil)
         #expect(dead == nil)
     }

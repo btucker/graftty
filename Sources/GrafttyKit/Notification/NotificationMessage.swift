@@ -31,10 +31,12 @@ public enum NotificationMessage: Sendable, Equatable {
     case listPanes(path: String)
     case addPane(path: String, direction: PaneSplit, command: String?)
     case closePane(path: String, index: Int)
+    case showPane(path: String, index: Int, lines: Int)
+    case sendPane(path: String, index: Int, text: String, pressEnter: Bool)
     case teamMessage(callerWorktree: String, recipient: String, text: String)
     case teamSend(callerWorktree: String, recipient: String, text: String, priority: TeamInboxPriority)
     case teamBroadcast(callerWorktree: String, text: String, priority: TeamInboxPriority)
-    case teamHook(callerWorktree: String, runtime: TeamHookRuntime, event: TeamHookEvent, sessionID: String?)
+    case teamHook(callerWorktree: String, runtime: TeamHookRuntime, event: TeamHookEvent, sessionID: String?, paneSessionName: String?)
     case teamInbox(callerWorktree: String?, worktree: String?, repo: String?, member: String?, unread: Bool, all: Bool)
     case teamMembers(callerWorktree: String?, worktree: String?, repo: String?)
     case teamList(callerWorktree: String)
@@ -42,10 +44,12 @@ public enum NotificationMessage: Sendable, Equatable {
 
 extension NotificationMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, path, text, clearAfter, direction, command, index
+        case type, path, text, clearAfter, direction, command, index, lines
         case callerWorktree = "caller_worktree"
         case recipient, priority, runtime, event, worktree, repo, member, unread, all
         case sessionID = "session_id"
+        case paneSessionName = "pane_session_name"
+        case pressEnter = "press_enter"
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -71,6 +75,17 @@ extension NotificationMessage: Codable {
             try container.encode("close_pane", forKey: .type)
             try container.encode(path, forKey: .path)
             try container.encode(index, forKey: .index)
+        case .showPane(let path, let index, let lines):
+            try container.encode("show_pane", forKey: .type)
+            try container.encode(path, forKey: .path)
+            try container.encode(index, forKey: .index)
+            try container.encode(lines, forKey: .lines)
+        case .sendPane(let path, let index, let text, let pressEnter):
+            try container.encode("send_pane", forKey: .type)
+            try container.encode(path, forKey: .path)
+            try container.encode(index, forKey: .index)
+            try container.encode(text, forKey: .text)
+            try container.encode(pressEnter, forKey: .pressEnter)
         case .teamMessage(let path, let recipient, let text):
             try container.encode("team_message", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
@@ -87,12 +102,13 @@ extension NotificationMessage: Codable {
             try container.encode(path, forKey: .callerWorktree)
             try container.encode(text, forKey: .text)
             try container.encode(priority, forKey: .priority)
-        case .teamHook(let path, let runtime, let event, let sessionID):
+        case .teamHook(let path, let runtime, let event, let sessionID, let paneSessionName):
             try container.encode("team_hook", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
             try container.encode(runtime, forKey: .runtime)
             try container.encode(event, forKey: .event)
             try container.encodeIfPresent(sessionID, forKey: .sessionID)
+            try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
         case .teamInbox(let callerWorktree, let worktree, let repo, let member, let unread, let all):
             try container.encode("team_inbox", forKey: .type)
             try container.encodeIfPresent(callerWorktree, forKey: .callerWorktree)
@@ -136,6 +152,17 @@ extension NotificationMessage: Codable {
             let path = try container.decode(String.self, forKey: .path)
             let index = try container.decode(Int.self, forKey: .index)
             self = .closePane(path: path, index: index)
+        case "show_pane":
+            let path = try container.decode(String.self, forKey: .path)
+            let index = try container.decode(Int.self, forKey: .index)
+            let lines = try container.decode(Int.self, forKey: .lines)
+            self = .showPane(path: path, index: index, lines: lines)
+        case "send_pane":
+            let path = try container.decode(String.self, forKey: .path)
+            let index = try container.decode(Int.self, forKey: .index)
+            let text = try container.decode(String.self, forKey: .text)
+            let pressEnter = try container.decode(Bool.self, forKey: .pressEnter)
+            self = .sendPane(path: path, index: index, text: text, pressEnter: pressEnter)
         case "team_message":
             let path = try container.decode(String.self, forKey: .callerWorktree)
             let recipient = try container.decode(String.self, forKey: .recipient)
@@ -157,7 +184,9 @@ extension NotificationMessage: Codable {
             let runtime = try container.decode(TeamHookRuntime.self, forKey: .runtime)
             let event = try container.decode(TeamHookEvent.self, forKey: .event)
             let sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
-            self = .teamHook(callerWorktree: path, runtime: runtime, event: event, sessionID: sessionID)
+            let paneSessionName = try container.decodeIfPresent(String.self, forKey: .paneSessionName)
+            self = .teamHook(callerWorktree: path, runtime: runtime, event: event,
+                             sessionID: sessionID, paneSessionName: paneSessionName)
         case "team_inbox":
             let callerWorktree = try container.decodeIfPresent(String.self, forKey: .callerWorktree)
             let worktree = try container.decodeIfPresent(String.self, forKey: .worktree)
@@ -253,6 +282,7 @@ public enum ResponseMessage: Sendable, Equatable {
     case ok
     case error(String)
     case paneList([PaneInfo])
+    case paneShow(String)
     case teamList(teamName: String, members: [TeamListMember])
     case teamHookOutput(String)
     case teamInbox([TeamInboxMessage])
@@ -260,7 +290,7 @@ public enum ResponseMessage: Sendable, Equatable {
 
 extension ResponseMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, message, panes, output, messages
+        case type, message, panes, output, messages, text
         case teamName = "team_name"
         case members
     }
@@ -276,6 +306,9 @@ extension ResponseMessage: Codable {
         case .paneList(let panes):
             try container.encode("pane_list", forKey: .type)
             try container.encode(panes, forKey: .panes)
+        case .paneShow(let text):
+            try container.encode("pane_show", forKey: .type)
+            try container.encode(text, forKey: .text)
         case .teamList(let teamName, let members):
             try container.encode("team_list", forKey: .type)
             try container.encode(teamName, forKey: .teamName)
@@ -301,6 +334,9 @@ extension ResponseMessage: Codable {
         case "pane_list":
             let panes = try container.decode([PaneInfo].self, forKey: .panes)
             self = .paneList(panes)
+        case "pane_show":
+            let text = try container.decode(String.self, forKey: .text)
+            self = .paneShow(text)
         case "team_list":
             let teamName = try container.decode(String.self, forKey: .teamName)
             let members = try container.decode([TeamListMember].self, forKey: .members)

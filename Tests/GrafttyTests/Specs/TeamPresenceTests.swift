@@ -4,7 +4,7 @@ import Foundation
 
 @Suite("TeamPresence — registration and storage")
 struct TeamPresenceTests {
-    @Test("@spec TEAM-PRESENCE-1.2: When the agent runs `graftty team register`, the application shall persist a presence record at `~/.graftty/teams/<id>/presence/<worktree>.<runtime>.json`.")
+    @Test("@spec TEAM-PRESENCE-1.2: When the agent runs `graftty team register`, the application shall persist a presence record at `~/.graftty/teams/<id>/presence/<worktree>.<runtime>.<pane>.json`.")
     func registerPersistsRecord() throws {
         let tmpRoot = try makeTmpDir()
         defer { try? FileManager.default.removeItem(at: tmpRoot) }
@@ -14,6 +14,7 @@ struct TeamPresenceTests {
             teamID: "team-abc",
             worktree: "feature-foo",
             runtime: .claude,
+            paneSessionName: nil,
             pid: 4242,
             registeredAt: Date(timeIntervalSince1970: 1_780_000_000)
         )
@@ -24,10 +25,15 @@ struct TeamPresenceTests {
         let expectedPath = tmpRoot
             .appendingPathComponent("team-abc")
             .appendingPathComponent("presence")
-            .appendingPathComponent("feature-foo.claude.json")
+            .appendingPathComponent("feature-foo.claude._no_pane.json")
         #expect(FileManager.default.fileExists(atPath: expectedPath.path))
 
-        let loaded = try storage.read(teamID: "team-abc", worktree: "feature-foo", runtime: .claude)
+        let loaded = try storage.read(
+            teamID: "team-abc",
+            worktree: "feature-foo",
+            runtime: .claude,
+            paneSessionName: nil
+        )
         #expect(loaded == record)
     }
 
@@ -38,20 +44,36 @@ struct TeamPresenceTests {
         let storage = TeamPresenceStorage(rootDirectory: tmpRoot)
 
         // Removing nothing succeeds.
-        try storage.delete(teamID: "team-abc", worktree: "feature-foo", runtime: .claude)
+        try storage.delete(
+            teamID: "team-abc",
+            worktree: "feature-foo",
+            runtime: .claude,
+            paneSessionName: nil
+        )
 
         // Round-trip then delete.
         let record = TeamPresenceRecord(
             teamID: "team-abc",
             worktree: "feature-foo",
             runtime: .claude,
+            paneSessionName: nil,
             pid: 4242,
             registeredAt: Date()
         )
         try storage.write(record)
-        try storage.delete(teamID: "team-abc", worktree: "feature-foo", runtime: .claude)
+        try storage.delete(
+            teamID: "team-abc",
+            worktree: "feature-foo",
+            runtime: .claude,
+            paneSessionName: nil
+        )
 
-        let loaded = try storage.read(teamID: "team-abc", worktree: "feature-foo", runtime: .claude)
+        let loaded = try storage.read(
+            teamID: "team-abc",
+            worktree: "feature-foo",
+            runtime: .claude,
+            paneSessionName: nil
+        )
         #expect(loaded == nil)
     }
 
@@ -61,7 +83,12 @@ struct TeamPresenceTests {
         defer { try? FileManager.default.removeItem(at: tmpRoot) }
         let storage = TeamPresenceStorage(rootDirectory: tmpRoot)
 
-        let result = try storage.read(teamID: "x", worktree: "y", runtime: .codex)
+        let result = try storage.read(
+            teamID: "x",
+            worktree: "y",
+            runtime: .codex,
+            paneSessionName: nil
+        )
         #expect(result == nil)
     }
 

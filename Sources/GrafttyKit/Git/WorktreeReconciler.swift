@@ -67,6 +67,7 @@ public enum WorktreeReconciler {
             .map { WorktreeEntry(path: $0.path, branch: $0.branch) }
 
         merged.append(contentsOf: newlyAdded)
+        merged = WorktreeOrdering.staleLast(merged)
 
         return Result(
             merged: merged,
