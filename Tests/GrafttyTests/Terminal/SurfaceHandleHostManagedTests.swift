@@ -316,7 +316,7 @@ private final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
         closeCount += 1
     }
 
-    func releaseReceiveUserdataAfterSurfaceFree() {
+    func surfaceWasFreed() {
         releaseCount += 1
     }
 }

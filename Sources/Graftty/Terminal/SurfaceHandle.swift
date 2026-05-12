@@ -36,10 +36,14 @@ protocol SurfaceHandleZmxBackend: AnyObject {
     func start(surface: ghostty_surface_t) throws
     func write(_ data: Data) throws
     func close()
-    func releaseReceiveUserdataAfterSurfaceFree()
+    func surfaceWasFreed()
 }
 
-extension HostManagedZmxBackend: SurfaceHandleZmxBackend {}
+extension HostManagedZmxBackend: SurfaceHandleZmxBackend {
+    func surfaceWasFreed() {
+        releaseReceiveUserdataAfterSurfaceFree()
+    }
+}
 
 struct SurfaceHandleGhosttySurfaceFactory {
     var create: (ghostty_app_t, UnsafeMutablePointer<ghostty_surface_config_s>) -> ghostty_surface_t?
@@ -216,7 +220,7 @@ final class SurfaceHandle {
             // crashed the entire app mid-`graftty pane add` when
             // libghostty rejected the config for any reason.
             backend?.close()
-            backend?.releaseReceiveUserdataAfterSurfaceFree()
+            backend?.surfaceWasFreed()
             freeCreateInputs()
             releaseSurfaceUserdata()
             return nil
@@ -240,20 +244,6 @@ final class SurfaceHandle {
                 reportZmxBackendStartFailure(error, surface: newSurface)
             }
         }
-
-        // userdata is set after construction so we can pass a valid `self`.
-        // libghostty does not use userdata until after callbacks fire, so setting
-        // it here (before any surface interaction) is safe.
-        // Note: there's no public setter in the current API; userdata is already
-        // part of the config copy. Passing `self` via config at construction time
-        // would require a chicken-and-egg dance. Callbacks that need to find the
-        // SurfaceHandle should use `ghostty_surface_userdata`, which returns the
-        // pointer we set on the config — so we set it BEFORE new() instead.
-        // See TerminalManager for how we resolve actions back to handles.
-        //
-        // We already passed config above without userdata; if callers need to map
-        // a surface back to a handle, they should look it up in TerminalManager's
-        // dictionary by terminalID.
 
         // Free the C strings now that libghostty has copied them internally.
         freeCreateInputs()
@@ -298,7 +288,7 @@ final class SurfaceHandle {
         }
         zmxBackend?.close()
         surfaceFactory.free(surface)
-        zmxBackend?.releaseReceiveUserdataAfterSurfaceFree()
+        zmxBackend?.surfaceWasFreed()
         // Surface is gone, so libghostty won't fire further callbacks against
         // our userdata pointer — safe to release the box.
         Unmanaged<SurfaceUserdataBox>.fromOpaque(userdataPointer).release()

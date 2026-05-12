@@ -4,7 +4,7 @@ import Testing
 @testable import Graftty
 @testable import GrafttyKit
 
-@Suite("HostManagedZmxBackend — Ghostty host-managed adapter")
+@Suite("HostManagedZmxBackend — Ghostty host-managed adapter", .serialized)
 struct HostManagedZmxBackendTests {
     @Test func configureSetsHostManagedBackendAndReceiveCallbacks() {
         let backend = Self.makeBackend(session: FakeHostManagedSession())

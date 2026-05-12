@@ -5,7 +5,7 @@ import Testing
 @testable import Graftty
 @testable import GrafttyKit
 
-@Suite("NativePtySession — PTY bridge")
+@Suite("NativePtySession — PTY bridge", .serialized)
 struct NativePtySessionTests {
     @Test func forwardsChildOutputToSurfaceSink() throws {
         let recorder = LockedRecorder<Data>()
@@ -165,6 +165,39 @@ struct NativePtySessionTests {
             readerObservedOpenFD.values().isEmpty == false
         }
         #expect(readerObservedOpenFD.values() == [true])
+        try Self.waitUntil {
+            fdCloses.value() == 1
+        }
+    }
+
+    @Test func readerClosesFDEvenIfSessionIsReleasedAfterClose() throws {
+        let allowReaderToStart = DispatchSemaphore(value: 0)
+        let fdCloses = LockedCounter()
+        var session: NativePtySession? = NativePtySession(
+            argv: ["/bin/sh", "-c", "sleep 2"],
+            env: [:],
+            workingDirectory: nil,
+            writeToSurface: { _ in },
+            processExited: { _, _ in },
+            spawnFailed: { _ in },
+            closer: { spawned in
+                Self.terminateChildOnly(spawned)
+            },
+            fdCloser: { fd in
+                _ = fdCloses.increment()
+                close(fd)
+            },
+            readerWillStart: { _ in
+                _ = allowReaderToStart.wait(timeout: .now() + 2)
+            }
+        )
+
+        try session!.start()
+        session!.close()
+        session = nil
+
+        #expect(fdCloses.value() == 0)
+        allowReaderToStart.signal()
         try Self.waitUntil {
             fdCloses.value() == 1
         }

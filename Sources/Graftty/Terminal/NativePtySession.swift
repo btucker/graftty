@@ -38,6 +38,24 @@ final class NativePtySession {
         case closed
     }
 
+    private final class State {
+        private let mutex = NSLock()
+        var lifecycle: Lifecycle = .idle
+        var spawned: PtyProcess.Spawned?
+        var readerThread: Thread?
+        var writeToSurface: ((Data) -> Void)?
+        var processExited: ((pid_t, Int32?) -> Void)?
+        var spawnFailed: ((Swift.Error) -> Void)?
+
+        func lock() {
+            mutex.lock()
+        }
+
+        func unlock() {
+            mutex.unlock()
+        }
+    }
+
     private let argv: [String]
     private let env: [String: String]
     private let workingDirectory: URL?
@@ -48,17 +66,8 @@ final class NativePtySession {
     private let closer: Closer
     private let fdCloser: FDCloser
     private let readerWillStart: ((Int32) -> Void)?
-    private let stateLock = NSLock()
+    private let state = State()
     private let ioLock = NSLock()
-
-    private var lifecycle: Lifecycle = .idle
-    private var spawned: PtyProcess.Spawned?
-    private var readerThread: Thread?
-    private var didNotifyExit = false
-    private var didNotifySpawnFailure = false
-    private var writeToSurface: ((Data) -> Void)?
-    private var processExited: ((pid_t, Int32?) -> Void)?
-    private var spawnFailed: ((Swift.Error) -> Void)?
 
     init(
         argv: [String],
@@ -86,9 +95,9 @@ final class NativePtySession {
         self.env = env
         self.workingDirectory = workingDirectory
         self.initialSize = initialSize
-        self.writeToSurface = writeToSurface
-        self.processExited = processExited
-        self.spawnFailed = spawnFailed
+        self.state.writeToSurface = writeToSurface
+        self.state.processExited = processExited
+        self.state.spawnFailed = spawnFailed
         self.spawner = spawner
         self.writer = writer
         self.resizer = resizer
@@ -145,19 +154,19 @@ final class NativePtySession {
     }
 
     func start() throws {
-        stateLock.lock()
-        switch lifecycle {
+        state.lock()
+        switch state.lifecycle {
         case .closed:
-            stateLock.unlock()
+            state.unlock()
             throw Error.closed
         case .idle:
-            lifecycle = .starting
-            stateLock.unlock()
+            state.lifecycle = .starting
+            state.unlock()
         case .failed(let error):
-            stateLock.unlock()
+            state.unlock()
             throw Error.spawnFailed(error)
         case .starting, .running:
-            stateLock.unlock()
+            state.unlock()
             throw Error.alreadyStarted
         }
 
@@ -165,23 +174,23 @@ final class NativePtySession {
         do {
             newSpawn = try spawner(argv, env, workingDirectory, initialSize)
         } catch {
-            stateLock.lock()
-            if case .starting = lifecycle { lifecycle = .failed(error) }
-            stateLock.unlock()
+            state.lock()
+            if case .starting = state.lifecycle { state.lifecycle = .failed(error) }
+            state.unlock()
             notifySpawnFailure(error)
             throw Error.spawnFailed(error)
         }
 
-        stateLock.lock()
-        if case .closed = lifecycle {
-            stateLock.unlock()
+        state.lock()
+        if case .closed = state.lifecycle {
+            state.unlock()
             closer(newSpawn)
             fdCloser(newSpawn.masterFD)
             throw Error.closed
         }
-        spawned = newSpawn
-        lifecycle = .running
-        stateLock.unlock()
+        state.spawned = newSpawn
+        state.lifecycle = .running
+        state.unlock()
 
         startReaderThread(fd: newSpawn.masterFD, pid: newSpawn.pid)
     }
@@ -208,17 +217,17 @@ final class NativePtySession {
     }
 
     func close() {
-        stateLock.lock()
-        if case .closed = lifecycle {
-            stateLock.unlock()
+        state.lock()
+        if case .closed = state.lifecycle {
+            state.unlock()
             return
         }
-        lifecycle = .closed
-        let currentSpawn = spawned
-        writeToSurface = nil
-        processExited = nil
-        spawnFailed = nil
-        stateLock.unlock()
+        state.lifecycle = .closed
+        let currentSpawn = state.spawned
+        state.writeToSurface = nil
+        state.processExited = nil
+        state.spawnFailed = nil
+        state.unlock()
 
         if let currentSpawn {
             ioLock.lock()
@@ -228,22 +237,26 @@ final class NativePtySession {
     }
 
     var activeMasterFDForTesting: Int32? {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        return spawned?.masterFD
+        state.lock()
+        defer { state.unlock() }
+        return state.spawned?.masterFD
     }
 
     private func activeMasterFD() throws -> Int32 {
-        stateLock.lock()
-        defer { stateLock.unlock() }
-        if case .closed = lifecycle { throw Error.closed }
-        guard let spawned else { throw Error.notStarted }
+        state.lock()
+        defer { state.unlock() }
+        if case .closed = state.lifecycle { throw Error.closed }
+        guard let spawned = state.spawned else { throw Error.notStarted }
         return spawned.masterFD
     }
 
     private func startReaderThread(fd: Int32, pid: pid_t) {
-        let thread = Thread { [weak self] in
-            self?.readerWillStart?(fd)
+        let state = state
+        let ioLock = ioLock
+        let fdCloser = fdCloser
+        let readerWillStart = readerWillStart
+        let thread = Thread {
+            readerWillStart?(fd)
             var buffer = [UInt8](repeating: 0, count: 8192)
             while true {
                 let count = buffer.withUnsafeMutableBufferPointer {
@@ -251,24 +264,30 @@ final class NativePtySession {
                 }
                 if count < 0, errno == EINTR { continue }
                 if count <= 0 { break }
-                self?.dispatchOutput(Data(buffer[0..<count]))
+                Self.dispatchOutput(Data(buffer[0..<count]), state: state)
             }
-            self?.closeMasterAfterReaderExit(fd: fd, pid: pid)
-            self?.notifyExit(pid: pid)
+            Self.closeMasterAfterReaderExit(
+                fd: fd,
+                pid: pid,
+                state: state,
+                ioLock: ioLock,
+                fdCloser: fdCloser
+            )
+            Self.notifyExit(pid: pid, state: state)
         }
         thread.name = "NativePtySession.reader(\(pid))"
 
-        stateLock.lock()
-        readerThread = thread
-        stateLock.unlock()
+        state.lock()
+        state.readerThread = thread
+        state.unlock()
 
         thread.start()
     }
 
-    private func dispatchOutput(_ data: Data) {
-        stateLock.lock()
-        let callback = writeToSurface
-        stateLock.unlock()
+    private static func dispatchOutput(_ data: Data, state: State) {
+        state.lock()
+        let callback = state.writeToSurface
+        state.unlock()
 
         if !data.isEmpty {
             callback?(data)
@@ -276,36 +295,32 @@ final class NativePtySession {
     }
 
     private func notifySpawnFailure(_ error: Swift.Error) {
-        stateLock.lock()
-        guard !didNotifySpawnFailure else {
-            stateLock.unlock()
-            return
-        }
-        didNotifySpawnFailure = true
-        let callback = spawnFailed
-        spawnFailed = nil
-        stateLock.unlock()
+        state.lock()
+        let callback = state.spawnFailed
+        state.spawnFailed = nil
+        state.unlock()
 
         callback?(error)
     }
 
-    private func notifyExit(pid: pid_t) {
+    private static func notifyExit(pid: pid_t, state: State) {
         let status = reap(pid: pid)
 
-        stateLock.lock()
-        guard !didNotifyExit else {
-            stateLock.unlock()
-            return
-        }
-        didNotifyExit = true
-        let callback = processExited
-        processExited = nil
-        stateLock.unlock()
+        state.lock()
+        let callback = state.processExited
+        state.processExited = nil
+        state.unlock()
 
         callback?(pid, status)
     }
 
-    private func closeMasterAfterReaderExit(fd: Int32, pid: pid_t) {
+    private static func closeMasterAfterReaderExit(
+        fd: Int32,
+        pid: pid_t,
+        state: State,
+        ioLock: NSLock,
+        fdCloser: FDCloser
+    ) {
         ioLock.lock()
         defer { ioLock.unlock() }
 
@@ -313,13 +328,13 @@ final class NativePtySession {
         // `close()` only terminates the child; closing here avoids the race
         // where `close()` closes/reuses the fd before a just-created reader
         // thread has entered its read loop.
-        stateLock.lock()
-        guard let current = spawned, current.masterFD == fd, current.pid == pid else {
-            stateLock.unlock()
+        state.lock()
+        guard let current = state.spawned, current.masterFD == fd, current.pid == pid else {
+            state.unlock()
             return
         }
-        spawned = nil
-        stateLock.unlock()
+        state.spawned = nil
+        state.unlock()
 
         fdCloser(fd)
     }
@@ -328,7 +343,7 @@ final class NativePtySession {
         closer(spawned)
     }
 
-    private func reap(pid: pid_t) -> Int32? {
+    private static func reap(pid: pid_t) -> Int32? {
         var status: Int32 = 0
         for _ in 0..<10 {
             let result = waitpid(pid, &status, WNOHANG)

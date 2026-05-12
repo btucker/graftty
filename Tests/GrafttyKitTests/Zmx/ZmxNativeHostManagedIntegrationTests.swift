@@ -16,23 +16,7 @@ struct ZmxNativeHostManagedIntegrationTests {
         let masterFd: Int32
 
         func write(_ string: String) throws {
-            let bytes = Array(string.utf8)
-            try bytes.withUnsafeBytes { raw in
-                guard let base = raw.baseAddress else { return }
-                var offset = 0
-                while offset < raw.count {
-                    let written = Darwin.write(
-                        masterFd,
-                        base.advanced(by: offset),
-                        raw.count - offset
-                    )
-                    if written < 0 {
-                        if errno == EINTR { continue }
-                        throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
-                    }
-                    offset += written
-                }
-            }
+            try SocketIO.writeAll(fd: masterFd, string: string)
         }
 
         func readAvailable() -> String {
@@ -288,7 +272,7 @@ struct ZmxNativeHostManagedIntegrationTests {
             if let sessions = try? launcher.listSessions(), sessions.contains(name) {
                 return
             }
-            Thread.sleep(forTimeInterval: 0.05)
+            Thread.sleep(forTimeInterval: 0.15)
         }
         throw NSError(
             domain: "ZmxNativeHostManagedIntegrationTests",
@@ -307,7 +291,7 @@ struct ZmxNativeHostManagedIntegrationTests {
             if let sessions = try? launcher.listSessions(), !sessions.contains(name) {
                 return
             }
-            Thread.sleep(forTimeInterval: 0.05)
+            Thread.sleep(forTimeInterval: 0.15)
         }
         let sessions = (try? launcher.listSessions()) ?? []
         throw NSError(
