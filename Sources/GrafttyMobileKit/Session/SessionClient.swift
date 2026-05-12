@@ -107,7 +107,7 @@ public final class SessionClient {
     /// @spec IOS-10.3
     public private(set) var renderActivity: RenderActivity = .active
 
-    /// @spec IOS-10.4
+    /// @spec IOS-10.4: While a `SessionClient` is in `.idle`, the corresponding view shall display a static snapshot of the last live frame in place of `TerminalPaneView`, with a tap target that resumes `.active`.
     public private(set) var idleSnapshot: UIImage?
 
     public func setIdleSnapshot(_ image: UIImage?) {
