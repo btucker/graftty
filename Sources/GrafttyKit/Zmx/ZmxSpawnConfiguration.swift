@@ -24,6 +24,9 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
         let hooksEnabled = !agentHooksDisabled
 
         var env = launcher.subprocessEnv(from: processEnv)
+        env.removeValue(forKey: "GRAFTTY_AGENT_HOOKS_BIN")
+        env.removeValue(forKey: "ZDOTDIR")
+        env.removeValue(forKey: "GHOSTTY_ZSH_ZDOTDIR")
         env["GRAFTTY_SOCK"] = socketPath
 
         let sanitizedPath = BundlePathSanitizer.sanitized(
@@ -42,15 +45,14 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
             ? AgentHookInstaller.wrappedUserShell(rawUserShell, rootDirectory: agentHooksRoot)
             : rawUserShell
 
-        if let ghosttyResourcesDir, !ghosttyResourcesDir.isEmpty,
+        if hooksEnabled,
+           let ghosttyResourcesDir, !ghosttyResourcesDir.isEmpty,
            (rawUserShell as NSString).lastPathComponent == "zsh" {
             env["ZDOTDIR"] = (ghosttyResourcesDir as NSString)
                 .appendingPathComponent("shell-integration/zsh")
-            if hooksEnabled {
-                env["GHOSTTY_ZSH_ZDOTDIR"] = AgentHookInstaller
-                    .zshInitDirectory(rootDirectory: agentHooksRoot)
-                    .path
-            }
+            env["GHOSTTY_ZSH_ZDOTDIR"] = AgentHookInstaller
+                .zshInitDirectory(rootDirectory: agentHooksRoot)
+                .path
         }
 
         return ZmxSpawnConfiguration(

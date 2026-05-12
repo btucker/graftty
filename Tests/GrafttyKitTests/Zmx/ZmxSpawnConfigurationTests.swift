@@ -81,6 +81,17 @@ struct ZmxSpawnConfigurationTests {
         #expect(config.env["PATH"] == sanitizedPath)
     }
 
+    @Test func disabledHooksRemoveInheritedHookOwnedEnv() throws {
+        let config = makeConfig(
+            processEnv: staleHookEnv(shell: "/bin/zsh"),
+            agentHooksDisabled: true
+        )
+
+        #expect(config.env["GRAFTTY_AGENT_HOOKS_BIN"] == nil)
+        #expect(config.env["ZDOTDIR"] == nil)
+        #expect(config.env["GHOSTTY_ZSH_ZDOTDIR"] == nil)
+    }
+
     @Test func missingGhosttyResourcesOmitZshIntegrationEnv() throws {
         let config = makeConfig(
             processEnv: [
@@ -89,6 +100,23 @@ struct ZmxSpawnConfigurationTests {
             ],
             ghosttyResourcesDir: nil
         )
+
+        #expect(config.env["ZDOTDIR"] == nil)
+        #expect(config.env["GHOSTTY_ZSH_ZDOTDIR"] == nil)
+    }
+
+    @Test func missingGhosttyResourcesRemoveInheritedZshIntegrationEnv() throws {
+        let config = makeConfig(
+            processEnv: staleHookEnv(shell: "/bin/zsh"),
+            ghosttyResourcesDir: nil
+        )
+
+        #expect(config.env["ZDOTDIR"] == nil)
+        #expect(config.env["GHOSTTY_ZSH_ZDOTDIR"] == nil)
+    }
+
+    @Test func nonZshShellRemovesInheritedZshIntegrationEnv() throws {
+        let config = makeConfig(processEnv: staleHookEnv(shell: "/bin/bash"))
 
         #expect(config.env["ZDOTDIR"] == nil)
         #expect(config.env["GHOSTTY_ZSH_ZDOTDIR"] == nil)
@@ -120,5 +148,15 @@ struct ZmxSpawnConfigurationTests {
             agentHooksDisabled: agentHooksDisabled,
             agentHooksRoot: agentHooksRoot
         )
+    }
+
+    private func staleHookEnv(shell: String) -> [String: String] {
+        [
+            "SHELL": shell,
+            "PATH": "/usr/bin",
+            "GRAFTTY_AGENT_HOOKS_BIN": "/stale/hooks/bin",
+            "ZDOTDIR": "/stale/zdotdir",
+            "GHOSTTY_ZSH_ZDOTDIR": "/stale/ghostty-zdotdir",
+        ]
     }
 }
