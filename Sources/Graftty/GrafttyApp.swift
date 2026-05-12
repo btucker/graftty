@@ -1039,8 +1039,8 @@ struct GrafttyApp: App {
         // without the registered process getting a chance to clean up.
         // input-stamp eviction stays on the same trigger so the per-pane
         // registries don't grow unbounded across the app's lifetime.
-        terminalManager.paneClosed = { [stateRegistry, inputRegistry, presenceStorage] paneID, sessionName in
-            inputRegistry.removeStamp(paneID: paneID)
+        terminalManager.paneClosed = { [stateRegistry, inputRegistry, presenceStorage] paneSlotID, sessionName in
+            inputRegistry.removeStamp(paneID: paneSlotID.id)
             guard let sessionName else { return }
             for record in presenceStorage.records(forPaneSessionName: sessionName) {
                 try? presenceStorage.delete(

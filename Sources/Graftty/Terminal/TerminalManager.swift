@@ -244,7 +244,7 @@ final class TerminalManager: ObservableObject {
     /// stamps, WorktreeAgentStateRegistry states, and TeamPresenceStorage
     /// records keyed off the pane's session name). Wired by
     /// `GrafttyApp.startup()` after the pipeline is constructed.
-    var paneClosed: ((UUID, String?) -> Void)?
+    var paneClosed: ((PaneSlotID, String?) -> Void)?
 
     /// Fired when cmd-click resolves to a CLI editor; owner spawns a new
     /// pane split-right of the source with `initialInput` as the command.
@@ -569,7 +569,7 @@ final class TerminalManager: ObservableObject {
         }
         shellReadyFired.remove(terminalID)
         cachedShellPIDs.removeValue(forKey: terminalID)
-        paneClosed?(terminalID.id, zmxSessionName(for: terminalID))
+        paneClosed?(terminalID, zmxSessionName(for: terminalID))
     }
 
     /// The rendered sidebar label for a pane. Chains in priority order:
@@ -635,11 +635,13 @@ final class TerminalManager: ObservableObject {
         surfaces.first(where: { self.zmxSessionName(for: $0.key) == sessionName })?.value
     }
 
-    /// Reverse-lookup of the pane UUID whose pane derives the given
-    /// zmx session name. Returns nil if no surface matches (e.g. pane
-    /// closed). O(n) over the surface set, same cost class as `handle`.
+    /// Reverse-lookup of the pane UUID whose current runtime mapping
+    /// derives the given zmx session name. This intentionally consults
+    /// the mapping rather than `surfaces`, so metadata tests and late
+    /// hook gates can verify session replacement without a real Ghostty
+    /// surface.
     func paneID(forSessionName sessionName: String) -> UUID? {
-        surfaces.first(where: { self.zmxSessionName(for: $0.key) == sessionName })?.key.id
+        paneSessionIDs.first(where: { ZmxLauncher.sessionName(for: $0.value) == sessionName })?.key.id
     }
 
     /// Tell libghostty whether a surface is currently visible. On visible,

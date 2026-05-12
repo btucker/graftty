@@ -141,4 +141,18 @@ struct TerminalManagerMetadataTests {
 
         #expect(manager.zmxSessionName(for: slotID) == "graftty-01234567")
     }
+
+    @Test func currentSessionNameChangesWhenSlotGetsNewSession() {
+        let manager = TerminalManager(socketPath: "/tmp/graftty-test.sock")
+        let slot = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!)
+        let first = PaneSessionID(id: UUID(uuidString: "AAAAAAAA-0000-0000-0000-000000000000")!)
+        let second = PaneSessionID(id: UUID(uuidString: "BBBBBBBB-0000-0000-0000-000000000000")!)
+
+        manager.recordPaneSession(first, for: slot)
+        #expect(manager.paneID(forSessionName: "graftty-aaaaaaaa") == slot.id)
+
+        manager.recordPaneSession(second, for: slot)
+        #expect(manager.paneID(forSessionName: "graftty-aaaaaaaa") == nil)
+        #expect(manager.paneID(forSessionName: "graftty-bbbbbbbb") == slot.id)
+    }
 }
