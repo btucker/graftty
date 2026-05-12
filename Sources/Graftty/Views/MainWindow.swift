@@ -43,6 +43,7 @@ struct MainWindow: View {
                 onAddRepo: addRepository,
                 onAddPath: addPath,
                 onRemoveRepo: removeRepoWithConfirmation,
+                onInitializeGit: initializeGitRepositoryInPlace,
                 onStopWorktree: stopWorktreeWithConfirmation,
                 onDeleteWorktree: deleteWorktreeWithConfirmation,
                 onMovePane: movePane,
@@ -778,6 +779,43 @@ struct MainWindow: View {
                     return
                 }
             }
+        }
+    }
+
+    /// PROJECT-1.3. Runs `GitInit.run` in the repo folder, flips
+    /// `isGitTracked` to true, then rediscovers worktrees so the
+    /// synthetic single-worktree entry is replaced by the real
+    /// `git worktree list --porcelain` result. Surfaces failures via
+    /// the same alert style as `addPath`'s init branch.
+    private func initializeGitRepositoryInPlace(_ repo: RepoEntry) {
+        Task { @MainActor in
+            do {
+                try await GitInit.run(at: repo.path)
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "Could not initialize git repository"
+                alert.informativeText = "\(repo.path)\n\n\(String(describing: error))"
+                alert.alertStyle = .warning
+                alert.runModal()
+                return
+            }
+            guard let idx = appState.repos.firstIndex(where: { $0.id == repo.id }) else { return }
+            appState.repos[idx].isGitTracked = true
+
+            let updatedRepo = appState.repos[idx]
+            let discovered: [DiscoveredWorktree]
+            do {
+                discovered = try await WorktreeDiscovery.discover(repo: updatedRepo)
+            } catch {
+                NSLog("[Graftty] initializeGitRepositoryInPlace: discover failed for %@: %@",
+                      repo.path, String(describing: error))
+                return
+            }
+            guard let idx2 = appState.repos.firstIndex(where: { $0.id == repo.id }) else { return }
+            appState.repos[idx2].worktrees = discovered.map {
+                WorktreeEntry(path: $0.path, branch: $0.branch)
+            }
+            remoteBranchStore.refresh(repoPath: repo.path)
         }
     }
 

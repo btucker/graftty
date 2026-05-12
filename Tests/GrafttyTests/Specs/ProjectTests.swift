@@ -123,3 +123,38 @@ struct NonGitMenuVisibilityTests {
         #expect(SidebarMenuVisibility.showsDeleteWorktree(worktree: wt, repo: nonGit) == false)
     }
 }
+
+@Suite("@spec PROJECT-1.3: When the user selects Initialize Git Repository on a non-git repo's row, the application shall run `git init` + `git commit --allow-empty`, set `isGitTracked` to true, and rediscover its worktrees via `git worktree list --porcelain`.")
+struct PromoteToGitTests {
+    @Test("After GitInit + flag flip, WorktreeDiscovery returns real porcelain output")
+    func promoteCreatesGitRepoAndDiscoversWorktree() async throws {
+        guard FileManager.default.fileExists(atPath: "/usr/bin/git") ||
+              FileManager.default.fileExists(atPath: "/opt/homebrew/bin/git") ||
+              FileManager.default.fileExists(atPath: "/usr/local/bin/git") else {
+            return
+        }
+
+        let tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-promote-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+
+        // `git worktree list --porcelain` reports the canonical (resolved)
+        // path — on macOS `/var/folders/...` resolves to `/private/var/...`
+        // — so compare via `URL.resolvingSymlinksInPath` to match.
+        let canonicalTmp = tmpDir.resolvingSymlinksInPath().path
+
+        try await GitInit.run(at: tmpDir.path)
+
+        let promoted = RepoEntry(
+            path: tmpDir.path,
+            displayName: tmpDir.lastPathComponent,
+            worktrees: [WorktreeEntry(path: tmpDir.path, branch: "main")],
+            isGitTracked: true
+        )
+        let discovered = try await WorktreeDiscovery.discover(repo: promoted)
+        #expect(discovered.count == 1)
+        #expect(URL(fileURLWithPath: discovered[0].path).resolvingSymlinksInPath().path == canonicalTmp)
+        #expect(!discovered[0].branch.isEmpty)
+    }
+}

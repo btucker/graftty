@@ -19,6 +19,7 @@ struct SidebarView: View {
     let onAddRepo: () -> Void
     let onAddPath: (String) -> Void
     let onRemoveRepo: (RepoEntry) -> Void
+    let onInitializeGit: (RepoEntry) -> Void
     let onStopWorktree: (String) -> Void
     let onDeleteWorktree: (String) -> Void
     let onMovePane: (TerminalID, String) -> Void
@@ -164,6 +165,11 @@ struct SidebarView: View {
                 }
             }
             .contextMenu {
+                if !repo.isGitTracked {
+                    Button("Initialize Git Repository") {
+                        onInitializeGit(repo)
+                    }
+                }
                 Button("Remove Repository") {
                     onRemoveRepo(repo)
                 }
