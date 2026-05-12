@@ -94,10 +94,15 @@ struct ZmxNativeHostManagedIntegrationTests {
                 launcher: launcher,
                 sessionName: session
             )
-            defer { launcher.kill(sessionName: session) }
+            var attachRunning = true
+            defer {
+                if attachRunning { attach.terminate() }
+                launcher.kill(sessionName: session)
+            }
 
             try Self.waitForSession(launcher: launcher, name: session, timeout: 5.0)
             attach.terminate(signal: SIGTERM)
+            attachRunning = false
 
             try Self.waitForSession(launcher: launcher, name: session, timeout: 2.0)
             #expect(try launcher.listSessions().contains(session))
@@ -115,6 +120,11 @@ struct ZmxNativeHostManagedIntegrationTests {
                 launcher: launcher,
                 sessionName: session
             )
+            var firstRunning = true
+            defer {
+                if firstRunning { first.terminate() }
+                launcher.kill(sessionName: session)
+            }
             try Self.waitForAttachReady(first)
             try first.write("stty -echo\n")
             Thread.sleep(forTimeInterval: 0.2)
@@ -124,6 +134,7 @@ struct ZmxNativeHostManagedIntegrationTests {
             let live = Self.readUntil(marker: output, from: first, deadline: 5.0)
             #expect(live.contains(output), "marker never appeared before detach; got: \(live)")
             first.terminate()
+            firstRunning = false
 
             try Self.waitForSession(launcher: launcher, name: session, timeout: 2.0)
 
@@ -131,10 +142,7 @@ struct ZmxNativeHostManagedIntegrationTests {
                 launcher: launcher,
                 sessionName: session
             )
-            defer {
-                second.terminate()
-                launcher.kill(sessionName: session)
-            }
+            defer { second.terminate() }
 
             let replay = Self.readUntil(marker: output, from: second, deadline: 5.0)
             #expect(replay.contains(output), "reattach did not replay prior output; got: \(replay)")
