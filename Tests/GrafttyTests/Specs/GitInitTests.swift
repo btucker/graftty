@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 @testable import GrafttyKit
@@ -32,5 +33,41 @@ struct GitInitTests {
         let log = try await GitRunner.run(args: ["log", "--oneline"], at: tmpDir.path)
         let lines = log.split(separator: "\n").filter { !$0.isEmpty }
         #expect(lines.count == 1)
+    }
+
+    @Test("`GitInit.run` preserves the user's git identity when configured")
+    func initRespectsConfiguredIdentity() async throws {
+        guard FileManager.default.fileExists(atPath: "/usr/bin/git") ||
+              FileManager.default.fileExists(atPath: "/opt/homebrew/bin/git") ||
+              FileManager.default.fileExists(atPath: "/usr/local/bin/git") else {
+            return
+        }
+
+        // Simulate "configured-user machine" via GIT_CONFIG_GLOBAL (git
+        // >= 2.32) pointing at a temp config file with [user] block, so
+        // GitInit's `git config user.email` probe sees a value and the
+        // ephemeral `-c user.email=noreply@graftty.local` override is
+        // suppressed.
+        let tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-gitinit-id-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+
+        let configFile = tmpDir.appendingPathComponent(".testgitconfig")
+        try "[user]\n\tname = Test User\n\temail = test@example.com\n"
+            .write(to: configFile, atomically: true, encoding: .utf8)
+
+        setenv("GIT_CONFIG_GLOBAL", configFile.path, 1)
+        defer { unsetenv("GIT_CONFIG_GLOBAL") }
+
+        let repoDir = tmpDir.appendingPathComponent("repo")
+        try FileManager.default.createDirectory(at: repoDir, withIntermediateDirectories: true)
+
+        try await GitInit.run(at: repoDir.path)
+
+        let author = try await GitRunner.run(
+            args: ["log", "--format=%ae", "-1"], at: repoDir.path
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(author == "test@example.com")
     }
 }

@@ -13,11 +13,14 @@ import Foundation
 /// an `NSAlert`; launch / not-found problems become `Error.cliFailure` so
 /// callers can distinguish "git ran and rejected" from "git never ran".
 ///
-/// The `git commit` invocation is prefixed with ephemeral
-/// `-c user.name` / `-c user.email` config so that the empty initial commit
-/// still succeeds on systems where the user has no global git identity
-/// configured (a common CI condition). The values are scoped to this single
-/// invocation and don't touch the user's global or per-repo config.
+/// If — and only if — the user has no effective git identity (no
+/// `user.name`/`user.email` configured at the system/global level), the
+/// `git commit` invocation is prefixed with ephemeral `-c user.name` /
+/// `-c user.email` config so the empty initial commit still succeeds (a
+/// common CI condition). When the user has a configured identity, the
+/// commit runs without override so the initial commit is authored as the
+/// user. The override values are scoped to this single invocation and
+/// don't touch the user's global or per-repo config.
 public enum GitInit {
 
     public enum Error: Swift.Error, Equatable {
@@ -30,14 +33,46 @@ public enum GitInit {
     /// - Parameter path: directory in which to run `git init`. Must already exist.
     public static func run(at path: String) async throws {
         try await runStep(args: ["init"], at: path)
-        try await runStep(
-            args: [
+
+        // `git init` ran moments earlier, so the local repo has no config
+        // yet — `git config user.email` therefore queries effective
+        // (system/global) identity. Only inject the ephemeral fallback
+        // when the user has no configured identity; otherwise the
+        // `-c key=value` overrides would clobber the user's real name.
+        let commitArgs: [String]
+        if await hasConfiguredIdentity(at: path) {
+            commitArgs = ["commit", "--allow-empty", "-m", "Initial commit"]
+        } else {
+            commitArgs = [
                 "-c", "user.name=Graftty",
                 "-c", "user.email=noreply@graftty.local",
                 "commit", "--allow-empty", "-m", "Initial commit",
-            ],
-            at: path
-        )
+            ]
+        }
+        try await runStep(args: commitArgs, at: path)
+    }
+
+    /// Returns true iff both `user.name` and `user.email` resolve to
+    /// non-empty values in this repo's effective git config. Uses
+    /// `GitRunner.captureAll` so a non-zero exit (unset key) is observable
+    /// without throwing.
+    private static func hasConfiguredIdentity(at path: String) async -> Bool {
+        func probe(_ key: String) async -> Bool {
+            do {
+                let out = try await GitRunner.captureAll(
+                    args: ["config", key], at: path
+                )
+                guard out.exitCode == 0 else { return false }
+                return !out.stdout
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .isEmpty
+            } catch {
+                return false
+            }
+        }
+        let hasEmail = await probe("user.email")
+        let hasName = await probe("user.name")
+        return hasEmail && hasName
     }
 
     private static func runStep(args: [String], at path: String) async throws {
