@@ -673,8 +673,14 @@ struct MainWindow: View {
         }
     }
 
-    /// GIT-4.7. The "offered" marker is persisted via `AppState.onChange`
-    /// so Keep is sticky across restarts, not just across polls.
+    /// GIT-4.7 / GIT-4.14. The "offered" marker is persisted via
+    /// `AppState.onChange` so Keep is sticky across restarts, not just
+    /// across polls — and is written only once we know the sheet is
+    /// going up, so a no-window early-return leaves the next poll free
+    /// to retry. `beginSheetModal(for:)` (rather than `runModal()`)
+    /// keeps the main run loop's default mode pumping so libghostty's
+    /// PTY callbacks keep flowing for every embedded pane while the
+    /// auto-triggered offer is on screen.
     private func offerDeleteForResolvedPR(worktreePath: String, prNumber: Int, state: PRInfo.State) {
         guard let (repoIdx, wtIdx) = appState.indices(forWorktreePath: worktreePath) else { return }
         let repo = appState.repos[repoIdx]
@@ -684,20 +690,27 @@ struct MainWindow: View {
         // a stale entry has no live worktree to remove.
         guard wt.path != repo.path, wt.state != .stale else { return }
         guard wt.offeredDeleteForResolvedPR != prNumber else { return }
-        guard let resolutionWord = state.resolutionWord else { return }
-
-        // Mark as offered *before* presenting the modal so a user who
-        // clicks Keep doesn't get re-prompted on the next poll.
-        appState.repos[repoIdx].worktrees[wtIdx].offeredDeleteForResolvedPR = prNumber
+        guard let config = PRResolutionOfferAlert.configuration(prNumber: prNumber, state: state) else { return }
+        // `NSApp.mainWindow` only — falling through to "any visible
+        // non-panel window" would attach the sheet to Settings or the
+        // Team Activity Log when those are foregrounded. Dropping the
+        // offer (and leaving the marker unset) lets the next poll retry.
+        guard let host = NSApp.mainWindow else { return }
 
         let alert = NSAlert()
-        alert.messageText = "Pull request #\(prNumber) \(resolutionWord)"
-        alert.informativeText = "Delete the worktree now? This will delete the worktree but not the branch."
+        alert.messageText = config.messageText
+        alert.informativeText = config.informativeText
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "Delete Worktree")
-        alert.addButton(withTitle: "Keep")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        performDeleteWorktree(worktreePath)
+        alert.addButton(withTitle: config.primaryButton)
+        alert.addButton(withTitle: config.secondaryButton)
+
+        // Set the marker now that the sheet is definitely going up, so a
+        // user who clicks Keep doesn't get re-prompted on the next poll.
+        appState.repos[repoIdx].worktrees[wtIdx].offeredDeleteForResolvedPR = prNumber
+        alert.beginSheetModal(for: host) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            performDeleteWorktree(worktreePath)
+        }
     }
 
     private func movePane(_ terminalID: PaneSlotID, to newPWD: String) {
