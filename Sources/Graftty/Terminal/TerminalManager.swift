@@ -49,6 +49,14 @@ final class TerminalManager: ObservableObject {
     private var paneSessionIDs: [PaneSlotID: PaneSessionID] = [:]
     private var paneSlotIDsBySessionName: [String: PaneSlotID] = [:]
 
+    /// Caps the number of worktrees with live surfaces (MEM-1.1). Wired by
+    /// `MainWindow`'s `.onChange(of: selectedWorktreePath)` observer.
+    /// Lazy so it captures `self` in the eviction callback after
+    /// `init` has completed.
+    lazy var surfaceBudget: WorktreeSurfaceBudget = WorktreeSurfaceBudget { [weak self] leafID in
+        self?.evictSurface(terminalID: leafID)
+    }
+
     var ptyDeviceAvailability: () -> PtyDeviceAvailability = {
         PtyDeviceAvailability.live()
     }
