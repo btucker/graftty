@@ -80,6 +80,44 @@ public final class WebServer {
         case internalFailure(String) // 500 — post-success discovery or spawn broke
     }
 
+    /// JSON body accepted by `POST /worktrees/delete`. `force` mirrors
+    /// the Mac's GIT-4.12 "Force Delete" branch — clients send `false`
+    /// first, then re-issue with `true` if they receive a 409 carrying
+    /// `forceAllowed: true`.
+    public struct DeleteWorktreeRequest: Codable, Sendable, Equatable {
+        public let worktreePath: String
+        public let force: Bool
+
+        public init(worktreePath: String, force: Bool) {
+            self.worktreePath = worktreePath
+            self.force = force
+        }
+    }
+
+    /// JSON body returned by `POST /worktrees/delete` on success.
+    /// `dismissed == true` when the flow ran the GIT-4.13 prune-on-
+    /// vanished branch; `false` when `git worktree remove` succeeded.
+    public struct DeleteWorktreeResponse: Codable, Sendable, Equatable {
+        public let dismissed: Bool
+
+        public init(dismissed: Bool) {
+            self.dismissed = dismissed
+        }
+    }
+
+    /// Outcome a `worktreeRemover` reports back. `gitFailedForceable`
+    /// holds the trimmed `git status --short` snapshot captured at the
+    /// failure point — that's what the iOS Force Delete dialog shows
+    /// the user, matching ForceDeleteAlert's macOS behavior.
+    public enum DeleteWorktreeOutcome: Sendable {
+        case success(DeleteWorktreeResponse)
+        case invalid(String)                       // 400 — empty/main checkout
+        case notFound(String)                      // 404 — unknown worktree path
+        case gitFailedForceable(stderr: String, shortStatus: String) // 409 forceAllowed:true
+        case gitFailedFinal(String)                // 409 forceAllowed:false
+        case internalFailure(String)               // 500
+    }
+
     public struct Config {
         public let port: Int
         public let zmxExecutable: URL
@@ -101,6 +139,10 @@ public final class WebServer {
         /// creator; the default exists for tests and early-boot states
         /// where `AppState` isn't wired yet.
         public let worktreeCreator: (@Sendable (CreateWorktreeRequest) async -> CreateWorktreeOutcome)?
+        /// Executes `POST /worktrees/delete`. Nil disables the endpoint
+        /// (503), same contract as `worktreeCreator`. Production wires
+        /// this to `DeleteWorktreeFlow.delete` via `GrafttyApp.startup()`.
+        public let worktreeRemover: (@Sendable (DeleteWorktreeRequest) async -> DeleteWorktreeOutcome)?
         /// Source for `GET /ghostty-config`. Returns the Mac-resolved
         /// Ghostty config so a remote client (GrafttyMobile) can render
         /// terminals with the same fonts, theme, and colors as the
@@ -122,6 +164,7 @@ public final class WebServer {
             sessionWorktreeProvider: @escaping @Sendable (String) async -> String? = { _ in nil },
             reposProvider: @escaping @Sendable () async -> [RepoInfo] = { [] },
             worktreeCreator: (@Sendable (CreateWorktreeRequest) async -> CreateWorktreeOutcome)? = nil,
+            worktreeRemover: (@Sendable (DeleteWorktreeRequest) async -> DeleteWorktreeOutcome)? = nil,
             ghosttyConfigProvider: @escaping @Sendable () async -> String = { "" },
             worktreePanesProvider: @escaping @Sendable () async -> [WorktreePanes] = { [] }
         ) {
@@ -132,6 +175,7 @@ public final class WebServer {
             self.sessionWorktreeProvider = sessionWorktreeProvider
             self.reposProvider = reposProvider
             self.worktreeCreator = worktreeCreator
+            self.worktreeRemover = worktreeRemover
             self.ghosttyConfigProvider = ghosttyConfigProvider
             self.worktreePanesProvider = worktreePanesProvider
         }
