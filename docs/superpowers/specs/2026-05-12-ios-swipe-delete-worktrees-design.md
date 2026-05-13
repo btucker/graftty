@@ -90,24 +90,25 @@ private func grouped(_ list: [WorktreePanes]) -> [(String, [WorktreePanes])] {
 
 ## Specs (EARS) to add
 
-All under their existing prefix families.
+All under their existing prefix families. The IOS-4.x family is full through IOS-4.19 and WEB-7.x through WEB-7.7, so we extend both forward.
 
-- **IOS-4.11** — When the user swipes a non-main-checkout, non-creating worktree row in `WorktreePickerView`, the application shall reveal a trailing destructive action labeled "Delete" or "Dismiss" depending on whether the worktree state is `.stale`.
-- **IOS-4.12** — When the user taps the trailing destructive action, the application shall present a confirmation dialog with copy matching the Mac sidebar's delete-or-dismiss alert.
-- **IOS-4.13** — If `POST /worktrees/delete` returns 409 with `forceAllowed: true`, then the application shall present a Force Delete confirmation surfacing the `shortStatus` field as the dialog body.
-- **IOS-4.14** — While rendering grouped worktrees in `WorktreePickerView`, the application shall preserve the wire order of `repoDisplayName` first-occurrences rather than sort alphabetically.
-- **WEB-7.3** — When `POST /worktrees/delete` arrives with a valid `worktreePath`, the application shall route it through `DeleteWorktreeFlow.delete` and respond `{ dismissed: Bool }` on success.
-- **WEB-7.4** — If the server-side delete flow encounters a git failure that `--force` could resolve, then the application shall respond 409 with `forceAllowed: true`, the captured stderr in `error`, and the short status in `shortStatus`.
-- **WEB-7.5** — If the server's `worktreeRemover` is not injected, then `POST /worktrees/delete` shall respond 503.
+- **IOS-9.6** — When the user swipes a non-main-checkout, non-creating worktree row in `WorktreePickerView`, the application shall reveal a trailing destructive action labeled "Delete" or "Dismiss" depending on whether the worktree state is `.stale`.
+- **IOS-9.7** — When the user taps the trailing destructive action, the application shall present a confirmation dialog with copy matching the Mac sidebar's delete-or-dismiss alert and shall not issue any HTTP call until the user confirms.
+- **IOS-9.8** — If `POST /worktrees/delete` returns 409 with `forceAllowed: true`, then the application shall present a Force Delete confirmation surfacing the `shortStatus` field as the dialog body, and retry the request with `force: true` only on user confirmation.
+- **IOS-9.9** — While rendering grouped worktrees in `WorktreePickerView`, the application shall preserve the wire order of `repoDisplayName` first-occurrences rather than sort alphabetically, so mobile groups follow the user's Mac sidebar ordering.
+- **WEB-7.8** — When `POST /worktrees/delete` arrives with a valid `worktreePath`, the application shall route it through `DeleteWorktreeFlow.delete` and respond `200 { dismissed: Bool }` on success — `dismissed: true` when the prune-on-vanished path ran (GIT-3.6 / GIT-4.13) and `dismissed: false` when `git worktree remove` succeeded.
+- **WEB-7.9** — If the server-side delete flow encounters a git failure that `--force` could resolve, then the application shall respond `409 Conflict` with `{ "error": "<stderr>", "forceAllowed": true, "shortStatus": "<git status --short>" }`. When `--force` already ran or could not help, `forceAllowed` shall be `false`.
+- **WEB-7.10** — If the server's `worktreeRemover` is not injected, then `POST /worktrees/delete` shall respond `503 Service Unavailable` with `{ "error": "worktree deletion not available" }`, matching the create endpoint's pre-injection behavior.
 
 ## Tests
 
 Per CLAUDE.md: write each spec first as a `@Test(.disabled("not yet implemented"))` in `Tests/GrafttyTests/Specs/<Prefix>Todo.swift`, promote to a real test, watch it fail (RED), implement (GREEN), regenerate `SPECS.md`.
 
-- **`WebServerEndpointTests`** (`Tests/GrafttyKitTests/Web/WebServerEndpointTests.swift`): inject a fake `worktreeRemover` closure and assert each branch's status code and body shape. Covers WEB-7.3, WEB-7.4, WEB-7.5.
-- **`DeleteWorktreeFlowTests`** (`Tests/GrafttyTests/DeleteWorktreeFlowTests.swift`): drive the flow with fakes for `GitWorktreeRemove`, `GitWorktreePrune`, `appState`, `terminalManager`, the two stores, and the team event dispatcher. Covers success, force-success, vanished-dir prune path, gitFailed→forceAllowed, gitFailed→forceAlreadyTried, and main-checkout rejection.
-- **`WorktreePickerGroupingTests`** (`Tests/GrafttyMobileKitTests/UI/WorktreePickerGroupingTests.swift`): extract `grouped(_:)` as a `static` pure function on `WorktreePickerView` (or move to a small `WorktreePickerGrouping` namespace) so the test can call it without instantiating SwiftUI. Asserts first-occurrence ordering. Covers IOS-4.14.
-- **`WorktreePickerSwipeActionTests`** (same target): same extraction approach — a pure `static` helper `swipeAction(for: WorktreePanes) -> SwipeAction?` returning `nil` for `.creating` and main checkout, `.delete` for non-stale, `.dismiss` for `.stale`. Covers IOS-4.11. No view-model layer is being added — just hoisting pure functions out of the SwiftUI body.
+- **`WebServerDeleteEndpointTests`** (`Tests/GrafttyKitTests/Web/WebServerDeleteEndpointTests.swift`): inject a fake `worktreeRemover` closure and assert each branch's status code and body shape. Covers WEB-7.8, WEB-7.9, WEB-7.10. Uses the same `skipInCI` early-return pattern as `WebServerWorktreeEndpointTests`.
+- (No standalone `DeleteWorktreeFlowTests`. `AddWorktreeFlow` has none either; both flows are integration-tested through the endpoint's stubbed-closure seam, matching the existing test layout. The Mac path runs via `swift run` / human verification, the iOS path via the endpoint stub + simulator. Adding a closure-injection seam to the flow only to test it in isolation would be cargo-cult — the closure that wires AppState/TerminalManager/etc. is the same code the test would have to fake.)
+- **`WorktreePickerGroupingTests`** (`Tests/GrafttyMobileKitTests/UI/WorktreePickerGroupingTests.swift`): extract `grouped(_:)` as a `static` pure function on a `WorktreePickerGrouping` namespace so the test can call it without instantiating SwiftUI. Asserts first-occurrence ordering. Covers IOS-9.9.
+- **`WorktreePickerSwipeActionTests`** (same target): same extraction approach — a pure `static` helper `swipeAction(for: WorktreePanes) -> SwipeAction?` returning `nil` for `.creating` and main checkout, `.delete` for non-stale, `.dismiss` for `.stale`. Covers IOS-9.6. No view-model layer is being added — just hoisting pure functions out of the SwiftUI body.
+- **`DeleteWorktreeClientTests`** (`Tests/GrafttyMobileKitTests/Session/DeleteWorktreeClientTests.swift`): URLProtocol-stub tests modeled on `CreateWorktreeClientTests`. Cover 200 success (dismissed true/false), 409 with `forceAllowed: true` including `shortStatus` decoding, 409 with `forceAllowed: false`, 400, 403, 503, transport failure. Covers IOS-9.7 and IOS-9.8 wire decoding.
 - iOS UI behavior past the helper (e.g. SwiftUI dialog plumbing) — given the `feedback_macos_swift_test_misses_uikit_guarded_code` memory, we rely on iOS-sim CI for integration. Confidence on the SwiftUI wiring comes from the iOS CI job, not local `swift test`.
 
 ## Risks / open questions
