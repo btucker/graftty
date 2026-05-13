@@ -1202,9 +1202,8 @@ struct GrafttyApp: App {
                 case .gitFailed(let msg): return .gitFailed(msg)
                 case .repoNotFound: return .invalid("repository not tracked")
                 case .pathCollision: return .invalid("a worktree at that name already exists")
-                case .branchAlreadyMounted(let path):
-                    let base = (path as NSString).lastPathComponent
-                    return .invalid("branch is already mounted at " + base)
+                case .branchAlreadyMounted:
+                    return .invalid(err.userMessage ?? "branch already mounted")
                 case .discoveryFailed(let msg): return .internalFailure(msg)
                 }
             }
