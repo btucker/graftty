@@ -94,4 +94,12 @@ struct BranchPickerViewModelTests {
         let entries = make(local: [("(detached)", now), ("(bare)", now), ("feat", now)])
         #expect(entries.map(\.name) == ["feat"])
     }
+
+    @Test("remote-only branch surfaces with .remoteOnly source")
+    func remoteOnlyAttribution() {
+        let now = Date()
+        let entries = make(remote: [("feat", now)])
+        #expect(entries.count == 1)
+        #expect(entries.first?.source == .remoteOnly)
+    }
 }

@@ -13,7 +13,7 @@ public enum BranchPickerViewModel {
         // Local wins on collision — local ref is what `git worktree add` will use.
         var byName: [String: BranchPickerEntry] = [:]
         for ref in branchSnapshot.localBranches {
-            guard RemoteBranchStore.isEligibleLocalBranch(ref.name) else { continue }
+            guard Self.isEligibleBranchName(ref.name) else { continue }
             byName[ref.name] = build(
                 ref: ref,
                 source: .local,
@@ -23,7 +23,7 @@ public enum BranchPickerViewModel {
         }
         for ref in branchSnapshot.remoteBranches {
             guard byName[ref.name] == nil else { continue }
-            guard RemoteBranchStore.isEligibleLocalBranch(ref.name) else { continue }
+            guard Self.isEligibleBranchName(ref.name) else { continue }
             byName[ref.name] = build(
                 ref: ref,
                 source: .remoteOnly,
@@ -60,5 +60,12 @@ public enum BranchPickerViewModel {
             mountedWorktreePath: mounted,
             pr: summary
         )
+    }
+
+    private static func isEligibleBranchName(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        if trimmed.isEmpty { return false }
+        if trimmed.hasPrefix("(") && trimmed.hasSuffix(")") { return false }
+        return true
     }
 }
