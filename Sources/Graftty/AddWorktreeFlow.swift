@@ -116,7 +116,7 @@ enum AddWorktreeFlow {
             try await GitWorktreeAdd.add(
                 repoPath: repoPath,
                 worktreePath: worktreePath,
-                branchName: branchName,
+                branch: .createNew(name: branchName),
                 startPoint: startPoint
             )
         } catch GitWorktreeAdd.Error.gitFailed(_, let stderr) {

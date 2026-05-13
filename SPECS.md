@@ -386,6 +386,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.9** When persisting `WorktreeEntry` to `state.json`, the application shall encode `.creating` as `.closed`. The `.creating` state is in-memory-only; if the app crashes mid-creation, the next launch's reconciler classifies the entry from `git worktree list --porcelain` rather than restoring a phantom spinner that would never resolve.
 
+**GIT-5.10** createNew without startPoint uses -b <name> <path>
+
+**GIT-5.11** useExisting local uses bare name, no -b
+
+**GIT-5.12** useExisting remoteOnly uses origin/<name>, no -b
+
 ## ATTN — Attention Notification System
 
 ### ATTN-1.x — CLI Tool
