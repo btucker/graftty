@@ -1364,6 +1364,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-8.4** When the application starts, if `defaultCommand` contains `--dangerously-load-development-channels server:graftty-channel`, the application shall strip the substring (with any adjacent leading whitespace), write the cleaned value back to `defaultCommand`, and present a one-shot informational `NSAlert` describing the change.
 
+### TEAM-9.x — Stop Hook Filtering
+
+**TEAM-9.1** When a Stop-event hook command (`graftty team hook <runtime> stop` or the async `graftty team watch-inbox <runtime>`) is invoked and the JSON the runtime wrote to the hook's stdin contains an `agent_id` string — Claude Code's marker that this Stop fired inside a Task subagent context rather than for a top-level agent turn — the CLI shall short-circuit before doing any per-Stop work: no `teamHook` socket message is sent, no `InboxWatcher` is spawned, and neither the worktree's `"<Agent> needs input"` attention overlay nor the macOS user notification fires. Without this filter, every Task subagent end both produces a spurious 'needs attention' alert and leaks a long-running watcher process while the top-level agent is still working.
+
 ## EDITOR — Editor Integration
 
 ### EDITOR-1.x

@@ -139,6 +139,7 @@
     "TEAM.5": "`team_*` Inbox Events",
     "TEAM.6": "Sidebar Visualization",
     "TEAM.7": "Team Activity Log Window",
-    "TEAM.8": "Legacy Channel Cleanup"
+    "TEAM.8": "Legacy Channel Cleanup",
+    "TEAM.9": "Stop Hook Filtering"
   }
 }
