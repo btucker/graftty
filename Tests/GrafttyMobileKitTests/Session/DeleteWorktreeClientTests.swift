@@ -17,9 +17,8 @@ struct DeleteWorktreeClientTests {
         #expect(req.url?.absoluteString == "http://mac.ts.net:8799/worktrees/delete")
         #expect(req.httpMethod == "POST")
         #expect(req.value(forHTTPHeaderField: "Content-Type") == "application/json")
-        let json = try #require(req.httpBody.map {
-            try JSONSerialization.jsonObject(with: $0) as? [String: Any]
-        })
+        let httpBody = try #require(req.httpBody)
+        let json = try #require(try JSONSerialization.jsonObject(with: httpBody) as? [String: Any])
         #expect(json["worktreePath"] as? String == "/repo/.worktrees/feature")
         #expect(json["force"] as? Bool == false)
     }
@@ -37,9 +36,8 @@ struct DeleteWorktreeClientTests {
         let base = URL(string: "http://mac.ts.net:8799/")!
         let body = DeleteWorktreeClient.Request(worktreePath: "/r", force: true)
         let req = try DeleteWorktreeClient.request(baseURL: base, body: body)
-        let json = try #require(req.httpBody.map {
-            try JSONSerialization.jsonObject(with: $0) as? [String: Any]
-        })
+        let httpBody = try #require(req.httpBody)
+        let json = try #require(try JSONSerialization.jsonObject(with: httpBody) as? [String: Any])
         #expect(json["force"] as? Bool == true)
     }
 
