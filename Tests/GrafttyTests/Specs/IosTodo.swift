@@ -232,4 +232,5 @@ struct IosTodo {
 @spec IOS-9.9: While rendering grouped worktrees in `WorktreePickerView`, the application shall preserve the order of `repoDisplayName` first-occurrences in the `GET /worktrees/panes` response rather than sort the group keys alphabetically, so the mobile picker's repo order matches the user's Mac sidebar order.
 """, .disabled("not yet implemented"))
     func ios_9_9() async throws { }
+
 }

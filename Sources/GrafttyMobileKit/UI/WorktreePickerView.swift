@@ -45,7 +45,7 @@ public struct WorktreePickerView: View {
                         }
                     }
                 }
-                .refreshable { await load() }
+                .refreshable { await refresh() }
             }
         }
         .navigationTitle(host.label)
