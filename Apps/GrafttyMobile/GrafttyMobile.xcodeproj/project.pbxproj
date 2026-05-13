@@ -7,35 +7,44 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		03C55D51794BAB7E1C6C722A /* SessionIdleRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68070C67FF59966F382824FF /* SessionIdleRendererTests.swift */; };
 		0C48DC35ED5DCBF20CC0A0A3 /* CreateWorktreeClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9BE28EEA6673202992718AC /* CreateWorktreeClientTests.swift */; };
 		0F0DC07D64128764A6E254A9 /* SessionLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB040F5D6FAA7EDA4C09F34F /* SessionLifecycleTests.swift */; };
+		1979A63164CFEDFAA56AD475 /* SessionReconnectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D9235F4AB2E4D6E89AEE13 /* SessionReconnectTests.swift */; };
 		2AE3E873CEBC645A93D9D3EF /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 1B4204CA01B233B9F19E518B /* Assets.xcassets */; };
 		2E416266017DFF6D47BFED05 /* BiometricGateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F8661072B5A91A28C0F46B5 /* BiometricGateTests.swift */; };
 		483FFAA6EA930913E3847B04 /* PanePreviewClientPoolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59C241EF3381506F0ED7BEC0 /* PanePreviewClientPoolTests.swift */; };
+		4D8D21035BA80B090DB04260 /* ClockTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6509EB736398D70ED6F6C712 /* ClockTests.swift */; };
 		4FC268572A822F79E5CBF517 /* SessionClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E56275CF0FCFE37F85EFC75 /* SessionClientTests.swift */; };
 		4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89CA6F3FF97966B7A2455984 /* ReposFetcherTests.swift */; };
-		51B742D1977638B5BEF698BC /* TerminalControllerThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C398EDC2B44DA604D4AF26C /* TerminalControllerThemeTests.swift */; };
 		5E82901F3ADEA7B4769B7E59 /* TerminalWidthLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DFA9C1F66C7E92D9F0BCE9C /* TerminalWidthLayoutTests.swift */; };
-		6362AD9E7B5D451E9D3C7A11 /* GhosttyConfigFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A9D9B4E1E5B4D97A1E8F2C3 /* GhosttyConfigFetcherTests.swift */; };
 		64E9C62E3509B5F9F6CE55D5 /* GrafttyMobileKit in Frameworks */ = {isa = PBXBuildFile; productRef = 961E5DC72693D5319AE8805F /* GrafttyMobileKit */; };
 		69A3E70C24956F734A8B75EE /* GrafttyMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E56F1F52D5AD50167862DB5 /* GrafttyMobileApp.swift */; };
+		6B09571A2AAA3C40657FA4C8 /* WorktreeDetailPreviewPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95D1019D3F14627D0AFFE97D /* WorktreeDetailPreviewPolicyTests.swift */; };
 		6E3698272F39E3D8665B41E7 /* HostStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F512E9DFA7D7EC060D47EAD /* HostStoreTests.swift */; };
+		7DE5B7E2F6C51A4876B2A332 /* TerminalControllerThemeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14155C510E994202A1F09C31 /* TerminalControllerThemeTests.swift */; };
 		7F73F1D0FCCA48FCAB1A219A /* GrafttyMobileKit in Frameworks */ = {isa = PBXBuildFile; productRef = 60C487620D1AB53BB66F5014 /* GrafttyMobileKit */; };
+		81DB8F5B4AA670E833184E67 /* PanePreviewFontSizingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 699F43C0FB75C3234C6AC7A2 /* PanePreviewFontSizingTests.swift */; };
+		9869112A7E35C04E54A7395A /* KeyboardFrameInsetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98C28B7B9FD4CB73021407F1 /* KeyboardFrameInsetTests.swift */; };
 		9FC5E92497F5755C7182F797 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 2E297959F982E90ED939C39C /* LaunchScreen.storyboard */; };
 		AA14A2ACD895768E8B7A2E2B /* HostControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */; };
+		BFAB69C16EF825DE58B94270 /* PanePreviewFontApplicationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CACB0C8C5BC2E635F2AA70BC /* PanePreviewFontApplicationTests.swift */; };
 		C0A3025E89B3FB9D1A6C744A /* SessionsFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340D909E38FF8ABE9EA6B38B /* SessionsFetcherTests.swift */; };
 		C55600CC2CAE99D7769B31A8 /* LaunchScreenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D25E071713009F00061D699 /* LaunchScreenTests.swift */; };
-		E2F5A0F51C09C4F573A8D54B /* PanePreviewFontSizingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F40AE6FE268B97E52515213 /* PanePreviewFontSizingTests.swift */; };
+		CAF2F1261BE1D2E9862B28E7 /* PreviewCapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6717C8CFDA2A367AD3F5421F /* PreviewCapTests.swift */; };
+		D6E07827478D558EA22701E3 /* MobileNavigationDecisionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9F5598DDE610D5D1567DBB2 /* MobileNavigationDecisionTests.swift */; };
+		EFF92B38741A91B2DCF46C0C /* VirtualClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 351F85648DBEE2F8B555AE7F /* VirtualClock.swift */; };
+		F1265680A75FBC8FC81FC5E8 /* GhosttyConfigFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE2551EB151BA762B2AF7663 /* GhosttyConfigFetcherTests.swift */; };
 		FD935B889FE139844ADA79E6 /* TerminalPaneViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		14155C510E994202A1F09C31 /* TerminalControllerThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalControllerThemeTests.swift; sourceTree = "<group>"; };
 		1B4204CA01B233B9F19E518B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		2E297959F982E90ED939C39C /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 		2F8661072B5A91A28C0F46B5 /* BiometricGateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BiometricGateTests.swift; sourceTree = "<group>"; };
-		31B0E348299A1140862F5AE4 /* GrafttyMobileKit */ = {isa = PBXFileReference; lastKnownFileType = folder; name = GrafttyMobileKit; path = ../..; sourceTree = SOURCE_ROOT; };
 		340D909E38FF8ABE9EA6B38B /* SessionsFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsFetcherTests.swift; sourceTree = "<group>"; };
-		3C398EDC2B44DA604D4AF26C /* TerminalControllerThemeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalControllerThemeTests.swift; sourceTree = "<group>"; };
+		351F85648DBEE2F8B555AE7F /* VirtualClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualClock.swift; sourceTree = "<group>"; };
 		3D25E071713009F00061D699 /* LaunchScreenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchScreenTests.swift; sourceTree = "<group>"; };
 		3DFA9C1F66C7E92D9F0BCE9C /* TerminalWidthLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalWidthLayoutTests.swift; sourceTree = "<group>"; };
 		3E56275CF0FCFE37F85EFC75 /* SessionClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionClientTests.swift; sourceTree = "<group>"; };
@@ -43,14 +52,23 @@
 		5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPaneViewTests.swift; sourceTree = "<group>"; };
 		59C241EF3381506F0ED7BEC0 /* PanePreviewClientPoolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanePreviewClientPoolTests.swift; sourceTree = "<group>"; };
 		60476F2F86616EAD082CF370 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		6A9D9B4E1E5B4D97A1E8F2C3 /* GhosttyConfigFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyConfigFetcherTests.swift; sourceTree = "<group>"; };
-		6F40AE6FE268B97E52515213 /* PanePreviewFontSizingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanePreviewFontSizingTests.swift; sourceTree = "<group>"; };
+		6509EB736398D70ED6F6C712 /* ClockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClockTests.swift; sourceTree = "<group>"; };
+		6717C8CFDA2A367AD3F5421F /* PreviewCapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewCapTests.swift; sourceTree = "<group>"; };
+		68070C67FF59966F382824FF /* SessionIdleRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionIdleRendererTests.swift; sourceTree = "<group>"; };
+		699F43C0FB75C3234C6AC7A2 /* PanePreviewFontSizingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanePreviewFontSizingTests.swift; sourceTree = "<group>"; };
 		7213F905213229A44DC07D77 /* GrafttyMobileKitTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = GrafttyMobileKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		89CA6F3FF97966B7A2455984 /* ReposFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReposFetcherTests.swift; sourceTree = "<group>"; };
 		8E56F1F52D5AD50167862DB5 /* GrafttyMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrafttyMobileApp.swift; sourceTree = "<group>"; };
 		8F512E9DFA7D7EC060D47EAD /* HostStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostStoreTests.swift; sourceTree = "<group>"; };
+		95D1019D3F14627D0AFFE97D /* WorktreeDetailPreviewPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeDetailPreviewPolicyTests.swift; sourceTree = "<group>"; };
+		98C28B7B9FD4CB73021407F1 /* KeyboardFrameInsetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardFrameInsetTests.swift; sourceTree = "<group>"; };
+		A9D9235F4AB2E4D6E89AEE13 /* SessionReconnectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionReconnectTests.swift; sourceTree = "<group>"; };
 		AB040F5D6FAA7EDA4C09F34F /* SessionLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLifecycleTests.swift; sourceTree = "<group>"; };
+		CACB0C8C5BC2E635F2AA70BC /* PanePreviewFontApplicationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanePreviewFontApplicationTests.swift; sourceTree = "<group>"; };
 		D0E517DBD6A521AB367A54A6 /* GrafttyMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = GrafttyMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		DE2551EB151BA762B2AF7663 /* GhosttyConfigFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyConfigFetcherTests.swift; sourceTree = "<group>"; };
+		E9F5598DDE610D5D1567DBB2 /* MobileNavigationDecisionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileNavigationDecisionTests.swift; sourceTree = "<group>"; };
+		F38FE4826E8A73ADE6C34DBB /* graftty */ = {isa = PBXFileReference; lastKnownFileType = folder; name = graftty; path = ../..; sourceTree = SOURCE_ROOT; };
 		F9BE28EEA6673202992718AC /* CreateWorktreeClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateWorktreeClientTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -78,6 +96,8 @@
 			isa = PBXGroup;
 			children = (
 				2F8661072B5A91A28C0F46B5 /* BiometricGateTests.swift */,
+				6509EB736398D70ED6F6C712 /* ClockTests.swift */,
+				351F85648DBEE2F8B555AE7F /* VirtualClock.swift */,
 			);
 			path = Auth;
 			sourceTree = "<group>";
@@ -97,10 +117,12 @@
 			isa = PBXGroup;
 			children = (
 				F9BE28EEA6673202992718AC /* CreateWorktreeClientTests.swift */,
-				6A9D9B4E1E5B4D97A1E8F2C3 /* GhosttyConfigFetcherTests.swift */,
+				DE2551EB151BA762B2AF7663 /* GhosttyConfigFetcherTests.swift */,
 				5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */,
 				89CA6F3FF97966B7A2455984 /* ReposFetcherTests.swift */,
 				3E56275CF0FCFE37F85EFC75 /* SessionClientTests.swift */,
+				68070C67FF59966F382824FF /* SessionIdleRendererTests.swift */,
+				A9D9235F4AB2E4D6E89AEE13 /* SessionReconnectTests.swift */,
 				340D909E38FF8ABE9EA6B38B /* SessionsFetcherTests.swift */,
 			);
 			path = Session;
@@ -119,7 +141,7 @@
 		5326D4D06134BD55FD5087CF /* Terminal */ = {
 			isa = PBXGroup;
 			children = (
-				3C398EDC2B44DA604D4AF26C /* TerminalControllerThemeTests.swift */,
+				14155C510E994202A1F09C31 /* TerminalControllerThemeTests.swift */,
 				5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */,
 				3DFA9C1F66C7E92D9F0BCE9C /* TerminalWidthLayoutTests.swift */,
 			);
@@ -138,8 +160,12 @@
 		6369E2047B8A39CA96B1E94C /* UI */ = {
 			isa = PBXGroup;
 			children = (
-				6F40AE6FE268B97E52515213 /* PanePreviewFontSizingTests.swift */,
+				E9F5598DDE610D5D1567DBB2 /* MobileNavigationDecisionTests.swift */,
 				59C241EF3381506F0ED7BEC0 /* PanePreviewClientPoolTests.swift */,
+				CACB0C8C5BC2E635F2AA70BC /* PanePreviewFontApplicationTests.swift */,
+				699F43C0FB75C3234C6AC7A2 /* PanePreviewFontSizingTests.swift */,
+				6717C8CFDA2A367AD3F5421F /* PreviewCapTests.swift */,
+				95D1019D3F14627D0AFFE97D /* WorktreeDetailPreviewPolicyTests.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -147,6 +173,7 @@
 		64B4A115C4DAA4C8BDCE0301 /* App */ = {
 			isa = PBXGroup;
 			children = (
+				98C28B7B9FD4CB73021407F1 /* KeyboardFrameInsetTests.swift */,
 				3D25E071713009F00061D699 /* LaunchScreenTests.swift */,
 				AB040F5D6FAA7EDA4C09F34F /* SessionLifecycleTests.swift */,
 			);
@@ -178,7 +205,7 @@
 		EBBD8BB4335B09E0E1E21C3F /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				31B0E348299A1140862F5AE4 /* GrafttyMobileKit */,
+				F38FE4826E8A73ADE6C34DBB /* graftty */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -235,6 +262,7 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					9C4899B8EF5E97558B0302C3 = {
+						DevelopmentTeam = 67APXH3J92;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -280,20 +308,29 @@
 			buildActionMask = 2147483647;
 			files = (
 				2E416266017DFF6D47BFED05 /* BiometricGateTests.swift in Sources */,
+				4D8D21035BA80B090DB04260 /* ClockTests.swift in Sources */,
 				0C48DC35ED5DCBF20CC0A0A3 /* CreateWorktreeClientTests.swift in Sources */,
-				6362AD9E7B5D451E9D3C7A11 /* GhosttyConfigFetcherTests.swift in Sources */,
+				F1265680A75FBC8FC81FC5E8 /* GhosttyConfigFetcherTests.swift in Sources */,
 				AA14A2ACD895768E8B7A2E2B /* HostControllerTests.swift in Sources */,
 				6E3698272F39E3D8665B41E7 /* HostStoreTests.swift in Sources */,
+				9869112A7E35C04E54A7395A /* KeyboardFrameInsetTests.swift in Sources */,
 				C55600CC2CAE99D7769B31A8 /* LaunchScreenTests.swift in Sources */,
+				D6E07827478D558EA22701E3 /* MobileNavigationDecisionTests.swift in Sources */,
 				483FFAA6EA930913E3847B04 /* PanePreviewClientPoolTests.swift in Sources */,
-				E2F5A0F51C09C4F573A8D54B /* PanePreviewFontSizingTests.swift in Sources */,
+				BFAB69C16EF825DE58B94270 /* PanePreviewFontApplicationTests.swift in Sources */,
+				81DB8F5B4AA670E833184E67 /* PanePreviewFontSizingTests.swift in Sources */,
+				CAF2F1261BE1D2E9862B28E7 /* PreviewCapTests.swift in Sources */,
 				4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */,
 				4FC268572A822F79E5CBF517 /* SessionClientTests.swift in Sources */,
+				03C55D51794BAB7E1C6C722A /* SessionIdleRendererTests.swift in Sources */,
 				0F0DC07D64128764A6E254A9 /* SessionLifecycleTests.swift in Sources */,
+				1979A63164CFEDFAA56AD475 /* SessionReconnectTests.swift in Sources */,
 				C0A3025E89B3FB9D1A6C744A /* SessionsFetcherTests.swift in Sources */,
-				51B742D1977638B5BEF698BC /* TerminalControllerThemeTests.swift in Sources */,
+				7DE5B7E2F6C51A4876B2A332 /* TerminalControllerThemeTests.swift in Sources */,
 				FD935B889FE139844ADA79E6 /* TerminalPaneViewTests.swift in Sources */,
 				5E82901F3ADEA7B4769B7E59 /* TerminalWidthLayoutTests.swift in Sources */,
+				EFF92B38741A91B2DCF46C0C /* VirtualClock.swift in Sources */,
+				6B09571A2AAA3C40657FA4C8 /* WorktreeDetailPreviewPolicyTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -433,7 +470,9 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGNING_REQUIRED = NO;
 				CODE_SIGN_IDENTITY = "-";
+				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 67APXH3J92;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = GrafttyMobile/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -441,7 +480,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = net.graftty.GrafttyMobile;
+				PRODUCT_BUNDLE_IDENTIFIER = com.quotably.graftty;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
 				SWIFT_VERSION = 5.10;
@@ -476,6 +516,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 67APXH3J92;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_FILE = GrafttyMobile/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -483,7 +524,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = net.graftty.GrafttyMobile;
+				PRODUCT_BUNDLE_IDENTIFIER = com.quotably.graftty;
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
 				SWIFT_VERSION = 5.10;
