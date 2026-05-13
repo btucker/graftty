@@ -38,6 +38,7 @@ struct MainWindow: View {
                 theme: terminalManager.theme,
                 statsStore: statsStore,
                 prStatusStore: prStatusStore,
+                remoteBranchStore: remoteBranchStore,
                 onSelect: selectWorktree,
                 onSelectPane: selectPane,
                 onAddRepo: addRepository,
@@ -219,6 +220,11 @@ struct MainWindow: View {
                let selection = terminalManager.readSelection(for: termID) {
                 prefill = WorktreeNameSanitizer.sanitizeForPrefill(selection)
             }
+            // Kick off fresh branch + PR data so the BranchComboBox
+            // renders something current as the sheet appears, even if
+            // the polling cadence is in a long-backoff.
+            remoteBranchStore.pulse()
+            prStatusStore.pulse()
             pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: prefill)
         }
     }
@@ -450,12 +456,12 @@ struct MainWindow: View {
     private func addWorktree(
         repo: RepoEntry,
         worktreeName: String,
-        branchName: String
+        branch: BranchSelection
     ) async -> String? {
         let beginResult = AddWorktreeFlow.beginCreate(
             repoPath: repo.path,
             worktreeName: worktreeName,
-            branch: .createNew(name: branchName),
+            branch: branch,
             appState: $appState
         )
         let worktreePath: String
@@ -469,7 +475,7 @@ struct MainWindow: View {
             let result = await AddWorktreeFlow.finishCreate(
                 repoPath: repo.path,
                 worktreePath: worktreePath,
-                branch: .createNew(name: branchName),
+                branch: branch,
                 appState: $appState,
                 worktreeMonitor: worktreeMonitor,
                 statsStore: statsStore,

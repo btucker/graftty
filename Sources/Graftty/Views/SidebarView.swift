@@ -14,6 +14,7 @@ struct SidebarView: View {
     let theme: GhosttyTheme
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
+    let remoteBranchStore: RemoteBranchStore
     let onSelect: (String) -> Void
     let onSelectPane: (String, PaneSlotID) -> Void
     let onAddRepo: () -> Void
@@ -26,7 +27,7 @@ struct SidebarView: View {
     /// Called when the user submits the add-worktree sheet. Returns nil
     /// on success, or a user-visible error string (typically git's
     /// stderr) on failure so the sheet can display it inline.
-    let onAddWorktree: (RepoEntry, String, String) async -> String?
+    let onAddWorktree: (RepoEntry, String, BranchSelection) async -> String?
 
     /// Injected by GrafttyApp so the pane-row context menu can gate the
     /// "Copy web URL" item on `controller.status == .listening` and read
@@ -86,14 +87,35 @@ struct SidebarView: View {
             AddWorktreeSheet(
                 repoDisplayName: request.repo.displayName,
                 initialWorktreeName: request.prefill,
-                onSubmit: { worktreeName, branchName in
-                    let err = await onAddWorktree(request.repo, worktreeName, branchName)
+                branchEntries: currentBranchEntries(forRepo: request.repo),
+                onSubmit: { worktreeName, branch in
+                    let err = await onAddWorktree(request.repo, worktreeName, branch)
                     if err == nil { pendingAddWorktree = nil }
                     return err
                 },
                 onCancel: { pendingAddWorktree = nil }
             )
         }
+    }
+
+    /// Builds the eligible-branch list for the Add Worktree sheet,
+    /// merging the latest remote-branch snapshot with the repo's
+    /// currently-mounted branches (so the picker can dim/disable them)
+    /// and any in-flight PR metadata. `filterText` is "" — the
+    /// BranchComboBox does live-filtering against the full list itself.
+    private func currentBranchEntries(forRepo repo: RepoEntry) -> [BranchPickerEntry] {
+        let snapshot = remoteBranchStore.branchesByRepo[repo.path] ?? RemoteBranchSnapshot()
+        var mounted: [String: String] = [:]
+        for wt in repo.worktrees where wt.state.hasOnDiskWorktree {
+            mounted[wt.branch] = wt.path
+        }
+        let prs = prStatusStore.prsByRepoBranch[repo.path] ?? [:]
+        return BranchPickerViewModel.entries(
+            branchSnapshot: snapshot,
+            mountedBranchToPath: mounted,
+            prsByBranch: prs,
+            filterText: ""
+        )
     }
 
     @ViewBuilder
@@ -152,6 +174,12 @@ struct SidebarView: View {
                 Spacer()
                 if SidebarMenuVisibility.showsAddWorktree(repo: repo) {
                     Button {
+                        // Kick off fresh branch + PR data so the
+                        // BranchComboBox renders something current as
+                        // the sheet appears, even if the polling
+                        // cadence is in a long-backoff.
+                        remoteBranchStore.pulse()
+                        prStatusStore.pulse()
                         pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: "")
                     } label: {
                         Image(systemName: "plus")
