@@ -5,6 +5,25 @@ import SwiftUI
 public struct WorktreePickerView: View {
     @State private var state: LoadState = .loading
     @State private var isAddSheetPresented: Bool = false
+    @State private var pendingDelete: PendingDelete?
+    @State private var pendingForceDelete: PendingForceDelete?
+    @State private var errorToast: String?
+    @State private var errorToastTask: Task<Void, Never>?
+
+    private struct PendingDelete: Identifiable, Equatable {
+        let id = UUID()
+        let worktree: WorktreePanes
+        let action: WorktreePickerSwipeAction
+    }
+
+    private struct PendingForceDelete: Identifiable, Equatable {
+        let id = UUID()
+        let worktreePath: String
+        let displayName: String
+        let stderr: String
+        let shortStatus: String
+    }
+
     public let host: Host
     public let onSelect: (WorktreePanes) -> Void
 
@@ -41,11 +60,67 @@ public struct WorktreePickerView: View {
                                 WorktreeBlock(worktree: wt) {
                                     onSelect(wt)
                                 }
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    if let action = WorktreePickerGrouping.swipeAction(for: wt) {
+                                        Button(role: .destructive) {
+                                            pendingDelete = PendingDelete(worktree: wt, action: action)
+                                        } label: {
+                                            Label(action.buttonLabel, systemImage: action == .dismiss ? "eye.slash" : "trash")
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
                 .refreshable { await refresh() }
+            }
+        }
+        .confirmationDialog(
+            pendingDelete?.action.dialogTitle ?? "",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingDelete
+        ) { pending in
+            Button(pending.action.buttonLabel, role: .destructive) {
+                Task { await performDelete(worktree: pending.worktree, force: false) }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: { pending in
+            Text(pending.action.dialogBody)
+        }
+        .confirmationDialog(
+            "Could not delete worktree",
+            isPresented: Binding(
+                get: { pendingForceDelete != nil },
+                set: { if !$0 { pendingForceDelete = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingForceDelete
+        ) { pending in
+            Button("Force Delete", role: .destructive) {
+                let path = pending.worktreePath
+                Task { await performForceDelete(worktreePath: path) }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: { pending in
+            Text(pending.stderr + (pending.shortStatus.isEmpty ? "" : "\n\n" + pending.shortStatus))
+        }
+        .overlay(alignment: .bottom) {
+            if let msg = errorToast {
+                Text(msg)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.red)
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .padding(.bottom, 16)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .navigationTitle(host.label)
@@ -94,6 +169,68 @@ public struct WorktreePickerView: View {
         guard case .loaded(let list) = state else { return }
         if let match = list.first(where: { $0.path == response.worktreePath }) {
             onSelect(match)
+        }
+    }
+
+    /// Issue the delete request; on success refresh in place, on
+    /// forceable failure surface the Force Delete confirmation, on
+    /// any other failure surface a transient error toast.
+    private func performDelete(worktree: WorktreePanes, force: Bool) async {
+        do {
+            _ = try await DeleteWorktreeClient.delete(
+                baseURL: host.baseURL,
+                body: DeleteWorktreeClient.Request(worktreePath: worktree.path, force: force)
+            )
+            await refresh()
+        } catch let DeleteWorktreeClient.DeleteError.gitFailedForceable(stderr, status) {
+            pendingForceDelete = PendingForceDelete(
+                worktreePath: worktree.path,
+                displayName: worktree.displayName,
+                stderr: stderr,
+                shortStatus: status
+            )
+        } catch let error as DeleteWorktreeClient.DeleteError {
+            if let msg = error.userMessage {
+                showErrorToast(msg)
+            }
+            await refresh()
+        } catch {
+            showErrorToast("Couldn't reach the server.")
+        }
+    }
+
+    /// User confirmed Force Delete on a 409 forceable response —
+    /// re-issue with `force: true`. We don't have the original
+    /// `WorktreePanes` in the dialog state, so build a minimal one
+    /// that carries the path. The server is the source of truth for
+    /// what to do with that path.
+    private func performForceDelete(worktreePath: String) async {
+        do {
+            _ = try await DeleteWorktreeClient.delete(
+                baseURL: host.baseURL,
+                body: DeleteWorktreeClient.Request(worktreePath: worktreePath, force: true)
+            )
+            await refresh()
+        } catch let error as DeleteWorktreeClient.DeleteError {
+            if let msg = error.userMessage {
+                showErrorToast(msg)
+            }
+            await refresh()
+        } catch {
+            showErrorToast("Couldn't reach the server.")
+        }
+    }
+
+    private func showErrorToast(_ message: String) {
+        errorToastTask?.cancel()
+        withAnimation { errorToast = message }
+        errorToastTask = Task {
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            if !Task.isCancelled {
+                await MainActor.run {
+                    withAnimation { errorToast = nil }
+                }
+            }
         }
     }
 

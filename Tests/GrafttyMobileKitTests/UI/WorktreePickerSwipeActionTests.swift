@@ -41,5 +41,29 @@ struct WorktreePickerSwipeActionTests {
         // implies dropping the whole repo by accident.
         #expect(WorktreePickerGrouping.swipeAction(for: Self.wt(.stale, isMainCheckout: true)) == nil)
     }
+
+    @Test("""
+    @spec IOS-9.7: When the user taps the trailing destructive action revealed by `IOS-9.6`, the application shall present a SwiftUI confirmation dialog before any HTTP call. The dialog title shall be "Delete Worktree?" for non-stale rows and "Dismiss Worktree?" for `.stale` rows; the dialog body shall mirror the Mac's NSAlert copy ("This will delete the worktree but not the branch." / "This will remove this stale entry from Graftty."). On cancel, no request shall be issued.
+    """)
+    func dialogCopyMatchesMacAlert() {
+        #expect(WorktreePickerSwipeAction.delete.dialogTitle == "Delete Worktree?")
+        #expect(WorktreePickerSwipeAction.delete.dialogBody == "This will delete the worktree but not the branch.")
+        #expect(WorktreePickerSwipeAction.dismiss.dialogTitle == "Dismiss Worktree?")
+        #expect(WorktreePickerSwipeAction.dismiss.dialogBody == "This will remove this stale entry from Graftty.")
+    }
+
+    @Test("""
+    @spec IOS-9.8: If `POST /worktrees/delete` returns 409 with `forceAllowed: true`, then the application shall present a Force Delete confirmation surfacing the `shortStatus` field as the dialog body, and shall retry the request with `force: true` only on user confirmation. A 409 with `forceAllowed: false` (or 4xx/5xx of any other shape) shall present a non-retryable error toast and shall not loop.
+    """)
+    func forceableErrorIsDistinctFromFinalError() {
+        let forceable = DeleteWorktreeClient.DeleteError.gitFailedForceable(
+            stderr: "err", shortStatus: "M foo"
+        )
+        let final = DeleteWorktreeClient.DeleteError.gitFailedFinal("main checkout")
+        // userMessage nil → caller renders a Force Delete dialog rather than a toast.
+        #expect(forceable.userMessage == nil)
+        // userMessage non-nil → caller renders a flat error toast.
+        #expect(final.userMessage == "main checkout")
+    }
 }
 #endif

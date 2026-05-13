@@ -213,14 +213,4 @@ struct IosTodo {
 """, .disabled("not yet implemented"))
     func ios_9_5() async throws { }
 
-    @Test("""
-@spec IOS-9.7: When the user taps the trailing destructive action revealed by `IOS-9.6`, the application shall present a SwiftUI confirmation dialog before any HTTP call. The dialog title shall be "Delete Worktree?" for non-stale rows and "Dismiss Worktree?" for `.stale` rows; the dialog body shall mirror the Mac's NSAlert copy ("This will delete the worktree but not the branch." / "This will remove this stale entry from Graftty."). On cancel, no request shall be issued.
-""", .disabled("not yet implemented"))
-    func ios_9_7() async throws { }
-
-    @Test("""
-@spec IOS-9.8: If `POST /worktrees/delete` returns 409 with `forceAllowed: true`, then the application shall present a Force Delete confirmation surfacing the `shortStatus` field as the dialog body, and shall retry the request with `force: true` only on user confirmation. A 409 with `forceAllowed: false` (or 4xx/5xx of any other shape) shall present a non-retryable error toast and shall not loop.
-""", .disabled("not yet implemented"))
-    func ios_9_8() async throws { }
-
 }
