@@ -19,10 +19,13 @@ targets:
     settings:
       base:
         INFOPLIST_FILE: GrafttyMobile/Info.plist
-        PRODUCT_BUNDLE_IDENTIFIER: net.graftty.GrafttyMobile
+        PRODUCT_BUNDLE_IDENTIFIER: com.quotably.graftty
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_IDENTITY[sdk=iphoneos*]: Apple Development
         CODE_SIGNING_REQUIRED: NO
+        DEVELOPMENT_TEAM: 67APXH3J92
+        PROVISIONING_PROFILE_SPECIFIER: ""
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_PREVIEWS: YES
         SWIFT_VERSION: "5.10"

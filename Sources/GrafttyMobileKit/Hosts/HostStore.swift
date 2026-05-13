@@ -43,7 +43,7 @@ public final class HostStore {
         let base = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fm.temporaryDirectory
         let dir = base.appendingPathComponent(
-            Bundle.main.bundleIdentifier ?? "net.graftty.GrafttyMobile",
+            Bundle.main.bundleIdentifier ?? "com.quotably.graftty",
             isDirectory: true
         )
         return dir.appendingPathComponent("hosts.json")
