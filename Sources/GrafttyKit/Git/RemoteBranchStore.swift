@@ -211,16 +211,18 @@ public final class RemoteBranchStore {
         })
     }
 
-    /// Parses `git for-each-ref --format=%(refname:short)\t%(upstream:short) refs/heads/`
-    /// into `[local: remoteOnOrigin]`, dropping branches with no
-    /// upstream or with a non-origin upstream.
+    /// Parses `git for-each-ref` heads output into `[local: remoteOnOrigin]`,
+    /// dropping branches with no upstream or with a non-origin upstream.
+    /// Accepts both the 2-column format `%(refname:short)\t%(upstream:short)`
+    /// and the 3-column format `%(refname:short)\t%(committerdate:iso-strict)\t%(upstream:short)`;
+    /// the upstream is always the last tab-separated field.
     nonisolated static func parseUpstreams(_ output: String) -> [String: String] {
         var result: [String: String] = [:]
         for raw in output.split(whereSeparator: \.isNewline) {
-            let parts = raw.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
-            guard parts.count == 2 else { continue }
+            let parts = raw.split(separator: "\t", omittingEmptySubsequences: false)
+            guard parts.count >= 2 else { continue }
             let local = String(parts[0])
-            let upstream = String(parts[1])
+            let upstream = String(parts[parts.count - 1])
             guard !local.isEmpty, upstream.hasPrefix("origin/") else { continue }
             let remote = String(upstream.dropFirst("origin/".count))
             guard !remote.isEmpty, remote != "HEAD" else { continue }
