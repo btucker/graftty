@@ -26,7 +26,10 @@ struct ZmxSpawnConfigurationTests {
         #expect(config.sessionName == "graftty-deadbeef")
         #expect(config.argv.first == "/tmp/zmx")
         #expect(Array(config.argv[1...2]) == ["attach", "graftty-deadbeef"])
-        #expect(config.argv.last == "/bin/zsh")
+        // ZMX-6.6: zsh path drops the positional shell so zmx does the
+        // login spawn. argv is [zmx, attach, sessionName] only.
+        #expect(config.argv.count == 3)
+        #expect(config.env["SHELL"] == "/bin/zsh")
         #expect(config.env["ZMX_DIR"] == "/tmp/zmx-dir")
         #expect(config.env["GRAFTTY_SOCK"] == "/tmp/graftty.sock")
         #expect(config.env["ZMX_SESSION"] == nil)
@@ -68,6 +71,50 @@ struct ZmxSpawnConfigurationTests {
         #expect(config.argv.last == AgentHookInstaller.wrappedUserShell("/opt/homebrew/bin/bash", rootDirectory: agentHooksRoot))
     }
 
+    @Test("""
+    @spec ZMX-6.6: When the resolved user-shell basename is anything other than `bash` (or when bash is selected with agent hooks disabled), the host-managed `zmx attach` argv shall omit the positional shell argument so that zmx applies its documented default behavior of spawning `$SHELL` as a login shell. The spawn `env["SHELL"]` shall be set to the resolved user-shell path so zmx exec's the intended binary. This restores `~/.zprofile` (via the ZMX-6.3 ZDOTDIR shim for zsh) processing — without it, `eval "$(brew shellenv)"` is skipped and `~/.zshrc` references to Homebrew-installed binaries (rbenv, nvm, etc.) resolve to "command not found", cascading into broken keybindings, missing colors, and shell-init errors.
+    """)
+    func zshOmitsPositionalShellAndSetsShellEnvForDefaultLoginSpawn() throws {
+        let config = makeConfig(processEnv: [
+            "SHELL": "/bin/zsh",
+            "PATH": "/usr/bin",
+        ])
+
+        #expect(config.argv == ["/tmp/zmx", "attach", "graftty-deadbeef"])
+        #expect(config.env["SHELL"] == "/bin/zsh")
+    }
+
+    @Test("""
+    @spec ZMX-6.6: When agent hooks are disabled and the user's shell is bash, the spawn shall also drop the positional shell argument and rely on zmx's default login-`$SHELL` spawn. The launcher script (which would otherwise force non-login bash via `--rcfile`) is bypassed, so login-time setup such as `~/.bash_profile` runs naturally.
+    """)
+    func bashWithoutHooksOmitsPositionalShellAndSetsShellEnv() throws {
+        let config = makeConfig(
+            processEnv: [
+                "SHELL": "/bin/bash",
+                "PATH": "/usr/bin",
+            ],
+            agentHooksDisabled: true
+        )
+
+        #expect(config.argv == ["/tmp/zmx", "attach", "graftty-deadbeef"])
+        #expect(config.env["SHELL"] == "/bin/bash")
+    }
+
+    @Test("""
+    @spec ZMX-6.6: When agent hooks are enabled and the user's shell is bash, the spawn shall keep the positional shell pointing at the bash launcher script (per ZMX-6.7), because login bash discards `--rcfile`.
+    """)
+    func bashWithHooksKeepsPositionalLauncherShell() throws {
+        let config = makeConfig(processEnv: [
+            "SHELL": "/opt/homebrew/bin/bash",
+            "PATH": "/usr/bin",
+        ])
+
+        let expectedLauncher = AgentHookInstaller.wrappedUserShell("/opt/homebrew/bin/bash", rootDirectory: agentHooksRoot)
+        #expect(config.argv.count == 4)
+        #expect(config.argv.last == expectedLauncher)
+        #expect(config.env["SHELL"] == "/opt/homebrew/bin/bash")
+    }
+
     @Test func disabledHooksUseRawShellAndDoNotSetHookEnv() throws {
         let config = makeConfig(
             processEnv: [
@@ -81,7 +128,10 @@ struct ZmxSpawnConfigurationTests {
             bundleURL: bundleURL
         )
 
-        #expect(config.argv.last == "/bin/bash")
+        // ZMX-6.6: hooks disabled → positional shell dropped (no launcher
+        // needed); zmx defaults to login $SHELL.
+        #expect(config.argv.count == 3)
+        #expect(config.env["SHELL"] == "/bin/bash")
         #expect(config.env["GRAFTTY_AGENT_HOOKS_BIN"] == nil)
         #expect(config.env["GHOSTTY_ZSH_ZDOTDIR"] == nil)
         #expect(config.env["PATH"] == sanitizedPath)
