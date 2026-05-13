@@ -68,7 +68,8 @@ struct WebSessionTests {
         let argv = try String(contentsOf: argvURL, encoding: .utf8)
             .split(separator: "\n")
             .map(String.init)
-        #expect(argv.count == 3)
+        // ZMX-6.6: attach now relies on zmx's default login spawn (no positional shell).
+        #expect(argv.count == 2)
         #expect(argv[0] == "attach")
         #expect(argv[1] == "graftty-abcdef12")
 
