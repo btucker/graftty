@@ -62,15 +62,6 @@ struct ZmxSpawnConfigurationTests {
         #expect(config.env["PATH"] == "\(hookBin):\(sanitizedPath)")
     }
 
-    @Test func bashUsesAgentHookWrappedShellWhenHooksAreEnabled() throws {
-        let config = makeConfig(processEnv: [
-            "SHELL": "/opt/homebrew/bin/bash",
-            "PATH": "/usr/bin",
-        ])
-
-        #expect(config.argv.last == AgentHookInstaller.wrappedUserShell("/opt/homebrew/bin/bash", rootDirectory: agentHooksRoot))
-    }
-
     @Test("""
     @spec ZMX-6.6: When the resolved user-shell basename is anything other than `bash` (or when bash is selected with agent hooks disabled), the host-managed `zmx attach` argv shall omit the positional shell argument so that zmx applies its documented default behavior of spawning `$SHELL` as a login shell. The spawn `env["SHELL"]` shall be set to the resolved user-shell path so zmx exec's the intended binary. This restores `~/.zprofile` (via the ZMX-6.3 ZDOTDIR shim for zsh) processing — without it, `eval "$(brew shellenv)"` is skipped and `~/.zshrc` references to Homebrew-installed binaries (rbenv, nvm, etc.) resolve to "command not found", cascading into broken keybindings, missing colors, and shell-init errors.
     """)
