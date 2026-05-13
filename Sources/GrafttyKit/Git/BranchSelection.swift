@@ -1,5 +1,3 @@
-import Foundation
-
 /// Branch decision for `AddWorktreeFlow` / `GitWorktreeAdd`. Determines
 /// whether `git worktree add` creates a fresh branch (`-b <name>`) or
 /// reuses an existing one. For `.useExisting`, the `source` tells the

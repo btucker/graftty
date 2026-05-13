@@ -6,7 +6,7 @@ import Foundation
 struct GitWorktreeAddArgsTests {
     @Test("createNew without startPoint uses -b <name> <path>")
     func createNewNoStart() {
-        let argv = GitWorktreeAdd.argvForTesting(
+        let argv = GitWorktreeAdd.argvFor(
             branch: .createNew(name: "feat-x"),
             worktreePath: "/repo/.worktrees/feat-x",
             startPoint: nil
@@ -16,7 +16,7 @@ struct GitWorktreeAddArgsTests {
 
     @Test("createNew with startPoint appends the start point")
     func createNewWithStart() {
-        let argv = GitWorktreeAdd.argvForTesting(
+        let argv = GitWorktreeAdd.argvFor(
             branch: .createNew(name: "feat-x"),
             worktreePath: "/repo/.worktrees/feat-x",
             startPoint: "origin/main"
@@ -26,7 +26,7 @@ struct GitWorktreeAddArgsTests {
 
     @Test("@spec GIT-5.10: useExisting local uses bare name, no -b")
     func useExistingLocal() {
-        let argv = GitWorktreeAdd.argvForTesting(
+        let argv = GitWorktreeAdd.argvFor(
             branch: .useExisting(name: "feat-x", source: .local),
             worktreePath: "/repo/.worktrees/feat-x",
             startPoint: nil
@@ -36,21 +36,11 @@ struct GitWorktreeAddArgsTests {
 
     @Test("@spec GIT-5.12: useExisting remoteOnly uses origin/<name>, no -b")
     func useExistingRemoteOnly() {
-        let argv = GitWorktreeAdd.argvForTesting(
+        let argv = GitWorktreeAdd.argvFor(
             branch: .useExisting(name: "feat-x", source: .remoteOnly),
             worktreePath: "/repo/.worktrees/feat-x",
             startPoint: nil
         )
         #expect(argv == ["worktree", "add", "/repo/.worktrees/feat-x", "origin/feat-x"])
-    }
-
-    @Test("useExisting ignores startPoint")
-    func useExistingIgnoresStartPoint() {
-        let argv = GitWorktreeAdd.argvForTesting(
-            branch: .useExisting(name: "feat-x", source: .local),
-            worktreePath: "/repo/.worktrees/feat-x",
-            startPoint: "origin/main"
-        )
-        #expect(argv == ["worktree", "add", "/repo/.worktrees/feat-x", "feat-x"])
     }
 }

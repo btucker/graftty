@@ -56,6 +56,10 @@ public enum GitWorktreeAdd {
             }
             return args
         case .useExisting(let name, let source):
+            precondition(
+                startPoint == nil,
+                "GitWorktreeAdd: startPoint must be nil when branch is .useExisting (caller should pass nil)"
+            )
             let ref: String
             switch source {
             case .local: ref = name
@@ -63,13 +67,5 @@ public enum GitWorktreeAdd {
             }
             return ["worktree", "add", worktreePath, ref]
         }
-    }
-
-    public nonisolated static func argvForTesting(
-        branch: BranchSelection,
-        worktreePath: String,
-        startPoint: String?
-    ) -> [String] {
-        argvFor(branch: branch, worktreePath: worktreePath, startPoint: startPoint)
     }
 }
