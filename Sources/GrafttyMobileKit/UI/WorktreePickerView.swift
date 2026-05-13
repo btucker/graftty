@@ -35,7 +35,7 @@ public struct WorktreePickerView: View {
                 }
             case .loaded(let worktrees):
                 List {
-                    ForEach(grouped(worktrees), id: \.0) { repoName, entries in
+                    ForEach(WorktreePickerGrouping.grouped(worktrees), id: \.0) { repoName, entries in
                         Section(repoName) {
                             ForEach(entries, id: \.path) { wt in
                                 WorktreeBlock(worktree: wt) {
@@ -97,11 +97,6 @@ public struct WorktreePickerView: View {
         }
     }
 
-    private func grouped(_ list: [WorktreePanes]) -> [(String, [WorktreePanes])] {
-        Dictionary(grouping: list, by: \.repoDisplayName)
-            .map { ($0.key, $0.value) }
-            .sorted { $0.0 < $1.0 }
-    }
 }
 
 private struct WorktreeBlock: View {
