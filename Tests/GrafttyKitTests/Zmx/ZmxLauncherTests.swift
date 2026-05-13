@@ -113,6 +113,25 @@ struct ZmxLauncherUnitTests {
         #expect(cmd == "'/usr/bin/zmx' attach 'my session; rm -rf /' $SHELL")
     }
 
+    @Test("""
+    @spec ZMX-6.6: When called with no `userShell`, `attachArgv` shall return `[zmx, "attach", sessionName]` with no positional shell so that zmx applies its documented default of spawning `$SHELL` as a login shell.
+    """)
+    func attachArgvWithoutUserShellOmitsPositionalShell() throws {
+        let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/zmx"))
+
+        let argv = launcher.attachArgv(sessionName: "graftty-deadbeef")
+
+        #expect(argv == ["/usr/bin/zmx", "attach", "graftty-deadbeef"])
+    }
+
+    @Test func attachArgvWithExplicitUserShellAppendsPositional() throws {
+        let launcher = ZmxLauncher(executable: URL(fileURLWithPath: "/usr/bin/zmx"))
+
+        let argv = launcher.attachArgv(sessionName: "graftty-cafe1234", userShell: "/bin/zsh")
+
+        #expect(argv == ["/usr/bin/zmx", "attach", "graftty-cafe1234", "/bin/zsh"])
+    }
+
     // MARK: parseListOutput
     //
     // `zmx list --short` emits one session name per line. (The non-short
