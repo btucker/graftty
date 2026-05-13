@@ -313,21 +313,15 @@ struct NativePtySessionTests {
         let allowCallbackToFinish = DispatchSemaphore(value: 0)
         let closeReturned = LockedCounter()
         let invocationsAfterClose = LockedCounter()
-        let firstInvocationStarted = LockedCounter()
         let session = NativePtySession(
-            argv: ["/bin/sh", "-c", "printf 'a'; sleep 5"],
+            argv: ["/bin/sh", "-c", "printf 'a'; sleep 2"],
             env: [:],
             workingDirectory: nil,
             writeToSurface: { _ in
-                if firstInvocationStarted.increment() == 1 {
-                    // Only the first invocation acts as the in-flight victim;
-                    // any subsequent callback would prove close() failed to
-                    // clear writeToSurface as a barrier.
+                if closeReturned.value() == 0 {
                     callbackEntered.signal()
                     _ = allowCallbackToFinish.wait(timeout: .now() + 2)
-                    return
-                }
-                if closeReturned.value() > 0 {
+                } else {
                     _ = invocationsAfterClose.increment()
                 }
             },

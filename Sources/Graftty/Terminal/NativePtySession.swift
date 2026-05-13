@@ -40,9 +40,8 @@ final class NativePtySession {
 
     private final class State {
         private let mutex = NSLock()
-        /// Held across each `writeToSurface` callback invocation so `close()`
-        /// can barrier-drain any in-flight call before its caller frees the
-        /// underlying ghostty surface (TERM-5.10).
+        /// Held across `writeToSurface` callbacks so `close()` can drain
+        /// in-flight calls (TERM-5.10).
         let writeToSurfaceLock = NSLock()
         var lifecycle: Lifecycle = .idle
         var spawned: PtyProcess.Spawned?
