@@ -554,6 +554,22 @@ public final class WebServer {
                 handleCreateWorktree(context: context, body: body)
                 return
             }
+            // WEB-7.8 / WEB-7.9 / WEB-7.10: delete or dismiss a worktree.
+            // POST-only; body is the same JSON envelope the iOS client
+            // sends. Other verbs get 405 so caching proxies and curl
+            // probes don't surprise the client.
+            if path == "/worktrees/delete" {
+                guard head.method == .POST else {
+                    Self.respondJSON(
+                        context: context,
+                        status: .methodNotAllowed,
+                        error: "only POST is supported"
+                    )
+                    return
+                }
+                handleDeleteWorktree(context: context, body: body)
+                return
+            }
             do {
                 let asset = try WebStaticResources.asset(for: path)
                 Self.respond(context: context, status: .ok, body: asset.data, contentType: asset.contentType)
@@ -643,6 +659,98 @@ public final class WebServer {
             }
             Task {
                 promise.succeed(await creator(decoded))
+            }
+        }
+
+        /// Decode the JSON body, invoke the injected `worktreeRemover`,
+        /// and map its `DeleteWorktreeOutcome` to an HTTP status + JSON
+        /// envelope. Same scheduling shape as `handleCreateWorktree`.
+        private func handleDeleteWorktree(context: ChannelHandlerContext, body: Data) {
+            guard let remover = config.worktreeRemover else {
+                Self.respondJSON(
+                    context: context,
+                    status: .serviceUnavailable,
+                    error: "worktree deletion not available"
+                )
+                return
+            }
+            let decoded: WebServer.DeleteWorktreeRequest
+            do {
+                decoded = try JSONDecoder().decode(WebServer.DeleteWorktreeRequest.self, from: body)
+            } catch {
+                Self.respondJSON(
+                    context: context,
+                    status: .badRequest,
+                    error: "invalid JSON body: \(error)"
+                )
+                return
+            }
+            let trimmedPath = decoded.worktreePath.trimmingCharacters(in: .whitespaces)
+            if trimmedPath.isEmpty {
+                Self.respondJSON(
+                    context: context,
+                    status: .badRequest,
+                    error: "worktreePath is required"
+                )
+                return
+            }
+
+            let promise = context.eventLoop.makePromise(of: WebServer.DeleteWorktreeOutcome.self)
+            promise.futureResult.whenComplete { result in
+                let outcome = (try? result.get()) ?? .internalFailure("remover dispatch failed")
+                switch outcome {
+                case .success(let resp):
+                    do {
+                        let data = try JSONEncoder().encode(resp)
+                        Self.respond(
+                            context: context,
+                            status: .ok,
+                            body: data,
+                            contentType: "application/json; charset=utf-8"
+                        )
+                    } catch {
+                        Self.respondJSON(
+                            context: context,
+                            status: .internalServerError,
+                            error: "encoding error"
+                        )
+                    }
+                case .invalid(let msg):
+                    Self.respondJSON(context: context, status: .badRequest, error: msg)
+                case .notFound(let msg):
+                    Self.respondJSON(context: context, status: .notFound, error: msg)
+                case .gitFailedForceable(let stderr, let shortStatus):
+                    struct ForceableBody: Codable {
+                        let error: String
+                        let forceAllowed: Bool
+                        let shortStatus: String
+                    }
+                    let body = (try? JSONEncoder().encode(ForceableBody(
+                        error: stderr, forceAllowed: true, shortStatus: shortStatus
+                    ))) ?? Data(#"{"error":"unknown","forceAllowed":true}"#.utf8)
+                    Self.respond(
+                        context: context,
+                        status: .conflict,
+                        body: body,
+                        contentType: "application/json; charset=utf-8"
+                    )
+                case .gitFailedFinal(let stderr):
+                    struct FinalBody: Codable { let error: String; let forceAllowed: Bool }
+                    let body = (try? JSONEncoder().encode(FinalBody(
+                        error: stderr, forceAllowed: false
+                    ))) ?? Data(#"{"error":"unknown","forceAllowed":false}"#.utf8)
+                    Self.respond(
+                        context: context,
+                        status: .conflict,
+                        body: body,
+                        contentType: "application/json; charset=utf-8"
+                    )
+                case .internalFailure(let msg):
+                    Self.respondJSON(context: context, status: .internalServerError, error: msg)
+                }
+            }
+            Task {
+                promise.succeed(await remover(decoded))
             }
         }
 

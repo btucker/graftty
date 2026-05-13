@@ -143,18 +143,4 @@ struct WebTodo {
 """, .disabled("not yet implemented"))
     func web_8_6() async throws { }
 
-    @Test("""
-@spec WEB-7.8: When a client sends `POST /worktrees/delete` with `{ "worktreePath": "<abs>", "force": <bool> }`, the application shall route the request through `DeleteWorktreeFlow.delete` and respond `200 { "dismissed": <bool> }` on success. `dismissed` shall be `true` when the flow took the GIT-3.6 / GIT-4.13 prune-on-vanished branch and `false` when `git worktree remove` succeeded. The `/worktrees/delete` endpoint accepts `POST` only; other verbs return `405 Method Not Allowed`.
-""", .disabled("not yet implemented"))
-    func web_7_8() async throws { }
-
-    @Test("""
-@spec WEB-7.9: If the server-side delete flow encounters a git failure that `--force` could resolve, then the application shall respond `409 Conflict` with `{ "error": "<stderr>", "forceAllowed": true, "shortStatus": "<git status --short output>" }`. When `--force` has already been attempted, or the failure class is one `--force` cannot help (e.g. main-checkout rejection), the response shall be `409 Conflict` with `forceAllowed: false` and no `shortStatus` field.
-""", .disabled("not yet implemented"))
-    func web_7_9() async throws { }
-
-    @Test("""
-@spec WEB-7.10: If the server's `worktreeRemover` closure is not injected, then `POST /worktrees/delete` shall respond `503 Service Unavailable` with `{ "error": "worktree deletion not available" }`. This matches the create endpoint's pre-injection contract (WEB-7.4 sibling) so a mobile or web client can distinguish "not supported yet" from "wrong URL".
-""", .disabled("not yet implemented"))
-    func web_7_10() async throws { }
 }
