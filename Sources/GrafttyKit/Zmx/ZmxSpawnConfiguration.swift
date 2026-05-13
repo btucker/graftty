@@ -62,20 +62,21 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
             }
         }
 
-        // ZMX-6.6: For non-bash shells (and bash with hooks disabled),
+        // ZMX-6.6/6.7: For non-bash shells (and bash with hooks disabled),
         // omit the positional shell argument so zmx's documented default
         // applies — it spawns $SHELL as a login shell, which sources the
-        // profile chain (~/.zprofile, ~/.bash_profile) before the rc
-        // file. ZMX-6.7: bash-with-hooks is the exception: the launcher
-        // script must run with --rcfile, which login bash discards, so
-        // we keep the positional pointing at the launcher path.
-        let useDefaultLoginSpawn = (shellBasename != "bash") || !hooksEnabled
+        // profile chain (~/.zprofile, ~/.bash_profile) before the rc file.
+        // For bash-with-hooks, keep the positional pointing at the launcher
+        // script because login bash discards `--rcfile`.
         let argv: [String]
-        if useDefaultLoginSpawn {
-            argv = launcher.attachArgv(sessionName: sessionName)
-        } else {
-            let wrappedShell = AgentHookInstaller.wrappedUserShell(rawUserShell, rootDirectory: agentHooksRoot)
+        if let wrappedShell = AgentHookInstaller.loginSpawnPositionalShell(
+            rawUserShell: rawUserShell,
+            hooksEnabled: hooksEnabled,
+            rootDirectory: agentHooksRoot
+        ) {
             argv = launcher.attachArgv(sessionName: sessionName, userShell: wrappedShell)
+        } else {
+            argv = launcher.attachArgv(sessionName: sessionName)
         }
 
         return ZmxSpawnConfiguration(

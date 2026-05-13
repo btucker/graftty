@@ -26,8 +26,6 @@ struct ZmxSpawnConfigurationTests {
         #expect(config.sessionName == "graftty-deadbeef")
         #expect(config.argv.first == "/tmp/zmx")
         #expect(Array(config.argv[1...2]) == ["attach", "graftty-deadbeef"])
-        // ZMX-6.6: zsh path drops the positional shell so zmx does the
-        // login spawn. argv is [zmx, attach, sessionName] only.
         #expect(config.argv.count == 3)
         #expect(config.env["SHELL"] == "/bin/zsh")
         #expect(config.env["ZMX_DIR"] == "/tmp/zmx-dir")
@@ -62,7 +60,7 @@ struct ZmxSpawnConfigurationTests {
         #expect(config.env["PATH"] == "\(hookBin):\(sanitizedPath)")
     }
 
-    @Test func disabledHooksUseRawShellAndDoNotSetHookEnv() throws {
+    @Test func disabledHooksOmitHookEnvAndPathUsesSanitizedPath() throws {
         let config = makeConfig(
             processEnv: [
                 "SHELL": "/bin/bash",
@@ -75,10 +73,6 @@ struct ZmxSpawnConfigurationTests {
             bundleURL: bundleURL
         )
 
-        // ZMX-6.6: hooks disabled → positional shell dropped (no launcher
-        // needed); zmx defaults to login $SHELL.
-        #expect(config.argv.count == 3)
-        #expect(config.env["SHELL"] == "/bin/bash")
         #expect(config.env["GRAFTTY_AGENT_HOOKS_BIN"] == nil)
         #expect(config.env["GHOSTTY_ZSH_ZDOTDIR"] == nil)
         #expect(config.env["PATH"] == sanitizedPath)

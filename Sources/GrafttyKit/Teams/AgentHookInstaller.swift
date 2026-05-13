@@ -70,6 +70,24 @@ public struct AgentHookInstaller: Sendable {
         return bashLauncherPath(rootDirectory: rootDirectory).path
     }
 
+    /// Returns the launcher path for callers that need an explicit
+    /// positional shell, OR `nil` if the spawn should let zmx apply
+    /// its documented default of spawning `$SHELL` as a login shell.
+    ///
+    /// Returns the launcher path (per `wrappedUserShell`) only when the
+    /// user's shell is bash AND agent hooks are enabled — that's the
+    /// one case where login mode would discard `--rcfile` and break
+    /// the agent-hooks shim. ZMX-6.6, ZMX-6.7.
+    public static func loginSpawnPositionalShell(
+        rawUserShell: String,
+        hooksEnabled: Bool,
+        rootDirectory: URL
+    ) -> String? {
+        let basename = (rawUserShell as NSString).lastPathComponent
+        guard basename == "bash", hooksEnabled else { return nil }
+        return wrappedUserShell(rawUserShell, rootDirectory: rootDirectory)
+    }
+
     public func install() throws -> AgentHookInstallResult {
         try FileManager.default.createDirectory(at: binDirectory, withIntermediateDirectories: true)
 

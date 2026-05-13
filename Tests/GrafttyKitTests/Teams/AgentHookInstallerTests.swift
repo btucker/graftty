@@ -80,6 +80,41 @@ struct AgentHookInstallerTests {
         }
     }
 
+    @Test func loginSpawnPositionalShellReturnsNilExceptForBashWithHooks() {
+        let root = URL(fileURLWithPath: "/test")
+        let bashLauncher = AgentHookInstaller.bashLauncherPath(rootDirectory: root).path
+
+        // Bash with hooks enabled → returns launcher path.
+        #expect(AgentHookInstaller.loginSpawnPositionalShell(
+            rawUserShell: "/bin/bash",
+            hooksEnabled: true,
+            rootDirectory: root
+        ) == bashLauncher)
+        #expect(AgentHookInstaller.loginSpawnPositionalShell(
+            rawUserShell: "/opt/homebrew/bin/bash",
+            hooksEnabled: true,
+            rootDirectory: root
+        ) == bashLauncher)
+
+        // Bash with hooks disabled → nil (let zmx do its default login spawn).
+        #expect(AgentHookInstaller.loginSpawnPositionalShell(
+            rawUserShell: "/bin/bash",
+            hooksEnabled: false,
+            rootDirectory: root
+        ) == nil)
+
+        // Non-bash shells → always nil regardless of hooks.
+        for shell in ["/bin/zsh", "/usr/local/bin/fish", "/bin/sh", "/bin/dash"] {
+            for hooks in [true, false] {
+                #expect(AgentHookInstaller.loginSpawnPositionalShell(
+                    rawUserShell: shell,
+                    hooksEnabled: hooks,
+                    rootDirectory: root
+                ) == nil)
+            }
+        }
+    }
+
     @Test func zshrcShimSourcesUserRcAndPrependsAgentBin() {
         let shim = AgentHookInstaller.zshrcShim()
         // Sources user's real .zshrc first.
