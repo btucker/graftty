@@ -26,6 +26,8 @@ struct AddWorktreeSheet: View {
     /// name. Once the user types something different in the branch field
     /// (in `.newBranch` mode), we stop auto-syncing so their edit sticks.
     @State private var branchMirrorsWorktree: Bool = true
+    /// @spec GIT-5.15: When the user selects a branch from the existing-branch picker, the application shall auto-fill the worktree name with the branch name unless the user has already edited the field.
+    ///
     /// Tracks whether the worktree field still mirrors the branch
     /// selection (in `.existing` mode). Once the user types a different
     /// worktree name, we stop auto-syncing.

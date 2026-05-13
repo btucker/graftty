@@ -388,7 +388,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.10** useExisting local uses bare name, no -b
 
+**GIT-5.11** useExisting on a mounted branch returns .branchAlreadyMounted
+
 **GIT-5.12** useExisting remoteOnly uses origin/<name>, no -b
+
+**GIT-5.13** sorts by lastCommitDate descending
+
+**GIT-5.14** surfaces PR info when present
+
+**GIT-5.15** When the user selects a branch from the existing-branch picker, the application shall auto-fill the worktree name with the branch name unless the user has already edited the field. Tracks whether the worktree field still mirrors the branch selection (in `.existing` mode). Once the user types a different worktree name, we stop auto-syncing.
 
 ## ATTN — Attention Notification System
 
