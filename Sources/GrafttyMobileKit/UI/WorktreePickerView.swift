@@ -19,7 +19,6 @@ public struct WorktreePickerView: View {
     private struct PendingForceDelete: Identifiable, Equatable {
         let id = UUID()
         let worktreePath: String
-        let displayName: String
         let stderr: String
         let shortStatus: String
     }
@@ -140,6 +139,7 @@ public struct WorktreePickerView: View {
             }
         }
         .task { await load() }
+        .onDisappear { errorToastTask?.cancel() }
     }
 
     private func load() async {
@@ -185,25 +185,18 @@ public struct WorktreePickerView: View {
         } catch let DeleteWorktreeClient.DeleteError.gitFailedForceable(stderr, status) {
             pendingForceDelete = PendingForceDelete(
                 worktreePath: worktree.path,
-                displayName: worktree.displayName,
                 stderr: stderr,
                 shortStatus: status
             )
         } catch let error as DeleteWorktreeClient.DeleteError {
-            if let msg = error.userMessage {
-                showErrorToast(msg)
-            }
-            await refresh()
+            surfaceDeleteError(error)
         } catch {
             showErrorToast("Couldn't reach the server.")
         }
     }
 
     /// User confirmed Force Delete on a 409 forceable response —
-    /// re-issue with `force: true`. We don't have the original
-    /// `WorktreePanes` in the dialog state, so build a minimal one
-    /// that carries the path. The server is the source of truth for
-    /// what to do with that path.
+    /// re-issue with `force: true`.
     private func performForceDelete(worktreePath: String) async {
         do {
             _ = try await DeleteWorktreeClient.delete(
@@ -212,12 +205,22 @@ public struct WorktreePickerView: View {
             )
             await refresh()
         } catch let error as DeleteWorktreeClient.DeleteError {
-            if let msg = error.userMessage {
-                showErrorToast(msg)
-            }
-            await refresh()
+            surfaceDeleteError(error)
         } catch {
             showErrorToast("Couldn't reach the server.")
+        }
+    }
+
+    /// Surface an error after a delete attempt. Toasts the user-facing
+    /// message and re-fetches only when the list actually changed
+    /// server-side (`.notFound` means the row vanished between the
+    /// picker render and the delete request).
+    private func surfaceDeleteError(_ error: DeleteWorktreeClient.DeleteError) {
+        if let msg = error.userMessage {
+            showErrorToast(msg)
+        }
+        if case .notFound = error {
+            Task { await refresh() }
         }
     }
 

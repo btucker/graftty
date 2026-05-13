@@ -73,8 +73,7 @@ public enum DeleteWorktreeClient {
     }
 
     public static func decodeErrorMessage(_ data: Data) -> String? {
-        struct Envelope: Decodable { let error: String? }
-        return (try? JSONDecoder().decode(Envelope.self, from: data))?.error
+        APIErrorEnvelope.decode(data)
     }
 
     public static func delete(
