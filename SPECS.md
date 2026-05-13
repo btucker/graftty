@@ -366,6 +366,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-4.13** When the user confirms Delete Worktree on a worktree whose directory no longer exists on disk, the application shall run `git worktree prune --expire=now`, drop the worktree entry from the sidebar without prompting the user with a Force Delete alert, and tear down any running terminal surfaces for the entry.
 
+**GIT-4.14** While the GIT-4.7 offer-delete dialog is on screen, the application shall not block the main run loop's default mode. The dialog is presented as a window-attached sheet via `NSAlert.beginSheetModal(for:)` rather than the nested-event-loop `NSAlert.runModal()`, so libghostty's PTY read callbacks — which land on the main thread in the default run-loop mode — keep flowing while the offer awaits a click. Without this, every terminal pane in every visible worktree freezes for as long as the auto-triggered offer stays unanswered.
+
 ### GIT-5.x — Creating a Worktree
 
 **GIT-5.1** When the user types or pastes into the "Worktree name" or "Branch" field of the Add Worktree sheet, the application shall replace any character outside the set `A-Z a-z 0-9 . _ - /` with `-`, and shall collapse any run of consecutive `-` (including dashes the user typed directly) into a single `-`. `/` is permitted so branch names can use the conventional namespace separator (`feature/foo`); the resulting worktree path becomes a nested `.worktrees/<ns>/<leaf>` directory that `git worktree add` creates. Ref-format rules git already enforces (`//`, leading/trailing `/`, components beginning with `.`) are not duplicated here — git reports them at submit time. The replacement shall apply live on every edit so the field shows only sanitized content.
