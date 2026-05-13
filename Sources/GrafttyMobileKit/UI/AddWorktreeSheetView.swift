@@ -5,6 +5,7 @@ import SwiftUI
 public struct AddWorktreeSheetView: View {
 
     public let host: Host
+    public let branchEntries: [BranchPickerEntry]
     public let onCreated: (CreateWorktreeClient.Response) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -15,14 +16,23 @@ public struct AddWorktreeSheetView: View {
     /// Once the user types a branch that differs from the worktree name,
     /// stop auto-syncing so their edit sticks.
     @State private var branchMirrorsWorktree: Bool = true
+    /// Tracks whether the worktree field still mirrors the selected branch
+    /// (in `.existing` mode). Once the user edits the worktree name
+    /// independently, we stop auto-syncing.
+    @State private var worktreeMirrorsBranch: Bool = true
+    @State private var branchMode: BranchMode = .newBranch
     @State private var isSubmitting: Bool = false
     @State private var errorMessage: String?
 
+    enum BranchMode { case newBranch, existing }
+
     public init(
         host: Host,
+        branchEntries: [BranchPickerEntry] = [],
         onCreated: @escaping (CreateWorktreeClient.Response) -> Void
     ) {
         self.host = host
+        self.branchEntries = branchEntries
         self.onCreated = onCreated
     }
 
@@ -100,25 +110,50 @@ public struct AddWorktreeSheetView: View {
                             worktreeName = sanitized
                             return
                         }
-                        if branchMirrorsWorktree && branchName != sanitized {
+                        if branchMode == .newBranch && branchMirrorsWorktree && branchName != sanitized {
                             branchName = sanitized
+                        }
+                        if branchMode == .existing && sanitized != branchName {
+                            worktreeMirrorsBranch = false
                         }
                     }
             }
             Section("Branch") {
-                TextField("feature-xyz", text: $branchName)
-                    .autocorrectionDisabled()
-                    .textInputAutocapitalization(.never)
-                    .onChange(of: branchName) { _, new in
-                        let sanitized = WorktreeNameSanitizer.sanitize(new)
-                        if sanitized != new {
-                            branchName = sanitized
-                            return
+                Picker("Mode", selection: $branchMode) {
+                    Text("New branch").tag(BranchMode.newBranch)
+                    Text("Existing branch").tag(BranchMode.existing)
+                }
+                .pickerStyle(.segmented)
+
+                if branchMode == .newBranch {
+                    TextField("feature-xyz", text: $branchName)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .onChange(of: branchName) { _, new in
+                            let sanitized = WorktreeNameSanitizer.sanitize(new)
+                            if sanitized != new {
+                                branchName = sanitized
+                                return
+                            }
+                            if sanitized != worktreeName {
+                                branchMirrorsWorktree = false
+                            }
                         }
-                        if sanitized != worktreeName {
-                            branchMirrorsWorktree = false
+                } else {
+                    NavigationLink {
+                        BranchPickerView(entries: branchEntries) { entry in
+                            branchName = entry.name
+                            if worktreeMirrorsBranch {
+                                worktreeName = entry.name
+                            }
+                        }
+                    } label: {
+                        HStack {
+                            Text(branchName.isEmpty ? "Choose branch…" : branchName)
+                            Spacer()
                         }
                     }
+                }
             }
             if let errorMessage {
                 Section {
@@ -161,7 +196,8 @@ public struct AddWorktreeSheetView: View {
         let body = CreateWorktreeClient.Request(
             repoPath: repoPath,
             worktreeName: WorktreeNameSanitizer.trimForSubmit(worktreeName),
-            branchName: WorktreeNameSanitizer.trimForSubmit(branchName)
+            branchName: WorktreeNameSanitizer.trimForSubmit(branchName),
+            existing: branchMode == .existing
         )
         do {
             let response = try await CreateWorktreeClient.create(baseURL: host.baseURL, body: body)

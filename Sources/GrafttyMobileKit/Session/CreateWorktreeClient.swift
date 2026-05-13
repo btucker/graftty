@@ -7,11 +7,18 @@ public enum CreateWorktreeClient {
         public let repoPath: String
         public let worktreeName: String
         public let branchName: String
+        public let existing: Bool
 
-        public init(repoPath: String, worktreeName: String, branchName: String) {
+        public init(
+            repoPath: String,
+            worktreeName: String,
+            branchName: String,
+            existing: Bool = false
+        ) {
             self.repoPath = repoPath
             self.worktreeName = worktreeName
             self.branchName = branchName
+            self.existing = existing
         }
     }
 
