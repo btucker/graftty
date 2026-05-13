@@ -24,7 +24,7 @@ struct GitWorktreeAddArgsTests {
         #expect(argv == ["worktree", "add", "-b", "feat-x", "/repo/.worktrees/feat-x", "origin/main"])
     }
 
-    @Test("@spec GIT-5.10: useExisting local uses bare name, no -b")
+    @Test("@spec GIT-5.10: When BranchSelection.useExisting is submitted with a local source, the application shall invoke `git worktree add <path> <name>` (no `-b` flag).")
     func useExistingLocal() {
         let argv = GitWorktreeAdd.argvFor(
             branch: .useExisting(name: "feat-x", source: .local),
@@ -34,7 +34,7 @@ struct GitWorktreeAddArgsTests {
         #expect(argv == ["worktree", "add", "/repo/.worktrees/feat-x", "feat-x"])
     }
 
-    @Test("@spec GIT-5.12: useExisting remoteOnly uses origin/<name>, no -b")
+    @Test("@spec GIT-5.12: When BranchSelection.useExisting is submitted with a remoteOnly source, the application shall pass `origin/<name>` so git creates a local tracking branch as a side effect.")
     func useExistingRemoteOnly() {
         let argv = GitWorktreeAdd.argvFor(
             branch: .useExisting(name: "feat-x", source: .remoteOnly),

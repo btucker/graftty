@@ -15,10 +15,6 @@ public struct AddWorktreeSheetView: View {
     /// Once the user types a branch that differs from the worktree name,
     /// stop auto-syncing so their edit sticks.
     @State private var branchMirrorsWorktree: Bool = true
-    /// Tracks whether the worktree field still mirrors the selected branch
-    /// (in `.existing` mode). Once the user edits the worktree name
-    /// independently, we stop auto-syncing.
-    @State private var worktreeMirrorsBranch: Bool = true
     @State private var branchMode: BranchMode = .newBranch
     @State private var isSubmitting: Bool = false
     @State private var errorMessage: String?
@@ -110,9 +106,6 @@ public struct AddWorktreeSheetView: View {
                         if branchMode == .newBranch && branchMirrorsWorktree && branchName != sanitized {
                             branchName = sanitized
                         }
-                        if branchMode == .existing && sanitized != branchName {
-                            worktreeMirrorsBranch = false
-                        }
                     }
             }
             Section("Branch") {
@@ -144,10 +137,6 @@ public struct AddWorktreeSheetView: View {
                             let sanitized = WorktreeNameSanitizer.sanitize(new)
                             if sanitized != new {
                                 branchName = sanitized
-                                return
-                            }
-                            if worktreeMirrorsBranch && worktreeName != sanitized {
-                                worktreeName = sanitized
                             }
                         }
                 }

@@ -72,7 +72,7 @@ public final class WebServer {
             self.repoPath = try container.decode(String.self, forKey: .repoPath)
             self.worktreeName = try container.decode(String.self, forKey: .worktreeName)
             self.branchName = try container.decode(String.self, forKey: .branchName)
-            self.existing = (try? container.decode(Bool.self, forKey: .existing)) ?? false
+            self.existing = try container.decodeIfPresent(Bool.self, forKey: .existing) ?? false
         }
 
         private enum CodingKeys: String, CodingKey {

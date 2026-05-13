@@ -27,14 +27,10 @@ struct AddWorktreeSheet: View {
     /// (in `.newBranch` mode), we stop auto-syncing so their edit sticks.
     @State private var branchMirrorsWorktree: Bool = true
     /// @spec GIT-5.15: When the user selects a branch from the existing-branch picker, the application shall auto-fill the worktree name with the branch name unless the user has already edited the field.
-    ///
-    /// Tracks whether the worktree field still mirrors the branch
-    /// selection (in `.existing` mode). Once the user types a different
-    /// worktree name, we stop auto-syncing.
     @State private var worktreeMirrorsBranch: Bool = true
     @State private var isSubmitting: Bool = false
     @State private var errorMessage: String?
-    @State private var selectedExistingSource: BranchSelection.ExistingSource = .local
+    @State private var selectedExistingEntry: BranchPickerEntry?
 
     @FocusState private var worktreeFieldFocused: Bool
 
@@ -112,8 +108,7 @@ struct AddWorktreeSheet: View {
                                 text: $branchName,
                                 entries: branchEntries
                             ) { entry in
-                                branchName = entry.name
-                                selectedExistingSource = entry.source
+                                selectedExistingEntry = entry
                                 if worktreeMirrorsBranch {
                                     worktreeName = entry.name
                                 }
@@ -171,7 +166,15 @@ struct AddWorktreeSheet: View {
         case .newBranch:
             return .createNew(name: trimmed)
         case .existing:
-            return .useExisting(name: trimmed, source: selectedExistingSource)
+            // If the user typed a branch without picking from the list,
+            // selectedExistingEntry is nil or stale — default to .local.
+            // The server (and git) resolves a bare name correctly when
+            // it matches either a local ref or origin/<name>.
+            let source: BranchSelection.ExistingSource =
+                selectedExistingEntry?.name == trimmed
+                ? (selectedExistingEntry?.source ?? .local)
+                : .local
+            return .useExisting(name: trimmed, source: source)
         }
     }
 

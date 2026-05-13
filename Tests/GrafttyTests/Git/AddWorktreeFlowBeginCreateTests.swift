@@ -7,7 +7,7 @@ import GrafttyKit
 @MainActor
 @Suite("AddWorktreeFlow.beginCreate")
 struct AddWorktreeFlowBeginCreateTests {
-    @Test("@spec GIT-5.11: useExisting on a mounted branch returns .branchAlreadyMounted")
+    @Test("@spec GIT-5.11: When BranchSelection.useExisting is submitted and the same repo already has the branch mounted in another worktree, the application shall reject the create with branchAlreadyMounted(at:) before invoking git.")
     func mountedBranchRejected() async throws {
         var wt = WorktreeEntry(path: "/r/.worktrees/feat", branch: "feat")
         wt.state = .running

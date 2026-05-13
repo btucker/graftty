@@ -40,16 +40,17 @@ struct BranchComboBox: View {
     }
 
     private var popoverList: some View {
-        ScrollView {
+        let entries = filteredEntries
+        return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                if filteredEntries.isEmpty {
+                if entries.isEmpty {
                     Text("No branches match")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
                 } else {
-                    ForEach(filteredEntries, id: \.name) { entry in
+                    ForEach(entries, id: \.name) { entry in
                         row(for: entry)
                     }
                 }
@@ -61,14 +62,15 @@ struct BranchComboBox: View {
 
     @ViewBuilder
     private func row(for entry: BranchPickerEntry) -> some View {
-        let mounted = entry.mountedWorktreePath != nil
+        let mountedPath = entry.mountedWorktreePath
+        let mounted = mountedPath != nil
         HStack(spacing: 8) {
             Text(entry.name)
                 .font(.callout)
                 .strikethrough(mounted)
                 .lineLimit(1)
-            if mounted, let path = entry.mountedWorktreePath {
-                Text("in worktree \((path as NSString).lastPathComponent)")
+            if let mountedPath {
+                Text("in worktree \((mountedPath as NSString).lastPathComponent)")
                     .font(.caption)
                     .italic()
                     .foregroundStyle(.secondary)
@@ -100,9 +102,13 @@ struct BranchComboBox: View {
         .disabled(mounted)
     }
 
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        return f
+    }()
+
     private func relativeDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        return formatter.localizedString(for: date, relativeTo: Date())
+        Self.relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 }

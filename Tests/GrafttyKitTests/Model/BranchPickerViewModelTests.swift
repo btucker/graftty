@@ -26,7 +26,7 @@ struct BranchPickerViewModelTests {
         )
     }
 
-    @Test("@spec GIT-5.13: sorts by lastCommitDate descending")
+    @Test("@spec GIT-5.13: While the existing-branch picker is open, the application shall display branches sorted by last-commit date descending, with branches mounted in another worktree dimmed and unselectable.")
     func sortsByDateDesc() {
         let now = Date()
         let entries = make(local: [
@@ -58,7 +58,7 @@ struct BranchPickerViewModelTests {
         #expect(entries.first?.mountedWorktreePath == "/r/.worktrees/feat")
     }
 
-    @Test("@spec GIT-5.14: surfaces PR info when present")
+    @Test("@spec GIT-5.14: When a branch row in the existing-branch picker has an associated open PR/MR, the application shall surface the PR number and title alongside the branch name.")
     func attachesPRInfo() {
         let now = Date()
         let pr = PRInfo(

@@ -386,17 +386,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.9** When persisting `WorktreeEntry` to `state.json`, the application shall encode `.creating` as `.closed`. The `.creating` state is in-memory-only; if the app crashes mid-creation, the next launch's reconciler classifies the entry from `git worktree list --porcelain` rather than restoring a phantom spinner that would never resolve.
 
-**GIT-5.10** useExisting local uses bare name, no -b
+**GIT-5.10** When BranchSelection.useExisting is submitted with a local source, the application shall invoke `git worktree add <path> <name>` (no `-b` flag).
 
-**GIT-5.11** useExisting on a mounted branch returns .branchAlreadyMounted
+**GIT-5.11** When BranchSelection.useExisting is submitted and the same repo already has the branch mounted in another worktree, the application shall reject the create with branchAlreadyMounted(at:) before invoking git.
 
-**GIT-5.12** useExisting remoteOnly uses origin/<name>, no -b
+**GIT-5.12** When BranchSelection.useExisting is submitted with a remoteOnly source, the application shall pass `origin/<name>` so git creates a local tracking branch as a side effect.
 
-**GIT-5.13** sorts by lastCommitDate descending
+**GIT-5.13** While the existing-branch picker is open, the application shall display branches sorted by last-commit date descending, with branches mounted in another worktree dimmed and unselectable.
 
-**GIT-5.14** surfaces PR info when present
+**GIT-5.14** When a branch row in the existing-branch picker has an associated open PR/MR, the application shall surface the PR number and title alongside the branch name.
 
-**GIT-5.15** When the user selects a branch from the existing-branch picker, the application shall auto-fill the worktree name with the branch name unless the user has already edited the field. Tracks whether the worktree field still mirrors the branch selection (in `.existing` mode). Once the user types a different worktree name, we stop auto-syncing.
+**GIT-5.15** When the user selects a branch from the existing-branch picker, the application shall auto-fill the worktree name with the branch name unless the user has already edited the field.
 
 ## ATTN — Attention Notification System
 
