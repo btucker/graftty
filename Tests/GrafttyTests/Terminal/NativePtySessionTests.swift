@@ -297,6 +297,73 @@ struct NativePtySessionTests {
         #expect(closeGroup.wait(timeout: .now() + 2) == .success)
     }
 
+    @Test("""
+    @spec TERM-5.10: When `NativePtySession.close()` is called while a \
+    `writeToSurface` callback is mid-execution on the PTY reader thread, the \
+    application shall block `close()` until that callback returns and shall \
+    ensure no further `writeToSurface` invocation occurs after `close()` has \
+    returned. The barrier prevents `SurfaceHandle.deinit` (which calls \
+    `close()` and then `ghostty_surface_free`) from racing with an in-flight \
+    `ghostty_surface_write_buffer` on the reader thread; without it, the \
+    reader dereferences the freed surface and aborts with \
+    `BUG IN CLIENT OF LIBPLATFORM: os_unfair_lock is corrupt`.
+    """)
+    func closeWaitsForInFlightWriteToSurfaceCallbackBeforeReturning() throws {
+        let callbackEntered = DispatchSemaphore(value: 0)
+        let allowCallbackToFinish = DispatchSemaphore(value: 0)
+        let closeReturned = LockedCounter()
+        let invocationsAfterClose = LockedCounter()
+        let firstInvocationStarted = LockedCounter()
+        let session = NativePtySession(
+            argv: ["/bin/sh", "-c", "printf 'a'; sleep 5"],
+            env: [:],
+            workingDirectory: nil,
+            writeToSurface: { _ in
+                if firstInvocationStarted.increment() == 1 {
+                    // Only the first invocation acts as the in-flight victim;
+                    // any subsequent callback would prove close() failed to
+                    // clear writeToSurface as a barrier.
+                    callbackEntered.signal()
+                    _ = allowCallbackToFinish.wait(timeout: .now() + 2)
+                    return
+                }
+                if closeReturned.value() > 0 {
+                    _ = invocationsAfterClose.increment()
+                }
+            },
+            processExited: { _, _ in },
+            spawnFailed: { _ in },
+            closer: { spawned in
+                Self.terminateChildOnly(spawned)
+            }
+        )
+
+        try session.start()
+
+        #expect(callbackEntered.wait(timeout: .now() + 5) == .success)
+
+        let closeGroup = DispatchGroup()
+        closeGroup.enter()
+        Self.runOnDedicatedThread {
+            session.close()
+            _ = closeReturned.increment()
+            closeGroup.leave()
+        }
+
+        // close() must NOT have returned while the callback is still blocked.
+        Thread.sleep(forTimeInterval: 0.1)
+        #expect(closeReturned.value() == 0)
+
+        allowCallbackToFinish.signal()
+        #expect(closeGroup.wait(timeout: .now() + 5) == .success)
+        #expect(closeReturned.value() == 1)
+
+        // After close() returns, the reader may still drain residual bytes
+        // from the PTY; none of those reads may invoke writeToSurface.
+        Thread.sleep(forTimeInterval: 0.3)
+        #expect(invocationsAfterClose.value() == 0)
+    }
+
     @Test func resizeChangesSttySize() throws {
         let recorder = LockedRecorder<Data>()
         let session = NativePtySession(

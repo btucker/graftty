@@ -40,6 +40,10 @@ final class NativePtySession {
 
     private final class State {
         private let mutex = NSLock()
+        /// Held across each `writeToSurface` callback invocation so `close()`
+        /// can barrier-drain any in-flight call before its caller frees the
+        /// underlying ghostty surface (TERM-5.10).
+        let writeToSurfaceLock = NSLock()
         var lifecycle: Lifecycle = .idle
         var spawned: PtyProcess.Spawned?
         var readerThread: Thread?
@@ -229,6 +233,12 @@ final class NativePtySession {
         state.spawnFailed = nil
         state.unlock()
 
+        // Barrier: wait for any in-flight writeToSurface callback to return,
+        // so SurfaceHandle.deinit can safely free the ghostty surface next
+        // (TERM-5.10).
+        state.writeToSurfaceLock.lock()
+        state.writeToSurfaceLock.unlock()
+
         if let currentSpawn {
             ioLock.lock()
             terminateAndClose(currentSpawn)
@@ -285,6 +295,15 @@ final class NativePtySession {
     }
 
     private static func dispatchOutput(_ data: Data, state: State) {
+        // Hold writeToSurfaceLock across the callback invocation so that
+        // `close()`'s post-`writeToSurface = nil` barrier drain (TERM-5.10)
+        // can guarantee no callback is in flight once `close()` returns.
+        // `state.lock()` is still used only briefly to read the current
+        // callback, so unrelated state operations (e.g., `activeMasterFD()`
+        // on the keystroke path) aren't blocked by long libghostty parses.
+        state.writeToSurfaceLock.lock()
+        defer { state.writeToSurfaceLock.unlock() }
+
         state.lock()
         let callback = state.writeToSurface
         state.unlock()
