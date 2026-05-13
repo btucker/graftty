@@ -4,7 +4,7 @@ import Foundation
 
 @Suite("GitWorktreeAdd argv shape")
 struct GitWorktreeAddArgsTests {
-    @Test("@spec GIT-5.10: createNew without startPoint uses -b <name> <path>")
+    @Test("createNew without startPoint uses -b <name> <path>")
     func createNewNoStart() {
         let argv = GitWorktreeAdd.argvForTesting(
             branch: .createNew(name: "feat-x"),
@@ -24,7 +24,7 @@ struct GitWorktreeAddArgsTests {
         #expect(argv == ["worktree", "add", "-b", "feat-x", "/repo/.worktrees/feat-x", "origin/main"])
     }
 
-    @Test("@spec GIT-5.11: useExisting local uses bare name, no -b")
+    @Test("@spec GIT-5.10: useExisting local uses bare name, no -b")
     func useExistingLocal() {
         let argv = GitWorktreeAdd.argvForTesting(
             branch: .useExisting(name: "feat-x", source: .local),

@@ -7,11 +7,11 @@ import Foundation
 /// `origin/<name>` (remote-only) so a local tracking branch is created
 /// as a side effect.
 public enum BranchSelection: Sendable, Hashable {
-    /// @spec GIT-5.10
     /// New-branch source for `git worktree add -b <name>`.
     case createNew(name: String)
-    /// @spec GIT-5.11
-    /// Existing-branch source for `git worktree add <path> <name|origin/name>`.
+    /// @spec GIT-5.10
+    /// Existing-branch source for `git worktree add <path> <name|origin/name>`
+    /// — no `-b` flag, no start point.
     case useExisting(name: String, source: ExistingSource)
 
     public enum ExistingSource: Sendable, Hashable {
