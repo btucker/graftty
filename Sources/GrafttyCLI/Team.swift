@@ -136,13 +136,19 @@ struct TeamHook: ParsableCommand {
         let stdinData = FileHandle.standardInput.readDataToEndOfFile()
         let stdinPayload = (try? JSONSerialization.jsonObject(with: stdinData) as? [String: Any]) ?? [:]
         let stdinSessionID = stdinPayload["session_id"] as? String
+        let runtime = TeamHookRuntime(rawValue: runtime)!
+        let event = TeamHookEvent(rawValue: event)!
+
+        // TEAM-9.1
+        if event == .stop, AgentStopHookFilter.isSubagentStop(stdinJSON: stdinPayload) {
+            print("{}")
+            return
+        }
 
         guard let worktreePath = try? WorktreeResolver.resolve() else {
             print("{}")
             return
         }
-        let runtime = TeamHookRuntime(rawValue: runtime)!
-        let event = TeamHookEvent(rawValue: event)!
         let resolvedSessionID = sessionID
             ?? stdinSessionID
             ?? ProcessInfo.processInfo.environment["GRAFTTY_AGENT_SESSION_ID"]
@@ -367,6 +373,12 @@ struct TeamWatchInbox: ParsableCommand {
         // team worktree since wrapper hooks call us unconditionally.
         let stdinData = FileHandle.standardInput.readDataToEndOfFile()
         let payload = (try? JSONSerialization.jsonObject(with: stdinData) as? [String: Any]) ?? [:]
+
+        // TEAM-9.1
+        if AgentStopHookFilter.isSubagentStop(stdinJSON: payload) {
+            return
+        }
+
         let sessionID = (payload["session_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             ?? UUID().uuidString
 
