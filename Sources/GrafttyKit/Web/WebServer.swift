@@ -48,11 +48,35 @@ public final class WebServer {
         public let repoPath: String
         public let worktreeName: String
         public let branchName: String
+        /// When `true`, the server routes to `.useExisting` rather than
+        /// `.createNew`. Omitting the field on the wire is treated as `false`
+        /// so existing clients don't break.
+        public let existing: Bool
 
-        public init(repoPath: String, worktreeName: String, branchName: String) {
+        public init(
+            repoPath: String,
+            worktreeName: String,
+            branchName: String,
+            existing: Bool = false
+        ) {
             self.repoPath = repoPath
             self.worktreeName = worktreeName
             self.branchName = branchName
+            self.existing = existing
+        }
+
+        // Custom decoder so `existing` defaults to false when absent on
+        // the wire (older clients that don't know about this field).
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.repoPath = try container.decode(String.self, forKey: .repoPath)
+            self.worktreeName = try container.decode(String.self, forKey: .worktreeName)
+            self.branchName = try container.decode(String.self, forKey: .branchName)
+            self.existing = (try? container.decode(Bool.self, forKey: .existing)) ?? false
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case repoPath, worktreeName, branchName, existing
         }
     }
 
@@ -77,6 +101,7 @@ public final class WebServer {
         case success(CreateWorktreeResponse)
         case invalid(String)       // 400 — bad input (empty names, unknown repo)
         case gitFailed(String)     // 409 — `git worktree add` rejected the request
+        case conflict(message: String) // 409 — semantic conflict (e.g. branch already mounted)
         case internalFailure(String) // 500 — post-success discovery or spawn broke
     }
 
@@ -592,6 +617,8 @@ public final class WebServer {
                 case .invalid(let msg):
                     Self.respondJSON(context: context, status: .badRequest, error: msg)
                 case .gitFailed(let msg):
+                    Self.respondJSON(context: context, status: .conflict, error: msg)
+                case .conflict(let msg):
                     Self.respondJSON(context: context, status: .conflict, error: msg)
                 case .internalFailure(let msg):
                     Self.respondJSON(context: context, status: .internalServerError, error: msg)

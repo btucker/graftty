@@ -346,4 +346,99 @@ struct WebServerWorktreeEndpointTests {
         let http = response as! HTTPURLResponse
         #expect(http.statusCode == 503)
     }
+
+    @Test func worktreesPostExistingTruePassesUseExistingToClosure() async throws {
+        if Self.skipInCI { return }
+
+        // Verify that `existing: true` in the JSON body is decoded and
+        // forwarded to the creator closure as `existing == true`.
+        actor Box {
+            var value: WebServer.CreateWorktreeRequest?
+            func set(_ v: WebServer.CreateWorktreeRequest) { value = v }
+        }
+        let box = Box()
+        let creator: @Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome = { req in
+            await box.set(req)
+            return .success(WebServer.CreateWorktreeResponse(
+                sessionName: "s", worktreePath: "/tmp/wt"
+            ))
+        }
+        let (server, port) = try Self.startServer(config: Self.makeConfig(creator: creator))
+        defer { server.stop() }
+
+        let body = Data(#"{"repoPath":"/r","worktreeName":"x","branchName":"feat","existing":true}"#.utf8)
+        var req = URLRequest(url: URL(string: "https://localhost:\(port)/worktrees")!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+
+        let (_, response) = try await trustAllData(for: req)
+        let http = response as! HTTPURLResponse
+        #expect(http.statusCode == 200)
+        let captured = await box.value
+        #expect(captured?.existing == true)
+        #expect(captured?.branchName == "feat")
+    }
+
+    @Test func worktreesPostMissingExistingFieldDefaultsFalse() async throws {
+        if Self.skipInCI { return }
+
+        // Back-compat: a payload without `existing` should decode to
+        // `existing == false` so older clients keep working.
+        actor Box {
+            var value: WebServer.CreateWorktreeRequest?
+            func set(_ v: WebServer.CreateWorktreeRequest) { value = v }
+        }
+        let box = Box()
+        let creator: @Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome = { req in
+            await box.set(req)
+            return .success(WebServer.CreateWorktreeResponse(
+                sessionName: "s", worktreePath: "/tmp/wt"
+            ))
+        }
+        let (server, port) = try Self.startServer(config: Self.makeConfig(creator: creator))
+        defer { server.stop() }
+
+        // No `existing` key in the payload.
+        let body = Data(#"{"repoPath":"/r","worktreeName":"x","branchName":"feat"}"#.utf8)
+        var req = URLRequest(url: URL(string: "https://localhost:\(port)/worktrees")!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+
+        let (_, response) = try await trustAllData(for: req)
+        let http = response as! HTTPURLResponse
+        #expect(http.statusCode == 200)
+        let captured = await box.value
+        #expect(captured?.existing == false)
+    }
+
+    @Test func worktreesPostConflictOutcomeReturns409() async throws {
+        if Self.skipInCI { return }
+
+        // A creator returning `.conflict(message:)` should map to HTTP 409
+        // so the client can distinguish "branch already mounted" from a
+        // validation error (400) or a git process failure (also 409 via
+        // .gitFailed, but semantically distinct).
+        let creator: @Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome = { _ in
+            .conflict(message: "branch already mounted in another worktree")
+        }
+        let (server, port) = try Self.startServer(config: Self.makeConfig(creator: creator))
+        defer { server.stop() }
+
+        let body = try JSONEncoder().encode(WebServer.CreateWorktreeRequest(
+            repoPath: "/tmp/repo", worktreeName: "feat", branchName: "feat", existing: true
+        ))
+        var req = URLRequest(url: URL(string: "https://localhost:\(port)/worktrees")!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+
+        let (data, response) = try await trustAllData(for: req)
+        let http = response as! HTTPURLResponse
+        #expect(http.statusCode == 409, "conflict outcome should map to 409 Conflict")
+        struct ErrEnv: Codable { let error: String }
+        let decoded = try JSONDecoder().decode(ErrEnv.self, from: data)
+        #expect(decoded.error.contains("already mounted"))
+    }
 }

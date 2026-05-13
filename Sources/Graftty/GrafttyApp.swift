@@ -1181,10 +1181,16 @@ struct GrafttyApp: App {
         let statsStore = services.statsStore
         let dispatcherForWeb = services.teamEventDispatcher
         webController.setWorktreeCreator { req in
+            let branch: BranchSelection
+            if req.existing {
+                branch = .useExisting(name: req.branchName, source: .local)
+            } else {
+                branch = .createNew(name: req.branchName)
+            }
             let result = await AddWorktreeFlow.add(
                 repoPath: req.repoPath,
                 worktreeName: req.worktreeName,
-                branch: .createNew(name: req.branchName),
+                branch: branch,
                 appState: appStateBinding,
                 worktreeMonitor: worktreeMonitor,
                 statsStore: statsStore,
@@ -1203,7 +1209,7 @@ struct GrafttyApp: App {
                 case .repoNotFound: return .invalid("repository not tracked")
                 case .pathCollision: return .invalid("a worktree at that name already exists")
                 case .branchAlreadyMounted:
-                    return .invalid(err.userMessage ?? "branch already mounted")
+                    return .conflict(message: err.userMessage ?? "branch already mounted")
                 case .discoveryFailed(let msg): return .internalFailure(msg)
                 }
             }
