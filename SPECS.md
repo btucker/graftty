@@ -1368,6 +1368,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **EDITOR-1.8** If `$EDITOR` is unset, the application shall fall back to `vi`.
 
+## MEM — MEM
+
+### MEM-1.x
+
+**MEM-1.1** While more than 4 worktrees have live surfaces, the application shall evict the least-recently-selected worktree's surfaces.
+
+**MEM-1.2** When a worktree's surfaces are evicted via the LRU budget, the application shall preserve its zmx sessions, pane-to-session mapping, titles, PWDs, and rehydration state so re-selection re-attaches transparently.
+
+**MEM-1.3** When a worktree is stopped, removed, has its repo removed, or transitions to stale, the application shall drop it from the LRU budget.
+
+**MEM-1.4** When a worktree whose surfaces were evicted is re-selected, the application shall re-create its surfaces via the same rehydration path used at cold launch.
+
+**MEM-1.5** When the LRU budget evicts a worktree, the application shall not kill its zmx sessions or fire `paneClosed` callbacks.
+
 ## PERF — PERF
 
 ### PERF-1.x
