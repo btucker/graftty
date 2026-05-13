@@ -709,6 +709,26 @@ final class TerminalManager: ObservableObject {
         forgetTrackingState(for: terminalID)
     }
 
+    /// @spec MEM-1.2
+    /// @spec MEM-1.5
+    /// Soft destroy. Releases the libghostty surface (freeing scrollback
+    /// + Metal layers via `SurfaceHandle.deinit`) and marks the leaf as
+    /// rehydrated so a future surface creation re-attaches to the zmx
+    /// session rather than re-running the default command. Unlike
+    /// `destroySurface`, this preserves titles, PWDs, the
+    /// pane→session map, and the `shellReadyFired` / `firstPaneMarkers`
+    /// labels, and does NOT call `killZmxSession` or fire `paneClosed`.
+    func evictSurface(terminalID: PaneSlotID) {
+        if surfaces[terminalID] != nil {
+            surfaces[terminalID]?.requestClose()
+            surfaces.removeValue(forKey: terminalID)
+        }
+        rehydratedSurfaces.insert(terminalID)
+        if let scanner = portScanner {
+            Task { await scanner.unregisterPane(terminalID) }
+        }
+    }
+
     /// Mark a terminal as the first pane of its worktree — the pane whose
     /// creation caused the worktree to transition from `.closed` to
     /// `.running`. Called by the sidebar "Open" action (and any other
