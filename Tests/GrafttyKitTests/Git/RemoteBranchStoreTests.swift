@@ -364,6 +364,32 @@ struct RemoteBranchStoreTests {
         #expect(ticker.pulseCallCount == 1)
     }
 
+    @Test func parseLocalBranchesWithDatesExtractsNameAndDate() {
+        let raw = """
+        main\t2026-05-10T12:30:00-05:00\torigin/main
+        feature/foo\t2026-05-13T09:15:00-05:00\torigin/feature/bar
+        no-upstream\t2026-04-01T00:00:00Z\t
+
+        """
+        let parsed = RemoteBranchStore.parseLocalBranchesWithDatesForTesting(raw)
+        let names = parsed.map(\.name)
+        #expect(names == ["main", "feature/foo", "no-upstream"])
+        #expect(parsed.first(where: { $0.name == "main" })?.lastCommitDate != nil)
+    }
+
+    @Test func parseRemoteBranchesWithDatesStripsOriginAndKeepsDate() {
+        let raw = """
+        origin/HEAD\t2026-05-13T09:15:00-05:00
+        origin/main\t2026-05-10T12:30:00-05:00
+        origin/feature/foo\t2026-05-13T09:15:00-05:00
+
+        """
+        let parsed = RemoteBranchStore.parseRemoteBranchesWithDatesForTesting(raw)
+        let names = parsed.map(\.name).sorted()
+        #expect(names == ["feature/foo", "main"])
+        #expect(parsed.contains { $0.name == "main" && $0.lastCommitDate.timeIntervalSince1970 > 0 })
+    }
+
     private func waitUntil(
         timeout: TimeInterval,
         condition: @escaping @MainActor @Sendable () -> Bool

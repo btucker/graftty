@@ -2,17 +2,45 @@ import Foundation
 import Observation
 import os
 
+public struct BranchRef: Sendable, Equatable, Hashable {
+    public let name: String
+    public let lastCommitDate: Date
+
+    public init(name: String, lastCommitDate: Date) {
+        self.name = name
+        self.lastCommitDate = lastCommitDate
+    }
+}
+
 /// @spec PR-8.23
 /// Per-repo remote-branch snapshot. `upstreams` is keyed by the
 /// local branch name and resolves to the remote-side ref `git push`
 /// would update — populated only for origin-tracked branches, so PR
 /// lookup can ignore branches that don't map to a PR/MR head ref.
 public struct RemoteBranchSnapshot: Sendable, Equatable {
-    public let branches: Set<String>
+    public let remoteBranches: [BranchRef]
+    public let localBranches: [BranchRef]
     public let upstreams: [String: String]
 
+    public init(
+        remoteBranches: [BranchRef] = [],
+        localBranches: [BranchRef] = [],
+        upstreams: [String: String] = [:]
+    ) {
+        self.remoteBranches = remoteBranches
+        self.localBranches = localBranches
+        self.upstreams = upstreams
+    }
+
+    /// Back-compat: callers that previously read `branches: Set<String>`
+    /// (e.g. `hasRemote`) now read the derived set.
+    public var branches: Set<String> { Set(remoteBranches.map(\.name)) }
+
+    /// Back-compat initializer for existing callers that pass a `Set<String>`.
+    /// `lastCommitDate` is set to `Date.distantPast` for all refs.
     public init(branches: Set<String>, upstreams: [String: String] = [:]) {
-        self.branches = branches
+        self.remoteBranches = branches.map { BranchRef(name: $0, lastCommitDate: .distantPast) }
+        self.localBranches = []
         self.upstreams = upstreams
     }
 }
@@ -201,18 +229,47 @@ public final class RemoteBranchStore {
         return result
     }
 
+    nonisolated static func parseLocalBranchesWithDates(_ output: String) -> [BranchRef] {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return output.split(whereSeparator: \.isNewline).compactMap { raw in
+            let parts = raw.split(separator: "\t", omittingEmptySubsequences: false)
+            guard parts.count >= 2 else { return nil }
+            let name = String(parts[0]).trimmingCharacters(in: .whitespaces)
+            guard isEligibleLocalBranch(name) else { return nil }
+            let date = formatter.date(from: String(parts[1])) ?? Date.distantPast
+            return BranchRef(name: name, lastCommitDate: date)
+        }
+    }
+
+    nonisolated static func parseRemoteBranchesWithDates(_ output: String) -> [BranchRef] {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return output.split(whereSeparator: \.isNewline).compactMap { raw in
+            let parts = raw.split(separator: "\t", omittingEmptySubsequences: false)
+            guard parts.count >= 2 else { return nil }
+            let ref = String(parts[0])
+            guard ref.hasPrefix("origin/") else { return nil }
+            let name = String(ref.dropFirst("origin/".count))
+            guard name != "HEAD", !name.isEmpty else { return nil }
+            let date = formatter.date(from: String(parts[1])) ?? Date.distantPast
+            return BranchRef(name: name, lastCommitDate: date)
+        }
+    }
+
     public nonisolated static let defaultList: ListFunction = { repoPath in
         async let remotesTask = GitRunner.run(
-            args: ["for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"],
+            args: ["for-each-ref", "--format=%(refname:short)\t%(committerdate:iso-strict)", "refs/remotes/origin"],
             at: repoPath
         )
         async let headsTask = GitRunner.run(
-            args: ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)", "refs/heads/"],
+            args: ["for-each-ref", "--format=%(refname:short)\t%(committerdate:iso-strict)\t%(upstream:short)", "refs/heads/"],
             at: repoPath
         )
         let (remotes, heads) = try await (remotesTask, headsTask)
         return RemoteBranchSnapshot(
-            branches: parseRefs(remotes),
+            remoteBranches: parseRemoteBranchesWithDates(remotes),
+            localBranches: parseLocalBranchesWithDates(heads),
             upstreams: parseUpstreams(heads)
         )
     }
@@ -223,5 +280,13 @@ public final class RemoteBranchStore {
 
     nonisolated static func parseUpstreamsForTesting(_ output: String) -> [String: String] {
         parseUpstreams(output)
+    }
+
+    nonisolated static func parseLocalBranchesWithDatesForTesting(_ output: String) -> [BranchRef] {
+        parseLocalBranchesWithDates(output)
+    }
+
+    nonisolated static func parseRemoteBranchesWithDatesForTesting(_ output: String) -> [BranchRef] {
+        parseRemoteBranchesWithDates(output)
     }
 }
