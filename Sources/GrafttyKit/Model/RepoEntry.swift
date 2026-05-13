@@ -56,3 +56,13 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
         self.isGitTracked = try container.decodeIfPresent(Bool.self, forKey: .isGitTracked) ?? true
     }
 }
+
+extension RepoEntry {
+    /// Path of the on-disk worktree currently checked out at `branch`,
+    /// or nil if no on-disk worktree of this repo uses that branch.
+    /// `.creating` placeholders are intentionally excluded — git would
+    /// let the user mount the branch even with a placeholder present.
+    public func branchMountedPath(_ branch: String) -> String? {
+        worktrees.first { $0.branch == branch && $0.state.hasOnDiskWorktree }?.path
+    }
+}

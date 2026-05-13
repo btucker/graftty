@@ -455,7 +455,7 @@ struct MainWindow: View {
         let beginResult = AddWorktreeFlow.beginCreate(
             repoPath: repo.path,
             worktreeName: worktreeName,
-            branchName: branchName,
+            branch: .createNew(name: branchName),
             appState: $appState
         )
         let worktreePath: String
@@ -469,7 +469,7 @@ struct MainWindow: View {
             let result = await AddWorktreeFlow.finishCreate(
                 repoPath: repo.path,
                 worktreePath: worktreePath,
-                branchName: branchName,
+                branch: .createNew(name: branchName),
                 appState: $appState,
                 worktreeMonitor: worktreeMonitor,
                 statsStore: statsStore,

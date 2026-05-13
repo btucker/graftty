@@ -1184,7 +1184,7 @@ struct GrafttyApp: App {
             let result = await AddWorktreeFlow.add(
                 repoPath: req.repoPath,
                 worktreeName: req.worktreeName,
-                branchName: req.branchName,
+                branch: .createNew(name: req.branchName),
                 appState: appStateBinding,
                 worktreeMonitor: worktreeMonitor,
                 statsStore: statsStore,
@@ -1202,6 +1202,9 @@ struct GrafttyApp: App {
                 case .gitFailed(let msg): return .gitFailed(msg)
                 case .repoNotFound: return .invalid("repository not tracked")
                 case .pathCollision: return .invalid("a worktree at that name already exists")
+                case .branchAlreadyMounted(let path):
+                    let base = (path as NSString).lastPathComponent
+                    return .invalid("branch is already mounted at " + base)
                 case .discoveryFailed(let msg): return .internalFailure(msg)
                 }
             }

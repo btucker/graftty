@@ -54,6 +54,11 @@ enum AddWorktreeFlow {
         /// "create-but-can't-attach" edge: we don't have a session to
         /// return. Holds the message.
         case discoveryFailed(String)
+        /// @spec GIT-5.11
+        /// `.useExisting(name, _)` was submitted but the same repo already
+        /// has the branch mounted in another worktree. Holds the colliding
+        /// worktree's path so the caller can surface it.
+        case branchAlreadyMounted(at: String)
     }
 
     /// Phase one: validate the request and insert a `.creating`
@@ -67,7 +72,7 @@ enum AddWorktreeFlow {
     static func beginCreate(
         repoPath: String,
         worktreeName: String,
-        branchName: String,
+        branch: BranchSelection,
         appState: Binding<AppState>
     ) -> Swift.Result<String, FlowError> {
         guard let repoIdx = appState.wrappedValue.repos
@@ -83,7 +88,12 @@ enum AddWorktreeFlow {
             return .failure(.pathCollision)
         }
 
-        var placeholder = WorktreeEntry(path: worktreePath, branch: branchName)
+        if case .useExisting(let name, _) = branch,
+           let existing = appState.wrappedValue.repos[repoIdx].branchMountedPath(name) {
+            return .failure(.branchAlreadyMounted(at: existing))
+        }
+
+        var placeholder = WorktreeEntry(path: worktreePath, branch: branch.branchName)
         placeholder.state = .creating
         appState.wrappedValue.repos[repoIdx].worktrees.append(placeholder)
         return .success(worktreePath)
@@ -100,23 +110,27 @@ enum AddWorktreeFlow {
     static func finishCreate(
         repoPath: String,
         worktreePath: String,
-        branchName: String,
+        branch: BranchSelection,
         appState: Binding<AppState>,
         worktreeMonitor: WorktreeMonitor,
         statsStore: WorktreeStatsStore,
         terminalManager: TerminalManager,
         teamEventDispatcher: TeamEventDispatcher
     ) async -> Swift.Result<Result, FlowError> {
-        // Start from origin's default branch so fresh feature worktrees
-        // branch off main rather than whatever the main checkout has
-        // checked out right now (commonly a half-finished branch).
-        let startPoint: String? = await GitOriginDefaultBranch.resolve(repoPath: repoPath)
+        // For .useExisting, the start point is the existing branch itself;
+        // git takes it from argv. For .createNew, default to origin's main.
+        let startPoint: String?
+        if case .createNew = branch {
+            startPoint = await GitOriginDefaultBranch.resolve(repoPath: repoPath)
+        } else {
+            startPoint = nil
+        }
 
         do {
             try await GitWorktreeAdd.add(
                 repoPath: repoPath,
                 worktreePath: worktreePath,
-                branch: .createNew(name: branchName),
+                branch: branch,
                 startPoint: startPoint
             )
         } catch GitWorktreeAdd.Error.gitFailed(_, let stderr) {
@@ -220,7 +234,7 @@ enum AddWorktreeFlow {
     static func add(
         repoPath: String,
         worktreeName: String,
-        branchName: String,
+        branch: BranchSelection,
         appState: Binding<AppState>,
         worktreeMonitor: WorktreeMonitor,
         statsStore: WorktreeStatsStore,
@@ -231,7 +245,7 @@ enum AddWorktreeFlow {
         switch beginCreate(
             repoPath: repoPath,
             worktreeName: worktreeName,
-            branchName: branchName,
+            branch: branch,
             appState: appState
         ) {
         case .success(let p): worktreePath = p
@@ -240,7 +254,7 @@ enum AddWorktreeFlow {
         return await finishCreate(
             repoPath: repoPath,
             worktreePath: worktreePath,
-            branchName: branchName,
+            branch: branch,
             appState: appState,
             worktreeMonitor: worktreeMonitor,
             statsStore: statsStore,
@@ -272,6 +286,9 @@ extension AddWorktreeFlow.FlowError {
         case .gitFailed(let m): return m
         case .repoNotFound: return "repository no longer tracked"
         case .pathCollision: return "a worktree at that name already exists"
+        case .branchAlreadyMounted(let path):
+            let base = (path as NSString).lastPathComponent
+            return "branch is already mounted at " + base
         case .discoveryFailed: return nil
         }
     }
