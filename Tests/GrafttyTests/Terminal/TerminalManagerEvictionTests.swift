@@ -22,12 +22,10 @@ struct TerminalManagerEvictionTests {
 
         manager.evictSurface(terminalID: terminalID)
 
-        // MEM-1.2: titles, PWD, pane→session, first-pane marker all preserved.
         #expect(manager.titles[terminalID] == "claude")
         #expect(manager.pwds[terminalID] == "/repo/work")
         #expect(manager.zmxSessionName(for: terminalID) != nil)
         #expect(manager.isFirstPane(terminalID))
-        // MEM-1.2: rehydration is marked so re-create skips default-command injection.
         #expect(manager.wasRehydrated(terminalID))
     }
 

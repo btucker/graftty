@@ -222,10 +222,7 @@ public struct AppState: Codable, Sendable, Equatable {
             .appendingPathComponent("Graftty")
     }
 
-    /// Returns a `[worktreePath: SplitTree]` snapshot of every worktree
-    /// currently in `.running` state, across all repos. Consumed by
-    /// `WorktreeSurfaceBudget` to enumerate evictable leaves and to
-    /// detect LRU entries that are no longer tracked.
+    /// Snapshot of every `.running` worktree's split tree, keyed by path.
     public func runningSplitTreesByPath() -> [String: SplitTree] {
         var result: [String: SplitTree] = [:]
         for repo in repos {

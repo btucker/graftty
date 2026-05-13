@@ -21,14 +21,17 @@ final class WorktreeSurfaceBudget {
         self.onEvict = onEvict
     }
 
-    /// Record a worktree selection. Prunes any LRU entries that are no
-    /// longer present in `splitTreesByPath`, then moves `worktreePath`
-    /// to the head. If the resulting list exceeds `capacity`, the
-    /// tail entries' leaves are dispatched to `onEvict`.
     func noteSelected(
         worktreePath: String,
         splitTreesByPath: [String: SplitTree]
     ) {
+        // Re-selecting the current head is a no-op for LRU order and
+        // can't trigger eviction, but still needs to fall through the
+        // self-prune below — so only short-circuit when nothing else
+        // is at risk of becoming stale.
+        if lru.first == worktreePath && lru.allSatisfy({ splitTreesByPath.keys.contains($0) }) {
+            return
+        }
         lru.removeAll { !splitTreesByPath.keys.contains($0) }
         lru.removeAll { $0 == worktreePath }
         lru.insert(worktreePath, at: 0)
