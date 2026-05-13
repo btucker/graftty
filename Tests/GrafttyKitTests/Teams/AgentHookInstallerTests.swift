@@ -38,6 +38,30 @@ struct AgentHookInstallerTests {
         #expect(shim.contains(#"_graftty_path="${_graftty_path//:$GRAFTTY_AGENT_HOOKS_BIN:/:}""#))
     }
 
+    @Test("""
+    @spec ZMX-6.7: When the user's shell is bash and agent hooks are enabled, the launcher script continues to invoke `bash --rcfile <shim>` (non-login, so `--rcfile` is honored), and the shim shall source the system + user profile chain (`/etc/profile`; first existing of `~/.bash_profile`, `~/.bash_login`, `~/.profile`) once per environment via an idempotency guard env variable (`__GRAFTTY_BASH_PROFILE_SOURCED`), before sourcing `~/.bashrc` and re-prepending the agent-hooks bin to PATH. This recovers login-time PATH setup (Homebrew shellenv, etc.) for bash users without losing the agent-hooks injection that depends on `--rcfile`.
+    """)
+    func bashrcShimSourcesProfileChainWithIdempotencyGuard() {
+        let shim = AgentHookInstaller.bashrcShim()
+
+        // Idempotency guard env var
+        #expect(shim.contains("__GRAFTTY_BASH_PROFILE_SOURCED"))
+        #expect(shim.contains("export __GRAFTTY_BASH_PROFILE_SOURCED=1"))
+
+        // System profile
+        #expect(shim.contains("/etc/profile"))
+
+        // User profile-chain candidates, in order
+        #expect(shim.contains(#""$HOME/.bash_profile""#))
+        #expect(shim.contains(#""$HOME/.bash_login""#))
+        #expect(shim.contains(#""$HOME/.profile""#))
+
+        // Profile chain is sourced BEFORE .bashrc
+        let profileGuardIdx = shim.range(of: "__GRAFTTY_BASH_PROFILE_SOURCED")!.lowerBound
+        let bashrcSourceIdx = shim.range(of: #"source "$HOME/.bashrc""#)!.lowerBound
+        #expect(profileGuardIdx < bashrcSourceIdx)
+    }
+
     @Test func bashLauncherExecsBashWithRcfileFlag() {
         let script = AgentHookInstaller.bashLauncherScript(rcfilePath: "/tmp/test/.bashrc")
         #expect(script.contains("#!/bin/sh"))
