@@ -5,6 +5,24 @@ import SwiftUI
 public struct WorktreePickerView: View {
     @State private var state: LoadState = .loading
     @State private var isAddSheetPresented: Bool = false
+    @State private var pendingDelete: PendingDelete?
+    @State private var pendingForceDelete: PendingForceDelete?
+    @State private var errorToast: String?
+    @State private var errorToastTask: Task<Void, Never>?
+
+    private struct PendingDelete: Identifiable, Equatable {
+        let id = UUID()
+        let worktree: WorktreePanes
+        let action: WorktreePickerSwipeAction
+    }
+
+    private struct PendingForceDelete: Identifiable, Equatable {
+        let id = UUID()
+        let worktreePath: String
+        let stderr: String
+        let shortStatus: String
+    }
+
     public let host: Host
     public let onSelect: (WorktreePanes) -> Void
 
@@ -35,17 +53,73 @@ public struct WorktreePickerView: View {
                 }
             case .loaded(let worktrees):
                 List {
-                    ForEach(grouped(worktrees), id: \.0) { repoName, entries in
+                    ForEach(WorktreePickerGrouping.grouped(worktrees), id: \.0) { repoName, entries in
                         Section(repoName) {
                             ForEach(entries, id: \.path) { wt in
                                 WorktreeBlock(worktree: wt) {
                                     onSelect(wt)
                                 }
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    if let action = WorktreePickerGrouping.swipeAction(for: wt) {
+                                        Button(role: .destructive) {
+                                            pendingDelete = PendingDelete(worktree: wt, action: action)
+                                        } label: {
+                                            Label(action.buttonLabel, systemImage: action == .dismiss ? "eye.slash" : "trash")
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
                 }
-                .refreshable { await load() }
+                .refreshable { await refresh() }
+            }
+        }
+        .confirmationDialog(
+            pendingDelete?.action.dialogTitle ?? "",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingDelete
+        ) { pending in
+            Button(pending.action.buttonLabel, role: .destructive) {
+                Task { await performDelete(worktree: pending.worktree, force: false) }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: { pending in
+            Text(pending.action.dialogBody)
+        }
+        .confirmationDialog(
+            "Could not delete worktree",
+            isPresented: Binding(
+                get: { pendingForceDelete != nil },
+                set: { if !$0 { pendingForceDelete = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: pendingForceDelete
+        ) { pending in
+            Button("Force Delete", role: .destructive) {
+                let path = pending.worktreePath
+                Task { await performForceDelete(worktreePath: path) }
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: { pending in
+            Text(pending.stderr + (pending.shortStatus.isEmpty ? "" : "\n\n" + pending.shortStatus))
+        }
+        .overlay(alignment: .bottom) {
+            if let msg = errorToast {
+                Text(msg)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.red)
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .padding(.bottom, 16)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .navigationTitle(host.label)
@@ -65,6 +139,7 @@ public struct WorktreePickerView: View {
             }
         }
         .task { await load() }
+        .onDisappear { errorToastTask?.cancel() }
     }
 
     private func load() async {
@@ -97,11 +172,71 @@ public struct WorktreePickerView: View {
         }
     }
 
-    private func grouped(_ list: [WorktreePanes]) -> [(String, [WorktreePanes])] {
-        Dictionary(grouping: list, by: \.repoDisplayName)
-            .map { ($0.key, $0.value) }
-            .sorted { $0.0 < $1.0 }
+    /// Issue the delete request; on success refresh in place, on
+    /// forceable failure surface the Force Delete confirmation, on
+    /// any other failure surface a transient error toast.
+    private func performDelete(worktree: WorktreePanes, force: Bool) async {
+        do {
+            _ = try await DeleteWorktreeClient.delete(
+                baseURL: host.baseURL,
+                body: DeleteWorktreeClient.Request(worktreePath: worktree.path, force: force)
+            )
+            await refresh()
+        } catch let DeleteWorktreeClient.DeleteError.gitFailedForceable(stderr, status) {
+            pendingForceDelete = PendingForceDelete(
+                worktreePath: worktree.path,
+                stderr: stderr,
+                shortStatus: status
+            )
+        } catch let error as DeleteWorktreeClient.DeleteError {
+            surfaceDeleteError(error)
+        } catch {
+            showErrorToast("Couldn't reach the server.")
+        }
     }
+
+    /// User confirmed Force Delete on a 409 forceable response —
+    /// re-issue with `force: true`.
+    private func performForceDelete(worktreePath: String) async {
+        do {
+            _ = try await DeleteWorktreeClient.delete(
+                baseURL: host.baseURL,
+                body: DeleteWorktreeClient.Request(worktreePath: worktreePath, force: true)
+            )
+            await refresh()
+        } catch let error as DeleteWorktreeClient.DeleteError {
+            surfaceDeleteError(error)
+        } catch {
+            showErrorToast("Couldn't reach the server.")
+        }
+    }
+
+    /// Surface an error after a delete attempt. Toasts the user-facing
+    /// message and re-fetches only when the list actually changed
+    /// server-side (`.notFound` means the row vanished between the
+    /// picker render and the delete request).
+    private func surfaceDeleteError(_ error: DeleteWorktreeClient.DeleteError) {
+        if let msg = error.userMessage {
+            showErrorToast(msg)
+        }
+        if case .notFound = error {
+            Task { await refresh() }
+        }
+    }
+
+    private func showErrorToast(_ message: String) {
+        errorToastTask?.cancel()
+        withAnimation { errorToast = message }
+        errorToastTask = Task {
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            if !Task.isCancelled {
+                await MainActor.run {
+                    withAnimation { errorToast = nil }
+                }
+            }
+        }
+    }
+
 }
 
 private struct WorktreeBlock: View {
