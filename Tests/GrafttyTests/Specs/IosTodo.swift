@@ -212,4 +212,24 @@ struct IosTodo {
 @spec IOS-9.5: While a `POST /worktrees` call is in flight, the Create button shall be replaced by an in-flight indicator, the Cancel button and both input fields shall be disabled, and the repository picker shall be disabled. Once the call resolves (success or failure) all controls shall re-enable.
 """, .disabled("not yet implemented"))
     func ios_9_5() async throws { }
+
+    @Test("""
+@spec IOS-9.6: When the user swipes a worktree row in `WorktreePickerView` that is neither the repo's main checkout nor in the `.creating` state, the application shall reveal a trailing destructive action labeled "Delete" for non-stale rows and "Dismiss" for `.stale` rows. Rows for the main checkout or for `.creating` worktrees shall expose no swipe action.
+""", .disabled("not yet implemented"))
+    func ios_9_6() async throws { }
+
+    @Test("""
+@spec IOS-9.7: When the user taps the trailing destructive action revealed by `IOS-9.6`, the application shall present a SwiftUI confirmation dialog before any HTTP call. The dialog title shall be "Delete Worktree?" for non-stale rows and "Dismiss Worktree?" for `.stale` rows; the dialog body shall mirror the Mac's NSAlert copy ("This will delete the worktree but not the branch." / "This will remove this stale entry from Graftty."). On cancel, no request shall be issued.
+""", .disabled("not yet implemented"))
+    func ios_9_7() async throws { }
+
+    @Test("""
+@spec IOS-9.8: If `POST /worktrees/delete` returns 409 with `forceAllowed: true`, then the application shall present a Force Delete confirmation surfacing the `shortStatus` field as the dialog body, and shall retry the request with `force: true` only on user confirmation. A 409 with `forceAllowed: false` (or 4xx/5xx of any other shape) shall present a non-retryable error toast and shall not loop.
+""", .disabled("not yet implemented"))
+    func ios_9_8() async throws { }
+
+    @Test("""
+@spec IOS-9.9: While rendering grouped worktrees in `WorktreePickerView`, the application shall preserve the order of `repoDisplayName` first-occurrences in the `GET /worktrees/panes` response rather than sort the group keys alphabetically, so the mobile picker's repo order matches the user's Mac sidebar order.
+""", .disabled("not yet implemented"))
+    func ios_9_9() async throws { }
 }
