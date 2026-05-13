@@ -10,6 +10,7 @@ struct BranchComboBox: View {
     let onSelect: (BranchPickerEntry) -> Void
 
     @State private var showPopover: Bool = false
+    @State private var suppressNextPopoverOpen: Bool = false
     @FocusState private var fieldFocused: Bool
 
     var body: some View {
@@ -20,6 +21,10 @@ struct BranchComboBox: View {
                 if focused { showPopover = true }
             }
             .onChange(of: text) { _, _ in
+                if suppressNextPopoverOpen {
+                    suppressNextPopoverOpen = false
+                    return
+                }
                 showPopover = true
             }
             .popover(isPresented: $showPopover, attachmentAnchor: .point(.bottom), arrowEdge: .top) {
@@ -28,17 +33,23 @@ struct BranchComboBox: View {
             }
     }
 
+    private var filteredEntries: [BranchPickerEntry] {
+        let needle = text.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !needle.isEmpty else { return entries }
+        return entries.filter { $0.name.lowercased().contains(needle) }
+    }
+
     private var popoverList: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                if entries.isEmpty {
+                if filteredEntries.isEmpty {
                     Text("No branches match")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
                 } else {
-                    ForEach(entries, id: \.name) { entry in
+                    ForEach(filteredEntries, id: \.name) { entry in
                         row(for: entry)
                     }
                 }
@@ -81,6 +92,7 @@ struct BranchComboBox: View {
         .background(Color.clear)
         .onTapGesture {
             guard !mounted else { return }
+            suppressNextPopoverOpen = true
             text = entry.name
             onSelect(entry)
             showPopover = false
