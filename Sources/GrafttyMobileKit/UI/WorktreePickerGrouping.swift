@@ -21,4 +21,44 @@ public enum WorktreePickerGrouping {
         return order.map { ($0, groups[$0] ?? []) }
     }
 }
+
+/// Trailing destructive action surfaced on swipe. Nil for rows that
+/// cannot be removed via the picker (main checkout, `.creating`).
+public enum WorktreePickerSwipeAction: Equatable {
+    case delete    // non-stale, non-main rows: runs `git worktree remove`
+    case dismiss   // `.stale` rows: prunes the orphan admin entry
+
+    public var buttonLabel: String {
+        switch self {
+        case .delete: return "Delete"
+        case .dismiss: return "Dismiss"
+        }
+    }
+
+    public var dialogTitle: String {
+        switch self {
+        case .delete: return "Delete Worktree?"
+        case .dismiss: return "Dismiss Worktree?"
+        }
+    }
+
+    public var dialogBody: String {
+        switch self {
+        case .delete: return "This will delete the worktree but not the branch."
+        case .dismiss: return "This will remove this stale entry from Graftty."
+        }
+    }
+}
+
+extension WorktreePickerGrouping {
+    /// IOS-9.6 rule: main checkout and `.creating` rows have no swipe
+    /// affordance. `.stale` rows offer Dismiss; everything else offers
+    /// Delete.
+    public static func swipeAction(for wt: WorktreePanes) -> WorktreePickerSwipeAction? {
+        if wt.isMainCheckout { return nil }
+        if wt.state == .creating { return nil }
+        if wt.state == .stale { return .dismiss }
+        return .delete
+    }
+}
 #endif
