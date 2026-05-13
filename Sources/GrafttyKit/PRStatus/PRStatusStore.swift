@@ -18,6 +18,12 @@ public final class PRStatusStore {
     public private(set) var infos: [String: PRInfo] = [:]
     public private(set) var absent: Set<String> = []
 
+    /// Per-repo, per-branch PR map. Populated alongside `infos` from the
+    /// same fetcher snapshot — the picker reads this for arbitrary
+    /// branches in the repo (including unmounted ones), while
+    /// per-worktree consumers continue reading `infos`.
+    public private(set) var prsByRepoBranch: [String: [String: PRInfo]] = [:]
+
     @ObservationIgnored private let executor: CLIExecutor
     @ObservationIgnored private let fetcherFor: (HostingProvider) -> PRFetcher?
     @ObservationIgnored private let detectHost: @Sendable (String) async throws -> HostingOrigin?
@@ -321,6 +327,11 @@ public final class PRStatusStore {
                 onPRResolved(wt.path, pr.number, pr.state)
             }
         }
+
+        // Publish the per-branch view for the picker.
+        if prsByRepoBranch[repoPath] != snapshot.prsByBranch {
+            prsByRepoBranch[repoPath] = snapshot.prsByBranch
+        }
     }
 
     private func markAbsent(_ worktreePath: String) {
@@ -476,6 +487,9 @@ extension PRStatusStore {
         }
         for repoPath in hostByRepo.keys where !currentRepoPaths.contains(repoPath) {
             hostByRepo.removeValue(forKey: repoPath)
+        }
+        for repoPath in prsByRepoBranch.keys where !currentRepoPaths.contains(repoPath) {
+            prsByRepoBranch.removeValue(forKey: repoPath)
         }
     }
 }
