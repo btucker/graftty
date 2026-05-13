@@ -5,7 +5,6 @@ import SwiftUI
 public struct AddWorktreeSheetView: View {
 
     public let host: Host
-    public let branchEntries: [BranchPickerEntry]
     public let onCreated: (CreateWorktreeClient.Response) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -28,11 +27,9 @@ public struct AddWorktreeSheetView: View {
 
     public init(
         host: Host,
-        branchEntries: [BranchPickerEntry] = [],
         onCreated: @escaping (CreateWorktreeClient.Response) -> Void
     ) {
         self.host = host
-        self.branchEntries = branchEntries
         self.onCreated = onCreated
     }
 
@@ -140,19 +137,19 @@ public struct AddWorktreeSheetView: View {
                             }
                         }
                 } else {
-                    NavigationLink {
-                        BranchPickerView(entries: branchEntries) { entry in
-                            branchName = entry.name
-                            if worktreeMirrorsBranch {
-                                worktreeName = entry.name
+                    TextField("existing-branch-name", text: $branchName)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .onChange(of: branchName) { _, new in
+                            let sanitized = WorktreeNameSanitizer.sanitize(new)
+                            if sanitized != new {
+                                branchName = sanitized
+                                return
+                            }
+                            if worktreeMirrorsBranch && worktreeName != sanitized {
+                                worktreeName = sanitized
                             }
                         }
-                    } label: {
-                        HStack {
-                            Text(branchName.isEmpty ? "Choose branch…" : branchName)
-                            Spacer()
-                        }
-                    }
                 }
             }
             if let errorMessage {
