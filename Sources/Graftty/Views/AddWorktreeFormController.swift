@@ -23,8 +23,7 @@ public final class AddWorktreeFormController {
     /// (in `.newBranch` mode), we stop auto-syncing.
     public var branchMirrorsWorktree: Bool = true
 
-    /// @spec GIT-5.15: tracks whether the worktree name still mirrors
-    /// the selected existing branch.
+    /// @spec GIT-5.15: When the user selects a branch from the existing-branch picker, the application shall auto-fill the worktree name with the branch name unless the user has already edited the field.
     public var worktreeMirrorsBranch: Bool = true
 
     public init(initialWorktreeName: String) {
