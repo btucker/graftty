@@ -237,4 +237,5 @@ struct GitTodo {
 @spec GIT-5.9: When persisting `WorktreeEntry` to `state.json`, the application shall encode `.creating` as `.closed`. The `.creating` state is in-memory-only; if the app crashes mid-creation, the next launch's reconciler classifies the entry from `git worktree list --porcelain` rather than restoring a phantom spinner that would never resolve.
 """, .disabled("not yet implemented"))
     func git_5_9() async throws { }
+
 }

@@ -227,7 +227,7 @@ struct MainWindow: View {
                let selection = terminalManager.readSelection(for: termID) {
                 prefill = WorktreeNameSanitizer.sanitizeForPrefill(selection)
             }
-            // Kick off fresh branch + PR data so the BranchComboBox
+            // Kick off fresh branch + PR data so the BranchPicker
             // renders something current as the sheet appears, even if
             // the polling cadence is in a long-backoff.
             remoteBranchStore.pulse()

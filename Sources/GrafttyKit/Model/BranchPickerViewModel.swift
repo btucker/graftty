@@ -68,4 +68,19 @@ public enum BranchPickerViewModel {
         if trimmed.hasPrefix("(") && trimmed.hasSuffix(")") { return false }
         return true
     }
+
+    /// Given the user's current selection and a fresh entries list
+    /// (already filtered + sorted by `entries(...)`), return what the
+    /// selection should become. Keeps the prior selection when it's
+    /// still present; otherwise picks the first non-mounted entry;
+    /// otherwise nil.
+    public static func autoSelect(
+        currentSelection: BranchPickerEntry?,
+        in entries: [BranchPickerEntry]
+    ) -> BranchPickerEntry? {
+        if let current = currentSelection, entries.contains(current) {
+            return current
+        }
+        return entries.first(where: { $0.mountedWorktreePath == nil })
+    }
 }

@@ -404,11 +404,19 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.12** When BranchSelection.useExisting is submitted with a remoteOnly source, the application shall pass `origin/<name>` so git creates a local tracking branch as a side effect.
 
-**GIT-5.13** While the existing-branch picker is open, the application shall display branches sorted by last-commit date descending, with branches mounted in another worktree dimmed and unselectable.
+**GIT-5.13** While the user is in existing-branch mode, the application shall display branches sorted by last-commit date descending in an always-visible list, with branches mounted in another worktree dimmed and unselectable.
 
 **GIT-5.14** When a branch row in the existing-branch picker has an associated open PR/MR, the application shall surface the PR number and title alongside the branch name.
 
 **GIT-5.15** When the user selects a branch from the existing-branch picker, the application shall auto-fill the worktree name with the branch name unless the user has already edited the field.
+
+**GIT-5.16** While the user is in existing-branch mode, the application shall render a filter `TextField` above the branch list whose contents narrow the list to branches whose name contains the typed substring (case-insensitive).
+
+**GIT-5.17** When the filter text changes and the currently selected branch no longer matches the filter (or no branch is selected), the application shall auto-select the first non-mounted branch in the filtered list. When the filter is cleared, the prior selection shall be preserved if it still exists.
+
+**GIT-5.18** While the user is in existing-branch mode, the Create button shall remain disabled until a branch row is selected; the filter `TextField`'s contents shall not be treated as a freeform branch name.
+
+**GIT-5.19** When the user toggles the branch-mode picker between "New branch" and "Existing branch", the application shall preserve each mode's prior input independently — the new-branch name shall not be clobbered by an existing-branch selection, and an existing-branch selection shall not be cleared by a temporary switch to new-branch mode.
 
 ## ATTN — Attention Notification System
 

@@ -26,7 +26,7 @@ struct BranchPickerViewModelTests {
         )
     }
 
-    @Test("@spec GIT-5.13: While the existing-branch picker is open, the application shall display branches sorted by last-commit date descending, with branches mounted in another worktree dimmed and unselectable.")
+    @Test("@spec GIT-5.13: While the user is in existing-branch mode, the application shall display branches sorted by last-commit date descending in an always-visible list, with branches mounted in another worktree dimmed and unselectable.")
     func sortsByDateDesc() {
         let now = Date()
         let entries = make(local: [
@@ -78,7 +78,7 @@ struct BranchPickerViewModelTests {
         #expect(entries.first?.pr?.title == "Add OAuth")
     }
 
-    @Test("filterText filters by case-insensitive substring on name")
+    @Test("@spec GIT-5.16: While the user is in existing-branch mode, the application shall render a filter `TextField` above the branch list whose contents narrow the list to branches whose name contains the typed substring (case-insensitive).")
     func filtersByText() {
         let now = Date()
         let entries = make(
