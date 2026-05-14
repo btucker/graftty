@@ -3,9 +3,6 @@ import GrafttyProtocol
 import SwiftUI
 import UIKit
 
-/// @spec IOS-10.2
-private let maxLivePanePreviews = 1
-
 /// Second "inside a host" screen — shows the split-faithful tree of
 /// panes for the selected worktree. Tapping a pane tile pushes a
 /// `SessionStep` onto the navigation stack which opens that pane's
@@ -97,7 +94,7 @@ public struct WorktreeDetailView: View {
                 )
             }
         }
-        previews?.update(layout: layout, maxLivePreviews: maxLivePanePreviews)
+        previews?.update(layout: layout)
     }
 }
 #endif

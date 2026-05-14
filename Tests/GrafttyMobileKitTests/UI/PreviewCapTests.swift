@@ -5,7 +5,7 @@ import GrafttyProtocol
 
 @Suite
 @MainActor
-struct PreviewCapTests {
+struct PreviewPoolTests {
 
     final class StubPreview: PanePreviewClienting {
         let sessionName: String
@@ -15,25 +15,38 @@ struct PreviewCapTests {
         func stop() { started = false }
     }
 
+    private static let threeLeaves = PaneLayoutNode.split(
+        direction: .horizontal,
+        ratio: 0.5,
+        left: .leaf(sessionName: "a", title: "A", attentionText: nil),
+        right: .split(
+            direction: .vertical,
+            ratio: 0.5,
+            left: .leaf(sessionName: "b", title: "B", attentionText: nil),
+            right: .leaf(sessionName: "c", title: "C", attentionText: nil)
+        )
+    )
+
     @Test("""
-@spec IOS-10.2: The `WorktreeDetailView` preview pool shall keep at most one live preview `SessionClient`.
+@spec IOS-10.2: When `WorktreeDetailView` is active with a multi-leaf layout, the application shall create a live preview `SessionClient` for every leaf so each pane tile renders a real-time preview rather than a static title.
 """)
-    func poolKeepsAtMostOneLivePreviewWhenCappedAtOne() {
+    func poolCreatesOnePreviewPerLeafByDefault() {
         let pool = PanePreviewClientPool { sessionName in
             StubPreview(sessionName: sessionName)
         }
-        let layout = PaneLayoutNode.split(
-            direction: .horizontal,
-            ratio: 0.5,
-            left: .leaf(sessionName: "a", title: "A", attentionText: nil),
-            right: .split(
-                direction: .vertical,
-                ratio: 0.5,
-                left: .leaf(sessionName: "b", title: "B", attentionText: nil),
-                right: .leaf(sessionName: "c", title: "C", attentionText: nil)
-            )
-        )
-        pool.update(layout: layout, maxLivePreviews: 1)
+        pool.update(layout: Self.threeLeaves)
+        #expect(pool.clients.count == 3)
+        #expect(pool.clients["a"]?.started == true)
+        #expect(pool.clients["b"]?.started == true)
+        #expect(pool.clients["c"]?.started == true)
+    }
+
+    @Test
+    func poolRespectsExplicitCapForCallersThatStillNeedOne() {
+        let pool = PanePreviewClientPool { sessionName in
+            StubPreview(sessionName: sessionName)
+        }
+        pool.update(layout: Self.threeLeaves, maxLivePreviews: 1)
         #expect(pool.clients.count == 1)
         #expect(pool.clients["a"]?.started == true)
     }

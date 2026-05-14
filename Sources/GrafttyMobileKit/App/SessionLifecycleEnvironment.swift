@@ -24,6 +24,15 @@ extension Optional where Wrapped == BiometricGate {
 }
 
 extension SessionClient {
+    /// @spec IOS-10.6
+    /// Preview-role clients use a tighter idle threshold so quiet panes
+    /// release their libghostty display link (via the IOS-10.4 static
+    /// snapshot) quickly. 10s gives bursty processes (build watchers,
+    /// log tailers ticking every few seconds) enough hysteresis to
+    /// stay live without churning surface tear-down + recreation.
+    public nonisolated static let previewIdleThreshold: TimeInterval = 10
+    public nonisolated static let fullscreenIdleThreshold: TimeInterval = 30
+
     /// One-stop factory for the `URLSessionWebSocketClient` + `SessionClient`
     /// pair. Both `SingleSessionView` (initial / re-dial) and
     /// `WorktreeDetailView` (preview pool) need the same triplet — URL
@@ -39,6 +48,7 @@ extension SessionClient {
                 let wsURL = RootView.makeWebSocketURL(base: baseURL, session: sessionName)
                 return URLSessionWebSocketClient(url: wsURL)
             },
+            idleThreshold: role == .preview ? previewIdleThreshold : fullscreenIdleThreshold,
             role: role
         )
     }
