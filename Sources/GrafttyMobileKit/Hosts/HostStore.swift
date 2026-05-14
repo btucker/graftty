@@ -96,6 +96,13 @@ public final class HostStore {
             next.append(host)
         }
         try write(next)
+        // After persistence: trigger a push re-register so the newly-added
+        // host gets the device token immediately rather than waiting for
+        // the next app-foreground sweep. Fire-and-forget; the registrar
+        // handles its own failure paths internally. Optional-chained
+        // because `registrar` can be nil during test bootstrap (no
+        // UIApplicationDelegate is installed there).
+        Task { await PushAppDelegate.registrar?.registerWithAllHosts() }
     }
 
     /// URLs compare case-insensitively on scheme/host and pass-through on

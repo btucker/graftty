@@ -61,6 +61,10 @@ public struct RootView: View {
                 if gate.state == .locked {
                     Task { await gate.authenticate() }
                 }
+                // Foreground re-register sweep — picks up any hosts that
+                // accumulated subscriptions while the app was background
+                // (or expired their TTL) and refreshes the APNs token map.
+                Task { await PushAppDelegate.registrar?.registerWithAllHosts() }
             default:
                 break
             }
