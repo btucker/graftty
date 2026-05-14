@@ -636,51 +636,24 @@ struct MainWindow: View {
     /// alert as the menu path. `force` is set internally on retry from
     /// the GIT-4.4 dialog; see GIT-4.12.
     private func performDeleteWorktree(_ worktreePath: String, force: Bool = false) {
-        guard let (repoIdx, wtIdx) = appState.indices(forWorktreePath: worktreePath) else { return }
-        let wt = appState.repos[repoIdx].worktrees[wtIdx]
-        let repoPath = appState.repos[repoIdx].path
-
-        // PROJECT-1.1 defense-in-depth: `git worktree remove` would error
-        // on a folder with no `.git`. UI affordances are gated, but a
-        // programmatic caller would otherwise hit a guaranteed git error.
-        guard appState.repos[repoIdx].isGitTracked else {
-            NSLog("[Graftty] performDeleteWorktree: refused for non-git repo at %@", repoPath)
-            return
-        }
-
-        // Run git first so a refusal (e.g. dirty worktree) leaves the
-        // running terminals intact — tearing them down before we know
-        // whether the delete will succeed would leave the user with a
-        // visible worktree and dead panes.
         Task { @MainActor in
-            do {
-                try await GitWorktreeRemove.remove(
-                    repoPath: repoPath,
-                    worktreePath: worktreePath,
-                    force: force
-                )
-            } catch GitWorktreeRemove.Error.gitFailed(_, let stderr) {
-                // GIT-4.13: directory is gone but the admin entry survives.
-                // --force can't bypass git's path validation, so the Force
-                // Delete dialog is a dead end here.
-                if !FileManager.default.fileExists(atPath: worktreePath) {
-                    try? await GitWorktreePrune.run(repoPath: repoPath)
-                    finishWorktreeRemoval(worktree: wt, repoPath: repoPath)
-                    return
-                }
-                if force {
-                    // Already attempted with --force; nothing left to
-                    // offer. Match the original GIT-4.4 single-button
-                    // shape so we don't trap the user in retry loops.
-                    let errorAlert = NSAlert()
-                    errorAlert.messageText = "Could not delete worktree"
-                    errorAlert.informativeText = stderr.isEmpty ? "git worktree remove --force failed" : stderr
-                    errorAlert.alertStyle = .warning
-                    errorAlert.runModal()
-                    return
-                }
-                // GIT-4.4.
-                let status = await GitStatusCapture.shortStatus(at: worktreePath)
+            let result = await DeleteWorktreeFlow.delete(
+                worktreePath: worktreePath,
+                force: force,
+                appState: $appState,
+                terminalManager: terminalManager,
+                statsStore: statsStore,
+                prStatusStore: prStatusStore,
+                teamEventDispatcher: teamEventDispatcher
+            )
+            switch result {
+            case .success:
+                return
+            case .failure(.notFound), .failure(.mainCheckoutRejected):
+                // UI gating already prevents these; silently no-op
+                // matches the pre-refactor behavior.
+                return
+            case .failure(.gitFailedForceable(let stderr, let status)):
                 let errorAlert = NSAlert()
                 errorAlert.messageText = "Could not delete worktree"
                 errorAlert.informativeText = ForceDeleteAlert.informativeText(stderr: stderr, status: status)
@@ -689,55 +662,25 @@ struct MainWindow: View {
                 errorAlert.addButton(withTitle: "Force Delete")
                 guard errorAlert.runModal() == .alertSecondButtonReturn else { return }
                 performDeleteWorktree(worktreePath, force: true)
-                return
-            } catch {
-                // Non-git-exit errors (git binary missing, subprocess launch
-                // failure, etc.). User clicked Delete Worktree; a silent
-                // bail leaves them wondering why nothing happened. Match
-                // the Add Repository path (GIT-1.2) with an alert. GIT-4.11.
-                NSLog("[Graftty] performDeleteWorktree: git launch failed for %@: %@",
-                      worktreePath, String(describing: error))
+            case .failure(.gitFailedFinal(let msg)):
+                NSLog("[Graftty] performDeleteWorktree: %@", msg)
                 let errorAlert = NSAlert()
                 errorAlert.messageText = "Could not delete worktree"
-                errorAlert.informativeText = "\(error)"
+                errorAlert.informativeText = msg
                 errorAlert.alertStyle = .warning
                 errorAlert.runModal()
-                return
             }
-
-            finishWorktreeRemoval(worktree: wt, repoPath: repoPath)
         }
     }
 
-    /// Post-remove teardown: destroy live surfaces, clear per-path caches
-    /// (GIT-4.10 ordering: BEFORE removing the model entry, so orphan
-    /// cache entries don't bleed into a future same-path re-add), drop
-    /// the entry, then fire TEAM-5.3 `left`. The TEAM-5.3 lookup uses
-    /// `repoPath` rather than `wt.path` because the worktree is gone
-    /// from `appState` by the time the lookup runs.
-    @MainActor
-    private func finishWorktreeRemoval(worktree wt: WorktreeEntry, repoPath: String) {
-        if wt.state == .running {
-            terminalManager.destroySurfaces(terminalIDs: wt.splitTree.allLeaves)
-        }
-        prStatusStore.clear(worktreePath: wt.path)
-        statsStore.clear(worktreePath: wt.path)
-        let leaverBranch = wt.branch
-        appState.removeWorktree(atPath: wt.path)
-        if let repo = appState.repo(forWorktreePath: repoPath) {
-            TeamMembershipEvents.fireLeft(
-                repo: repo,
-                leaverBranch: leaverBranch,
-                leaverPath: wt.path,
-                reason: .removed,
-                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
-                dispatcher: teamEventDispatcher
-            )
-        }
-    }
-
-    /// GIT-4.7. The "offered" marker is persisted via `AppState.onChange`
-    /// so Keep is sticky across restarts, not just across polls.
+    /// GIT-4.7 / GIT-4.14. The "offered" marker is persisted via
+    /// `AppState.onChange` so Keep is sticky across restarts, not just
+    /// across polls — and is written only once we know the sheet is
+    /// going up, so a no-window early-return leaves the next poll free
+    /// to retry. `beginSheetModal(for:)` (rather than `runModal()`)
+    /// keeps the main run loop's default mode pumping so libghostty's
+    /// PTY callbacks keep flowing for every embedded pane while the
+    /// auto-triggered offer is on screen.
     private func offerDeleteForResolvedPR(worktreePath: String, prNumber: Int, state: PRInfo.State) {
         guard let (repoIdx, wtIdx) = appState.indices(forWorktreePath: worktreePath) else { return }
         let repo = appState.repos[repoIdx]
@@ -747,20 +690,27 @@ struct MainWindow: View {
         // a stale entry has no live worktree to remove.
         guard wt.path != repo.path, wt.state != .stale else { return }
         guard wt.offeredDeleteForResolvedPR != prNumber else { return }
-        guard let resolutionWord = state.resolutionWord else { return }
-
-        // Mark as offered *before* presenting the modal so a user who
-        // clicks Keep doesn't get re-prompted on the next poll.
-        appState.repos[repoIdx].worktrees[wtIdx].offeredDeleteForResolvedPR = prNumber
+        guard let config = PRResolutionOfferAlert.configuration(prNumber: prNumber, state: state) else { return }
+        // `NSApp.mainWindow` only — falling through to "any visible
+        // non-panel window" would attach the sheet to Settings or the
+        // Team Activity Log when those are foregrounded. Dropping the
+        // offer (and leaving the marker unset) lets the next poll retry.
+        guard let host = NSApp.mainWindow else { return }
 
         let alert = NSAlert()
-        alert.messageText = "Pull request #\(prNumber) \(resolutionWord)"
-        alert.informativeText = "Delete the worktree now? This will delete the worktree but not the branch."
+        alert.messageText = config.messageText
+        alert.informativeText = config.informativeText
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "Delete Worktree")
-        alert.addButton(withTitle: "Keep")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        performDeleteWorktree(worktreePath)
+        alert.addButton(withTitle: config.primaryButton)
+        alert.addButton(withTitle: config.secondaryButton)
+
+        // Set the marker now that the sheet is definitely going up, so a
+        // user who clicks Keep doesn't get re-prompted on the next poll.
+        appState.repos[repoIdx].worktrees[wtIdx].offeredDeleteForResolvedPR = prNumber
+        alert.beginSheetModal(for: host) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            performDeleteWorktree(worktreePath)
+        }
     }
 
     private func movePane(_ terminalID: PaneSlotID, to newPWD: String) {

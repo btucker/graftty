@@ -98,16 +98,31 @@ public final class ZmxLauncher: Sendable {
         "\(shellQuote(executable.path)) attach \(shellQuote(sessionName)) $SHELL"
     }
 
-    /// Argv form of the attach invocation, for callers that spawn `zmx attach`
-    /// directly (not via a shell) — e.g. `WebSession` through `PtyProcess`.
+    /// Argv form of the attach invocation when Graftty wants zmx to apply
+    /// its documented default behavior of spawning `$SHELL` as a login
+    /// shell. The caller is responsible for setting `env["SHELL"]` to the
+    /// resolved user shell so zmx exec's the intended binary.
     ///
-    /// Resolves `$SHELL` at call time because there is no shell in the
-    /// pipeline to expand it — `execve` passes argv verbatim, and zmx
-    /// doesn't re-expand shell metacharacters in the command arg. Native
-    /// panes reach this through `ZmxSpawnConfiguration`; `attachCommand`
-    /// remains only for shell-based tests and survival checks.
-    public func attachArgv(sessionName: String,
-                           userShell: String = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/bash") -> [String] {
+    /// Use this for every shell EXCEPT bash with agent hooks enabled —
+    /// bash login mode ignores `--rcfile` (the mechanism the agent-hooks
+    /// shim depends on), so bash-with-hooks must keep an explicit
+    /// positional shell pointing at the launcher script. ZMX-6.6, ZMX-6.7.
+    public func attachArgv(sessionName: String) -> [String] {
+        [executable.path, "attach", sessionName]
+    }
+
+    /// Argv form of the attach invocation with an explicit user-shell
+    /// positional. Use this only when zmx's default login-shell spawn is
+    /// the wrong choice — currently bash with agent hooks enabled (the
+    /// launcher must run with `--rcfile`, which login bash ignores).
+    /// Tests that need a deterministic shell binary also use this overload.
+    ///
+    /// The caller is responsible for supplying the resolved user-shell
+    /// path — the function appends it verbatim. `execve` passes argv
+    /// without re-expansion, and zmx does not re-interpret shell
+    /// metacharacters in the command arg, so any `$SHELL` resolution
+    /// must happen on the caller side.
+    public func attachArgv(sessionName: String, userShell: String) -> [String] {
         [executable.path, "attach", sessionName, userShell]
     }
 

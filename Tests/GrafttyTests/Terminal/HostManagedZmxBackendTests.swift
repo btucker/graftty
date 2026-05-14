@@ -276,10 +276,12 @@ struct HostManagedZmxBackendTests {
     }
 
     private static func spawnConfiguration() -> ZmxSpawnConfiguration {
+        // ZMX-6.6: argv shape for zsh drops the positional shell —
+        // zmx's default-spawn picks up env["SHELL"].
         ZmxSpawnConfiguration(
             sessionName: "graftty-test",
-            argv: ["/tmp/zmx", "attach", "graftty-test", "/bin/zsh"],
-            env: ["ZMX_DIR": "/tmp/zmx-dir"],
+            argv: ["/tmp/zmx", "attach", "graftty-test"],
+            env: ["ZMX_DIR": "/tmp/zmx-dir", "SHELL": "/bin/zsh"],
             workingDirectory: URL(fileURLWithPath: "/tmp/worktree", isDirectory: true)
         )
     }

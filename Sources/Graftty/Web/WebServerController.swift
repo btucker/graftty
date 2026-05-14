@@ -37,6 +37,11 @@ final class WebServerController: ObservableObject {
     /// `AddWorktreeFlow.add` on the main actor. Nil before injection
     /// causes the endpoint to respond `503 service unavailable`.
     private var worktreeCreator: (@Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome)?
+    /// Executes `POST /worktrees/delete` (`WEB-7.8` / `WEB-7.9` /
+    /// `WEB-7.10`). Routes into `DeleteWorktreeFlow.delete` on the
+    /// main actor. Nil before injection causes the endpoint to respond
+    /// `503 service unavailable`.
+    private var worktreeRemover: (@Sendable (WebServer.DeleteWorktreeRequest) async -> WebServer.DeleteWorktreeOutcome)?
 
     /// Executes `POST /push/register`. Routes into the
     /// `PushOrchestrator`'s nonisolated `handleRegister`. Nil before
@@ -127,6 +132,16 @@ final class WebServerController: ObservableObject {
         _ handler: @escaping @Sendable (WebServer.PushRegisterRequest) async -> WebServer.PushRegisterResponse
     ) {
         pushRegisterHandler = handler
+        rebuildIfRunning()
+    }
+
+    /// Install the remover used for `POST /worktrees/delete`. Same
+    /// contract as `setWorktreeCreator`: pre-injection requests get
+    /// `503 service unavailable`.
+    func setWorktreeRemover(
+        _ remover: @escaping @Sendable (WebServer.DeleteWorktreeRequest) async -> WebServer.DeleteWorktreeOutcome
+    ) {
+        worktreeRemover = remover
         rebuildIfRunning()
     }
 
@@ -254,6 +269,7 @@ final class WebServerController: ObservableObject {
         let repos = reposProvider ?? { [] }
         let creator = worktreeCreator
         let pushHandler = pushRegisterHandler
+        let remover = worktreeRemover
         let s = WebServer(
             config: .init(
                 port: port,
@@ -263,6 +279,7 @@ final class WebServerController: ObservableObject {
                 sessionWorktreeProvider: sessionWorktreeProvider,
                 reposProvider: repos,
                 worktreeCreator: creator,
+                worktreeRemover: remover,
                 ghosttyConfigProvider: { GhosttyConfigReader.resolvedConfig() },
                 worktreePanesProvider: worktreePanesProvider ?? { [] },
                 pushRegisterHandler: pushHandler
