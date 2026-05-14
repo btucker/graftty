@@ -24,11 +24,6 @@ struct PushTodo {
     func push_4_2() async throws { }
 
     @Test("""
-@spec PUSH-5.1: When `clearAttentionIfTimestamp(_:_:)` fires on the Mac for a worktree+timestamp that was previously pushed, the application shall send a silent APNs push (`apns-push-type: background`, `aps.content-available: 1`, no `aps.alert`) with the same `apns-collapse-id` as the original alert push.
-""", .disabled("not yet implemented"))
-    func push_5_1() async throws { }
-
-    @Test("""
 @spec PUSH-5.2: When iOS receives a remote notification with `userInfo.kind == "agent_stop_clear"`, the application shall call `UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [userInfo.collapse_id])`.
 """, .disabled("not yet implemented"))
     func push_5_2() async throws { }
