@@ -227,4 +227,24 @@ struct GitTodo {
 @spec GIT-5.9: When persisting `WorktreeEntry` to `state.json`, the application shall encode `.creating` as `.closed`. The `.creating` state is in-memory-only; if the app crashes mid-creation, the next launch's reconciler classifies the entry from `git worktree list --porcelain` rather than restoring a phantom spinner that would never resolve.
 """, .disabled("not yet implemented"))
     func git_5_9() async throws { }
+
+    @Test("""
+@spec GIT-5.16: While the user is in existing-branch mode, the application shall render a filter `TextField` above the branch list whose contents narrow the list to branches whose name contains the typed substring (case-insensitive).
+""", .disabled("not yet implemented"))
+    func git_5_16() async throws { }
+
+    @Test("""
+@spec GIT-5.17: When the filter text changes and the currently selected branch no longer matches the filter (or no branch is selected), the application shall auto-select the first non-mounted branch in the filtered list. When the filter is cleared, the prior selection shall be preserved if it still exists.
+""", .disabled("not yet implemented"))
+    func git_5_17() async throws { }
+
+    @Test("""
+@spec GIT-5.18: While the user is in existing-branch mode, the Create button shall remain disabled until a branch row is selected; the filter `TextField`'s contents shall not be treated as a freeform branch name.
+""", .disabled("not yet implemented"))
+    func git_5_18() async throws { }
+
+    @Test("""
+@spec GIT-5.19: When the user toggles the branch-mode picker between "New branch" and "Existing branch", the application shall preserve each mode's prior input independently — the new-branch name shall not be clobbered by an existing-branch selection, and an existing-branch selection shall not be cleared by a temporary switch to new-branch mode.
+""", .disabled("not yet implemented"))
+    func git_5_19() async throws { }
 }
