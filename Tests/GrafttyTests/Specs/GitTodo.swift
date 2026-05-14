@@ -234,11 +234,6 @@ struct GitTodo {
     func git_5_16() async throws { }
 
     @Test("""
-@spec GIT-5.17: When the filter text changes and the currently selected branch no longer matches the filter (or no branch is selected), the application shall auto-select the first non-mounted branch in the filtered list. When the filter is cleared, the prior selection shall be preserved if it still exists.
-""", .disabled("not yet implemented"))
-    func git_5_17() async throws { }
-
-    @Test("""
 @spec GIT-5.18: While the user is in existing-branch mode, the Create button shall remain disabled until a branch row is selected; the filter `TextField`'s contents shall not be treated as a freeform branch name.
 """, .disabled("not yet implemented"))
     func git_5_18() async throws { }
