@@ -14,24 +14,9 @@ struct PushTodo {
     func push_1_2() async throws { }
 
     @Test("""
-@spec PUSH-2.1: When `recordAgentStop` fires and `DesktopActivityMonitor.isUserActiveOnDesktop == false`, the application shall send an APNs alert push to every live registered device.
-""", .disabled("not yet implemented"))
-    func push_2_1() async throws { }
-
-    @Test("""
-@spec PUSH-2.2: When `recordAgentStop` fires and `isUserActiveOnDesktop == true`, the application shall not send an APNs push.
-""", .disabled("not yet implemented"))
-    func push_2_2() async throws { }
-
-    @Test("""
 @spec PUSH-2.3: The application shall set `isUserActiveOnDesktop == true` iff the system is not sleeping, the screen is not locked, and `CGEventSourceSecondsSinceLastEventType(.combinedSessionState, .anyInputEventType) < 60`.
 """, .disabled("not yet implemented"))
     func push_2_3() async throws { }
-
-    @Test("""
-@spec PUSH-2.4: When the same `(worktreePath, attentionTimestamp)` is observed more than once within a process lifetime, the application shall send at most one alert push.
-""", .disabled("not yet implemented"))
-    func push_2_4() async throws { }
 
     @Test("""
 @spec PUSH-3.1: The APNs alert envelope shall use `apns-topic: com.quotably.graftty`, `apns-push-type: alert`, `apns-collapse-id: "<worktreePath>:<attentionTimestampISO>"`, and a `userInfo` payload matching `AgentStopNotification.content(...).userInfo`.
