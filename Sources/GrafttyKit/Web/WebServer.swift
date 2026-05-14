@@ -69,6 +69,33 @@ public final class WebServer {
         }
     }
 
+    /// JSON shape accepted by `POST /push/register` — an iOS device
+    /// announcing (or refreshing) its APNs device token so the Mac can
+    /// target push notifications at it. `platform` is reserved for
+    /// future cross-platform support; today only `"ios"` is accepted.
+    public struct PushRegisterRequest: Codable, Sendable {
+        public let deviceToken: String
+        public let deviceName: String
+        public let platform: String  // currently always "ios"
+
+        public init(deviceToken: String, deviceName: String, platform: String) {
+            self.deviceToken = deviceToken
+            self.deviceName = deviceName
+            self.platform = platform
+        }
+    }
+
+    /// JSON shape returned by `POST /push/register` confirming the
+    /// device was recorded. `registeredAt` is the server-side wall
+    /// clock at the moment the registration was persisted, so the
+    /// client can display a "Registered <ago>" line on its settings
+    /// pane without doing its own bookkeeping.
+    public struct PushRegisterResponse: Codable, Sendable {
+        public let registeredAt: Date
+
+        public init(registeredAt: Date) { self.registeredAt = registeredAt }
+    }
+
     /// Outcome a `worktreeCreator` reports back. Success carries the
     /// session name to steer the client to; failure carries the
     /// user-visible message (typically `git worktree add`'s stderr) and
@@ -113,6 +140,14 @@ public final class WebServer {
         /// faithful pane layout inside each. Default returns an empty
         /// list.
         public let worktreePanesProvider: @Sendable () async -> [WorktreePanes]
+        /// Executes `POST /push/register`. Nil (default) means push
+        /// registration is disabled — the endpoint responds `503`
+        /// rather than `404` so an iOS client can tell "Mac doesn't
+        /// support this yet" apart from "wrong URL". In production
+        /// `WebServerController` wires this to a `PushDeviceStore`-
+        /// backed handler; the default exists for tests and early-boot
+        /// states where the store isn't ready yet.
+        public let pushRegisterHandler: (@Sendable (PushRegisterRequest) async -> PushRegisterResponse)?
 
         public init(
             port: Int,
@@ -123,7 +158,8 @@ public final class WebServer {
             reposProvider: @escaping @Sendable () async -> [RepoInfo] = { [] },
             worktreeCreator: (@Sendable (CreateWorktreeRequest) async -> CreateWorktreeOutcome)? = nil,
             ghosttyConfigProvider: @escaping @Sendable () async -> String = { "" },
-            worktreePanesProvider: @escaping @Sendable () async -> [WorktreePanes] = { [] }
+            worktreePanesProvider: @escaping @Sendable () async -> [WorktreePanes] = { [] },
+            pushRegisterHandler: (@Sendable (PushRegisterRequest) async -> PushRegisterResponse)? = nil
         ) {
             self.port = port
             self.zmxExecutable = zmxExecutable
@@ -134,6 +170,7 @@ public final class WebServer {
             self.worktreeCreator = worktreeCreator
             self.ghosttyConfigProvider = ghosttyConfigProvider
             self.worktreePanesProvider = worktreePanesProvider
+            self.pushRegisterHandler = pushRegisterHandler
         }
 
         /// Accepts the range NIO's `bootstrap.bind(host:port:)` will accept
@@ -510,6 +547,21 @@ public final class WebServer {
                 handleCreateWorktree(context: context, body: body)
                 return
             }
+            // PUSH-1.3: register an iOS device's APNs token. POST-only;
+            // other verbs get 405 for the same caching-proxy reason as
+            // `/worktrees`.
+            if path == "/push/register" {
+                guard head.method == .POST else {
+                    Self.respondJSON(
+                        context: context,
+                        status: .methodNotAllowed,
+                        error: "only POST is supported"
+                    )
+                    return
+                }
+                handlePushRegister(context: context, body: body)
+                return
+            }
             do {
                 let asset = try WebStaticResources.asset(for: path)
                 Self.respond(context: context, status: .ok, body: asset.data, contentType: asset.contentType)
@@ -600,6 +652,73 @@ public final class WebServer {
             Task {
                 promise.succeed(await creator(decoded))
             }
+        }
+
+        /// Decode the JSON body, invoke the injected
+        /// `pushRegisterHandler`, and respond with the
+        /// `PushRegisterResponse` envelope. Mirrors `handleCreateWorktree`
+        /// but with simpler outcome plumbing — the handler returns a
+        /// concrete response (no Outcome enum) because device registration
+        /// has no domain-level failure modes the client needs to
+        /// distinguish from a generic 500.
+        private func handlePushRegister(context: ChannelHandlerContext, body: Data) {
+            guard let handler = config.pushRegisterHandler else {
+                Self.respondJSON(
+                    context: context,
+                    status: .serviceUnavailable,
+                    error: "push registration not available"
+                )
+                return
+            }
+            let decoded: PushRegisterRequest
+            do {
+                decoded = try JSONDecoder().decode(PushRegisterRequest.self, from: body)
+            } catch {
+                Self.respondJSON(
+                    context: context,
+                    status: .badRequest,
+                    error: "invalid JSON body"
+                )
+                return
+            }
+            guard !decoded.deviceToken.isEmpty,
+                  !decoded.deviceName.isEmpty,
+                  decoded.platform == "ios" else {
+                Self.respondJSON(
+                    context: context,
+                    status: .badRequest,
+                    error: "deviceToken, deviceName, and platform=\"ios\" are required"
+                )
+                return
+            }
+            let promise = context.eventLoop.makePromise(of: PushRegisterResponse.self)
+            promise.futureResult.whenComplete { result in
+                switch result {
+                case .success(let resp):
+                    do {
+                        let data = try JSONEncoder.iso8601().encode(resp)
+                        Self.respond(
+                            context: context,
+                            status: .ok,
+                            body: data,
+                            contentType: "application/json; charset=utf-8"
+                        )
+                    } catch {
+                        Self.respondJSON(
+                            context: context,
+                            status: .internalServerError,
+                            error: "encoding error"
+                        )
+                    }
+                case .failure:
+                    Self.respondJSON(
+                        context: context,
+                        status: .internalServerError,
+                        error: "internal error"
+                    )
+                }
+            }
+            Task { promise.succeed(await handler(decoded)) }
         }
 
         /// Encode a concrete array and respond 200 (or 500 on encoding
