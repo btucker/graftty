@@ -71,6 +71,9 @@ let package = Package(
                 .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "Stencil", package: "Stencil"),
             ],
+            resources: [
+                .copy("Resources/apns"),
+            ],
             swiftSettings: strictWarnings
         ),
         .executableTarget(

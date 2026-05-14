@@ -15,3 +15,6 @@ Apps/*/build/
 **/*.xcuserstate
 .swiftpm/xcode/
 __pycache__/
+
+# APNs keys — minted per-developer, never committed
+Sources/Graftty/Resources/apns/*.p8
