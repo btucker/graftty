@@ -1456,7 +1456,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PUSH-1.2** If the iOS user denies notification authorization, the application shall not call `registerForRemoteNotifications()` and shall not POST `/push/register`.
 
-**PUSH-1.3** The Mac shall persist device registrations at `~/Library/Application Support/Graftty/push-devices.json` as `[{token, deviceName, platform, lastRegisteredAt}]`, written atomically on each mutation; records with `lastRegisteredAt > 90 days` shall be filtered out on read.
+**PUSH-1.3** PushDeviceStore persists registrations and filters stale entries on read.
 
 ### PUSH-2.x
 

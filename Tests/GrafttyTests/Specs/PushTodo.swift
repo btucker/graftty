@@ -14,11 +14,6 @@ struct PushTodo {
     func push_1_2() async throws { }
 
     @Test("""
-@spec PUSH-1.3: The Mac shall persist device registrations at `~/Library/Application Support/Graftty/push-devices.json` as `[{token, deviceName, platform, lastRegisteredAt}]`, written atomically on each mutation; records with `lastRegisteredAt > 90 days` shall be filtered out on read.
-""", .disabled("not yet implemented"))
-    func push_1_3() async throws { }
-
-    @Test("""
 @spec PUSH-2.1: When `recordAgentStop` fires and `DesktopActivityMonitor.isUserActiveOnDesktop == false`, the application shall send an APNs alert push to every live registered device.
 """, .disabled("not yet implemented"))
     func push_2_1() async throws { }
