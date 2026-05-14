@@ -3281,15 +3281,17 @@ private func paneLayoutNode(
 
 extension WorktreeWireState {
     /// Exhaustive bridge from the persistence-side `WorktreeState` (in
-    /// GrafttyKit, whose `encode(to:)` coerces `.creating → .closed`)
-    /// to the wire enum. A `switch` rather than `rawValue` round-trip
-    /// so a future `WorktreeState` case is a compile error here.
+    /// GrafttyKit, whose `encode(to:)` coerces `.creating` and
+    /// `.deleting` to `.closed`) to the wire enum. A `switch` rather
+    /// than `rawValue` round-trip so a future `WorktreeState` case is a
+    /// compile error here.
     init(_ state: WorktreeState) {
         switch state {
         case .closed: self = .closed
         case .running: self = .running
         case .stale: self = .stale
         case .creating: self = .creating
+        case .deleting: self = .deleting
         }
     }
 }

@@ -12,17 +12,22 @@ public enum WorktreeState: String, Codable, Sendable {
     /// hooks) is running. Transient by design — see custom `encode` for
     /// the persistence policy.
     case creating
+    /// Placeholder shown while `DeleteWorktreeFlow` is mid-`git worktree
+    /// remove`. Only ever produced by that flow. Transient by design —
+    /// see custom `encode` for the persistence policy.
+    case deleting
 
-    /// `.creating` is in-memory only. If the app crashes mid-creation,
-    /// the on-disk worktree may or may not exist — the next launch's
-    /// reconciler will resolve it (see `GIT-2.2`). Persisting `.creating`
-    /// would otherwise leave a phantom row spinning forever after
-    /// restart, so we coerce it to `.closed` on encode and let the
-    /// reconciler classify based on `git worktree list --porcelain`.
+    /// `.creating` / `.deleting` are in-memory only. If the app crashes
+    /// mid-flight, the on-disk worktree may or may not exist — the next
+    /// launch's reconciler will resolve it (see `GIT-2.2`). Persisting
+    /// either transient state would otherwise leave a phantom row
+    /// spinning forever after restart, so we coerce both to `.closed` on
+    /// encode and let the reconciler classify based on `git worktree
+    /// list --porcelain`.
     public func encode(to encoder: Encoder) throws {
         var container = encoder.singleValueContainer()
         switch self {
-        case .creating: try container.encode(WorktreeState.closed.rawValue)
+        case .creating, .deleting: try container.encode(WorktreeState.closed.rawValue)
         case .closed, .running, .stale: try container.encode(self.rawValue)
         }
     }
@@ -31,13 +36,23 @@ public enum WorktreeState: String, Codable, Sendable {
     /// worktree git can inspect. Polling stores (stats, PR), per-
     /// worktree subprocess scans, and FSEvents watcher arming should
     /// gate on this — `.creating` placeholders have no directory yet,
-    /// `.stale` placeholders have lost theirs, and either case fires
-    /// failed subprocesses for no benefit.
+    /// `.stale` placeholders have lost theirs, and `.deleting` rows are
+    /// about to lose theirs; firing fresh subprocesses against any of
+    /// them is wasted work at best, racey at worst.
     public var hasOnDiskWorktree: Bool {
         switch self {
         case .closed, .running: return true
-        case .stale, .creating: return false
+        case .stale, .creating, .deleting: return false
         }
+    }
+
+    /// True iff the entry is a transient placeholder owned by a flow
+    /// (`AddWorktreeFlow` for `.creating`, `DeleteWorktreeFlow` for
+    /// `.deleting`). The on-disk path is either not there yet or
+    /// about to vanish — every consumer that touches the path or the
+    /// row's interactivity gates on this so it doesn't race the flow.
+    public var isInFlight: Bool {
+        self == .creating || self == .deleting
     }
 }
 

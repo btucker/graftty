@@ -119,6 +119,25 @@ struct WorktreeReconcilerTests {
         #expect(r.newlyAdded.isEmpty, "placeholder is not double-added")
     }
 
+    /// GIT-4.18: a `.deleting` placeholder is in flight by definition —
+    /// `git worktree remove` is mid-call. If the remove succeeds the
+    /// worktree directory and the git admin entry both disappear in
+    /// quick succession; an FSEvents-driven reconcile that fires before
+    /// `DeleteWorktreeFlow` removes the model entry must NOT flip the
+    /// spinning row to `.stale`. Only `DeleteWorktreeFlow` is allowed to
+    /// clear `.deleting` placeholders (success → remove from model,
+    /// failure → restore prior state).
+    @Test("""
+    @spec GIT-4.18: While a worktree entry is in the `.deleting` state, the reconciler (`WorktreeReconciler.reconcile`) shall not transition the entry to `.stale` even when the path is absent from `git worktree list --porcelain` output. The placeholder is in flight by definition — `git worktree remove` is mid-call and the admin entry may disappear from porcelain before `DeleteWorktreeFlow` removes the model entry — and only `DeleteWorktreeFlow` is permitted to clear the placeholder (success → remove from model, failure → restore prior state). Mirrors `GIT-5.8` for `.creating`.
+    """)
+    func deletingPlaceholderIsPreservedWhenAbsentFromDiscovery() {
+        let existing = [wt("/r/in-flight", "feat", state: .deleting)]
+        let r = WorktreeReconciler.reconcile(existing: existing, discovered: [])
+        #expect(r.merged[0].state == .deleting,
+                "placeholder must not be transitioned to .stale by the reconciler")
+        #expect(r.newlyStale.isEmpty)
+    }
+
     @Test func mixedSet() {
         let existing = [
             wt("/r/a", "main", state: .running), // stays

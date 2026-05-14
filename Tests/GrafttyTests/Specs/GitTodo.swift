@@ -189,6 +189,16 @@ struct GitTodo {
     func git_4_11() async throws { }
 
     @Test("""
+@spec GIT-4.15: When `DeleteWorktreeFlow.delete` runs and the early `notFound` / `mainCheckoutRejected` / non-git-repo gates pass, the application shall transition the worktree entry to `.deleting` state synchronously before awaiting `git worktree remove`, so the sidebar row renders a spinner while git runs. On flow failure (forceable or final), the application shall restore the entry's prior state before surfacing the error alert; on success the entry is removed entirely. Mirrors `GIT-5.4` on the symmetric delete path so a long-running `git worktree remove` (which can take seconds when the worktree contains many untracked files or holds a slow lock) produces visible feedback rather than a frozen row.
+""", .disabled("structural — verified by manual smoke testing and unit tests for GIT-4.17 / GIT-4.18"))
+    func git_4_15() async throws { }
+
+    @Test("""
+@spec GIT-4.16: While a worktree entry is in the `.deleting` state, the sidebar row shall render a `ProgressView` in place of its type icon (`house` / `arrow.triangle.branch` / `arrow.triangle.pull`), shall present an empty right-click context menu (Stop, Delete Worktree, Open in Finder would all either error or race the in-flight remove), shall reject same-repo pane drops (the target worktree is about to disappear), and shall ignore selection clicks — the user keeps their previous worktree focused until the entry is removed or restored. Mirrors `GIT-5.5` for the symmetric delete-in-flight indicator.
+""", .disabled("structural — verified by manual smoke testing"))
+    func git_4_16() async throws { }
+
+    @Test("""
 @spec GIT-5.1: When the user types or pastes into the "Worktree name" or "Branch" field of the Add Worktree sheet, the application shall replace any character outside the set `A-Z a-z 0-9 . _ - /` with `-`, and shall collapse any run of consecutive `-` (including dashes the user typed directly) into a single `-`. `/` is permitted so branch names can use the conventional namespace separator (`feature/foo`); the resulting worktree path becomes a nested `.worktrees/<ns>/<leaf>` directory that `git worktree add` creates. Ref-format rules git already enforces (`//`, leading/trailing `/`, components beginning with `.`) are not duplicated here — git reports them at submit time. The replacement shall apply live on every edit so the field shows only sanitized content.
 """, .disabled("not yet implemented"))
     func git_5_1() async throws { }

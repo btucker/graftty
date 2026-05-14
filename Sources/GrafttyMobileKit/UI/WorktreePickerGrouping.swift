@@ -51,12 +51,13 @@ public enum WorktreePickerSwipeAction: Equatable {
 }
 
 extension WorktreePickerGrouping {
-    /// IOS-9.6 rule: main checkout and `.creating` rows have no swipe
-    /// affordance. `.stale` rows offer Dismiss; everything else offers
-    /// Delete.
+    /// IOS-9.6 rule: main checkout and in-flight rows have no swipe
+    /// affordance — the first can't be deleted; the latter are
+    /// mid-flight on the server. `.stale` rows offer Dismiss;
+    /// everything else offers Delete.
     public static func swipeAction(for wt: WorktreePanes) -> WorktreePickerSwipeAction? {
         if wt.isMainCheckout { return nil }
-        if wt.state == .creating { return nil }
+        if wt.state.isInFlight { return nil }
         if wt.state == .stale { return .dismiss }
         return .delete
     }

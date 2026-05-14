@@ -71,6 +71,9 @@ enum DeleteWorktreeFlow {
             return .failure(.gitFailedFinal("not a git repository"))
         }
 
+        let priorState = wt.state
+        appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .deleting
+
         do {
             try await GitWorktreeRemove.remove(
                 repoPath: repoPath,
@@ -95,6 +98,7 @@ enum DeleteWorktreeFlow {
                 )
                 return .success(Outcome(dismissed: true))
             }
+            restoreState(priorState, worktreePath: worktreePath, appState: appState)
             if force {
                 return .failure(.gitFailedFinal(stderr.isEmpty ? "git worktree remove --force failed" : stderr))
             }
@@ -104,6 +108,7 @@ enum DeleteWorktreeFlow {
                 shortStatus: status
             ))
         } catch {
+            restoreState(priorState, worktreePath: worktreePath, appState: appState)
             return .failure(.gitFailedFinal("\(error)"))
         }
 
@@ -117,6 +122,21 @@ enum DeleteWorktreeFlow {
             teamEventDispatcher: teamEventDispatcher
         )
         return .success(Outcome(dismissed: false))
+    }
+
+    /// Restores the worktree's pre-`.deleting` state after a failed
+    /// `git worktree remove`. A no-op if the entry has been removed
+    /// from `AppState` in the meantime (e.g. an FSEvents-driven prune
+    /// raced ahead).
+    private static func restoreState(
+        _ prior: WorktreeState,
+        worktreePath: String,
+        appState: Binding<AppState>
+    ) {
+        guard let (r, w) = appState.wrappedValue.indices(forWorktreePath: worktreePath) else {
+            return
+        }
+        appState.wrappedValue.repos[r].worktrees[w].state = prior
     }
 
     /// Post-remove teardown. Identical ordering to the previous

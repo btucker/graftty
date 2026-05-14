@@ -256,11 +256,10 @@ struct SidebarView: View {
             .dropDestination(for: TransferablePaneSlotID.self) { items, _ in
                 guard let item = items.first else { return false }
                 let sourceID = PaneSlotID(id: item.id)
-                // `.creating` placeholders have no on-disk directory
-                // and no terminal surfaces yet — moving a pane onto one
-                // would either fail in zmx attach or silently land on
-                // a worktree that's about to disappear if git fails.
-                guard worktree.state != .creating else { return false }
+                // In-flight rows are about to materialize or vanish —
+                // a drop here would land on a worktree that won't exist
+                // (or might revert) by the time the move completes.
+                guard !worktree.state.isInFlight else { return false }
                 guard let indices =
                         appState.indicesOfWorktreeContaining(terminalID: sourceID),
                       appState.repos[indices.repo].id == repo.id
@@ -326,12 +325,10 @@ struct SidebarView: View {
     /// `.rightClickMenu` documents.
     private func buildWorktreeMenu(_ worktree: WorktreeEntry, repo: RepoEntry) -> NSMenu {
         let menu = NSMenu()
-        // While an entry is in `.creating`, the on-disk worktree may
-        // not exist yet (`git worktree add` is still running, possibly
-        // blocked on hooks). Open-in-Finder, Stop, and Delete-Worktree
-        // would all either error or race the in-flight create — so the
-        // menu is empty until the placeholder transitions out.
-        if worktree.state == .creating {
+        // In-flight rows have nothing the menu actions can act on
+        // safely — Open-in-Finder, Stop, and Delete-Worktree would all
+        // either error or race the flow that owns the placeholder.
+        if worktree.state.isInFlight {
             return menu
         }
         if worktree.state != .stale {
