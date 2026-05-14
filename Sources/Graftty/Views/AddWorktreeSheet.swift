@@ -5,35 +5,45 @@ import GrafttyProtocol
 
 /// Sheet for creating a new worktree under a repo. Collects a directory
 /// name (used for the worktree path at `<repo>/.worktrees/<name>`) and a
-/// branch name that defaults to mirror the worktree name but can be
-/// edited independently.
+/// branch selection that is either a fresh branch name (mirrors the
+/// worktree name until edited independently) or an existing branch
+/// picked from the BranchComboBox.
 struct AddWorktreeSheet: View {
+    enum BranchMode: Hashable { case newBranch, existing }
+
     let repoDisplayName: String
     let initialWorktreeName: String
-    /// Called with (worktreeName, branchName) on submit. The caller
+    let branchEntries: [BranchPickerEntry]
+    /// Called with (worktreeName, branchSelection) on submit. The caller
     /// performs the git invocation and dismisses the sheet.
-    let onSubmit: (String, String) async -> String?
+    let onSubmit: (String, BranchSelection) async -> String?
     let onCancel: () -> Void
 
     @State private var worktreeName: String
     @State private var branchName: String
+    @State private var branchMode: BranchMode = .newBranch
     /// Tracks whether the branch field is still mirroring the worktree
-    /// name. Once the user types something different in the branch field,
-    /// we stop auto-syncing so their edit sticks.
+    /// name. Once the user types something different in the branch field
+    /// (in `.newBranch` mode), we stop auto-syncing so their edit sticks.
     @State private var branchMirrorsWorktree: Bool = true
+    /// @spec GIT-5.15: When the user selects a branch from the existing-branch picker, the application shall auto-fill the worktree name with the branch name unless the user has already edited the field.
+    @State private var worktreeMirrorsBranch: Bool = true
     @State private var isSubmitting: Bool = false
     @State private var errorMessage: String?
+    @State private var selectedExistingEntry: BranchPickerEntry?
 
     @FocusState private var worktreeFieldFocused: Bool
 
     init(
         repoDisplayName: String,
         initialWorktreeName: String = "",
-        onSubmit: @escaping (String, String) async -> String?,
+        branchEntries: [BranchPickerEntry] = [],
+        onSubmit: @escaping (String, BranchSelection) async -> String?,
         onCancel: @escaping () -> Void
     ) {
         self.repoDisplayName = repoDisplayName
         self.initialWorktreeName = initialWorktreeName
+        self.branchEntries = branchEntries
         self.onSubmit = onSubmit
         self.onCancel = onCancel
         _worktreeName = State(initialValue: initialWorktreeName)
@@ -58,29 +68,53 @@ struct AddWorktreeSheet: View {
                                 worktreeName = sanitized
                                 return
                             }
-                            if branchMirrorsWorktree {
+                            if branchMode == .newBranch && branchMirrorsWorktree {
                                 branchName = sanitized
+                            }
+                            if branchMode == .existing && sanitized != branchName {
+                                worktreeMirrorsBranch = false
                             }
                         }
                 }
                 GridRow {
                     Text("Branch:")
                         .foregroundStyle(.secondary)
-                    TextField("feature-xyz", text: $branchName)
-                        .textFieldStyle(.roundedBorder)
-                        .onChange(of: branchName) { _, new in
-                            let sanitized = WorktreeNameSanitizer.sanitize(new)
-                            if sanitized != new {
-                                branchName = sanitized
-                                return
-                            }
-                            // Once the user types a branch name that differs
-                            // from the worktree name, stop auto-syncing so
-                            // their edit persists.
-                            if sanitized != worktreeName {
-                                branchMirrorsWorktree = false
+                    VStack(alignment: .leading, spacing: 6) {
+                        Picker("", selection: $branchMode) {
+                            Text("New branch").tag(BranchMode.newBranch)
+                            Text("Existing branch").tag(BranchMode.existing)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+
+                        if branchMode == .newBranch {
+                            TextField("feature-xyz", text: $branchName)
+                                .textFieldStyle(.roundedBorder)
+                                .onChange(of: branchName) { _, new in
+                                    let sanitized = WorktreeNameSanitizer.sanitize(new)
+                                    if sanitized != new {
+                                        branchName = sanitized
+                                        return
+                                    }
+                                    // Once the user types a branch name that
+                                    // differs from the worktree name, stop
+                                    // auto-syncing so their edit persists.
+                                    if sanitized != worktreeName {
+                                        branchMirrorsWorktree = false
+                                    }
+                                }
+                        } else {
+                            BranchComboBox(
+                                text: $branchName,
+                                entries: branchEntries
+                            ) { entry in
+                                selectedExistingEntry = entry
+                                if worktreeMirrorsBranch {
+                                    worktreeName = entry.name
+                                }
                             }
                         }
+                    }
                 }
             }
 
@@ -110,7 +144,7 @@ struct AddWorktreeSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 420)
+        .frame(width: 460)
         .onAppear {
             worktreeFieldFocused = true
             if !initialWorktreeName.isEmpty {
@@ -126,14 +160,31 @@ struct AddWorktreeSheet: View {
             && !WorktreeNameSanitizer.trimForSubmit(branchName).isEmpty
     }
 
+    private var selectedSelection: BranchSelection {
+        let trimmed = WorktreeNameSanitizer.trimForSubmit(branchName)
+        switch branchMode {
+        case .newBranch:
+            return .createNew(name: trimmed)
+        case .existing:
+            // If the user typed a branch without picking from the list,
+            // selectedExistingEntry is nil or stale — default to .local.
+            // The server (and git) resolves a bare name correctly when
+            // it matches either a local ref or origin/<name>.
+            let source: BranchSelection.ExistingSource =
+                selectedExistingEntry?.name == trimmed
+                ? (selectedExistingEntry?.source ?? .local)
+                : .local
+            return .useExisting(name: trimmed, source: source)
+        }
+    }
+
     private func submit() async {
         errorMessage = nil
         isSubmitting = true
         defer { isSubmitting = false }
 
         let wt = WorktreeNameSanitizer.trimForSubmit(worktreeName)
-        let br = WorktreeNameSanitizer.trimForSubmit(branchName)
-        if let err = await onSubmit(wt, br) {
+        if let err = await onSubmit(wt, selectedSelection) {
             errorMessage = err
         }
     }

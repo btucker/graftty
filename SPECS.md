@@ -354,7 +354,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-4.6** When `git worktree remove` succeeds, the application shall remove the worktree entry from the sidebar, and if that worktree was the selected worktree the application shall clear the selected-worktree state so the terminal content area shows the "no worktree selected" placeholder.
 
-**GIT-4.7** When the application first observes a worktree's associated pull request transition into a terminal resolved state — either merged or closed-without-merging, whether from open, from no-PR-cached, or from a different previously-resolved PR number — the application shall present an informational dialog offering to delete the worktree. The dialog's message text shall cite the PR number and the resolution word ("merged" or "closed"), its informative text shall read "Delete the worktree now? This will delete the worktree but not the branch.", and its buttons shall be "Delete Worktree" and "Keep".
+**GIT-4.7** When the application first observes a worktree's associated pull request transition into a terminal resolved state — either merged or closed-without-merging, whether from open, from no-PR-cached, or from a different previously-resolved PR number — the application shall present an informational dialog offering to delete the worktree. The dialog's message text shall cite the PR number and the resolution word ("merged" or "closed"). Its informative text shall begin with the PR/MR title on its own line (when non-empty), followed by "Delete the worktree now? This will delete the worktree but not the branch." Its buttons shall be "Delete Worktree" and "Keep".
 
 **GIT-4.8** If the user confirms the offer dialog from GIT-4.7 by clicking "Delete Worktree", the application shall proceed directly to `git worktree remove` without re-prompting — the offer dialog IS the confirmation. The resulting success and failure paths shall be identical to GIT-4.5 and GIT-4.4 (teardown on success, stderr surfaced on failure).
 
@@ -389,6 +389,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **GIT-5.8** While a worktree entry is in the `.creating` state, the reconciler (`WorktreeReconciler.reconcile`) shall not transition the entry to `.stale` even when the path is absent from `git worktree list --porcelain` output. The placeholder is in flight by definition — git hasn't finished writing its admin entry yet — and only `AddWorktreeFlow` is permitted to clear the placeholder (success → `.running`, failure → remove). Without this guard, an FSEvents tick on `.git/worktrees/` that fires before git's admin write completes (or one driven by an unrelated change in another worktree) would briefly flash the spinning placeholder to `.stale`.
 
 **GIT-5.9** When persisting `WorktreeEntry` to `state.json`, the application shall encode `.creating` as `.closed`. The `.creating` state is in-memory-only; if the app crashes mid-creation, the next launch's reconciler classifies the entry from `git worktree list --porcelain` rather than restoring a phantom spinner that would never resolve.
+
+**GIT-5.10** When BranchSelection.useExisting is submitted with a local source, the application shall invoke `git worktree add <path> <name>` (no `-b` flag).
+
+**GIT-5.11** When BranchSelection.useExisting is submitted and the same repo already has the branch mounted in another worktree, the application shall reject the create with branchAlreadyMounted(at:) before invoking git.
+
+**GIT-5.12** When BranchSelection.useExisting is submitted with a remoteOnly source, the application shall pass `origin/<name>` so git creates a local tracking branch as a side effect.
+
+**GIT-5.13** While the existing-branch picker is open, the application shall display branches sorted by last-commit date descending, with branches mounted in another worktree dimmed and unselectable.
+
+**GIT-5.14** When a branch row in the existing-branch picker has an associated open PR/MR, the application shall surface the PR number and title alongside the branch name.
+
+**GIT-5.15** When the user selects a branch from the existing-branch picker, the application shall auto-fill the worktree name with the branch name unless the user has already edited the field.
 
 ## ATTN — Attention Notification System
 

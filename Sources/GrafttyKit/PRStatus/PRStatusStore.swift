@@ -18,6 +18,12 @@ public final class PRStatusStore {
     public private(set) var infos: [String: PRInfo] = [:]
     public private(set) var absent: Set<String> = []
 
+    /// Per-repo, per-branch PR map. Populated alongside `infos` from the
+    /// same fetcher snapshot — the picker reads this for arbitrary
+    /// branches in the repo (including unmounted ones), while
+    /// per-worktree consumers continue reading `infos`.
+    public private(set) var prsByRepoBranch: [String: [String: PRInfo]] = [:]
+
     @ObservationIgnored private let executor: CLIExecutor
     @ObservationIgnored private let fetcherFor: (HostingProvider) -> PRFetcher?
     @ObservationIgnored private let detectHost: @Sendable (String) async throws -> HostingOrigin?
@@ -48,7 +54,7 @@ public final class PRStatusStore {
     /// merging) — for a (PR-number, state) pair that was not the
     /// previous cache value. Drives the "PR resolved — delete
     /// worktree?" offer dialog (GIT-4.7).
-    @ObservationIgnored public var onPRResolved: (@MainActor (_ worktreePath: String, _ prNumber: Int, _ state: PRInfo.State) -> Void)?
+    @ObservationIgnored public var onPRResolved: (@MainActor (_ worktreePath: String, _ prNumber: Int, _ prTitle: String, _ state: PRInfo.State) -> Void)?
 
     /// Fires on PR state, CI-conclusion, or mergeable-state transitions
     /// for a tracked worktree. Idempotent polls (same info twice) do not
@@ -318,8 +324,13 @@ public final class PRStatusStore {
                 absent.remove(wt.path)
             }
             if justResolved, let onPRResolved {
-                onPRResolved(wt.path, pr.number, pr.state)
+                onPRResolved(wt.path, pr.number, pr.title, pr.state)
             }
+        }
+
+        // Publish the per-branch view for the picker.
+        if prsByRepoBranch[repoPath] != snapshot.prsByBranch {
+            prsByRepoBranch[repoPath] = snapshot.prsByBranch
         }
     }
 
@@ -476,6 +487,9 @@ extension PRStatusStore {
         }
         for repoPath in hostByRepo.keys where !currentRepoPaths.contains(repoPath) {
             hostByRepo.removeValue(forKey: repoPath)
+        }
+        for repoPath in prsByRepoBranch.keys where !currentRepoPaths.contains(repoPath) {
+            prsByRepoBranch.removeValue(forKey: repoPath)
         }
     }
 }

@@ -18,11 +18,12 @@ struct CreateWorktreeClientTests {
         #expect(req.url?.absoluteString == "http://mac.ts.net:8799/worktrees")
         #expect(req.httpMethod == "POST")
         #expect(req.value(forHTTPHeaderField: "Content-Type") == "application/json")
-        let json = try #require(req.httpBody.map { try JSONSerialization.jsonObject(with: $0) as? [String: String] })
+        let json = try #require(req.httpBody.map { try JSONSerialization.jsonObject(with: $0) as? [String: AnyHashable] })
         #expect(json == [
             "repoPath": "/repo",
             "worktreeName": "feature-xyz",
             "branchName": "feature-xyz",
+            "existing": false,
         ])
     }
 

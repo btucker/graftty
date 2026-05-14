@@ -38,6 +38,7 @@ struct MainWindow: View {
                 theme: terminalManager.theme,
                 statsStore: statsStore,
                 prStatusStore: prStatusStore,
+                remoteBranchStore: remoteBranchStore,
                 onSelect: selectWorktree,
                 onSelectPane: selectPane,
                 onAddRepo: addRepository,
@@ -139,8 +140,8 @@ struct MainWindow: View {
             // Wired here rather than in GrafttyApp.startup() so the
             // closure captures MainWindow's `$appState` binding — both
             // NSAlert presentation and the "offered" write-back need it.
-            prStatusStore.onPRResolved = { worktreePath, prNumber, state in
-                offerDeleteForResolvedPR(worktreePath: worktreePath, prNumber: prNumber, state: state)
+            prStatusStore.onPRResolved = { worktreePath, prNumber, prTitle, state in
+                offerDeleteForResolvedPR(worktreePath: worktreePath, prNumber: prNumber, prTitle: prTitle, state: state)
             }
         }
         .focusedSceneValue(\.addWorktreeAction, addWorktreeAction)
@@ -226,6 +227,11 @@ struct MainWindow: View {
                let selection = terminalManager.readSelection(for: termID) {
                 prefill = WorktreeNameSanitizer.sanitizeForPrefill(selection)
             }
+            // Kick off fresh branch + PR data so the BranchComboBox
+            // renders something current as the sheet appears, even if
+            // the polling cadence is in a long-backoff.
+            remoteBranchStore.pulse()
+            prStatusStore.pulse()
             pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: prefill)
         }
     }
@@ -457,12 +463,12 @@ struct MainWindow: View {
     private func addWorktree(
         repo: RepoEntry,
         worktreeName: String,
-        branchName: String
+        branch: BranchSelection
     ) async -> String? {
         let beginResult = AddWorktreeFlow.beginCreate(
             repoPath: repo.path,
             worktreeName: worktreeName,
-            branchName: branchName,
+            branch: branch,
             appState: $appState
         )
         let worktreePath: String
@@ -476,7 +482,7 @@ struct MainWindow: View {
             let result = await AddWorktreeFlow.finishCreate(
                 repoPath: repo.path,
                 worktreePath: worktreePath,
-                branchName: branchName,
+                branch: branch,
                 appState: $appState,
                 worktreeMonitor: worktreeMonitor,
                 statsStore: statsStore,
@@ -680,6 +686,33 @@ struct MainWindow: View {
         }
     }
 
+    /// Post-remove teardown: destroy live surfaces, clear per-path caches
+    /// (GIT-4.10 ordering: BEFORE removing the model entry, so orphan
+    /// cache entries don't bleed into a future same-path re-add), drop
+    /// the entry, then fire TEAM-5.3 `left`. The TEAM-5.3 lookup uses
+    /// `repoPath` rather than `wt.path` because the worktree is gone
+    /// from `appState` by the time the lookup runs.
+    @MainActor
+    private func finishWorktreeRemoval(worktree wt: WorktreeEntry, repoPath: String) {
+        if wt.state == .running {
+            terminalManager.destroySurfaces(terminalIDs: wt.splitTree.allLeaves)
+        }
+        prStatusStore.clear(worktreePath: wt.path)
+        statsStore.clear(worktreePath: wt.path)
+        let leaverBranch = wt.branch
+        appState.removeWorktree(atPath: wt.path)
+        if let repo = appState.repo(forWorktreePath: repoPath) {
+            TeamMembershipEvents.fireLeft(
+                repo: repo,
+                leaverBranch: leaverBranch,
+                leaverPath: wt.path,
+                reason: .removed,
+                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled),
+                dispatcher: teamEventDispatcher
+            )
+        }
+    }
+
     /// GIT-4.7 / GIT-4.14. The "offered" marker is persisted via
     /// `AppState.onChange` so Keep is sticky across restarts, not just
     /// across polls — and is written only once we know the sheet is
@@ -688,7 +721,7 @@ struct MainWindow: View {
     /// keeps the main run loop's default mode pumping so libghostty's
     /// PTY callbacks keep flowing for every embedded pane while the
     /// auto-triggered offer is on screen.
-    private func offerDeleteForResolvedPR(worktreePath: String, prNumber: Int, state: PRInfo.State) {
+    private func offerDeleteForResolvedPR(worktreePath: String, prNumber: Int, prTitle: String, state: PRInfo.State) {
         guard let (repoIdx, wtIdx) = appState.indices(forWorktreePath: worktreePath) else { return }
         let repo = appState.repos[repoIdx]
         let wt = repo.worktrees[wtIdx]
@@ -697,7 +730,7 @@ struct MainWindow: View {
         // a stale entry has no live worktree to remove.
         guard wt.path != repo.path, wt.state != .stale else { return }
         guard wt.offeredDeleteForResolvedPR != prNumber else { return }
-        guard let config = PRResolutionOfferAlert.configuration(prNumber: prNumber, state: state) else { return }
+        guard let config = PRResolutionOfferAlert.configuration(prNumber: prNumber, prTitle: prTitle, state: state) else { return }
         // `NSApp.mainWindow` only — falling through to "any visible
         // non-panel window" would attach the sheet to Settings or the
         // Team Activity Log when those are foregrounded. Dropping the

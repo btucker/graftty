@@ -4,21 +4,6 @@ import Foundation
 
 @Suite("RemoteBranchStore")
 struct RemoteBranchStoreTests {
-    @Test func parseStripsOriginPrefixPreservesSlashesAndSkipsHead() {
-        let refs = """
-        origin/HEAD
-        origin/main
-        origin/feature/foo
-        upstream/ignored
-
-        """
-
-        #expect(RemoteBranchStore.parseRefsForTesting(refs) == [
-            "main",
-            "feature/foo",
-        ])
-    }
-
     @Test func parseUpstreamsMapsLocalHeadsToOriginRemoteBranches() {
         // Branches without upstream emit an empty trailing column;
         // non-origin upstreams (e.g. `upstream/main`) are dropped.
@@ -364,6 +349,34 @@ struct RemoteBranchStoreTests {
         #expect(ticker.pulseCallCount == 1)
     }
 
+    @Test func parseLocalBranchesWithDatesExtractsNameAndDate() {
+        let raw = """
+        main\t2026-05-10T12:30:00-05:00\torigin/main
+        feature/foo\t2026-05-13T09:15:00-05:00\torigin/feature/bar
+        no-upstream\t2026-04-01T00:00:00Z\t
+
+        """
+        let parsed = RemoteBranchStore.parseLocalBranchesWithDatesForTesting(raw)
+        let names = parsed.map(\.name)
+        #expect(names == ["main", "feature/foo", "no-upstream"])
+        let expectedMainDate = ISO8601DateFormatter.dateFromInternetDateTime("2026-05-10T12:30:00-05:00")
+        #expect(parsed.first(where: { $0.name == "main" })?.lastCommitDate == expectedMainDate)
+    }
+
+    @Test func parseRemoteBranchesWithDatesStripsOriginAndKeepsDate() {
+        let raw = """
+        origin/HEAD\t2026-05-13T09:15:00-05:00
+        origin/main\t2026-05-10T12:30:00-05:00
+        origin/feature/foo\t2026-05-13T09:15:00-05:00
+
+        """
+        let parsed = RemoteBranchStore.parseRemoteBranchesWithDatesForTesting(raw)
+        let names = parsed.map(\.name).sorted()
+        #expect(names == ["feature/foo", "main"])
+        let expectedMainDate = ISO8601DateFormatter.dateFromInternetDateTime("2026-05-10T12:30:00-05:00")
+        #expect(parsed.first(where: { $0.name == "main" })?.lastCommitDate == expectedMainDate)
+    }
+
     private func waitUntil(
         timeout: TimeInterval,
         condition: @escaping @MainActor @Sendable () -> Bool
@@ -406,6 +419,14 @@ private enum TestError: Error {
 }
 
 private final class CompletionToken {}
+
+private extension ISO8601DateFormatter {
+    static func dateFromInternetDateTime(_ s: String) -> Date? {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f.date(from: s)
+    }
+}
 
 private final class RecordingRemoteBranchLister: @unchecked Sendable {
     private let lock = NSLock()

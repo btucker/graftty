@@ -19,11 +19,12 @@ enum PRResolutionOfferAlert {
     /// Returns `nil` for non-terminal states (`.open`) so the factory
     /// owns the "PR isn't done, no offer" rule rather than asking every
     /// caller to pre-guard `state.resolutionWord`.
-    static func configuration(prNumber: Int, state: PRInfo.State) -> Configuration? {
+    static func configuration(prNumber: Int, prTitle: String, state: PRInfo.State) -> Configuration? {
         guard let resolutionWord = state.resolutionWord else { return nil }
+        let titlePrefix = prTitle.isEmpty ? "" : "\(prTitle)\n\n"
         return Configuration(
             messageText: "Pull request #\(prNumber) \(resolutionWord)",
-            informativeText: "Delete the worktree now? This will delete the worktree but not the branch.",
+            informativeText: "\(titlePrefix)Delete the worktree now? This will delete the worktree but not the branch.",
             primaryButton: "Delete Worktree",
             secondaryButton: "Keep"
         )

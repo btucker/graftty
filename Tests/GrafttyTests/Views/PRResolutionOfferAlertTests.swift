@@ -13,22 +13,27 @@ import GrafttyProtocol
 struct PRResolutionOfferAlertTests {
 
     @Test("""
-@spec GIT-4.7: When the application first observes a worktree's associated pull request transition into a terminal resolved state — either merged or closed-without-merging, whether from open, from no-PR-cached, or from a different previously-resolved PR number — the application shall present an informational dialog offering to delete the worktree. The dialog's message text shall cite the PR number and the resolution word ("merged" or "closed"), its informative text shall read "Delete the worktree now? This will delete the worktree but not the branch.", and its buttons shall be "Delete Worktree" and "Keep".
+@spec GIT-4.7: When the application first observes a worktree's associated pull request transition into a terminal resolved state — either merged or closed-without-merging, whether from open, from no-PR-cached, or from a different previously-resolved PR number — the application shall present an informational dialog offering to delete the worktree. The dialog's message text shall cite the PR number and the resolution word ("merged" or "closed"). Its informative text shall begin with the PR/MR title on its own line (when non-empty), followed by "Delete the worktree now? This will delete the worktree but not the branch." Its buttons shall be "Delete Worktree" and "Keep".
 """)
-    func mergedConfiguration() {
-        let config = PRResolutionOfferAlert.configuration(prNumber: 142, state: .merged)
+    func mergedConfigurationWithTitle() {
+        let config = PRResolutionOfferAlert.configuration(prNumber: 142, prTitle: "Add OAuth flow", state: .merged)
         #expect(config?.messageText == "Pull request #142 merged")
-        #expect(config?.informativeText == "Delete the worktree now? This will delete the worktree but not the branch.")
+        #expect(config?.informativeText == "Add OAuth flow\n\nDelete the worktree now? This will delete the worktree but not the branch.")
         #expect(config?.primaryButton == "Delete Worktree")
         #expect(config?.secondaryButton == "Keep")
     }
 
+    @Test func emptyTitleOmitsTitlePrefix() {
+        let config = PRResolutionOfferAlert.configuration(prNumber: 142, prTitle: "", state: .merged)
+        #expect(config?.informativeText == "Delete the worktree now? This will delete the worktree but not the branch.")
+    }
+
     @Test func closedStateUsesClosedVerb() {
-        let config = PRResolutionOfferAlert.configuration(prNumber: 99, state: .closed)
+        let config = PRResolutionOfferAlert.configuration(prNumber: 99, prTitle: "Drop legacy auth", state: .closed)
         #expect(config?.messageText == "Pull request #99 closed")
     }
 
     @Test func openStateReturnsNil() {
-        #expect(PRResolutionOfferAlert.configuration(prNumber: 1, state: .open) == nil)
+        #expect(PRResolutionOfferAlert.configuration(prNumber: 1, prTitle: "anything", state: .open) == nil)
     }
 }

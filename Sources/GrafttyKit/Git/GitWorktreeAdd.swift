@@ -1,10 +1,11 @@
 import Foundation
 
-/// Creates a new git worktree for a repository with a fresh branch.
+/// Creates a new git worktree for a repository.
 ///
-/// Delegates to `git worktree add -b <branch> <path> [<start>]`. Reports
-/// git's stderr on failure so callers can surface the user-visible error
-/// (e.g. "branch 'foo' already exists").
+/// Switches argv based on `BranchSelection`: `.createNew` invokes
+/// `git worktree add -b <branch> <path> [<start>]` (today's behavior);
+/// `.useExisting` invokes `git worktree add <path> <branch|origin/branch>`
+/// (no `-b`, no start point — the existing ref IS the start point).
 public enum GitWorktreeAdd {
 
     public enum Error: Swift.Error, Equatable {
@@ -17,25 +18,17 @@ public enum GitWorktreeAdd {
         case cliFailure(CLIError)
     }
 
-    /// - Parameters:
-    ///   - repoPath: the repository root (the main checkout directory).
-    ///   - worktreePath: where to create the new worktree on disk. May be
-    ///     absolute or relative to `repoPath`.
-    ///   - branchName: the new branch to create. Passed as `-b <branch>`,
-    ///     so this must not already exist as a local branch.
-    ///   - startPoint: ref to branch from (e.g. `"main"`,
-    ///     `"origin/main"`). Nil defers to git's default (current HEAD
-    ///     of the main checkout).
     public static func add(
         repoPath: String,
         worktreePath: String,
-        branchName: String,
+        branch: BranchSelection,
         startPoint: String?
     ) async throws {
-        var args: [String] = ["worktree", "add", "-b", branchName, worktreePath]
-        if let startPoint, !startPoint.isEmpty {
-            args.append(startPoint)
-        }
+        let args = argvFor(
+            branch: branch,
+            worktreePath: worktreePath,
+            startPoint: startPoint
+        )
         let result: CLIOutput
         do {
             result = try await GitRunner.captureAll(args: args, at: repoPath)
@@ -47,6 +40,32 @@ public enum GitWorktreeAdd {
                 exitCode: result.exitCode,
                 stderr: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
             )
+        }
+    }
+
+    nonisolated static func argvFor(
+        branch: BranchSelection,
+        worktreePath: String,
+        startPoint: String?
+    ) -> [String] {
+        switch branch {
+        case .createNew(let name):
+            var args = ["worktree", "add", "-b", name, worktreePath]
+            if let startPoint, !startPoint.isEmpty {
+                args.append(startPoint)
+            }
+            return args
+        case .useExisting(let name, let source):
+            precondition(
+                startPoint == nil,
+                "GitWorktreeAdd: startPoint must be nil when branch is .useExisting (caller should pass nil)"
+            )
+            let ref: String
+            switch source {
+            case .local: ref = name
+            case .remoteOnly: ref = "origin/" + name
+            }
+            return ["worktree", "add", worktreePath, ref]
         }
     }
 }
