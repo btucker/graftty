@@ -2,7 +2,9 @@ import Foundation
 import Testing
 @testable import GrafttyKit
 
-@Suite("@spec PUSH-1.3: PushDeviceStore persists registrations and filters stale entries on read.")
+@Suite("""
+@spec PUSH-1.3: The Mac shall persist device registrations at `~/Library/Application Support/Graftty/push-devices.json` as `[{token, deviceName, platform, lastRegisteredAt}]`, written atomically on each mutation; records with `lastRegisteredAt > 90 days` shall be filtered out on read.
+""")
 struct PushDeviceStoreTests {
     private func makeTempStore() -> (PushDeviceStore, URL) {
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
