@@ -1,0 +1,60 @@
+#if canImport(UIKit)
+import UIKit
+import UserNotifications
+
+/// `@UIApplicationDelegateAdaptor`-installed delegate that owns the
+/// `PushRegistrar` and bridges UIKit's APNs callbacks into it. The registrar
+/// is constructed eagerly in `init` (rather than lazily in
+/// `didFinishLaunchingWithOptions`) so the static handle is non-nil for any
+/// caller that wants to trigger a re-register sweep from elsewhere (e.g. the
+/// host-add flow). `HostStore.shared` is safe to read at delegate-init time
+/// because `HostStore.init` performs no I/O.
+@MainActor
+public final class PushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+
+    /// Static handle so non-AppDelegate surfaces (e.g. the "add host" sheet)
+    /// can ask the registrar to fan out without plumbing it through the view
+    /// hierarchy.
+    public static var registrar: PushRegistrar?
+
+    public override init() {
+        super.init()
+        let registrar = PushRegistrar(
+            hostSource: HostStorePushSource(HostStore.shared),
+            network: URLSessionPushNetwork(),
+            deviceName: UIDevice.current.name
+        )
+        Self.registrar = registrar
+    }
+
+    public func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+    ) -> Bool {
+        UNUserNotificationCenter.current().delegate = self
+        if let registrar = Self.registrar {
+            Task { await registrar.requestAuthorizationAndRegister() }
+        }
+        return true
+    }
+
+    public func application(
+        _ application: UIApplication,
+        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+    ) {
+        let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
+        guard let registrar = Self.registrar else { return }
+        Task {
+            await registrar.deviceTokenDidArrive(token: hex)
+            await registrar.registerWithAllHosts()
+        }
+    }
+
+    public func application(
+        _ application: UIApplication,
+        didFailToRegisterForRemoteNotificationsWithError error: Error
+    ) {
+        NSLog("PushAppDelegate: APNs registration failed: \(error)")
+    }
+}
+#endif

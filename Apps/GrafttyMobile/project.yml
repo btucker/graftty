@@ -23,6 +23,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_IDENTITY[sdk=iphoneos*]: Apple Development
+        CODE_SIGN_ENTITLEMENTS: GrafttyMobile/GrafttyMobile.entitlements
         CODE_SIGNING_REQUIRED: NO
         DEVELOPMENT_TEAM: 67APXH3J92
         PROVISIONING_PROFILE_SPECIFIER: ""

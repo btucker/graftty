@@ -21,6 +21,13 @@ public final class HostStore {
         case io(String)
     }
 
+    /// Shared singleton used by the iOS app's launch path so non-SwiftUI
+    /// surfaces (notably `PushAppDelegate`, which `@UIApplicationDelegateAdaptor`
+    /// instantiates before any SwiftUI `init` runs) can reach the same store
+    /// that the `RootView` reads. The init() runs no I/O (see header doc), so
+    /// constructing it eagerly here doesn't cost the launch path anything.
+    public static let shared = HostStore()
+
     public private(set) var hosts: [Host] = []
 
     /// Distinguishes "loaded, zero hosts" from "load not yet completed",
@@ -149,6 +156,29 @@ public final class HostStore {
 
     private func sorted(_ list: [Host]) -> [Host] {
         list.sorted { ($0.lastUsedAt ?? $0.addedAt) > ($1.lastUsedAt ?? $1.addedAt) }
+    }
+}
+
+/// `PushHostSource` adapter over `HostStore`. The store stores `[Host]` and
+/// is `@MainActor`-isolated for SwiftUI observation; the registrar (an actor)
+/// needs `Sendable` read access to a `[PushTargetHost]` view. We can't put
+/// the conformance on `HostStore` itself because the protocol's required
+/// `hosts: [PushTargetHost]` collides with the existing `hosts: [Host]`
+/// stored property, so we wrap.
+///
+/// Reads hop to the main actor via `assumeIsolated` — safe because the live
+/// caller (`PushAppDelegate`, fed by UIKit scene-phase + APNs callbacks) is
+/// already on the main actor.
+public final class HostStorePushSource: PushHostSource, @unchecked Sendable {
+    private let store: HostStore
+    public init(_ store: HostStore) { self.store = store }
+    public var hosts: [PushTargetHost] {
+        MainActor.assumeIsolated {
+            store.hosts.map {
+                PushTargetHost(baseURL: $0.baseURL,
+                               lastUsedAt: $0.lastUsedAt ?? $0.addedAt)
+            }
+        }
     }
 }
 #endif

@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		03C55D51794BAB7E1C6C722A /* SessionIdleRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68070C67FF59966F382824FF /* SessionIdleRendererTests.swift */; };
+		7B5E2E0001000002000000A1 /* PushRegistrarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B5E2E0001000002000000A0 /* PushRegistrarTests.swift */; };
 		0C48DC35ED5DCBF20CC0A0A3 /* CreateWorktreeClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9BE28EEA6673202992718AC /* CreateWorktreeClientTests.swift */; };
 		0F0DC07D64128764A6E254A9 /* SessionLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB040F5D6FAA7EDA4C09F34F /* SessionLifecycleTests.swift */; };
 		1979A63164CFEDFAA56AD475 /* SessionReconnectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D9235F4AB2E4D6E89AEE13 /* SessionReconnectTests.swift */; };
@@ -52,6 +53,8 @@
 		5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPaneViewTests.swift; sourceTree = "<group>"; };
 		59C241EF3381506F0ED7BEC0 /* PanePreviewClientPoolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanePreviewClientPoolTests.swift; sourceTree = "<group>"; };
 		60476F2F86616EAD082CF370 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		7B5E2E0001000001000000A0 /* GrafttyMobile.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GrafttyMobile.entitlements; sourceTree = "<group>"; };
+		7B5E2E0001000002000000A0 /* PushRegistrarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRegistrarTests.swift; sourceTree = "<group>"; };
 		6509EB736398D70ED6F6C712 /* ClockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClockTests.swift; sourceTree = "<group>"; };
 		6717C8CFDA2A367AD3F5421F /* PreviewCapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewCapTests.swift; sourceTree = "<group>"; };
 		68070C67FF59966F382824FF /* SessionIdleRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionIdleRendererTests.swift; sourceTree = "<group>"; };
@@ -106,6 +109,7 @@
 			isa = PBXGroup;
 			children = (
 				1B4204CA01B233B9F19E518B /* Assets.xcassets */,
+				7B5E2E0001000001000000A0 /* GrafttyMobile.entitlements */,
 				8E56F1F52D5AD50167862DB5 /* GrafttyMobileApp.swift */,
 				60476F2F86616EAD082CF370 /* Info.plist */,
 				2E297959F982E90ED939C39C /* LaunchScreen.storyboard */,
@@ -186,6 +190,7 @@
 				64B4A115C4DAA4C8BDCE0301 /* App */,
 				1B9D91891E2ED0F7FB19D21F /* Auth */,
 				A1A551D7B6750F11488B0E0A /* Hosts */,
+				7B5E2E0001000003000000A0 /* Push */,
 				2E51D47314D16FBA8059B04C /* Session */,
 				5326D4D06134BD55FD5087CF /* Terminal */,
 				6369E2047B8A39CA96B1E94C /* UI */,
@@ -200,6 +205,14 @@
 				8F512E9DFA7D7EC060D47EAD /* HostStoreTests.swift */,
 			);
 			path = Hosts;
+			sourceTree = "<group>";
+		};
+		7B5E2E0001000003000000A0 /* Push */ = {
+			isa = PBXGroup;
+			children = (
+				7B5E2E0001000002000000A0 /* PushRegistrarTests.swift */,
+			);
+			path = Push;
 			sourceTree = "<group>";
 		};
 		EBBD8BB4335B09E0E1E21C3F /* Packages */ = {
@@ -320,6 +333,7 @@
 				BFAB69C16EF825DE58B94270 /* PanePreviewFontApplicationTests.swift in Sources */,
 				81DB8F5B4AA670E833184E67 /* PanePreviewFontSizingTests.swift in Sources */,
 				CAF2F1261BE1D2E9862B28E7 /* PreviewCapTests.swift in Sources */,
+				7B5E2E0001000002000000A1 /* PushRegistrarTests.swift in Sources */,
 				4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */,
 				4FC268572A822F79E5CBF517 /* SessionClientTests.swift in Sources */,
 				03C55D51794BAB7E1C6C722A /* SessionIdleRendererTests.swift in Sources */,
@@ -469,6 +483,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_ENTITLEMENTS = GrafttyMobile/GrafttyMobile.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
@@ -513,6 +528,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_ENTITLEMENTS = GrafttyMobile/GrafttyMobile.entitlements;
 				CODE_SIGN_IDENTITY = "-";
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;

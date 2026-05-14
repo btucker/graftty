@@ -5,7 +5,7 @@ import SwiftUI
 
 public struct RootView: View {
 
-    @State private var hostStore = HostStore()
+    @State private var hostStore = HostStore.shared
     @State private var gate = BiometricGate()
     @State private var navigationPath = NavigationPath()
     @Environment(\.scenePhase) private var scenePhase
