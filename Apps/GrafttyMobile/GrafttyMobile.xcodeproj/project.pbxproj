@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		03C55D51794BAB7E1C6C722A /* SessionIdleRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68070C67FF59966F382824FF /* SessionIdleRendererTests.swift */; };
 		7B5E2E0001000002000000A1 /* PushRegistrarTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B5E2E0001000002000000A0 /* PushRegistrarTests.swift */; };
+		7B5E2E0001000002000000A3 /* PushReceiverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B5E2E0001000002000000A2 /* PushReceiverTests.swift */; };
 		0C48DC35ED5DCBF20CC0A0A3 /* CreateWorktreeClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9BE28EEA6673202992718AC /* CreateWorktreeClientTests.swift */; };
 		0F0DC07D64128764A6E254A9 /* SessionLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB040F5D6FAA7EDA4C09F34F /* SessionLifecycleTests.swift */; };
 		1979A63164CFEDFAA56AD475 /* SessionReconnectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D9235F4AB2E4D6E89AEE13 /* SessionReconnectTests.swift */; };
@@ -55,6 +56,7 @@
 		60476F2F86616EAD082CF370 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		7B5E2E0001000001000000A0 /* GrafttyMobile.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = GrafttyMobile.entitlements; sourceTree = "<group>"; };
 		7B5E2E0001000002000000A0 /* PushRegistrarTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRegistrarTests.swift; sourceTree = "<group>"; };
+		7B5E2E0001000002000000A2 /* PushReceiverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushReceiverTests.swift; sourceTree = "<group>"; };
 		6509EB736398D70ED6F6C712 /* ClockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClockTests.swift; sourceTree = "<group>"; };
 		6717C8CFDA2A367AD3F5421F /* PreviewCapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewCapTests.swift; sourceTree = "<group>"; };
 		68070C67FF59966F382824FF /* SessionIdleRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionIdleRendererTests.swift; sourceTree = "<group>"; };
@@ -211,6 +213,7 @@
 			isa = PBXGroup;
 			children = (
 				7B5E2E0001000002000000A0 /* PushRegistrarTests.swift */,
+				7B5E2E0001000002000000A2 /* PushReceiverTests.swift */,
 			);
 			path = Push;
 			sourceTree = "<group>";
@@ -334,6 +337,7 @@
 				81DB8F5B4AA670E833184E67 /* PanePreviewFontSizingTests.swift in Sources */,
 				CAF2F1261BE1D2E9862B28E7 /* PreviewCapTests.swift in Sources */,
 				7B5E2E0001000002000000A1 /* PushRegistrarTests.swift in Sources */,
+				7B5E2E0001000002000000A3 /* PushReceiverTests.swift in Sources */,
 				4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */,
 				4FC268572A822F79E5CBF517 /* SessionClientTests.swift in Sources */,
 				03C55D51794BAB7E1C6C722A /* SessionIdleRendererTests.swift in Sources */,

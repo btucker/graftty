@@ -13,9 +13,4 @@ struct PushTodo {
 """, .disabled("not yet implemented"))
     func push_4_2() async throws { }
 
-    @Test("""
-@spec PUSH-5.2: When iOS receives a remote notification with `userInfo.kind == "agent_stop_clear"`, the application shall call `UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [userInfo.collapse_id])`.
-""", .disabled("not yet implemented"))
-    func push_5_2() async throws { }
-
 }

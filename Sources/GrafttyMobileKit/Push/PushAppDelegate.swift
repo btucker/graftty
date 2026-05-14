@@ -10,12 +10,14 @@ import UserNotifications
 /// host-add flow). `HostStore.shared` is safe to read at delegate-init time
 /// because `HostStore.init` performs no I/O.
 @MainActor
-public final class PushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+public final class PushAppDelegate: NSObject, UIApplicationDelegate, @MainActor UNUserNotificationCenterDelegate {
 
     /// Static handle so non-AppDelegate surfaces (e.g. the "add host" sheet)
     /// can ask the registrar to fan out without plumbing it through the view
     /// hierarchy.
     public static var registrar: PushRegistrar?
+
+    private let receiver = PushReceiver()
 
     public override init() {
         super.init()
@@ -55,6 +57,25 @@ public final class PushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotif
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
         NSLog("PushAppDelegate: APNs registration failed: \(error)")
+    }
+
+    public func application(
+        _ application: UIApplication,
+        didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+        fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+    ) {
+        Task {
+            let handled = await receiver.handleSilentPush(userInfo: userInfo)
+            completionHandler(handled ? .newData : .noData)
+        }
+    }
+
+    public func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
     }
 }
 #endif
