@@ -19,11 +19,6 @@ struct PushTodo {
     func push_3_1() async throws { }
 
     @Test("""
-@spec PUSH-3.2: The application shall sign APNs JWTs with ES256 using a `.p8` bundled in Graftty.app at `Resources/apns/AuthKey_<KEYID>.p8`; the same JWT shall be cached for up to 50 minutes before being re-signed.
-""", .disabled("not yet implemented"))
-    func push_3_2() async throws { }
-
-    @Test("""
 @spec PUSH-4.1: When the user taps an iOS alert banner, the application shall decode the `userInfo` as `AgentStopNotificationPayload` and reconstruct the navigation stack to `[HostPicker → WorktreePicker(host) → WorktreeDetail(worktreePath) → TerminalPane(sessionID)]`.
 """, .disabled("not yet implemented"))
     func push_4_1() async throws { }
