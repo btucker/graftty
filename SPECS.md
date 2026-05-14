@@ -206,6 +206,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-5.9** When `SurfaceHandle.setFrameSize` forwards a backing-pixel dimension to `ghostty_surface_set_size`, the conversion from `CGFloat` to `UInt32` shall be performed via a defensive clamp that maps `NaN` and values `≤ 1` to `1`, `+∞` and values `≥ UInt32.max` to `UInt32.max`, and all other finite values to their truncated `UInt32` representation. Naive `UInt32(max(1, Int(dim)))` traps on `NaN` and on out-of-`Int`-range values; SwiftUI `GeometryReader` has been observed to emit `.infinity` transiently during certain rebinding flows, and a trap on the view's layout pass crashes the whole process (every open pane dies). The helper is `SurfacePixelDimension.clamp(_:)` in GrafttyKit so the rule is unit-testable without an NSView host.
 
+**TERM-5.10** When `NativePtySession.close()` is called while a `writeToSurface` callback is mid-execution on the PTY reader thread, the application shall block `close()` until that callback returns and shall ensure no further `writeToSurface` invocation occurs after `close()` has returned. The barrier prevents `SurfaceHandle.deinit` (which calls `close()` and then `ghostty_surface_free`) from racing with an in-flight `ghostty_surface_write_buffer` on the reader thread; without it, the reader dereferences the freed surface and aborts with `BUG IN CLIENT OF LIBPLATFORM: os_unfair_lock is corrupt`.
+
 ### TERM-6.x — Stopping a Worktree
 
 **TERM-6.1** When the user triggers "Stop" on a running worktree, if any terminal surface has a running process, then the application shall display a confirmation dialog before proceeding.
