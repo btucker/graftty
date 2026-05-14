@@ -11,12 +11,12 @@ import GrafttyKit
 @MainActor
 final class WorktreeSurfaceBudget {
     let capacity: Int
-    private let onEvict: (PaneSlotID) -> Void
+    private let onEvict: @MainActor (PaneSlotID) -> Void
 
     /// Most-recently-used first.
     private(set) var lru: [String] = []
 
-    init(capacity: Int = 4, onEvict: @escaping (PaneSlotID) -> Void) {
+    init(capacity: Int = 4, onEvict: @escaping @MainActor (PaneSlotID) -> Void) {
         self.capacity = capacity
         self.onEvict = onEvict
     }
@@ -25,13 +25,6 @@ final class WorktreeSurfaceBudget {
         worktreePath: String,
         splitTreesByPath: [String: SplitTree]
     ) {
-        // Re-selecting the current head is a no-op for LRU order and
-        // can't trigger eviction, but still needs to fall through the
-        // self-prune below — so only short-circuit when nothing else
-        // is at risk of becoming stale.
-        if lru.first == worktreePath && lru.allSatisfy({ splitTreesByPath.keys.contains($0) }) {
-            return
-        }
         lru.removeAll { !splitTreesByPath.keys.contains($0) }
         lru.removeAll { $0 == worktreePath }
         lru.insert(worktreePath, at: 0)
