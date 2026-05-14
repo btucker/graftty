@@ -30,8 +30,12 @@ public enum TerminalWidthLayout {
     public static func decide(
         containerWidth: CGFloat,
         serverCols: UInt16?,
-        cellWidth: CGFloat
+        cellWidth: CGFloat,
+        isLeader: Bool
     ) -> Decision {
+        // IOS-5.6: leader owns cols; `serverCols` may be stale mid
+        // resize round-trip and must not pin the layout.
+        if isLeader { return .fits }
         guard let serverCols, serverCols > 0, cellWidth > 0 else {
             return .fits
         }

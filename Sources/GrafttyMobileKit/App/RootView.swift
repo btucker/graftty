@@ -503,7 +503,8 @@ struct SingleSessionView: View {
         let decision = TerminalWidthLayout.decide(
             containerWidth: containerSize.width,
             serverCols: client.serverGrid?.cols,
-            cellWidth: cellWidth
+            cellWidth: cellWidth,
+            isLeader: client.isSizeLeader
         )
         switch decision {
         case .fits:

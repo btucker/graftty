@@ -164,9 +164,9 @@ struct GitTodo {
     func git_4_6() async throws { }
 
     @Test("""
-@spec GIT-4.7: When the application first observes a worktree's associated pull request transition into a terminal resolved state — either merged or closed-without-merging, whether from open, from no-PR-cached, or from a different previously-resolved PR number — the application shall present an informational dialog offering to delete the worktree. The dialog's message text shall cite the PR number and the resolution word ("merged" or "closed"). Its informative text shall begin with the PR/MR title on its own line (when non-empty), followed by "Delete the worktree now? This will delete the worktree but not the branch." Its buttons shall be "Delete Worktree" and "Keep".
-""", .disabled("not yet implemented"))
-    func git_4_7() async throws { }
+@spec GIT-4.14: While the GIT-4.7 offer-delete dialog is on screen, the application shall not block the main run loop's default mode. The dialog is presented as a window-attached sheet via `NSAlert.beginSheetModal(for:)` rather than the nested-event-loop `NSAlert.runModal()`, so libghostty's PTY read callbacks — which land on the main thread in the default run-loop mode — keep flowing while the offer awaits a click. Without this, every terminal pane in every visible worktree freezes for as long as the auto-triggered offer stays unanswered.
+""", .disabled("structural — verified by manual smoke testing"))
+    func git_4_14() async throws { }
 
     @Test("""
 @spec GIT-4.8: If the user confirms the offer dialog from GIT-4.7 by clicking "Delete Worktree", the application shall proceed directly to `git worktree remove` without re-prompting — the offer dialog IS the confirmation. The resulting success and failure paths shall be identical to GIT-4.5 and GIT-4.4 (teardown on success, stderr surfaced on failure).

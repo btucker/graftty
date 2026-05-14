@@ -1215,6 +1215,36 @@ struct GrafttyApp: App {
             }
         }
 
+        // WEB-7.8: drive `POST /worktrees/delete` into the shared
+        // `DeleteWorktreeFlow`. Mirrors the create wiring above —
+        // closure runs on `MainActor` via `DeleteWorktreeFlow.delete`'s
+        // `@MainActor` isolation, so every `appState` mutation and
+        // surface teardown lands on the main actor, same as the native
+        // sidebar's "Delete Worktree" path.
+        webController.setWorktreeRemover { req in
+            let result = await DeleteWorktreeFlow.delete(
+                worktreePath: req.worktreePath,
+                force: req.force,
+                appState: appStateBinding,
+                terminalManager: tm,
+                statsStore: statsStore,
+                prStatusStore: prStatusStore,
+                teamEventDispatcher: dispatcherForWeb
+            )
+            switch result {
+            case .success(let outcome):
+                return .success(WebServer.DeleteWorktreeResponse(dismissed: outcome.dismissed))
+            case .failure(.notFound):
+                return .notFound("unknown worktree path")
+            case .failure(.mainCheckoutRejected):
+                return .invalid("cannot delete the repo's main checkout")
+            case .failure(.gitFailedForceable(let stderr, let status)):
+                return .gitFailedForceable(stderr: stderr, shortStatus: status)
+            case .failure(.gitFailedFinal(let msg)):
+                return .gitFailedFinal(msg)
+            }
+        }
+
         // WEB-4.3: close the NIO listen sockets + SIGTERM any in-flight
         // `zmx attach` children as part of normal shutdown. Process exit
         // would eventually do both, but we can't rely on that: WEB-4.6's

@@ -58,12 +58,13 @@ public final class SessionClient {
     /// layout tick; no view reads it, so don't churn observers.
     @ObservationIgnored
     private var lastIOSViewport: (cols: UInt16, rows: UInt16)?
-    /// True once we've sent our first keystroke-triggered resize —
-    /// from then on, libghostty's layout-driven resize events are
-    /// forwarded to the server (iOS is the leader). Before the first
-    /// keystroke, we stay silent on layout changes so the Mac pane
-    /// keeps control of the PTY's dimensions.
-    private var isLeader = false
+    /// True once we've sent our first keystroke-triggered resize. From
+    /// then on, libghostty's layout-driven resize events are forwarded
+    /// to the server (iOS is the size-leader) and `TerminalWidthLayout`
+    /// trusts the iOS-side cols rather than the server-announced grid
+    /// (`IOS-5.6`). Before the first keystroke we stay silent on layout
+    /// changes so the Mac pane keeps control of the PTY's dimensions.
+    public private(set) var isSizeLeader: Bool = false
 
     nonisolated private static let lf = Data([0x0A])
     nonisolated private static let cr = Data([0x0D])
@@ -193,7 +194,7 @@ public final class SessionClient {
             let next = CGFloat(viewport.cellWidthPixels) / displayScale
             if cellWidthPoints != next { cellWidthPoints = next }
         }
-        if isLeader {
+        if isSizeLeader {
             sendResizeToServer(cols: cols, rows: rows)
         }
     }
@@ -369,8 +370,8 @@ public final class SessionClient {
     }
 
     private func claimLeadershipIfNeeded() {
-        guard !isLeader, !stopped, role != .preview, let v = lastIOSViewport else { return }
-        isLeader = true
+        guard !isSizeLeader, !stopped, role != .preview, let v = lastIOSViewport else { return }
+        isSizeLeader = true
         sendResizeToServer(cols: v.cols, rows: v.rows)
     }
 

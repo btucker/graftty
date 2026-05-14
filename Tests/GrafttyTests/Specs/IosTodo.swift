@@ -139,11 +139,6 @@ struct IosTodo {
     func ios_5_5() async throws { }
 
     @Test("""
-@spec IOS-5.6: While the iOS client is not the size-leader (before the first keystroke on this session per `IOS-6.5`) and the server-announced grid's column count exceeds what fits in the device's container at libghostty's current cell width, the application shall wrap the terminal pane in a horizontal `ScrollView` whose inner frame width equals `serverCols × cellWidthPoints`. `cellWidthPoints` shall be taken from the `cellWidthPixels` field of libghostty's resize-callback viewport (divided by the display scale) — not a static font-aspect estimate — so libghostty's VT parser runs at exactly `serverCols` columns and server output flows through without internal line-wrap. Before the first viewport callback delivers a non-zero cell width, an overshooting fallback shall be used so the scroll frame errs toward too-wide (extra blank cells) rather than too-narrow (wrapped lines).
-""", .disabled("not yet implemented"))
-    func ios_5_6() async throws { }
-
-    @Test("""
 @spec IOS-6.1: While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard. The v1 bar shall expose, at minimum: Esc, Tab, Ctrl-C, Ctrl-D, ↑, ↓, ←, →, submit Return, insert literal LF, and Hide Keyboard. These controls shall send explicit PTY bytes through `SessionClient` rather than relying on UIKit text entry: Esc=`0x1B`, Tab=`0x09`, Ctrl-C=`0x03`, Ctrl-D=`0x04`, arrows=`ESC [ A/B/D/C`, submit Return=`0x0D`, and literal LF=`0x0A`.
 """, .disabled("not yet implemented"))
     func ios_6_1() async throws { }
@@ -212,4 +207,5 @@ struct IosTodo {
 @spec IOS-9.5: While a `POST /worktrees` call is in flight, the Create button shall be replaced by an in-flight indicator, the Cancel button and both input fields shall be disabled, and the repository picker shall be disabled. Once the call resolves (success or failure) all controls shall re-enable.
 """, .disabled("not yet implemented"))
     func ios_9_5() async throws { }
+
 }

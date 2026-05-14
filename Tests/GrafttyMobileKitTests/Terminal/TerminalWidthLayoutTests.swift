@@ -3,7 +3,9 @@ import CoreGraphics
 import Testing
 @testable import GrafttyMobileKit
 
-@Suite
+@Suite("""
+@spec IOS-5.6: While the iOS client is not the size-leader (before the first keystroke on this session per `IOS-6.5`) and the server-announced grid's column count exceeds what fits in the device's container at libghostty's current cell width, the application shall wrap the terminal pane in a horizontal `ScrollView` whose inner frame width equals `serverCols × cellWidthPoints`. `cellWidthPoints` shall be taken from the `cellWidthPixels` field of libghostty's resize-callback viewport (divided by the display scale) — not a static font-aspect estimate — so libghostty's VT parser runs at exactly `serverCols` columns and server output flows through without internal line-wrap. Before the first viewport callback delivers a non-zero cell width, an overshooting fallback shall be used so the scroll frame errs toward too-wide (extra blank cells) rather than too-narrow (wrapped lines).
+""")
 struct TerminalWidthLayoutTests {
 
     @Test
@@ -11,7 +13,8 @@ struct TerminalWidthLayoutTests {
         let d = TerminalWidthLayout.decide(
             containerWidth: 390,
             serverCols: nil,
-            cellWidth: 6.24
+            cellWidth: 6.24,
+            isLeader: false
         )
         #expect(d == .fits)
     }
@@ -21,7 +24,8 @@ struct TerminalWidthLayoutTests {
         let d = TerminalWidthLayout.decide(
             containerWidth: 390,
             serverCols: 0,
-            cellWidth: 6.24
+            cellWidth: 6.24,
+            isLeader: false
         )
         #expect(d == .fits)
     }
@@ -32,7 +36,8 @@ struct TerminalWidthLayoutTests {
         let d = TerminalWidthLayout.decide(
             containerWidth: 800,
             serverCols: 80,
-            cellWidth: 6.24
+            cellWidth: 6.24,
+            isLeader: false
         )
         #expect(d == .fits)
     }
@@ -46,7 +51,8 @@ struct TerminalWidthLayoutTests {
         let d = TerminalWidthLayout.decide(
             containerWidth: 390,
             serverCols: 120,
-            cellWidth: 6.24
+            cellWidth: 6.24,
+            isLeader: false
         )
         #expect(d == .scrollable(frameWidth: 120 * 6.24))
     }
@@ -57,9 +63,29 @@ struct TerminalWidthLayoutTests {
         let d = TerminalWidthLayout.decide(
             containerWidth: 390,
             serverCols: 100,
-            cellWidth: realCell
+            cellWidth: realCell,
+            isLeader: false
         )
         #expect(d == .scrollable(frameWidth: 100 * realCell))
+    }
+
+    @Test
+    func leaderAlwaysFitsContainerDespiteStaleServerCols() {
+        // Mid-pinch-zoom-in: cellWidth has just grown from 10 → 12pt so
+        // libghostty's resize callback already shrank cols from 39 → 32.
+        // iOS, as leader, has sent resize(32) to the server, but the
+        // server's grid envelope hasn't round-tripped yet — serverCols
+        // is still the pre-pinch 39. Returning .scrollable here would
+        // wrap the pane in a 468pt frame, pin libghostty back to 39
+        // cols, and (when the prior decision was .fits) remount
+        // UITerminalView — discarding the pinch-incremented font size.
+        let d = TerminalWidthLayout.decide(
+            containerWidth: 390,
+            serverCols: 39,
+            cellWidth: 12,
+            isLeader: true
+        )
+        #expect(d == .fits)
     }
 }
 #endif
