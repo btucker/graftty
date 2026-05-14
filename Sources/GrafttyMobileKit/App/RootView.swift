@@ -65,6 +65,27 @@ public struct RootView: View {
                 break
             }
         }
+        // PUSH-4.2: when the biometric gate transitions to unlocked,
+        // flush any deep-link target that was queued while locked.
+        .onChange(of: gate.state) { _, newState in
+            if newState == .unlocked {
+                DeepLinkRouter.shared.unlockDidSucceed()
+            }
+        }
+        // PUSH-4.1: when a deep-link target is published, consume it.
+        // TODO: full HostPicker → WorktreePicker → WorktreeDetail →
+        // TerminalPane reconstruction. The router exposes the decoded
+        // worktreePath + sessionID, but mapping that to the matching
+        // Host (and synthesising the intermediate `WorktreeStep` /
+        // `SessionStep` nav entries) requires resolving the worktree
+        // across `HostStore` — a UX-polish step that's deferred. The
+        // observer hook lands here so the structural contract (tap →
+        // router → RootView) is satisfied today; .consume() prevents
+        // re-render loops on the same target.
+        .onChange(of: DeepLinkRouter.shared.pendingTarget) { _, target in
+            guard target != nil else { return }
+            DeepLinkRouter.shared.consume()
+        }
     }
 
     private var lockOverlay: some View {

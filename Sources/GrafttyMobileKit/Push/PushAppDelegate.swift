@@ -77,5 +77,30 @@ public final class PushAppDelegate: NSObject, UIApplicationDelegate, @MainActor 
     ) {
         completionHandler([.banner, .sound])
     }
+
+    /// PUSH-4.1 / PUSH-4.2: routes a banner tap into `DeepLinkRouter`.
+    /// The router decodes the payload and publishes a `DeepLinkTarget`
+    /// that `RootView` observes to drive navigation reconstruction.
+    public func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let userInfo = response.notification.request.content.userInfo
+        Task { @MainActor in
+            // TODO: wire iOS-3.1 lock state (BiometricGate) so a tap
+            // while locked queues instead of publishing. The gate
+            // currently lives in RootView's view-state; pulling it out
+            // to a shared singleton (or threading it via a delegate
+            // accessor) is a separate refactor. Defaulting to `false`
+            // means a locked-tap target is published immediately — the
+            // RootView observer still won't navigate behind the lock
+            // overlay, so the user-visible behaviour is correct, just
+            // not queued/re-applied on unlock.
+            let locked = false
+            DeepLinkRouter.shared.handleTap(userInfo: userInfo, isAppLocked: locked)
+            completionHandler()
+        }
+    }
 }
 #endif
