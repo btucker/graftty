@@ -244,8 +244,9 @@ private struct WorktreeBlock: View {
     let onSelect: () -> Void
 
     var body: some View {
-        if worktree.state == .creating {
-            // Non-tappable: on-disk path may not exist yet.
+        if worktree.state.isInFlight {
+            // Non-tappable: on-disk path may not exist yet
+            // (`.creating`) or is about to vanish (`.deleting`).
             WorktreeRowContent(worktree: worktree)
         } else {
             Button(action: onSelect) {
@@ -291,7 +292,7 @@ private struct WorktreeRowContent: View {
 
     @ViewBuilder
     private var typeIcon: some View {
-        if worktree.state == .creating {
+        if worktree.state.isInFlight {
             ProgressView()
                 .controlSize(.mini)
                 .frame(width: 14)
@@ -306,10 +307,11 @@ private struct WorktreeRowContent: View {
         }
     }
 
-    /// Dim secondary for closed/creating, green when running, yellow when stale.
+    /// Dim secondary for closed/creating/deleting, green when running,
+    /// yellow when stale.
     private var typeIconColor: Color {
         switch worktree.state {
-        case .closed, .creating: return .secondary
+        case .closed, .creating, .deleting: return .secondary
         case .running: return .green
         case .stale: return .yellow
         }

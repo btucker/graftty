@@ -233,14 +233,13 @@ struct WorktreeRow: View {
     /// linked worktrees, and `arrow.triangle.pull` once a PR/MR is
     /// associated with the worktree. The icon's color encodes the
     /// worktree's running state: dim foreground when closed, green when
-    /// running, yellow when stale. While the entry is in `.creating` —
-    /// the optimistic placeholder shown between the user's submit and
-    /// `git worktree add` returning — a small `ProgressView` replaces the
-    /// icon so the user sees that work is in flight rather than a static
-    /// row that looks identical to a finished one.
+    /// running, yellow when stale. In-flight rows (`.creating` /
+    /// `.deleting`) get a `ProgressView` in place of the icon so the
+    /// user sees that work is in flight rather than a static row that
+    /// looks identical to a finished one.
     @ViewBuilder
     private var typeIcon: some View {
-        if entry.state == .creating {
+        if entry.state.isInFlight {
             ProgressView()
                 .controlSize(.mini)
                 .frame(width: 12)
@@ -257,7 +256,7 @@ struct WorktreeRow: View {
 
     private var typeIconColor: Color {
         switch entry.state {
-        case .closed, .creating: return theme.foreground.opacity(0.6)
+        case .closed, .creating, .deleting: return theme.foreground.opacity(0.6)
         case .running: return .green
         case .stale: return .yellow
         }

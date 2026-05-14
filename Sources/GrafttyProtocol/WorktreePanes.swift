@@ -1,14 +1,25 @@
 import Foundation
 
-/// Visible state of a worktree on the wire. Same four cases as the
+/// Visible state of a worktree on the wire. Same five cases as the
 /// server-side `WorktreeState` but without the persistence-only
-/// `.creating → .closed` coercion: the mobile client wants to render
-/// a spinner for `.creating` rows the same way the Mac sidebar does.
+/// `.creating → .closed` / `.deleting → .closed` coercion: the mobile
+/// client wants to render a spinner for in-flight rows the same way
+/// the Mac sidebar does.
 public enum WorktreeWireState: String, Codable, Sendable, Hashable {
     case closed
     case running
     case stale
     case creating
+    case deleting
+
+    /// True iff the row is a transient placeholder mid-flight on the
+    /// server (`AddWorktreeFlow` for `.creating`, `DeleteWorktreeFlow`
+    /// for `.deleting`). The picker renders a spinner and suppresses
+    /// taps / swipe actions for these rows. Mirrors
+    /// `WorktreeState.isInFlight` server-side.
+    public var isInFlight: Bool {
+        self == .creating || self == .deleting
+    }
 }
 
 /// Divergence stats for a worktree, faithful to the Mac sidebar's

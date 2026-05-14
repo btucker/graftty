@@ -285,13 +285,11 @@ struct MainWindow: View {
     }
 
     private func selectWorktree(_ path: String) {
-        // `.creating` placeholders have no on-disk worktree yet — there
-        // are no surfaces to focus, no PR / stats to refresh, and the
-        // detail pane would render an empty terminal. Ignore selection
-        // attempts on placeholders and let the user keep working in
-        // their current worktree until `AddWorktreeFlow` promotes the
-        // entry to `.running` (which auto-selects on its own).
-        if let wt = appState.worktree(forPath: path), wt.state == .creating {
+        // In-flight rows have no surfaces to focus and no PR / stats
+        // to refresh — let the user keep their current worktree until
+        // the owning flow finalizes (`.creating → .running`, or
+        // `.deleting → removed`).
+        if let wt = appState.worktree(forPath: path), wt.state.isInFlight {
             return
         }
         let previousPath = appState.selectedWorktreePath

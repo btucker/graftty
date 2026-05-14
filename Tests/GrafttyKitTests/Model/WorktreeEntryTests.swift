@@ -436,6 +436,33 @@ struct WorktreeEntryTests {
                 "encoded state field must be the closed raw value")
     }
 
+    /// GIT-4.17: `.deleting` is the in-memory placeholder used while
+    /// `git worktree remove` is in flight. Mirrors `.creating` (GIT-5.9):
+    /// if the app crashes mid-deletion, the next launch's reconciler
+    /// classifies the entry from `git worktree list --porcelain` rather
+    /// than restoring a phantom spinner that would never resolve. Encode
+    /// coerces `.deleting` to `.closed` so the persisted shape never
+    /// carries the transient state.
+    @Test("""
+    @spec GIT-4.17: When persisting `WorktreeEntry` to `state.json`, the application shall encode `.deleting` as `.closed`. The `.deleting` state is in-memory-only; if the app crashes mid-deletion, the next launch's reconciler classifies the entry from `git worktree list --porcelain` rather than restoring a phantom spinner that would never resolve. Mirrors `GIT-5.9` for `.creating`.
+    """)
+    func deletingStateIsEncodedAsClosed() throws {
+        var entry = WorktreeEntry(path: "/tmp/removing", branch: "feat")
+        entry.state = .deleting
+
+        let data = try JSONEncoder().encode(entry)
+        let decoded = try JSONDecoder().decode(WorktreeEntry.self, from: data)
+
+        #expect(decoded.state == .closed,
+                "deleting must not survive a round-trip through state.json")
+
+        let json = try #require(
+            try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        #expect(json["state"] as? String == "closed",
+                "encoded state field must be the closed raw value")
+    }
+
     @Test func codableRoundTrip() throws {
         var entry = WorktreeEntry(path: "/tmp/worktree", branch: "feature/bar")
         entry.state = .running
