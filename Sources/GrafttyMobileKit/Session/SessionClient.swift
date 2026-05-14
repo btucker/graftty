@@ -130,7 +130,7 @@ public final class SessionClient {
         webSocketFactory: @Sendable @escaping () -> WebSocketClient,
         clock: any Clock = SystemClock(),
         backoffSchedule: [TimeInterval] = HostController.backoffSchedule(attempts: 6),
-        idleThreshold: TimeInterval = 30,
+        idleThreshold: TimeInterval = SessionClient.fullscreenIdleThreshold,
         idleCheckInterval: TimeInterval = 5,
         role: Role = .fullscreen
     ) {

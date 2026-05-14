@@ -17,18 +17,31 @@ public struct RootView: View {
             NavigationStack(path: $navigationPath) {
                 HostPickerView(store: hostStore)
                     .navigationDestination(for: Host.self) { host in
-                        WorktreePickerView(host: host) { wt in
-                            switch MobileNavigationDecision.decide(layout: wt.layout) {
-                            case let .session(sessionName, title):
-                                navigationPath.append(SessionStep(
-                                    host: host,
-                                    sessionName: sessionName,
-                                    title: title
-                                ))
-                            case .worktreeDetail:
-                                navigationPath.append(WorktreeStep(host: host, worktree: wt))
+                        WorktreePickerView(
+                            host: host,
+                            onSelect: { wt in
+                                switch MobileNavigationDecision.decide(layout: wt.layout) {
+                                case let .session(sessionName, title):
+                                    navigationPath.append(SessionStep(
+                                        host: host,
+                                        sessionName: sessionName,
+                                        title: title
+                                    ))
+                                case .worktreeDetail:
+                                    navigationPath.append(WorktreeStep(host: host, worktree: wt))
+                                }
+                            },
+                            onSelectPane: { leaf in
+                                if case let .session(sessionName, title) =
+                                    MobileNavigationDecision.decide(paneRow: leaf) {
+                                    navigationPath.append(SessionStep(
+                                        host: host,
+                                        sessionName: sessionName,
+                                        title: title
+                                    ))
+                                }
                             }
-                        }
+                        )
                     }
                     .navigationDestination(for: WorktreeStep.self) { step in
                         WorktreeDetailView(

@@ -25,10 +25,16 @@ public struct WorktreePickerView: View {
 
     public let host: Host
     public let onSelect: (WorktreePanes) -> Void
+    public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
 
-    public init(host: Host, onSelect: @escaping (WorktreePanes) -> Void) {
+    public init(
+        host: Host,
+        onSelect: @escaping (WorktreePanes) -> Void,
+        onSelectPane: @escaping (PaneLayoutNode.Leaf) -> Void
+    ) {
         self.host = host
         self.onSelect = onSelect
+        self.onSelectPane = onSelectPane
     }
 
     private enum LoadState {
@@ -56,9 +62,11 @@ public struct WorktreePickerView: View {
                     ForEach(WorktreePickerGrouping.grouped(worktrees), id: \.0) { repoName, entries in
                         Section(repoName) {
                             ForEach(entries, id: \.path) { wt in
-                                WorktreeBlock(worktree: wt) {
-                                    onSelect(wt)
-                                }
+                                WorktreeBlock(
+                                    worktree: wt,
+                                    onSelect: { onSelect(wt) },
+                                    onSelectPane: onSelectPane
+                                )
                                 .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                     if let action = WorktreePickerGrouping.swipeAction(for: wt) {
                                         Button(role: .destructive) {
@@ -242,6 +250,7 @@ public struct WorktreePickerView: View {
 private struct WorktreeBlock: View {
     let worktree: WorktreePanes
     let onSelect: () -> Void
+    let onSelectPane: (PaneLayoutNode.Leaf) -> Void
 
     var body: some View {
         if worktree.state == .creating {
@@ -254,8 +263,21 @@ private struct WorktreeBlock: View {
             .buttonStyle(.plain)
         }
         if let layout = worktree.layout {
+            // IOS-4.21: pane child rows beneath multi-leaf worktrees are
+            // tappable and route straight to the fullscreen terminal,
+            // skipping the worktree-detail preview screen. Single-leaf
+            // worktrees already shortcut at the worktree row (IOS-4.17),
+            // so their pane row stays informational to avoid two tap
+            // targets that do the same thing.
             ForEach(layout.leaves, id: \.sessionName) { leaf in
-                PaneTitleRow(leaf: leaf)
+                if layout.isLeaf {
+                    PaneTitleRow(leaf: leaf)
+                } else {
+                    Button { onSelectPane(leaf) } label: {
+                        PaneTitleRow(leaf: leaf)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
     }

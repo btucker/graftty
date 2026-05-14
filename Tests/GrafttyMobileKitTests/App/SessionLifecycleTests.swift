@@ -30,6 +30,32 @@ struct LiveSessionReadinessTests {
     }
 }
 
+#if canImport(UIKit)
+@Suite
+@MainActor
+struct LivePreviewIdleThresholdTests {
+
+    @Test("""
+@spec IOS-10.6: When `SessionClient.live` is constructed with role `.preview`, the application shall set the client's `idleThreshold` shorter than the fullscreen default so off-input preview panes flip to the static-snapshot state and free libghostty's display link, while still letting fresh PTY bytes wake the live renderer per IOS-10.5.
+""")
+    func previewRoleUsesShortIdleThreshold() {
+        let preview = SessionClient.live(
+            baseURL: URL(string: "http://example.invalid")!,
+            sessionName: "p",
+            role: .preview
+        )
+        let fullscreen = SessionClient.live(
+            baseURL: URL(string: "http://example.invalid")!,
+            sessionName: "f",
+            role: .fullscreen
+        )
+        #expect(preview.idleThreshold < fullscreen.idleThreshold)
+        #expect(fullscreen.idleThreshold == SessionClient.fullscreenIdleThreshold)
+        #expect(preview.idleThreshold == SessionClient.previewIdleThreshold)
+    }
+}
+#endif
+
 @Suite
 struct SessionRehydrationTests {
 
