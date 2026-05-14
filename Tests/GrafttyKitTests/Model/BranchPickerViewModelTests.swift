@@ -26,7 +26,7 @@ struct BranchPickerViewModelTests {
         )
     }
 
-    @Test("@spec GIT-5.13: While the existing-branch picker is open, the application shall display branches sorted by last-commit date descending, with branches mounted in another worktree dimmed and unselectable.")
+    @Test("@spec GIT-5.13: While the user is in existing-branch mode, the application shall display branches sorted by last-commit date descending in an always-visible list, with branches mounted in another worktree dimmed and unselectable.")
     func sortsByDateDesc() {
         let now = Date()
         let entries = make(local: [
