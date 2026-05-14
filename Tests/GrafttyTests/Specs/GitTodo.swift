@@ -229,11 +229,6 @@ struct GitTodo {
     func git_5_9() async throws { }
 
     @Test("""
-@spec GIT-5.16: While the user is in existing-branch mode, the application shall render a filter `TextField` above the branch list whose contents narrow the list to branches whose name contains the typed substring (case-insensitive).
-""", .disabled("not yet implemented"))
-    func git_5_16() async throws { }
-
-    @Test("""
 @spec GIT-5.18: While the user is in existing-branch mode, the Create button shall remain disabled until a branch row is selected; the filter `TextField`'s contents shall not be treated as a freeform branch name.
 """, .disabled("not yet implemented"))
     func git_5_18() async throws { }

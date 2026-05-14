@@ -78,7 +78,7 @@ struct BranchPickerViewModelTests {
         #expect(entries.first?.pr?.title == "Add OAuth")
     }
 
-    @Test("filterText filters by case-insensitive substring on name")
+    @Test("@spec GIT-5.16: While the user is in existing-branch mode, the application shall render a filter `TextField` above the branch list whose contents narrow the list to branches whose name contains the typed substring (case-insensitive).")
     func filtersByText() {
         let now = Date()
         let entries = make(
