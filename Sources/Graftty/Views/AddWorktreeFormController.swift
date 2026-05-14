@@ -23,8 +23,8 @@ public final class AddWorktreeFormController {
     /// (in `.newBranch` mode), we stop auto-syncing.
     public var branchMirrorsWorktree: Bool = true
 
-    /// Tracks whether the worktree name still mirrors the selected
-    /// existing branch (per GIT-5.15).
+    /// @spec GIT-5.15: tracks whether the worktree name still mirrors
+    /// the selected existing branch.
     public var worktreeMirrorsBranch: Bool = true
 
     public init(initialWorktreeName: String) {
