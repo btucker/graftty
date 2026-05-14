@@ -22,12 +22,18 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
         let sessionName = launcher.sessionName(for: paneSessionID)
         let rawUserShell = processEnv["SHELL"] ?? "/bin/sh"
         let hooksEnabled = !agentHooksDisabled
+        let shellBasename = (rawUserShell as NSString).lastPathComponent
 
         var env = launcher.subprocessEnv(from: processEnv)
         env.removeValue(forKey: "GRAFTTY_AGENT_HOOKS_BIN")
         env.removeValue(forKey: "ZDOTDIR")
         env.removeValue(forKey: "GHOSTTY_ZSH_ZDOTDIR")
         env["GRAFTTY_SOCK"] = socketPath
+        // ZMX-6.6: zmx's no-command default-login-spawn reads $SHELL from
+        // its env to decide what binary to exec. Set it explicitly so the
+        // resolved user shell is used regardless of what the parent
+        // process inherited.
+        env["SHELL"] = rawUserShell
         applyTerminalCapabilities(
             env: &env,
             ghosttyResourcesDir: ghosttyResourcesDir
@@ -45,12 +51,8 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
             env["PATH"] = sanitizedPath
         }
 
-        let userShell = hooksEnabled
-            ? AgentHookInstaller.wrappedUserShell(rawUserShell, rootDirectory: agentHooksRoot)
-            : rawUserShell
-
         if let ghosttyResourcesDir, !ghosttyResourcesDir.isEmpty,
-           (rawUserShell as NSString).lastPathComponent == "zsh" {
+           shellBasename == "zsh" {
             env["ZDOTDIR"] = (ghosttyResourcesDir as NSString)
                 .appendingPathComponent("shell-integration/zsh")
             if hooksEnabled {
@@ -60,9 +62,26 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
             }
         }
 
+        // ZMX-6.6/6.7: For non-bash shells (and bash with hooks disabled),
+        // omit the positional shell argument so zmx's documented default
+        // applies — it spawns $SHELL as a login shell, which sources the
+        // profile chain (~/.zprofile, ~/.bash_profile) before the rc file.
+        // For bash-with-hooks, keep the positional pointing at the launcher
+        // script because login bash discards `--rcfile`.
+        let argv: [String]
+        if let wrappedShell = AgentHookInstaller.loginSpawnPositionalShell(
+            rawUserShell: rawUserShell,
+            hooksEnabled: hooksEnabled,
+            rootDirectory: agentHooksRoot
+        ) {
+            argv = launcher.attachArgv(sessionName: sessionName, userShell: wrappedShell)
+        } else {
+            argv = launcher.attachArgv(sessionName: sessionName)
+        }
+
         return ZmxSpawnConfiguration(
             sessionName: sessionName,
-            argv: launcher.attachArgv(sessionName: sessionName, userShell: userShell),
+            argv: argv,
             env: env,
             workingDirectory: URL(fileURLWithPath: worktreePath, isDirectory: true)
         )

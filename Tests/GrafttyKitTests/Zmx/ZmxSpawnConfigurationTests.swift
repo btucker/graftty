@@ -26,7 +26,8 @@ struct ZmxSpawnConfigurationTests {
         #expect(config.sessionName == "graftty-deadbeef")
         #expect(config.argv.first == "/tmp/zmx")
         #expect(Array(config.argv[1...2]) == ["attach", "graftty-deadbeef"])
-        #expect(config.argv.last == "/bin/zsh")
+        #expect(config.argv.count == 3)
+        #expect(config.env["SHELL"] == "/bin/zsh")
         #expect(config.env["ZMX_DIR"] == "/tmp/zmx-dir")
         #expect(config.env["GRAFTTY_SOCK"] == "/tmp/graftty.sock")
         #expect(config.env["ZMX_SESSION"] == nil)
@@ -59,16 +60,7 @@ struct ZmxSpawnConfigurationTests {
         #expect(config.env["PATH"] == "\(hookBin):\(sanitizedPath)")
     }
 
-    @Test func bashUsesAgentHookWrappedShellWhenHooksAreEnabled() throws {
-        let config = makeConfig(processEnv: [
-            "SHELL": "/opt/homebrew/bin/bash",
-            "PATH": "/usr/bin",
-        ])
-
-        #expect(config.argv.last == AgentHookInstaller.wrappedUserShell("/opt/homebrew/bin/bash", rootDirectory: agentHooksRoot))
-    }
-
-    @Test func disabledHooksUseRawShellAndDoNotSetHookEnv() throws {
+    @Test func disabledHooksOmitHookEnvAndPathUsesSanitizedPath() throws {
         let config = makeConfig(
             processEnv: [
                 "SHELL": "/bin/bash",
@@ -81,7 +73,6 @@ struct ZmxSpawnConfigurationTests {
             bundleURL: bundleURL
         )
 
-        #expect(config.argv.last == "/bin/bash")
         #expect(config.env["GRAFTTY_AGENT_HOOKS_BIN"] == nil)
         #expect(config.env["GHOSTTY_ZSH_ZDOTDIR"] == nil)
         #expect(config.env["PATH"] == sanitizedPath)
@@ -239,5 +230,71 @@ struct ZmxSpawnConfigurationTests {
             "ZDOTDIR": "/stale/zdotdir",
             "GHOSTTY_ZSH_ZDOTDIR": "/stale/ghostty-zdotdir",
         ]
+    }
+}
+
+@Suite("""
+@spec ZMX-6.6: When the host-managed `zmx attach` spawn invokes the user's shell, the spawn shall recover login-shell behavior. For non-bash shells (and bash with agent hooks disabled), the argv shall omit the positional shell argument so zmx applies its documented default of spawning `$SHELL` as a login shell, with `env["SHELL"]` set to the resolved user-shell path. For bash with agent hooks enabled (per ZMX-6.7), the spawn shall keep the positional pointing at the bash launcher script because login bash discards `--rcfile`. This restores `~/.zprofile` (via the ZMX-6.3 ZDOTDIR shim for zsh) processing — without it, `eval "$(brew shellenv)"` is skipped and `~/.zshrc` references to Homebrew-installed binaries (rbenv, nvm, etc.) resolve to "command not found", cascading into broken keybindings, missing colors, and shell-init errors.
+""")
+struct ZmxLoginShellRecoveryTests {
+    private let paneSessionID = PaneSessionID(id: UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!)
+    private let launcher = ZmxLauncher(
+        executable: URL(fileURLWithPath: "/tmp/zmx"),
+        zmxDir: URL(fileURLWithPath: "/tmp/zmx-dir", isDirectory: true)
+    )
+    private let bundleURL = URL(fileURLWithPath: "/Applications/Graftty.app", isDirectory: true)
+    private let agentHooksRoot = URL(fileURLWithPath: "/tmp/hooks", isDirectory: true)
+
+    @Test func zshDropsPositionalShellAndSetsShellEnv() throws {
+        let config = makeConfig(processEnv: [
+            "SHELL": "/bin/zsh",
+            "PATH": "/usr/bin",
+        ])
+
+        #expect(config.argv == ["/tmp/zmx", "attach", "graftty-deadbeef"])
+        #expect(config.env["SHELL"] == "/bin/zsh")
+    }
+
+    @Test func bashWithoutHooksDropsPositionalShell() throws {
+        let config = makeConfig(
+            processEnv: [
+                "SHELL": "/bin/bash",
+                "PATH": "/usr/bin",
+            ],
+            agentHooksDisabled: true
+        )
+
+        #expect(config.argv == ["/tmp/zmx", "attach", "graftty-deadbeef"])
+        #expect(config.env["SHELL"] == "/bin/bash")
+    }
+
+    @Test func bashWithHooksKeepsPositionalLauncher() throws {
+        let config = makeConfig(processEnv: [
+            "SHELL": "/opt/homebrew/bin/bash",
+            "PATH": "/usr/bin",
+        ])
+
+        let expectedLauncher = AgentHookInstaller.wrappedUserShell("/opt/homebrew/bin/bash", rootDirectory: agentHooksRoot)
+        #expect(config.argv.count == 4)
+        #expect(config.argv.last == expectedLauncher)
+        #expect(config.env["SHELL"] == "/opt/homebrew/bin/bash")
+    }
+
+    private func makeConfig(
+        processEnv: [String: String],
+        ghosttyResourcesDir: String? = "/Applications/Ghostty.app/Contents/Resources/ghostty",
+        agentHooksDisabled: Bool = false
+    ) -> ZmxSpawnConfiguration {
+        ZmxSpawnConfiguration.make(
+            launcher: launcher,
+            paneSessionID: paneSessionID,
+            worktreePath: "/repo/wt",
+            socketPath: "/tmp/graftty.sock",
+            processEnv: processEnv,
+            bundleURL: bundleURL,
+            ghosttyResourcesDir: ghosttyResourcesDir,
+            agentHooksDisabled: agentHooksDisabled,
+            agentHooksRoot: agentHooksRoot
+        )
     }
 }
