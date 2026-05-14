@@ -229,11 +229,6 @@ struct GitTodo {
     func git_5_9() async throws { }
 
     @Test("""
-@spec GIT-5.18: While the user is in existing-branch mode, the Create button shall remain disabled until a branch row is selected; the filter `TextField`'s contents shall not be treated as a freeform branch name.
-""", .disabled("not yet implemented"))
-    func git_5_18() async throws { }
-
-    @Test("""
 @spec GIT-5.19: When the user toggles the branch-mode picker between "New branch" and "Existing branch", the application shall preserve each mode's prior input independently — the new-branch name shall not be clobbered by an existing-branch selection, and an existing-branch selection shall not be cleared by a temporary switch to new-branch mode.
 """, .disabled("not yet implemented"))
     func git_5_19() async throws { }
