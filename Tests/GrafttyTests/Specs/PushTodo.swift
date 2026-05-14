@@ -14,11 +14,6 @@ struct PushTodo {
     func push_1_2() async throws { }
 
     @Test("""
-@spec PUSH-2.3: The application shall set `isUserActiveOnDesktop == true` iff the system is not sleeping, the screen is not locked, and `CGEventSourceSecondsSinceLastEventType(.combinedSessionState, .anyInputEventType) < 60`.
-""", .disabled("not yet implemented"))
-    func push_2_3() async throws { }
-
-    @Test("""
 @spec PUSH-3.1: The APNs alert envelope shall use `apns-topic: com.quotably.graftty`, `apns-push-type: alert`, `apns-collapse-id: "<worktreePath>:<attentionTimestampISO>"`, and a `userInfo` payload matching `AgentStopNotification.content(...).userInfo`.
 """, .disabled("not yet implemented"))
     func push_3_1() async throws { }
