@@ -13,12 +13,6 @@ public struct PushConfig: Sendable {
         self.privateKeyPEM = privateKeyPEM
     }
 
-    public enum LoadError: Error, Equatable {
-        case missingInfoPlistKeys
-        case missingP8
-        case unreadableP8
-    }
-
     /// Load from Info.plist (`APNsKeyID`, `APNsTeamID`, `APNsTopic`) + a
     /// `.p8` at `Resources/apns/AuthKey_<KEYID>.p8`. Returns `nil` if any
     /// component is missing — caller logs and disables push (matches the

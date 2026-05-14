@@ -2,11 +2,17 @@
 import Foundation
 import Observation
 
+/// APNs `userInfo.kind` values produced by the Mac sender. Must stay in
+/// lockstep with `AgentStopNotification` on the macOS side — duplicated
+/// here because `GrafttyMobileKit` deliberately does not depend on
+/// `GrafttyKit` (which pulls in AppKit/Sparkle).
+enum PushPayloadKind {
+    static let agentStop = "agent_stop"
+    static let agentStopClear = "agent_stop_clear"
+}
+
 /// Runtime tag carried in the APNs `userInfo` payload. Mirrors the
-/// macOS-side `TeamHookRuntime` (in `GrafttyKit`) but is duplicated here
-/// because `GrafttyMobileKit` deliberately does not depend on
-/// `GrafttyKit` (which pulls in AppKit/Sparkle and other macOS-only
-/// frameworks). The raw string values must stay in lockstep.
+/// macOS-side `TeamHookRuntime` (in `GrafttyKit`).
 public enum DeepLinkRuntime: String, Sendable, Equatable {
     case claude
     case codex
@@ -83,7 +89,7 @@ public final class DeepLinkRouter {
     /// `agent_stop_clear` kind, which is handled elsewhere by
     /// `PushReceiver`).
     static func decode(userInfo: [AnyHashable: Any]) -> DeepLinkTarget? {
-        guard userInfo["kind"] as? String == "agent_stop",
+        guard userInfo["kind"] as? String == PushPayloadKind.agentStop,
               let runtimeRaw = userInfo["runtime"] as? String,
               let runtime = DeepLinkRuntime(rawValue: runtimeRaw),
               let worktreePath = userInfo["worktree_path"] as? String,

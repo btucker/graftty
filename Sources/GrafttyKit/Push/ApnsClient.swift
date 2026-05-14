@@ -3,7 +3,6 @@ import Foundation
 public enum ApnsSendOutcome: Sendable, Equatable {
     case delivered
     case badDeviceToken
-    case skippedNoKey
     case error(String)
 }
 

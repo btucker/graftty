@@ -1,5 +1,15 @@
 import Foundation
 
+/// APNs `userInfo.kind` discriminators. The iOS app keys off these to
+/// dispatch alerts vs silent-remove pushes; the strings here are the
+/// shared contract between sender (this file + `AgentStopNotification`)
+/// and receiver (`DeepLinkRouter` / `PushReceiver` in `GrafttyMobileKit`,
+/// which duplicates these constants because of the no-shared-module rule).
+public enum PushPayloadKind {
+    public static let agentStop = "agent_stop"
+    public static let agentStopClear = "agent_stop_clear"
+}
+
 public struct ApnsEnvelope: Sendable, Equatable {
     public enum PushType: String, Sendable { case alert, background }
 
@@ -34,7 +44,7 @@ public struct ApnsEnvelope: Sendable, Equatable {
                             payload: data, priority: 10)
     }
 
-    /// Silent-remove envelope carrying `kind: "agent_stop_clear"`.
+    /// Silent-remove envelope carrying `kind: PushPayloadKind.agentStopClear`.
     public static func clear(
         topic: String,
         worktreePath: String,
@@ -43,7 +53,7 @@ public struct ApnsEnvelope: Sendable, Equatable {
         let cid = collapseID(worktreePath: worktreePath, attentionTimestamp: attentionTimestamp)
         let payload: [String: Any] = [
             "aps": ["content-available": 1],
-            "kind": "agent_stop_clear",
+            "kind": PushPayloadKind.agentStopClear,
             "collapse_id": cid,
         ]
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys])

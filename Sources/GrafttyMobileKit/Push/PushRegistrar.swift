@@ -52,6 +52,7 @@ public actor PushRegistrar {
     private let network: PushRegisterNetwork
     private let deviceName: String
     private var deviceToken: String?
+    private var lastRegisteredToken: String?
 
     /// Hosts older than this are treated as abandoned and skipped.
     private static let freshnessWindow: TimeInterval = 90 * 86_400
@@ -63,6 +64,9 @@ public actor PushRegistrar {
     }
 
     public func deviceTokenDidArrive(token: String) {
+        // Reset the "already pushed this token" gate so the next sweep
+        // re-fans out to every host with the rotated token.
+        if token != deviceToken { lastRegisteredToken = nil }
         deviceToken = token
     }
 
@@ -86,11 +90,12 @@ public actor PushRegistrar {
     /// PUSH-1.1: fan out to every host with `lastUsedAt` within 90 days.
     /// Called from `didRegisterForRemoteNotificationsWithDeviceToken` and
     /// from `scenePhase == .active` after the registrar has a token.
-    /// When no token has been captured yet (denied auth, or APNs callback
-    /// has not fired), the method is a no-op so a foreground sweep
-    /// before the token arrives doesn't blast empty `/push/register` POSTs.
+    /// Skips the fanout entirely if the same token was already pushed
+    /// (every foregrounding without a token change is then free); reset
+    /// by `deviceTokenDidArrive` when the token rotates.
     public func registerWithAllHosts() async {
         guard let token = deviceToken else { return }
+        if lastRegisteredToken == token { return }
         let cutoff = Date().addingTimeInterval(-Self.freshnessWindow)
         let live = hostSource.hosts.filter { $0.lastUsedAt > cutoff }
         let body = PushRegisterRequest(
@@ -103,6 +108,7 @@ public actor PushRegistrar {
                 NSLog("PushRegistrar: register at \(host.baseURL) failed: \(error)")
             }
         }
+        lastRegisteredToken = token
     }
 }
 
@@ -111,7 +117,9 @@ public final class URLSessionPushNetwork: PushRegisterNetwork {
     public init(session: URLSession = .shared) { self.session = session }
 
     public func register(baseURL: URL, body: PushRegisterRequest) async throws {
-        var req = URLRequest(url: baseURL.appendingPathComponent("push/register"))
+        let url = baseURL.appendingAPIPath("push/register")
+            ?? baseURL.appendingPathComponent("push/register")
+        var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "content-type")
         req.httpBody = try JSONEncoder().encode(body)

@@ -48,7 +48,7 @@ public enum AgentStopNotification {
             title: "\(runtimeName) needs input",
             body: "\(worktreeName) is waiting for you.",
             userInfo: [
-                "kind": "agent_stop",
+                "kind": PushPayloadKind.agentStop,
                 "runtime": runtime.rawValue,
                 "worktree_path": worktreePath,
                 "session_id": sessionID,
@@ -58,7 +58,7 @@ public enum AgentStopNotification {
     }
 
     public static func payload(from userInfo: [String: Any]) throws -> AgentStopNotificationPayload {
-        guard userInfo["kind"] as? String == "agent_stop",
+        guard userInfo["kind"] as? String == PushPayloadKind.agentStop,
               let runtimeRaw = userInfo["runtime"] as? String,
               let runtime = TeamHookRuntime(rawValue: runtimeRaw),
               let worktreePath = userInfo["worktree_path"] as? String,

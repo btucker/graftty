@@ -30,7 +30,8 @@ public actor PushReceiver {
     /// Called from `UIApplicationDelegate.application(_:didReceiveRemoteNotification:fetchCompletionHandler:)`.
     /// Returns `true` if the userInfo matched a known silent-push kind and was processed.
     public func handleSilentPush(userInfo: [AnyHashable: Any]) async -> Bool {
-        guard let kind = userInfo["kind"] as? String, kind == "agent_stop_clear" else { return false }
+        guard let kind = userInfo["kind"] as? String,
+              kind == PushPayloadKind.agentStopClear else { return false }
         guard let collapseID = userInfo["collapse_id"] as? String else { return false }
         await remover.removeNotifications(ids: [collapseID])
         return true
