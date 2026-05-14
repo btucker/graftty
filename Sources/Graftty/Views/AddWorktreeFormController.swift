@@ -32,8 +32,7 @@ public final class AddWorktreeFormController {
     }
 
     /// Called by the View when the existing-branch picker reports a
-    /// selection. Mirrors the prior popover-tap behavior in
-    /// `BranchComboBox`.
+    /// selection.
     public func pickExistingBranch(_ entry: BranchPickerEntry) {
         existingSelection = entry
         if worktreeMirrorsBranch {

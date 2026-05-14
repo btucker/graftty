@@ -102,7 +102,7 @@ struct SidebarView: View {
     /// merging the latest remote-branch snapshot with the repo's
     /// currently-mounted branches (so the picker can dim/disable them)
     /// and any in-flight PR metadata. `filterText` is "" — the
-    /// BranchComboBox does live-filtering against the full list itself.
+    /// `BranchPicker` does live-filtering against the full list itself.
     private func currentBranchEntries(forRepo repo: RepoEntry) -> [BranchPickerEntry] {
         let snapshot = remoteBranchStore.branchesByRepo[repo.path] ?? RemoteBranchSnapshot()
         var mounted: [String: String] = [:]
@@ -175,7 +175,7 @@ struct SidebarView: View {
                 if SidebarMenuVisibility.showsAddWorktree(repo: repo) {
                     Button {
                         // Kick off fresh branch + PR data so the
-                        // BranchComboBox renders something current as
+                        // BranchPicker renders something current as
                         // the sheet appears, even if the polling
                         // cadence is in a long-backoff.
                         remoteBranchStore.pulse()
