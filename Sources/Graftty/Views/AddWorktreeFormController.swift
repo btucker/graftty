@@ -23,7 +23,9 @@ public final class AddWorktreeFormController {
     /// (in `.newBranch` mode), we stop auto-syncing.
     public var branchMirrorsWorktree: Bool = true
 
-    /// @spec GIT-5.15: When the user selects a branch from the existing-branch picker, the application shall auto-fill the worktree name with the branch name unless the user has already edited the field.
+    /// True while the worktree name should track the picker selection.
+    /// Cleared once the user edits the worktree name independently —
+    /// see `GIT-5.15`'s test for the resulting auto-fill behavior.
     public var worktreeMirrorsBranch: Bool = true
 
     public init(initialWorktreeName: String) {
@@ -31,11 +33,9 @@ public final class AddWorktreeFormController {
         self.newBranchName = initialWorktreeName
     }
 
-    /// Called by the View when the existing-branch picker reports a
-    /// selection.
     public func pickExistingBranch(_ entry: BranchPickerEntry) {
-        existingSelection = entry
-        if worktreeMirrorsBranch {
+        if existingSelection != entry { existingSelection = entry }
+        if worktreeMirrorsBranch && worktreeName != entry.name {
             worktreeName = entry.name
         }
     }

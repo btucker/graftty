@@ -54,16 +54,17 @@ struct BranchPicker: View {
             get: { selection },
             set: { new in
                 if let new, new.mountedWorktreePath != nil { return }
-                selection = new
+                if new != selection { selection = new }
             }
         )
     }
 
     private func applyAutoSelect() {
-        selection = BranchPickerViewModel.autoSelect(
+        let next = BranchPickerViewModel.autoSelect(
             currentSelection: selection,
             in: filteredEntries
         )
+        if next != selection { selection = next }
     }
 
     @ViewBuilder

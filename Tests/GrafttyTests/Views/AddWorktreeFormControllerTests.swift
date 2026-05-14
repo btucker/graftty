@@ -25,6 +25,20 @@ struct AddWorktreeFormControllerTests {
         #expect(c.canSubmit == true)
     }
 
+    @Test("@spec GIT-5.15: When the user selects a branch from the existing-branch picker, the application shall auto-fill the worktree name with the branch name unless the user has already edited the field.")
+    func pickingExistingBranchAutoFillsWorktreeName() {
+        let c = AddWorktreeFormController(initialWorktreeName: "")
+        c.branchMode = .existing
+        c.pickExistingBranch(someEntry(name: "feat-xyz"))
+        #expect(c.worktreeName == "feat-xyz")
+
+        // Once the user edits the worktree name (the View flips
+        // worktreeMirrorsBranch=false), subsequent picks don't clobber it.
+        c.worktreeMirrorsBranch = false
+        c.pickExistingBranch(someEntry(name: "feat-zzz"))
+        #expect(c.worktreeName == "feat-xyz", "edited worktree name must not be clobbered")
+    }
+
     @Test("@spec GIT-5.18: While the user is in existing-branch mode, the Create button shall remain disabled until a branch row is selected; the filter `TextField`'s contents shall not be treated as a freeform branch name.")
     func existingBranchModeRequiresSelection() {
         let c = AddWorktreeFormController(initialWorktreeName: "wt")
