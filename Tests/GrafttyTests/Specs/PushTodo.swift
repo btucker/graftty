@@ -14,11 +14,6 @@ struct PushTodo {
     func push_1_2() async throws { }
 
     @Test("""
-@spec PUSH-3.1: The APNs alert envelope shall use `apns-topic: com.quotably.graftty`, `apns-push-type: alert`, `apns-collapse-id: "<worktreePath>:<attentionTimestampISO>"`, and a `userInfo` payload matching `AgentStopNotification.content(...).userInfo`.
-""", .disabled("not yet implemented"))
-    func push_3_1() async throws { }
-
-    @Test("""
 @spec PUSH-4.1: When the user taps an iOS alert banner, the application shall decode the `userInfo` as `AgentStopNotificationPayload` and reconstruct the navigation stack to `[HostPicker → WorktreePicker(host) → WorktreeDetail(worktreePath) → TerminalPane(sessionID)]`.
 """, .disabled("not yet implemented"))
     func push_4_1() async throws { }
@@ -38,13 +33,4 @@ struct PushTodo {
 """, .disabled("not yet implemented"))
     func push_5_2() async throws { }
 
-    @Test("""
-@spec PUSH-6.1: When APNs returns `400 BadDeviceToken` or `410 Unregistered` for a device, the application shall remove the matching record from `PushDeviceStore`.
-""", .disabled("not yet implemented"))
-    func push_6_1() async throws { }
-
-    @Test("""
-@spec PUSH-6.2: When APNs returns `BadDeviceToken` for every device in the fanout of a single attention event sent to `api.push.apple.com`, the application shall retry the same fanout against `api.sandbox.push.apple.com` and cache the working endpoint in memory for the rest of the process lifetime.
-""", .disabled("not yet implemented"))
-    func push_6_2() async throws { }
 }
