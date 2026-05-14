@@ -38,6 +38,11 @@ final class WebServerController: ObservableObject {
     /// causes the endpoint to respond `503 service unavailable`.
     private var worktreeCreator: (@Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome)?
 
+    /// Executes `POST /push/register`. Routes into the
+    /// `PushOrchestrator`'s nonisolated `handleRegister`. Nil before
+    /// injection causes the endpoint to respond `503 service unavailable`.
+    private var pushRegisterHandler: (@Sendable (WebServer.PushRegisterRequest) async -> WebServer.PushRegisterResponse)?
+
     /// Last `(isEnabled, port)` tuple we reconciled against. Used to suppress
     /// no-op reconciles — `objectWillChange` on `@AppStorage` fires on every
     /// property write, including ones that don't affect our server.
@@ -113,6 +118,15 @@ final class WebServerController: ObservableObject {
         _ creator: @escaping @Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome
     ) {
         worktreeCreator = creator
+        rebuildIfRunning()
+    }
+
+    /// Install the handler used for `POST /push/register`. Same
+    /// injection-timing contract as `setWorktreeCreator`.
+    func setPushRegisterHandler(
+        _ handler: @escaping @Sendable (WebServer.PushRegisterRequest) async -> WebServer.PushRegisterResponse
+    ) {
+        pushRegisterHandler = handler
         rebuildIfRunning()
     }
 
@@ -239,6 +253,7 @@ final class WebServerController: ObservableObject {
         let sessionWorktreeProvider = self.sessionWorktreeProvider ?? { _ in nil }
         let repos = reposProvider ?? { [] }
         let creator = worktreeCreator
+        let pushHandler = pushRegisterHandler
         let s = WebServer(
             config: .init(
                 port: port,
@@ -249,7 +264,8 @@ final class WebServerController: ObservableObject {
                 reposProvider: repos,
                 worktreeCreator: creator,
                 ghosttyConfigProvider: { GhosttyConfigReader.resolvedConfig() },
-                worktreePanesProvider: worktreePanesProvider ?? { [] }
+                worktreePanesProvider: worktreePanesProvider ?? { [] },
+                pushRegisterHandler: pushHandler
             ),
             auth: auth,
             bindAddresses: bindAddresses,

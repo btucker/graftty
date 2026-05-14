@@ -242,6 +242,16 @@ struct GrafttyApp: App {
     // one-time-per-launch (ghostty_init, pollers, observers). LAYOUT-5.3.
     @State private var didStartup = false
 
+    /// App-scoped push pipeline. `nil` when push is disabled (missing
+    /// APNs config or `.p8`) — `recordAgentStop` and the
+    /// `clearAttentionIfTimestamp` sites become no-ops in that case.
+    /// Built lazily inside a `MainActor.assumeIsolated` because
+    /// `PushOrchestrator` is `@MainActor`-isolated and SwiftUI doesn't
+    /// expose a main-actor static initializer.
+    fileprivate static let pushOrchestrator: PushOrchestrator? = {
+        MainActor.assumeIsolated { PushOrchestrator() }
+    }()
+
     init() {
         // Graftty is single-instance: the state.json, the graftty.sock
         // listener, and (most visibly) the per-pane zmx session names are
@@ -1207,6 +1217,21 @@ struct GrafttyApp: App {
             }
         }
 
+        // Route `POST /push/register` (iOS device registration) into the
+        // app's `PushOrchestrator`. The handler is `nonisolated` so the
+        // NIO event loop doesn't pay for a MainActor hop. If push is
+        // disabled (missing `.p8` / Info.plist keys), the closure
+        // short-circuits to the default response and no device entries
+        // are persisted. Capture the orchestrator reference here (on the
+        // main actor) so the @Sendable closure body can stay nonisolated.
+        let push = Self.pushOrchestrator
+        webController.setPushRegisterHandler { req in
+            if let push {
+                return push.handleRegister(req)
+            }
+            return WebServer.PushRegisterResponse(registeredAt: Date())
+        }
+
         // WEB-4.3: close the NIO listen sockets + SIGTERM any in-flight
         // `zmx attach` children as part of normal shutdown. Process exit
         // would eventually do both, but we can't rely on that: WEB-4.6's
@@ -1610,6 +1635,9 @@ struct GrafttyApp: App {
                                 }
                             }
                         }
+                        if let orch = Self.pushOrchestrator {
+                            Task { await orch.handleAttentionCleared(worktreePath: path, attentionTimestamp: stamp) }
+                        }
                     }
                 }
 
@@ -1675,6 +1703,9 @@ struct GrafttyApp: App {
                                             appState.wrappedValue.repos[ri].worktrees[wi].clearAttentionIfTimestamp(stamp)
                                         }
                                     }
+                                }
+                                if let orch = Self.pushOrchestrator {
+                                    Task { await orch.handleAttentionCleared(worktreePath: path, attentionTimestamp: stamp) }
                                 }
                             }
                         }
@@ -1934,6 +1965,15 @@ struct GrafttyApp: App {
                         timestamp: timestamp
                     )
                 )
+                if let orch = Self.pushOrchestrator {
+                    let payload = AgentStopNotificationPayload(
+                        runtime: runtime,
+                        worktreePath: callerPath,
+                        sessionID: resolvedSessionID,
+                        attentionTimestamp: timestamp
+                    )
+                    Task { await orch.handleAgentStop(payload: payload, worktreeName: worktreeName) }
+                }
                 return
             }
         }
