@@ -184,7 +184,7 @@ struct IosTodo {
     func ios_8_4() async throws { }
 
     @Test("""
-@spec IOS-8.5: The v1 iOS app shall not use push notifications for PR status, build completions, or session events.
+@spec IOS-8.5: The v1 iOS app shall not use push notifications for PR status, build completions, or session events other than the agent-attention notifications defined in PUSH-1..6.
 """, .disabled("not yet implemented"))
     func ios_8_5() async throws { }
 
