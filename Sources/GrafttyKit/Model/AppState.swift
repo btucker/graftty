@@ -222,6 +222,17 @@ public struct AppState: Codable, Sendable, Equatable {
             .appendingPathComponent("Graftty")
     }
 
+    /// Snapshot of every `.running` worktree's split tree, keyed by path.
+    public func runningSplitTreesByPath() -> [String: SplitTree] {
+        var result: [String: SplitTree] = [:]
+        for repo in repos {
+            for wt in repo.worktrees where wt.state == .running {
+                result[wt.path] = wt.splitTree
+            }
+        }
+        return result
+    }
+
     /// Reverse lookup from a leaf to its hosting worktree's `(repo, worktree)`
     /// indices. Returns nil when no worktree owns the pane (mid-reassignment).
     public func indicesOfWorktreeContaining(terminalID: PaneSlotID) -> (repo: Int, worktree: Int)? {

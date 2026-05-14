@@ -157,6 +157,13 @@ struct MainWindow: View {
                 }
             }
         }
+        .onChange(of: appState.selectedWorktreePath, initial: true) { _, newPath in
+            guard let newPath else { return }
+            terminalManager.surfaceBudget.noteSelected(
+                worktreePath: newPath,
+                splitTreesByPath: appState.runningSplitTreesByPath()
+            )
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in
             applyAppVisibility(isVisible: false)
         }

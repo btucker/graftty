@@ -49,6 +49,12 @@ final class TerminalManager: ObservableObject {
     private var paneSessionIDs: [PaneSlotID: PaneSessionID] = [:]
     private var paneSlotIDsBySessionName: [String: PaneSlotID] = [:]
 
+    /// Caps the number of worktrees with live surfaces (MEM-1.1).
+    /// Lazy so it can capture `self` in the eviction callback after `init`.
+    lazy var surfaceBudget: WorktreeSurfaceBudget = WorktreeSurfaceBudget { [weak self] leafID in
+        self?.evictSurface(terminalID: leafID)
+    }
+
     var ptyDeviceAvailability: () -> PtyDeviceAvailability = {
         PtyDeviceAvailability.live()
     }
@@ -707,6 +713,23 @@ final class TerminalManager: ObservableObject {
         forgetSurfaceRuntimeState(for: terminalID)
         killZmxSession(for: terminalID)
         forgetTrackingState(for: terminalID)
+    }
+
+    /// Soft destroy. Releases the libghostty surface (freeing scrollback
+    /// + Metal layers via `SurfaceHandle.deinit`) and marks the leaf as
+    /// rehydrated so a future surface creation re-attaches to the zmx
+    /// session rather than re-running the default command. Unlike
+    /// `destroySurface`, this preserves titles, PWDs, the
+    /// pane→session map, and the `shellReadyFired` / `firstPaneMarkers`
+    /// labels, and does NOT call `killZmxSession` or fire `paneClosed`.
+    func evictSurface(terminalID: PaneSlotID) {
+        if let handle = surfaces.removeValue(forKey: terminalID) {
+            handle.requestClose()
+        }
+        rehydratedSurfaces.insert(terminalID)
+        if let scanner = portScanner {
+            Task { await scanner.unregisterPane(terminalID) }
+        }
     }
 
     /// Mark a terminal as the first pane of its worktree — the pane whose
