@@ -34,4 +34,27 @@ struct AddWorktreeFormControllerTests {
         #expect(c.canSubmit == true)
         #expect(c.selectedSelection == .useExisting(name: "feat", source: .local))
     }
+
+    @Test("@spec GIT-5.19: When the user toggles the branch-mode picker between \"New branch\" and \"Existing branch\", the application shall preserve each mode's prior input independently — the new-branch name shall not be clobbered by an existing-branch selection, and an existing-branch selection shall not be cleared by a temporary switch to new-branch mode.")
+    func modeSwitchPreservesEachModesInputIndependently() {
+        let c = AddWorktreeFormController(initialWorktreeName: "")
+        c.worktreeName = "my-worktree"
+        c.newBranchName = "cool-thing-v2"   // user customized
+        c.branchMirrorsWorktree = false
+
+        // New → Existing → pick a branch.
+        c.branchMode = .existing
+        c.pickExistingBranch(someEntry(name: "feat-other"))
+        #expect(c.newBranchName == "cool-thing-v2", "new-branch name must survive the mode switch")
+
+        // Existing → New: new-branch name is still there.
+        c.branchMode = .newBranch
+        #expect(c.newBranchName == "cool-thing-v2")
+        #expect(c.selectedSelection == .createNew(name: "cool-thing-v2"))
+
+        // New → Existing again: prior pick is still there.
+        c.branchMode = .existing
+        #expect(c.existingSelection?.name == "feat-other")
+        #expect(c.selectedSelection == .useExisting(name: "feat-other", source: .local))
+    }
 }
