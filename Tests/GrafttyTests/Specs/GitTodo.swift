@@ -164,7 +164,7 @@ struct GitTodo {
     func git_4_6() async throws { }
 
     @Test("""
-@spec GIT-4.7: When the application first observes a worktree's associated pull request transition into a terminal resolved state — either merged or closed-without-merging, whether from open, from no-PR-cached, or from a different previously-resolved PR number — the application shall present an informational dialog offering to delete the worktree. The dialog's message text shall cite the PR number and the resolution word ("merged" or "closed"), its informative text shall read "Delete the worktree now? This will delete the worktree but not the branch.", and its buttons shall be "Delete Worktree" and "Keep".
+@spec GIT-4.7: When the application first observes a worktree's associated pull request transition into a terminal resolved state — either merged or closed-without-merging, whether from open, from no-PR-cached, or from a different previously-resolved PR number — the application shall present an informational dialog offering to delete the worktree. The dialog's message text shall cite the PR number and the resolution word ("merged" or "closed"). Its informative text shall begin with the PR/MR title on its own line (when non-empty), followed by "Delete the worktree now? This will delete the worktree but not the branch." Its buttons shall be "Delete Worktree" and "Keep".
 """, .disabled("not yet implemented"))
     func git_4_7() async throws { }
 

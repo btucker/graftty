@@ -140,8 +140,8 @@ struct MainWindow: View {
             // Wired here rather than in GrafttyApp.startup() so the
             // closure captures MainWindow's `$appState` binding — both
             // NSAlert presentation and the "offered" write-back need it.
-            prStatusStore.onPRResolved = { worktreePath, prNumber, state in
-                offerDeleteForResolvedPR(worktreePath: worktreePath, prNumber: prNumber, state: state)
+            prStatusStore.onPRResolved = { worktreePath, prNumber, prTitle, state in
+                offerDeleteForResolvedPR(worktreePath: worktreePath, prNumber: prNumber, prTitle: prTitle, state: state)
             }
         }
         .focusedSceneValue(\.addWorktreeAction, addWorktreeAction)
@@ -744,7 +744,7 @@ struct MainWindow: View {
 
     /// GIT-4.7. The "offered" marker is persisted via `AppState.onChange`
     /// so Keep is sticky across restarts, not just across polls.
-    private func offerDeleteForResolvedPR(worktreePath: String, prNumber: Int, state: PRInfo.State) {
+    private func offerDeleteForResolvedPR(worktreePath: String, prNumber: Int, prTitle: String, state: PRInfo.State) {
         guard let (repoIdx, wtIdx) = appState.indices(forWorktreePath: worktreePath) else { return }
         let repo = appState.repos[repoIdx]
         let wt = repo.worktrees[wtIdx]
@@ -761,7 +761,8 @@ struct MainWindow: View {
 
         let alert = NSAlert()
         alert.messageText = "Pull request #\(prNumber) \(resolutionWord)"
-        alert.informativeText = "Delete the worktree now? This will delete the worktree but not the branch."
+        let titlePrefix = prTitle.isEmpty ? "" : "\(prTitle)\n\n"
+        alert.informativeText = "\(titlePrefix)Delete the worktree now? This will delete the worktree but not the branch."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Delete Worktree")
         alert.addButton(withTitle: "Keep")

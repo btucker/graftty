@@ -106,7 +106,7 @@ struct PRStatusStoreResolvedTransitionTests {
         let (store, _) = await Self.makeStore(fetcher: fetcher)
         let sink = EventSink()
         await MainActor.run {
-            store.onPRResolved = { path, num, state in
+            store.onPRResolved = { path, num, _, state in
                 Task { await sink.record(path, num, state) }
             }
         }
@@ -131,7 +131,7 @@ struct PRStatusStoreResolvedTransitionTests {
         let (store, _) = await Self.makeStore(fetcher: fetcher)
         let sink = EventSink()
         await MainActor.run {
-            store.onPRResolved = { path, num, state in
+            store.onPRResolved = { path, num, _, state in
                 Task { await sink.record(path, num, state) }
             }
         }
@@ -161,7 +161,7 @@ struct PRStatusStoreResolvedTransitionTests {
         let (store, _) = await Self.makeStore(fetcher: fetcher)
         let sink = EventSink()
         await MainActor.run {
-            store.onPRResolved = { path, num, state in
+            store.onPRResolved = { path, num, _, state in
                 Task { await sink.record(path, num, state) }
             }
         }
@@ -187,7 +187,7 @@ struct PRStatusStoreResolvedTransitionTests {
         let (store, _) = await Self.makeStore(fetcher: fetcher)
         let sink = EventSink()
         await MainActor.run {
-            store.onPRResolved = { path, num, state in
+            store.onPRResolved = { path, num, _, state in
                 Task { await sink.record(path, num, state) }
             }
         }

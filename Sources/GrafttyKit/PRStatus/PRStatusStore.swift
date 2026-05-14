@@ -54,7 +54,7 @@ public final class PRStatusStore {
     /// merging) — for a (PR-number, state) pair that was not the
     /// previous cache value. Drives the "PR resolved — delete
     /// worktree?" offer dialog (GIT-4.7).
-    @ObservationIgnored public var onPRResolved: (@MainActor (_ worktreePath: String, _ prNumber: Int, _ state: PRInfo.State) -> Void)?
+    @ObservationIgnored public var onPRResolved: (@MainActor (_ worktreePath: String, _ prNumber: Int, _ prTitle: String, _ state: PRInfo.State) -> Void)?
 
     /// Fires on PR state, CI-conclusion, or mergeable-state transitions
     /// for a tracked worktree. Idempotent polls (same info twice) do not
@@ -324,7 +324,7 @@ public final class PRStatusStore {
                 absent.remove(wt.path)
             }
             if justResolved, let onPRResolved {
-                onPRResolved(wt.path, pr.number, pr.state)
+                onPRResolved(wt.path, pr.number, pr.title, pr.state)
             }
         }
 
