@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import GhosttyTerminal
+import UIKit
 
 /// A narrow facade over `TerminalSurface`'s selection-driving methods,
 /// so `TerminalSelectionController` can be tested without a real
@@ -48,4 +49,14 @@ public final class RealSurfaceProxy: SurfaceProxy {
         surfaceProvider()?.readSelection()
     }
 }
+
+/// A narrow facade over `UIPasteboard` so the selection controller can
+/// be tested without touching the system clipboard.
+@MainActor
+public protocol Pasteboard {
+    var hasStrings: Bool { get }
+    var string: String? { get set }
+}
+
+extension UIPasteboard: Pasteboard {}
 #endif
