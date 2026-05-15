@@ -99,6 +99,15 @@ public final class RemoteBranchStore {
         branchesByRepo[repoPath]?.upstreams[branch]
     }
 
+    /// Resolves the main-checkout label's primary text for a repo:
+    /// the live `origin/HEAD`-derived value (from the latest snapshot)
+    /// if available, else the hint persisted at add-repo time. Returns
+    /// `nil` only when neither source is known — callers (specifically
+    /// `SidebarWorktreeLabel.text`) fall back to `"main"` at the boundary.
+    public func resolvedDefaultBranch(forRepoAt repoPath: String, hint: String?) -> String? {
+        branchesByRepo[repoPath]?.defaultBranch ?? hint
+    }
+
     public func clear(repoPath: String) {
         branchesByRepo.removeValue(forKey: repoPath)
         inFlight.removeValue(forKey: repoPath)

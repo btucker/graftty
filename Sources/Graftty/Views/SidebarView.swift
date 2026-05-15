@@ -120,9 +120,10 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func repoSection(_ repo: RepoEntry) -> some View {
-        let resolvedDefaultBranch =
-            remoteBranchStore.branchesByRepo[repo.path]?.defaultBranch
-            ?? repo.defaultBranchHint
+        let resolvedDefaultBranch = remoteBranchStore.resolvedDefaultBranch(
+            forRepoAt: repo.path,
+            hint: repo.defaultBranchHint
+        )
         let worktreeLabels = SidebarWorktreeLabel.texts(
             for: repo.worktrees,
             inRepoAtPath: repo.path,
@@ -388,9 +389,10 @@ struct SidebarView: View {
         let menu = NSMenu()
         let defaultBranches: [String: String?] = Dictionary(
             uniqueKeysWithValues: appState.repos.map { repo in
-                (repo.path,
-                 remoteBranchStore.branchesByRepo[repo.path]?.defaultBranch
-                    ?? repo.defaultBranchHint)
+                (repo.path, remoteBranchStore.resolvedDefaultBranch(
+                    forRepoAt: repo.path,
+                    hint: repo.defaultBranchHint
+                ))
             }
         )
         if let context = PaneMoveMenuContext.resolve(

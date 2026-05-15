@@ -255,9 +255,10 @@ struct MainWindow: View {
 
     private var worktreeDisplayName: String? {
         guard let repo = selectedRepo, let wt = selectedWorktree else { return nil }
-        let defaultBranch =
-            remoteBranchStore.branchesByRepo[repo.path]?.defaultBranch
-            ?? repo.defaultBranchHint
+        let defaultBranch = remoteBranchStore.resolvedDefaultBranch(
+            forRepoAt: repo.path,
+            hint: repo.defaultBranchHint
+        )
         return SidebarWorktreeLabel.text(
             for: wt,
             inRepoAtPath: repo.path,
@@ -783,9 +784,10 @@ struct MainWindow: View {
                         // directory basename users actually recognise.
                         let siblingPaths = appState.repos[repoIdx].worktrees.map(\.path)
                         let repo = appState.repos[repoIdx]
-                        let defaultBranch =
-                            remoteBranchStore.branchesByRepo[repo.path]?.defaultBranch
-                            ?? repo.defaultBranchHint
+                        let defaultBranch = remoteBranchStore.resolvedDefaultBranch(
+                            forRepoAt: repo.path,
+                            hint: repo.defaultBranchHint
+                        )
                         let label = SidebarWorktreeLabel.text(
                             for: wt,
                             inRepoAtPath: repo.path,

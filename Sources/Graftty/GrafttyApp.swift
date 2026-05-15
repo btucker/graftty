@@ -604,9 +604,10 @@ struct GrafttyApp: App {
                 let state = appState.wrappedValue
                 let defaultBranches: [String: String?] = Dictionary(
                     uniqueKeysWithValues: state.repos.map { repo in
-                        (repo.path,
-                         paneMoveRemoteBranchStore.branchesByRepo[repo.path]?.defaultBranch
-                            ?? repo.defaultBranchHint)
+                        (repo.path, paneMoveRemoteBranchStore.resolvedDefaultBranch(
+                            forRepoAt: repo.path,
+                            hint: repo.defaultBranchHint
+                        ))
                     }
                 )
                 return PaneMoveMenuContext.resolve(
@@ -1082,16 +1083,29 @@ struct GrafttyApp: App {
 
         // WEB-5.4: feed the web server a snapshot of running sessions on
         // each GET /sessions request. Binding snapshot is read on the
-        // main actor; worktree names are computed the same way the
-        // sidebar does (displayName amongst siblings) so the picker
-        // disambiguates same-basename worktrees the same way.
+        // main actor; worktree names are routed through
+        // `SidebarWorktreeLabel.text` so the iOS session picker matches
+        // every other sidebar-adjacent surface — most notably, the main
+        // checkout renders as the resolved default branch, not the
+        // directory basename.
         let appStateBinding = $appState
+        let panesRemoteBranchStore = services.remoteBranchStore
         webController.setSessionsProvider {
             await MainActor.run { () -> [SessionInfo] in
                 var sessions: [SessionInfo] = []
                 for repo in appStateBinding.wrappedValue.repos {
                     let siblingPaths = repo.worktrees.map(\.path)
+                    let defaultBranch = panesRemoteBranchStore.resolvedDefaultBranch(
+                        forRepoAt: repo.path,
+                        hint: repo.defaultBranchHint
+                    )
                     for wt in repo.worktrees where wt.state == .running {
+                        let worktreeDisplayName = SidebarWorktreeLabel.text(
+                            for: wt,
+                            inRepoAtPath: repo.path,
+                            siblingPaths: siblingPaths,
+                            defaultBranch: defaultBranch
+                        )
                         for leafID in wt.splitTree.allLeaves {
                             guard let sessionID = wt.paneSessions[leafID] else { continue }
                             let sessionName = ZmxLauncher.sessionName(for: sessionID)
@@ -1099,7 +1113,7 @@ struct GrafttyApp: App {
                                 name: sessionName,
                                 worktreePath: wt.path,
                                 repoDisplayName: repo.displayName,
-                                worktreeDisplayName: wt.displayName(amongSiblingPaths: siblingPaths)
+                                worktreeDisplayName: worktreeDisplayName
                             ))
                         }
                     }
@@ -1132,14 +1146,14 @@ struct GrafttyApp: App {
         let terminalManager = tm
         let panesStatsStore = services.statsStore
         let panesPRStore = services.prStatusStore
-        let panesRemoteBranchStore = services.remoteBranchStore
         webController.setWorktreePanesProvider {
             await MainActor.run { () -> [WorktreePanes] in
                 var out: [WorktreePanes] = []
                 for repo in appStateBinding.wrappedValue.repos {
-                    let defaultBranch =
-                        panesRemoteBranchStore.branchesByRepo[repo.path]?.defaultBranch
-                        ?? repo.defaultBranchHint
+                    let defaultBranch = panesRemoteBranchStore.resolvedDefaultBranch(
+                        forRepoAt: repo.path,
+                        hint: repo.defaultBranchHint
+                    )
                     let labels = SidebarWorktreeLabel.texts(
                         for: repo.worktrees,
                         inRepoAtPath: repo.path,
