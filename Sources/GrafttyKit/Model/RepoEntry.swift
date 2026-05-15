@@ -22,8 +22,6 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
     /// Graftty. Used as a fallback for the main-checkout row label
     /// when `RemoteBranchSnapshot.defaultBranch` is not yet resolved
     /// (no remote, network failure, fresh launch before first poll).
-    /// Pre-feature `state.json` blobs lack this key —
-    /// `init(from:)` defaults it to `nil`.
     public var defaultBranchHint: String?
 
     public init(
