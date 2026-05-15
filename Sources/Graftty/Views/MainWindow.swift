@@ -904,6 +904,15 @@ struct MainWindow: View {
             } else if let first = worktrees.first {
                 self.selectWorktree(first.path)
             }
+
+            // After the repo lands in `appState` so the user sees the
+            // new sidebar row before the nudge explains why its PR
+            // column will stay empty. `try?` because a transient detect
+            // failure means "no nudge", which is the safe default.
+            Task.detached {
+                guard let origin = try? await GitOriginHost.detect(repoPath: repoPath) else { return }
+                await HostCLIInstallNudge.presentIfNeeded(for: origin.provider)
+            }
         }
     }
 }
