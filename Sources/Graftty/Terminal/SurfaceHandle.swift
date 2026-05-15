@@ -53,6 +53,7 @@ struct SurfaceHandleGhosttySurfaceFactory {
     var processExit: (ghostty_surface_t, UInt32, UInt64) -> Void
     var size: (ghostty_surface_t) -> ghostty_surface_size_s
     var setSize: (ghostty_surface_t, UInt32, UInt32) -> Void
+    var requestClose: (ghostty_surface_t) -> Void
 
     static let live = SurfaceHandleGhosttySurfaceFactory(
         create: { app, config in ghostty_surface_new(app, config) },
@@ -63,7 +64,8 @@ struct SurfaceHandleGhosttySurfaceFactory {
             ghostty_surface_process_exit(surface, exitCode, runtimeMilliseconds)
         },
         size: { surface in ghostty_surface_size(surface) },
-        setSize: { surface, w, h in ghostty_surface_set_size(surface, w, h) }
+        setSize: { surface, w, h in ghostty_surface_set_size(surface, w, h) },
+        requestClose: { surface in ghostty_surface_request_close(surface) }
     )
 }
 
@@ -411,7 +413,7 @@ final class SurfaceHandle {
     }
 
     func requestClose() {
-        ghostty_surface_request_close(surface)
+        surfaceFactory.requestClose(surface)
     }
 }
 
