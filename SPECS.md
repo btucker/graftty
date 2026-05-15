@@ -68,6 +68,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.25** The application shall display the repository's resolved default branch name as the main-checkout sidebar row's primary label, regardless of the worktree's current HEAD.
 
+**LAYOUT-2.26** When the main-checkout worktree's current branch differs from the repository's resolved default branch, the sidebar row shall render the current branch as a dimmed secondary caption beneath the primary label.
+
 **LAYOUT-2.27** The application shall render the `house` SF Symbol on the main-checkout sidebar row regardless of whether a PR is associated with that worktree, so the home affordance never disappears.
 
 **LAYOUT-2.28** The application shall fall back to `main` for the main-checkout row label when no default branch has been resolved.

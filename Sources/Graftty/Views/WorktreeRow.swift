@@ -322,6 +322,11 @@ struct WorktreeRow: View {
         return "Pull request \(badge.number), \(stateWord)\(suffix). Click to open in browser."
     }
 
+    /// @spec LAYOUT-2.26
+    /// When the main-checkout worktree's current branch differs from
+    /// the repository's resolved default branch, the sidebar row shall
+    /// render the current branch as a dimmed secondary caption beneath
+    /// the primary label.
     @ViewBuilder
     private var branchLabel: some View {
         HStack(spacing: 6) {
