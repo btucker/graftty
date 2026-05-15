@@ -101,7 +101,6 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
         view.onPasteRequested = onPasteRequested
         context.coordinator.onWillUnmount = onWillUnmount
-        captureContainer?(view)
         if context.coordinator.lastFocusRequest != focusRequestCount {
             context.coordinator.lastFocusRequest = focusRequestCount
             DispatchQueue.main.async {
@@ -228,7 +227,6 @@ public final class TerminalInputContainerView: UIView {
     /// @spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and libghostty's built-in pan-to-scroll recognizer on the underlying `UITerminalView` shall be disabled until selection mode exits.
     private func enterSelectionMode() {
         selectionPanRecognizer.isEnabled = true
-        // IOS-11.4: suppress libghostty's pan-to-scroll while selection is active.
         terminalView.gestureRecognizers?.forEach { $0.isEnabled = false }
     }
 

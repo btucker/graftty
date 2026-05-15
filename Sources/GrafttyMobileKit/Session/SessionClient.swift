@@ -319,10 +319,9 @@ public final class SessionClient {
     /// of the paste's meaning.
     public func sendPaste(_ text: String) {
         guard !text.isEmpty else { return }
-        var payload = Data()
-        payload.append(contentsOf: [0x1B, 0x5B, 0x32, 0x30, 0x30, 0x7E]) // ESC [ 2 0 0 ~
+        var payload = Data("\u{1B}[200~".utf8)
         payload.append(Data(text.utf8))
-        payload.append(contentsOf: [0x1B, 0x5B, 0x32, 0x30, 0x31, 0x7E]) // ESC [ 2 0 1 ~
+        payload.append(Data("\u{1B}[201~".utf8))
         recordActivity()
         sendBinary(payload)
         claimLeadershipIfNeeded()

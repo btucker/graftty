@@ -431,54 +431,43 @@ struct SingleSessionView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 terminalTextControl("Esc", accessibilityLabel: "Escape") {
-                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.sendEscape()
                 }
                 terminalTextControl("Tab", accessibilityLabel: "Tab") {
-                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.sendTab()
                 }
                 terminalTextControl("^C", accessibilityLabel: "Control C") {
-                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.sendControl(.c)
                 }
                 terminalTextControl("^D", accessibilityLabel: "Control D") {
-                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.sendControl(.d)
                 }
                 Divider()
                     .frame(height: 28)
                 terminalIconControl("arrow.left", accessibilityLabel: "Left arrow") {
-                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.sendArrow(.left)
                 }
                 terminalIconControl("arrow.down", accessibilityLabel: "Down arrow") {
-                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.sendArrow(.down)
                 }
                 terminalIconControl("arrow.up", accessibilityLabel: "Up arrow") {
-                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.sendArrow(.up)
                 }
                 terminalIconControl("arrow.right", accessibilityLabel: "Right arrow") {
-                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.sendArrow(.right)
                 }
                 Divider()
                     .frame(height: 28)
                 terminalIconControl("return", accessibilityLabel: "Submit return") {
-                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.submitReturn()
                 }
                 terminalTextControl("LF", accessibilityLabel: "Insert newline") {
-                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.insertNewline()
                 }
                 terminalIconControl(
                     "keyboard.chevron.compact.down",
                     accessibilityLabel: "Hide keyboard"
                 ) {
-                    paneContainerBox.cancelActiveSelectionIfAny()
                     keyboardAllowed = false
                     UIApplication.shared.sendAction(
                         #selector(UIResponder.resignFirstResponder),
@@ -575,12 +564,23 @@ struct SingleSessionView: View {
             .shadow(radius: 1)
     }
 
+    /// Wraps a control-bar action so that pressing any key while a
+    /// terminal selection is active first cancels the selection
+    /// (IOS-11.7). Every entry in `terminalControlBar` routes its
+    /// action through this wrapper.
+    private func controlBarAction(_ body: @escaping () -> Void) -> () -> Void {
+        { [paneContainerBox] in
+            paneContainerBox.cancelActiveSelectionIfAny()
+            body()
+        }
+    }
+
     private func terminalTextControl(
         _ title: String,
         accessibilityLabel: String,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        Button(action: controlBarAction(action)) {
             Text(title)
                 .font(.footnote.monospaced().weight(.semibold))
                 .foregroundStyle(.primary)
@@ -597,7 +597,7 @@ struct SingleSessionView: View {
         accessibilityLabel: String,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        Button(action: controlBarAction(action)) {
             Image(systemName: systemName)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.primary)
