@@ -22,10 +22,10 @@ public struct RemoteBranchSnapshot: Sendable, Equatable {
     public let localBranches: [BranchRef]
     public let upstreams: [String: String]
     /// @spec LAYOUT-2.29
-    /// Repository's default branch as resolved from
-    /// `git symbolic-ref --short refs/remotes/origin/HEAD`,
-    /// stripped of the `<remote>/` prefix. `nil` when HEAD is
-    /// unset on origin or the lookup fails.
+    /// Repository's default branch as resolved by
+    /// `GitOriginDefaultBranch.resolve` (origin/HEAD symbolic-ref with
+    /// main/master/develop probe fallback). `nil` when no default
+    /// branch can be identified.
     public let defaultBranch: String?
 
     public init(
@@ -276,15 +276,6 @@ public final class RemoteBranchStore {
         }
     }
 
-    nonisolated static func parseDefaultBranch(_ output: String) -> String? {
-        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        if let slash = trimmed.firstIndex(of: "/") {
-            return String(trimmed[trimmed.index(after: slash)...])
-        }
-        return trimmed
-    }
-
     public nonisolated static let defaultList: ListFunction = { repoPath in
         async let remotesTask = GitRunner.run(
             args: ["for-each-ref", "--format=%(refname:short)\t%(committerdate:iso-strict)", "refs/remotes/origin"],
@@ -294,12 +285,9 @@ public final class RemoteBranchStore {
             args: ["for-each-ref", "--format=%(refname:short)\t%(committerdate:iso-strict)\t%(upstream:short)", "refs/heads/"],
             at: repoPath
         )
-        async let defaultBranchTask = GitRunner.run(
-            args: ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
-            at: repoPath
-        )
+        async let defaultBranchTask = GitOriginDefaultBranch.resolve(repoPath: repoPath)
         let (remotes, heads) = try await (remotesTask, headsTask)
-        let defaultBranch = (try? await defaultBranchTask).flatMap(parseDefaultBranch)
+        let defaultBranch = await defaultBranchTask
         return RemoteBranchSnapshot(
             remoteBranches: parseRemoteBranchesWithDates(remotes),
             localBranches: parseLocalBranchesWithDates(heads),
@@ -318,9 +306,5 @@ public final class RemoteBranchStore {
 
     nonisolated static func parseRemoteBranchesWithDatesForTesting(_ output: String) -> [BranchRef] {
         parseRemoteBranchesWithDates(output)
-    }
-
-    nonisolated static func parseDefaultBranchForTesting(_ output: String) -> String? {
-        parseDefaultBranch(output)
     }
 }

@@ -66,6 +66,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.24** When a worktree enters the stale/yellow state, the application shall permanently move stale worktrees to the bottom of that repository's persisted `worktrees` array while preserving relative order within stale and non-stale groups.
 
+**LAYOUT-2.29** Repository's default branch as resolved by `GitOriginDefaultBranch.resolve` (origin/HEAD symbolic-ref with main/master/develop probe fallback). `nil` when no default branch can be identified.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
