@@ -52,6 +52,7 @@ struct SurfaceHandleGhosttySurfaceFactory {
     var writeBuffer: (ghostty_surface_t, UnsafePointer<UInt8>, UInt) -> Void
     var processExit: (ghostty_surface_t, UInt32, UInt64) -> Void
     var size: (ghostty_surface_t) -> ghostty_surface_size_s
+    var setSize: (ghostty_surface_t, UInt32, UInt32) -> Void
 
     static let live = SurfaceHandleGhosttySurfaceFactory(
         create: { app, config in ghostty_surface_new(app, config) },
@@ -61,7 +62,8 @@ struct SurfaceHandleGhosttySurfaceFactory {
         processExit: { surface, exitCode, runtimeMilliseconds in
             ghostty_surface_process_exit(surface, exitCode, runtimeMilliseconds)
         },
-        size: { surface in ghostty_surface_size(surface) }
+        size: { surface in ghostty_surface_size(surface) },
+        setSize: { surface, w, h in ghostty_surface_set_size(surface, w, h) }
     )
 }
 
@@ -94,9 +96,13 @@ final class SurfaceHandle {
         terminalManager: TerminalManager? = nil,
         inputActivityObserver: PaneInputActivityObserver? = nil,
         surfaceFactory: SurfaceHandleGhosttySurfaceFactory = .live,
-        zmxBackendFactory: (ZmxSpawnConfiguration) -> SurfaceHandleZmxBackend = {
-            HostManagedZmxBackend(spawnConfiguration: $0)
-        }
+        zmxBackendFactory: (ZmxSpawnConfiguration, (cols: UInt16, rows: UInt16)?) -> SurfaceHandleZmxBackend = { spawn, initialSize in
+            HostManagedZmxBackend(
+                spawnConfiguration: spawn,
+                initialSize: initialSize
+            )
+        },
+        initialGridSize: ghostty_surface_size_s? = nil
     ) {
         self.terminalID = terminalID
         self.worktreePath = worktreePath
@@ -108,7 +114,9 @@ final class SurfaceHandle {
         )
         let userdataPtr = Unmanaged.passRetained(userdataBox).toOpaque()
         self.userdataPointer = userdataPtr
-        let backend = zmxSpawnConfiguration.map(zmxBackendFactory)
+        let backend = zmxSpawnConfiguration.map { spawn in
+            zmxBackendFactory(spawn, initialGridSize.map { ($0.columns, $0.rows) })
+        }
         self.zmxBackend = backend
 
         let surfaceView = SurfaceNSView()
@@ -238,6 +246,10 @@ final class SurfaceHandle {
         // The view weakly references the surface via this unmanaged handle;
         // it forwards keystrokes/mouse events back into libghostty.
         surfaceView.surface = newSurface
+
+        if let initialGridSize, initialGridSize.width_px > 0, initialGridSize.height_px > 0 {
+            surfaceFactory.setSize(newSurface, initialGridSize.width_px, initialGridSize.height_px)
+        }
 
         if let backend {
             do {

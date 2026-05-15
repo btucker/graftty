@@ -22,7 +22,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: Self.spawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _ in backend }
+            zmxBackendFactory: { _, _ in backend }
         )
 
         #expect(handle != nil)
@@ -68,7 +68,7 @@ struct SurfaceHandleHostManagedTests {
             zmxSpawnConfiguration: Self.spawnConfiguration(),
             extraInitialInput: "nvim Sources/main.swift\r",
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _ in backend }
+            zmxBackendFactory: { _, _ in backend }
         )
 
         #expect(handle != nil)
@@ -88,7 +88,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: Self.spawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _ in backend }
+            zmxBackendFactory: { _, _ in backend }
         ))
 
         handle.typeText("abc")
@@ -148,7 +148,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: Self.spawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _ in backend }
+            zmxBackendFactory: { _, _ in backend }
         )
 
         #expect(handle == nil)
@@ -172,7 +172,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: Self.spawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _ in backend }
+            zmxBackendFactory: { _, _ in backend }
         )
 
         #expect(handle != nil)
@@ -204,7 +204,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: Self.spawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _ in backend }
+            zmxBackendFactory: { _, _ in backend }
         )
         _ = try #require(handle)
 
@@ -234,7 +234,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: Self.spawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _ in backend }
+            zmxBackendFactory: { _, _ in backend }
         ))
 
         let size = handle.queryGridSize()
@@ -242,6 +242,75 @@ struct SurfaceHandleHostManagedTests {
         #expect(size.rows == 43)
         #expect(size.width_px == 1584)
         #expect(size.height_px == 688)
+    }
+
+    @Test("""
+    @spec MEM-1.7: When a previously-evicted pane is re-attached via the rehydration path, the application shall spawn its outer `zmx attach` PTY with `initialSize` equal to the captured grid size, so the underlying shell PTY winsize remains stable across the evict / re-attach cycle.
+    """)
+    func initialGridSizePropagatesThroughBackendFactory() throws {
+        var observedInitialSize: (cols: UInt16, rows: UInt16)?
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+
+        let handle = SurfaceHandle(
+            terminalID: Self.terminalID(),
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: Self.spawnConfiguration(),
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _, initialSize in
+                observedInitialSize = initialSize
+                return backend
+            },
+            initialGridSize: ghostty_surface_size_s(
+                columns: 132,
+                rows: 43,
+                width_px: 1584,
+                height_px: 688,
+                cell_width_px: 12,
+                cell_height_px: 16
+            )
+        )
+
+        #expect(handle != nil)
+        #expect(observedInitialSize?.cols == 132)
+        #expect(observedInitialSize?.rows == 43)
+    }
+
+    @Test("""
+    @spec MEM-1.8: When a previously-evicted pane is re-attached via the rehydration path, the application shall pre-size the new libghostty surface to the captured pixel dimensions before starting its host-managed backend, so the first post-layout resize event is a no-op when the layout container has not changed.
+    """)
+    func initialGridSizePreSetsSurfaceBeforeBackendStart() throws {
+        let surface = fakeSurface()
+        let harness = SurfaceHandleTestHarness(surface: surface)
+        let backend = FakeSurfaceHandleZmxBackend(
+            setSizeCountSource: { harness.setSizeCalls.count }
+        )
+
+        let handle = SurfaceHandle(
+            terminalID: Self.terminalID(),
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: Self.spawnConfiguration(),
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _, _ in backend },
+            initialGridSize: ghostty_surface_size_s(
+                columns: 132,
+                rows: 43,
+                width_px: 1584,
+                height_px: 688,
+                cell_width_px: 12,
+                cell_height_px: 16
+            )
+        )
+
+        #expect(handle != nil)
+        #expect(harness.setSizeCalls == [
+            SetSizeCall(surface: surface, width: 1584, height: 688)
+        ])
+        #expect(backend.observedSetSizeCountAtStart == 1)
     }
 
     private static func terminalID() -> PaneSlotID {
@@ -293,6 +362,7 @@ private final class SurfaceHandleTestHarness {
     var textWrites: [Data] = []
     var writeBufferCalls: [SurfaceWriteBufferCall] = []
     var processExitCalls: [ProcessExitCall] = []
+    var setSizeCalls: [SetSizeCall] = []
     var sizeStub: ghostty_surface_size_s = ghostty_surface_size_s(
         columns: 0,
         rows: 0,
@@ -336,9 +406,18 @@ private final class SurfaceHandleTestHarness {
                     columns: 0, rows: 0, width_px: 0, height_px: 0,
                     cell_width_px: 0, cell_height_px: 0
                 )
+            },
+            setSize: { [weak self] surface, w, h in
+                self?.setSizeCalls.append(SetSizeCall(surface: surface, width: w, height: h))
             }
         )
     }
+}
+
+private struct SetSizeCall: Equatable {
+    let surface: ghostty_surface_t
+    let width: UInt32
+    let height: UInt32
 }
 
 private struct SurfaceWriteBufferCall: Equatable {
@@ -371,13 +450,16 @@ private struct CapturedSurfaceConfig {
 
 private final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
     private let startError: Error?
+    private let setSizeCountSource: () -> Int
     private(set) var startCount = 0
     private(set) var closeCount = 0
     private(set) var releaseCount = 0
     private(set) var writes: [Data] = []
+    private(set) var observedSetSizeCountAtStart = 0
 
-    init(startError: Error? = nil) {
+    init(startError: Error? = nil, setSizeCountSource: @escaping () -> Int = { 0 }) {
         self.startError = startError
+        self.setSizeCountSource = setSizeCountSource
     }
 
     func configure(_ config: inout ghostty_surface_config_s) {
@@ -389,6 +471,7 @@ private final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
 
     func start(surface: ghostty_surface_t) throws {
         startCount += 1
+        observedSetSizeCountAtStart = setSizeCountSource()
         if let startError {
             throw startError
         }
