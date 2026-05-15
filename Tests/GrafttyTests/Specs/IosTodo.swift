@@ -208,4 +208,59 @@ struct IosTodo {
 """, .disabled("not yet implemented"))
     func ios_9_5() async throws { }
 
+    @Test("""
+@spec IOS-11.1: When the user long-presses a focused terminal pane, the application shall present a `UIEditMenuInteraction` menu at the touch point containing **Select**, **Select All**, and (when `UIPasteboard.general.hasStrings` is true at menu-build time) **Paste**.
+""", .disabled("not yet implemented"))
+    func ios_11_1() async throws { }
+
+    @Test("""
+@spec IOS-11.2: When the user taps **Select** in the long-press menu, the application shall ask libghostty to word-select the cell under the long-press point by synthesizing a LEFT mouse-down/up pair plus a second click within libghostty's double-click window, and shall enter selection mode for that pane.
+""", .disabled("not yet implemented"))
+    func ios_11_2() async throws { }
+
+    @Test("""
+@spec IOS-11.3: When the user taps **Select All** in the long-press menu, the application shall invoke libghostty's `select_all` binding action via `surface.performAction("select_all")` and shall enter selection mode for that pane with the visible viewport highlighted.
+""", .disabled("not yet implemented"))
+    func ios_11_3() async throws { }
+
+    @Test("""
+@spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and libghostty's built-in pan-to-scroll recognizer on the underlying `UITerminalView` shall be disabled until selection mode exits.
+""", .disabled("not yet implemented"))
+    func ios_11_4() async throws { }
+
+    @Test("""
+@spec IOS-11.5: When selection mode is active and the user lifts their finger after Select / Select All / extend, the application shall present a second `UIEditMenuInteraction` menu anchored near the selection rect containing **Copy** and **Cancel**.
+""", .disabled("not yet implemented"))
+    func ios_11_5() async throws { }
+
+    @Test("""
+@spec IOS-11.6: When the user taps **Copy**, the application shall extract the active selection via `surface.readSelection()`, write the result to `UIPasteboard.general.string`, clear libghostty's selection, and exit selection mode. If `readSelection()` returns nil or empty, the pasteboard shall not be modified.
+""", .disabled("not yet implemented"))
+    func ios_11_6() async throws { }
+
+    @Test("""
+@spec IOS-11.7: When the user taps **Cancel**, taps outside the highlighted selection, or presses a key on the terminal control bar while in selection mode, the application shall clear libghostty's selection and exit selection mode without modifying the pasteboard.
+""", .disabled("not yet implemented"))
+    func ios_11_7() async throws { }
+
+    @Test("""
+@spec IOS-11.8: When the user taps **Paste** in the long-press menu, the application shall read `UIPasteboard.general.string` and, when non-empty, send it via `SessionClient.sendPaste(_:)`. An empty or absent clipboard string shall be a silent no-op.
+""", .disabled("not yet implemented"))
+    func ios_11_8() async throws { }
+
+    @Test("""
+@spec IOS-11.9: `SessionClient.sendPaste(_:)` shall wrap the payload in `ESC [ 200 ~` and `ESC [ 201 ~` and emit the wrapped sequence as a single binary WebSocket frame. The single-byte LF→CR translation of `IOS-6.3` shall not apply to this path; the payload's own line endings shall be preserved verbatim.
+""", .disabled("not yet implemented"))
+    func ios_11_9() async throws { }
+
+    @Test("""
+@spec IOS-11.10: Selection mode shall be per-pane state owned by the focused pane's `TerminalSelectionController`. Selection in one pane shall not affect the selection state of any other pane.
+""", .disabled("not yet implemented"))
+    func ios_11_10() async throws { }
+
+    @Test("""
+@spec IOS-11.11: While a pane is rendered as a worktree-detail preview tile (`IOS-4.10`), the long-press selection menu shall not be installed; tapping the tile shall continue to open the fullscreen pane per `IOS-4.21`.
+""", .disabled("not yet implemented"))
+    func ios_11_11() async throws { }
+
 }
