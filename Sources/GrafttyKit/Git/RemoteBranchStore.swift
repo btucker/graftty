@@ -21,15 +21,23 @@ public struct RemoteBranchSnapshot: Sendable, Equatable {
     public let remoteBranches: [BranchRef]
     public let localBranches: [BranchRef]
     public let upstreams: [String: String]
+    /// @spec LAYOUT-2.29
+    /// Repository's default branch as resolved from
+    /// `git symbolic-ref --short refs/remotes/origin/HEAD`,
+    /// stripped of the `<remote>/` prefix. `nil` when HEAD is
+    /// unset on origin or the lookup fails.
+    public let defaultBranch: String?
 
     public init(
         remoteBranches: [BranchRef] = [],
         localBranches: [BranchRef] = [],
-        upstreams: [String: String] = [:]
+        upstreams: [String: String] = [:],
+        defaultBranch: String? = nil
     ) {
         self.remoteBranches = remoteBranches
         self.localBranches = localBranches
         self.upstreams = upstreams
+        self.defaultBranch = defaultBranch
     }
 
     /// Back-compat: callers that previously read `branches: Set<String>`
@@ -42,6 +50,7 @@ public struct RemoteBranchSnapshot: Sendable, Equatable {
         self.remoteBranches = branches.map { BranchRef(name: $0, lastCommitDate: .distantPast) }
         self.localBranches = []
         self.upstreams = upstreams
+        self.defaultBranch = nil
     }
 }
 
@@ -267,6 +276,15 @@ public final class RemoteBranchStore {
         }
     }
 
+    nonisolated static func parseDefaultBranch(_ output: String) -> String? {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let slash = trimmed.firstIndex(of: "/") {
+            return String(trimmed[trimmed.index(after: slash)...])
+        }
+        return trimmed
+    }
+
     public nonisolated static let defaultList: ListFunction = { repoPath in
         async let remotesTask = GitRunner.run(
             args: ["for-each-ref", "--format=%(refname:short)\t%(committerdate:iso-strict)", "refs/remotes/origin"],
@@ -276,11 +294,17 @@ public final class RemoteBranchStore {
             args: ["for-each-ref", "--format=%(refname:short)\t%(committerdate:iso-strict)\t%(upstream:short)", "refs/heads/"],
             at: repoPath
         )
+        async let defaultBranchTask = GitRunner.run(
+            args: ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            at: repoPath
+        )
         let (remotes, heads) = try await (remotesTask, headsTask)
+        let defaultBranch = (try? await defaultBranchTask).flatMap(parseDefaultBranch)
         return RemoteBranchSnapshot(
             remoteBranches: parseRemoteBranchesWithDates(remotes),
             localBranches: parseLocalBranchesWithDates(heads),
-            upstreams: parseUpstreams(heads)
+            upstreams: parseUpstreams(heads),
+            defaultBranch: defaultBranch
         )
     }
 
@@ -294,5 +318,9 @@ public final class RemoteBranchStore {
 
     nonisolated static func parseRemoteBranchesWithDatesForTesting(_ output: String) -> [BranchRef] {
         parseRemoteBranchesWithDates(output)
+    }
+
+    nonisolated static func parseDefaultBranchForTesting(_ output: String) -> String? {
+        parseDefaultBranch(output)
     }
 }

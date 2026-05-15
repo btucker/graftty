@@ -377,6 +377,25 @@ struct RemoteBranchStoreTests {
         #expect(parsed.first(where: { $0.name == "main" })?.lastCommitDate == expectedMainDate)
     }
 
+    @Test func parseDefaultBranchStripsOriginPrefix() {
+        #expect(RemoteBranchStore.parseDefaultBranchForTesting("origin/main\n") == "main")
+    }
+
+    @Test func parseDefaultBranchHandlesAlternateRemoteName() {
+        #expect(RemoteBranchStore.parseDefaultBranchForTesting("upstream/trunk\n") == "trunk")
+    }
+
+    @Test func parseDefaultBranchReturnsNilForEmpty() {
+        #expect(RemoteBranchStore.parseDefaultBranchForTesting("") == nil)
+        #expect(RemoteBranchStore.parseDefaultBranchForTesting("\n") == nil)
+    }
+
+    @Test func parseDefaultBranchReturnsRawWhenNoSlash() {
+        // Defensive: git would not normally emit this, but if it does we
+        // prefer to surface *something* over nil.
+        #expect(RemoteBranchStore.parseDefaultBranchForTesting("trunk") == "trunk")
+    }
+
     private func waitUntil(
         timeout: TimeInterval,
         condition: @escaping @MainActor @Sendable () -> Bool
