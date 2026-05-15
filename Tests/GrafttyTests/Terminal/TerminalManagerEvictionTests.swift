@@ -71,14 +71,7 @@ struct TerminalManagerEvictionTests {
 
         let backend = FakeSurfaceHandleZmxBackend()
         let harness = SurfaceHandleTestHarness(surface: fakeSurface())
-        harness.sizeStub = ghostty_surface_size_s(
-            columns: 132,
-            rows: 43,
-            width_px: 1584,
-            height_px: 688,
-            cell_width_px: 12,
-            cell_height_px: 16
-        )
+        harness.sizeStub = .testSize132x43
 
         let handle = try #require(SurfaceHandle(
             terminalID: terminalID,

@@ -78,16 +78,12 @@ final class TerminalManager: ObservableObject {
         var rows: UInt16
         var widthPx: UInt32
         var heightPx: UInt32
-        var cellWidthPx: UInt32
-        var cellHeightPx: UInt32
 
         init(_ s: ghostty_surface_size_s) {
             cols = s.columns
             rows = s.rows
             widthPx = s.width_px
             heightPx = s.height_px
-            cellWidthPx = s.cell_width_px
-            cellHeightPx = s.cell_height_px
         }
 
         var asGhosttySize: ghostty_surface_size_s {
@@ -96,8 +92,8 @@ final class TerminalManager: ObservableObject {
                 rows: rows,
                 width_px: widthPx,
                 height_px: heightPx,
-                cell_width_px: cellWidthPx,
-                cell_height_px: cellHeightPx
+                cell_width_px: 0,
+                cell_height_px: 0
             )
         }
     }
@@ -501,7 +497,6 @@ final class TerminalManager: ObservableObject {
             // can return null under libghostty resource exhaustion. Skip the
             // leaf rather than crash the app; the pane renders the Color.black
             // + ProgressView fallback until it's re-created.
-            let cachedSize = evictedGridSizes.removeValue(forKey: terminalID)
             guard let handle = SurfaceHandle(
                 terminalID: terminalID,
                 app: app,
@@ -510,11 +505,12 @@ final class TerminalManager: ObservableObject {
                 zmxSpawnConfiguration: zmxSpawnConfiguration,
                 terminalManager: self,
                 inputActivityObserver: inputActivityObserver,
-                initialGridSize: cachedSize?.asGhosttySize
+                initialGridSize: consumeCachedGridSize(for: terminalID)
             ) else {
                 forgetPaneSession(for: terminalID)
                 continue
             }
+            didCreateSurface(for: terminalID)
             surfaces[terminalID] = handle
             created[terminalID] = handle
             if let scanner = portScanner, let pid = lookupShellPID(for: terminalID) {
@@ -547,7 +543,6 @@ final class TerminalManager: ObservableObject {
         )
         // TERM-5.5: failable init returns nil on libghostty rejection;
         // propagate that to the caller instead of crashing.
-        let cachedSize = evictedGridSizes.removeValue(forKey: terminalID)
         guard let handle = SurfaceHandle(
             terminalID: terminalID,
             app: app,
@@ -557,11 +552,12 @@ final class TerminalManager: ObservableObject {
             extraInitialInput: extraInitialInput,
             terminalManager: self,
             inputActivityObserver: inputActivityObserver,
-            initialGridSize: cachedSize?.asGhosttySize
+            initialGridSize: consumeCachedGridSize(for: terminalID)
         ) else {
             forgetPaneSession(for: terminalID)
             return nil
         }
+        didCreateSurface(for: terminalID)
         surfaces[terminalID] = handle
         if let scanner = portScanner, let pid = lookupShellPID(for: terminalID) {
             Task { await scanner.registerPane(terminalID, shellPID: pid) }
@@ -694,6 +690,17 @@ final class TerminalManager: ObservableObject {
     /// `createSurface` / `createSurfaces` exclusively.
     func insertSurfaceForTesting(_ handle: SurfaceHandle, for terminalID: PaneSlotID) {
         surfaces[terminalID] = handle
+    }
+
+    /// Drop and return the cached grid size for a pane, if any. Peek-then-
+    /// consume rather than consume-then-spawn so a failable `SurfaceHandle`
+    /// init can roll back and leave the cache available for the next retry.
+    private func consumeCachedGridSize(for terminalID: PaneSlotID) -> ghostty_surface_size_s? {
+        evictedGridSizes[terminalID]?.asGhosttySize
+    }
+
+    private func didCreateSurface(for terminalID: PaneSlotID) {
+        evictedGridSizes.removeValue(forKey: terminalID)
     }
 
     /// Tell libghostty whether a surface is currently visible. On visible,

@@ -5,8 +5,20 @@ import GrafttyKit
 import Testing
 @testable import Graftty
 
-// Shared test harness extracted from SurfaceHandleHostManagedTests.swift
-// so TerminalManagerEvictionTests and other suites can reuse these helpers.
+extension ghostty_surface_size_s {
+    static let zero = ghostty_surface_size_s(
+        columns: 0, rows: 0, width_px: 0, height_px: 0,
+        cell_width_px: 0, cell_height_px: 0
+    )
+
+    /// Canonical fixture for tests that need a representative non-zero
+    /// grid (132×43 cells at 12×16 px). Reused across MEM-1.6..1.8
+    /// coverage so cell metrics don't drift between assertions.
+    static let testSize132x43 = ghostty_surface_size_s(
+        columns: 132, rows: 43, width_px: 1584, height_px: 688,
+        cell_width_px: 12, cell_height_px: 16
+    )
+}
 
 @MainActor
 final class SurfaceHandleTestHarness {
@@ -18,14 +30,7 @@ final class SurfaceHandleTestHarness {
     var processExitCalls: [ProcessExitCall] = []
     var setSizeCalls: [SetSizeCall] = []
     var requestCloseCalls: [ghostty_surface_t] = []
-    var sizeStub: ghostty_surface_size_s = ghostty_surface_size_s(
-        columns: 0,
-        rows: 0,
-        width_px: 0,
-        height_px: 0,
-        cell_width_px: 0,
-        cell_height_px: 0
-    )
+    var sizeStub: ghostty_surface_size_s = .zero
 
     init(surface: ghostty_surface_t?) {
         self.surface = surface
@@ -57,10 +62,7 @@ final class SurfaceHandleTestHarness {
                 )
             },
             size: { [weak self] _ in
-                self?.sizeStub ?? ghostty_surface_size_s(
-                    columns: 0, rows: 0, width_px: 0, height_px: 0,
-                    cell_width_px: 0, cell_height_px: 0
-                )
+                self?.sizeStub ?? .zero
             },
             setSize: { [weak self] surface, w, h in
                 self?.setSizeCalls.append(SetSizeCall(surface: surface, width: w, height: h))
