@@ -598,12 +598,22 @@ struct GrafttyApp: App {
         // Surface menu (`SurfaceContextMenu`) calls this at right-click
         // time so the snapshot is fresh; nil makes it skip the Move
         // section (e.g. mid-reassignment race window).
+        let paneMoveRemoteBranchStore = services.remoteBranchStore
         terminalManager.currentPaneMoveContext = { [appState = $appState, tm = terminalManager] terminalID in
             MainActor.assumeIsolated {
-                PaneMoveMenuContext.resolve(
+                let state = appState.wrappedValue
+                let defaultBranches: [String: String?] = Dictionary(
+                    uniqueKeysWithValues: state.repos.map { repo in
+                        (repo.path,
+                         paneMoveRemoteBranchStore.branchesByRepo[repo.path]?.defaultBranch
+                            ?? repo.defaultBranchHint)
+                    }
+                )
+                return PaneMoveMenuContext.resolve(
                     terminalID: terminalID,
-                    appState: appState.wrappedValue,
-                    shellCwd: tm.shellCwd(for: terminalID)
+                    appState: state,
+                    shellCwd: tm.shellCwd(for: terminalID),
+                    defaultBranchesByRepoPath: defaultBranches
                 )
             }
         }
@@ -1122,13 +1132,18 @@ struct GrafttyApp: App {
         let terminalManager = tm
         let panesStatsStore = services.statsStore
         let panesPRStore = services.prStatusStore
+        let panesRemoteBranchStore = services.remoteBranchStore
         webController.setWorktreePanesProvider {
             await MainActor.run { () -> [WorktreePanes] in
                 var out: [WorktreePanes] = []
                 for repo in appStateBinding.wrappedValue.repos {
+                    let defaultBranch =
+                        panesRemoteBranchStore.branchesByRepo[repo.path]?.defaultBranch
+                        ?? repo.defaultBranchHint
                     let labels = SidebarWorktreeLabel.texts(
                         for: repo.worktrees,
-                        inRepoAtPath: repo.path
+                        inRepoAtPath: repo.path,
+                        defaultBranch: defaultBranch
                     )
                     for wt in repo.worktrees {
                         let stats = wt.state.hasOnDiskWorktree

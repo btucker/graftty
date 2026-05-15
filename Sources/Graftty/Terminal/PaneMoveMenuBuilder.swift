@@ -13,6 +13,18 @@ struct PaneMoveMenuContext {
     /// form per PWD-1.2.
     let cwdMatch: (repo: RepoEntry, worktree: WorktreeEntry)?
 
+    /// Resolved default branch per repo path. Passed to
+    /// `SidebarWorktreeLabel.text` so main-checkout menu entries
+    /// label the row with the repo's default branch (LAYOUT-2.25)
+    /// rather than the worktree's current HEAD. The optional inner
+    /// value mirrors the helper's contract: `nil` means "unresolved"
+    /// and the helper falls back to `"main"` (LAYOUT-2.28).
+    let defaultBranchesByRepoPath: [String: String?]
+
+    func defaultBranch(for repoPath: String) -> String? {
+        defaultBranchesByRepoPath[repoPath] ?? nil
+    }
+
     /// Builds a context for `terminalID` from the live model. Returns
     /// nil when no worktree currently hosts the pane (mid-reassignment
     /// race, or the pane was just removed) — callers should skip the
@@ -20,7 +32,8 @@ struct PaneMoveMenuContext {
     static func resolve(
         terminalID: PaneSlotID,
         appState: AppState,
-        shellCwd: String?
+        shellCwd: String?,
+        defaultBranchesByRepoPath: [String: String?]
     ) -> PaneMoveMenuContext? {
         guard let host = appState.indicesOfWorktreeContaining(terminalID: terminalID) else {
             return nil
@@ -33,7 +46,8 @@ struct PaneMoveMenuContext {
         return PaneMoveMenuContext(
             currentWorktree: repo.worktrees[host.worktree],
             currentRepo: repo,
-            cwdMatch: match
+            cwdMatch: match,
+            defaultBranchesByRepoPath: defaultBranchesByRepoPath
         )
     }
 }
@@ -74,6 +88,7 @@ enum PaneMoveMenuBuilder {
                 terminalID: terminalID,
                 siblings: siblings,
                 repo: context.currentRepo,
+                context: context,
                 onMove: onMove
             ))
         }
@@ -91,7 +106,8 @@ enum PaneMoveMenuBuilder {
             let label = SidebarWorktreeLabel.text(
                 for: match.worktree,
                 inRepoAtPath: match.repo.path,
-                siblingPaths: match.repo.worktrees.map(\.path)
+                siblingPaths: match.repo.worktrees.map(\.path),
+                defaultBranch: context.defaultBranch(for: match.repo.path)
             )
             return ClosureMenuItem(title: "Move to \(label)") {
                 onMove(terminalID, match.worktree.path)
@@ -110,6 +126,7 @@ enum PaneMoveMenuBuilder {
         terminalID: PaneSlotID,
         siblings: [WorktreeEntry],
         repo: RepoEntry,
+        context: PaneMoveMenuContext,
         onMove: @escaping (PaneSlotID, String) -> Void
     ) -> NSMenuItem {
         let parent = NSMenuItem(title: "Move to worktree", action: nil, keyEquivalent: "")
@@ -119,7 +136,8 @@ enum PaneMoveMenuBuilder {
             let label = SidebarWorktreeLabel.text(
                 for: sibling,
                 inRepoAtPath: repo.path,
-                siblingPaths: allPaths
+                siblingPaths: allPaths,
+                defaultBranch: context.defaultBranch(for: repo.path)
             )
             let item = ClosureMenuItem(title: label) {
                 onMove(terminalID, sibling.path)

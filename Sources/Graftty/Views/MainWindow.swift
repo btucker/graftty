@@ -255,7 +255,15 @@ struct MainWindow: View {
 
     private var worktreeDisplayName: String? {
         guard let repo = selectedRepo, let wt = selectedWorktree else { return nil }
-        return wt.displayName(amongSiblingPaths: repo.worktrees.map(\.path))
+        let defaultBranch =
+            remoteBranchStore.branchesByRepo[repo.path]?.defaultBranch
+            ?? repo.defaultBranchHint
+        return SidebarWorktreeLabel.text(
+            for: wt,
+            inRepoAtPath: repo.path,
+            siblingPaths: repo.worktrees.map(\.path),
+            defaultBranch: defaultBranch
+        )
     }
 
     private var prInfo: PRInfo? {
@@ -774,7 +782,16 @@ struct MainWindow: View {
                         // (detached)") — whereas displayName gives the
                         // directory basename users actually recognise.
                         let siblingPaths = appState.repos[repoIdx].worktrees.map(\.path)
-                        let label = wt.displayName(amongSiblingPaths: siblingPaths)
+                        let repo = appState.repos[repoIdx]
+                        let defaultBranch =
+                            remoteBranchStore.branchesByRepo[repo.path]?.defaultBranch
+                            ?? repo.defaultBranchHint
+                        let label = SidebarWorktreeLabel.text(
+                            for: wt,
+                            inRepoAtPath: repo.path,
+                            siblingPaths: siblingPaths,
+                            defaultBranch: defaultBranch
+                        )
                         let alert = NSAlert()
                         alert.messageText = "Stop Worktree?"
                         alert.informativeText = "There are running processes in \(label). Stop all terminals?"

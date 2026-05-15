@@ -12,31 +12,77 @@ import Foundation
 @Suite("""
 SidebarWorktreeLabel
 
-@spec GIT-2.10: When the application renders a worktree's branch name in the UI (the breadcrumb bar per `LAYOUT-1.3`, the secondary label in the sidebar row, and the main-checkout label in right-click "Move to <name>" menu entries — both in the sidebar pane row's menu and the terminal surface menu, per `PWD-1.1` / `PWD-1.3` / `TERM-8.10`), it shall read `WorktreeEntry.displayBranch` rather than `WorktreeEntry.branch`. `displayBranch` strips every Unicode bidirectional-override scalar (same ranges as `PR-5.5`) so a collaborator-controlled branch name like `"feat\\u{202E}lanigiro"` — which git accepts and which propagates into `state.json` via `git worktree list --porcelain` — can't render RTL-reversed in the breadcrumb, row, or menu items. `branch` itself is preserved unchanged so downstream `git` subprocess calls, `gh pr list --head <branch>`, and the `PRStatusStore.isFetchableBranch` gate keep operating on the real ref. This is the same strip-not-reject policy `PR-5.5` uses for externally-sourced text. The shared `SidebarWorktreeLabel.text(for:inRepoAtPath:siblingPaths:)` helper is the single call site for sidebar-adjacent labels so menu items and the row can't drift on the main-checkout path.
+The shared label helper for sidebar-adjacent worktree surfaces (row
+label + right-click "Move to <name>" menu items). For linked
+worktrees, the label is derived from the path basename. For the
+main checkout, the label is the resolved default branch name —
+application-controlled, never user-controlled — so BIDI-override
+sanitization (GIT-2.10) is unnecessary on this surface for the
+main-checkout path. The secondary caption rendered by `WorktreeRow`
+still routes user-controlled `entry.branch` through `displayBranch`,
+preserving GIT-2.10 for the row's dimmed current-HEAD line.
 """)
 struct SidebarWorktreeLabelTests {
 
-    @Test func mainCheckoutUsesSanitizedDisplayBranch() {
+    @Test("@spec LAYOUT-2.25: The application shall display the repository's resolved default branch name as the main-checkout sidebar row's primary label, regardless of the worktree's current HEAD.")
+    func mainCheckoutLabelUsesResolvedDefaultBranch() {
+        let entry = WorktreeEntry(path: "/repo", branch: "feature-x")
+        let label = SidebarWorktreeLabel.text(
+            for: entry,
+            inRepoAtPath: "/repo",
+            siblingPaths: ["/repo"],
+            defaultBranch: "trunk"
+        )
+        #expect(label == "trunk")
+    }
+
+    @Test("@spec LAYOUT-2.28: The application shall fall back to `\"main\"` for the main-checkout row label when no default branch has been resolved.")
+    func mainCheckoutLabelFallsBackToMain() {
+        let entry = WorktreeEntry(path: "/repo", branch: "feature-x")
+        let label = SidebarWorktreeLabel.text(
+            for: entry,
+            inRepoAtPath: "/repo",
+            siblingPaths: ["/repo"],
+            defaultBranch: nil
+        )
+        #expect(label == "main")
+    }
+
+    @Test func linkedWorktreeLabelIgnoresDefaultBranchArgument() {
+        let entry = WorktreeEntry(path: "/repo/.worktrees/feature-x", branch: "feature/x")
+        let label = SidebarWorktreeLabel.text(
+            for: entry,
+            inRepoAtPath: "/repo",
+            siblingPaths: ["/repo", "/repo/.worktrees/feature-x"],
+            defaultBranch: "trunk"
+        )
+        #expect(label == "feature-x")
+    }
+
+    @Test func mainCheckoutLabelDoesNotReadWorktreeBranch() {
+        // Under the new design, the main-checkout label is the
+        // resolved default branch, not the worktree's current branch.
+        // A BIDI-override scalar in `entry.branch` cannot reach this
+        // label at all. (The secondary caption in WorktreeRow.swift
+        // still goes through `entry.displayBranch`, which strips
+        // BIDI overrides per GIT-2.10.)
         let entry = WorktreeEntry(path: "/repo", branch: "feat\u{202E}lanigiro")
         let label = SidebarWorktreeLabel.text(
             for: entry,
             inRepoAtPath: "/repo",
-            siblingPaths: ["/repo"]
+            siblingPaths: ["/repo"],
+            defaultBranch: "main"
         )
-        // displayBranch strips U+202E → "featlanigiro" (the scalar
-        // removed, leaving the visible characters only).
-        #expect(label == "featlanigiro")
-        // Raw `branch` is preserved for git operations; only the
-        // rendered label is sanitized.
-        #expect(entry.branch == "feat\u{202E}lanigiro")
+        #expect(label == "main")
     }
 
-    @Test func mainCheckoutWithCleanBranchReturnsBranch() {
+    @Test func mainCheckoutReturnsResolvedDefaultBranch() {
         let entry = WorktreeEntry(path: "/repo", branch: "main")
         let label = SidebarWorktreeLabel.text(
             for: entry,
             inRepoAtPath: "/repo",
-            siblingPaths: ["/repo"]
+            siblingPaths: ["/repo"],
+            defaultBranch: "main"
         )
         #expect(label == "main")
     }
@@ -46,7 +92,8 @@ struct SidebarWorktreeLabelTests {
         let label = SidebarWorktreeLabel.text(
             for: entry,
             inRepoAtPath: "/repo",
-            siblingPaths: ["/repo", "/repo/.worktrees/feature-x"]
+            siblingPaths: ["/repo", "/repo/.worktrees/feature-x"],
+            defaultBranch: nil
         )
         #expect(label == "feature-x")
     }
@@ -59,7 +106,8 @@ struct SidebarWorktreeLabelTests {
 
         let labels = SidebarWorktreeLabel.texts(
             for: worktrees,
-            inRepoAtPath: "/repo"
+            inRepoAtPath: "/repo",
+            defaultBranch: "main"
         )
         let siblingPaths = worktrees.map(\.path)
 
@@ -67,7 +115,8 @@ struct SidebarWorktreeLabelTests {
             #expect(labels[worktree.id] == SidebarWorktreeLabel.text(
                 for: worktree,
                 inRepoAtPath: "/repo",
-                siblingPaths: siblingPaths
+                siblingPaths: siblingPaths,
+                defaultBranch: "main"
             ))
         }
     }
