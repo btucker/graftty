@@ -537,6 +537,10 @@ struct SingleSessionView: View {
             ),
             preferredInterfaceStyle: preferredStyle,
             onWillUnmount: { snapshot in client.setIdleSnapshot(snapshot) },
+            // @spec IOS-11.8: When the user taps **Paste** in the long-press menu,
+            // the application shall read `UIPasteboard.general.string` and, when
+            // non-empty, send it via `SessionClient.sendPaste(_:)`. An empty or
+            // absent clipboard string shall be a silent no-op.
             onPasteRequested: { [weak client] in
                 guard let client, let text = UIPasteboard.general.string, !text.isEmpty else {
                     return

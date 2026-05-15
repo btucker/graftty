@@ -209,11 +209,6 @@ struct IosTodo {
     func ios_9_5() async throws { }
 
     @Test("""
-@spec IOS-11.8: When the user taps **Paste** in the long-press menu, the application shall read `UIPasteboard.general.string` and, when non-empty, send it via `SessionClient.sendPaste(_:)`. An empty or absent clipboard string shall be a silent no-op.
-""", .disabled("not yet implemented"))
-    func ios_11_8() async throws { }
-
-    @Test("""
 @spec IOS-11.11: While a pane is rendered as a worktree-detail preview tile (`IOS-4.10`), the long-press selection menu shall not be installed; tapping the tile shall continue to open the fullscreen pane per `IOS-4.21`.
 """, .disabled("not yet implemented"))
     func ios_11_11() async throws { }
