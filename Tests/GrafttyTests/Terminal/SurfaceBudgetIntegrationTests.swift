@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import GhosttyKit
 import Testing
 @testable import Graftty
 @testable import GrafttyKit
@@ -120,5 +122,51 @@ struct SurfaceBudgetIntegrationTests {
         )
         // /a is pruned; /e is head; /b /c /d remain. No evictions fired.
         #expect(manager.surfaceBudget.lru == ["/e", "/d", "/c", "/b"])
+    }
+
+    @Test("""
+@spec MEM-1.7 (integration): When a worktree's pane is evicted by the LRU budget and later re-attached, the application shall pass the captured grid size through to the re-created SurfaceHandle's initialGridSize.
+""")
+    func evictThenRecreatePropagatesCachedSize() throws {
+        let paths = ["/a", "/b", "/c", "/d", "/e"]
+        let (state, leaves) = makeRunningState(paths: paths)
+        let manager = TerminalManager(socketPath: "/tmp/graftty-cache-rt-test.sock")
+        for (_, leaf) in leaves {
+            manager.recordPaneSession(PaneSessionID(), for: leaf)
+        }
+
+        // Stand up a live SurfaceHandle for /a so the budget's eviction
+        // tick can capture its grid size. The other four worktrees don't
+        // need surfaces — they're only there to push /a out of the LRU.
+        let leafA = leaves["/a"]!
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        harness.sizeStub = ghostty_surface_size_s(
+            columns: 144, rows: 50, width_px: 1728, height_px: 800,
+            cell_width_px: 12, cell_height_px: 16
+        )
+        let handle = try #require(SurfaceHandle(
+            terminalID: leafA,
+            app: fakeApp(),
+            worktreePath: "/a",
+            socketPath: "/tmp/graftty-cache-rt-test.sock",
+            zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _, _ in backend }
+        ))
+        manager.insertSurfaceForTesting(handle, for: leafA)
+
+        for path in paths {
+            manager.surfaceBudget.noteSelected(
+                worktreePath: path,
+                splitTreesByPath: state.runningSplitTreesByPath()
+            )
+        }
+
+        let cached = try #require(manager.evictedGridSize(for: leafA))
+        #expect(cached.cols == 144)
+        #expect(cached.rows == 50)
+        #expect(cached.widthPx == 1728)
+        #expect(cached.heightPx == 800)
     }
 }
