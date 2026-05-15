@@ -124,10 +124,12 @@ struct SurfaceBudgetIntegrationTests {
         #expect(manager.surfaceBudget.lru == ["/e", "/d", "/c", "/b"])
     }
 
-    @Test("""
-@spec MEM-1.7 (integration): When a worktree's pane is evicted by the LRU budget and later re-attached, the application shall pass the captured grid size through to the re-created SurfaceHandle's initialGridSize.
-""")
-    func evictThenRecreatePropagatesCachedSize() throws {
+    /// Integration coverage for `MEM-1.6` and `MEM-1.7`: drives the
+    /// full `WorktreeSurfaceBudget` → `TerminalManager.evictSurface`
+    /// capture path with a live `SurfaceHandle`, so that the unit-level
+    /// guarantees in `TerminalManagerEvictionTests.swift` and
+    /// `SurfaceHandleHostManagedTests.swift` are observed end-to-end.
+    @Test func evictThenRecreatePropagatesCachedSize() throws {
         let paths = ["/a", "/b", "/c", "/d", "/e"]
         let (state, leaves) = makeRunningState(paths: paths)
         let manager = TerminalManager(socketPath: "/tmp/graftty-cache-rt-test.sock")
