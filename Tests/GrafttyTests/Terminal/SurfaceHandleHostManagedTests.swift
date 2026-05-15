@@ -215,6 +215,35 @@ struct SurfaceHandleHostManagedTests {
         #expect(harness.freeCalls == [surface])
     }
 
+    @Test func queryGridSizeReturnsValueFromFactorySizeClosure() throws {
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        harness.sizeStub = ghostty_surface_size_s(
+            columns: 132,
+            rows: 43,
+            width_px: 1584,
+            height_px: 688,
+            cell_width_px: 12,
+            cell_height_px: 16
+        )
+
+        let handle = try #require(SurfaceHandle(
+            terminalID: Self.terminalID(),
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: Self.spawnConfiguration(),
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _ in backend }
+        ))
+
+        let size = handle.queryGridSize()
+        #expect(size.columns == 132)
+        #expect(size.rows == 43)
+        #expect(size.width_px == 1584)
+        #expect(size.height_px == 688)
+    }
+
     private static func terminalID() -> PaneSlotID {
         PaneSlotID(id: UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!)
     }
@@ -264,6 +293,14 @@ private final class SurfaceHandleTestHarness {
     var textWrites: [Data] = []
     var writeBufferCalls: [SurfaceWriteBufferCall] = []
     var processExitCalls: [ProcessExitCall] = []
+    var sizeStub: ghostty_surface_size_s = ghostty_surface_size_s(
+        columns: 0,
+        rows: 0,
+        width_px: 0,
+        height_px: 0,
+        cell_width_px: 0,
+        cell_height_px: 0
+    )
 
     init(surface: ghostty_surface_t?) {
         self.surface = surface
@@ -292,6 +329,12 @@ private final class SurfaceHandleTestHarness {
             processExit: { [weak self] surface, exitCode, _ in
                 self?.processExitCalls.append(
                     ProcessExitCall(surface: surface, exitCode: exitCode)
+                )
+            },
+            size: { [weak self] _ in
+                self?.sizeStub ?? ghostty_surface_size_s(
+                    columns: 0, rows: 0, width_px: 0, height_px: 0,
+                    cell_width_px: 0, cell_height_px: 0
                 )
             }
         )

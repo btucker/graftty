@@ -51,6 +51,7 @@ struct SurfaceHandleGhosttySurfaceFactory {
     var text: (ghostty_surface_t, UnsafePointer<CChar>, UInt) -> Void
     var writeBuffer: (ghostty_surface_t, UnsafePointer<UInt8>, UInt) -> Void
     var processExit: (ghostty_surface_t, UInt32, UInt64) -> Void
+    var size: (ghostty_surface_t) -> ghostty_surface_size_s
 
     static let live = SurfaceHandleGhosttySurfaceFactory(
         create: { app, config in ghostty_surface_new(app, config) },
@@ -59,7 +60,8 @@ struct SurfaceHandleGhosttySurfaceFactory {
         writeBuffer: { surface, ptr, count in ghostty_surface_write_buffer(surface, ptr, count) },
         processExit: { surface, exitCode, runtimeMilliseconds in
             ghostty_surface_process_exit(surface, exitCode, runtimeMilliseconds)
-        }
+        },
+        size: { surface in ghostty_surface_size(surface) }
     )
 }
 
@@ -324,6 +326,10 @@ final class SurfaceHandle {
 
     func setSize(width: UInt32, height: UInt32) {
         ghostty_surface_set_size(surface, width, height)
+    }
+
+    func queryGridSize() -> ghostty_surface_size_s {
+        surfaceFactory.size(surface)
     }
 
     /// Tell libghostty whether this surface is currently visible. Despite
