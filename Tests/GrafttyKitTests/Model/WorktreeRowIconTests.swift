@@ -16,9 +16,13 @@ struct WorktreeRowIconTests {
         #expect(WorktreeRowIcon.symbolName(isMainCheckout: false, hasPR: true) == "arrow.triangle.pull")
     }
 
-    @Test func mainCheckoutWithPRStillUsesPullSymbol() {
-        // PR existence wins over the main-vs-linked distinction so the
-        // signal is consistent regardless of which checkout the PR is on.
-        #expect(WorktreeRowIcon.symbolName(isMainCheckout: true, hasPR: true) == "arrow.triangle.pull")
+    @Test("@spec LAYOUT-2.27: The application shall render the `house` SF Symbol on the main-checkout sidebar row regardless of whether a PR is associated with that worktree, so the home affordance never disappears.")
+    func mainCheckoutAlwaysUsesHouseSymbolEvenWithPR() {
+        // The home icon is the only persistent visual indicator that
+        // identifies the main checkout row. Flipping it to the PR glyph
+        // when a PR exists on the main branch would erase the only
+        // stable "home" cue once the row's text label also drifts to
+        // the current branch.
+        #expect(WorktreeRowIcon.symbolName(isMainCheckout: true, hasPR: true) == "house")
     }
 }
