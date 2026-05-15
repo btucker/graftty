@@ -36,7 +36,7 @@ struct SidebarWorktreeLabelTests {
         #expect(label == "trunk")
     }
 
-    @Test("@spec LAYOUT-2.28: The application shall fall back to `\"main\"` for the main-checkout row label when no default branch has been resolved.")
+    @Test("@spec LAYOUT-2.28: The application shall fall back to `main` for the main-checkout row label when no default branch has been resolved.")
     func mainCheckoutLabelFallsBackToMain() {
         let entry = WorktreeEntry(path: "/repo", branch: "feature-x")
         let label = SidebarWorktreeLabel.text(
