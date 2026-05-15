@@ -35,6 +35,7 @@
 		D6E07827478D558EA22701E3 /* MobileNavigationDecisionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9F5598DDE610D5D1567DBB2 /* MobileNavigationDecisionTests.swift */; };
 		EFF92B38741A91B2DCF46C0C /* VirtualClock.swift in Sources */ = {isa = PBXBuildFile; fileRef = 351F85648DBEE2F8B555AE7F /* VirtualClock.swift */; };
 		F1265680A75FBC8FC81FC5E8 /* GhosttyConfigFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE2551EB151BA762B2AF7663 /* GhosttyConfigFetcherTests.swift */; };
+		A1B2C3D4E5F60718293A4B5C /* SurfaceProxyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E5F6071829A3B4C5D6 /* SurfaceProxyTests.swift */; };
 		FD935B889FE139844ADA79E6 /* TerminalPaneViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */; };
 /* End PBXBuildFile section */
 
@@ -50,6 +51,7 @@
 		3E56275CF0FCFE37F85EFC75 /* SessionClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionClientTests.swift; sourceTree = "<group>"; };
 		5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostControllerTests.swift; sourceTree = "<group>"; };
 		5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPaneViewTests.swift; sourceTree = "<group>"; };
+		B2C3D4E5F6071829A3B4C5D6 /* SurfaceProxyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfaceProxyTests.swift; sourceTree = "<group>"; };
 		59C241EF3381506F0ED7BEC0 /* PanePreviewClientPoolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanePreviewClientPoolTests.swift; sourceTree = "<group>"; };
 		60476F2F86616EAD082CF370 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		6509EB736398D70ED6F6C712 /* ClockTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClockTests.swift; sourceTree = "<group>"; };
@@ -141,6 +143,7 @@
 		5326D4D06134BD55FD5087CF /* Terminal */ = {
 			isa = PBXGroup;
 			children = (
+				B2C3D4E5F6071829A3B4C5D6 /* SurfaceProxyTests.swift */,
 				14155C510E994202A1F09C31 /* TerminalControllerThemeTests.swift */,
 				5998E66A30A2C0BDA5095427 /* TerminalPaneViewTests.swift */,
 				3DFA9C1F66C7E92D9F0BCE9C /* TerminalWidthLayoutTests.swift */,
@@ -326,6 +329,7 @@
 				0F0DC07D64128764A6E254A9 /* SessionLifecycleTests.swift in Sources */,
 				1979A63164CFEDFAA56AD475 /* SessionReconnectTests.swift in Sources */,
 				C0A3025E89B3FB9D1A6C744A /* SessionsFetcherTests.swift in Sources */,
+				A1B2C3D4E5F60718293A4B5C /* SurfaceProxyTests.swift in Sources */,
 				7DE5B7E2F6C51A4876B2A332 /* TerminalControllerThemeTests.swift in Sources */,
 				FD935B889FE139844ADA79E6 /* TerminalPaneViewTests.swift in Sources */,
 				5E82901F3ADEA7B4769B7E59 /* TerminalWidthLayoutTests.swift in Sources */,
