@@ -501,6 +501,7 @@ final class TerminalManager: ObservableObject {
             // can return null under libghostty resource exhaustion. Skip the
             // leaf rather than crash the app; the pane renders the Color.black
             // + ProgressView fallback until it's re-created.
+            let cachedSize = evictedGridSizes.removeValue(forKey: terminalID)
             guard let handle = SurfaceHandle(
                 terminalID: terminalID,
                 app: app,
@@ -508,7 +509,8 @@ final class TerminalManager: ObservableObject {
                 socketPath: socketPath,
                 zmxSpawnConfiguration: zmxSpawnConfiguration,
                 terminalManager: self,
-                inputActivityObserver: inputActivityObserver
+                inputActivityObserver: inputActivityObserver,
+                initialGridSize: cachedSize?.asGhosttySize
             ) else {
                 forgetPaneSession(for: terminalID)
                 continue
@@ -545,6 +547,7 @@ final class TerminalManager: ObservableObject {
         )
         // TERM-5.5: failable init returns nil on libghostty rejection;
         // propagate that to the caller instead of crashing.
+        let cachedSize = evictedGridSizes.removeValue(forKey: terminalID)
         guard let handle = SurfaceHandle(
             terminalID: terminalID,
             app: app,
@@ -553,7 +556,8 @@ final class TerminalManager: ObservableObject {
             zmxSpawnConfiguration: zmxSpawnConfiguration,
             extraInitialInput: extraInitialInput,
             terminalManager: self,
-            inputActivityObserver: inputActivityObserver
+            inputActivityObserver: inputActivityObserver,
+            initialGridSize: cachedSize?.asGhosttySize
         ) else {
             forgetPaneSession(for: terminalID)
             return nil
@@ -822,6 +826,7 @@ final class TerminalManager: ObservableObject {
         shellReadyFired.remove(terminalID)
         firstPaneMarkers.remove(terminalID)
         rehydratedSurfaces.remove(terminalID)
+        evictedGridSizes.removeValue(forKey: terminalID)
         forgetPaneSession(for: terminalID)
     }
 

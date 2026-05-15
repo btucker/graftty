@@ -124,4 +124,36 @@ struct TerminalManagerEvictionTests {
 
         #expect(manager.evictedGridSize(for: terminalID) == nil)
     }
+
+    @Test("""
+@spec MEM-1.9: When a previously-evicted pane is destroyed (rather than re-attached), the application shall drop its captured grid size from the cache.
+""")
+    func destroyClearsEvictedGridSize() throws {
+        let manager = TerminalManager(socketPath: "/tmp/graftty-destroy-cache-test.sock")
+        let terminalID = PaneSlotID(id: UUID(uuidString: "00000000-0000-0000-0000-0000000000C3")!)
+        manager.recordPaneSession(PaneSessionID(), for: terminalID)
+
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        harness.sizeStub = ghostty_surface_size_s(
+            columns: 120, rows: 40, width_px: 1440, height_px: 640,
+            cell_width_px: 12, cell_height_px: 16
+        )
+        let handle = try #require(SurfaceHandle(
+            terminalID: terminalID,
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _, _ in backend }
+        ))
+        manager.insertSurfaceForTesting(handle, for: terminalID)
+
+        manager.evictSurface(terminalID: terminalID)
+        #expect(manager.evictedGridSize(for: terminalID) != nil)
+
+        manager.destroySurface(terminalID: terminalID)
+        #expect(manager.evictedGridSize(for: terminalID) == nil)
+    }
 }
