@@ -387,13 +387,9 @@ struct SidebarView: View {
     /// its session name without going through this same view tree.
     private func buildPaneMenu(terminalID: PaneSlotID) -> NSMenu {
         let menu = NSMenu()
-        let defaultBranches: [String: String?] = Dictionary(
-            uniqueKeysWithValues: appState.repos.map { repo in
-                (repo.path, remoteBranchStore.resolvedDefaultBranch(
-                    forRepoAt: repo.path,
-                    hint: repo.defaultBranchHint
-                ))
-            }
+        let defaultBranches = PaneMoveMenuContext.defaultBranches(
+            for: appState.repos,
+            using: remoteBranchStore
         )
         if let context = PaneMoveMenuContext.resolve(
             terminalID: terminalID,

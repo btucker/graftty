@@ -602,13 +602,9 @@ struct GrafttyApp: App {
         terminalManager.currentPaneMoveContext = { [appState = $appState, tm = terminalManager] terminalID in
             MainActor.assumeIsolated {
                 let state = appState.wrappedValue
-                let defaultBranches: [String: String?] = Dictionary(
-                    uniqueKeysWithValues: state.repos.map { repo in
-                        (repo.path, paneMoveRemoteBranchStore.resolvedDefaultBranch(
-                            forRepoAt: repo.path,
-                            hint: repo.defaultBranchHint
-                        ))
-                    }
+                let defaultBranches = PaneMoveMenuContext.defaultBranches(
+                    for: state.repos,
+                    using: paneMoveRemoteBranchStore
                 )
                 return PaneMoveMenuContext.resolve(
                     terminalID: terminalID,
