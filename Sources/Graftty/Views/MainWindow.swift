@@ -866,11 +866,16 @@ struct MainWindow: View {
             if bookmark == nil {
                 NSLog("[Graftty] addRepoFromPath: bookmark mint failed for %@; rename-recovery disabled for this entry", repoPath)
             }
+            // Capture the main-checkout branch at add time so the sidebar
+            // has a stable default-branch label even before the first
+            // origin/HEAD poll lands (or for repos with no remote at all).
+            let mainCheckoutBranch = discovered.first(where: { $0.path == repoPath })?.branch
             let repo = RepoEntry(
                 path: repoPath,
                 displayName: displayName,
                 worktrees: worktrees,
-                bookmark: bookmark
+                bookmark: bookmark,
+                defaultBranchHint: mainCheckoutBranch
             )
             appState.addRepo(repo)
             remoteBranchStore.refresh(repoPath: repoPath)
