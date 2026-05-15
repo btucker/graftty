@@ -13,10 +13,10 @@ struct RemotePairingTranscriptTests {
         #expect(!nonce.bytes.isEmpty)
     }
 
-    @Test("RemotePairingNonce: generate() produces at least 16 bytes")
-    func generateProducesAtLeast16Bytes() {
+    @Test("RemotePairingNonce: generate() produces exactly 16 bytes")
+    func generateProducesExactly16Bytes() {
         let nonce = RemotePairingNonce.generate()
-        #expect(nonce.bytes.count >= 16)
+        #expect(nonce.bytes.count == 16)
     }
 
     @Test("RemotePairingNonce: two generate() calls produce distinct nonces")
@@ -132,6 +132,24 @@ struct RemotePairingTranscriptTests {
             expiry: altExpiry
         )
         #expect(base.verificationCode() != alt.verificationCode())
+    }
+
+    @Test("RemotePairingTranscript: transcripts differing only in sub-second expiry produce identical verification codes and JSON")
+    func expirySubSecondPrecisionIgnored() throws {
+        let base = Self.makeTranscript()
+        // Add 0.5 s — sub-second delta should be ignored
+        let slightlyLater = RemotePairingTranscript(
+            hostPublicKey: base.hostPublicKey,
+            clientPublicKey: base.clientPublicKey,
+            nonce: base.nonce,
+            expiry: base.expiry.addingTimeInterval(0.5)
+        )
+        #expect(base.verificationCode() == slightlyLater.verificationCode())
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        let baseJSON = try encoder.encode(base)
+        let laterJSON = try encoder.encode(slightlyLater)
+        #expect(baseJSON == laterJSON)
     }
 
     @Test("RemotePairingTranscript: Codable round-trips")

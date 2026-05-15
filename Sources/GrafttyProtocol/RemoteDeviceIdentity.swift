@@ -45,6 +45,24 @@ public struct RemoteIdentityPublicKey: Codable, Sendable, Equatable, Hashable {
         }
         self.rawRepresentation = rawRepresentation
     }
+
+    // MARK: Codable
+
+    private enum CodingKeys: String, CodingKey { case rawRepresentation }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let data = try container.decode(Data.self, forKey: .rawRepresentation)
+        do {
+            try self.init(rawRepresentation: data)
+        } catch Error.invalidLength(let expected, let actual) {
+            throw DecodingError.dataCorruptedError(
+                forKey: .rawRepresentation,
+                in: container,
+                debugDescription: "Expected \(expected) bytes, got \(actual)."
+            )
+        }
+    }
 }
 
 // MARK: - RemoteIdentityFingerprint
@@ -77,7 +95,29 @@ public struct RemoteIdentityFingerprint: Codable, Sendable, Equatable, Hashable 
         self.rawBytes = Data(digest)
     }
 
-    public init(rawBytes: Data) {
+    /// Initialises from exactly 32 bytes. Throws if `rawBytes` is not 32 bytes.
+    public init(rawBytes: Data) throws {
+        guard rawBytes.count == 32 else {
+            throw RemoteIdentityPublicKey.Error.invalidLength(expected: 32, actual: rawBytes.count)
+        }
         self.rawBytes = rawBytes
+    }
+
+    // MARK: Codable
+
+    private enum CodingKeys: String, CodingKey { case rawBytes }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let data = try container.decode(Data.self, forKey: .rawBytes)
+        do {
+            try self.init(rawBytes: data)
+        } catch RemoteIdentityPublicKey.Error.invalidLength(let expected, let actual) {
+            throw DecodingError.dataCorruptedError(
+                forKey: .rawBytes,
+                in: container,
+                debugDescription: "Expected \(expected) bytes, got \(actual)."
+            )
+        }
     }
 }

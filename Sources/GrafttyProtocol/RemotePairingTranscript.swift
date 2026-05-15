@@ -39,7 +39,9 @@ public struct RemotePairingTranscript: Codable, Sendable, Equatable {
         self.hostPublicKey = hostPublicKey
         self.clientPublicKey = clientPublicKey
         self.nonce = nonce
-        self.expiry = expiry
+        // Truncate to whole-second precision so the stored value matches the
+        // Int64 epoch-seconds used in verificationCode() and Codable encoding.
+        self.expiry = Date(timeIntervalSince1970: Double(Int64(expiry.timeIntervalSince1970)))
     }
 
     /// Derives a 6-digit verification code via HKDF-SHA256.
@@ -47,7 +49,7 @@ public struct RemotePairingTranscript: Codable, Sendable, Equatable {
     /// Input keying material: `hostPublicKey || clientPublicKey || expiry (8-byte big-endian Int64)`.
     /// Salt: `nonce.bytes` (makes the code one-time per pairing session).
     /// Info: fixed label `"graftty-remote-pairing-verification-v1"`.
-    /// Output: 3 bytes → 6 decimal digits (000000–999999), displayed as `"XXX XXX"`.
+    /// Output: 4 bytes → UInt32 mod 1,000,000 → 6 decimal digits (000000–999999), displayed as `"XXX XXX"`.
     public func verificationCode() -> RemoteVerificationCode {
         let info = Data("graftty-remote-pairing-verification-v1".utf8)
         // Salt must conform to DataProtocol — use raw Data

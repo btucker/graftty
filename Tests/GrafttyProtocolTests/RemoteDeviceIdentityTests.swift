@@ -82,6 +82,25 @@ struct RemoteDeviceIdentityTests {
         #expect(decoded.rawRepresentation == bytes)
     }
 
+    @Test("RemoteIdentityPublicKey: Codable decode rejects non-32-byte rawRepresentation")
+    func publicKeyDecodingRejectsWrongLength() throws {
+        // 31 bytes encoded as base64 in JSON
+        func jsonPayload(byteCount: Int) -> Data {
+            let bytes = Data(repeating: 0xAB, count: byteCount)
+            let b64 = bytes.base64EncodedString()
+            return Data(#"{"rawRepresentation":"\#(b64)"}"#.utf8)
+        }
+        #expect(throws: (any Error).self) {
+            _ = try JSONDecoder().decode(RemoteIdentityPublicKey.self, from: jsonPayload(byteCount: 31))
+        }
+        #expect(throws: (any Error).self) {
+            _ = try JSONDecoder().decode(RemoteIdentityPublicKey.self, from: jsonPayload(byteCount: 0))
+        }
+        #expect(throws: (any Error).self) {
+            _ = try JSONDecoder().decode(RemoteIdentityPublicKey.self, from: jsonPayload(byteCount: 33))
+        }
+    }
+
     @Test("RemoteIdentityPublicKey: Equatable compares by raw bytes")
     func publicKeyEquality() throws {
         let bytes = Data(repeating: 0x42, count: 32)
@@ -148,5 +167,23 @@ struct RemoteDeviceIdentityTests {
         let decoded = try JSONDecoder().decode(RemoteIdentityFingerprint.self, from: data)
         #expect(decoded == fp)
         #expect(decoded.display == fp.display)
+    }
+
+    @Test("RemoteIdentityFingerprint: Codable decode rejects non-32-byte rawBytes")
+    func fingerprintDecodingRejectsWrongLength() throws {
+        func jsonPayload(byteCount: Int) -> Data {
+            let bytes = Data(repeating: 0xAB, count: byteCount)
+            let b64 = bytes.base64EncodedString()
+            return Data(#"{"rawBytes":"\#(b64)"}"#.utf8)
+        }
+        #expect(throws: (any Error).self) {
+            _ = try JSONDecoder().decode(RemoteIdentityFingerprint.self, from: jsonPayload(byteCount: 31))
+        }
+        #expect(throws: (any Error).self) {
+            _ = try JSONDecoder().decode(RemoteIdentityFingerprint.self, from: jsonPayload(byteCount: 0))
+        }
+        #expect(throws: (any Error).self) {
+            _ = try JSONDecoder().decode(RemoteIdentityFingerprint.self, from: jsonPayload(byteCount: 33))
+        }
     }
 }
