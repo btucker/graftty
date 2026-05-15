@@ -21,15 +21,23 @@ public struct RemoteBranchSnapshot: Sendable, Equatable {
     public let remoteBranches: [BranchRef]
     public let localBranches: [BranchRef]
     public let upstreams: [String: String]
+    /// @spec LAYOUT-2.29
+    /// Repository's default branch as resolved by
+    /// `GitOriginDefaultBranch.resolve` (origin/HEAD symbolic-ref with
+    /// main/master/develop probe fallback). `nil` when no default
+    /// branch can be identified.
+    public let defaultBranch: String?
 
     public init(
         remoteBranches: [BranchRef] = [],
         localBranches: [BranchRef] = [],
-        upstreams: [String: String] = [:]
+        upstreams: [String: String] = [:],
+        defaultBranch: String? = nil
     ) {
         self.remoteBranches = remoteBranches
         self.localBranches = localBranches
         self.upstreams = upstreams
+        self.defaultBranch = defaultBranch
     }
 
     /// Back-compat: callers that previously read `branches: Set<String>`
@@ -42,6 +50,7 @@ public struct RemoteBranchSnapshot: Sendable, Equatable {
         self.remoteBranches = branches.map { BranchRef(name: $0, lastCommitDate: .distantPast) }
         self.localBranches = []
         self.upstreams = upstreams
+        self.defaultBranch = nil
     }
 }
 
@@ -88,6 +97,15 @@ public final class RemoteBranchStore {
     /// back to the local branch name for PR lookup when nil.
     public func upstreamRemoteBranch(repoPath: String, branch: String) -> String? {
         branchesByRepo[repoPath]?.upstreams[branch]
+    }
+
+    /// Resolves the main-checkout label's primary text for a repo:
+    /// the live `origin/HEAD`-derived value (from the latest snapshot)
+    /// if available, else the hint persisted at add-repo time. Returns
+    /// `nil` only when neither source is known — callers (specifically
+    /// `SidebarWorktreeLabel.text`) fall back to `"main"` at the boundary.
+    public func resolvedDefaultBranch(forRepoAt repoPath: String, hint: String?) -> String? {
+        branchesByRepo[repoPath]?.defaultBranch ?? hint
     }
 
     public func clear(repoPath: String) {
@@ -276,11 +294,14 @@ public final class RemoteBranchStore {
             args: ["for-each-ref", "--format=%(refname:short)\t%(committerdate:iso-strict)\t%(upstream:short)", "refs/heads/"],
             at: repoPath
         )
+        async let defaultBranchTask = GitOriginDefaultBranch.resolve(repoPath: repoPath)
         let (remotes, heads) = try await (remotesTask, headsTask)
+        let defaultBranch = await defaultBranchTask
         return RemoteBranchSnapshot(
             remoteBranches: parseRemoteBranchesWithDates(remotes),
             localBranches: parseLocalBranchesWithDates(heads),
-            upstreams: parseUpstreams(heads)
+            upstreams: parseUpstreams(heads),
+            defaultBranch: defaultBranch
         )
     }
 

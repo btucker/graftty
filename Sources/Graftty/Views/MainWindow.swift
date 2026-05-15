@@ -255,7 +255,16 @@ struct MainWindow: View {
 
     private var worktreeDisplayName: String? {
         guard let repo = selectedRepo, let wt = selectedWorktree else { return nil }
-        return wt.displayName(amongSiblingPaths: repo.worktrees.map(\.path))
+        let defaultBranch = remoteBranchStore.resolvedDefaultBranch(
+            forRepoAt: repo.path,
+            hint: repo.defaultBranchHint
+        )
+        return SidebarWorktreeLabel.text(
+            for: wt,
+            inRepoAtPath: repo.path,
+            siblingPaths: repo.worktrees.map(\.path),
+            defaultBranch: defaultBranch
+        )
     }
 
     private var prInfo: PRInfo? {
@@ -774,7 +783,17 @@ struct MainWindow: View {
                         // (detached)") — whereas displayName gives the
                         // directory basename users actually recognise.
                         let siblingPaths = appState.repos[repoIdx].worktrees.map(\.path)
-                        let label = wt.displayName(amongSiblingPaths: siblingPaths)
+                        let repo = appState.repos[repoIdx]
+                        let defaultBranch = remoteBranchStore.resolvedDefaultBranch(
+                            forRepoAt: repo.path,
+                            hint: repo.defaultBranchHint
+                        )
+                        let label = SidebarWorktreeLabel.text(
+                            for: wt,
+                            inRepoAtPath: repo.path,
+                            siblingPaths: siblingPaths,
+                            defaultBranch: defaultBranch
+                        )
                         let alert = NSAlert()
                         alert.messageText = "Stop Worktree?"
                         alert.informativeText = "There are running processes in \(label). Stop all terminals?"
@@ -866,11 +885,16 @@ struct MainWindow: View {
             if bookmark == nil {
                 NSLog("[Graftty] addRepoFromPath: bookmark mint failed for %@; rename-recovery disabled for this entry", repoPath)
             }
+            // Capture the main-checkout branch at add time so the sidebar
+            // has a stable default-branch label even before the first
+            // origin/HEAD poll lands (or for repos with no remote at all).
+            let mainCheckoutBranch = discovered.first(where: { $0.path == repoPath })?.branch
             let repo = RepoEntry(
                 path: repoPath,
                 displayName: displayName,
                 worktrees: worktrees,
-                bookmark: bookmark
+                bookmark: bookmark,
+                defaultBranchHint: mainCheckoutBranch
             )
             appState.addRepo(repo)
             remoteBranchStore.refresh(repoPath: repoPath)

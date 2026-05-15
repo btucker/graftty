@@ -1,14 +1,22 @@
 import Foundation
 
 /// Shared label rule for sidebar-adjacent worktree surfaces (row
-/// label + right-click "Move to <name>" menu items). Routes the
-/// main-checkout branch through `displayBranch` so a BIDI-override
-/// scalar can't render RTL-reversed on any of those surfaces
-/// (`GIT-2.10`).
+/// label + right-click "Move to <name>" menu items).
+///
+/// Main checkout: label is the repo's resolved default branch
+/// (passed in by callers, who chain
+/// `snapshot.defaultBranch ?? repo.defaultBranchHint`). Falls back
+/// to `"main"` so the UI never goes blank. Stable across local
+/// `git checkout`.
+///
+/// Linked worktrees: label is the directory basename, possibly
+/// disambiguated against same-named siblings via
+/// `WorktreeEntry.displayName(amongSiblingPaths:)`.
 public enum SidebarWorktreeLabel {
     public static func texts(
         for worktrees: [WorktreeEntry],
-        inRepoAtPath repoPath: String
+        inRepoAtPath repoPath: String,
+        defaultBranch: String?
     ) -> [WorktreeEntry.ID: String] {
         let siblingPaths = worktrees.map(\.path)
         return Dictionary(
@@ -18,7 +26,8 @@ public enum SidebarWorktreeLabel {
                     text(
                         for: worktree,
                         inRepoAtPath: repoPath,
-                        siblingPaths: siblingPaths
+                        siblingPaths: siblingPaths,
+                        defaultBranch: defaultBranch
                     )
                 )
             }
@@ -28,10 +37,11 @@ public enum SidebarWorktreeLabel {
     public static func text(
         for worktree: WorktreeEntry,
         inRepoAtPath repoPath: String,
-        siblingPaths: [String]
+        siblingPaths: [String],
+        defaultBranch: String?
     ) -> String {
         if worktree.path == repoPath {
-            return worktree.displayBranch
+            return defaultBranch ?? "main"
         }
         return worktree.displayName(amongSiblingPaths: siblingPaths)
     }

@@ -18,6 +18,11 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
     /// Pre-feature `state.json` blobs lack this key — `init(from:)` defaults
     /// it to `true` (PROJECT-1.5) so existing users load unchanged.
     public var isGitTracked: Bool
+    /// Default branch observed when the repo was first added to
+    /// Graftty. Used as a fallback for the main-checkout row label
+    /// when `RemoteBranchSnapshot.defaultBranch` is not yet resolved
+    /// (no remote, network failure, fresh launch before first poll).
+    public var defaultBranchHint: String?
 
     public init(
         path: String,
@@ -25,7 +30,8 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
         isCollapsed: Bool = false,
         worktrees: [WorktreeEntry] = [],
         bookmark: Data? = nil,
-        isGitTracked: Bool = true
+        isGitTracked: Bool = true,
+        defaultBranchHint: String? = nil
     ) {
         self.id = UUID()
         self.path = path
@@ -34,6 +40,7 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
         self.worktrees = worktrees
         self.bookmark = bookmark
         self.isGitTracked = isGitTracked
+        self.defaultBranchHint = defaultBranchHint
     }
 
     // Custom Decodable so `bookmark` (added in LAYOUT-4.5) is optional on
@@ -42,7 +49,7 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
     // state blobs don't carry the key, `decodeIfPresent` defaults it to
     // nil, and existing users keep their state across the upgrade.
     private enum CodingKeys: String, CodingKey {
-        case id, path, displayName, isCollapsed, worktrees, bookmark, isGitTracked
+        case id, path, displayName, isCollapsed, worktrees, bookmark, isGitTracked, defaultBranchHint
     }
 
     public init(from decoder: Decoder) throws {
@@ -54,6 +61,7 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
         self.worktrees = try container.decode([WorktreeEntry].self, forKey: .worktrees)
         self.bookmark = try container.decodeIfPresent(Data.self, forKey: .bookmark)
         self.isGitTracked = try container.decodeIfPresent(Bool.self, forKey: .isGitTracked) ?? true
+        self.defaultBranchHint = try container.decodeIfPresent(String.self, forKey: .defaultBranchHint)
     }
 }
 

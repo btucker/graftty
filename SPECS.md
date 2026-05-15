@@ -66,6 +66,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.24** When a worktree enters the stale/yellow state, the application shall permanently move stale worktrees to the bottom of that repository's persisted `worktrees` array while preserving relative order within stale and non-stale groups.
 
+**LAYOUT-2.25** The application shall display the repository's resolved default branch name as the main-checkout sidebar row's primary label, regardless of the worktree's current HEAD.
+
+**LAYOUT-2.26** When the main-checkout worktree's current branch differs from the repository's resolved default branch, the sidebar row shall render the current branch as a dimmed secondary caption beneath the primary label.
+
+**LAYOUT-2.27** The application shall render the `house` SF Symbol on the main-checkout sidebar row regardless of whether a PR is associated with that worktree, so the home affordance never disappears.
+
+**LAYOUT-2.28** The application shall fall back to `main` for the main-checkout row label when no default branch has been resolved.
+
+**LAYOUT-2.29** Repository's default branch as resolved by `GitOriginDefaultBranch.resolve` (origin/HEAD symbolic-ref with main/master/develop probe fallback). `nil` when no default branch can be identified.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -298,7 +308,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-2.9** When the origin-ref watcher from `GIT-2.5` observes a remote-tracking ref movement, the application shall refresh the repo's local remote-branch set before deciding which worktrees should receive PR/MR polling.
 
-**GIT-2.10** When the application renders a worktree's branch name in the UI (the breadcrumb bar per `LAYOUT-1.3`, the secondary label in the sidebar row, and the main-checkout label in right-click "Move to <name>" menu entries — both in the sidebar pane row's menu and the terminal surface menu, per `PWD-1.1` / `PWD-1.3` / `TERM-8.10`), it shall read `WorktreeEntry.displayBranch` rather than `WorktreeEntry.branch`. `displayBranch` strips every Unicode bidirectional-override scalar (same ranges as `PR-5.5`) so a collaborator-controlled branch name like `"feat\u{202E}lanigiro"` — which git accepts and which propagates into `state.json` via `git worktree list --porcelain` — can't render RTL-reversed in the breadcrumb, row, or menu items. `branch` itself is preserved unchanged so downstream `git` subprocess calls, `gh pr list --head <branch>`, and the `PRStatusStore.isFetchableBranch` gate keep operating on the real ref. This is the same strip-not-reject policy `PR-5.5` uses for externally-sourced text. The shared `SidebarWorktreeLabel.text(for:inRepoAtPath:siblingPaths:)` helper is the single call site for sidebar-adjacent labels so menu items and the row can't drift on the main-checkout path.
+**GIT-2.10** When the application renders a worktree's branch name in the UI (the breadcrumb bar per `LAYOUT-1.3` and the secondary dimmed caption in the sidebar row), it shall read this property rather than `WorktreeEntry.branch`. `displayBranch` strips every Unicode bidirectional-override scalar (same ranges as `PR-5.5`) so a collaborator-controlled branch name like `"feat\u{202E}lanigiro"` — which git accepts and which propagates into `state.json` via `git worktree list --porcelain` — can't render RTL-reversed in the breadcrumb or row. `branch` itself is preserved unchanged so downstream `git` subprocess calls, `gh pr list --head <branch>`, and the `PRStatusStore.isFetchableBranch` gate keep operating on the real ref. This is the same strip-not-reject policy `PR-5.5` uses for externally-sourced text.
 
 ### GIT-3.x — Change Handling
 

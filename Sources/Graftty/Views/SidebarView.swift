@@ -120,9 +120,14 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func repoSection(_ repo: RepoEntry) -> some View {
+        let resolvedDefaultBranch = remoteBranchStore.resolvedDefaultBranch(
+            forRepoAt: repo.path,
+            hint: repo.defaultBranchHint
+        )
         let worktreeLabels = SidebarWorktreeLabel.texts(
             for: repo.worktrees,
-            inRepoAtPath: repo.path
+            inRepoAtPath: repo.path,
+            defaultBranch: resolvedDefaultBranch
         )
         DisclosureGroup(
             isExpanded: Binding(
@@ -141,7 +146,8 @@ struct SidebarView: View {
                     displayName: worktreeLabels[worktree.id] ?? SidebarWorktreeLabel.text(
                         for: worktree,
                         inRepoAtPath: repo.path,
-                        siblingPaths: repo.worktrees.map(\.path)
+                        siblingPaths: repo.worktrees.map(\.path),
+                        defaultBranch: resolvedDefaultBranch
                     )
                 )
                     // Outdent the worktree rows so each row's state
@@ -381,10 +387,15 @@ struct SidebarView: View {
     /// its session name without going through this same view tree.
     private func buildPaneMenu(terminalID: PaneSlotID) -> NSMenu {
         let menu = NSMenu()
+        let defaultBranches = PaneMoveMenuContext.defaultBranches(
+            for: appState.repos,
+            using: remoteBranchStore
+        )
         if let context = PaneMoveMenuContext.resolve(
             terminalID: terminalID,
             appState: appState,
-            shellCwd: terminalManager.shellCwd(for: terminalID)
+            shellCwd: terminalManager.shellCwd(for: terminalID),
+            defaultBranchesByRepoPath: defaultBranches
         ) {
             for item in PaneMoveMenuBuilder.items(
                 terminalID: terminalID,
