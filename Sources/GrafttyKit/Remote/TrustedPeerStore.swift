@@ -140,7 +140,17 @@ public final class TrustedPeerStore: @unchecked Sendable {
         let data = try Data(contentsOf: fileURL)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        return try decoder.decode(Envelope.self, from: data)
+        do {
+            return try decoder.decode(Envelope.self, from: data)
+        } catch {
+            // Corrupt file: back it up and return an empty envelope so callers can recover.
+            // Best effort: if the rename fails (permissions, etc.) we still return empty
+            // so operations like revocation remain possible after corruption.
+            let ms = Int(Date().timeIntervalSince1970 * 1000)
+            let backupURL = directory.appendingPathComponent("\(Self.fileName).corrupt.\(ms)")
+            try? FileManager.default.moveItem(at: fileURL, to: backupURL)
+            return Envelope(peers: [])
+        }
     }
 
     private func _save(_ envelope: Envelope) throws {

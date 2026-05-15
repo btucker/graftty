@@ -106,8 +106,20 @@ public final class HostIdentityStore: @unchecked Sendable {
         let fileURL = directory.appendingPathComponent(Self.fileName)
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
         let data = try Data(contentsOf: fileURL)
-        let stored = try JSONDecoder().decode(StoredKey.self, from: data)
-        return try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: stored.privateKeyData)
+        do {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let stored = try decoder.decode(StoredKey.self, from: data)
+            return try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: stored.privateKeyData)
+        } catch {
+            // Corrupt file: back it up and signal "no key" so callers can recover.
+            // Best effort: if the rename fails (permissions, etc.) we still return nil
+            // so the app boots. The next persist will overwrite the corrupt file.
+            let ms = Int(Date().timeIntervalSince1970 * 1000)
+            let backupURL = directory.appendingPathComponent("\(Self.fileName).corrupt.\(ms)")
+            try? FileManager.default.moveItem(at: fileURL, to: backupURL)
+            return nil
+        }
     }
 
     private func _persist(_ key: Curve25519.KeyAgreement.PrivateKey) throws {
@@ -116,7 +128,13 @@ public final class HostIdentityStore: @unchecked Sendable {
         let stored = StoredKey(privateKeyData: key.rawRepresentation)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(stored)
         try data.write(to: fileURL, options: .atomic)
+        // Restrict to owner-read/write only — this file holds the raw private key.
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o600))],
+            ofItemAtPath: fileURL.path
+        )
     }
 }

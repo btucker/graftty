@@ -235,4 +235,34 @@ struct TrustedPeerStoreTests {
             try store.remove(id: .generate())
         }
     }
+
+    // MARK: - Corruption recovery
+
+    @Test("Corrupt trusted-peers.json is backed up and list returns empty without throwing")
+    func corruptFileIsBackedUpAndListReturnsEmpty() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Write a corrupt file directly
+        let fileURL = dir.appendingPathComponent("trusted-peers.json")
+        try "not json".data(using: .utf8)!.write(to: fileURL)
+
+        let store = TrustedPeerStore(directory: dir)
+
+        // list() should return empty, not throw
+        let list = try store.list()
+        #expect(list.isEmpty, "Expected empty list after corrupt file")
+
+        // A backup file with .corrupt.<digits> suffix should exist
+        let contents = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        let backupFiles = contents.filter { $0.hasPrefix("trusted-peers.json.corrupt.") }
+        #expect(!backupFiles.isEmpty, "Expected a backup file to exist; found: \(contents)")
+
+        // add() should succeed; subsequent list() shows the added peer
+        let peer = makePeer(name: "After Recovery")
+        try store.add(peer)
+        let afterRecovery = try store.list()
+        #expect(afterRecovery.count == 1, "Expected one peer after recovery add")
+        #expect(afterRecovery[0].displayName == "After Recovery")
+    }
 }
