@@ -9,11 +9,6 @@ import Testing
 @Suite("REMOTE — pending specs")
 struct RemoteTodo {
     @Test("""
-@spec REMOTE-1.1: When a host starts remote access for the first time, the application shall generate and persist a host identity key before accepting pairing requests.
-""", .disabled("not yet implemented"))
-    func remote_1_1() async throws { }
-
-    @Test("""
 @spec REMOTE-1.2: When a client pairs with a host, the application shall require a matching verification code and host-side confirmation before storing the client as a trusted peer.
 """, .disabled("not yet implemented"))
     func remote_1_2() async throws { }
