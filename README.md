@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="Resources/AppIcon.png" alt="Graftty app icon" width="128" />
+  <img src="docs/hero.png" alt="Graftty on macOS in a MacBook Pro frame, with Graftty for iOS in an iPhone frame overlapping front-right" width="1200" />
+</p>
+
+<p align="center">
+  <img src="Resources/AppIcon.png" alt="Graftty app icon" width="96" />
 </p>
 
 # Graftty
@@ -7,10 +11,6 @@
 A macOS worktree-aware terminal multiplexer built on [libghostty](https://ghostty.org) & [zmx.sh](https://zmx.sh/).
 
 Graftty organizes persistent terminal sessions by git worktree. Each worktree in your sidebar has its own split layout of terminals that stay alive across worktree switches, and a CLI (`graftty`) lets running processes interact with the Graftty UI.
-
-<p align="center">
-  <img src="docs/screenshot.png" alt="Graftty showing a worktree sidebar and split terminal layout" width="900" />
-</p>
 
 ## Installing
 
