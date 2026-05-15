@@ -113,6 +113,17 @@ struct SessionStep: Hashable {
     let title: String
 }
 
+/// Holds a weak reference to the live `TerminalInputContainerView` so
+/// SwiftUI-side code (e.g., terminal control-bar buttons) can reach into
+/// the UIKit container to cancel an active selection per IOS-11.7. The
+/// container is owned by the `TerminalPaneView` representable; this box
+/// is updated from `makeUIView` / `updateUIView` via `captureContainer`.
+@MainActor
+final class TerminalContainerBox {
+    weak var view: TerminalInputContainerView?
+    func cancelActiveSelectionIfAny() { view?.cancelActiveSelectionIfAny() }
+}
+
 /// Fullscreen terminal view for one session. Owns the WebSocket and
 /// InMemoryTerminalSession; both are torn down on `.background` and
 /// re-dialed on `.active` once the gate is unlocked.
@@ -145,6 +156,10 @@ struct SingleSessionView: View {
     /// as an explicit bottom padding on the fullscreen layout
     /// (`IOS-6.9`). Populated from `keyboardWillChangeFrame`.
     @State private var keyboardBottomInset: CGFloat = 0
+    /// Box that holds a weak reference to the live terminal-input
+    /// container so the SwiftUI control-bar buttons can cancel an
+    /// active selection per IOS-11.7.
+    @State private var paneContainerBox = TerminalContainerBox()
 
     private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
 
@@ -416,43 +431,54 @@ struct SingleSessionView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 terminalTextControl("Esc", accessibilityLabel: "Escape") {
+                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.sendEscape()
                 }
                 terminalTextControl("Tab", accessibilityLabel: "Tab") {
+                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.sendTab()
                 }
                 terminalTextControl("^C", accessibilityLabel: "Control C") {
+                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.sendControl(.c)
                 }
                 terminalTextControl("^D", accessibilityLabel: "Control D") {
+                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.sendControl(.d)
                 }
                 Divider()
                     .frame(height: 28)
                 terminalIconControl("arrow.left", accessibilityLabel: "Left arrow") {
+                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.sendArrow(.left)
                 }
                 terminalIconControl("arrow.down", accessibilityLabel: "Down arrow") {
+                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.sendArrow(.down)
                 }
                 terminalIconControl("arrow.up", accessibilityLabel: "Up arrow") {
+                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.sendArrow(.up)
                 }
                 terminalIconControl("arrow.right", accessibilityLabel: "Right arrow") {
+                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.sendArrow(.right)
                 }
                 Divider()
                     .frame(height: 28)
                 terminalIconControl("return", accessibilityLabel: "Submit return") {
+                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.submitReturn()
                 }
                 terminalTextControl("LF", accessibilityLabel: "Insert newline") {
+                    paneContainerBox.cancelActiveSelectionIfAny()
                     client?.insertNewline()
                 }
                 terminalIconControl(
                     "keyboard.chevron.compact.down",
                     accessibilityLabel: "Hide keyboard"
                 ) {
+                    paneContainerBox.cancelActiveSelectionIfAny()
                     keyboardAllowed = false
                     UIApplication.shared.sendAction(
                         #selector(UIResponder.resignFirstResponder),
@@ -510,7 +536,14 @@ struct SingleSessionView: View {
                 deleteBackward: { client.deleteBackward() }
             ),
             preferredInterfaceStyle: preferredStyle,
-            onWillUnmount: { snapshot in client.setIdleSnapshot(snapshot) }
+            onWillUnmount: { snapshot in client.setIdleSnapshot(snapshot) },
+            onPasteRequested: { [weak client] in
+                guard let client, let text = UIPasteboard.general.string, !text.isEmpty else {
+                    return
+                }
+                client.sendPaste(text)
+            },
+            captureContainer: { [paneContainerBox] view in paneContainerBox.view = view }
         )
         let cellWidth = client.cellWidthPoints ?? TerminalWidthLayout.fallbackCellWidth
         let decision = TerminalWidthLayout.decide(

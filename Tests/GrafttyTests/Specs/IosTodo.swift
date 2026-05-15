@@ -209,21 +209,6 @@ struct IosTodo {
     func ios_9_5() async throws { }
 
     @Test("""
-@spec IOS-11.1: When the user long-presses a focused terminal pane, the application shall present a `UIEditMenuInteraction` menu at the touch point containing **Select**, **Select All**, and (when `UIPasteboard.general.hasStrings` is true at menu-build time) **Paste**.
-""", .disabled("not yet implemented"))
-    func ios_11_1() async throws { }
-
-    @Test("""
-@spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and libghostty's built-in pan-to-scroll recognizer on the underlying `UITerminalView` shall be disabled until selection mode exits.
-""", .disabled("not yet implemented"))
-    func ios_11_4() async throws { }
-
-    @Test("""
-@spec IOS-11.5: When selection mode is active and the user lifts their finger after Select / Select All / extend, the application shall present a second `UIEditMenuInteraction` menu anchored near the selection rect containing **Copy** and **Cancel**.
-""", .disabled("not yet implemented"))
-    func ios_11_5() async throws { }
-
-    @Test("""
 @spec IOS-11.8: When the user taps **Paste** in the long-press menu, the application shall read `UIPasteboard.general.string` and, when non-empty, send it via `SessionClient.sendPaste(_:)`. An empty or absent clipboard string shall be a silent no-op.
 """, .disabled("not yet implemented"))
     func ios_11_8() async throws { }
