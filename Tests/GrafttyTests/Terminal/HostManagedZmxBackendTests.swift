@@ -100,7 +100,7 @@ struct HostManagedZmxBackendTests {
         let spawnConfiguration = Self.spawnConfiguration()
         let backend = HostManagedZmxBackend(
             spawnConfiguration: spawnConfiguration,
-            sessionFactory: { startedSurface, configuration in
+            sessionFactory: { startedSurface, configuration, _ in
                 observedSurfaces.append(startedSurface)
                 observedConfigurations.append(configuration)
                 return session
@@ -122,7 +122,7 @@ struct HostManagedZmxBackendTests {
         let releaseFactory = DispatchSemaphore(value: 0)
         let backend = HostManagedZmxBackend(
             spawnConfiguration: Self.spawnConfiguration(),
-            sessionFactory: { _, _ in
+            sessionFactory: { _, _, _ in
                 _ = factoryCalls.increment()
                 factoryEntered.signal()
                 _ = releaseFactory.wait(timeout: .now() + 2)
@@ -161,7 +161,7 @@ struct HostManagedZmxBackendTests {
         let releaseFactory = DispatchSemaphore(value: 0)
         let backend = HostManagedZmxBackend(
             spawnConfiguration: Self.spawnConfiguration(),
-            sessionFactory: { _, _ in
+            sessionFactory: { _, _, _ in
                 factoryEntered.signal()
                 _ = releaseFactory.wait(timeout: .now() + 2)
                 return session
@@ -268,10 +268,39 @@ struct HostManagedZmxBackendTests {
         HostManagedZmxBackend.receiveResizeCallback(nil, 80, 24, 800, 600)
     }
 
+    @Test func defaultSessionFactoryReceivesInitialSizeFromBackend() throws {
+        final class CapturingSession: HostManagedZmxSession {
+            var startCount = 0
+            func start() throws { startCount += 1 }
+            func write(_ data: Data) throws {}
+            func resize(cols: UInt16, rows: UInt16) throws {}
+            func close() {}
+        }
+        let captured = LockedRecorder<(cols: UInt16, rows: UInt16)?>()
+        let session = CapturingSession()
+        let backend = HostManagedZmxBackend(
+            spawnConfiguration: Self.spawnConfiguration(),
+            initialSize: (cols: 132, rows: 43),
+            sessionFactory: { _, _, initialSize in
+                captured.append(initialSize)
+                return session
+            }
+        )
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+
+        try backend.start(surface: Self.fakeSurface())
+
+        #expect(session.startCount == 1)
+        let recorded = captured.values()
+        #expect(recorded.count == 1)
+        #expect(recorded.first??.cols == 132)
+        #expect(recorded.first??.rows == 43)
+    }
+
     private static func makeBackend(session: FakeHostManagedSession) -> HostManagedZmxBackend {
         HostManagedZmxBackend(
             spawnConfiguration: spawnConfiguration(),
-            sessionFactory: { _, _ in session }
+            sessionFactory: { _, _, _ in session }
         )
     }
 

@@ -46,6 +46,7 @@ final class TerminalManager: ObservableObject {
     private var ghosttyApp: GhosttyApp?
     private var ghosttyConfig: GhosttyConfig?
     private var surfaces: [PaneSlotID: SurfaceHandle] = [:]
+    private var evictedGridSizes: [PaneSlotID: GridSize] = [:]
     private var paneSessionIDs: [PaneSlotID: PaneSessionID] = [:]
     private var paneSlotIDsBySessionName: [String: PaneSlotID] = [:]
 
@@ -66,6 +67,35 @@ final class TerminalManager: ObservableObject {
     private enum ZmxSessionSnapshot {
         case live(Set<String>)
         case unavailable
+    }
+
+    /// Cached grid size for a pane whose surface was evicted by the LRU
+    /// budget. Replayed as `initialGridSize:` on the next `createSurface`
+    /// for the same pane so the outer `zmx attach` PTY is spawned at the
+    /// captured winsize. Cleared on consume or on destroy.
+    struct GridSize: Equatable {
+        var cols: UInt16
+        var rows: UInt16
+        var widthPx: UInt32
+        var heightPx: UInt32
+
+        init(_ s: ghostty_surface_size_s) {
+            cols = s.columns
+            rows = s.rows
+            widthPx = s.width_px
+            heightPx = s.height_px
+        }
+
+        var asGhosttySize: ghostty_surface_size_s {
+            ghostty_surface_size_s(
+                columns: cols,
+                rows: rows,
+                width_px: widthPx,
+                height_px: heightPx,
+                cell_width_px: 0,
+                cell_height_px: 0
+            )
+        }
     }
 
     /// Terminal IDs that are the "first pane" of a worktree — the pane
@@ -474,11 +504,13 @@ final class TerminalManager: ObservableObject {
                 socketPath: socketPath,
                 zmxSpawnConfiguration: zmxSpawnConfiguration,
                 terminalManager: self,
-                inputActivityObserver: inputActivityObserver
+                inputActivityObserver: inputActivityObserver,
+                initialGridSize: consumeCachedGridSize(for: terminalID)
             ) else {
                 forgetPaneSession(for: terminalID)
                 continue
             }
+            didCreateSurface(for: terminalID)
             surfaces[terminalID] = handle
             created[terminalID] = handle
             if let scanner = portScanner, let pid = lookupShellPID(for: terminalID) {
@@ -519,11 +551,13 @@ final class TerminalManager: ObservableObject {
             zmxSpawnConfiguration: zmxSpawnConfiguration,
             extraInitialInput: extraInitialInput,
             terminalManager: self,
-            inputActivityObserver: inputActivityObserver
+            inputActivityObserver: inputActivityObserver,
+            initialGridSize: consumeCachedGridSize(for: terminalID)
         ) else {
             forgetPaneSession(for: terminalID)
             return nil
         }
+        didCreateSurface(for: terminalID)
         surfaces[terminalID] = handle
         if let scanner = portScanner, let pid = lookupShellPID(for: terminalID) {
             Task { await scanner.registerPane(terminalID, shellPID: pid) }
@@ -646,6 +680,29 @@ final class TerminalManager: ObservableObject {
         paneSlotIDsBySessionName[sessionName]?.id
     }
 
+    /// Test seam: read the captured grid size for a pane.
+    func evictedGridSize(for terminalID: PaneSlotID) -> GridSize? {
+        evictedGridSizes[terminalID]
+    }
+
+    /// Test seam: insert a surface handle for tests that exercise
+    /// `evictSurface` without a live ghostty app. Production callers use
+    /// `createSurface` / `createSurfaces` exclusively.
+    func insertSurfaceForTesting(_ handle: SurfaceHandle, for terminalID: PaneSlotID) {
+        surfaces[terminalID] = handle
+    }
+
+    /// Drop and return the cached grid size for a pane, if any. Peek-then-
+    /// consume rather than consume-then-spawn so a failable `SurfaceHandle`
+    /// init can roll back and leave the cache available for the next retry.
+    private func consumeCachedGridSize(for terminalID: PaneSlotID) -> ghostty_surface_size_s? {
+        evictedGridSizes[terminalID]?.asGhosttySize
+    }
+
+    private func didCreateSurface(for terminalID: PaneSlotID) {
+        evictedGridSizes.removeValue(forKey: terminalID)
+    }
+
     /// Tell libghostty whether a surface is currently visible. On visible,
     /// force a repaint so a re-shown pane presents a clean full frame.
     func setVisible(_ visible: Bool, for terminalID: PaneSlotID) {
@@ -724,6 +781,10 @@ final class TerminalManager: ObservableObject {
     /// labels, and does NOT call `killZmxSession` or fire `paneClosed`.
     func evictSurface(terminalID: PaneSlotID) {
         if let handle = surfaces.removeValue(forKey: terminalID) {
+            let size = GridSize(handle.queryGridSize())
+            if size.cols > 0 && size.rows > 0 {
+                evictedGridSizes[terminalID] = size
+            }
             handle.requestClose()
         }
         rehydratedSurfaces.insert(terminalID)
@@ -772,6 +833,7 @@ final class TerminalManager: ObservableObject {
         shellReadyFired.remove(terminalID)
         firstPaneMarkers.remove(terminalID)
         rehydratedSurfaces.remove(terminalID)
+        evictedGridSizes.removeValue(forKey: terminalID)
         forgetPaneSession(for: terminalID)
     }
 

@@ -14,7 +14,8 @@ extension NativePtySession: HostManagedZmxSession {}
 final class HostManagedZmxBackend {
     typealias SessionFactory = (
         _ surface: ghostty_surface_t,
-        _ spawnConfiguration: ZmxSpawnConfiguration
+        _ spawnConfiguration: ZmxSpawnConfiguration,
+        _ initialSize: (cols: UInt16, rows: UInt16)?
     ) -> HostManagedZmxSession
 
     enum Error: Swift.Error {
@@ -54,6 +55,7 @@ final class HostManagedZmxBackend {
     }
 
     private let spawnConfiguration: ZmxSpawnConfiguration
+    private let initialSize: (cols: UInt16, rows: UInt16)?
     private let sessionFactory: SessionFactory
     private let lock = NSLock()
 
@@ -64,17 +66,20 @@ final class HostManagedZmxBackend {
 
     init(
         spawnConfiguration: ZmxSpawnConfiguration,
-        sessionFactory: @escaping SessionFactory = { surface, configuration in
+        initialSize: (cols: UInt16, rows: UInt16)? = nil,
+        sessionFactory: @escaping SessionFactory = { surface, configuration, initialSize in
             NativePtySession(
                 surface: surface,
                 argv: configuration.argv,
                 env: configuration.env,
                 workingDirectory: configuration.workingDirectory,
+                initialSize: initialSize,
                 spawnFailed: { _ in }
             )
         }
     ) {
         self.spawnConfiguration = spawnConfiguration
+        self.initialSize = initialSize
         self.sessionFactory = sessionFactory
 
         let userdata = HostManagedZmxBackendUserdata(backend: self)
@@ -115,7 +120,7 @@ final class HostManagedZmxBackend {
             throw Error.closed
         }
 
-        let newSession = sessionFactory(surface, spawnConfiguration)
+        let newSession = sessionFactory(surface, spawnConfiguration, initialSize)
 
         lock.lock()
         if case .closed = lifecycle {

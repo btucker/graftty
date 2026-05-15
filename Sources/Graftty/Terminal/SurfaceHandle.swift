@@ -51,6 +51,9 @@ struct SurfaceHandleGhosttySurfaceFactory {
     var text: (ghostty_surface_t, UnsafePointer<CChar>, UInt) -> Void
     var writeBuffer: (ghostty_surface_t, UnsafePointer<UInt8>, UInt) -> Void
     var processExit: (ghostty_surface_t, UInt32, UInt64) -> Void
+    var size: (ghostty_surface_t) -> ghostty_surface_size_s
+    var setSize: (ghostty_surface_t, UInt32, UInt32) -> Void
+    var requestClose: (ghostty_surface_t) -> Void
 
     static let live = SurfaceHandleGhosttySurfaceFactory(
         create: { app, config in ghostty_surface_new(app, config) },
@@ -59,7 +62,10 @@ struct SurfaceHandleGhosttySurfaceFactory {
         writeBuffer: { surface, ptr, count in ghostty_surface_write_buffer(surface, ptr, count) },
         processExit: { surface, exitCode, runtimeMilliseconds in
             ghostty_surface_process_exit(surface, exitCode, runtimeMilliseconds)
-        }
+        },
+        size: { surface in ghostty_surface_size(surface) },
+        setSize: { surface, w, h in ghostty_surface_set_size(surface, w, h) },
+        requestClose: { surface in ghostty_surface_request_close(surface) }
     )
 }
 
@@ -92,9 +98,13 @@ final class SurfaceHandle {
         terminalManager: TerminalManager? = nil,
         inputActivityObserver: PaneInputActivityObserver? = nil,
         surfaceFactory: SurfaceHandleGhosttySurfaceFactory = .live,
-        zmxBackendFactory: (ZmxSpawnConfiguration) -> SurfaceHandleZmxBackend = {
-            HostManagedZmxBackend(spawnConfiguration: $0)
-        }
+        zmxBackendFactory: (ZmxSpawnConfiguration, (cols: UInt16, rows: UInt16)?) -> SurfaceHandleZmxBackend = { spawn, initialSize in
+            HostManagedZmxBackend(
+                spawnConfiguration: spawn,
+                initialSize: initialSize
+            )
+        },
+        initialGridSize: ghostty_surface_size_s? = nil
     ) {
         self.terminalID = terminalID
         self.worktreePath = worktreePath
@@ -106,7 +116,9 @@ final class SurfaceHandle {
         )
         let userdataPtr = Unmanaged.passRetained(userdataBox).toOpaque()
         self.userdataPointer = userdataPtr
-        let backend = zmxSpawnConfiguration.map(zmxBackendFactory)
+        let backend = zmxSpawnConfiguration.map { spawn in
+            zmxBackendFactory(spawn, initialGridSize.map { ($0.columns, $0.rows) })
+        }
         self.zmxBackend = backend
 
         let surfaceView = SurfaceNSView()
@@ -237,6 +249,10 @@ final class SurfaceHandle {
         // it forwards keystrokes/mouse events back into libghostty.
         surfaceView.surface = newSurface
 
+        if let initialGridSize, initialGridSize.width_px > 0, initialGridSize.height_px > 0 {
+            surfaceFactory.setSize(newSurface, initialGridSize.width_px, initialGridSize.height_px)
+        }
+
         if let backend {
             do {
                 try backend.start(surface: newSurface)
@@ -326,6 +342,10 @@ final class SurfaceHandle {
         ghostty_surface_set_size(surface, width, height)
     }
 
+    func queryGridSize() -> ghostty_surface_size_s {
+        surfaceFactory.size(surface)
+    }
+
     /// Tell libghostty whether this surface is currently visible. Despite
     /// the C symbol's name, the boolean is `visible`, not `occluded`.
     func setVisible(_ visible: Bool) {
@@ -393,7 +413,7 @@ final class SurfaceHandle {
     }
 
     func requestClose() {
-        ghostty_surface_request_close(surface)
+        surfaceFactory.requestClose(surface)
     }
 }
 
