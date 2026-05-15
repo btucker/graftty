@@ -249,11 +249,6 @@ struct IosTodo {
     func ios_11_8() async throws { }
 
     @Test("""
-@spec IOS-11.9: `SessionClient.sendPaste(_:)` shall wrap the payload in `ESC [ 200 ~` and `ESC [ 201 ~` and emit the wrapped sequence as a single binary WebSocket frame. The single-byte LF→CR translation of `IOS-6.3` shall not apply to this path; the payload's own line endings shall be preserved verbatim.
-""", .disabled("not yet implemented"))
-    func ios_11_9() async throws { }
-
-    @Test("""
 @spec IOS-11.10: Selection mode shall be per-pane state owned by the focused pane's `TerminalSelectionController`. Selection in one pane shall not affect the selection state of any other pane.
 """, .disabled("not yet implemented"))
     func ios_11_10() async throws { }

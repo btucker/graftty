@@ -313,6 +313,21 @@ public final class SessionClient {
         sendInput(Data(text.utf8))
     }
 
+    /// IOS-11.9: send clipboard text as a single bracketed-paste frame.
+    /// Bypasses the IOS-6.3 single-byte LF→CR translation — pastes are
+    /// not per-keystroke input and the payload's line endings are part
+    /// of the paste's meaning.
+    public func sendPaste(_ text: String) {
+        guard !text.isEmpty else { return }
+        var payload = Data()
+        payload.append(contentsOf: [0x1B, 0x5B, 0x32, 0x30, 0x30, 0x7E]) // ESC [ 2 0 0 ~
+        payload.append(Data(text.utf8))
+        payload.append(contentsOf: [0x1B, 0x5B, 0x32, 0x30, 0x31, 0x7E]) // ESC [ 2 0 1 ~
+        recordActivity()
+        sendBinary(payload)
+        claimLeadershipIfNeeded()
+    }
+
     public func deleteBackward() {
         sendInput(Data([0x7F]))
     }
