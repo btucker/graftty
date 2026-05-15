@@ -9,11 +9,6 @@ import Testing
 @Suite("REMOTE — pending specs")
 struct RemoteTodo {
     @Test("""
-@spec REMOTE-1.2: When a client pairs with a host, the application shall require a matching verification code and host-side confirmation before storing the client as a trusted peer.
-""", .disabled("not yet implemented"))
-    func remote_1_2() async throws { }
-
-    @Test("""
 @spec REMOTE-2.1: When a remote transport reconnects, the host shall require a fresh authenticated attach handshake before writing any bytes to the PTY.
 """, .disabled("not yet implemented"))
     func remote_2_1() async throws { }
