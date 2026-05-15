@@ -111,6 +111,36 @@ struct PairingPayloadTests {
         }
     }
 
+    // MARK: - Fix 2: decodeQR must reject non-https URLs
+
+    @Test("decodeQR rejects http:// pairingURL with insecureURL error")
+    func decodeQRRejectsHttpURL() throws {
+        let pubKey = makePublicKey()
+        let fingerprint = RemoteIdentityFingerprint(of: pubKey)
+        let insecurePayload = PairingPayload(
+            version: 1,
+            hostDeviceID: RemoteDeviceID(value: "test-host-id"),
+            hostKind: .mac,
+            hostDisplayName: "Test Mac",
+            hostPublicKeyFingerprint: fingerprint,
+            nonce: RemotePairingNonce(bytes: Data(repeating: 0xAB, count: 16)),
+            expiry: Date(timeIntervalSince1970: 1_800_000_300),
+            pairingURL: URL(string: "http://attacker.local:8800/v1/pairing")!
+        )
+        let qr = try insecurePayload.qrEncoded()
+        #expect(throws: PairingPayload.DecodeError.insecureURL) {
+            try PairingPayload.decodeQR(qr)
+        }
+    }
+
+    @Test("decodeQR accepts https:// pairingURL (regression: scheme check must not break happy path)")
+    func decodeQRAcceptsHttpsURL() throws {
+        let payload = makePayload()  // makePayload already uses https://
+        let qr = try payload.qrEncoded()
+        let decoded = try PairingPayload.decodeQR(qr)
+        #expect(decoded == payload)
+    }
+
     // MARK: - Codable (JSON)
 
     @Test("PairingPayload Codable round-trips via JSON")

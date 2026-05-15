@@ -125,6 +125,11 @@ public final class HostPairingSession: @unchecked Sendable {
     ///
     /// Throws `.noHostIdentity` if no host identity key has been generated yet
     /// (REMOTE-1.1: identity must exist before accepting pairing requests).
+    ///
+    /// If a pairing is already in progress (`.awaitingClient` or
+    /// `.pendingConfirmation`), calling `startPairing` again abandons
+    /// it and starts a fresh nonce. The prior nonce will be rejected
+    /// by `receiveClientIdentity` when an old client connects.
     public func startPairing(validFor: TimeInterval = 300) throws -> PairingPayload {
         lock.lock()
         defer { lock.unlock() }
@@ -251,16 +256,31 @@ public final class HostPairingSession: @unchecked Sendable {
 
     /// User denies the pairing request. Transitions to `.denied` without
     /// inserting anything into the peer store.
+    ///
+    /// Only transitions from `.pendingConfirmation`. No-op from terminal states
+    /// (`.confirmed`, `.denied`, `.cancelled`, `.expired`, `.failed`) to prevent
+    /// a delayed UI action from clobbering an already-completed session.
     public func deny() {
         lock.lock()
         defer { lock.unlock() }
+        guard case .pendingConfirmation = _state else { return }
         _state = .denied
     }
 
     /// User cancels before the client connects. Transitions to `.cancelled`.
+    ///
+    /// No-op from terminal states (`.idle`, `.confirmed`, `.denied`,
+    /// `.cancelled`, `.expired`, `.failed`) — only active states
+    /// (`.awaitingClient`, `.pendingConfirmation`) are cancellable.
     public func cancel() {
         lock.lock()
         defer { lock.unlock() }
+        switch _state {
+        case .idle, .confirmed, .denied, .cancelled, .expired, .failed:
+            return
+        case .awaitingClient, .pendingConfirmation:
+            break
+        }
         _state = .cancelled
     }
 

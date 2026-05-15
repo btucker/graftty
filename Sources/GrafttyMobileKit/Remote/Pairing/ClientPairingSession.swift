@@ -50,14 +50,12 @@ public final class ClientPairingSession: @unchecked Sendable {
         /// The host returned a public key whose fingerprint doesn't match the QR payload.
         case fingerprintMismatch
         case unsupportedPayloadVersion(Int)
-        case noClientIdentity
         case pinnedHostStoreFailed(underlying: String)
 
         public static func == (lhs: ClientPairingSession.Error, rhs: ClientPairingSession.Error) -> Bool {
             switch (lhs, rhs) {
             case (.expired, .expired): return true
             case (.fingerprintMismatch, .fingerprintMismatch): return true
-            case (.noClientIdentity, .noClientIdentity): return true
             case let (.wrongState(l), .wrongState(r)): return l == r
             case let (.unsupportedPayloadVersion(l), .unsupportedPayloadVersion(r)): return l == r
             case let (.pinnedHostStoreFailed(l), .pinnedHostStoreFailed(r)): return l == r
@@ -171,16 +169,18 @@ public final class ClientPairingSession: @unchecked Sendable {
         // REMOTE-1.2: fingerprint check — anti-MITM guard
         let receivedFingerprint = RemoteIdentityFingerprint(of: hostPublicKey)
         guard receivedFingerprint == payload.hostPublicKeyFingerprint else {
+            _state = .failed(message: "Fingerprint mismatch: received key does not match QR payload")
             throw Error.fingerprintMismatch
         }
 
+        let currentTime = now()
         let host = PinnedHost(
             id: payload.hostDeviceID,
             kind: payload.hostKind,
             publicKey: hostPublicKey,
             displayName: payload.hostDisplayName,
-            pinnedAt: now(),
-            lastConnectedAt: now(),
+            pinnedAt: currentTime,
+            lastConnectedAt: currentTime,
             pairingURL: payload.pairingURL
         )
 
@@ -196,9 +196,14 @@ public final class ClientPairingSession: @unchecked Sendable {
     }
 
     /// Called when the host explicitly denies the pairing request.
+    ///
+    /// Only transitions from `.awaitingHostConfirmation`. No-op from terminal states
+    /// (`.confirmed`, `.denied`, `.cancelled`, `.expired`, `.failed`) to prevent a
+    /// delayed network callback from clobbering an already-completed session.
     public func handleDenied() {
         lock.lock()
         defer { lock.unlock() }
+        guard case .awaitingHostConfirmation = _state else { return }
         _state = .denied
     }
 
@@ -210,9 +215,19 @@ public final class ClientPairingSession: @unchecked Sendable {
     }
 
     /// Client cancels the pairing before it completes.
+    ///
+    /// No-op from terminal states (`.confirmed`, `.denied`, `.cancelled`,
+    /// `.expired`, `.failed`) to prevent a delayed cancel from overwriting
+    /// an already-completed session.
     public func cancel() {
         lock.lock()
         defer { lock.unlock() }
+        switch _state {
+        case .idle, .confirmed, .denied, .cancelled, .expired, .failed:
+            return
+        case .readyToConnect, .awaitingHostConfirmation:
+            break
+        }
         _state = .cancelled
     }
 

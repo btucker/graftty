@@ -121,6 +121,10 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
             throw DecodeError.unsupportedVersion(payload.version)
         }
 
+        guard payload.pairingURL.scheme == "https" else {
+            throw DecodeError.insecureURL
+        }
+
         return payload
     }
 
@@ -131,5 +135,8 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
         case malformedBase64
         case malformedJSON
         case unsupportedVersion(Int)
+        /// The `pairingURL` in the QR payload uses a non-https scheme. Only
+        /// `https://` endpoints are accepted to prevent plaintext interception.
+        case insecureURL
     }
 }

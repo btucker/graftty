@@ -264,6 +264,118 @@ struct HostPairingSessionTests {
         #expect(peers.isEmpty, "No peer should be inserted after deny()")
     }
 
+    // MARK: - Fix 3: startPairing twice generates a fresh nonce
+
+    @Test("startPairing twice abandons prior session and generates a fresh nonce")
+    func startPairingTwiceAbandonsPriorSession() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let identityStore = HostIdentityStore(directory: dir)
+        let peerStore = TrustedPeerStore(directory: dir)
+        _ = try identityStore.generateAndPersist()
+
+        let session = makeSession(identityStore: identityStore, peerStore: peerStore)
+
+        let firstPayload = try session.startPairing()
+        let secondPayload = try session.startPairing()
+
+        #expect(firstPayload.nonce != secondPayload.nonce,
+            "Second startPairing must generate a fresh nonce — old nonce is abandoned")
+    }
+
+    // MARK: - Fix 4: deny() and cancel() are no-ops from terminal states
+
+    @Test("deny() from .confirmed state is a no-op")
+    func denyIsNoOpFromConfirmed() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let identityStore = HostIdentityStore(directory: dir)
+        let peerStore = TrustedPeerStore(directory: dir)
+        _ = try identityStore.generateAndPersist()
+
+        let session = makeSession(identityStore: identityStore, peerStore: peerStore)
+        _ = try session.startPairing()
+        let clientID = RemoteDeviceID.generate()
+        try session.receiveClientIdentity(
+            clientPublicKey: makeClientPublicKey(),
+            clientDeviceID: clientID,
+            clientKind: .iphone,
+            clientDisplayName: "Test iPhone"
+        )
+        _ = try session.confirm()
+
+        // Now in .confirmed — deny() must be a no-op
+        session.deny()
+
+        if case .confirmed = session.state {
+            // expected
+        } else {
+            Issue.record("Expected .confirmed state to be preserved after deny(), got \(session.state)")
+        }
+    }
+
+    @Test("cancel() from .confirmed state is a no-op")
+    func cancelIsNoOpFromConfirmed() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let identityStore = HostIdentityStore(directory: dir)
+        let peerStore = TrustedPeerStore(directory: dir)
+        _ = try identityStore.generateAndPersist()
+
+        let session = makeSession(identityStore: identityStore, peerStore: peerStore)
+        _ = try session.startPairing()
+        let clientID = RemoteDeviceID.generate()
+        try session.receiveClientIdentity(
+            clientPublicKey: makeClientPublicKey(),
+            clientDeviceID: clientID,
+            clientKind: .iphone,
+            clientDisplayName: "Test iPhone"
+        )
+        _ = try session.confirm()
+
+        // Now in .confirmed — cancel() must be a no-op
+        session.cancel()
+
+        if case .confirmed = session.state {
+            // expected
+        } else {
+            Issue.record("Expected .confirmed state to be preserved after cancel(), got \(session.state)")
+        }
+    }
+
+    @Test("cancel() from .denied state is a no-op")
+    func cancelIsNoOpFromDenied() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let identityStore = HostIdentityStore(directory: dir)
+        let peerStore = TrustedPeerStore(directory: dir)
+        _ = try identityStore.generateAndPersist()
+
+        let session = makeSession(identityStore: identityStore, peerStore: peerStore)
+        _ = try session.startPairing()
+        let clientID = RemoteDeviceID.generate()
+        try session.receiveClientIdentity(
+            clientPublicKey: makeClientPublicKey(),
+            clientDeviceID: clientID,
+            clientKind: .iphone,
+            clientDisplayName: "Test iPhone"
+        )
+        session.deny()
+
+        // Now in .denied — cancel() must be a no-op
+        session.cancel()
+
+        if case .denied = session.state {
+            // expected
+        } else {
+            Issue.record("Expected .denied state to be preserved after cancel(), got \(session.state)")
+        }
+    }
+
     // MARK: - Nonce expiry: tick() after expiry transitions to .expired
 
     @Test("tick() after expiry transitions from awaitingClient to expired")

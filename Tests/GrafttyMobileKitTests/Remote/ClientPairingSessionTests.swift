@@ -224,6 +224,119 @@ struct ClientPairingSessionTests {
         #expect(list.isEmpty, "Expected no hosts pinned after fingerprint mismatch")
     }
 
+    // MARK: - Fix 1: fingerprintMismatch must terminate session (security)
+
+    @Test("confirm(hostPublicKey:) with fingerprint mismatch transitions to .failed, not awaitingHostConfirmation")
+    func fingerprintMismatchTerminatesSession() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let identityStore = ClientIdentityStore(directory: dir)
+        _ = try identityStore.generateAndPersist()
+        let pinnedHostStore = PinnedHostStore(directory: dir)
+        let session = makeSession(identityStore: identityStore, pinnedHostStore: pinnedHostStore)
+
+        let hostPrivateKey = makePrivateKey()
+        let hostPublicKey = try RemoteIdentityPublicKey(rawRepresentation: hostPrivateKey.publicKey.rawRepresentation)
+        let payload = makePayload(hostPublicKey: hostPublicKey)
+
+        try session.consume(payload: payload)
+
+        let clientPublicKey = try identityStore.currentPublicKey()!
+        let transcript = RemotePairingTranscript(
+            hostPublicKey: hostPublicKey,
+            clientPublicKey: clientPublicKey,
+            nonce: payload.nonce,
+            expiry: payload.expiry
+        )
+        try session.markAwaitingConfirmation(transcript: transcript)
+
+        // Attacker substitutes a different key
+        let impostorKey = makePublicKey(byte: 0xFF)
+        #expect(throws: ClientPairingSession.Error.fingerprintMismatch) {
+            try session.confirm(hostPublicKey: impostorKey)
+        }
+
+        // Session must be in a terminal .failed state — not .awaitingHostConfirmation
+        if case .failed = session.state {
+            // expected — MITM retry window is closed
+        } else {
+            Issue.record("Expected .failed state after fingerprint mismatch, got \(session.state)")
+        }
+    }
+
+    // MARK: - Fix 4: deny/cancel/handleDenied/cancel are no-ops from terminal states
+
+    @Test("handleDenied() from .confirmed state is a no-op")
+    func handleDeniedIsNoOpFromConfirmed() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let identityStore = ClientIdentityStore(directory: dir)
+        _ = try identityStore.generateAndPersist()
+        let pinnedHostStore = PinnedHostStore(directory: dir)
+        let session = makeSession(identityStore: identityStore, pinnedHostStore: pinnedHostStore)
+
+        let hostPrivateKey = makePrivateKey()
+        let hostPublicKey = try RemoteIdentityPublicKey(rawRepresentation: hostPrivateKey.publicKey.rawRepresentation)
+        let payload = makePayload(hostPublicKey: hostPublicKey)
+
+        try session.consume(payload: payload)
+        let clientPublicKey = try identityStore.currentPublicKey()!
+        let transcript = RemotePairingTranscript(
+            hostPublicKey: hostPublicKey,
+            clientPublicKey: clientPublicKey,
+            nonce: payload.nonce,
+            expiry: payload.expiry
+        )
+        try session.markAwaitingConfirmation(transcript: transcript)
+        _ = try session.confirm(hostPublicKey: hostPublicKey)
+
+        // Now in .confirmed — handleDenied must be a no-op
+        session.handleDenied()
+
+        if case .confirmed = session.state {
+            // expected — confirmed is unchanged
+        } else {
+            Issue.record("Expected .confirmed state to be preserved after handleDenied(), got \(session.state)")
+        }
+    }
+
+    @Test("cancel() from .confirmed state is a no-op")
+    func cancelIsNoOpFromConfirmed() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let identityStore = ClientIdentityStore(directory: dir)
+        _ = try identityStore.generateAndPersist()
+        let pinnedHostStore = PinnedHostStore(directory: dir)
+        let session = makeSession(identityStore: identityStore, pinnedHostStore: pinnedHostStore)
+
+        let hostPrivateKey = makePrivateKey()
+        let hostPublicKey = try RemoteIdentityPublicKey(rawRepresentation: hostPrivateKey.publicKey.rawRepresentation)
+        let payload = makePayload(hostPublicKey: hostPublicKey)
+
+        try session.consume(payload: payload)
+        let clientPublicKey = try identityStore.currentPublicKey()!
+        let transcript = RemotePairingTranscript(
+            hostPublicKey: hostPublicKey,
+            clientPublicKey: clientPublicKey,
+            nonce: payload.nonce,
+            expiry: payload.expiry
+        )
+        try session.markAwaitingConfirmation(transcript: transcript)
+        _ = try session.confirm(hostPublicKey: hostPublicKey)
+
+        // Now in .confirmed — cancel() must be a no-op
+        session.cancel()
+
+        if case .confirmed = session.state {
+            // expected — confirmed is unchanged
+        } else {
+            Issue.record("Expected .confirmed state to be preserved after cancel(), got \(session.state)")
+        }
+    }
+
     // MARK: - handleDenied() transitions to .denied
 
     @Test("handleDenied() transitions to denied state")
