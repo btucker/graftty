@@ -92,4 +92,24 @@ struct IpadTodo {
 @spec IPAD-3.6: When a `pane_control` RPC returns `409 Conflict`, the application shall not present an error toast and shall rely on the next `panes_state` snapshot to reflect actual server state.
 """, .disabled("not yet implemented"))
     func ipad_3_6() async throws { }
+
+    @Test("""
+@spec IPAD-4.1: While the iPad layout is presented, the application shall cap concurrent open `terminal` channels at 8 leaves across all visible panes.
+""", .disabled("not yet implemented"))
+    func ipad_4_1() async throws { }
+
+    @Test("""
+@spec IPAD-4.2: When opening a new `terminal` channel would exceed the IPAD-4.1 cap, the application shall close the least-recently-focused open `terminal` channel and render its leaf as an `IdleSnapshotView` from the last frame the channel held.
+""", .disabled("not yet implemented"))
+    func ipad_4_2() async throws { }
+
+    @Test("""
+@spec IPAD-4.3: When the user taps an `IdleSnapshotView` placeholder leaf, the application shall open a fresh `terminal` channel for that leaf, potentially evicting a different least-recently-focused leaf per IPAD-4.2.
+""", .disabled("not yet implemented"))
+    func ipad_4_3() async throws { }
+
+    @Test("""
+@spec IPAD-4.4: When a leaf is closed (via `pane_control: close` or removed from a `panes_state` snapshot), the application shall close its `terminal` channel and drop it from the LRU budget.
+""", .disabled("not yet implemented"))
+    func ipad_4_4() async throws { }
 }
