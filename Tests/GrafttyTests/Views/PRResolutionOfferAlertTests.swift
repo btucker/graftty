@@ -8,7 +8,8 @@ import GrafttyProtocol
 /// dialog's text and button labels stay regression-proof without booting
 /// AppKit. NSAlert.init() loads a NIB that needs a running
 /// NSApplication, which `swift test` doesn't provide — so the factory
-/// returns a value struct and MainWindow assembles the NSAlert.
+/// returns a `SheetAlert.Configuration` and `SheetAlert.present`
+/// assembles the NSAlert at the call site.
 @Suite("PRResolutionOfferAlert")
 struct PRResolutionOfferAlertTests {
 

@@ -1,5 +1,4 @@
 import AppKit
-import Foundation
 import GrafttyProtocol
 
 /// Builds the `SheetAlert.Configuration` for the GIT-4.7 "Pull request
