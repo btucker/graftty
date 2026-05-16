@@ -595,14 +595,18 @@ struct MainWindow: View {
     /// `worktreeMonitorDidDetectDeletion` shortly after, but its update
     /// is idempotent so the eventual callback is harmless.
     private func deleteWorktreeWithConfirmation(_ worktreePath: String) {
-        let alert = NSAlert()
-        alert.messageText = "Delete Worktree?"
-        alert.informativeText = "This will delete the worktree but not the branch."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Delete Worktree")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        performDeleteWorktree(worktreePath)
+        guard let host = NSApp.mainWindow else { return }
+        let config = SheetAlert.Configuration(
+            messageText: "Delete Worktree?",
+            informativeText: "This will delete the worktree but not the branch.",
+            style: .warning,
+            primaryButton: "Delete Worktree",
+            secondaryButton: "Cancel"
+        )
+        SheetAlert.present(config, on: host) { response in
+            guard response == .primary else { return }
+            performDeleteWorktree(worktreePath)
+        }
     }
 
     private func removeRepoWithConfirmation(_ repo: RepoEntry) {
