@@ -169,11 +169,6 @@ struct IosTodo {
     func ios_8_2() async throws { }
 
     @Test("""
-@spec IOS-8.3: When the `terminal_control` capability is granted via the WebRTC pairing flow (REMOTE-1.x), the iOS application shall initiate pane lifecycle operations only through the `pane_control` channel (REMOTE-7.x). The application shall not invent any other path for initiating pane lifecycle operations on the host. Worktree-stop and session-kill operations remain out of scope.
-""", .disabled("not yet implemented"))
-    func ios_8_3() async throws { }
-
-    @Test("""
 @spec IOS-8.4: The v1 iOS app shall not persist terminal scrollback on the device. On reconnect, it renders whatever the zmx daemon's buffer still contains.
 """, .disabled("not yet implemented"))
     func ios_8_4() async throws { }

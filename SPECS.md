@@ -1282,8 +1282,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-8.2** The v1 iOS app shall not forward terminal mouse events, OSC 52 clipboard reads, or Kitty graphics/keyboard-protocol sequences. (Mirrors `WEB-6.2`.)
 
-**IOS-8.3** When the `terminal_control` capability is granted via the WebRTC pairing flow (REMOTE-1.x), the iOS application shall initiate pane lifecycle operations only through the `pane_control` channel (REMOTE-7.x). The application shall not invent any other path for initiating pane lifecycle operations on the host. Worktree-stop and session-kill operations remain out of scope.
-
 **IOS-8.4** The v1 iOS app shall not persist terminal scrollback on the device. On reconnect, it renders whatever the zmx daemon's buffer still contains.
 
 **IOS-8.5** The v1 iOS app shall not use push notifications for PR status, build completions, or session events.
@@ -1584,7 +1582,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-7.3** When the host receives a `pane_control` request `{"type":"close","target":<sessionName>}`, the host shall destroy the surface for the leaf whose `sessionName == target` and reply `{"ok":true}` on success.
 
-**REMOTE-7.4** When two `pane_control` requests target the same leaf concurrently, the host shall serialize processing and reply to the second request with `{"ok":false,"error":"conflict","code":"conflict"}` (logical 409 semantics) until the first request's resulting `panes_state` snapshot has been emitted.
+**REMOTE-7.4** When two `pane_control` requests target the same leaf concurrently, the host shall immediately reply to the second request with `{"ok":false,"error":"conflict","code":"conflict"}` and continue processing only the first request. The conflict window for a target leaf ends once the first request's resulting `panes_state` snapshot has been emitted.
 
 **REMOTE-7.5** A `pane_control` request shall not change the host's `AppState.selectedWorktreePath` or any worktree's `focusedPaneSlotID`. Mac focus is sovereign to the Mac user, mirroring `WEB-7.5`.
 
