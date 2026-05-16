@@ -73,8 +73,11 @@ public final class HostIdentityStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         let fileURL = directory.appendingPathComponent(Self.fileName)
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
-        try FileManager.default.removeItem(at: fileURL)
+        do {
+            try FileManager.default.removeItem(at: fileURL)
+        } catch let error as CocoaError where error.code == .fileNoSuchFile {
+            // Already gone — treat as success.
+        }
     }
 
     /// Derives the `RemoteIdentityPublicKey` from the currently stored private
@@ -89,11 +92,10 @@ public final class HostIdentityStore: @unchecked Sendable {
     // MARK: Default directory
 
     /// The production default storage directory.
-    ///
-    /// // TODO: Keychain integration before v1 production release —
-    /// // the private key should be stored in the Keychain/Secure Enclave
-    /// // rather than Application Support. This file-backed path is used
-    /// // until that integration lands.
+    // TODO: Keychain integration before v1 production release —
+    // the private key should be stored in the Keychain/Secure Enclave
+    // rather than Application Support. This file-backed path is used
+    // until that integration lands.
     public static var defaultDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Graftty")
@@ -104,8 +106,7 @@ public final class HostIdentityStore: @unchecked Sendable {
 
     private func _load() throws -> Curve25519.KeyAgreement.PrivateKey? {
         let fileURL = directory.appendingPathComponent(Self.fileName)
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
-        let data = try Data(contentsOf: fileURL)
+        guard let data = try? Data(contentsOf: fileURL) else { return nil }
         do {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601

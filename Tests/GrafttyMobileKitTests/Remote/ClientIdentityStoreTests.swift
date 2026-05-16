@@ -132,6 +132,26 @@ struct ClientIdentityStoreTests {
         #expect(publicKey!.rawRepresentation == expectedBytes)
     }
 
+    // MARK: - Missing file is not corruption
+
+    @Test("Missing client-identity.json returns nil without creating a .corrupt backup")
+    func missingFileReturnsNilWithoutCorruptBackup() throws {
+        // Use a directory that exists but has no identity file in it.
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = ClientIdentityStore(directory: dir)
+
+        // load() on a never-written store must return nil, not throw
+        let result = try store.load()
+        #expect(result == nil, "Expected nil when file has never been written")
+
+        // Crucially: no .corrupt backup should be created
+        let contents = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        let backupFiles = contents.filter { $0.hasPrefix("client-identity.json.corrupt.") }
+        #expect(backupFiles.isEmpty, "A missing file must NOT create a .corrupt backup; found: \(contents)")
+    }
+
     // MARK: - Stable persistence across instances
 
     @Test("Stable persistence: a new store on the same URL sees prior generates")

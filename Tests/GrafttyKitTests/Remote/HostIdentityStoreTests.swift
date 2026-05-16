@@ -141,6 +141,24 @@ struct HostIdentityStoreTests {
         #expect(publicKey!.rawRepresentation == expectedBytes)
     }
 
+    @Test("Missing host-identity.json returns nil without creating a .corrupt backup")
+    func missingFileReturnsNilWithoutCorruptBackup() throws {
+        // Use a directory that exists but has no identity file in it.
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = HostIdentityStore(directory: dir)
+
+        // load() on a never-written store must return nil, not throw
+        let result = try store.load()
+        #expect(result == nil, "Expected nil when file has never been written")
+
+        // Crucially: no .corrupt backup should be created
+        let contents = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        let backupFiles = contents.filter { $0.hasPrefix("host-identity.json.corrupt.") }
+        #expect(backupFiles.isEmpty, "A missing file must NOT create a .corrupt backup; found: \(contents)")
+    }
+
     @Test("Stable persistence across store instances")
     func stablePersistenceAcrossInstances() throws {
         let dir = try makeTempDir()

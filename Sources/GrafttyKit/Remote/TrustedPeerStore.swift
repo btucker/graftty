@@ -134,10 +134,9 @@ public final class TrustedPeerStore: @unchecked Sendable {
 
     private func _load() throws -> Envelope {
         let fileURL = directory.appendingPathComponent(Self.fileName)
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+        guard let data = try? Data(contentsOf: fileURL) else {
             return Envelope(peers: [])
         }
-        let data = try Data(contentsOf: fileURL)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         do {

@@ -219,6 +219,26 @@ struct PinnedHostStoreTests {
         }
     }
 
+    // MARK: - Missing file is not corruption
+
+    @Test("Missing pinned-hosts.json returns empty list without creating a .corrupt backup")
+    func missingFileReturnsEmptyWithoutCorruptBackup() throws {
+        // Use a directory that exists but has no hosts file in it.
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = PinnedHostStore(directory: dir)
+
+        // list() on a never-written store must return [], not throw
+        let list = try store.list()
+        #expect(list.isEmpty, "Expected empty list when file has never been written")
+
+        // Crucially: no .corrupt backup should be created
+        let contents = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+        let backupFiles = contents.filter { $0.hasPrefix("pinned-hosts.json.corrupt.") }
+        #expect(backupFiles.isEmpty, "A missing file must NOT create a .corrupt backup; found: \(contents)")
+    }
+
     // MARK: - Corruption recovery
 
     @Test("Corrupt pinned-hosts.json is backed up; list returns empty; recovery add succeeds")

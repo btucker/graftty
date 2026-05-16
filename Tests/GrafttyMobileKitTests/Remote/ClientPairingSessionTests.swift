@@ -224,7 +224,7 @@ struct ClientPairingSessionTests {
         #expect(list.isEmpty, "Expected no hosts pinned after fingerprint mismatch")
     }
 
-    // MARK: - Fix 1: fingerprintMismatch must terminate session (security)
+    // MARK: - Fingerprint mismatch terminates session
 
     @Test("confirm(hostPublicKey:) with fingerprint mismatch transitions to .failed, not awaitingHostConfirmation")
     func fingerprintMismatchTerminatesSession() throws {
@@ -265,7 +265,7 @@ struct ClientPairingSessionTests {
         }
     }
 
-    // MARK: - Fix 4: deny/cancel/handleDenied/cancel are no-ops from terminal states
+    // MARK: - Terminal states reject handleDenied() and cancel()
 
     @Test("handleDenied() from .confirmed state is a no-op")
     func handleDeniedIsNoOpFromConfirmed() throws {

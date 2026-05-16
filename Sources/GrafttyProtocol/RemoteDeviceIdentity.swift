@@ -27,6 +27,13 @@ public enum RemoteDeviceKind: String, Codable, Sendable, Equatable, Hashable {
     case ipad
 }
 
+// MARK: - RemoteIdentityError
+
+/// Errors produced by validation on 32-byte X25519-derived value types in this file.
+public enum RemoteIdentityError: Swift.Error, Equatable {
+    case invalidLength(expected: Int, actual: Int)
+}
+
 // MARK: - RemoteIdentityPublicKey
 
 /// Wraps the raw 32-byte representation of an X25519 static identity key.
@@ -34,9 +41,7 @@ public struct RemoteIdentityPublicKey: Codable, Sendable, Equatable, Hashable {
     public let rawRepresentation: Data
 
     /// Errors produced by `init(rawRepresentation:)`.
-    public enum Error: Swift.Error {
-        case invalidLength(expected: Int, actual: Int)
-    }
+    public typealias Error = RemoteIdentityError
 
     /// Initialises from exactly 32 bytes. Throws if `rawRepresentation` is not 32 bytes.
     public init(rawRepresentation: Data) throws {
@@ -98,7 +103,7 @@ public struct RemoteIdentityFingerprint: Codable, Sendable, Equatable, Hashable 
     /// Initialises from exactly 32 bytes. Throws if `rawBytes` is not 32 bytes.
     public init(rawBytes: Data) throws {
         guard rawBytes.count == 32 else {
-            throw RemoteIdentityPublicKey.Error.invalidLength(expected: 32, actual: rawBytes.count)
+            throw RemoteIdentityError.invalidLength(expected: 32, actual: rawBytes.count)
         }
         self.rawBytes = rawBytes
     }
@@ -112,7 +117,7 @@ public struct RemoteIdentityFingerprint: Codable, Sendable, Equatable, Hashable 
         let data = try container.decode(Data.self, forKey: .rawBytes)
         do {
             try self.init(rawBytes: data)
-        } catch RemoteIdentityPublicKey.Error.invalidLength(let expected, let actual) {
+        } catch RemoteIdentityError.invalidLength(let expected, let actual) {
             throw DecodingError.dataCorruptedError(
                 forKey: .rawBytes,
                 in: container,

@@ -84,17 +84,10 @@ public final class HostPairingSession: @unchecked Sendable {
     private let lock = NSLock()
     private var _state: HostPairingSessionState = .idle
 
-    public private(set) var state: HostPairingSessionState {
-        get {
-            lock.lock()
-            defer { lock.unlock() }
-            return _state
-        }
-        set {
-            lock.lock()
-            defer { lock.unlock() }
-            _state = newValue
-        }
+    public var state: HostPairingSessionState {
+        lock.lock()
+        defer { lock.unlock() }
+        return _state
     }
 
     // MARK: Init

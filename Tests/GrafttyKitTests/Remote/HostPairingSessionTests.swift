@@ -264,7 +264,7 @@ struct HostPairingSessionTests {
         #expect(peers.isEmpty, "No peer should be inserted after deny()")
     }
 
-    // MARK: - Fix 3: startPairing twice generates a fresh nonce
+    // MARK: - startPairing restarts nonce when called twice
 
     @Test("startPairing twice abandons prior session and generates a fresh nonce")
     func startPairingTwiceAbandonsPriorSession() throws {
@@ -284,7 +284,7 @@ struct HostPairingSessionTests {
             "Second startPairing must generate a fresh nonce — old nonce is abandoned")
     }
 
-    // MARK: - Fix 4: deny() and cancel() are no-ops from terminal states
+    // MARK: - Terminal states reject deny() and cancel()
 
     @Test("deny() from .confirmed state is a no-op")
     func denyIsNoOpFromConfirmed() throws {

@@ -64,8 +64,7 @@ public struct PinnedHost: Codable, Sendable, Equatable, Hashable, Identifiable {
 /// from a crash mid-write.
 ///
 /// Thread safety is achieved via an `NSLock`.
-///
-/// // TODO: Extract JSONFileStore<T> helper before Task 5
+// TODO: Extract JSONFileStore<T> helper before the network layer lands.
 public final class PinnedHostStore: @unchecked Sendable {
 
     // MARK: Errors
@@ -186,10 +185,9 @@ public final class PinnedHostStore: @unchecked Sendable {
 
     private func _load() throws -> Envelope {
         let fileURL = directory.appendingPathComponent(Self.fileName)
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+        guard let data = try? Data(contentsOf: fileURL) else {
             return Envelope(hosts: [])
         }
-        let data = try Data(contentsOf: fileURL)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         do {
