@@ -20,7 +20,7 @@ enum ForceDeleteAlert {
     /// for GIT-4.4. Cancel is the primary (safe) button; Force Delete
     /// is the secondary so the destructive action requires a
     /// deliberate second-button click.
-    static func recoverableConfiguration(stderr: String, status: String) -> SheetAlert.Configuration {
+    static func gitFailedForceableConfiguration(stderr: String, status: String) -> SheetAlert.Configuration {
         SheetAlert.Configuration(
             messageText: "Could not delete worktree",
             informativeText: informativeText(stderr: stderr, status: status),
@@ -34,7 +34,7 @@ enum ForceDeleteAlert {
     /// (non-`gitFailed` errors: missing git binary, subprocess launch
     /// failure, timeout). `message` is `DeleteWorktreeFlow.delete`'s
     /// pre-formatted error string.
-    static func finalFailureConfiguration(message: String) -> SheetAlert.Configuration {
+    static func gitFailedFinalConfiguration(message: String) -> SheetAlert.Configuration {
         SheetAlert.Configuration(
             messageText: "Could not delete worktree",
             informativeText: message,

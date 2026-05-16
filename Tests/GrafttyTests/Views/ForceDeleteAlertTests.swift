@@ -1,9 +1,10 @@
 import Testing
 @testable import Graftty
 
-/// Pins the formatting logic for the GIT-4.4 failure alert's informative
-/// text block. Tests the pure formatter — the NSAlert dialog itself
-/// (modal AppKit) is exercised manually.
+/// Pins the GIT-4.4 informative-text formatter and the two
+/// `SheetAlert.Configuration` factories (GIT-4.4 forceable, GIT-4.11
+/// final). The dialog presentation itself is exercised manually since
+/// NSAlert needs a running NSApplication.
 @Suite("ForceDeleteAlert")
 struct ForceDeleteAlertTests {
 
@@ -54,8 +55,8 @@ struct ForceDeleteAlertTests {
     /// the secondary, and informative text built by the existing
     /// formatter. The dialog's behavioural contract lives in the
     /// GIT-4.4 spec test above.
-    @Test func recoverableConfiguration() {
-        let config = ForceDeleteAlert.recoverableConfiguration(
+    @Test func gitFailedForceableConfiguration() {
+        let config = ForceDeleteAlert.gitFailedForceableConfiguration(
             stderr: "fatal: dirty",
             status: " M file.swift"
         )
@@ -71,8 +72,8 @@ struct ForceDeleteAlertTests {
     /// button (no secondary), and the supplied error message as
     /// informative text. The dialog's behavioural contract lives in
     /// the GIT-4.11 inventory entry until Task 4 wires it up.
-    @Test func finalFailureConfiguration() {
-        let config = ForceDeleteAlert.finalFailureConfiguration(
+    @Test func gitFailedFinalConfiguration() {
+        let config = ForceDeleteAlert.gitFailedFinalConfiguration(
             message: "git binary not found"
         )
         #expect(config.messageText == "Could not delete worktree")
