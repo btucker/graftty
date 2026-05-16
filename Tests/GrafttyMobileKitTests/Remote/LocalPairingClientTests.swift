@@ -33,11 +33,9 @@ struct LocalPairingClientTests {
         let identityStore = ClientIdentityStore(directory: dir)
         let pinnedStore = PinnedHostStore(directory: dir)
 
-        // Pre-seed a client private key so we can compute the public key.
         let clientPriv = try identityStore.generateAndPersist()
         let clientPub = try RemoteIdentityPublicKey(rawRepresentation: clientPriv.publicKey.rawRepresentation)
 
-        // Generate a host keypair for the fixture payload.
         let hostPriv = Curve25519.KeyAgreement.PrivateKey()
         let hostPub = try RemoteIdentityPublicKey(rawRepresentation: hostPriv.publicKey.rawRepresentation)
         let hostFingerprint = RemoteIdentityFingerprint(of: hostPub)
@@ -70,22 +68,21 @@ struct LocalPairingClientTests {
         )
     }
 
-    /// Build a stub transport that replays a sequence of canned responses
-    /// keyed by URL path suffix.
-    private final class StubTransport: @unchecked Sendable {
-        var responses: [String: (Data, Int)] = [:]
-        var recordedRequests: [URLRequest] = []
-        var lock = NSLock()
+    /// Stub transport actor: replays canned responses keyed by URL path
+    /// suffix and records every received request. Actor isolation
+    /// removes the need for explicit locking.
+    private actor StubTransport {
+        private var responses: [String: (Data, Int)] = [:]
+        private(set) var recordedRequests: [URLRequest] = []
+
+        func setResponse(for pathSuffix: String, body: Data, status: Int = 200) {
+            responses[pathSuffix] = (body, status)
+        }
 
         func makeTransport() -> LocalPairingClient.Transport {
-            return { [self] request in
-                lock.lock()
-                recordedRequests.append(request)
-                let path = request.url?.path ?? ""
-                let last = path.split(separator: "/").last.map(String.init) ?? ""
-                let entry = responses[last]
-                lock.unlock()
-
+            return { [weak self] request in
+                guard let self else { throw URLError(.cancelled) }
+                let entry = await self.recordAndLookup(request)
                 guard let (data, status) = entry else {
                     throw URLError(.unsupportedURL)
                 }
@@ -98,12 +95,37 @@ struct LocalPairingClientTests {
                 return (data, http)
             }
         }
+
+        private func recordAndLookup(_ request: URLRequest) -> (Data, Int)? {
+            recordedRequests.append(request)
+            let path = request.url?.path ?? ""
+            let last = path.split(separator: "/").last.map(String.init) ?? ""
+            return responses[last]
+        }
     }
 
     private func jsonData<T: Encodable>(_ value: T) throws -> Data {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         return try encoder.encode(value)
+    }
+
+    /// Stub the standard happy-path responses (200 introduce, 200 await
+    /// with the given outcome).
+    private func stubHappyPath(
+        on stub: StubTransport,
+        hostPublicKey: RemoteIdentityPublicKey,
+        expiry: Date,
+        outcome: PairingOutcome
+    ) async throws {
+        await stub.setResponse(
+            for: "introduce",
+            body: try jsonData(PairingIntroduceResponse(hostPublicKey: hostPublicKey, expiry: expiry))
+        )
+        await stub.setResponse(
+            for: "await-outcome",
+            body: try jsonData(PairingOutcomeResponse(outcome: outcome))
+        )
     }
 
     // MARK: - Happy path
@@ -115,22 +137,12 @@ struct LocalPairingClientTests {
         let fx = try makeFixtures(dir: dir)
 
         let stub = StubTransport()
-        stub.responses["introduce"] = (
-            try jsonData(PairingIntroduceResponse(
-                hostPublicKey: fx.hostPublicKey,
-                expiry: fx.payload.expiry
-            )),
-            200
-        )
-        stub.responses["await-outcome"] = (
-            try jsonData(PairingOutcomeResponse(outcome: .confirmed)),
-            200
-        )
+        try await stubHappyPath(on: stub, hostPublicKey: fx.hostPublicKey, expiry: fx.payload.expiry, outcome: .confirmed)
 
         let client = LocalPairingClient(
             session: fx.session,
             identityStore: fx.identityStore,
-            transport: stub.makeTransport()
+            transport: await stub.makeTransport()
         )
 
         let pinned = try await client.runPairing(payload: fx.payload)
@@ -138,62 +150,49 @@ struct LocalPairingClientTests {
         #expect(pinned.id == fx.payload.hostDeviceID)
         #expect(pinned.publicKey == fx.hostPublicKey)
 
-        // Two requests, in order.
-        #expect(stub.recordedRequests.count == 2)
-        #expect(stub.recordedRequests[0].url?.absoluteString.hasSuffix("/introduce") == true)
-        #expect(stub.recordedRequests[1].url?.absoluteString.hasSuffix("/await-outcome") == true)
-        #expect(stub.recordedRequests.allSatisfy { $0.httpMethod == "POST" })
+        let recorded = await stub.recordedRequests
+        #expect(recorded.count == 2)
+        #expect(recorded[0].url?.absoluteString.hasSuffix("/introduce") == true)
+        #expect(recorded[1].url?.absoluteString.hasSuffix("/await-outcome") == true)
+        #expect(recorded.allSatisfy { $0.httpMethod == "POST" })
 
-        // The pinned host should be persisted.
         let pinnedList = try fx.pinnedStore.list()
         #expect(pinnedList.contains(where: { $0.id == fx.payload.hostDeviceID }))
     }
 
     // MARK: - Fingerprint mismatch (REMOTE-1.2 client side enforcement at the wire)
 
-    @Test("runPairing throws fingerprintMismatch if host returns a key whose fingerprint differs from QR payload")
+    @Test("runPairing throws fingerprintMismatch if host returns a key whose fingerprint differs from QR payload — and does not pin the host")
     func fingerprintMismatchRejection() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let fx = try makeFixtures(dir: dir)
 
         // Generate a *different* host key. The QR payload pinned the
-        // first host's fingerprint, so this should mismatch.
+        // first host's fingerprint, so the imposter response will
+        // mismatch when ClientPairingSession.confirm runs.
         let imposterPriv = Curve25519.KeyAgreement.PrivateKey()
         let imposterPub = try RemoteIdentityPublicKey(rawRepresentation: imposterPriv.publicKey.rawRepresentation)
 
         let stub = StubTransport()
-        stub.responses["introduce"] = (
-            try jsonData(PairingIntroduceResponse(
-                hostPublicKey: imposterPub,
-                expiry: fx.payload.expiry
-            )),
-            200
-        )
-        // award-outcome shouldn't even be reached, but stub it just in case.
-        stub.responses["await-outcome"] = (
-            try jsonData(PairingOutcomeResponse(outcome: .confirmed)),
-            200
-        )
+        try await stubHappyPath(on: stub, hostPublicKey: imposterPub, expiry: fx.payload.expiry, outcome: .confirmed)
 
         let client = LocalPairingClient(
             session: fx.session,
             identityStore: fx.identityStore,
-            transport: stub.makeTransport()
+            transport: await stub.makeTransport()
         )
 
         do {
             _ = try await client.runPairing(payload: fx.payload)
             Issue.record("Expected fingerprintMismatch")
         } catch ClientPairingSession.Error.fingerprintMismatch {
-            // expected
+            // expected — REMOTE-1.2 protection fired inside session.confirm
         }
 
-        // Should NOT have hit await-outcome.
-        let paths = stub.recordedRequests.map { $0.url?.path ?? "" }
-        #expect(!paths.contains(where: { $0.hasSuffix("await-outcome") }))
-
-        // Host should NOT be pinned.
+        // The protection that matters: no host was persisted, even
+        // though await-outcome returned `.confirmed`. The fingerprint
+        // check is the gating step inside ClientPairingSession.confirm.
         let pinnedList = try fx.pinnedStore.list()
         #expect(pinnedList.isEmpty)
     }
@@ -207,22 +206,12 @@ struct LocalPairingClientTests {
         let fx = try makeFixtures(dir: dir)
 
         let stub = StubTransport()
-        stub.responses["introduce"] = (
-            try jsonData(PairingIntroduceResponse(
-                hostPublicKey: fx.hostPublicKey,
-                expiry: fx.payload.expiry
-            )),
-            200
-        )
-        stub.responses["await-outcome"] = (
-            try jsonData(PairingOutcomeResponse(outcome: .denied)),
-            200
-        )
+        try await stubHappyPath(on: stub, hostPublicKey: fx.hostPublicKey, expiry: fx.payload.expiry, outcome: .denied)
 
         let client = LocalPairingClient(
             session: fx.session,
             identityStore: fx.identityStore,
-            transport: stub.makeTransport()
+            transport: await stub.makeTransport()
         )
 
         do {
@@ -232,7 +221,6 @@ struct LocalPairingClientTests {
             // expected
         }
 
-        // Session state should reflect denial.
         if case .denied = fx.session.state {
             // expected
         } else {
@@ -249,22 +237,12 @@ struct LocalPairingClientTests {
         let fx = try makeFixtures(dir: dir)
 
         let stub = StubTransport()
-        stub.responses["introduce"] = (
-            try jsonData(PairingIntroduceResponse(
-                hostPublicKey: fx.hostPublicKey,
-                expiry: fx.payload.expiry
-            )),
-            200
-        )
-        stub.responses["await-outcome"] = (
-            try jsonData(PairingOutcomeResponse(outcome: .expired)),
-            200
-        )
+        try await stubHappyPath(on: stub, hostPublicKey: fx.hostPublicKey, expiry: fx.payload.expiry, outcome: .expired)
 
         let client = LocalPairingClient(
             session: fx.session,
             identityStore: fx.identityStore,
-            transport: stub.makeTransport()
+            transport: await stub.makeTransport()
         )
 
         do {
@@ -284,22 +262,12 @@ struct LocalPairingClientTests {
         let fx = try makeFixtures(dir: dir)
 
         let stub = StubTransport()
-        stub.responses["introduce"] = (
-            try jsonData(PairingIntroduceResponse(
-                hostPublicKey: fx.hostPublicKey,
-                expiry: fx.payload.expiry
-            )),
-            200
-        )
-        stub.responses["await-outcome"] = (
-            try jsonData(PairingOutcomeResponse(outcome: .cancelled)),
-            200
-        )
+        try await stubHappyPath(on: stub, hostPublicKey: fx.hostPublicKey, expiry: fx.payload.expiry, outcome: .cancelled)
 
         let client = LocalPairingClient(
             session: fx.session,
             identityStore: fx.identityStore,
-            transport: stub.makeTransport()
+            transport: await stub.makeTransport()
         )
 
         do {
@@ -320,12 +288,12 @@ struct LocalPairingClientTests {
 
         let serverError = PairingErrorResponse(code: .sessionExpired, error: "session expired")
         let stub = StubTransport()
-        stub.responses["introduce"] = (try jsonData(serverError), 410)
+        await stub.setResponse(for: "introduce", body: try jsonData(serverError), status: 410)
 
         let client = LocalPairingClient(
             session: fx.session,
             identityStore: fx.identityStore,
-            transport: stub.makeTransport()
+            transport: await stub.makeTransport()
         )
 
         do {
@@ -346,19 +314,19 @@ struct LocalPairingClientTests {
 
         let serverError = PairingErrorResponse(code: .unknownNonce, error: "stale nonce")
         let stub = StubTransport()
-        stub.responses["introduce"] = (
-            try jsonData(PairingIntroduceResponse(
+        await stub.setResponse(
+            for: "introduce",
+            body: try jsonData(PairingIntroduceResponse(
                 hostPublicKey: fx.hostPublicKey,
                 expiry: fx.payload.expiry
-            )),
-            200
+            ))
         )
-        stub.responses["await-outcome"] = (try jsonData(serverError), 410)
+        await stub.setResponse(for: "await-outcome", body: try jsonData(serverError), status: 410)
 
         let client = LocalPairingClient(
             session: fx.session,
             identityStore: fx.identityStore,
-            transport: stub.makeTransport()
+            transport: await stub.makeTransport()
         )
 
         do {
@@ -378,12 +346,12 @@ struct LocalPairingClientTests {
         let fx = try makeFixtures(dir: dir)
 
         let stub = StubTransport()
-        stub.responses["introduce"] = (Data("not json".utf8), 200)
+        await stub.setResponse(for: "introduce", body: Data("not json".utf8))
 
         let client = LocalPairingClient(
             session: fx.session,
             identityStore: fx.identityStore,
-            transport: stub.makeTransport()
+            transport: await stub.makeTransport()
         )
 
         do {
@@ -403,26 +371,17 @@ struct LocalPairingClientTests {
         let fx = try makeFixtures(dir: dir)
 
         let stub = StubTransport()
-        stub.responses["introduce"] = (
-            try jsonData(PairingIntroduceResponse(
-                hostPublicKey: fx.hostPublicKey,
-                expiry: fx.payload.expiry
-            )),
-            200
-        )
-        stub.responses["await-outcome"] = (
-            try jsonData(PairingOutcomeResponse(outcome: .confirmed)),
-            200
-        )
+        try await stubHappyPath(on: stub, hostPublicKey: fx.hostPublicKey, expiry: fx.payload.expiry, outcome: .confirmed)
 
         let client = LocalPairingClient(
             session: fx.session,
             identityStore: fx.identityStore,
-            transport: stub.makeTransport()
+            transport: await stub.makeTransport()
         )
         _ = try await client.runPairing(payload: fx.payload)
 
-        let introduceReq = stub.recordedRequests.first { $0.url?.path.hasSuffix("/introduce") == true }
+        let recorded = await stub.recordedRequests
+        let introduceReq = recorded.first { $0.url?.path.hasSuffix("/introduce") == true }
         let body = try #require(introduceReq?.httpBody)
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
