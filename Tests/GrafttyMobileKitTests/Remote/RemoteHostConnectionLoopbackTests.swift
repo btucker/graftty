@@ -1,0 +1,204 @@
+#if canImport(UIKit)
+import Foundation
+import Testing
+import WebRTC
+@testable import GrafttyMobileKit
+
+/// Loopback test: construct a `RemoteHostConnection` (offerer, mobile-side)
+/// and a paired in-process answerer using the bundled WebRTC SDK, exchange
+/// SDP + ICE in-process (no signaling endpoint yet), verify a DataChannel
+/// opens, and verify a byte ping-pong round-trips.
+///
+/// This is the M1.1 acceptance criterion: SDK integration works, peer
+/// connection negotiates, data channel opens. M1.2 replaces the in-process
+/// SDP swap with an HTTPS signaling endpoint; M1.3 adds Noise before any
+/// channel traffic; M1.4 framing.
+@Suite("@spec REMOTE-2.x — WebRTC peer connection establishes locally (M1.1 foundation).")
+struct RemoteHostConnectionLoopbackTests {
+
+    @Test
+    func twoConnectionsExchangeBytesOverDataChannel() async throws {
+        let client = RemoteHostConnection()
+        let answererPeer = TestAnswerer()
+
+        // 1. Client creates offer.
+        let offer = try await client.createOffer()
+
+        // 2. In a real flow this would be POSTed to /v1/rtc/offer.
+        //    Here we feed it straight into the answerer.
+        let answer = try await answererPeer.accept(offer: offer)
+
+        // 3. Forward ICE candidates each way as they're gathered.
+        client.bindIceCandidates(to: answererPeer)
+        answererPeer.bindIceCandidates(to: client)
+
+        // 4. Apply the answer on the client; this waits for the data
+        //    channel to reach the `open` state on the offerer side.
+        try await client.applyAnswer(answer)
+
+        // 5. Send a binary ping from the client; the answerer should
+        //    receive it within a short window.
+        let ping = Data([0xCA, 0xFE, 0xBA, 0xBE])
+        try await client.sendBinary(ping)
+
+        try await pollUntil(timeout: .seconds(5)) {
+            await answererPeer.lastReceived == ping
+        }
+
+        // 6. Send a binary pong back; the client should receive it.
+        let pong = Data([0xDE, 0xAD, 0xBE, 0xEF])
+        try await answererPeer.send(pong)
+
+        try await pollUntil(timeout: .seconds(5)) {
+            await client.lastReceivedBinary == pong
+        }
+
+        await client.close()
+        await answererPeer.close()
+    }
+}
+
+/// Test helper that owns the answerer side of the loopback. Production
+/// uses `WebRTCHostAgent` from GrafttyKit, but that target isn't
+/// importable here; we duplicate the minimal answerer logic inline so
+/// the loopback proves the mobile-side `RemoteHostConnection` works in
+/// isolation. The Mac-side test in `GrafttyKitTests` will mirror.
+private actor TestAnswerer: WebRTCIceCandidateReceiver {
+    private let factory: RTCPeerConnectionFactory
+    private var peerConnection: RTCPeerConnection?
+    private var dataChannel: RTCDataChannel?
+    private let delegate = AnswererDelegate()
+    private let dataChannelDelegate = AnswererDataChannelDelegate()
+    private(set) var lastReceived: Data?
+
+    init() {
+        RTCInitializeSSL()
+        self.factory = RTCPeerConnectionFactory(
+            encoderFactory: RTCDefaultVideoEncoderFactory(),
+            decoderFactory: RTCDefaultVideoDecoderFactory()
+        )
+    }
+
+    deinit {
+        RTCCleanupSSL()
+    }
+
+    func accept(offer: RTCSessionDescription) async throws -> RTCSessionDescription {
+        let config = RTCConfiguration()
+        config.iceServers = []
+        config.sdpSemantics = .unifiedPlan
+        config.continualGatheringPolicy = .gatherContinually
+        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+        guard let pc = factory.peerConnection(with: config, constraints: constraints, delegate: delegate) else {
+            throw NSError(domain: "TestAnswerer", code: 1)
+        }
+        self.peerConnection = pc
+
+        delegate.onDataChannel = { [weak self] dc in
+            Task { await self?.adopt(dc) }
+        }
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            pc.setRemoteDescription(offer) { error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+            }
+        }
+        let answer = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RTCSessionDescription, Error>) in
+            pc.answer(for: constraints) { sdp, error in
+                if let error { continuation.resume(throwing: error); return }
+                guard let sdp else { continuation.resume(throwing: NSError(domain: "TestAnswerer", code: 2)); return }
+                continuation.resume(returning: sdp)
+            }
+        }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            pc.setLocalDescription(answer) { error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+            }
+        }
+        return answer
+    }
+
+    func send(_ data: Data) async throws {
+        guard let dc = dataChannel, dc.readyState == .open else {
+            throw NSError(domain: "TestAnswerer", code: 3)
+        }
+        let buffer = RTCDataBuffer(data: data, isBinary: true)
+        _ = dc.sendData(buffer)
+    }
+
+    func bindIceCandidates(to client: RemoteHostConnection) {
+        delegate.onIceCandidate = { candidate in
+            Task { try? await client.addRemoteIceCandidate(candidate) }
+        }
+    }
+
+    func addRemoteIceCandidate(_ candidate: RTCIceCandidate) async throws {
+        guard let pc = peerConnection else { return }
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            pc.add(candidate) { error in
+                if let error { continuation.resume(throwing: error) } else { continuation.resume() }
+            }
+        }
+    }
+
+    func close() {
+        dataChannel?.close()
+        peerConnection?.close()
+    }
+
+    fileprivate func adopt(_ dc: RTCDataChannel) {
+        self.dataChannel = dc
+        dc.delegate = dataChannelDelegate
+        dataChannelDelegate.onMessage = { [weak self] data in
+            Task { await self?.record(data) }
+        }
+    }
+
+    fileprivate func record(_ data: Data) {
+        self.lastReceived = data
+    }
+}
+
+private final class AnswererDelegate: NSObject, RTCPeerConnectionDelegate {
+    var onIceCandidate: ((RTCIceCandidate) -> Void)?
+    var onDataChannel: ((RTCDataChannel) -> Void)?
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
+    func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
+        onIceCandidate?(candidate)
+    }
+    func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
+        onDataChannel?(dataChannel)
+    }
+}
+
+private final class AnswererDataChannelDelegate: NSObject, RTCDataChannelDelegate {
+    var onMessage: ((Data) -> Void)?
+    func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {}
+    func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
+        onMessage?(buffer.data)
+    }
+}
+
+/// Poll until `condition()` returns true or the deadline expires. Used
+/// instead of arbitrary `Task.sleep` so the test exits promptly on
+/// success but still fails clearly when the condition genuinely doesn't
+/// hold.
+private func pollUntil(
+    timeout: Duration,
+    interval: Duration = .milliseconds(50),
+    condition: () async -> Bool
+) async throws {
+    let deadline = ContinuousClock.now.advanced(by: timeout)
+    while ContinuousClock.now < deadline {
+        if await condition() { return }
+        try await Task.sleep(for: interval)
+    }
+    Issue.record("pollUntil timed out after \(timeout)")
+}
+#endif
