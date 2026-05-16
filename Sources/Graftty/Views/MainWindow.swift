@@ -604,32 +604,46 @@ struct MainWindow: View {
     /// `worktreeMonitorDidDetectDeletion` shortly after, but its update
     /// is idempotent so the eventual callback is harmless.
     private func deleteWorktreeWithConfirmation(_ worktreePath: String) {
-        let alert = NSAlert()
-        alert.messageText = "Delete Worktree?"
-        alert.informativeText = "This will delete the worktree but not the branch."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Delete Worktree")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        performDeleteWorktree(worktreePath)
+        guard let host = NSApp.mainWindow else { return }
+        let config = SheetAlert.Configuration(
+            messageText: "Delete Worktree?",
+            informativeText: "This will delete the worktree but not the branch.",
+            style: .warning,
+            primaryButton: "Delete Worktree",
+            secondaryButton: "Cancel"
+        )
+        SheetAlert.present(config, on: host) { response in
+            guard response == .primary else { return }
+            performDeleteWorktree(worktreePath)
+        }
     }
 
     private func removeRepoWithConfirmation(_ repo: RepoEntry) {
-        let alert = NSAlert()
-        alert.messageText = "Remove \"\(repo.displayName)\"?"
-        alert.informativeText = "This removes the repository from Graftty but does not delete any files from disk."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Remove")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        performRemoveRepo(repo)
+        guard let host = NSApp.mainWindow else { return }
+        let config = SheetAlert.Configuration(
+            messageText: "Remove \"\(repo.displayName)\"?",
+            informativeText: "This removes the repository from Graftty but does not delete any files from disk.",
+            style: .warning,
+            primaryButton: "Remove",
+            secondaryButton: "Cancel"
+        )
+        let repoPath = repo.path
+        SheetAlert.present(config, on: host) { response in
+            guard response == .primary else { return }
+            performRemoveRepo(atPath: repoPath)
+        }
     }
 
     /// Implements LAYOUT-4.3. Ordering of (a)–(d) before (e) matches the
     /// orphan-surfaces / orphan-caches contracts in GIT-3.10 / GIT-4.10 /
     /// GIT-3.13 / GIT-3.11. No git is invoked; no on-disk files are
-    /// touched.
-    private func performRemoveRepo(_ repo: RepoEntry) {
+    /// touched. Re-resolves the repo by path because the user-facing
+    /// confirmation sheet is now async (GIT-4.19) — `appState.repos`
+    /// can mutate during the wait, and a stale snapshot of
+    /// `repo.worktrees` would leave any worktree added mid-dialog with
+    /// an orphan surface after `appState.removeRepo` drops the entry.
+    private func performRemoveRepo(atPath repoPath: String) {
+        guard let repo = appState.repos.first(where: { $0.path == repoPath }) else { return }
         // (a) Tear down live surfaces for running worktrees. Covers
         // stale-while-running surfaces kept alive by GIT-3.4.
         for wt in repo.worktrees where wt.state == .running {
@@ -674,21 +688,17 @@ struct MainWindow: View {
                 // matches the pre-refactor behavior.
                 return
             case .failure(.gitFailedForceable(let stderr, let status)):
-                let errorAlert = NSAlert()
-                errorAlert.messageText = "Could not delete worktree"
-                errorAlert.informativeText = ForceDeleteAlert.informativeText(stderr: stderr, status: status)
-                errorAlert.alertStyle = .warning
-                errorAlert.addButton(withTitle: "Cancel")
-                errorAlert.addButton(withTitle: "Force Delete")
-                guard errorAlert.runModal() == .alertSecondButtonReturn else { return }
-                performDeleteWorktree(worktreePath, force: true)
+                guard let host = NSApp.mainWindow else { return }
+                let config = ForceDeleteAlert.gitFailedForceableConfiguration(stderr: stderr, status: status)
+                SheetAlert.present(config, on: host) { response in
+                    guard response == .secondary else { return }
+                    performDeleteWorktree(worktreePath, force: true)
+                }
             case .failure(.gitFailedFinal(let msg)):
                 NSLog("[Graftty] performDeleteWorktree: %@", msg)
-                let errorAlert = NSAlert()
-                errorAlert.messageText = "Could not delete worktree"
-                errorAlert.informativeText = msg
-                errorAlert.alertStyle = .warning
-                errorAlert.runModal()
+                guard let host = NSApp.mainWindow else { return }
+                let config = ForceDeleteAlert.gitFailedFinalConfiguration(message: msg)
+                SheetAlert.present(config, on: host)
             }
         }
     }
@@ -744,18 +754,11 @@ struct MainWindow: View {
         // offer (and leaving the marker unset) lets the next poll retry.
         guard let host = NSApp.mainWindow else { return }
 
-        let alert = NSAlert()
-        alert.messageText = config.messageText
-        alert.informativeText = config.informativeText
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: config.primaryButton)
-        alert.addButton(withTitle: config.secondaryButton)
-
         // Set the marker now that the sheet is definitely going up, so a
         // user who clicks Keep doesn't get re-prompted on the next poll.
         appState.repos[repoIdx].worktrees[wtIdx].offeredDeleteForResolvedPR = prNumber
-        alert.beginSheetModal(for: host) { response in
-            guard response == .alertFirstButtonReturn else { return }
+        SheetAlert.present(config, on: host) { response in
+            guard response == .primary else { return }
             performDeleteWorktree(worktreePath)
         }
     }
