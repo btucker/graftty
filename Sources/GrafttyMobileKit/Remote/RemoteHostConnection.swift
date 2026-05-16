@@ -35,8 +35,14 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     private let factory: RTCPeerConnectionFactory
     private var peerConnection: RTCPeerConnection?
     private var dataChannel: RTCDataChannel?
-    private let delegate: PeerConnectionDelegate
-    private let dataChannelDelegate: DataChannelDelegate
+    /// `nonisolated let` so the `nonisolated` `bindIceCandidates`
+    /// can install its callback without crossing the actor boundary.
+    /// The delegate classes are `@unchecked Sendable`; their mutable
+    /// closure properties carry `nonisolated(unsafe) @Sendable` and
+    /// are themselves the explicit synchronization contract with
+    /// WebRTC's internal dispatch queue.
+    private nonisolated let delegate: PeerConnectionDelegate
+    private nonisolated let dataChannelDelegate: DataChannelDelegate
 
     /// Continuation that resumes when the data channel transitions to
     /// `open`. Set during `connect`, resumed by `dataChannelDidChangeState`.
@@ -245,7 +251,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
 /// boundary, while `@Sendable` on the closure type prevents callers
 /// from capturing non-Sendable actor state by accident. M1.2 wires
 /// signaling onto the ICE candidate signal captured here.
-private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate {
+private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
     nonisolated(unsafe) var onIceCandidate: (@Sendable (RTCIceCandidate) -> Void)?
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
@@ -266,7 +272,7 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate 
 ///
 /// See `PeerConnectionDelegate` for the rationale on the
 /// `nonisolated(unsafe)` + `@Sendable` annotations.
-private final class DataChannelDelegate: NSObject, RTCDataChannelDelegate {
+private final class DataChannelDelegate: NSObject, RTCDataChannelDelegate, @unchecked Sendable {
     nonisolated(unsafe) var onOpen: (@Sendable () -> Void)?
     nonisolated(unsafe) var onMessage: (@Sendable (Data) -> Void)?
 
