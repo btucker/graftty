@@ -665,21 +665,19 @@ struct MainWindow: View {
                 // matches the pre-refactor behavior.
                 return
             case .failure(.gitFailedForceable(let stderr, let status)):
-                let errorAlert = NSAlert()
-                errorAlert.messageText = "Could not delete worktree"
-                errorAlert.informativeText = ForceDeleteAlert.informativeText(stderr: stderr, status: status)
-                errorAlert.alertStyle = .warning
-                errorAlert.addButton(withTitle: "Cancel")
-                errorAlert.addButton(withTitle: "Force Delete")
-                guard errorAlert.runModal() == .alertSecondButtonReturn else { return }
-                performDeleteWorktree(worktreePath, force: true)
+                guard let host = NSApp.mainWindow else { return }
+                let config = ForceDeleteAlert.gitFailedForceableConfiguration(stderr: stderr, status: status)
+                SheetAlert.present(config, on: host) { response in
+                    // Cancel is primary (safe default); Force Delete is secondary
+                    // so the destructive action requires a deliberate click.
+                    guard response == .secondary else { return }
+                    performDeleteWorktree(worktreePath, force: true)
+                }
             case .failure(.gitFailedFinal(let msg)):
                 NSLog("[Graftty] performDeleteWorktree: %@", msg)
-                let errorAlert = NSAlert()
-                errorAlert.messageText = "Could not delete worktree"
-                errorAlert.informativeText = msg
-                errorAlert.alertStyle = .warning
-                errorAlert.runModal()
+                guard let host = NSApp.mainWindow else { return }
+                let config = ForceDeleteAlert.gitFailedFinalConfiguration(message: msg)
+                SheetAlert.present(config, on: host)
             }
         }
     }
