@@ -618,17 +618,23 @@ struct MainWindow: View {
             primaryButton: "Remove",
             secondaryButton: "Cancel"
         )
+        let repoPath = repo.path
         SheetAlert.present(config, on: host) { response in
             guard response == .primary else { return }
-            performRemoveRepo(repo)
+            performRemoveRepo(atPath: repoPath)
         }
     }
 
     /// Implements LAYOUT-4.3. Ordering of (a)–(d) before (e) matches the
     /// orphan-surfaces / orphan-caches contracts in GIT-3.10 / GIT-4.10 /
     /// GIT-3.13 / GIT-3.11. No git is invoked; no on-disk files are
-    /// touched.
-    private func performRemoveRepo(_ repo: RepoEntry) {
+    /// touched. Re-resolves the repo by path because the user-facing
+    /// confirmation sheet is now async (GIT-4.19) — `appState.repos`
+    /// can mutate during the wait, and a stale snapshot of
+    /// `repo.worktrees` would leave any worktree added mid-dialog with
+    /// an orphan surface after `appState.removeRepo` drops the entry.
+    private func performRemoveRepo(atPath repoPath: String) {
+        guard let repo = appState.repos.first(where: { $0.path == repoPath }) else { return }
         // (a) Tear down live surfaces for running worktrees. Covers
         // stale-while-running surfaces kept alive by GIT-3.4.
         for wt in repo.worktrees where wt.state == .running {
@@ -676,8 +682,6 @@ struct MainWindow: View {
                 guard let host = NSApp.mainWindow else { return }
                 let config = ForceDeleteAlert.gitFailedForceableConfiguration(stderr: stderr, status: status)
                 SheetAlert.present(config, on: host) { response in
-                    // Cancel is primary (safe default); Force Delete is secondary
-                    // so the destructive action requires a deliberate click.
                     guard response == .secondary else { return }
                     performDeleteWorktree(worktreePath, force: true)
                 }

@@ -13,7 +13,7 @@ import AppKit
 /// booting `NSApplication` (NSAlert.init() lazy-loads a NIB that needs
 /// a running app).
 enum SheetAlert {
-    struct Configuration: Equatable {
+    struct Configuration {
         var messageText: String
         var informativeText: String
         var style: NSAlert.Style

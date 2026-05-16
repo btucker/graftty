@@ -70,8 +70,7 @@ struct ForceDeleteAlertTests {
 
     /// Pins the GIT-4.11 factory's shape: warning style, single OK
     /// button (no secondary), and the supplied error message as
-    /// informative text. The dialog's behavioural contract lives in
-    /// the GIT-4.11 inventory entry until Task 4 wires it up.
+    /// informative text.
     @Test func gitFailedFinalConfiguration() {
         let config = ForceDeleteAlert.gitFailedFinalConfiguration(
             message: "git binary not found"

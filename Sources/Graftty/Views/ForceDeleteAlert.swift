@@ -1,5 +1,4 @@
 import AppKit
-import Foundation
 
 /// Builds `SheetAlert.Configuration`s for the GIT-4.4 (recoverable —
 /// "Force Delete" button) and GIT-4.11 (final — single-button)
