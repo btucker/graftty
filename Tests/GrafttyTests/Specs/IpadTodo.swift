@@ -147,4 +147,14 @@ struct IpadTodo {
 @spec IPAD-6.3: When the new `RemoteHostConnection` completes its first `panes_state` snapshot, the application shall clear the spinner and, unless a prior selection has been restored from device state, select the first worktree in the snapshot's ordering as `IPadAppState.selectedWorktreePath`.
 """, .disabled("not yet implemented"))
     func ipad_6_3() async throws { }
+
+    @Test("""
+@spec IPAD-7.1: When `horizontalSizeClass == .compact`, the application shall render the existing compact `RootView` flow (NavigationStack: HostPicker → WorktreePicker → SingleSessionView) without any iPad layout components.
+""", .disabled("not yet implemented"))
+    func ipad_7_1() async throws { }
+
+    @Test("""
+@spec IPAD-7.2: When `horizontalSizeClass` transitions between `.regular` and `.compact`, the application shall preserve `selectedHostId`, `selectedWorktreePath`, and `focusedPaneId` so the user lands on the equivalent leaf in the new layout.
+""", .disabled("not yet implemented"))
+    func ipad_7_2() async throws { }
 }
