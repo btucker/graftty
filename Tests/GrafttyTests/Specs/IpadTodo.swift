@@ -84,7 +84,7 @@ struct IpadTodo {
     func ipad_3_4() async throws { }
 
     @Test("""
-@spec IPAD-3.5: When the user taps Swap in the toolbar, the application shall send a `pane_control` RPC with `type: "swap"`, `source` set to the focused leaf's `sessionName`, and `target` set to the previously-focused leaf's `sessionName`.
+@spec IPAD-3.5: When the user taps Swap in the toolbar, the application shall send a `pane_control` RPC with `type: "swap"`, `source` set to the focused leaf's `sessionName`, and `target` selected per the swap-target policy resolved in milestone M7 (see design doc §12 Open Question #3).
 """, .disabled("not yet implemented"))
     func ipad_3_5() async throws { }
 
