@@ -169,7 +169,7 @@ struct IosTodo {
     func ios_8_2() async throws { }
 
     @Test("""
-@spec IOS-8.3: The v1 iOS app shall not initiate pane lifecycle operations on the Mac (close, split, move, stop) nor worktree-stop or session-kill operations. Worktree **creation** is supported per §19.9. Any other such control surface is deferred to a future spec.
+@spec IOS-8.3: When the `terminal_control` capability is granted via the WebRTC pairing flow (REMOTE-1.x), the iOS application shall initiate pane lifecycle operations only through the `pane_control` channel (REMOTE-7.x). The application shall not invent any other path for initiating pane lifecycle operations on the host. Worktree-stop and session-kill operations remain out of scope.
 """, .disabled("not yet implemented"))
     func ios_8_3() async throws { }
 
