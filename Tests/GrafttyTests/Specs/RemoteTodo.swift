@@ -33,4 +33,24 @@ struct RemoteTodo {
 """, .disabled("not yet implemented"))
     func remote_5_1() async throws { }
 
+    @Test("""
+@spec REMOTE-6.1: When a client opens a channel with `channel_type: "panes_state"` over an authenticated `RemoteHostConnection`, the host shall accept the channel for any trusted peer holding the `terminal_control` capability.
+""", .disabled("not yet implemented"))
+    func remote_6_1() async throws { }
+
+    @Test("""
+@spec REMOTE-6.2: Immediately after accepting a `panes_state` channel, the host shall send a `{"type":"snapshot","worktrees":[…]}` frame containing the current `[WorktreePanes]` array.
+""", .disabled("not yet implemented"))
+    func remote_6_2() async throws { }
+
+    @Test("""
+@spec REMOTE-6.3: While a `panes_state` channel is open, on any change to the host's `AppState.repos[*].worktrees`, splittree, attention state, or PR status, the host shall send a fresh `{"type":"snapshot","worktrees":[…]}` frame.
+""", .disabled("not yet implemented"))
+    func remote_6_3() async throws { }
+
+    @Test("""
+@spec REMOTE-6.4: When the `RemoteHostConnection` tears down (client background, host switch, network failure, peer revocation), any open `panes_state` channels shall close.
+""", .disabled("not yet implemented"))
+    func remote_6_4() async throws { }
+
 }
