@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Land disabled `@Test(.disabled(...))` entries for every new spec ID introduced by the iPad layout design (IPAD-1.x..7.x, REMOTE-6.x, REMOTE-7.x), amend the existing IOS-8.3 text, register the new sections in `scripts/spec-sections.json`, regenerate `SPECS.md`, and ship a clean reviewable PR.
+**Goal:** Land disabled `@Test(.disabled(...))` entries for every new spec ID introduced by the iPad layout design (IPAD-1.x..7.x, REMOTE-6.x, REMOTE-7.x), delete the now-superseded IOS-8.3 entry, register the new sections in `scripts/spec-sections.json`, regenerate `SPECS.md`, and ship a clean reviewable PR.
 
 **Architecture:** Spec inventory only — no production code in this PR. The disabled-test entries follow the project's `*Todo.swift` convention from `CLAUDE.md`: each spec ID is a `@Test(.disabled("not yet implemented"))` with the full EARS text in the title. Later milestones promote individual disabled entries to active tests RED→GREEN, then implement.
 
@@ -539,6 +539,8 @@ Append after `remote_6_4`:
     func remote_7_6() async throws { }
 ```
 
+**Post-PR amendment:** During /simplify review, the REMOTE-7.4 EARS text was sharpened to remove ambiguity between "serialize processing" (queue) and "reply with conflict" (reject). The shipped text says immediately-reject, no queueing. See commit `4a3fbc5` and design doc §6.5.
+
 - [ ] **Step 2: Verify compile**
 
 Run: `swift build 2>&1 | tail -10`
@@ -558,31 +560,12 @@ git commit -m "docs(specs): REMOTE-7.x — pane_control channel inventory"
 **Files:**
 - Modify: `Tests/GrafttyTests/Specs/IosTodo.swift:172`
 
-- [ ] **Step 1: Replace the IOS-8.3 EARS text**
+**Original intent:** Amend the EARS text of IOS-8.3 from "shall not initiate pane lifecycle operations" to a positive behavior pointing at the new `pane_control` channel.
 
-Find the line currently reading:
+**Actual outcome:** During implementation, review surfaced that a positive-behavior spec living in a "Non-goals" section is semantically misclassified. The cleaner fix was to **delete IOS-8.3 entirely**; the positive behavior is already covered by IPAD-3.3 / IPAD-3.4 / IPAD-3.5 (focused-pane toolbar sending `pane_control` RPCs) and REMOTE-7.1 (capability gate). See design doc §7.3 for the rationale and commit `ae12844` for the change.
 
-```swift
-@spec IOS-8.3: The v1 iOS app shall not initiate pane lifecycle operations on the Mac (close, split, move, stop) nor worktree-stop or session-kill operations. Worktree **creation** is supported per §19.9. Any other such control surface is deferred to a future spec.
-```
-
-Replace with:
-
-```swift
-@spec IOS-8.3: When the `terminal_control` capability is granted via the WebRTC pairing flow (REMOTE-1.x), the iOS application shall initiate pane lifecycle operations only through the `pane_control` channel (REMOTE-7.x). The application shall not invent any other path for initiating pane lifecycle operations on the host. Worktree-stop and session-kill operations remain out of scope.
-```
-
-- [ ] **Step 2: Verify compile**
-
-Run: `swift build 2>&1 | tail -10`
-Expected: clean build.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add Tests/GrafttyTests/Specs/IosTodo.swift
-git commit -m "docs(specs): amend IOS-8.3 to point at REMOTE pane_control channel"
-```
+- [x] Delete IOS-8.3 block from `IosTodo.swift`.
+- [x] Regenerate `SPECS.md` and commit.
 
 ---
 
@@ -707,7 +690,7 @@ Expected: PR URL printed.
 
 After all tasks land:
 
-- **Spec coverage:** Every IPAD subsection from the design doc §7.1 has at least one disabled `@Test` entry. REMOTE-6.x covers all four bullets from design §6.3. REMOTE-7.x covers all six from §6.4. IOS-8.3 amendment matches design §7.2.
+- **Spec coverage:** Every IPAD subsection from the design doc §7.1 has at least one disabled `@Test` entry. REMOTE-6.x covers all four bullets from design §6.3. REMOTE-7.x covers all six from §6.4. IOS-8.3 deletion matches design §7.3 (Superseded).
 - **Placeholders:** none — every step has full code to write or exact command to run.
 - **Type consistency:** spec IDs `IPAD-x.y` referenced in later tasks match what earlier tasks introduced.
 - **Naming consistency:** `IpadTodo.swift` (not `iPadTodo.swift`) follows the existing camel-segment convention (`IosTodo`, not `iOSTodo`).
