@@ -199,6 +199,11 @@ struct GitTodo {
     func git_4_16() async throws { }
 
     @Test("""
+@spec GIT-4.19: When the user invokes a delete-flow confirmation dialog (GIT-4.2 Delete Worktree, GIT-4.4 force-delete recovery, GIT-4.11 final failure, or the GIT-3.6 Remove Repository menu item), the application shall present it as a window-attached sheet via `NSAlert.beginSheetModal(for:)` rather than `NSAlert.runModal()`. Extends GIT-4.14's policy from the auto-triggered offer dialog to every user-initiated delete dialog — otherwise the nested-event-loop `runModal()` freezes libghostty's PTY callbacks for every embedded terminal pane while the dialog awaits a click.
+""", .disabled("structural — verified by manual smoke testing"))
+    func git_4_19() async throws { }
+
+    @Test("""
 @spec GIT-5.1: When the user types or pastes into the "Worktree name" or "Branch" field of the Add Worktree sheet, the application shall replace any character outside the set `A-Z a-z 0-9 . _ - /` with `-`, and shall collapse any run of consecutive `-` (including dashes the user typed directly) into a single `-`. `/` is permitted so branch names can use the conventional namespace separator (`feature/foo`); the resulting worktree path becomes a nested `.worktrees/<ns>/<leaf>` directory that `git worktree add` creates. Ref-format rules git already enforces (`//`, leading/trailing `/`, components beginning with `.`) are not duplicated here — git reports them at submit time. The replacement shall apply live on every edit so the field shows only sanitized content.
 """, .disabled("not yet implemented"))
     func git_5_1() async throws { }
