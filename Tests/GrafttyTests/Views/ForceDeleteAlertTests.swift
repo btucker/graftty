@@ -1,10 +1,11 @@
 import Testing
 @testable import Graftty
 
-/// Pins the formatting logic for the GIT-4.4 failure alert's informative
-/// text block. Tests the pure formatter — the NSAlert dialog itself
-/// (modal AppKit) is exercised manually.
-@Suite("ForceDeleteAlert.informativeText")
+/// Pins the GIT-4.4 informative-text formatter and the two
+/// `SheetAlert.Configuration` factories (GIT-4.4 forceable, GIT-4.11
+/// final). The dialog presentation itself is exercised manually since
+/// NSAlert needs a running NSApplication.
+@Suite("ForceDeleteAlert")
 struct ForceDeleteAlertTests {
 
     @Test("""
@@ -47,5 +48,37 @@ struct ForceDeleteAlertTests {
         #expect(body.contains("…"))
         #expect(body.contains("?? f1.txt"))
         #expect(!body.contains("?? f200.txt"))
+    }
+
+    /// Pins the GIT-4.4 factory's shape: warning style, message text,
+    /// Cancel as the primary (safe-default) button, Force Delete as
+    /// the secondary, and informative text built by the existing
+    /// formatter. The dialog's behavioural contract lives in the
+    /// GIT-4.4 spec test above.
+    @Test func gitFailedForceableConfiguration() {
+        let config = ForceDeleteAlert.gitFailedForceableConfiguration(
+            stderr: "fatal: dirty",
+            status: " M file.swift"
+        )
+        #expect(config.messageText == "Could not delete worktree")
+        #expect(config.informativeText.contains("fatal: dirty"))
+        #expect(config.informativeText.contains(" M file.swift"))
+        #expect(config.style == .warning)
+        #expect(config.primaryButton == "Cancel")
+        #expect(config.secondaryButton == "Force Delete")
+    }
+
+    /// Pins the GIT-4.11 factory's shape: warning style, single OK
+    /// button (no secondary), and the supplied error message as
+    /// informative text.
+    @Test func gitFailedFinalConfiguration() {
+        let config = ForceDeleteAlert.gitFailedFinalConfiguration(
+            message: "git binary not found"
+        )
+        #expect(config.messageText == "Could not delete worktree")
+        #expect(config.informativeText == "git binary not found")
+        #expect(config.style == .warning)
+        #expect(config.primaryButton == "OK")
+        #expect(config.secondaryButton == nil)
     }
 }
