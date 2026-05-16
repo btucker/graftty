@@ -171,6 +171,48 @@ struct SessionClientTests {
         #expect(ws.sent.contains(.binary(paste)))
     }
 
+    @Test("""
+    @spec IOS-11.9: `SessionClient.sendPaste(_:)` shall wrap the payload in `ESC [ 200 ~` and `ESC [ 201 ~` and emit the wrapped sequence as a single binary WebSocket frame. The single-byte LF→CR translation of `IOS-6.3` shall not apply to this path; the payload's own line endings shall be preserved verbatim.
+    """)
+    func sendPasteWrapsInBracketedPasteDelimiters() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        client.sendPaste("hello")
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let expected = Data("\u{1B}[200~hello\u{1B}[201~".utf8)
+        #expect(ws.sent.contains(.binary(expected)))
+    }
+
+    @Test
+    func sendPastePreservesEmbeddedNewlinesVerbatim() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        client.sendPaste("a\nb")
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let expected = Data("\u{1B}[200~a\nb\u{1B}[201~".utf8)
+        #expect(ws.sent.contains(.binary(expected)))
+        // The IOS-6.3 LF→CR translation must NOT apply here.
+        #expect(!ws.sent.contains(.binary(Data("\u{1B}[200~a\rb\u{1B}[201~".utf8))))
+    }
+
+    @Test
+    func sendPasteSkipsEmptyPayload() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        let before = ws.sent.count
+        client.sendPaste("")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(ws.sent.count == before)
+    }
+
     @Test
     func stopClosesWebSocket() {
         let ws = FakeWS()

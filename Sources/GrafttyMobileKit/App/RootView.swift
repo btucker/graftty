@@ -113,6 +113,17 @@ struct SessionStep: Hashable {
     let title: String
 }
 
+/// Holds a weak reference to the live `TerminalInputContainerView` so
+/// SwiftUI-side code (e.g., terminal control-bar buttons) can reach into
+/// the UIKit container to cancel an active selection per IOS-11.7. The
+/// container is owned by the `TerminalPaneView` representable; this box
+/// is updated from `makeUIView` / `updateUIView` via `captureContainer`.
+@MainActor
+final class TerminalContainerBox {
+    weak var view: TerminalInputContainerView?
+    func cancelActiveSelectionIfAny() { view?.cancelActiveSelectionIfAny() }
+}
+
 /// Fullscreen terminal view for one session. Owns the WebSocket and
 /// InMemoryTerminalSession; both are torn down on `.background` and
 /// re-dialed on `.active` once the gate is unlocked.
@@ -145,6 +156,10 @@ struct SingleSessionView: View {
     /// as an explicit bottom padding on the fullscreen layout
     /// (`IOS-6.9`). Populated from `keyboardWillChangeFrame`.
     @State private var keyboardBottomInset: CGFloat = 0
+    /// Box that holds a weak reference to the live terminal-input
+    /// container so the SwiftUI control-bar buttons can cancel an
+    /// active selection per IOS-11.7.
+    @State private var paneContainerBox = TerminalContainerBox()
 
     private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
 
@@ -510,7 +525,18 @@ struct SingleSessionView: View {
                 deleteBackward: { client.deleteBackward() }
             ),
             preferredInterfaceStyle: preferredStyle,
-            onWillUnmount: { snapshot in client.setIdleSnapshot(snapshot) }
+            onWillUnmount: { snapshot in client.setIdleSnapshot(snapshot) },
+            // @spec IOS-11.8: When the user taps **Paste** in the long-press menu,
+            // the application shall read `UIPasteboard.general.string` and, when
+            // non-empty, send it via `SessionClient.sendPaste(_:)`. An empty or
+            // absent clipboard string shall be a silent no-op.
+            onPasteRequested: { [weak client] in
+                guard let client, let text = UIPasteboard.general.string, !text.isEmpty else {
+                    return
+                }
+                client.sendPaste(text)
+            },
+            captureContainer: { [paneContainerBox] view in paneContainerBox.view = view }
         )
         let cellWidth = client.cellWidthPoints ?? TerminalWidthLayout.fallbackCellWidth
         let decision = TerminalWidthLayout.decide(
@@ -538,12 +564,23 @@ struct SingleSessionView: View {
             .shadow(radius: 1)
     }
 
+    /// Wraps a control-bar action so that pressing any key while a
+    /// terminal selection is active first cancels the selection
+    /// (IOS-11.7). Every entry in `terminalControlBar` routes its
+    /// action through this wrapper.
+    private func controlBarAction(_ body: @escaping () -> Void) -> () -> Void {
+        { [paneContainerBox] in
+            paneContainerBox.cancelActiveSelectionIfAny()
+            body()
+        }
+    }
+
     private func terminalTextControl(
         _ title: String,
         accessibilityLabel: String,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        Button(action: controlBarAction(action)) {
             Text(title)
                 .font(.footnote.monospaced().weight(.semibold))
                 .foregroundStyle(.primary)
@@ -560,7 +597,7 @@ struct SingleSessionView: View {
         accessibilityLabel: String,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        Button(action: controlBarAction(action)) {
             Image(systemName: systemName)
                 .font(.body.weight(.semibold))
                 .foregroundStyle(.primary)
