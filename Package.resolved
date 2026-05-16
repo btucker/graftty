@@ -1,5 +1,5 @@
 {
-  "originHash" : "615566c776b60d247753dcadab715ab098ecabe5250dcaebef76dde8229949c8",
+  "originHash" : "284b15d1fc9b379bd4afcce3f711dcc7164b9a4e9386351193a0805894493a8e",
   "pins" : [
     {
       "identity" : "libghostty-spm",
@@ -107,6 +107,15 @@
       "state" : {
         "revision" : "7c6ad0fc39d0763e0b699210e4124afd5041c5df",
         "version" : "1.6.4"
+      }
+    },
+    {
+      "identity" : "webrtc",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/stasel/WebRTC.git",
+      "state" : {
+        "revision" : "b85669f32ffb3f48ce3a8f18ad828c6f559a8a0c",
+        "version" : "137.0.0"
       }
     }
   ],
