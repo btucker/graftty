@@ -24,7 +24,6 @@ struct LocalPairingClientTests {
         let identityStore: ClientIdentityStore
         let pinnedStore: PinnedHostStore
         let payload: PairingPayload
-        let hostPrivateKey: Curve25519.KeyAgreement.PrivateKey
         let hostPublicKey: RemoteIdentityPublicKey
         let clientPublicKey: RemoteIdentityPublicKey
     }
@@ -36,15 +35,15 @@ struct LocalPairingClientTests {
         let clientPriv = try identityStore.generateAndPersist()
         let clientPub = try RemoteIdentityPublicKey(rawRepresentation: clientPriv.publicKey.rawRepresentation)
 
-        let hostPriv = Curve25519.KeyAgreement.PrivateKey()
-        let hostPub = try RemoteIdentityPublicKey(rawRepresentation: hostPriv.publicKey.rawRepresentation)
-        let hostFingerprint = RemoteIdentityFingerprint(of: hostPub)
+        let hostPub = try RemoteIdentityPublicKey(
+            rawRepresentation: Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation
+        )
 
         let payload = PairingPayload(
             hostDeviceID: RemoteDeviceID(value: "host-1"),
             hostKind: .mac,
             hostDisplayName: "Test Mac",
-            hostPublicKeyFingerprint: hostFingerprint,
+            hostPublicKeyFingerprint: RemoteIdentityFingerprint(of: hostPub),
             nonce: RemotePairingNonce.generate(),
             expiry: Date().addingTimeInterval(300),
             pairingURL: URL(string: "https://host.local:8800/v1/pairing")!
@@ -62,7 +61,6 @@ struct LocalPairingClientTests {
             identityStore: identityStore,
             pinnedStore: pinnedStore,
             payload: payload,
-            hostPrivateKey: hostPriv,
             hostPublicKey: hostPub,
             clientPublicKey: clientPub
         )
@@ -80,8 +78,7 @@ struct LocalPairingClientTests {
         }
 
         func makeTransport() -> LocalPairingClient.Transport {
-            return { [weak self] request in
-                guard let self else { throw URLError(.cancelled) }
+            return { [self] request in
                 let entry = await self.recordAndLookup(request)
                 guard let (data, status) = entry else {
                     throw URLError(.unsupportedURL)
@@ -105,9 +102,7 @@ struct LocalPairingClientTests {
     }
 
     private func jsonData<T: Encodable>(_ value: T) throws -> Data {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        return try encoder.encode(value)
+        try JSONEncoder.iso8601().encode(value)
     }
 
     /// Stub the standard happy-path responses (200 introduce, 200 await
@@ -168,11 +163,9 @@ struct LocalPairingClientTests {
         defer { try? FileManager.default.removeItem(at: dir) }
         let fx = try makeFixtures(dir: dir)
 
-        // Generate a *different* host key. The QR payload pinned the
-        // first host's fingerprint, so the imposter response will
-        // mismatch when ClientPairingSession.confirm runs.
-        let imposterPriv = Curve25519.KeyAgreement.PrivateKey()
-        let imposterPub = try RemoteIdentityPublicKey(rawRepresentation: imposterPriv.publicKey.rawRepresentation)
+        let imposterPub = try RemoteIdentityPublicKey(
+            rawRepresentation: Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation
+        )
 
         let stub = StubTransport()
         try await stubHappyPath(on: stub, hostPublicKey: imposterPub, expiry: fx.payload.expiry, outcome: .confirmed)
@@ -187,20 +180,56 @@ struct LocalPairingClientTests {
             _ = try await client.runPairing(payload: fx.payload)
             Issue.record("Expected fingerprintMismatch")
         } catch ClientPairingSession.Error.fingerprintMismatch {
-            // expected — REMOTE-1.2 protection fired inside session.confirm
+            // REMOTE-1.2 protection fired inside session.confirm
         }
 
-        // The protection that matters: no host was persisted, even
-        // though await-outcome returned `.confirmed`. The fingerprint
-        // check is the gating step inside ClientPairingSession.confirm.
+        // The protection that matters: no host was persisted, even though
+        // await-outcome returned `.confirmed`. The fingerprint check is
+        // the gating step inside ClientPairingSession.confirm.
         let pinnedList = try fx.pinnedStore.list()
         #expect(pinnedList.isEmpty)
     }
 
-    // MARK: - Denied outcome
+    // MARK: - Terminal-outcome trio (denied / expired / cancelled)
 
-    @Test("runPairing throws .denied when host returns outcome=denied")
-    func deniedOutcome() async throws {
+    /// Pairs each `PairingOutcome` the host can return with the
+    /// `LocalPairingClient.Error` the test must observe.
+    static let terminalOutcomeArguments: [(PairingOutcome, LocalPairingClient.Error)] = [
+        (.denied, .denied),
+        (.expired, .expired),
+        (.cancelled, .cancelled),
+    ]
+
+    @Test(
+        "runPairing throws the matching client error when host returns a terminal outcome",
+        arguments: terminalOutcomeArguments
+    )
+    func terminalOutcomeMapping(outcome: PairingOutcome, expectedError: LocalPairingClient.Error) async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fx = try makeFixtures(dir: dir)
+
+        let stub = StubTransport()
+        try await stubHappyPath(on: stub, hostPublicKey: fx.hostPublicKey, expiry: fx.payload.expiry, outcome: outcome)
+
+        let client = LocalPairingClient(
+            session: fx.session,
+            identityStore: fx.identityStore,
+            transport: await stub.makeTransport()
+        )
+
+        do {
+            _ = try await client.runPairing(payload: fx.payload)
+            Issue.record("Expected \(expectedError)")
+        } catch let error as LocalPairingClient.Error {
+            #expect(error == expectedError)
+        }
+    }
+
+    // MARK: - Denied propagates to session state
+
+    @Test("Denied outcome additionally transitions the session state to .denied")
+    func deniedOutcomeUpdatesSessionState() async throws {
         let dir = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: dir) }
         let fx = try makeFixtures(dir: dir)
@@ -214,67 +243,12 @@ struct LocalPairingClientTests {
             transport: await stub.makeTransport()
         )
 
-        do {
-            _ = try await client.runPairing(payload: fx.payload)
-            Issue.record("Expected denied")
-        } catch LocalPairingClient.Error.denied {
-            // expected
-        }
+        _ = try? await client.runPairing(payload: fx.payload)
 
         if case .denied = fx.session.state {
             // expected
         } else {
             Issue.record("Expected denied session state, got \(fx.session.state)")
-        }
-    }
-
-    // MARK: - Expired outcome
-
-    @Test("runPairing throws .expired when host returns outcome=expired")
-    func expiredOutcome() async throws {
-        let dir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let fx = try makeFixtures(dir: dir)
-
-        let stub = StubTransport()
-        try await stubHappyPath(on: stub, hostPublicKey: fx.hostPublicKey, expiry: fx.payload.expiry, outcome: .expired)
-
-        let client = LocalPairingClient(
-            session: fx.session,
-            identityStore: fx.identityStore,
-            transport: await stub.makeTransport()
-        )
-
-        do {
-            _ = try await client.runPairing(payload: fx.payload)
-            Issue.record("Expected expired")
-        } catch LocalPairingClient.Error.expired {
-            // expected
-        }
-    }
-
-    // MARK: - Cancelled outcome
-
-    @Test("runPairing throws .cancelled when host returns outcome=cancelled")
-    func cancelledOutcome() async throws {
-        let dir = try makeTempDir()
-        defer { try? FileManager.default.removeItem(at: dir) }
-        let fx = try makeFixtures(dir: dir)
-
-        let stub = StubTransport()
-        try await stubHappyPath(on: stub, hostPublicKey: fx.hostPublicKey, expiry: fx.payload.expiry, outcome: .cancelled)
-
-        let client = LocalPairingClient(
-            session: fx.session,
-            identityStore: fx.identityStore,
-            transport: await stub.makeTransport()
-        )
-
-        do {
-            _ = try await client.runPairing(payload: fx.payload)
-            Issue.record("Expected cancelled")
-        } catch LocalPairingClient.Error.cancelled {
-            // expected
         }
     }
 
@@ -383,9 +357,7 @@ struct LocalPairingClientTests {
         let recorded = await stub.recordedRequests
         let introduceReq = recorded.first { $0.url?.path.hasSuffix("/introduce") == true }
         let body = try #require(introduceReq?.httpBody)
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let decoded = try decoder.decode(PairingIntroduceRequest.self, from: body)
+        let decoded = try JSONDecoder.iso8601().decode(PairingIntroduceRequest.self, from: body)
         #expect(decoded.version == 1)
         #expect(decoded.nonce == fx.payload.nonce)
         #expect(decoded.clientPublicKey == fx.clientPublicKey)

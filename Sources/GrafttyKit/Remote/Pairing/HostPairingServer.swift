@@ -94,6 +94,13 @@ public actor HostPairingServer {
         session.state
     }
 
+    /// Number of long-poll callers currently suspended in
+    /// `handleAwaitOutcome`. Test-only — lets tests deterministically
+    /// wait for waiter registration instead of a fixed sleep.
+    public var pendingWaiterCount: Int {
+        outcomeWaiters.count
+    }
+
     // MARK: - HTTP-facing API
 
     /// Handles `POST /v1/pairing/introduce`.

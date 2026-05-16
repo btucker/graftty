@@ -65,6 +65,15 @@ struct HostPairingServerTests {
         )
     }
 
+    /// Yield until at least `count` long-poll waiters are registered.
+    /// Replaces a fixed `Task.sleep` so tests don't race the actor's
+    /// scheduling under load.
+    private func waitForWaiters(on server: HostPairingServer, atLeast count: Int) async {
+        while await server.pendingWaiterCount < count {
+            await Task.yield()
+        }
+    }
+
     // MARK: - start
 
     @Test("start delegates to session and returns the payload")
@@ -196,8 +205,7 @@ struct HostPairingServerTests {
             PairingAwaitOutcomeRequest(nonce: payload.nonce)
         )
 
-        // Brief yield so the long-poll registers before confirm.
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        await waitForWaiters(on: fx.server, atLeast: 1)
         try await fx.server.confirm()
 
         let result = await outcomeResult
@@ -222,7 +230,7 @@ struct HostPairingServerTests {
             PairingAwaitOutcomeRequest(nonce: payload.nonce)
         )
 
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        await waitForWaiters(on: fx.server, atLeast: 1)
         await fx.server.deny()
 
         let result = await outcomeResult
@@ -247,7 +255,7 @@ struct HostPairingServerTests {
             PairingAwaitOutcomeRequest(nonce: payload.nonce)
         )
 
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        await waitForWaiters(on: fx.server, atLeast: 1)
         await fx.server.cancel()
 
         let result = await outcomeResult
@@ -338,7 +346,7 @@ struct HostPairingServerTests {
             PairingAwaitOutcomeRequest(nonce: payload.nonce)
         )
 
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        await waitForWaiters(on: fx.server, atLeast: 2)
         try await fx.server.confirm()
 
         let r1 = await result1
@@ -386,8 +394,7 @@ struct HostPairingServerTests {
             PairingAwaitOutcomeRequest(nonce: payload.nonce)
         )
 
-        // Brief yield so the waiter registers, then restart.
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        await waitForWaiters(on: fx.server, atLeast: 1)
         _ = try await fx.server.start()
 
         let result = await outcomeResult
