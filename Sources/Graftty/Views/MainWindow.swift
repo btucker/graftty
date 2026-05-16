@@ -735,18 +735,11 @@ struct MainWindow: View {
         // offer (and leaving the marker unset) lets the next poll retry.
         guard let host = NSApp.mainWindow else { return }
 
-        let alert = NSAlert()
-        alert.messageText = config.messageText
-        alert.informativeText = config.informativeText
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: config.primaryButton)
-        alert.addButton(withTitle: config.secondaryButton)
-
         // Set the marker now that the sheet is definitely going up, so a
         // user who clicks Keep doesn't get re-prompted on the next poll.
         appState.repos[repoIdx].worktrees[wtIdx].offeredDeleteForResolvedPR = prNumber
-        alert.beginSheetModal(for: host) { response in
-            guard response == .alertFirstButtonReturn else { return }
+        SheetAlert.present(config, on: host) { response in
+            guard response == .primary else { return }
             performDeleteWorktree(worktreePath)
         }
     }

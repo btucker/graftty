@@ -21,6 +21,7 @@ struct PRResolutionOfferAlertTests {
         #expect(config?.informativeText == "Add OAuth flow\n\nDelete the worktree now? This will delete the worktree but not the branch.")
         #expect(config?.primaryButton == "Delete Worktree")
         #expect(config?.secondaryButton == "Keep")
+        #expect(config?.style == .informational)
     }
 
     @Test func emptyTitleOmitsTitlePrefix() {
