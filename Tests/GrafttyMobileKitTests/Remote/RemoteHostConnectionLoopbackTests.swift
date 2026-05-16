@@ -29,8 +29,12 @@ struct RemoteHostConnectionLoopbackTests {
         let answer = try await answererPeer.accept(offer: offer)
 
         // 3. Forward ICE candidates each way as they're gathered.
+        //    `client.bindIceCandidates` is `nonisolated`; the TestAnswerer
+        //    helper keeps its `bindIceCandidates` actor-isolated (one extra
+        //    `await` in tests is fine; the production pattern is what gets
+        //    optimised).
         client.bindIceCandidates(to: answererPeer)
-        answererPeer.bindIceCandidates(to: client)
+        await answererPeer.bindIceCandidates(to: client)
 
         // 4. Apply the answer on the client; this waits for the data
         //    channel to reach the `open` state on the offerer side.
