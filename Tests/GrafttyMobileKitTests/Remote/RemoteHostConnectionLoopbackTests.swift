@@ -13,7 +13,7 @@ import WebRTC
 /// connection negotiates, data channel opens. M1.2 replaces the in-process
 /// SDP swap with an HTTPS signaling endpoint; M1.3 adds Noise before any
 /// channel traffic; M1.4 framing.
-@Suite("@spec REMOTE-2.x — WebRTC peer connection establishes locally (M1.1 foundation).")
+@Suite("WebRTC SDK integration — loopback DataChannel ping-pong (M1.1 foundation).")
 struct RemoteHostConnectionLoopbackTests {
 
     @Test
