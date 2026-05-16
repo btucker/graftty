@@ -132,4 +132,19 @@ struct IpadTodo {
 @spec IPAD-5.4: When a previously-focused leaf is no longer present in the foreground-fresh `panes_state` snapshot, the application shall surface a "Pane no longer running" banner on the detail column with a "Back to sidebar" action.
 """, .disabled("not yet implemented"))
     func ipad_5_4() async throws { }
+
+    @Test("""
+@spec IPAD-6.1: When the user selects a different host from the host-switcher popover, the application shall close all open channels on the current `RemoteHostConnection`, tear down the connection, and build a new `RemoteHostConnection` for the selected host.
+""", .disabled("not yet implemented"))
+    func ipad_6_1() async throws { }
+
+    @Test("""
+@spec IPAD-6.2: While the new `RemoteHostConnection` is establishing, the sidebar shall show the new host's label with an in-progress spinner and the detail column shall render `ContentUnavailableView`.
+""", .disabled("not yet implemented"))
+    func ipad_6_2() async throws { }
+
+    @Test("""
+@spec IPAD-6.3: When the new `RemoteHostConnection` completes its first `panes_state` snapshot, the application shall clear the spinner and, unless a prior selection has been restored from device state, select the first worktree in the snapshot's ordering as `IPadAppState.selectedWorktreePath`.
+""", .disabled("not yet implemented"))
+    func ipad_6_3() async throws { }
 }
