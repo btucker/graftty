@@ -114,21 +114,6 @@ struct IosTodo {
     func ios_4_11() async throws { }
 
     @Test("""
-@spec IOS-5.1: On iPad (regular `horizontalSizeClass`), the application shall render a `NavigationSplitView` sidebar + detail layout. The sidebar shall show saved hosts; tapping a host reveals the session picker; tapping a session renders the detail as a terminal pane.
-""", .disabled("not yet implemented"))
-    func ios_5_1() async throws { }
-
-    @Test("""
-@spec IOS-5.2: On iPad, the application shall support an in-app left/right split in the detail area, with up to two concurrent panes. Each pane owns its own `URLSessionWebSocketTask` + `InMemoryTerminalSession`. Each pane independently emits its own resize envelopes.
-""", .disabled("not yet implemented"))
-    func ios_5_2() async throws { }
-
-    @Test("""
-@spec IOS-5.3: On iPhone (compact `horizontalSizeClass`), the application shall collapse the layout to a `NavigationStack`. Only one pane is visible at a time; session switching is via a bottom-edge session switcher.
-""", .disabled("not yet implemented"))
-    func ios_5_3() async throws { }
-
-    @Test("""
 @spec IOS-5.4: When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
 """, .disabled("not yet implemented"))
     func ios_5_4() async throws { }

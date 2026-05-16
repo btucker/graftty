@@ -1234,12 +1234,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IOS-5.x — Multi-pane layout
 
-**IOS-5.1** On iPad (regular `horizontalSizeClass`), the application shall render a `NavigationSplitView` sidebar + detail layout. The sidebar shall show saved hosts; tapping a host reveals the session picker; tapping a session renders the detail as a terminal pane.
-
-**IOS-5.2** On iPad, the application shall support an in-app left/right split in the detail area, with up to two concurrent panes. Each pane owns its own `URLSessionWebSocketTask` + `InMemoryTerminalSession`. Each pane independently emits its own resize envelopes.
-
-**IOS-5.3** On iPhone (compact `horizontalSizeClass`), the application shall collapse the layout to a `NavigationStack`. Only one pane is visible at a time; session switching is via a bottom-edge session switcher.
-
 **IOS-5.4** When multiple panes exist, only one pane shall be focused at a time. The keyboard accessory bar and hardware keyboard routing shall deliver input only to the focused pane.
 
 **IOS-5.5** While a session's terminal is rendered full-screen (navigation bar hidden per the fullscreen layout), the application shall overlay a translucent back-button in the top-left that pops the current session off the `NavigationPath`, returning the user to the worktree detail they drilled in from. The button shall be rendered as a chevron inside an `.ultraThinMaterial` circle at a fixed 44×44pt tap target, padded 12pt from the top and leading edges so it floats above the terminal content without being clipped by the device's notch / rounded corners. The system edge-swipe gesture remains available but is not discoverable, so this overlay is the primary affordance.
