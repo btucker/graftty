@@ -610,14 +610,18 @@ struct MainWindow: View {
     }
 
     private func removeRepoWithConfirmation(_ repo: RepoEntry) {
-        let alert = NSAlert()
-        alert.messageText = "Remove \"\(repo.displayName)\"?"
-        alert.informativeText = "This removes the repository from Graftty but does not delete any files from disk."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Remove")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        performRemoveRepo(repo)
+        guard let host = NSApp.mainWindow else { return }
+        let config = SheetAlert.Configuration(
+            messageText: "Remove \"\(repo.displayName)\"?",
+            informativeText: "This removes the repository from Graftty but does not delete any files from disk.",
+            style: .warning,
+            primaryButton: "Remove",
+            secondaryButton: "Cancel"
+        )
+        SheetAlert.present(config, on: host) { response in
+            guard response == .primary else { return }
+            performRemoveRepo(repo)
+        }
     }
 
     /// Implements LAYOUT-4.3. Ordering of (a)–(d) before (e) matches the
