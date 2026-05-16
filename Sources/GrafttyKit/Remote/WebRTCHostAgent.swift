@@ -115,12 +115,19 @@ public actor WebRTCHostAgent {
     private func adoptDataChannel(_ dc: RTCDataChannel) {
         self.dataChannel = dc
         dc.delegate = dataChannelDelegate
+        dataChannelDelegate.onOpen = { [weak self] in
+            Task { await self?.handleDataChannelOpen() }
+        }
         dataChannelDelegate.onMessage = { [weak self] data in
             Task { await self?.recordReceivedBinary(data) }
         }
         if dc.readyState == .open {
             state = .connected
         }
+    }
+
+    private func handleDataChannelOpen() {
+        state = .connected
     }
 
     private func recordReceivedBinary(_ data: Data) {
@@ -167,9 +174,12 @@ public actor WebRTCHostAgent {
     }
 }
 
+/// See the matching comment in `RemoteHostConnection.swift` —
+/// WebRTC dispatches delegate calls serially per connection, so the
+/// unsafe is bounded; `@Sendable` keeps callers honest.
 private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate {
-    var onIceCandidate: ((RTCIceCandidate) -> Void)?
-    var onDataChannel: ((RTCDataChannel) -> Void)?
+    nonisolated(unsafe) var onIceCandidate: (@Sendable (RTCIceCandidate) -> Void)?
+    nonisolated(unsafe) var onDataChannel: (@Sendable (RTCDataChannel) -> Void)?
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
@@ -187,9 +197,14 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate 
 }
 
 private final class DataChannelDelegate: NSObject, RTCDataChannelDelegate {
-    var onMessage: ((Data) -> Void)?
+    nonisolated(unsafe) var onOpen: (@Sendable () -> Void)?
+    nonisolated(unsafe) var onMessage: (@Sendable (Data) -> Void)?
 
-    func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {}
+    func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
+        if dataChannel.readyState == .open {
+            onOpen?()
+        }
+    }
 
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
         onMessage?(buffer.data)

@@ -241,8 +241,16 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
 /// `RTCPeerConnectionDelegate` glue. Routes ICE-related signals into
 /// the actor; we don't yet do anything with them in M1.1, but capture
 /// them so M1.2 can wire signaling.
+///
+/// Delegate adapter that bridges WebRTC's NSObject-callback world to
+/// Swift closures the surrounding actor sets and reads. WebRTC's SDK
+/// dispatches every delegate call for a given peer connection on a
+/// fixed internal queue, so the closure properties are read serially —
+/// `nonisolated(unsafe)` marks the deliberate sharing across that
+/// boundary, while `@Sendable` on the closure type prevents callers
+/// from capturing non-Sendable actor state by accident.
 private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate {
-    var onIceCandidate: ((RTCIceCandidate) -> Void)?
+    nonisolated(unsafe) var onIceCandidate: (@Sendable (RTCIceCandidate) -> Void)?
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
@@ -259,9 +267,12 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate 
 
 /// `RTCDataChannelDelegate` glue. The actor sets `onOpen` / `onMessage`
 /// before awaiting state transitions.
+///
+/// See `PeerConnectionDelegate` for the rationale on the
+/// `nonisolated(unsafe)` + `@Sendable` annotations.
 private final class DataChannelDelegate: NSObject, RTCDataChannelDelegate {
-    var onOpen: (() -> Void)?
-    var onMessage: ((Data) -> Void)?
+    nonisolated(unsafe) var onOpen: (@Sendable () -> Void)?
+    nonisolated(unsafe) var onMessage: (@Sendable (Data) -> Void)?
 
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
         if dataChannel.readyState == .open {
