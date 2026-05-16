@@ -164,6 +164,10 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     }
 
     public func close() {
+        if let pending = openContinuation {
+            openContinuation = nil
+            pending.resume(throwing: ConnectionError.closed)
+        }
         dataChannel?.close()
         peerConnection?.close()
         dataChannel = nil
@@ -235,6 +239,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         case notConfigured
         case notOpen
         case sendFailed
+        case closed
     }
 }
 
