@@ -59,7 +59,7 @@ struct RemoteTodo {
     func remote_7_1() async throws { }
 
     @Test("""
-@spec REMOTE-7.2: When the host receives a `pane_control` request `{"type":"split","target":<sessionName>,"direction":<axis>}`, the host shall invoke the splittree mutation that adds a new pane adjacent to the leaf whose `sessionName == target` (on the main actor) and reply `{"ok":true}` on success.
+@spec REMOTE-7.2: When the host receives a `pane_control` request `{"type":"split","target":<sessionName>,"direction":<axis>}`, the host shall replace the leaf whose `sessionName == target` with a new split node of the requested `direction` whose left/top child is the original leaf and whose right/bottom child is a freshly-spawned leaf, applied on the main actor, and reply `{"ok":true}` on success.
 """, .disabled("not yet implemented"))
     func remote_7_2() async throws { }
 
