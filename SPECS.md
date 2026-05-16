@@ -1282,7 +1282,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-8.2** The v1 iOS app shall not forward terminal mouse events, OSC 52 clipboard reads, or Kitty graphics/keyboard-protocol sequences. (Mirrors `WEB-6.2`.)
 
-**IOS-8.3** The v1 iOS app shall not initiate pane lifecycle operations on the Mac (close, split, move, stop) nor worktree-stop or session-kill operations. Worktree **creation** is supported per §19.9. Any other such control surface is deferred to a future spec.
+**IOS-8.3** When the `terminal_control` capability is granted via the WebRTC pairing flow (REMOTE-1.x), the iOS application shall initiate pane lifecycle operations only through the `pane_control` channel (REMOTE-7.x). The application shall not invent any other path for initiating pane lifecycle operations on the host. Worktree-stop and session-kill operations remain out of scope.
 
 **IOS-8.4** The v1 iOS app shall not persist terminal scrollback on the device. On reconnect, it renders whatever the zmx daemon's buffer still contains.
 
@@ -1345,6 +1345,82 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-11.10** Selection mode shall be per-pane state owned by the focused pane's `TerminalSelectionController`. Selection in one pane shall not affect the selection state of any other pane.
 
 **IOS-11.11** While a pane is rendered as a worktree-detail preview tile (`IOS-4.10`), the long-press selection menu shall not be installed; tapping the tile shall continue to open the fullscreen pane per `IOS-4.21`. Guaranteed by `.allowsHitTesting(false)` applied to the inner `TerminalPaneView` in `paneContent` — `TerminalInputContainerView`'s long-press gesture recogniser never receives touches. The `onPasteRequested` closure is also left `nil` at the `TerminalPaneView` call site.
+
+## IPAD — iPad Layout
+
+### IPAD-1.x — Root Layout and Sidebar
+
+**IPAD-1.1** When `horizontalSizeClass == .regular`, the iPad application shall render `IPadRootLayout` (NavigationSplitView, 2-column) in place of the compact-width `NavigationStack`.
+
+**IPAD-1.2** While `IPadRootLayout` is presented, the sidebar shall display a `HostHeaderRow` at the top showing the selected host's label and a tap target presenting a host-switcher popover.
+
+**IPAD-1.3** While `IPadRootLayout` is presented, the sidebar shall render `WorktreeListContent` extracted from `WorktreePickerView`, bound to `WorktreePanesStore`, preserving `WorktreePickerGrouping`, swipe actions, PR badges, attention pills, and divergence gutter.
+
+**IPAD-1.4** When the user taps a pane child row in the sidebar at iPad regular width, the application shall set `IPadAppState.focusedPaneId` to that leaf's `sessionName` without pushing a new navigation stack frame.
+
+### IPAD-2.x — Multi-Pane Detail View
+
+**IPAD-2.1** While a worktree is selected and the iPad layout is regular-width, the detail column shall render `MultiPaneDetailView` over the worktree's `PaneLayoutNode`.
+
+**IPAD-2.2** When `MultiPaneDetailView` renders a `.split(.horizontal, ratio, left, right)`, the application shall render an `HStack` with the two children proportionally sized by `ratio` and a draggable `Divider` between them.
+
+**IPAD-2.3** When `MultiPaneDetailView` renders a `.split(.vertical, ratio, left, right)`, the application shall render a `VStack` with the two children proportionally sized by `ratio` and a draggable `Divider` between them.
+
+**IPAD-2.4** When `MultiPaneDetailView` renders a `.leaf(sessionName, …)`, the application shall render a `PaneLeafView` that owns its own `terminal` channel via `TerminalChannelPool`.
+
+**IPAD-2.5** While a leaf's allotted frame width is less than `serverCols × cellWidth`, the application shall wrap the leaf's `TerminalPaneView` in a horizontal `ScrollView`, matching the per-screen logic in `TerminalWidthLayout.decide`.
+
+**IPAD-2.6** When `IPadAppState.focusedPaneId == leaf.sessionName`, the application shall render a 2pt focus ring around the corresponding `PaneLeafView`.
+
+**IPAD-2.7** When the user drags a split's divider, the application shall update a per-iPad-client divider-ratio override map keyed by the tree path to that split, without sending any RPC to the host.
+
+### IPAD-3.x — Focused-Pane Toolbar
+
+**IPAD-3.1** When `MultiPaneDetailView` has a focused leaf and the soft keyboard is hidden, the application shall overlay a `FocusedPaneToolbar` on the focused leaf containing Split Right, Split Down, Swap, and Close icons.
+
+**IPAD-3.2** When the soft keyboard becomes visible, the application shall hide the `FocusedPaneToolbar` and yield its position to the terminal control bar.
+
+**IPAD-3.3** When the user taps Split Right or Split Down in the toolbar, the application shall send a `pane_control` RPC with `type: "split"`, `target` set to the focused leaf's `sessionName`, and `direction` set to `"horizontal"` or `"vertical"` respectively.
+
+**IPAD-3.4** When the user taps Close in the toolbar, the application shall send a `pane_control` RPC with `type: "close"` and `target` set to the focused leaf's `sessionName`.
+
+**IPAD-3.5** When the user taps Swap in the toolbar, the application shall send a `pane_control` RPC with `type: "swap"`, `source` set to the focused leaf's `sessionName`, and `target` set to the previously-focused leaf's `sessionName`.
+
+**IPAD-3.6** When a `pane_control` RPC returns `409 Conflict`, the application shall not present an error toast and shall rely on the next `panes_state` snapshot to reflect actual server state.
+
+### IPAD-4.x — Live-Channel Budget
+
+**IPAD-4.1** While the iPad layout is presented, the application shall cap concurrent open `terminal` channels at 8 leaves across all visible panes.
+
+**IPAD-4.2** When opening a new `terminal` channel would exceed the IPAD-4.1 cap, the application shall close the least-recently-focused open `terminal` channel and render its leaf as an `IdleSnapshotView` from the last frame the channel held.
+
+**IPAD-4.3** When the user taps an `IdleSnapshotView` placeholder leaf, the application shall open a fresh `terminal` channel for that leaf, potentially evicting a different least-recently-focused leaf per IPAD-4.2.
+
+**IPAD-4.4** When a leaf is closed (via `pane_control: close` or removed from a `panes_state` snapshot), the application shall close its `terminal` channel and drop it from the LRU budget.
+
+### IPAD-5.x — Background and Foreground Lifecycle
+
+**IPAD-5.1** When the application enters the background, the application shall close all `terminal` channels, close the `panes_state` channel, close the DataChannel, and tear down the `RemoteHostConnection`.
+
+**IPAD-5.2** When the application foregrounds and the biometric gate is satisfied, the application shall rebuild the `RemoteHostConnection` from signaling onward, completing a fresh Noise handshake before opening any channel.
+
+**IPAD-5.3** When the application foregrounds, the application shall re-open the `panes_state` channel before re-opening any `terminal` channel, so the splittree shape is current before deciding which leaves to attach.
+
+**IPAD-5.4** When a previously-focused leaf is no longer present in the foreground-fresh `panes_state` snapshot, the application shall surface a "Pane no longer running" banner on the detail column with a "Back to sidebar" action.
+
+### IPAD-6.x — Host Switching
+
+**IPAD-6.1** When the user selects a different host from the host-switcher popover, the application shall close all open channels on the current `RemoteHostConnection`, tear down the connection, and build a new `RemoteHostConnection` for the selected host.
+
+**IPAD-6.2** While the new `RemoteHostConnection` is establishing, the sidebar shall show the new host's label with an in-progress spinner and the detail column shall render `ContentUnavailableView`.
+
+**IPAD-6.3** When the new `RemoteHostConnection` completes its first `panes_state` snapshot, the application shall clear the spinner and, unless a prior selection has been restored from device state, select the first worktree in the snapshot's ordering as `IPadAppState.selectedWorktreePath`.
+
+### IPAD-7.x — Compact-Width Fallback
+
+**IPAD-7.1** When `horizontalSizeClass == .compact`, the application shall render the existing compact `RootView` flow (NavigationStack: HostPicker → WorktreePicker → SingleSessionView) without any iPad layout components.
+
+**IPAD-7.2** When `horizontalSizeClass` transitions between `.regular` and `.compact`, the application shall preserve `selectedHostId`, `selectedWorktreePath`, and `focusedPaneId` so the user lands on the equivalent leaf in the new layout.
 
 ## TEAM — Agent Teams
 
@@ -1466,29 +1542,53 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ## REMOTE — Secure Remote Access
 
-### REMOTE-1.x
+### REMOTE-1.x — Identity and Pairing
 
 **REMOTE-1.1** When a host starts remote access for the first time, the application shall generate and persist a host identity key before accepting pairing requests.
 
 **REMOTE-1.2** When a client pairs with a host, the application shall require a matching verification code and host-side confirmation before storing the client as a trusted peer.
 
-### REMOTE-2.x
+### REMOTE-2.x — Authenticated Attach
 
 **REMOTE-2.1** When a remote transport reconnects, the host shall require a fresh authenticated attach handshake before writing any bytes to the PTY.
 
-### REMOTE-3.x
+### REMOTE-3.x — Revocation
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
 
-### REMOTE-4.x
+### REMOTE-4.x — Port Tunnels
 
 **REMOTE-4.1** If a client requests a port tunnel without host approval under the default ask-each-time policy, then the host shall reject the channel open request before connecting to the target port.
 
 **REMOTE-4.2** If a client requests a port tunnel to a non-loopback target under the default policy, then the host shall reject the channel open request.
 
-### REMOTE-5.x
+### REMOTE-5.x — Retired Endpoints
 
 **REMOTE-5.1** When a client attempts to use the retired `/ws` terminal endpoint, the host shall reject the request without attaching to a PTY.
+
+### REMOTE-6.x — panes_state Channel
+
+**REMOTE-6.1** When a client opens a channel with `channel_type: "panes_state"` over an authenticated `RemoteHostConnection`, the host shall accept the channel for any trusted peer holding the `terminal_control` capability.
+
+**REMOTE-6.2** Immediately after accepting a `panes_state` channel, the host shall send a `{"type":"snapshot","worktrees":[…]}` frame containing the current `[WorktreePanes]` array.
+
+**REMOTE-6.3** While a `panes_state` channel is open, on any change to the host's `AppState.repos[*].worktrees`, splittree, attention state, or PR status, the host shall send a fresh `{"type":"snapshot","worktrees":[…]}` frame.
+
+**REMOTE-6.4** When the `RemoteHostConnection` tears down (client background, host switch, network failure, peer revocation), any open `panes_state` channels shall close.
+
+### REMOTE-7.x — pane_control Channel
+
+**REMOTE-7.1** When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability.
+
+**REMOTE-7.2** When the host receives a `pane_control` request `{"type":"split","target":<sessionName>,"direction":<axis>}`, the host shall invoke the splittree mutation that adds a new pane adjacent to the leaf whose `sessionName == target` (on the main actor) and reply `{"ok":true}` on success.
+
+**REMOTE-7.3** When the host receives a `pane_control` request `{"type":"close","target":<sessionName>}`, the host shall destroy the surface for the leaf whose `sessionName == target` and reply `{"ok":true}` on success.
+
+**REMOTE-7.4** When two `pane_control` requests target the same leaf concurrently, the host shall serialize processing and reply to the second request with `{"ok":false,"error":"conflict","code":"conflict"}` (logical 409 semantics) until the first request's resulting `panes_state` snapshot has been emitted.
+
+**REMOTE-7.5** A `pane_control` request shall not change the host's `AppState.selectedWorktreePath` or any worktree's `focusedPaneSlotID`. Mac focus is sovereign to the Mac user, mirroring `WEB-7.5`.
+
+**REMOTE-7.6** If a trusted peer is revoked while a `pane_control` channel is open, the channel shall close and subsequent open requests from the revoked peer shall be rejected.
 
 ## MEM — MEM
 
