@@ -72,22 +72,11 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
     private(set) var lastReceived: Data?
 
     init() {
-        RTCInitializeSSL()
-        self.factory = RTCPeerConnectionFactory(
-            encoderFactory: RTCDefaultVideoEncoderFactory(),
-            decoderFactory: RTCDefaultVideoDecoderFactory()
-        )
-    }
-
-    deinit {
-        RTCCleanupSSL()
+        self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
     }
 
     func accept(offer: RTCSessionDescription) async throws -> RTCSessionDescription {
-        let config = RTCConfiguration()
-        config.iceServers = []
-        config.sdpSemantics = .unifiedPlan
-        config.continualGatheringPolicy = .gatherContinually
+        let config = RemoteHostConnection.defaultConfig()
         let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
         guard let pc = factory.peerConnection(with: config, constraints: constraints, delegate: delegate) else {
             throw NSError(domain: "TestAnswerer", code: 1)
@@ -123,7 +112,9 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
             throw NSError(domain: "TestAnswerer", code: 3)
         }
         let buffer = RTCDataBuffer(data: data, isBinary: true)
-        _ = dc.sendData(buffer)
+        guard dc.sendData(buffer) else {
+            throw NSError(domain: "TestAnswerer", code: 4)
+        }
     }
 
     func bindIceCandidates(to client: RemoteHostConnection) {
@@ -160,8 +151,8 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
 }
 
 private final class AnswererDelegate: NSObject, RTCPeerConnectionDelegate {
-    var onIceCandidate: ((RTCIceCandidate) -> Void)?
-    var onDataChannel: ((RTCDataChannel) -> Void)?
+    nonisolated(unsafe) var onIceCandidate: (@Sendable (RTCIceCandidate) -> Void)?
+    nonisolated(unsafe) var onDataChannel: (@Sendable (RTCDataChannel) -> Void)?
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
@@ -178,7 +169,7 @@ private final class AnswererDelegate: NSObject, RTCPeerConnectionDelegate {
 }
 
 private final class AnswererDataChannelDelegate: NSObject, RTCDataChannelDelegate {
-    var onMessage: ((Data) -> Void)?
+    nonisolated(unsafe) var onMessage: (@Sendable (Data) -> Void)?
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {}
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
         onMessage?(buffer.data)
@@ -188,7 +179,14 @@ private final class AnswererDataChannelDelegate: NSObject, RTCDataChannelDelegat
 /// Poll until `condition()` returns true or the deadline expires. Used
 /// instead of arbitrary `Task.sleep` so the test exits promptly on
 /// success but still fails clearly when the condition genuinely doesn't
-/// hold.
+/// hold. Throws on timeout so the test stops at the first failure point
+/// rather than cascading into follow-up failures triggered by the same
+/// root cause.
+private struct PollTimeout: Error, CustomStringConvertible {
+    let timeout: Duration
+    var description: String { "pollUntil timed out after \(timeout)" }
+}
+
 private func pollUntil(
     timeout: Duration,
     interval: Duration = .milliseconds(50),
@@ -199,6 +197,6 @@ private func pollUntil(
         if await condition() { return }
         try await Task.sleep(for: interval)
     }
-    Issue.record("pollUntil timed out after \(timeout)")
+    throw PollTimeout(timeout: timeout)
 }
 #endif

@@ -44,24 +44,23 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
 
     /// Most-recently received binary frame. Test-only entry point —
     /// production code routes through the channel-framing layer
-    /// added in a later PR.
-    public private(set) var lastReceivedBinary: Data?
+    /// added in a later PR. `internal` so the in-target test can read it
+    /// via `@testable import`.
+    internal private(set) var lastReceivedBinary: Data?
+
+    /// SSH-style label of the single multiplexing DataChannel between
+    /// client and host. Both sides need to agree; promoted from a
+    /// magic string to a named constant so M1.2 signaling can refer
+    /// to it by symbol.
+    public static let dataChannelLabel = "graftty"
 
     public init() {
-        // Initialising the factory triggers WebRTC's SSL/codec setup;
-        // expensive (~10ms) but only done once per `RemoteHostConnection`.
-        // Subsequent peer connections share the factory.
-        RTCInitializeSSL()
-        self.factory = RTCPeerConnectionFactory(
-            encoderFactory: RTCDefaultVideoEncoderFactory(),
-            decoderFactory: RTCDefaultVideoDecoderFactory()
-        )
+        // SSL and codec subsystems are process-wide; initialize once.
+        Self.initializeWebRTC()
+        // nil factories: DataChannel-only — no video codec work needed.
+        self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
         self.delegate = PeerConnectionDelegate()
         self.dataChannelDelegate = DataChannelDelegate()
-    }
-
-    deinit {
-        RTCCleanupSSL()
     }
 
     /// Build the local peer connection and create the data channel.
@@ -84,7 +83,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         let dataChannelConfig = RTCDataChannelConfiguration()
         dataChannelConfig.isOrdered = true
         guard let dc = pc.dataChannel(
-            forLabel: "graftty",
+            forLabel: Self.dataChannelLabel,
             configuration: dataChannelConfig
         ) else {
             throw ConnectionError.dataChannelInitFailed
@@ -94,12 +93,8 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
 
         state = .connecting
 
-        let offerConstraints = RTCMediaConstraints(
-            mandatoryConstraints: nil,
-            optionalConstraints: nil
-        )
         let offer = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RTCSessionDescription, Error>) in
-            pc.offer(for: offerConstraints) { sdp, error in
+            pc.offer(for: constraints) { sdp, error in
                 if let error { continuation.resume(throwing: error); return }
                 guard let sdp else { continuation.resume(throwing: ConnectionError.sdpGenerationFailed); return }
                 continuation.resume(returning: sdp)
@@ -150,16 +145,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         }
     }
 
-    /// Test-only — exposes the WebRTC factory so a paired
-    /// `WebRTCHostAgent` running in the same process can be constructed
-    /// against a known offerer for the loopback test.
-    public func underlyingPeerConnection() -> RTCPeerConnection? {
-        peerConnection
-    }
-
-    /// Test-only — records the last binary frame received on the data
-    /// channel. Used by the loopback test to verify ping-pong.
-    func _testRecordReceivedBinary(_ data: Data) {
+    private func recordReceivedBinary(_ data: Data) {
         lastReceivedBinary = data
     }
 
@@ -186,7 +172,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
                 Task { await self?.handleDataChannelOpen() }
             }
             self.dataChannelDelegate.onMessage = { [weak self] data in
-                Task { await self?._testRecordReceivedBinary(data) }
+                Task { await self?.recordReceivedBinary(data) }
             }
         }
     }
@@ -198,7 +184,15 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         continuation?.resume()
     }
 
-    public static func defaultConfig() -> RTCConfiguration {
+    /// Initialise WebRTC's SSL subsystem exactly once per process.
+    /// `RTCInitializeSSL` / `RTCCleanupSSL` are not ref-counted in all SDK
+    /// builds; calling cleanup while another connection is live can tear down
+    /// SSL globally. A static token avoids both repeated init cost and the
+    /// premature-cleanup hazard.
+    private static let _webRTCInitOnce: Void = { RTCInitializeSSL() }()
+    private static func initializeWebRTC() { _ = _webRTCInitOnce }
+
+    static func defaultConfig() -> RTCConfiguration {
         let config = RTCConfiguration()
         // Empty ICE servers — LAN / Tailscale loopback uses mDNS-derived
         // host candidates only; no STUN/TURN needed in M1.1 scope.
@@ -243,17 +237,14 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     }
 }
 
-/// `RTCPeerConnectionDelegate` glue. Routes ICE-related signals into
-/// the actor; we don't yet do anything with them in M1.1, but capture
-/// them so M1.2 can wire signaling.
-///
 /// Delegate adapter that bridges WebRTC's NSObject-callback world to
 /// Swift closures the surrounding actor sets and reads. WebRTC's SDK
 /// dispatches every delegate call for a given peer connection on a
 /// fixed internal queue, so the closure properties are read serially —
 /// `nonisolated(unsafe)` marks the deliberate sharing across that
 /// boundary, while `@Sendable` on the closure type prevents callers
-/// from capturing non-Sendable actor state by accident.
+/// from capturing non-Sendable actor state by accident. M1.2 wires
+/// signaling onto the ICE candidate signal captured here.
 private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate {
     nonisolated(unsafe) var onIceCandidate: (@Sendable (RTCIceCandidate) -> Void)?
 

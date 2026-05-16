@@ -26,23 +26,18 @@ public actor WebRTCHostAgent {
     private let delegate: PeerConnectionDelegate
     private let dataChannelDelegate: DataChannelDelegate
 
-    /// Test-only — most recent binary frame received on the answerer's
-    /// data channel. Production replaces this with channel-framing
-    /// dispatch in M1.4.
-    public private(set) var lastReceivedBinary: Data?
+    /// Most-recently received binary frame. Test-only entry point —
+    /// production replaces this with channel-framing dispatch in M1.4.
+    /// `internal` so the in-target test can read it via `@testable import`.
+    internal private(set) var lastReceivedBinary: Data?
 
     public init() {
-        RTCInitializeSSL()
-        self.factory = RTCPeerConnectionFactory(
-            encoderFactory: RTCDefaultVideoEncoderFactory(),
-            decoderFactory: RTCDefaultVideoDecoderFactory()
-        )
+        // SSL and codec subsystems are process-wide; initialize once.
+        Self.initializeWebRTC()
+        // nil factories: DataChannel-only — no video codec work needed.
+        self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
         self.delegate = PeerConnectionDelegate()
         self.dataChannelDelegate = DataChannelDelegate()
-    }
-
-    deinit {
-        RTCCleanupSSL()
     }
 
     /// Accept an incoming offer and return the answer.
@@ -71,12 +66,8 @@ public actor WebRTCHostAgent {
         state = .answering
         try await Self.setRemoteDescription(pc, offer)
 
-        let answerConstraints = RTCMediaConstraints(
-            mandatoryConstraints: nil,
-            optionalConstraints: nil
-        )
         let answer = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RTCSessionDescription, Error>) in
-            pc.answer(for: answerConstraints) { sdp, error in
+            pc.answer(for: constraints) { sdp, error in
                 if let error { continuation.resume(throwing: error); return }
                 guard let sdp else { continuation.resume(throwing: HostError.sdpGenerationFailed); return }
                 continuation.resume(returning: sdp)
@@ -95,13 +86,6 @@ public actor WebRTCHostAgent {
         guard dc.sendData(buffer) else {
             throw HostError.sendFailed
         }
-    }
-
-    /// Test-only — exposes the underlying peer connection so ICE
-    /// candidates from the offerer can be funneled in by the loopback
-    /// test harness without going through a signaling endpoint.
-    public func underlyingPeerConnection() -> RTCPeerConnection? {
-        peerConnection
     }
 
     public func close() {
@@ -134,7 +118,11 @@ public actor WebRTCHostAgent {
         lastReceivedBinary = data
     }
 
-    public static func defaultConfig() -> RTCConfiguration {
+    /// See `RemoteHostConnection.initializeWebRTC` for rationale.
+    private static let _webRTCInitOnce: Void = { RTCInitializeSSL() }()
+    private static func initializeWebRTC() { _ = _webRTCInitOnce }
+
+    static func defaultConfig() -> RTCConfiguration {
         let config = RTCConfiguration()
         config.iceServers = []
         config.sdpSemantics = .unifiedPlan
