@@ -141,7 +141,7 @@ WebRTCHostAgent (Phase 2)
 
 ### 5.2 Detail column
 
-- **BreadcrumbBar (IPAD-2.1):** simpler than desktop's. Renders `host · repo · worktree · branch` + PR badge. PR refresh action (tap PR badge → opens PR URL). No-worktree-selected state → `ContentUnavailableView("Select a worktree from the sidebar")`.
+- **BreadcrumbBar:** simpler than desktop's. Renders `host · repo · worktree · branch` + PR badge. PR refresh action (tap PR badge → opens PR URL). No-worktree-selected state → `ContentUnavailableView("Select a worktree from the sidebar")`.
 - **`MultiPaneDetailView` (IPAD-2.x):** recursive renderer over `PaneLayoutNode`. Splits with `ratio: Double` produce an `HStack` or `VStack` (per `SplitAxis`) with the two children proportionally sized and a `Divider` between them. Dragging the divider mutates a local override map keyed by the tree path to that split (a `[Int]` of "go-left / go-right" steps from the root); v1 stores these per-iPad-client only (see §12 Open Question #1).
 - **`PaneLeafView` (IPAD-2.4):** owns:
   - The `terminal` channel for its leaf via `TerminalChannelPool`.
