@@ -22,6 +22,7 @@
     "KBD",
     "PR",
     "IOS",
+    "IPAD",
     "TEAM",
     "EDITOR",
     "REMOTE"
@@ -48,6 +49,7 @@
     "KBD": "Keyboard Shortcuts",
     "PR": "PR/MR Status Display",
     "IOS": "iOS App",
+    "IPAD": "iPad Layout",
     "TEAM": "Agent Teams",
     "EDITOR": "Editor Integration",
     "REMOTE": "Secure Remote Access"
@@ -134,6 +136,13 @@
     "IOS.7": "Lifecycle",
     "IOS.8": "Non-goals (recorded for future specs)",
     "IOS.9": "Creating worktrees from the iOS client",
+    "IPAD.1": "Root Layout and Sidebar",
+    "IPAD.2": "Multi-Pane Detail View",
+    "IPAD.3": "Focused-Pane Toolbar",
+    "IPAD.4": "Live-Channel Budget",
+    "IPAD.5": "Background and Foreground Lifecycle",
+    "IPAD.6": "Host Switching",
+    "IPAD.7": "Compact-Width Fallback",
     "TEAM.1": "Settings & Enablement",
     "TEAM.2": "Team Identity & Membership",
     "TEAM.3": "Team-Aware Hook Instructions",
@@ -142,6 +151,13 @@
     "TEAM.6": "Sidebar Visualization",
     "TEAM.7": "Team Activity Log Window",
     "TEAM.8": "Legacy Channel Cleanup",
-    "TEAM.9": "Stop Hook Filtering"
+    "TEAM.9": "Stop Hook Filtering",
+    "REMOTE.1": "Identity and Pairing",
+    "REMOTE.2": "Authenticated Attach",
+    "REMOTE.3": "Revocation",
+    "REMOTE.4": "Port Tunnels",
+    "REMOTE.5": "Retired Endpoints",
+    "REMOTE.6": "panes_state Channel",
+    "REMOTE.7": "pane_control Channel"
   }
 }
