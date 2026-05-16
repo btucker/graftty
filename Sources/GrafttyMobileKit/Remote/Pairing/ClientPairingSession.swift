@@ -69,9 +69,13 @@ public final class ClientPairingSession: @unchecked Sendable {
     private let identityStore: ClientIdentityStore
     private let pinnedHostStore: PinnedHostStore
     private let now: () -> Date
-    private let clientDeviceID: RemoteDeviceID
-    private let clientKind: RemoteDeviceKind
-    private let clientDisplayName: String
+
+    /// Client device metadata exposed so `LocalPairingClient` (and other
+    /// network adapters) can build wire-shape requests without taking
+    /// duplicate copies of the same values.
+    public let clientDeviceID: RemoteDeviceID
+    public let clientKind: RemoteDeviceKind
+    public let clientDisplayName: String
 
     // MARK: State
 
