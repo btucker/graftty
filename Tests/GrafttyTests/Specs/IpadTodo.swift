@@ -62,4 +62,34 @@ struct IpadTodo {
 @spec IPAD-2.7: When the user drags a split's divider, the application shall update a per-iPad-client divider-ratio override map keyed by the tree path to that split, without sending any RPC to the host.
 """, .disabled("not yet implemented"))
     func ipad_2_7() async throws { }
+
+    @Test("""
+@spec IPAD-3.1: When `MultiPaneDetailView` has a focused leaf and the soft keyboard is hidden, the application shall overlay a `FocusedPaneToolbar` on the focused leaf containing Split Right, Split Down, Swap, and Close icons.
+""", .disabled("not yet implemented"))
+    func ipad_3_1() async throws { }
+
+    @Test("""
+@spec IPAD-3.2: When the soft keyboard becomes visible, the application shall hide the `FocusedPaneToolbar` and yield its position to the terminal control bar.
+""", .disabled("not yet implemented"))
+    func ipad_3_2() async throws { }
+
+    @Test("""
+@spec IPAD-3.3: When the user taps Split Right or Split Down in the toolbar, the application shall send a `pane_control` RPC with `type: "split"`, `target` set to the focused leaf's `sessionName`, and `direction` set to `"horizontal"` or `"vertical"` respectively.
+""", .disabled("not yet implemented"))
+    func ipad_3_3() async throws { }
+
+    @Test("""
+@spec IPAD-3.4: When the user taps Close in the toolbar, the application shall send a `pane_control` RPC with `type: "close"` and `target` set to the focused leaf's `sessionName`.
+""", .disabled("not yet implemented"))
+    func ipad_3_4() async throws { }
+
+    @Test("""
+@spec IPAD-3.5: When the user taps Swap in the toolbar, the application shall send a `pane_control` RPC with `type: "swap"`, `source` set to the focused leaf's `sessionName`, and `target` set to the previously-focused leaf's `sessionName`.
+""", .disabled("not yet implemented"))
+    func ipad_3_5() async throws { }
+
+    @Test("""
+@spec IPAD-3.6: When a `pane_control` RPC returns `409 Conflict`, the application shall not present an error toast and shall rely on the next `panes_state` snapshot to reflect actual server state.
+""", .disabled("not yet implemented"))
+    func ipad_3_6() async throws { }
 }
