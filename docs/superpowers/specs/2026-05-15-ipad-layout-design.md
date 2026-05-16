@@ -246,7 +246,6 @@ Mirroring desktop's `MEM-1.x` LRU but for terminal *channels* on iPad: cap concu
 
 ### 7.2 Amendments
 
-- **`IOS-8.3`** — Rewrite to: "When the `terminal_control` capability is granted via the WebRTC pairing flow (REMOTE-1.x), the application shall initiate pane lifecycle operations only through the `pane_control` channel (REMOTE-7.x). The application shall not invent any other path for initiating pane lifecycle operations on the host."
 - **`IOS-5.x`** — Reframe as compact-width-only. New `IPAD-2.x` covers iPad regular-width multi-pane.
 - **`IOS-7.x`** — Extend with Noise re-establish on foreground. Add language: "When the application foregrounds and the biometric gate is satisfied, the application shall rebuild the `RemoteHostConnection` from signaling onward, completing a fresh Noise handshake per REMOTE-2.1, before re-opening any `terminal` channel."
 - **`IOS-4.x`** — Soften to "during the WebRTC connection-establish window" for the cold-load HTTPS metadata path; `panes_state` is authoritative once subscribed.
@@ -254,6 +253,7 @@ Mirroring desktop's `MEM-1.x` LRU but for terminal *channels* on iPad: cap concu
 ### 7.3 Superseded
 
 - Any rule referencing `/ws` or `WebSocketClient` for terminal attach — replaced by `terminal` channel references. Actual deletion of `WebSocketClient` lands in M2 with WebRTC Phase 2 adoption.
+- **`IOS-8.3`** — Removed. The non-goal ("shall not initiate pane lifecycle operations") is fundamentally inverted by this work; the positive behavior is fully expressed by `IPAD-3.3` / `IPAD-3.4` / `IPAD-3.5` (toolbar → `pane_control` RPC) and `REMOTE-7.1` (capability gate). No replacement IOS-* spec is added.
 
 ## 8. Implementation milestones
 
@@ -264,7 +264,7 @@ The bundle is a serial 9-PR sequence. Each milestone is independently shippable 
 | M1 | WebRTC Phase 2 foundation | Peer connection, signaling endpoint, ICE, Noise handshake, channel framing layer. No channels wired. | REMOTE-2.x |
 | M2 | `terminal` channel + retire `/ws` | Move existing `SessionClient` onto a `terminal` channel; delete `WebSocketClient`. iPhone fullscreen pane keeps working through the new transport. | REMOTE-5.x, IOS-4.x amend |
 | M3 | `panes_state` channel | Subscription channel, server pushes snapshots, `WorktreePanesStore` decodes. Sidebar refresh becomes live without iPad UI changes yet. | REMOTE-6.x |
-| M4 | `pane_control` channel | RPC frames, server handlers, capability gate. No UI surfaces yet. | REMOTE-7.x, IOS-8.3 amend |
+| M4 | `pane_control` channel | RPC frames, server handlers, capability gate. No UI surfaces yet. | REMOTE-7.x |
 | M5 | `RootView` size-class router + iPad sidebar | `NavigationSplitView`, host header, extracted `WorktreeListContent`. Detail still single-pane. | IPAD-1.x, IPAD-6.x |
 | M6 | `MultiPaneDetailView` read-only | Recursive splittree render, per-leaf width policy, focus ring. No lifecycle UI yet. | IPAD-2.x |
 | M7 | Focused-pane toolbar + lifecycle UI | Toolbar overlay, split/close/swap gestures wired to `PaneControlClient`. Drag-divider resize. | IPAD-3.x |
