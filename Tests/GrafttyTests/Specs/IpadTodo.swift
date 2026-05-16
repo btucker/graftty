@@ -112,4 +112,24 @@ struct IpadTodo {
 @spec IPAD-4.4: When a leaf is closed (via `pane_control: close` or removed from a `panes_state` snapshot), the application shall close its `terminal` channel and drop it from the LRU budget.
 """, .disabled("not yet implemented"))
     func ipad_4_4() async throws { }
+
+    @Test("""
+@spec IPAD-5.1: When the application enters the background, the application shall close all `terminal` channels, close the `panes_state` channel, close the DataChannel, and tear down the `RemoteHostConnection`.
+""", .disabled("not yet implemented"))
+    func ipad_5_1() async throws { }
+
+    @Test("""
+@spec IPAD-5.2: When the application foregrounds and the biometric gate is satisfied, the application shall rebuild the `RemoteHostConnection` from signaling onward, completing a fresh Noise handshake before opening any channel.
+""", .disabled("not yet implemented"))
+    func ipad_5_2() async throws { }
+
+    @Test("""
+@spec IPAD-5.3: When the application foregrounds, the application shall re-open the `panes_state` channel before re-opening any `terminal` channel, so the splittree shape is current before deciding which leaves to attach.
+""", .disabled("not yet implemented"))
+    func ipad_5_3() async throws { }
+
+    @Test("""
+@spec IPAD-5.4: When a previously-focused leaf is no longer present in the foreground-fresh `panes_state` snapshot, the application shall surface a "Pane no longer running" banner on the detail column with a "Back to sidebar" action.
+""", .disabled("not yet implemented"))
+    func ipad_5_4() async throws { }
 }
