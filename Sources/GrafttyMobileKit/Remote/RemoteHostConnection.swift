@@ -117,6 +117,10 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     }
 
     /// See `WebRTCHostAgent.waitForIceGatheringComplete` for the rationale.
+    /// A 5-second timeout falls through with whatever candidates were gathered.
+    /// On the iOS simulator, gathering can stay in `.gathering` indefinitely
+    /// when the SDK can't see real network interfaces — the timeout keeps the
+    /// offer flow making progress instead of hanging.
     private func waitForIceGatheringComplete(_ pc: RTCPeerConnection) async {
         if pc.iceGatheringState == .complete { return }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
@@ -130,6 +134,11 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             // nothing when the continuation is already nil.
             if pc.iceGatheringState == .complete {
                 self.handleIceGatheringComplete()
+                return
+            }
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(5))
+                await self?.handleIceGatheringComplete()
             }
         }
     }

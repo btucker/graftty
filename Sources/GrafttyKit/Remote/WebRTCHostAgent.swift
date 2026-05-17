@@ -103,6 +103,15 @@ public actor WebRTCHostAgent {
             }
             if pc.iceGatheringState == .complete {
                 self.handleIceGatheringComplete()
+                return
+            }
+            // 5-second timeout — falls through with whatever candidates were
+            // gathered. iOS simulator can stay in `.gathering` indefinitely
+            // when the SDK can't see real network interfaces; without this,
+            // the answer flow hangs forever.
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(5))
+                await self?.handleIceGatheringComplete()
             }
         }
     }

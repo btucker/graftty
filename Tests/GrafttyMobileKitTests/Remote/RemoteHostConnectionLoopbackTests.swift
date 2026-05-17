@@ -125,6 +125,13 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
             }
             if pc.iceGatheringState == .complete {
                 handleIceGatheringComplete()
+                return
+            }
+            // 5-second timeout — iOS simulator's WebRTC can't see real
+            // interfaces and stays in `.gathering` forever otherwise.
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(5))
+                await self?.handleIceGatheringComplete()
             }
         }
     }
