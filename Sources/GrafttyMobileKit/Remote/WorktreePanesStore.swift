@@ -8,7 +8,14 @@ import GrafttyProtocol
 /// sidebar can read.
 public actor WorktreePanesStore {
 
+    public enum ConnectionState: Sendable, Equatable {
+        case idle
+        case subscribed
+        case closed(reason: String)
+    }
+
     public private(set) var current: [WorktreePanes] = []
+    public private(set) var connectionState: ConnectionState = .idle
 
     private let router: ChannelRouter
     private var channelID: ChannelID?
@@ -20,21 +27,33 @@ public actor WorktreePanesStore {
     /// Open the `panes_state` channel. Returns when the initial open
     /// frame has been sent — snapshot frames arrive asynchronously.
     public func subscribe() async throws {
-        let handler = SubscriberHandler { [weak self] snapshot in
-            await self?.applySnapshot(snapshot)
-        }
+        let handler = SubscriberHandler(
+            onSnapshot: { [weak self] snapshot in
+                await self?.applySnapshot(snapshot)
+            },
+            onClosed: { [weak self] reason in
+                await self?.markClosed(reason: reason)
+            }
+        )
         let id = try await router.open(type: "panes_state", handler: handler)
         self.channelID = id
+        self.connectionState = .subscribed
     }
 
     public func unsubscribe() async {
         guard let id = channelID else { return }
         channelID = nil
+        connectionState = .closed(reason: "unsubscribed")
         try? await router.close(id)
     }
 
     private func applySnapshot(_ snapshot: [WorktreePanes]) {
         self.current = snapshot
+    }
+
+    private func markClosed(reason: String) {
+        self.connectionState = .closed(reason: reason)
+        self.channelID = nil
     }
 }
 
@@ -45,9 +64,14 @@ private actor SubscriberHandler: ChannelHandler {
     nonisolated let channelType = "panes_state"
 
     private let onSnapshot: @Sendable ([WorktreePanes]) async -> Void
+    private let onClosed: @Sendable (String) async -> Void
 
-    init(onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void) {
+    init(
+        onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
+        onClosed: @escaping @Sendable (String) async -> Void
+    ) {
         self.onSnapshot = onSnapshot
+        self.onClosed = onClosed
     }
 
     func onOpen(_ id: ChannelID, outbox: ChannelOutbox) async {
@@ -67,7 +91,12 @@ private actor SubscriberHandler: ChannelHandler {
         }
     }
 
-    func onClose() async {}
-    func onError(_ code: String, message: String) async {}
+    func onClose() async {
+        await onClosed("channel-closed")
+    }
+
+    func onError(_ code: String, message: String) async {
+        await onClosed("\(code): \(message)")
+    }
 }
 #endif

@@ -58,6 +58,33 @@ struct WorktreePanesStoreTests {
         try await pollUntil(timeout: .seconds(2)) { await panes.cancelled }
     }
 
+    @Test
+    func channelCloseUpdatesConnectionState() async throws {
+        let pair = FakePair()
+        let mobileRouter = ChannelRouter(transport: pair.aliceSide)
+        let serverRouter = ChannelRouter(transport: pair.bobSide)
+        await mobileRouter.start()
+        await serverRouter.start()
+
+        let initial = makeWorktrees(count: 0)
+        let panes = PassThroughPanesSource(initial: initial)
+        await serverRouter.register(type: "panes_state") {
+            ServerSidePushHandler(source: panes)
+        }
+
+        let store = WorktreePanesStore(router: mobileRouter)
+        try await store.subscribe()
+        try await pollUntil(timeout: .seconds(2)) {
+            await store.connectionState == .subscribed
+        }
+
+        await store.unsubscribe()
+        try await pollUntil(timeout: .seconds(2)) {
+            if case .closed = await store.connectionState { return true }
+            return false
+        }
+    }
+
     private func makeWorktrees(count: Int) -> [WorktreePanes] {
         (0..<count).map { idx in
             WorktreePanes(
