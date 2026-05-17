@@ -64,20 +64,30 @@ public enum ChannelFrameCoder {
             throw DecodeError.payloadLengthMismatch
         }
         let payload = data[cursor..<(cursor + Int(payloadLength))]
-        let decoder = JSONDecoder()
         switch frameType {
         case .open:
-            let m = try decoder.decode(ChannelOpen.self, from: Data(metadataJSON))
+            let m = try Self.decodeMetadata(ChannelOpen.self, from: Data(metadataJSON))
             return .open(m)
         case .close:
-            let m = try decoder.decode(ChannelClose.self, from: Data(metadataJSON))
+            let m = try Self.decodeMetadata(ChannelClose.self, from: Data(metadataJSON))
             return .close(m)
         case .payload:
-            let m = try decoder.decode(ChannelPayload.self, from: Data(metadataJSON))
+            let m = try Self.decodeMetadata(ChannelPayload.self, from: Data(metadataJSON))
             return .payload(m, Data(payload))
         case .error:
-            let m = try decoder.decode(ChannelError.self, from: Data(metadataJSON))
+            let m = try Self.decodeMetadata(ChannelError.self, from: Data(metadataJSON))
             return .error(m)
+        }
+    }
+
+    private static func decodeMetadata<T: Decodable>(
+        _ type: T.Type,
+        from data: Data
+    ) throws -> T {
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch let error as DecodingError {
+            throw DecodeError.malformedJSON(String(describing: error))
         }
     }
 

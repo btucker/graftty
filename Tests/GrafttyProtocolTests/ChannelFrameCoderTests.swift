@@ -80,4 +80,23 @@ struct ChannelFrameCoderTests {
             try ChannelFrameCoder.decode(bytes)
         }
     }
+
+    @Test
+    func decodeMalformedJSONMetadataThrowsMalformedJSON() throws {
+        // type=open (0x01), metadataLength=4, metadata="bogu" (not valid JSON),
+        // payloadLength=0
+        var bytes = Data([0x01])
+        bytes.append(contentsOf: [0x04, 0x00, 0x00, 0x00]) // metadata length = 4
+        bytes.append(Data("bogu".utf8))                     // 4 bytes of bad JSON
+        bytes.append(contentsOf: [0x00, 0x00, 0x00, 0x00]) // payload length = 0
+        do {
+            _ = try ChannelFrameCoder.decode(bytes)
+            Issue.record("expected throw")
+        } catch let error as ChannelFrameCoder.DecodeError {
+            guard case .malformedJSON = error else {
+                Issue.record("expected .malformedJSON, got \(error)")
+                return
+            }
+        }
+    }
 }
