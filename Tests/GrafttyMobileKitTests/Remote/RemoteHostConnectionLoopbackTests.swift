@@ -108,7 +108,34 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
                 if let error { continuation.resume(throwing: error) } else { continuation.resume() }
             }
         }
-        return answer
+        // Wait for ICE gathering to complete so the answer SDP includes
+        // every `a=candidate:` line — mirrors WebRTCHostAgent.acceptOffer.
+        // Without this, the client's connection has no remote candidates
+        // and the data channel never opens, hanging the test forever.
+        await waitForIceGatheringComplete(pc)
+        return pc.localDescription ?? answer
+    }
+
+    private func waitForIceGatheringComplete(_ pc: RTCPeerConnection) async {
+        if pc.iceGatheringState == .complete { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            self.gatheringContinuation = continuation
+            delegate.onIceGatheringComplete = { [weak self] in
+                Task { await self?.handleIceGatheringComplete() }
+            }
+            if pc.iceGatheringState == .complete {
+                handleIceGatheringComplete()
+            }
+        }
+    }
+
+    private var gatheringContinuation: CheckedContinuation<Void, Never>?
+
+    private func handleIceGatheringComplete() {
+        let pending = gatheringContinuation
+        gatheringContinuation = nil
+        delegate.onIceGatheringComplete = nil
+        pending?.resume()
     }
 
     func send(_ data: Data) async throws {
@@ -154,15 +181,20 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
     }
 }
 
-private final class AnswererDelegate: NSObject, RTCPeerConnectionDelegate {
+private final class AnswererDelegate: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
     nonisolated(unsafe) var onIceCandidate: (@Sendable (RTCIceCandidate) -> Void)?
     nonisolated(unsafe) var onDataChannel: (@Sendable (RTCDataChannel) -> Void)?
+    nonisolated(unsafe) var onIceGatheringComplete: (@Sendable () -> Void)?
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
+        if newState == .complete {
+            onIceGatheringComplete?()
+        }
+    }
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
         onIceCandidate?(candidate)
     }
@@ -172,7 +204,7 @@ private final class AnswererDelegate: NSObject, RTCPeerConnectionDelegate {
     }
 }
 
-private final class AnswererDataChannelDelegate: NSObject, RTCDataChannelDelegate {
+private final class AnswererDataChannelDelegate: NSObject, RTCDataChannelDelegate, @unchecked Sendable {
     nonisolated(unsafe) var onMessage: (@Sendable (Data) -> Void)?
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {}
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
