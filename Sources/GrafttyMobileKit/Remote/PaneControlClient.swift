@@ -59,13 +59,17 @@ public actor PaneControlClient {
         let body = try JSONEncoder().encode(request)
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<PaneControlResponse, Error>) in
             self.pendingResponse = continuation
-            Task {
+            // `Task.detached` rather than `Task {}`: an inherited-isolation
+            // Task ties the send-loop to this actor's executor, which
+            // collides with the response-flow re-entry that needs to call
+            // `deliverResponse` on the same actor while it's still suspended
+            // on this continuation. Detaching the send-loop runs it on the
+            // global executor so the actor is free to receive the response.
+            Task.detached { [outbox, channelID, body, weak self] in
                 do {
                     try await outbox.send(.payload(ChannelPayload(id: channelID), body))
                 } catch {
-                    let c = pendingResponse
-                    pendingResponse = nil
-                    c?.resume(throwing: error)
+                    await self?.failPendingResponse(error)
                 }
             }
         }
@@ -75,6 +79,12 @@ public actor PaneControlClient {
         let c = pendingResponse
         pendingResponse = nil
         c?.resume(returning: response)
+    }
+
+    private func failPendingResponse(_ error: Error) {
+        let c = pendingResponse
+        pendingResponse = nil
+        c?.resume(throwing: error)
     }
 
     func captureOutbox(_ outbox: ChannelOutbox) {
