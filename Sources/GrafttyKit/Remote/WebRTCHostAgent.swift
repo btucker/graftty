@@ -31,6 +31,10 @@ public actor WebRTCHostAgent {
     /// re-check can converge through a single actor-isolated handler — the
     /// two paths can't race into a double-resume.
     private var iceGatheringContinuation: CheckedContinuation<Void, Never>?
+    private var iceGatheringTimeoutTask: Task<Void, Never>?
+
+    /// See `RemoteHostConnection.iceGatheringTimeout`.
+    private static let iceGatheringTimeout: Duration = .seconds(5)
 
     /// Most-recently received binary frame. Test-only entry point —
     /// production replaces this with channel-framing dispatch in M1.4.
@@ -105,12 +109,12 @@ public actor WebRTCHostAgent {
                 self.handleIceGatheringComplete()
                 return
             }
-            // 5-second timeout — falls through with whatever candidates were
+            // Timeout falls through with whatever candidates were
             // gathered. iOS simulator can stay in `.gathering` indefinitely
             // when the SDK can't see real network interfaces; without this,
             // the answer flow hangs forever.
-            Task { [weak self] in
-                try? await Task.sleep(for: .seconds(5))
+            self.iceGatheringTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(for: Self.iceGatheringTimeout)
                 await self?.handleIceGatheringComplete()
             }
         }
@@ -120,6 +124,8 @@ public actor WebRTCHostAgent {
         let pending = iceGatheringContinuation
         iceGatheringContinuation = nil
         delegate.onIceGatheringComplete = nil
+        iceGatheringTimeoutTask?.cancel()
+        iceGatheringTimeoutTask = nil
         pending?.resume()
     }
 

@@ -52,6 +52,13 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// Stored on the actor so the delegate's callback can hop back into
     /// actor-isolated context for a safe single-resume.
     private var iceGatheringContinuation: CheckedContinuation<Void, Never>?
+    private var iceGatheringTimeoutTask: Task<Void, Never>?
+
+    /// Bound on how long `waitForIceGatheringComplete` will block when the
+    /// SDK never emits `.complete` (iOS simulator, locked-down networks).
+    /// Real LAN gathering completes in <100ms, so this only fires in
+    /// degenerate environments.
+    private static let iceGatheringTimeout: Duration = .seconds(5)
 
     /// Most-recently received binary frame. Test-only entry point —
     /// production code routes through the channel-framing layer
@@ -136,8 +143,8 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
                 self.handleIceGatheringComplete()
                 return
             }
-            Task { [weak self] in
-                try? await Task.sleep(for: .seconds(5))
+            self.iceGatheringTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(for: Self.iceGatheringTimeout)
                 await self?.handleIceGatheringComplete()
             }
         }
@@ -147,6 +154,8 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         let pending = iceGatheringContinuation
         iceGatheringContinuation = nil
         delegate.onIceGatheringComplete = nil
+        iceGatheringTimeoutTask?.cancel()
+        iceGatheringTimeoutTask = nil
         pending?.resume()
     }
 

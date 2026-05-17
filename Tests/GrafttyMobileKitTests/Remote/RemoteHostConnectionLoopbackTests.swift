@@ -127,21 +127,25 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
                 handleIceGatheringComplete()
                 return
             }
-            // 5-second timeout — iOS simulator's WebRTC can't see real
-            // interfaces and stays in `.gathering` forever otherwise.
-            Task { [weak self] in
-                try? await Task.sleep(for: .seconds(5))
+            // iOS simulator's WebRTC can't see real interfaces and stays
+            // in `.gathering` forever otherwise.
+            self.gatheringTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(for: Self.gatheringTimeout)
                 await self?.handleIceGatheringComplete()
             }
         }
     }
 
+    private static let gatheringTimeout: Duration = .seconds(5)
     private var gatheringContinuation: CheckedContinuation<Void, Never>?
+    private var gatheringTimeoutTask: Task<Void, Never>?
 
     private func handleIceGatheringComplete() {
         let pending = gatheringContinuation
         gatheringContinuation = nil
         delegate.onIceGatheringComplete = nil
+        gatheringTimeoutTask?.cancel()
+        gatheringTimeoutTask = nil
         pending?.resume()
     }
 
@@ -171,6 +175,13 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
     }
 
     func close() {
+        if let pending = gatheringContinuation {
+            gatheringContinuation = nil
+            delegate.onIceGatheringComplete = nil
+            gatheringTimeoutTask?.cancel()
+            gatheringTimeoutTask = nil
+            pending.resume()
+        }
         dataChannel?.close()
         peerConnection?.close()
     }
