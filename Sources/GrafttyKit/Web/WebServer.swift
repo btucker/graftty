@@ -143,6 +143,13 @@ public final class WebServer {
         case internalFailure(String)               // 500
     }
 
+    public enum SignalingHandlerOutcome: Sendable {
+        case success(SignalingAnswer)
+        case invalid(String)        // 400 — malformed offer
+        case unavailable(String)    // 503 — handler not wired
+        case internalFailure(String) // 500
+    }
+
     public struct Config {
         public let port: Int
         public let zmxExecutable: URL
@@ -180,6 +187,12 @@ public final class WebServer {
         /// faithful pane layout inside each. Default returns an empty
         /// list.
         public let worktreePanesProvider: @Sendable () async -> [WorktreePanes]
+        /// Drives `POST /v1/rtc/offer`. Receives the client's
+        /// `SignalingOffer` and returns either a `SignalingAnswer` (success)
+        /// or a `SignalingError` (failure). Nil disables the endpoint with
+        /// a 503 response — matching the existing `worktreeCreator` shape
+        /// so a client can distinguish "not supported yet" from "wrong URL".
+        public let signalingHandler: (@Sendable (SignalingOffer) async -> SignalingHandlerOutcome)?
 
         public init(
             port: Int,
@@ -191,7 +204,8 @@ public final class WebServer {
             worktreeCreator: (@Sendable (CreateWorktreeRequest) async -> CreateWorktreeOutcome)? = nil,
             worktreeRemover: (@Sendable (DeleteWorktreeRequest) async -> DeleteWorktreeOutcome)? = nil,
             ghosttyConfigProvider: @escaping @Sendable () async -> String = { "" },
-            worktreePanesProvider: @escaping @Sendable () async -> [WorktreePanes] = { [] }
+            worktreePanesProvider: @escaping @Sendable () async -> [WorktreePanes] = { [] },
+            signalingHandler: (@Sendable (SignalingOffer) async -> SignalingHandlerOutcome)? = nil
         ) {
             self.port = port
             self.zmxExecutable = zmxExecutable
@@ -203,6 +217,7 @@ public final class WebServer {
             self.worktreeRemover = worktreeRemover
             self.ghosttyConfigProvider = ghosttyConfigProvider
             self.worktreePanesProvider = worktreePanesProvider
+            self.signalingHandler = signalingHandler
         }
 
         /// Accepts the range NIO's `bootstrap.bind(host:port:)` will accept
