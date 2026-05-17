@@ -93,9 +93,12 @@ public actor ChannelRouter {
     }
 
     public func close(_ id: ChannelID) async throws {
-        guard let handler = handlersByID.removeValue(forKey: id) else { return }
-        await handler.onClose()
+        guard handlersByID[id] != nil else { return }
         try await sendFrame(.close(ChannelClose(id: id)))
+        // Send succeeded — remove and notify atomically from the remote's
+        // perspective.
+        let handler = handlersByID.removeValue(forKey: id)
+        await handler?.onClose()
     }
 
     private func sendFrame(_ frame: ChannelFrame) async throws {
