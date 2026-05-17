@@ -594,6 +594,23 @@ public final class WebServer {
                 handleCreateWorktree(context: context, body: body)
                 return
             }
+            // POST /v1/rtc/offer — WebRTC signaling exchange (M1.2).
+            // The handler runs the SDP offer through `WebRTCHostAgent`
+            // (or any test fake) and returns either a SignalingAnswer or
+            // a SignalingError. POST-only; other verbs get 405 so
+            // caching proxies and curl probes don't surprise the client.
+            if path == "/v1/rtc/offer" {
+                guard head.method == .POST else {
+                    Self.respondJSON(
+                        context: context,
+                        status: .methodNotAllowed,
+                        error: "only POST is supported"
+                    )
+                    return
+                }
+                handleSignalingOffer(context: context, body: body)
+                return
+            }
             // WEB-7.8 / WEB-7.9 / WEB-7.10: delete or dismiss a worktree.
             // POST-only; body is the same JSON envelope the iOS client
             // sends. Other verbs get 405 so caching proxies and curl
@@ -793,6 +810,62 @@ public final class WebServer {
             }
             Task {
                 promise.succeed(await remover(decoded))
+            }
+        }
+
+        /// Decode the JSON body as a `SignalingOffer`, invoke the
+        /// injected `signalingHandler`, and map the outcome to an HTTP
+        /// status + JSON envelope. Mirrors `handleCreateWorktree`.
+        private func handleSignalingOffer(context: ChannelHandlerContext, body: Data) {
+            guard let handler = config.signalingHandler else {
+                Self.respondJSON(
+                    context: context,
+                    status: .serviceUnavailable,
+                    error: "signaling endpoint not available"
+                )
+                return
+            }
+            let offer: SignalingOffer
+            do {
+                offer = try JSONDecoder().decode(SignalingOffer.self, from: body)
+            } catch {
+                Self.respondJSON(
+                    context: context,
+                    status: .badRequest,
+                    error: "malformed signaling offer: \(error.localizedDescription)"
+                )
+                return
+            }
+            let promise = context.eventLoop.makePromise(of: WebServer.SignalingHandlerOutcome.self)
+            promise.futureResult.whenComplete { result in
+                let outcome = (try? result.get()) ?? .internalFailure("handler dispatch failed")
+                switch outcome {
+                case .success(let answer):
+                    do {
+                        let data = try JSONEncoder().encode(answer)
+                        Self.respond(
+                            context: context,
+                            status: .ok,
+                            body: data,
+                            contentType: "application/json; charset=utf-8"
+                        )
+                    } catch {
+                        Self.respondJSON(
+                            context: context,
+                            status: .internalServerError,
+                            error: "encoding error"
+                        )
+                    }
+                case .invalid(let msg):
+                    Self.respondJSON(context: context, status: .badRequest, error: msg)
+                case .unavailable(let msg):
+                    Self.respondJSON(context: context, status: .serviceUnavailable, error: msg)
+                case .internalFailure(let msg):
+                    Self.respondJSON(context: context, status: .internalServerError, error: msg)
+                }
+            }
+            Task {
+                promise.succeed(await handler(offer))
             }
         }
 
