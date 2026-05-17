@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Testing
 import GrafttyProtocol
 @testable import GrafttyKit
@@ -59,8 +60,8 @@ struct PanesStateHandlerTests {
         try await pollUntil(timeout: .seconds(2)) { await outboxSpy.framesCount == 1 }
 
         await handler.onClose()
-        try await pollUntil(timeout: .seconds(2)) { await subscription.cancelled }
-        #expect(await subscription.cancelled)
+        try await pollUntil(timeout: .seconds(5)) { subscription.cancelled }
+        #expect(subscription.cancelled)
     }
 
     private func makeWorktrees(count: Int) -> [WorktreePanes] {
@@ -81,36 +82,38 @@ struct PanesStateHandlerTests {
     }
 }
 
-private actor FakeSubscription {
-    private(set) var cancelled = false
-    private var onChange: (@Sendable ([WorktreePanes]) async -> Void)?
+private final class FakeSubscription: @unchecked Sendable {
+    private let state = OSAllocatedUnfairLock(initialState: (
+        cancelled: false,
+        onChange: Optional<@Sendable ([WorktreePanes]) async -> Void>.none
+    ))
     private let initialSnapshot: [WorktreePanes]
+
+    var cancelled: Bool {
+        state.withLock { $0.cancelled }
+    }
 
     init(initialSnapshot: [WorktreePanes]) {
         self.initialSnapshot = initialSnapshot
     }
 
-    nonisolated func subscribe(
+    func subscribe(
         _ onChange: @escaping @Sendable ([WorktreePanes]) async -> Void
     ) async -> PanesStateHandler.Cancellable {
-        await register(onChange)
-        let initial = initialSnapshot
-        await onChange(initial)
+        state.withLock { $0.onChange = onChange }
+        await onChange(initialSnapshot)
         return PanesStateHandler.Cancellable { [weak self] in
-            Task { await self?.markCancelled() }
+            self?.markCancelled()
         }
     }
 
-    private func register(_ callback: @escaping @Sendable ([WorktreePanes]) async -> Void) {
-        self.onChange = callback
-    }
-
     func fire(_ snapshot: [WorktreePanes]) async {
-        await onChange?(snapshot)
+        let cb = state.withLock { $0.onChange }
+        await cb?(snapshot)
     }
 
-    func markCancelled() {
-        cancelled = true
+    private func markCancelled() {
+        state.withLock { $0.cancelled = true }
     }
 }
 

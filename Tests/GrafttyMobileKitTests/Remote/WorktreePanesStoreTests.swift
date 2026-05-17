@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import Foundation
+import os
 import Testing
 import GrafttyProtocol
 @testable import GrafttyMobileKit
@@ -55,7 +56,7 @@ struct WorktreePanesStoreTests {
         }
 
         await store.unsubscribe()
-        try await pollUntil(timeout: .seconds(2)) { await panes.cancelled }
+        try await pollUntil(timeout: .seconds(5)) { panes.cancelled }
     }
 
     @Test
@@ -105,26 +106,33 @@ struct WorktreePanesStoreTests {
 
 /// Server-side mock that sends the initial snapshot on open, then any
 /// snapshot the test pushes via `fire(_:)`.
-private actor PassThroughPanesSource {
-    private(set) var cancelled = false
-    private var emit: (@Sendable ([WorktreePanes]) async -> Void)?
+private final class PassThroughPanesSource: @unchecked Sendable {
+    private let state = OSAllocatedUnfairLock(initialState: (
+        cancelled: false,
+        emit: Optional<@Sendable ([WorktreePanes]) async -> Void>.none
+    ))
     private let initial: [WorktreePanes]
+
+    var cancelled: Bool {
+        state.withLock { $0.cancelled }
+    }
 
     init(initial: [WorktreePanes]) {
         self.initial = initial
     }
 
     func register(_ emit: @escaping @Sendable ([WorktreePanes]) async -> Void) async {
-        self.emit = emit
+        state.withLock { $0.emit = emit }
         await emit(initial)
     }
 
     func fire(_ snapshot: [WorktreePanes]) async {
-        await emit?(snapshot)
+        let cb = state.withLock { $0.emit }
+        await cb?(snapshot)
     }
 
     func markCancelled() {
-        cancelled = true
+        state.withLock { $0.cancelled = true }
     }
 }
 
@@ -146,10 +154,10 @@ private actor ServerSidePushHandler: ChannelHandler {
 
     func onPayload(_ data: Data) async {}
     func onClose() async {
-        await source.markCancelled()
+        source.markCancelled()
     }
     func onError(_ code: String, message: String) async {
-        await source.markCancelled()
+        source.markCancelled()
     }
 }
 
