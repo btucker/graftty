@@ -74,7 +74,28 @@ public actor WebRTCHostAgent {
             }
         }
         try await Self.setLocalDescription(pc, answer)
-        return answer
+        await waitForIceGatheringComplete(pc)
+        // After gathering completes, `pc.localDescription` has the full
+        // SDP with `a=candidate:` lines included.
+        return pc.localDescription ?? answer
+    }
+
+    /// Block until the peer connection's ICE gathering reaches `.complete`.
+    /// Required for non-trickle ICE: only after gathering completes does the
+    /// local SDP include every `a=candidate:` line the remote peer needs.
+    /// Returns immediately if gathering is already complete.
+    private func waitForIceGatheringComplete(_ pc: RTCPeerConnection) async {
+        if pc.iceGatheringState == .complete { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            delegate.onIceGatheringComplete = {
+                continuation.resume()
+            }
+            if pc.iceGatheringState == .complete {
+                delegate.onIceGatheringComplete = nil
+                continuation.resume()
+            }
+        }
+        delegate.onIceGatheringComplete = nil
     }
 
     /// Send a binary frame back to the client. Test-only entry point.
@@ -174,7 +195,12 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate 
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
+    nonisolated(unsafe) var onIceGatheringComplete: (@Sendable () -> Void)?
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
+        if newState == .complete {
+            onIceGatheringComplete?()
+        }
+    }
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
         onIceCandidate?(candidate)
     }
