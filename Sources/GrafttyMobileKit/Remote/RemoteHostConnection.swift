@@ -107,7 +107,23 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             }
         }
         try await Self.setLocalDescription(pc, offer)
-        return offer
+        await waitForIceGatheringComplete(pc)
+        return pc.localDescription ?? offer
+    }
+
+    /// See `WebRTCHostAgent.waitForIceGatheringComplete` for the rationale.
+    private func waitForIceGatheringComplete(_ pc: RTCPeerConnection) async {
+        if pc.iceGatheringState == .complete { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            delegate.onIceGatheringComplete = {
+                continuation.resume()
+            }
+            if pc.iceGatheringState == .complete {
+                delegate.onIceGatheringComplete = nil
+                continuation.resume()
+            }
+        }
+        delegate.onIceGatheringComplete = nil
     }
 
     /// Apply the answer received from the remote host and return when
@@ -259,7 +275,12 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate,
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
+    nonisolated(unsafe) var onIceGatheringComplete: (@Sendable () -> Void)?
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
+        if newState == .complete {
+            onIceGatheringComplete?()
+        }
+    }
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
         onIceCandidate?(candidate)
     }
