@@ -37,6 +37,32 @@ struct PaneControlClientTests {
         #expect(response == .error(code: "conflict", message: "concurrent split rejected"))
     }
 
+    @Test
+    func channelCloseDuringInFlightRPCReturnsError() async throws {
+        // Mutator hangs forever so the RPC never gets a normal reply.
+        // Then we manually close the channel via the router and verify
+        // the in-flight `split` call wakes up with a `channel-closed` error.
+        let blockingMutator: @Sendable (PaneControlRequest) async -> PaneControlResponse = { _ in
+            try? await Task.sleep(for: .seconds(60))
+            return .ok
+        }
+        let env = try await loopback(mutator: blockingMutator)
+        async let inflight = env.client.split(target: "session-a", direction: .horizontal)
+
+        // Give the open + outbound payload a moment to land.
+        try await Task.sleep(for: .milliseconds(100))
+
+        // Close from the client side — should produce a synthetic error.
+        await env.client.close()
+
+        let response = try await inflight
+        guard case .error(let code, _) = response else {
+            Issue.record("expected .error, got \(response)")
+            return
+        }
+        #expect(code == "channel-closed")
+    }
+
     private struct Env {
         let client: PaneControlClient
     }

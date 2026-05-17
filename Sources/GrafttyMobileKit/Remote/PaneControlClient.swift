@@ -114,7 +114,15 @@ private actor ResponseHandler: ChannelHandler {
         await onResponse(response)
     }
 
-    func onClose() async {}
-    func onError(_ code: String, message: String) async {}
+    func onClose() async {
+        await onResponse(.error(
+            code: "channel-closed",
+            message: "pane_control channel closed before response"
+        ))
+    }
+
+    func onError(_ code: String, message: String) async {
+        await onResponse(.error(code: code, message: message))
+    }
 }
 #endif
