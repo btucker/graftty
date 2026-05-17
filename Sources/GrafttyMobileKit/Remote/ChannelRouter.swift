@@ -123,6 +123,14 @@ public actor ChannelRouter {
         }
         switch frame {
         case .open(let m):
+            guard m.id != .reserved else {
+                try? await sendFrame(.error(ChannelError(
+                    id: m.id,
+                    code: "channel-id-reserved",
+                    message: "channel id 0 is reserved for the channel layer"
+                )))
+                return
+            }
             guard let factory = handlerFactoriesByType[m.type] else {
                 try? await sendFrame(.error(ChannelError(
                     id: m.id,
