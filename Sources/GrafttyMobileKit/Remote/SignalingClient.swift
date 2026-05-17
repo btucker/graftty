@@ -19,11 +19,19 @@ public struct SignalingClient: Sendable {
     public enum Error: Swift.Error, Equatable, Sendable {
         case http(status: Int, body: String)
         case decode(String)
+        /// `String` rather than `Swift.Error` so the enum stays
+        /// `Equatable` for test assertions and switch-case clarity.
+        /// The string carries `String(describing:)` of the underlying
+        /// error, which is sufficient for logging but not for typed
+        /// recovery — callers needing the original error must rebuild
+        /// from the message string.
         case transport(String)
     }
 
     public func exchange(baseURL: URL, offer: SignalingOffer) async throws -> SignalingAnswer {
-        let url = baseURL.appendingPathComponent("v1").appendingPathComponent("rtc").appendingPathComponent("offer")
+        guard let url = baseURL.appendingAPIPath("v1/rtc/offer") else {
+            throw Error.transport("could not construct offer URL from \(baseURL)")
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.addValue("application/json", forHTTPHeaderField: "Content-Type")

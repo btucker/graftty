@@ -53,11 +53,18 @@ struct SignalingClientTests {
             return (body, response)
         }
         let client = SignalingClient(transport: fake)
-        await #expect(throws: SignalingClient.Error.self) {
+        do {
             _ = try await client.exchange(
                 baseURL: URL(string: "https://example.local")!,
                 offer: SignalingOffer(clientDeviceID: "x", sdp: "")
             )
+            Issue.record("expected throw")
+        } catch let error as SignalingClient.Error {
+            guard case .http(let status, _) = error else {
+                Issue.record("expected .http, got \(error)")
+                return
+            }
+            #expect(status == 403)
         }
     }
 
@@ -74,11 +81,17 @@ struct SignalingClientTests {
             return (body, response)
         }
         let client = SignalingClient(transport: fake)
-        await #expect(throws: SignalingClient.Error.self) {
+        do {
             _ = try await client.exchange(
                 baseURL: URL(string: "https://example.local")!,
                 offer: SignalingOffer(clientDeviceID: "x", sdp: "")
             )
+            Issue.record("expected throw")
+        } catch let error as SignalingClient.Error {
+            guard case .decode = error else {
+                Issue.record("expected .decode, got \(error)")
+                return
+            }
         }
     }
 }

@@ -26,7 +26,10 @@ public actor WebRTCHostAgent {
     private let delegate: PeerConnectionDelegate
     private let dataChannelDelegate: DataChannelDelegate
 
-    /// See `RemoteHostConnection.iceGatheringContinuation` for the rationale.
+    /// Resumed once `iceGatheringState` first reaches `.complete`. Stored on
+    /// the actor so the WebRTC-thread delegate callback and the actor's
+    /// re-check can converge through a single actor-isolated handler — the
+    /// two paths can't race into a double-resume.
     private var iceGatheringContinuation: CheckedContinuation<Void, Never>?
 
     /// Most-recently received binary frame. Test-only entry point —
@@ -157,7 +160,11 @@ public actor WebRTCHostAgent {
         lastReceivedBinary = data
     }
 
-    /// See `RemoteHostConnection.initializeWebRTC` for rationale.
+    /// `RTCInitializeSSL` is process-wide and not refcounted in every SDK
+    /// build, so a per-instance `deinit { RTCCleanupSSL() }` would tear SSL
+    /// down for other live connections. A one-shot static token initialises
+    /// once and never cleans up; this matches what production iOS apps
+    /// using WebRTC.framework typically do.
     private static let _webRTCInitOnce: Void = { RTCInitializeSSL() }()
     private static func initializeWebRTC() { _ = _webRTCInitOnce }
 
@@ -204,7 +211,7 @@ public actor WebRTCHostAgent {
 /// See the matching comment in `RemoteHostConnection.swift` —
 /// WebRTC dispatches delegate calls serially per connection, so the
 /// unsafe is bounded; `@Sendable` keeps callers honest.
-private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate {
+private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
     nonisolated(unsafe) var onIceCandidate: (@Sendable (RTCIceCandidate) -> Void)?
     nonisolated(unsafe) var onDataChannel: (@Sendable (RTCDataChannel) -> Void)?
 
@@ -228,7 +235,7 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate 
     }
 }
 
-private final class DataChannelDelegate: NSObject, RTCDataChannelDelegate {
+private final class DataChannelDelegate: NSObject, RTCDataChannelDelegate, @unchecked Sendable {
     nonisolated(unsafe) var onOpen: (@Sendable () -> Void)?
     nonisolated(unsafe) var onMessage: (@Sendable (Data) -> Void)?
 

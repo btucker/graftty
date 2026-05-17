@@ -38,14 +38,9 @@ private struct TestWebServer {
 @Suite("POST /v1/rtc/offer — signaling route returns SignalingAnswer from injected handler.")
 struct SignalingRouteTests {
 
-    /// Skip in CI to match the established pattern in WebServerWorktreeEndpointTests.
-    private static var skipInCI: Bool {
-        ProcessInfo.processInfo.environment["CI"] != nil
-    }
-
     @Test
     func postOfferReturnsAnswerFromHandler() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
         let server = try await TestWebServer.start { offer in
             #expect(offer.clientDeviceID == "ios-device-abc")
             return .success(SignalingAnswer(sdp: "v=0\nm=application 9 UDP/DTLS/SCTP webrtc-datachannel\n"))
@@ -71,7 +66,7 @@ struct SignalingRouteTests {
 
     @Test
     func malformedOfferReturns400() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
         let server = try await TestWebServer.start { _ in
             .success(SignalingAnswer(sdp: ""))
         }
@@ -92,7 +87,7 @@ struct SignalingRouteTests {
 
     @Test
     func missingHandlerReturns503() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
         let server = try await TestWebServer.start(signalingHandler: nil)
         defer { server.stop() }
 
@@ -111,7 +106,7 @@ struct SignalingRouteTests {
 
     @Test
     func handlerReturningInvalidYields400() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
         let server = try await TestWebServer.start { _ in
             .invalid("offer references unknown device")
         }

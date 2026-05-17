@@ -188,10 +188,10 @@ public final class WebServer {
         /// list.
         public let worktreePanesProvider: @Sendable () async -> [WorktreePanes]
         /// Drives `POST /v1/rtc/offer`. Receives the client's
-        /// `SignalingOffer` and returns either a `SignalingAnswer` (success)
-        /// or a `SignalingError` (failure). Nil disables the endpoint with
-        /// a 503 response — matching the existing `worktreeCreator` shape
-        /// so a client can distinguish "not supported yet" from "wrong URL".
+        /// `SignalingOffer` and returns a `SignalingHandlerOutcome`. Nil
+        /// disables the endpoint with a 503 response — matching the
+        /// existing `worktreeCreator` shape so a client can distinguish
+        /// "not supported yet" from "wrong URL".
         public let signalingHandler: (@Sendable (SignalingOffer) async -> SignalingHandlerOutcome)?
 
         public init(
@@ -595,10 +595,8 @@ public final class WebServer {
                 return
             }
             // POST /v1/rtc/offer — WebRTC signaling exchange (M1.2).
-            // The handler runs the SDP offer through `WebRTCHostAgent`
-            // (or any test fake) and returns either a SignalingAnswer or
-            // a SignalingError. POST-only; other verbs get 405 so
-            // caching proxies and curl probes don't surprise the client.
+            // POST-only; other verbs get 405 so caching proxies and curl
+            // probes don't surprise the client.
             if path == "/v1/rtc/offer" {
                 guard head.method == .POST else {
                     Self.respondJSON(
