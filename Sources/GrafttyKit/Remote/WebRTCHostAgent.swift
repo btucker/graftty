@@ -26,6 +26,9 @@ public actor WebRTCHostAgent {
     private let delegate: PeerConnectionDelegate
     private let dataChannelDelegate: DataChannelDelegate
 
+    /// See `RemoteHostConnection.iceGatheringContinuation` for the rationale.
+    private var iceGatheringContinuation: CheckedContinuation<Void, Never>?
+
     /// Most-recently received binary frame. Test-only entry point —
     /// production replaces this with channel-framing dispatch in M1.4.
     /// `internal` so the in-target test can read it via `@testable import`.
@@ -84,18 +87,28 @@ public actor WebRTCHostAgent {
     /// Required for non-trickle ICE: only after gathering completes does the
     /// local SDP include every `a=candidate:` line the remote peer needs.
     /// Returns immediately if gathering is already complete.
+    ///
+    /// The continuation is stored on the actor and resumed via an
+    /// actor-isolated handler so the WebRTC-thread delegate callback and
+    /// the actor's re-check can't race into a double-resume.
     private func waitForIceGatheringComplete(_ pc: RTCPeerConnection) async {
         if pc.iceGatheringState == .complete { return }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            delegate.onIceGatheringComplete = {
-                continuation.resume()
+            self.iceGatheringContinuation = continuation
+            self.delegate.onIceGatheringComplete = { [weak self] in
+                Task { await self?.handleIceGatheringComplete() }
             }
             if pc.iceGatheringState == .complete {
-                delegate.onIceGatheringComplete = nil
-                continuation.resume()
+                self.handleIceGatheringComplete()
             }
         }
+    }
+
+    private func handleIceGatheringComplete() {
+        let pending = iceGatheringContinuation
+        iceGatheringContinuation = nil
         delegate.onIceGatheringComplete = nil
+        pending?.resume()
     }
 
     /// Send a binary frame back to the client. Test-only entry point.
@@ -110,6 +123,11 @@ public actor WebRTCHostAgent {
     }
 
     public func close() {
+        if let pending = iceGatheringContinuation {
+            iceGatheringContinuation = nil
+            delegate.onIceGatheringComplete = nil
+            pending.resume()
+        }
         dataChannel?.close()
         peerConnection?.close()
         dataChannel = nil

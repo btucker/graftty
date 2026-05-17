@@ -48,6 +48,11 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// `open`. Set during `connect`, resumed by `dataChannelDidChangeState`.
     private var openContinuation: CheckedContinuation<Void, Error>?
 
+    /// Continuation resumed when `iceGatheringState` first reaches `.complete`.
+    /// Stored on the actor so the delegate's callback can hop back into
+    /// actor-isolated context for a safe single-resume.
+    private var iceGatheringContinuation: CheckedContinuation<Void, Never>?
+
     /// Most-recently received binary frame. Test-only entry point —
     /// production code routes through the channel-framing layer
     /// added in a later PR. `internal` so the in-target test can read it
@@ -115,15 +120,25 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     private func waitForIceGatheringComplete(_ pc: RTCPeerConnection) async {
         if pc.iceGatheringState == .complete { return }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            delegate.onIceGatheringComplete = {
-                continuation.resume()
+            self.iceGatheringContinuation = continuation
+            self.delegate.onIceGatheringComplete = { [weak self] in
+                Task { await self?.handleIceGatheringComplete() }
             }
+            // Re-check inside the actor: if gathering completed between
+            // the early-return check and installing the callback, resume
+            // immediately. Idempotent — `handleIceGatheringComplete` does
+            // nothing when the continuation is already nil.
             if pc.iceGatheringState == .complete {
-                delegate.onIceGatheringComplete = nil
-                continuation.resume()
+                self.handleIceGatheringComplete()
             }
         }
+    }
+
+    private func handleIceGatheringComplete() {
+        let pending = iceGatheringContinuation
+        iceGatheringContinuation = nil
         delegate.onIceGatheringComplete = nil
+        pending?.resume()
     }
 
     /// Apply the answer received from the remote host and return when
@@ -172,6 +187,11 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     }
 
     public func close() {
+        if let pending = iceGatheringContinuation {
+            iceGatheringContinuation = nil
+            delegate.onIceGatheringComplete = nil
+            pending.resume()
+        }
         if let pending = openContinuation {
             openContinuation = nil
             pending.resume(throwing: ConnectionError.closed)
