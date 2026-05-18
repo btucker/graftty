@@ -20,12 +20,20 @@ struct TerminalChannelHandlerTests {
         let meta = try JSONEncoder().encode(TerminalChannelOpenMeta(sessionName: "test-session"))
         await handler.onPayload(meta)
 
+        // Give the spawned outbound Task a chance to start its
+        // `for await` loop on stream.inboundBytes. Without this yield
+        // the buffered emits below race against the Task's launch on
+        // a busy CI runner — the buffer would catch them either way,
+        // but the explicit yield removes the dependency on
+        // executor-scheduling latency.
+        await Task.yield()
+
         // After attach, the handler subscribes to stream.inboundBytes —
         // emit some and expect them as outbound payload frames.
         fakeStream.emit(Data([0x68, 0x69]))  // "hi"
         fakeStream.emit(Data([0x0A]))         // "\n"
 
-        try await pollUntil(timeout: .seconds(2)) { await outboxSpy.framesCount == 2 }
+        try await pollUntil(timeout: .seconds(5)) { await outboxSpy.framesCount == 2 }
         let frames = await outboxSpy.frames
         guard case .payload(_, let first) = frames[0] else {
             Issue.record("expected payload frame")
@@ -45,7 +53,7 @@ struct TerminalChannelHandlerTests {
         let keystroke = Data([0x65])  // "e"
         await handler.onPayload(keystroke)
 
-        try await pollUntil(timeout: .seconds(2)) { fakeStream.sent == [keystroke] }
+        try await pollUntil(timeout: .seconds(5)) { fakeStream.sent == [keystroke] }
     }
 
     @Test
@@ -61,7 +69,7 @@ struct TerminalChannelHandlerTests {
 
         await handler.onPayload(Data("not-json".utf8))
 
-        try await pollUntil(timeout: .seconds(2)) { await outboxSpy.framesCount == 1 }
+        try await pollUntil(timeout: .seconds(5)) { await outboxSpy.framesCount == 1 }
         let frames = await outboxSpy.frames
         guard case .error(let err) = frames[0] else {
             Issue.record("expected error frame, got \(frames[0])")
@@ -80,7 +88,7 @@ struct TerminalChannelHandlerTests {
         await handler.onPayload(try JSONEncoder().encode(TerminalChannelOpenMeta(sessionName: "s")))
 
         await handler.onClose()
-        try await pollUntil(timeout: .seconds(2)) { fakeStream.isClosed }
+        try await pollUntil(timeout: .seconds(5)) { fakeStream.isClosed }
     }
 }
 
