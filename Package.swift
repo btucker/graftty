@@ -57,10 +57,17 @@ let package = Package(
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
                 .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "Stencil", package: "Stencil"),
-                .product(name: "WebRTC", package: "WebRTC"),
             ],
             resources: [
                 .copy("Web/Resources"),
+            ],
+            swiftSettings: strictWarnings
+        ),
+        .target(
+            name: "GrafttyHostAgent",
+            dependencies: [
+                "GrafttyProtocol",
+                .product(name: "WebRTC", package: "WebRTC"),
             ],
             swiftSettings: strictWarnings
         ),
@@ -68,6 +75,7 @@ let package = Package(
             name: "Graftty",
             dependencies: [
                 "GrafttyKit",
+                "GrafttyHostAgent",
                 "GrafttyProtocol",
                 .product(name: "GhosttyKit", package: "libghostty-spm"),
                 .product(name: "Sparkle", package: "Sparkle"),

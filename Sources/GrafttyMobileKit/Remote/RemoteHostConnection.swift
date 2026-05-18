@@ -123,7 +123,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         return pc.localDescription ?? offer
     }
 
-    /// See `WebRTCHostAgent.waitForIceGatheringComplete` for the rationale.
+    /// See `WebRTCHostAgent.waitForIceGatheringComplete` (in the `GrafttyHostAgent` target) for the rationale.
     /// A 5-second timeout falls through with whatever candidates were gathered.
     /// On the iOS simulator, gathering can stay in `.gathering` indefinitely
     /// when the SDK can't see real network interfaces — the timeout keeps the
