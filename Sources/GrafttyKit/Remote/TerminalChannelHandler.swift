@@ -1,15 +1,16 @@
 import Foundation
 import GrafttyProtocol
 
-/// Server-side handler for the `terminal` channel. On open, decodes
-/// the `TerminalChannelOpenMeta` from `ChannelOpen.metadata` (NOTE: the
-/// router doesn't currently surface open metadata to handlers — the
-/// `onOpen` signature receives only `id` and `outbox`. M2a accepts this
-/// gap: the handler reads `sessionName` from the first inbound payload
-/// frame as a JSON `TerminalChannelOpenMeta`, then treats subsequent
-/// frames as raw PTY bytes. A future PR can extend `onOpen` to surface
-/// metadata directly; in the meantime, this first-frame handshake keeps
-/// the M1.4 framing layer untouched).
+/// Server-side handler for the `terminal` channel. Reads the
+/// `TerminalChannelOpenMeta` JSON from the first inbound payload
+/// frame (a one-time handshake) and treats every subsequent payload
+/// frame as raw PTY bytes.
+///
+/// NOTE: the wire spec carries `sessionName` in `ChannelOpen.metadata`,
+/// but the M1.4 framing layer doesn't currently surface open metadata
+/// to handlers (`ChannelHandler.onOpen` receives only `id` and `outbox`).
+/// M2a accepts that gap and uses the first payload frame as the carrier.
+/// A future PR can extend `onOpen` to surface metadata directly.
 public actor TerminalChannelHandler: ChannelHandler {
     public nonisolated let channelType = "terminal"
 
