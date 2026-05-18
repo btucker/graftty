@@ -1,5 +1,6 @@
 import Foundation
 
+/// @spec REMOTE-7.2
 /// RPC request shape on a `pane_control` channel. Tagged-union JSON.
 public enum PaneControlRequest: Sendable, Equatable {
     case split(target: String, direction: SplitDirection)
@@ -60,6 +61,7 @@ extension PaneControlRequest: Codable {
     }
 }
 
+/// @spec REMOTE-7.3
 /// RPC response shape. Reply to every `PaneControlRequest`. Errors
 /// carry a short `code` (e.g. `"conflict"`, `"unknown-target"`) plus a
 /// human message.

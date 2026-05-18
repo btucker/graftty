@@ -1,5 +1,6 @@
 import Foundation
 
+/// @spec REMOTE-6.2
 /// Wire shape of a single `payload` frame on a `panes_state` channel.
 /// Tagged-union JSON so future message types (deltas, presence pings)
 /// can extend without breaking compatibility.
