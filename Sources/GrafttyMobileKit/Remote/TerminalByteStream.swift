@@ -11,6 +11,14 @@ import Foundation
 public protocol TerminalByteStream: Sendable {
     func send(_ bytes: Data) async throws
     var inboundBytes: AsyncStream<Data> { get }
+
+    /// Stop the stream and release any underlying resources (e.g.
+    /// terminate the zmx attach process). Conformers **must** finish
+    /// the `inboundBytes` `AsyncStream` continuation before returning —
+    /// `TerminalChannelHandler.teardown` relies on this to exit its
+    /// `for await` loop and reclaim the outbound forwarding task.
+    /// A conformer that releases resources without calling
+    /// `continuation.finish()` synchronously will leak that task.
     func close() async
 }
 
