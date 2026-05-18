@@ -24,17 +24,17 @@ struct ChannelRouterOpenCleanupTests {
         let closeFrame = ChannelFrame.close(ChannelClose(id: ChannelID(1)))
         let bytes = try ChannelFrameCoder.encode(closeFrame)
         await transport.deliverInbound(bytes)
-        let count = await handler.closedCount
-        #expect(count == 0, "handler should have been removed from handlersByID after sendFrame failure")
+        let wasClosed = await handler.wasClosed
+        #expect(wasClosed == false, "handler should have been removed from handlersByID after sendFrame failure")
     }
 }
 
 private actor NoopHandler: ChannelHandler {
     nonisolated let channelType = "noop"
-    private(set) var closedCount = 0
+    private(set) var wasClosed = false
     func onOpen(_ id: ChannelID, outbox: ChannelOutbox) async { }
     func onPayload(_ data: Data) async { }
-    func onClose() async { closedCount += 1 }
+    func onClose() async { wasClosed = true }
     func onError(_ code: String, message: String) async { }
 }
 
