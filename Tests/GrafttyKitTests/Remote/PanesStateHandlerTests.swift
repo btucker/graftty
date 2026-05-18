@@ -7,7 +7,9 @@ import GrafttyProtocol
 @Suite("PanesStateHandler — emits initial snapshot on open + re-emits on each subscribe-callback fire.")
 struct PanesStateHandlerTests {
 
-    @Test
+    @Test("""
+@spec REMOTE-6.2: Immediately after accepting a `panes_state` channel, the host shall send a `{"type":"snapshot","worktrees":[…]}` frame containing the current `[WorktreePanes]` array.
+""")
     func emitsInitialSnapshotOnOpen() async throws {
         let initial = makeWorktrees(count: 1)
         let subscription = FakeSubscription(initialSnapshot: initial)
@@ -28,7 +30,9 @@ struct PanesStateHandlerTests {
         #expect(decoded == .snapshot(initial))
     }
 
-    @Test
+    @Test("""
+@spec REMOTE-6.3: While a `panes_state` channel is open, on any change to the host's `AppState.repos[*].worktrees`, splittree, attention state, or PR status, the host shall send a fresh `{"type":"snapshot","worktrees":[…]}` frame.
+""")
     func reemitsOnFurtherSubscribeFires() async throws {
         let initial = makeWorktrees(count: 0)
         let subscription = FakeSubscription(initialSnapshot: initial)
@@ -50,7 +54,9 @@ struct PanesStateHandlerTests {
         #expect(decoded == .snapshot(next))
     }
 
-    @Test
+    @Test("""
+@spec REMOTE-6.4: When the `RemoteHostConnection` tears down (client background, host switch, network failure, peer revocation), any open `panes_state` channels shall close.
+""")
     func cancelsSubscriptionOnClose() async throws {
         let initial = makeWorktrees(count: 0)
         let subscription = FakeSubscription(initialSnapshot: initial)
