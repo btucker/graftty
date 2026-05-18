@@ -17,9 +17,16 @@ public enum FrameType: UInt8, Sendable, CaseIterable {
 public struct ChannelOpen: Codable, Sendable, Equatable {
     public let id: ChannelID
     public let type: String
-    public init(id: ChannelID, type: String) {
+    /// Per-channel-type open-time metadata. Opaque bytes the handler
+    /// factory interprets (e.g. `TerminalChannelOpenMeta` JSON for
+    /// `type == "terminal"`). Nil for channels that don't need it
+    /// (e.g. `panes_state`, `pane_control`).
+    public let metadata: Data?
+
+    public init(id: ChannelID, type: String, metadata: Data? = nil) {
         self.id = id
         self.type = type
+        self.metadata = metadata
     }
 }
 
