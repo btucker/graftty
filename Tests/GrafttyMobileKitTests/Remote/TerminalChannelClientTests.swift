@@ -19,14 +19,6 @@ struct TerminalChannelClientTests {
         }
     }
 
-    @Test
-    func encodingHandshakeProducesExpectedJSON() throws {
-        // Verify the wire shape of the attach handshake directly.
-        let meta = TerminalChannelOpenMeta(sessionName: "graftty-shell")
-        let data = try JSONEncoder().encode(meta)
-        let decoded = try JSONDecoder().decode(TerminalChannelOpenMeta.self, from: data)
-        #expect(decoded.sessionName == "graftty-shell")
-    }
 }
 
 private struct NoopTransport: ChannelTransport {

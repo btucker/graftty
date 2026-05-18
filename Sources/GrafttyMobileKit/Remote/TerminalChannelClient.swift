@@ -27,7 +27,12 @@ public actor TerminalChannelClient {
     public init(router: ChannelRouter) {
         self.router = router
         var c: AsyncStream<Data>.Continuation!
-        self.inboundBytes = AsyncStream { c = $0 }
+        // Cap the inbound buffer. A flooding PTY with a slow consumer would
+        // otherwise grow the heap without bound. 256 chunks is generous for
+        // terminal output (each chunk is a single SCTP/DataChannel message,
+        // typically ≤16KB). `bufferingNewest` drops oldest chunks under
+        // pressure; an interactive shell prefers fresh output over stale.
+        self.inboundBytes = AsyncStream(bufferingPolicy: .bufferingNewest(256)) { c = $0 }
         self.continuation = c
     }
 
@@ -46,6 +51,11 @@ public actor TerminalChannelClient {
         )
         let id = try await router.open(type: "terminal", handler: handler)
         self.channelID = id
+        // outbox is guaranteed non-nil here: router.open awaits
+        // handler.onOpen -> onOutbox -> captureOutbox before returning.
+        // The handshake send below relies on this sequencing — a future
+        // refactor that lets router.open return before handler.onOpen
+        // completes would break this invariant silently.
         // Send the attach handshake.
         let body: Data
         do {

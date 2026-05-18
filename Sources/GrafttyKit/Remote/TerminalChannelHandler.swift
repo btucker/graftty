@@ -42,6 +42,11 @@ public actor TerminalChannelHandler: ChannelHandler {
         case .awaitingAttach:
             await handleAttach(data)
         case .attached(let stream, _):
+            // Post-attach: every payload is raw PTY bytes. A second
+            // attach-looking JSON blob is intentionally forwarded as raw
+            // bytes (the PTY consumer treats it as garbled input — we
+            // don't try to detect or filter, since a benign attach-shaped
+            // byte pattern in legitimate output would also trigger).
             try? await stream.send(data)
         case .closed:
             break
@@ -96,6 +101,13 @@ public actor TerminalChannelHandler: ChannelHandler {
     }
 
     private func teardown() async {
+        // Cleanup order matters: we rely on `stream.close()` finishing the
+        // continuation that drives `inboundBytes`, which exits the
+        // `for await` in the spawned outbound task — before we nil the
+        // outbox below. `task.cancel()` alone is not sufficient: cancellation
+        // is only delivered at the next `await` inside the loop, and bytes
+        // already in flight from `stream` could otherwise reach
+        // `forwardOutbound` after `outbox` was set to nil.
         if case .attached(let stream, let task) = state {
             task.cancel()
             await stream.close()
