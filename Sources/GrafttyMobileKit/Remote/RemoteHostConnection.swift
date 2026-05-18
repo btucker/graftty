@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import Foundation
+import GrafttyProtocol
 import WebRTC
 
 /// Common interface for "thing that can accept ICE candidates from a
@@ -66,12 +67,6 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// via `@testable import`.
     internal private(set) var lastReceivedBinary: Data?
 
-    /// SSH-style label of the single multiplexing DataChannel between
-    /// client and host. Both sides need to agree; promoted from a
-    /// magic string to a named constant so M1.2 signaling can refer
-    /// to it by symbol.
-    public static let dataChannelLabel = "graftty"
-
     public init() {
         // SSL and codec subsystems are process-wide; initialize once.
         Self.initializeWebRTC()
@@ -101,7 +96,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         let dataChannelConfig = RTCDataChannelConfiguration()
         dataChannelConfig.isOrdered = true
         guard let dc = pc.dataChannel(
-            forLabel: Self.dataChannelLabel,
+            forLabel: GrafttyWebRTC.dataChannelLabel,
             configuration: dataChannelConfig
         ) else {
             throw ConnectionError.dataChannelInitFailed

@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 import WebRTC
 
 /// Mac-side actor that accepts incoming WebRTC offers, completes the
@@ -154,6 +155,13 @@ public actor WebRTCHostAgent {
     }
 
     private func adoptDataChannel(_ dc: RTCDataChannel) {
+        guard dc.label == GrafttyWebRTC.dataChannelLabel else {
+            // Unexpected label — close defensively. With Noise handshake (M1.3),
+            // peer identity will be authenticated separately; this is belt-and-
+            // suspenders.
+            dc.close()
+            return
+        }
         self.dataChannel = dc
         dc.delegate = dataChannelDelegate
         dataChannelDelegate.onOpen = { [weak self] in
