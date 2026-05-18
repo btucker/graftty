@@ -77,7 +77,14 @@ public actor ChannelRouter {
         nextOutboundID &+= 1
         handlersByID[id] = handler
         let frame: ChannelFrame = .open(ChannelOpen(id: id, type: type))
-        try await sendFrame(frame)
+        do {
+            try await sendFrame(frame)
+        } catch {
+            // Roll back the registration: the remote never received the
+            // open, so no `close` frame will ever arrive to clean it up.
+            handlersByID.removeValue(forKey: id)
+            throw error
+        }
         let outbox = ChannelOutbox { [weak self] frame in
             try await self?.sendFrame(frame)
         }
