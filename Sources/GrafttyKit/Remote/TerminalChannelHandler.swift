@@ -102,14 +102,10 @@ public actor TerminalChannelHandler: ChannelHandler {
     }
 
     private func teardown() async {
-        // Close first: `stream.close()` is contracted to finish the
-        // continuation that drives `inboundBytes`, exiting the spawned
-        // outbound task's `for await` loop naturally. `task.cancel()`
-        // afterwards is belt-and-suspenders for a non-compliant conformer
-        // that doesn't honor the contract — for a compliant one it is a
-        // no-op. Any late `forwardOutbound` call that races with the
-        // state mutation below is rejected by `forwardOutbound`'s own
-        // `guard case .attached = state` check.
+        // Close first to finish the continuation (per `TerminalByteStream.close()`
+        // contract); `task.cancel()` after is a safety net for a non-compliant
+        // conformer. The state mutation below races safely — `forwardOutbound`
+        // re-checks `guard case .attached = state` before each send.
         if case .attached(let stream, let task) = state {
             await stream.close()
             task.cancel()
