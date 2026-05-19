@@ -42,12 +42,13 @@ public struct GhosttyThemeColors: Sendable, Equatable {
 
     public var isDark: Bool {
         let bg = backgroundRGB
-        // Round to 6 decimal places so that the canonical mid-gray
-        // (r=g=b=0.5, theoretical luminance=0.5) lands exactly on the
-        // boundary and is treated as light (not dark), despite floating-
-        // point accumulation in the weighted sum.
-        let raw = 0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b
-        let luminance = (raw * 1_000_000).rounded() / 1_000_000
+        let luminance = 0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b
+        // The canonical mid-gray (r=g=b=0.5, theoretical luminance=0.5) needs
+        // to land on the boundary (treated as light, not dark) — but IEEE 754
+        // accumulation gives 0.49999999999999994 for these coefficients. An
+        // epsilon catches the boundary case without altering far-from-boundary
+        // decisions.
+        if abs(luminance - 0.5) < 1e-9 { return false }
         return luminance < 0.5
     }
 

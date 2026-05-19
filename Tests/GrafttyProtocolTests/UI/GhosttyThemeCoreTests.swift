@@ -52,19 +52,23 @@ struct GhosttyThemeCoreTests {
         #expect(abs(lightSide.g - 0.89) < 0.001)
         #expect(abs(lightSide.b - 0.89) < 0.001)
 
-        // Clamp: nearly-black dark theme + 6% shift mustn't drift negative.
+        // Pure black (isDark=true) + 6% shift → 0.06 across all channels.
         let veryDark = GhosttyThemeColors(
             backgroundRGB: .init(r: 0.0, g: 0.0, b: 0.0),
             foregroundRGB: .init(r: 1.0, g: 1.0, b: 1.0))
         let veryDarkSide = veryDark.sidebarBackgroundRGB
-        #expect(veryDarkSide.r >= 0.0 && veryDarkSide.r <= 1.0)
+        #expect(abs(veryDarkSide.r - 0.06) < 0.001)
+        #expect(abs(veryDarkSide.g - 0.06) < 0.001)
+        #expect(abs(veryDarkSide.b - 0.06) < 0.001)
 
-        // Clamp: nearly-white light theme − 6% shift mustn't exceed 1.
+        // Pure white (isDark=false) − 6% shift → 0.94 across all channels.
         let veryLight = GhosttyThemeColors(
             backgroundRGB: .init(r: 1.0, g: 1.0, b: 1.0),
             foregroundRGB: .init(r: 0.0, g: 0.0, b: 0.0))
         let veryLightSide = veryLight.sidebarBackgroundRGB
-        #expect(veryLightSide.r >= 0.0 && veryLightSide.r <= 1.0)
+        #expect(abs(veryLightSide.r - 0.94) < 0.001)
+        #expect(abs(veryLightSide.g - 0.94) < 0.001)
+        #expect(abs(veryLightSide.b - 0.94) < 0.001)
     }
 
     @Test("Color builders return SwiftUI Color in sRGB")
