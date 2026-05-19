@@ -36,6 +36,28 @@ struct WebSessionTests {
         return script
     }
 
+    /// Fake zmx that dumps its inherited env to `env.txt` so a test can
+    /// assert which variables WebSession propagated to the spawned
+    /// `zmx attach` child. Variables propagated here become the user
+    /// shell's env when this `zmx attach` is the one that creates the
+    /// daemon session (the create-session race symptom that motivates
+    /// WEB-4.10 — see test below).
+    private static func makeEnvCapturingZmx(in dir: URL) throws -> URL {
+        let script = dir.appendingPathComponent("zmx")
+        let envFile = dir.appendingPathComponent("env.txt").path
+        let body = """
+        #!/bin/sh
+        env > \(shellQuoted(envFile))
+        while :; do sleep 0.05; done
+        """
+        try body.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: script.path
+        )
+        return script
+    }
+
     private static func waitForFile(_ url: URL, timeout: TimeInterval = 2.0) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -104,6 +126,67 @@ struct WebSessionTests {
         #expect(Self.waitForFile(termURL))
         let termText = try String(contentsOf: termURL, encoding: .utf8)
         #expect(termText == "TERM")
+    }
+
+    @Test("""
+    @spec WEB-4.10: When the WebSocket bridge spawns a `zmx attach` child to back a mobile-client session, the application shall propagate the same shell-integration env (`TERM`, `COLORTERM`, `TERM_PROGRAM`, `TERMINFO` when ghostty-terminfo is available, and `ZDOTDIR` pointing at Ghostty's zsh shell-integration when the user's shell is zsh) that host-managed native panes use (per `ZMX-6.3` / `ZMX-6.5`). Without this, the WS attach can win the create-session race against the Mac surface's attach (which is slow because it follows `git worktree add` + discovery) and spawn the daemon's user shell with no shell integration — silencing the first-PWD trigger (so the host pane never types the user's default command) and leaving the shell without truecolor.
+    """)
+    func startPropagatesTerminalCapabilitiesAndZshIntegrationEnv() throws {
+        let dir = try Self.makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fakeZmx = try Self.makeEnvCapturingZmx(in: dir)
+        let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
+        try FileManager.default.createDirectory(at: zmxDir, withIntermediateDirectories: true)
+
+        // Use a temp ghostty-resources path with no terminfo siblings so
+        // TERM resolves to the `xterm-256color` fallback regardless of
+        // whether Ghostty is installed on the test machine. ZDOTDIR is
+        // still set from this path, which is what we want to verify.
+        let fakeResources = dir.appendingPathComponent("ghostty-resources", isDirectory: true)
+        try FileManager.default.createDirectory(at: fakeResources, withIntermediateDirectories: true)
+
+        let session = WebSession(config: .init(
+            zmxExecutable: fakeZmx,
+            zmxDir: zmxDir,
+            sessionName: "graftty-cafebabe"
+        ))
+        // `processEnvForTesting` lets the test inject SHELL + GHOSTTY_RESOURCES_DIR
+        // without leaking into the real environment; the impl falls back to
+        // ProcessInfo when nil. Without this hook, this test would depend on
+        // the CI runner's SHELL setting.
+        session.processEnvForTesting = [
+            "SHELL": "/bin/zsh",
+            "PATH": "/usr/bin",
+            "GHOSTTY_RESOURCES_DIR": fakeResources.path,
+        ]
+        try session.start()
+        defer { session.close() }
+
+        let envURL = dir.appendingPathComponent("env.txt")
+        #expect(Self.waitForFile(envURL))
+        let envText = try String(contentsOf: envURL, encoding: .utf8)
+        let envPairs = envText
+            .split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+            .reduce(into: [String: String]()) { dict, line in
+                let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                if parts.count == 2 {
+                    dict[String(parts[0])] = String(parts[1])
+                }
+            }
+
+        // Color: TERM falls back to `xterm-256color` because the temp
+        // ghostty-resources path has no terminfo sibling. COLORTERM +
+        // TERM_PROGRAM are unconditional.
+        #expect(envPairs["TERM"] == "xterm-256color")
+        #expect(envPairs["COLORTERM"] == "truecolor")
+        #expect(envPairs["TERM_PROGRAM"] == "ghostty")
+
+        // Default-command: ZDOTDIR points at ghostty's zsh shell-integration so
+        // the shell's first-prompt hook fires OSC 7 / OSC 133, the host
+        // surface's `onShellReady` fires, and `maybeRunDefaultCommand` types
+        // the configured command.
+        let expectedZDOTDIR = fakeResources.appendingPathComponent("shell-integration/zsh").path
+        #expect(envPairs["ZDOTDIR"] == expectedZDOTDIR)
     }
 
     @Test func attachProcessStartsInConfiguredWorktreeDirectory() throws {
