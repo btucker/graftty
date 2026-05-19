@@ -191,9 +191,15 @@ Two concurrent .task(id: host.id) fetches:
 ```
 WorktreeListContent.onSelectWorktree(wt)
   → IPadAppState.selectedWorktreePath = wt.path
-  → IPadAppState.focusedPaneId = pickFocusedPane(wt)
-      = wt.layout?.leaf(slotID: wt.layout.focusedPaneSlotID)?.sessionName
-        ?? wt.layout?.leaves.first?.sessionName
+  → IPadAppState.focusedPaneId = wt.layout?.leaves.first?.sessionName
+                                  // wire model has no focused-pane
+                                  // marker; M5 picks the first leaf.
+                                  // Mac's `focusedPaneSlotID` lives on
+                                  // `WorktreeEntry`, not on the wire
+                                  // `WorktreePanes`. Future milestone
+                                  // can extend the wire model if
+                                  // restoring Mac-side focus becomes
+                                  // necessary.
 
 IPadDetailColumn:
   if focusedPaneId != nil → SingleSessionView(...)
