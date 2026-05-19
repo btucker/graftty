@@ -1578,9 +1578,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-7.3** When the host receives a `pane_control` request `{"type":"close","target":<sessionName>}`, the host shall destroy the surface for the leaf whose `sessionName == target` and reply `{"ok":true}` on success.
 
-**REMOTE-7.4** When two `pane_control` requests target the same leaf concurrently, the host shall immediately reply to the second request with `{"ok":false,"error":"conflict","code":"conflict"}` and continue processing only the first request. The conflict window for a target leaf ends once the first request's resulting `panes_state` snapshot has been emitted.
+**REMOTE-7.4** When two `pane_control` requests target the same leaf concurrently, the host shall immediately reply to the second request with `{"ok":false,"code":"conflict","message":<human-readable>}` and continue processing only the first request. The conflict window for a target leaf ends once the first request's resulting `panes_state` snapshot has been emitted.
 
-**REMOTE-7.5** A `pane_control` request shall not change the host's `AppState.selectedWorktreePath` or any worktree's `focusedPaneSlotID`. Mac focus is sovereign to the Mac user, mirroring `WEB-7.5`.
+**REMOTE-7.5** `PaneControlHandler` has no reference to `AppState`; per-client focus sovereignty is enforced by construction.
 
 **REMOTE-7.6** If a trusted peer is revoked while a `pane_control` channel is open, the channel shall close and subsequent open requests from the revoked peer shall be rejected.
 

@@ -100,7 +100,7 @@ struct PaneControlHandlerTests {
     }
 
     @Test("""
-@spec REMOTE-7.4: When two `pane_control` requests target the same leaf concurrently, the host shall immediately reply to the second request with `{"ok":false,"error":"conflict","code":"conflict"}` and continue processing only the first request. The conflict window for a target leaf ends once the first request's resulting `panes_state` snapshot has been emitted.
+@spec REMOTE-7.4: When two `pane_control` requests target the same leaf concurrently, the host shall immediately reply to the second request with `{"ok":false,"code":"conflict","message":<human-readable>}` and continue processing only the first request. The conflict window for a target leaf ends once the first request's resulting `panes_state` snapshot has been emitted.
 """)
     func conflictResponseMatchesWireShape() async throws {
         // The handler delegates per-leaf serialization to the injected
@@ -131,10 +131,8 @@ struct PaneControlHandlerTests {
         #expect((json["message"] as? String)?.isEmpty == false)
     }
 
-    @Test("""
-@spec REMOTE-7.5: A `pane_control` request shall not change the host's `AppState.selectedWorktreePath` or any worktree's `focusedPaneSlotID`. Mac focus is sovereign to the Mac user, mirroring `WEB-7.5`.
-""")
-    func handlerHasNoPathToMutateFocus() async throws {
+    @Test
+    func decodesAndDispatchesSwapRequest() async throws {
         let recorder = MutatorRecorder()
         let handler = PaneControlHandler(mutator: { [recorder] in await recorder.handle($0) })
         let outboxSpy = OutboxSpy()
@@ -144,8 +142,14 @@ struct PaneControlHandlerTests {
         await handler.onPayload(try JSONEncoder().encode(request))
         try await pollUntil(timeout: .seconds(2)) { await outboxSpy.framesCount == 1 }
 
+        let frames = await outboxSpy.frames
+        guard case .payload(_, let respBody) = frames[0] else {
+            Issue.record("expected payload frame")
+            return
+        }
+        let resp = try JSONDecoder().decode(PaneControlResponse.self, from: respBody)
+        #expect(resp == .ok)
         #expect(await recorder.lastRequest == request)
-        #expect(await outboxSpy.framesCount == 1)
     }
 }
 
