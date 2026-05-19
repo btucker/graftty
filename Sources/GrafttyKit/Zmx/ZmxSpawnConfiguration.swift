@@ -51,15 +51,15 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
             env["PATH"] = sanitizedPath
         }
 
-        if let ghosttyResourcesDir, !ghosttyResourcesDir.isEmpty,
-           shellBasename == "zsh" {
-            env["ZDOTDIR"] = (ghosttyResourcesDir as NSString)
-                .appendingPathComponent("shell-integration/zsh")
-            if hooksEnabled {
-                env["GHOSTTY_ZSH_ZDOTDIR"] = AgentHookInstaller
-                    .zshInitDirectory(rootDirectory: agentHooksRoot)
-                    .path
-            }
+        applyZshShellIntegration(
+            env: &env,
+            userShellPath: rawUserShell,
+            ghosttyResourcesDir: ghosttyResourcesDir
+        )
+        if hooksEnabled, shellBasename == "zsh", env["ZDOTDIR"] != nil {
+            env["GHOSTTY_ZSH_ZDOTDIR"] = AgentHookInstaller
+                .zshInitDirectory(rootDirectory: agentHooksRoot)
+                .path
         }
 
         // ZMX-6.6/6.7: For non-bash shells (and bash with hooks disabled),
@@ -87,7 +87,14 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
         )
     }
 
-    private static func applyTerminalCapabilities(
+    /// Apply the terminal-capability env (TERM, COLORTERM, TERM_PROGRAM,
+    /// TERMINFO when ghostty-terminfo is available) so the inner shell
+    /// emits truecolor and unlocks ghostty-specific terminfo features.
+    /// Shared between the host-managed pane path (`make`) and the WebSocket
+    /// bridge (`WebSession.start`) so whichever `zmx attach` wins the
+    /// create-session race produces a shell with identical terminal
+    /// capabilities — WEB-4.10.
+    static func applyTerminalCapabilities(
         env: inout [String: String],
         ghosttyResourcesDir: String?
     ) {
@@ -99,6 +106,31 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
         if let terminfoDir {
             setDefault("TERMINFO", in: &env, to: terminfoDir.path)
         }
+    }
+
+    /// Apply Ghostty's zsh shell-integration env. Sets `ZDOTDIR` to
+    /// ghostty's `shell-integration/zsh` dir so the spawned zsh sources
+    /// ghostty's prompt hooks — which emit OSC 7 (PWD) and OSC 133 (prompt
+    /// marks). Without those, `TerminalManager`'s `onShellReady` callback
+    /// never fires, the `maybeRunDefaultCommand` flow never types the
+    /// user's configured command, and shell-integration attention pings
+    /// stay silent.
+    ///
+    /// Shared between the host-managed pane path (`make`) and the
+    /// WebSocket bridge (`WebSession.start`) — the bridge needs it because
+    /// its `zmx attach` can win the create-session race against the
+    /// matching host pane's attach (the host pane spends seconds inside
+    /// `git worktree add` before its attach starts). WEB-4.10.
+    static func applyZshShellIntegration(
+        env: inout [String: String],
+        userShellPath: String,
+        ghosttyResourcesDir: String?
+    ) {
+        guard let ghosttyResourcesDir, !ghosttyResourcesDir.isEmpty else { return }
+        let shellBasename = (userShellPath as NSString).lastPathComponent
+        guard shellBasename == "zsh" else { return }
+        env["ZDOTDIR"] = (ghosttyResourcesDir as NSString)
+            .appendingPathComponent("shell-integration/zsh")
     }
 
     private static func setDefault(_ key: String, in env: inout [String: String], to value: String) {
