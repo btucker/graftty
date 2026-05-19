@@ -9,6 +9,14 @@ import GrafttyProtocol
 /// Production wires `mutator` to the real splittree operations on
 /// `AppState`. Tests pass a fake that records the request and produces
 /// a canned response.
+///
+/// @spec REMOTE-7.5
+/// `PaneControlHandler` has no reference to `AppState`. The only outbound
+/// effect of an inbound request is to invoke the injected `Mutator` and
+/// forward its `PaneControlResponse` back as a payload frame. Per-client
+/// focus sovereignty is therefore enforced by construction: no path
+/// through this type can mutate `selectedWorktreePath` or
+/// `focusedPaneSlotID`. Mirrors `WEB-7.5` on the Mac web client side.
 public actor PaneControlHandler: ChannelHandler {
     public nonisolated let channelType = "pane_control"
 

@@ -44,11 +44,6 @@ struct RemoteTodo {
     func remote_7_1() async throws { }
 
     @Test("""
-@spec REMOTE-7.5: A `pane_control` request shall not change the host's `AppState.selectedWorktreePath` or any worktree's `focusedPaneSlotID`. Mac focus is sovereign to the Mac user, mirroring `WEB-7.5`.
-""", .disabled("not yet implemented"))
-    func remote_7_5() async throws { }
-
-    @Test("""
 @spec REMOTE-7.6: If a trusted peer is revoked while a `pane_control` channel is open, the channel shall close and subsequent open requests from the revoked peer shall be rejected.
 """, .disabled("not yet implemented"))
     func remote_7_6() async throws { }
