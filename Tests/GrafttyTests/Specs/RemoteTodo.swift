@@ -44,11 +44,6 @@ struct RemoteTodo {
     func remote_7_1() async throws { }
 
     @Test("""
-@spec REMOTE-7.4: When two `pane_control` requests target the same leaf concurrently, the host shall immediately reply to the second request with `{"ok":false,"error":"conflict","code":"conflict"}` and continue processing only the first request. The conflict window for a target leaf ends once the first request's resulting `panes_state` snapshot has been emitted.
-""", .disabled("not yet implemented"))
-    func remote_7_4() async throws { }
-
-    @Test("""
 @spec REMOTE-7.5: A `pane_control` request shall not change the host's `AppState.selectedWorktreePath` or any worktree's `focusedPaneSlotID`. Mac focus is sovereign to the Mac user, mirroring `WEB-7.5`.
 """, .disabled("not yet implemented"))
     func remote_7_5() async throws { }
