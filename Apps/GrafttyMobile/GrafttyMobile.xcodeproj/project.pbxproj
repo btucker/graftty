@@ -12,6 +12,7 @@
 		0C48DC35ED5DCBF20CC0A0A3 /* CreateWorktreeClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9BE28EEA6673202992718AC /* CreateWorktreeClientTests.swift */; };
 		0F0DC07D64128764A6E254A9 /* SessionLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB040F5D6FAA7EDA4C09F34F /* SessionLifecycleTests.swift */; };
 		1424F3BDEE73AA89A78610F3 /* IPadAppStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B5DBD2CC8F2E2A00F94D044 /* IPadAppStateTests.swift */; };
+		16F9774F4AD6CAB9EB7BA47C /* RootViewSizeClassTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A4E23E7D15FDB354063BF2C /* RootViewSizeClassTests.swift */; };
 		1979A63164CFEDFAA56AD475 /* SessionReconnectTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9D9235F4AB2E4D6E89AEE13 /* SessionReconnectTests.swift */; };
 		260F499C5621E4995F3E56C4 /* SurfaceProxyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91C85B2EFEF3B277843C1777 /* SurfaceProxyTests.swift */; };
 		28150992D7BDB7D273241A5F /* ChannelRouterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68160E38740F3834696D8FEA /* ChannelRouterTests.swift */; };
@@ -70,6 +71,7 @@
 		30604C1C39FF21FE6B6A74D5 /* TerminalSelectionControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSelectionControllerTests.swift; sourceTree = "<group>"; };
 		340D909E38FF8ABE9EA6B38B /* SessionsFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsFetcherTests.swift; sourceTree = "<group>"; };
 		351F85648DBEE2F8B555AE7F /* VirtualClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualClock.swift; sourceTree = "<group>"; };
+		3A4E23E7D15FDB354063BF2C /* RootViewSizeClassTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewSizeClassTests.swift; sourceTree = "<group>"; };
 		3B5DBD2CC8F2E2A00F94D044 /* IPadAppStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadAppStateTests.swift; sourceTree = "<group>"; };
 		3D25E071713009F00061D699 /* LaunchScreenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchScreenTests.swift; sourceTree = "<group>"; };
 		3DFA9C1F66C7E92D9F0BCE9C /* TerminalWidthLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalWidthLayoutTests.swift; sourceTree = "<group>"; };
@@ -226,6 +228,7 @@
 				4725DB60C50A64BC035E70BB /* IPadRootLayoutSelectionTests.swift */,
 				98C28B7B9FD4CB73021407F1 /* KeyboardFrameInsetTests.swift */,
 				3D25E071713009F00061D699 /* LaunchScreenTests.swift */,
+				3A4E23E7D15FDB354063BF2C /* RootViewSizeClassTests.swift */,
 				AB040F5D6FAA7EDA4C09F34F /* SessionLifecycleTests.swift */,
 			);
 			path = App;
@@ -412,6 +415,7 @@
 				CAF2F1261BE1D2E9862B28E7 /* PreviewCapTests.swift in Sources */,
 				A63A9ED30E91C1F8ADE5E21F /* RemoteHostConnectionLoopbackTests.swift in Sources */,
 				4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */,
+				16F9774F4AD6CAB9EB7BA47C /* RootViewSizeClassTests.swift in Sources */,
 				4FC268572A822F79E5CBF517 /* SessionClientTests.swift in Sources */,
 				03C55D51794BAB7E1C6C722A /* SessionIdleRendererTests.swift in Sources */,
 				0F0DC07D64128764A6E254A9 /* SessionLifecycleTests.swift in Sources */,

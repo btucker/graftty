@@ -9,11 +9,6 @@ import Testing
 @Suite("IPAD — pending specs")
 struct IpadTodo {
     @Test("""
-@spec IPAD-1.1: When `horizontalSizeClass == .regular`, the iPad application shall render `IPadRootLayout` (NavigationSplitView, 2-column) in place of the compact-width `NavigationStack`.
-""", .disabled("not yet implemented"))
-    func ipad_1_1() async throws { }
-
-    @Test("""
 @spec IPAD-2.1: While a worktree is selected and the iPad layout is regular-width, the detail column shall render `MultiPaneDetailView` over the worktree's `PaneLayoutNode`.
 """, .disabled("not yet implemented"))
     func ipad_2_1() async throws { }
@@ -117,16 +112,6 @@ struct IpadTodo {
 @spec IPAD-5.4: When a previously-focused leaf is no longer present in the foreground-fresh `panes_state` snapshot, the application shall surface a "Pane no longer running" banner on the detail column with a "Back to sidebar" action.
 """, .disabled("not yet implemented"))
     func ipad_5_4() async throws { }
-
-    @Test("""
-@spec IPAD-6.3: When the new `RemoteHostConnection` completes its first `panes_state` snapshot, the application shall clear the spinner and, unless a prior selection has been restored from device state, select the first worktree in the snapshot's ordering as `IPadAppState.selectedWorktreePath`.
-""", .disabled("not yet implemented"))
-    func ipad_6_3() async throws { }
-
-    @Test("""
-@spec IPAD-7.1: When `horizontalSizeClass == .compact`, the application shall render the existing compact `RootView` flow (NavigationStack: HostPicker → WorktreePicker → SingleSessionView) without any iPad layout components.
-""", .disabled("not yet implemented"))
-    func ipad_7_1() async throws { }
 
     @Test("""
 @spec IPAD-7.2: When `horizontalSizeClass` transitions between `.regular` and `.compact`, the application shall preserve `selectedHostId`, `selectedWorktreePath`, and `focusedPaneId` so the user lands on the equivalent leaf in the new layout.

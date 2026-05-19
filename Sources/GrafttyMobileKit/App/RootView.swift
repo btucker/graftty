@@ -9,55 +9,21 @@ public struct RootView: View {
     @State private var gate = BiometricGate()
     @State private var navigationPath = NavigationPath()
     @Environment(\.scenePhase) private var scenePhase
+    @State private var iPadAppState = IPadAppState()
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     public init() {}
 
     public var body: some View {
         ZStack {
-            NavigationStack(path: $navigationPath) {
-                HostPickerView(store: hostStore)
-                    .navigationDestination(for: Host.self) { host in
-                        WorktreePickerView(
-                            host: host,
-                            onSelect: { wt in
-                                switch MobileNavigationDecision.decide(layout: wt.layout) {
-                                case let .session(sessionName, title):
-                                    navigationPath.append(SessionStep(
-                                        host: host,
-                                        sessionName: sessionName,
-                                        title: title
-                                    ))
-                                case .worktreeDetail:
-                                    navigationPath.append(WorktreeStep(host: host, worktree: wt))
-                                }
-                            },
-                            onSelectPane: { leaf in
-                                if case let .session(sessionName, title) =
-                                    MobileNavigationDecision.decide(paneRow: leaf) {
-                                    navigationPath.append(SessionStep(
-                                        host: host,
-                                        sessionName: sessionName,
-                                        title: title
-                                    ))
-                                }
-                            }
-                        )
-                    }
-                    .navigationDestination(for: WorktreeStep.self) { step in
-                        WorktreeDetailView(
-                            host: step.host,
-                            worktree: step.worktree
-                        ) { sessionName in
-                            navigationPath.append(SessionStep(
-                                host: step.host,
-                                sessionName: sessionName,
-                                title: step.worktree.layout?.title(for: sessionName) ?? sessionName
-                            ))
-                        }
-                    }
-                    .navigationDestination(for: SessionStep.self) { step in
-                        SingleSessionView(step: step, navigationPath: $navigationPath)
-                    }
+            switch horizontalSizeClass {
+            case .regular:
+                IPadRootLayout(
+                    hostStore: hostStore,
+                    appState: iPadAppState
+                )
+            default:
+                compactBody
             }
             if gate.state == .locked {
                 lockOverlay
@@ -77,6 +43,55 @@ public struct RootView: View {
             default:
                 break
             }
+        }
+    }
+
+    @ViewBuilder
+    private var compactBody: some View {
+        NavigationStack(path: $navigationPath) {
+            HostPickerView(store: hostStore)
+                .navigationDestination(for: Host.self) { host in
+                    WorktreePickerView(
+                        host: host,
+                        onSelect: { wt in
+                            switch MobileNavigationDecision.decide(layout: wt.layout) {
+                            case let .session(sessionName, title):
+                                navigationPath.append(SessionStep(
+                                    host: host,
+                                    sessionName: sessionName,
+                                    title: title
+                                ))
+                            case .worktreeDetail:
+                                navigationPath.append(WorktreeStep(host: host, worktree: wt))
+                            }
+                        },
+                        onSelectPane: { leaf in
+                            if case let .session(sessionName, title) =
+                                MobileNavigationDecision.decide(paneRow: leaf) {
+                                navigationPath.append(SessionStep(
+                                    host: host,
+                                    sessionName: sessionName,
+                                    title: title
+                                ))
+                            }
+                        }
+                    )
+                }
+                .navigationDestination(for: WorktreeStep.self) { step in
+                    WorktreeDetailView(
+                        host: step.host,
+                        worktree: step.worktree
+                    ) { sessionName in
+                        navigationPath.append(SessionStep(
+                            host: step.host,
+                            sessionName: sessionName,
+                            title: step.worktree.layout?.title(for: sessionName) ?? sessionName
+                        ))
+                    }
+                }
+                .navigationDestination(for: SessionStep.self) { step in
+                    SingleSessionView(step: step, navigationPath: $navigationPath)
+                }
         }
     }
 
