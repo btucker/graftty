@@ -28,12 +28,11 @@ struct RemoteHostConnectionLoopbackTests {
         //    Here we feed it straight into the answerer.
         let answer = try await answererPeer.accept(offer: offer)
 
-        // 3. Forward ICE candidates each way as they're gathered.
-        //    `client.bindIceCandidates` is `nonisolated`; the TestAnswerer
-        //    helper keeps its `bindIceCandidates` actor-isolated (one extra
-        //    `await` in tests is fine; the production pattern is what gets
-        //    optimised).
-        client.bindIceCandidates(to: answererPeer)
+        // 3. Forward ICE candidates each way. Both sides buffer candidates
+        //    emitted during the initial gathering pass (which happens
+        //    inside `createOffer` / `accept` before this point), then
+        //    drain in arrival order when their target is bound.
+        await client.bindIceCandidates(to: answererPeer)
         await answererPeer.bindIceCandidates(to: client)
 
         // 4. Apply the answer on the client; this waits for the data
@@ -74,9 +73,28 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
     private let delegate = AnswererDelegate()
     private let dataChannelDelegate = AnswererDataChannelDelegate()
     private(set) var lastReceived: Data?
+    /// Mirror of `RemoteHostConnection.pendingLocalCandidates` — buffer
+    /// candidates gathered during `accept` until the test binds a target,
+    /// so the offerer doesn't starve waiting for our host candidates.
+    private var pendingLocalCandidates: [RTCIceCandidate] = []
+    private var iceCandidateTarget: RemoteHostConnection?
 
     init() {
         self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
+        // See `RemoteHostConnection.init` — install the candidate sink
+        // up-front so candidates emitted during `accept`'s ICE gathering
+        // pass (before `bindIceCandidates` is called) are buffered.
+        delegate.onIceCandidate = { [weak self] candidate in
+            Task { await self?.routeLocalIceCandidate(candidate) }
+        }
+    }
+
+    private func routeLocalIceCandidate(_ candidate: RTCIceCandidate) async {
+        if let target = iceCandidateTarget {
+            try? await target.addRemoteIceCandidate(candidate)
+        } else {
+            pendingLocalCandidates.append(candidate)
+        }
     }
 
     func accept(offer: RTCSessionDescription) async throws -> RTCSessionDescription {
@@ -160,8 +178,16 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
     }
 
     func bindIceCandidates(to client: RemoteHostConnection) {
-        delegate.onIceCandidate = { candidate in
-            Task { try? await client.addRemoteIceCandidate(candidate) }
+        self.iceCandidateTarget = client
+        let drained = pendingLocalCandidates
+        pendingLocalCandidates.removeAll()
+        // Single Task, sequential awaits — mirror of
+        // `RemoteHostConnection.bindIceCandidates`. Per-candidate Tasks
+        // would race on the receiver's executor.
+        Task {
+            for candidate in drained {
+                try? await client.addRemoteIceCandidate(candidate)
+            }
         }
     }
 
@@ -184,6 +210,8 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
         }
         dataChannel?.close()
         peerConnection?.close()
+        iceCandidateTarget = nil
+        pendingLocalCandidates.removeAll()
     }
 
     fileprivate func adopt(_ dc: RTCDataChannel) {
