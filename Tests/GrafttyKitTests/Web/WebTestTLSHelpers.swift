@@ -69,3 +69,12 @@ func trustAllData(for request: URLRequest) async throws -> (Data, URLResponse) {
         try await session.data(for: request)
     }
 }
+
+/// Returns `true` when running under CI (the `CI` env var is set).
+/// Used by web-server integration tests that hang on GitHub Actions
+/// runners and must be skipped there while still running locally.
+/// Plain function rather than a computed property so call sites read
+/// as `if skipInCI() { return }` — no `Self.` prefix needed.
+func skipInCI() -> Bool {
+    ProcessInfo.processInfo.environment["CI"] != nil
+}

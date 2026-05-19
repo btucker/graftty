@@ -36,6 +36,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.26.0"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
         .package(url: "https://github.com/stencilproject/Stencil.git", from: "0.15.1"),
+        .package(url: "https://github.com/stasel/WebRTC.git", from: "137.0.0"),
     ],
     targets: [
         .target(
@@ -62,10 +63,19 @@ let package = Package(
             ],
             swiftSettings: strictWarnings
         ),
+        .target(
+            name: "GrafttyHostAgent",
+            dependencies: [
+                "GrafttyProtocol",
+                .product(name: "WebRTC", package: "WebRTC"),
+            ],
+            swiftSettings: strictWarnings
+        ),
         .executableTarget(
             name: "Graftty",
             dependencies: [
                 "GrafttyKit",
+                "GrafttyHostAgent",
                 "GrafttyProtocol",
                 .product(name: "GhosttyKit", package: "libghostty-spm"),
                 .product(name: "Sparkle", package: "Sparkle"),
@@ -113,6 +123,7 @@ let package = Package(
             dependencies: [
                 "GrafttyProtocol",
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
+                .product(name: "WebRTC", package: "WebRTC"),
             ],
             swiftSettings: strictWarnings
         ),

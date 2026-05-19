@@ -143,6 +143,13 @@ public final class WebServer {
         case internalFailure(String)               // 500
     }
 
+    public enum SignalingHandlerOutcome: Sendable {
+        case success(SignalingAnswer)
+        case invalid(String)        // 400 — malformed offer
+        case unavailable(String)    // 503 — handler not wired
+        case internalFailure(String) // 500
+    }
+
     public struct Config {
         public let port: Int
         public let zmxExecutable: URL
@@ -180,6 +187,12 @@ public final class WebServer {
         /// faithful pane layout inside each. Default returns an empty
         /// list.
         public let worktreePanesProvider: @Sendable () async -> [WorktreePanes]
+        /// Drives `POST /v1/rtc/offer`. Receives the client's
+        /// `SignalingOffer` and returns a `SignalingHandlerOutcome`. Nil
+        /// disables the endpoint with a 503 response — matching the
+        /// existing `worktreeCreator` shape so a client can distinguish
+        /// "not supported yet" from "wrong URL".
+        public let signalingHandler: (@Sendable (SignalingOffer) async -> SignalingHandlerOutcome)?
 
         public init(
             port: Int,
@@ -191,7 +204,8 @@ public final class WebServer {
             worktreeCreator: (@Sendable (CreateWorktreeRequest) async -> CreateWorktreeOutcome)? = nil,
             worktreeRemover: (@Sendable (DeleteWorktreeRequest) async -> DeleteWorktreeOutcome)? = nil,
             ghosttyConfigProvider: @escaping @Sendable () async -> String = { "" },
-            worktreePanesProvider: @escaping @Sendable () async -> [WorktreePanes] = { [] }
+            worktreePanesProvider: @escaping @Sendable () async -> [WorktreePanes] = { [] },
+            signalingHandler: (@Sendable (SignalingOffer) async -> SignalingHandlerOutcome)? = nil
         ) {
             self.port = port
             self.zmxExecutable = zmxExecutable
@@ -203,6 +217,7 @@ public final class WebServer {
             self.worktreeRemover = worktreeRemover
             self.ghosttyConfigProvider = ghosttyConfigProvider
             self.worktreePanesProvider = worktreePanesProvider
+            self.signalingHandler = signalingHandler
         }
 
         /// Accepts the range NIO's `bootstrap.bind(host:port:)` will accept
@@ -579,6 +594,21 @@ public final class WebServer {
                 handleCreateWorktree(context: context, body: body)
                 return
             }
+            // POST /v1/rtc/offer — WebRTC signaling exchange (M1.2).
+            // POST-only; other verbs get 405 so caching proxies and curl
+            // probes don't surprise the client.
+            if path == "/v1/rtc/offer" {
+                guard head.method == .POST else {
+                    Self.respondJSON(
+                        context: context,
+                        status: .methodNotAllowed,
+                        error: "only POST is supported"
+                    )
+                    return
+                }
+                handleSignalingOffer(context: context, body: body)
+                return
+            }
             // WEB-7.8 / WEB-7.9 / WEB-7.10: delete or dismiss a worktree.
             // POST-only; body is the same JSON envelope the iOS client
             // sends. Other verbs get 405 so caching proxies and curl
@@ -778,6 +808,62 @@ public final class WebServer {
             }
             Task {
                 promise.succeed(await remover(decoded))
+            }
+        }
+
+        /// Decode the JSON body as a `SignalingOffer`, invoke the
+        /// injected `signalingHandler`, and map the outcome to an HTTP
+        /// status + JSON envelope. Mirrors `handleCreateWorktree`.
+        private func handleSignalingOffer(context: ChannelHandlerContext, body: Data) {
+            guard let handler = config.signalingHandler else {
+                Self.respondJSON(
+                    context: context,
+                    status: .serviceUnavailable,
+                    error: "signaling endpoint not available"
+                )
+                return
+            }
+            let offer: SignalingOffer
+            do {
+                offer = try JSONDecoder().decode(SignalingOffer.self, from: body)
+            } catch {
+                Self.respondJSON(
+                    context: context,
+                    status: .badRequest,
+                    error: "malformed signaling offer: \(error.localizedDescription)"
+                )
+                return
+            }
+            let promise = context.eventLoop.makePromise(of: WebServer.SignalingHandlerOutcome.self)
+            promise.futureResult.whenComplete { result in
+                let outcome = (try? result.get()) ?? .internalFailure("handler dispatch failed")
+                switch outcome {
+                case .success(let answer):
+                    do {
+                        let data = try JSONEncoder().encode(answer)
+                        Self.respond(
+                            context: context,
+                            status: .ok,
+                            body: data,
+                            contentType: "application/json; charset=utf-8"
+                        )
+                    } catch {
+                        Self.respondJSON(
+                            context: context,
+                            status: .internalServerError,
+                            error: "encoding error"
+                        )
+                    }
+                case .invalid(let msg):
+                    Self.respondJSON(context: context, status: .badRequest, error: msg)
+                case .unavailable(let msg):
+                    Self.respondJSON(context: context, status: .serviceUnavailable, error: msg)
+                case .internalFailure(let msg):
+                    Self.respondJSON(context: context, status: .internalServerError, error: msg)
+                }
+            }
+            Task {
+                promise.succeed(await handler(offer))
             }
         }
 

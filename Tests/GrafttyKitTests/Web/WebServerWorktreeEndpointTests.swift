@@ -23,14 +23,6 @@ import Foundation
 @Suite("WebServer — /repos + /worktrees endpoints", .serialized)
 struct WebServerWorktreeEndpointTests {
 
-    /// Matches the skip pattern `wsEchoRoundTrip` uses (see
-    /// `WebServerIntegrationTests`). Plain early-return rather than
-    /// `#require` because Swift Testing treats `#require` failure as a
-    /// test failure, not a skip.
-    private static var skipInCI: Bool {
-        ProcessInfo.processInfo.environment["CI"] != nil
-    }
-
     private static func makeConfig(
         repos: [WebServer.RepoInfo] = [],
         creator: (@Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome)? = nil
@@ -65,7 +57,7 @@ struct WebServerWorktreeEndpointTests {
     @spec WEB-7.1: When a client requests `GET /repos`, the application shall respond with a JSON array of the currently-tracked repositories (one entry per top-level `RepoEntry` in `AppState.repos`) with fields `path` (opaque absolute path round-tripped on `POST /worktrees`) and `displayName` (matching the native sidebar's top-level label). Access is gated by the same Tailscale-whois authorization (`WEB-2.1` / `WEB-2.2`).
     """)
     func reposEndpointEncodesProviderOutput() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let (server, port) = try Self.startServer(config: Self.makeConfig(repos: [
             WebServer.RepoInfo(path: "/tmp/alpha", displayName: "alpha"),
@@ -86,7 +78,7 @@ struct WebServerWorktreeEndpointTests {
     }
 
     @Test func deniedReposRequestReturns403WithoutCallingProvider() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let config = WebServer.Config(
             port: 0,
@@ -108,7 +100,7 @@ struct WebServerWorktreeEndpointTests {
     }
 
     @Test func reposEndpointReturnsEmptyArrayWhenNoProvider() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         // Default-empty provider baked into Config.init — consumers who
         // haven't wired `setReposProvider` yet should still get a valid
@@ -131,7 +123,7 @@ struct WebServerWorktreeEndpointTests {
     }
 
     @Test func worktreesPostReturnsSessionOnSuccess() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let creator: @Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome = { req in
             #expect(req.repoPath == "/tmp/repo")
@@ -164,7 +156,7 @@ struct WebServerWorktreeEndpointTests {
     }
 
     @Test func worktreesPostGitFailureReturns409WithError() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let creator: @Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome = { _ in
             .gitFailed("fatal: branch 'foo' already exists")
@@ -188,7 +180,7 @@ struct WebServerWorktreeEndpointTests {
     }
 
     @Test func worktreesPostInvalidJSONReturns400() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let creator: @Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome = { _ in
             Issue.record("creator should not run on invalid input")
@@ -207,7 +199,7 @@ struct WebServerWorktreeEndpointTests {
     }
 
     @Test func worktreesPostMissingFieldReturns400WithoutInvokingCreator() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let creator: @Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome = { _ in
             Issue.record("creator should not run when required JSON fields are missing")
@@ -227,7 +219,7 @@ struct WebServerWorktreeEndpointTests {
     }
 
     @Test func worktreesPostEmptyFieldReturns400WithoutInvokingCreator() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let creator: @Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome = { _ in
             Issue.record("creator should not run when trimmed input is empty")
@@ -249,7 +241,7 @@ struct WebServerWorktreeEndpointTests {
     }
 
     @Test func worktreesPostEmptyBranchReturns400WithoutInvokingCreator() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let creator: @Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome = { _ in
             Issue.record("creator should not run when trimmed branch is empty")
@@ -271,7 +263,7 @@ struct WebServerWorktreeEndpointTests {
     }
 
     @Test func worktreesGetReturns405() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let (server, port) = try Self.startServer(config: Self.makeConfig(
             creator: { _ in .internalFailure("unused") }
@@ -286,7 +278,7 @@ struct WebServerWorktreeEndpointTests {
     }
 
     @Test func worktreesDeleteReturns405() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let (server, port) = try Self.startServer(config: Self.makeConfig(
             creator: { _ in .internalFailure("unused") }
@@ -302,7 +294,7 @@ struct WebServerWorktreeEndpointTests {
     }
 
     @Test func worktreesOversizedBodyReturns413WithoutInvokingCreator() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let creator: @Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome = { _ in
             Issue.record("creator should not run for oversized request body")
@@ -326,7 +318,7 @@ struct WebServerWorktreeEndpointTests {
     }
 
     @Test func worktreesPostWithoutCreatorReturns503() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         // No creator injected — `WebServerController` before
         // `setWorktreeCreator` is called, or a test that omits it. The
@@ -348,7 +340,7 @@ struct WebServerWorktreeEndpointTests {
     }
 
     @Test func worktreesPostExistingTruePassesUseExistingToClosure() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         // Verify that `existing: true` in the JSON body is decoded and
         // forwarded to the creator closure as `existing == true`.
@@ -381,7 +373,7 @@ struct WebServerWorktreeEndpointTests {
     }
 
     @Test func worktreesPostMissingExistingFieldDefaultsFalse() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         // Back-compat: a payload without `existing` should decode to
         // `existing == false` so older clients keep working.
@@ -414,7 +406,7 @@ struct WebServerWorktreeEndpointTests {
     }
 
     @Test func worktreesPostConflictOutcomeReturns409() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         // A creator returning `.conflict(message:)` should map to HTTP 409
         // so the client can distinguish "branch already mounted" from a

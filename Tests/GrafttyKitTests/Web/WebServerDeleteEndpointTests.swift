@@ -12,10 +12,6 @@ import Foundation
 @Suite("WebServer — /worktrees/delete endpoint", .serialized)
 struct WebServerDeleteEndpointTests {
 
-    private static var skipInCI: Bool {
-        ProcessInfo.processInfo.environment["CI"] != nil
-    }
-
     private static func makeConfig(
         remover: (@Sendable (WebServer.DeleteWorktreeRequest) async -> WebServer.DeleteWorktreeOutcome)? = nil
     ) -> WebServer.Config {
@@ -64,7 +60,7 @@ struct WebServerDeleteEndpointTests {
     @spec WEB-7.8: When a client sends `POST /worktrees/delete` with `{ "worktreePath": "<abs>", "force": <bool> }`, the application shall route the request through `DeleteWorktreeFlow.delete` and respond `200 { "dismissed": <bool> }` on success. `dismissed` shall be `true` when the flow took the GIT-3.6 / GIT-4.13 prune-on-vanished branch and `false` when `git worktree remove` succeeded. The `/worktrees/delete` endpoint accepts `POST` only; other verbs return `405 Method Not Allowed`.
     """)
     func deleteSuccessReturnsDismissedFlag() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let remover: @Sendable (WebServer.DeleteWorktreeRequest) async -> WebServer.DeleteWorktreeOutcome = { req in
             #expect(req.worktreePath == "/tmp/repo/.worktrees/feature-x")
@@ -85,7 +81,7 @@ struct WebServerDeleteEndpointTests {
     }
 
     @Test func deleteSuccessWithPruneBranchReturnsDismissedTrue() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let remover: @Sendable (WebServer.DeleteWorktreeRequest) async -> WebServer.DeleteWorktreeOutcome = { _ in
             .success(WebServer.DeleteWorktreeResponse(dismissed: true))
@@ -102,7 +98,7 @@ struct WebServerDeleteEndpointTests {
     }
 
     @Test func deleteGetReturns405() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let (server, port) = try Self.startServer(config: Self.makeConfig(
             remover: { _ in .internalFailure("unused") }
@@ -120,7 +116,7 @@ struct WebServerDeleteEndpointTests {
     @spec WEB-7.9: If the server-side delete flow encounters a git failure that `--force` could resolve, then the application shall respond `409 Conflict` with `{ "error": "<stderr>", "forceAllowed": true, "shortStatus": "<git status --short output>" }`. When `--force` has already been attempted, or the failure class is one `--force` cannot help (e.g. main-checkout rejection), the response shall be `409 Conflict` with `forceAllowed: false` and no `shortStatus` field.
     """)
     func deleteForceableFailureReturns409WithStatus() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let remover: @Sendable (WebServer.DeleteWorktreeRequest) async -> WebServer.DeleteWorktreeOutcome = { _ in
             .gitFailedForceable(
@@ -143,7 +139,7 @@ struct WebServerDeleteEndpointTests {
     }
 
     @Test func deleteFinalFailureReturns409WithoutShortStatus() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let remover: @Sendable (WebServer.DeleteWorktreeRequest) async -> WebServer.DeleteWorktreeOutcome = { _ in
             .gitFailedFinal("fatal: main working tree cannot be removed")
@@ -162,7 +158,7 @@ struct WebServerDeleteEndpointTests {
     }
 
     @Test func deleteInvalidJSONReturns400() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let (server, port) = try Self.startServer(config: Self.makeConfig(
             remover: { _ in Issue.record("remover should not run on invalid JSON"); return .internalFailure("x") }
@@ -178,7 +174,7 @@ struct WebServerDeleteEndpointTests {
     }
 
     @Test func deleteEmptyPathReturns400WithoutInvokingRemover() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let (server, port) = try Self.startServer(config: Self.makeConfig(
             remover: { _ in Issue.record("remover should not run on empty path"); return .internalFailure("x") }
@@ -190,7 +186,7 @@ struct WebServerDeleteEndpointTests {
     }
 
     @Test func deleteNotFoundReturns404() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let remover: @Sendable (WebServer.DeleteWorktreeRequest) async -> WebServer.DeleteWorktreeOutcome = { _ in
             .notFound("unknown worktree path")
@@ -208,7 +204,7 @@ struct WebServerDeleteEndpointTests {
     @spec WEB-7.10: If the server's `worktreeRemover` closure is not injected, then `POST /worktrees/delete` shall respond `503 Service Unavailable` with `{ "error": "worktree deletion not available" }`. This matches the create endpoint's pre-injection contract (WEB-7.4 sibling) so a mobile or web client can distinguish "not supported yet" from "wrong URL".
     """)
     func deleteWithoutRemoverReturns503() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let (server, port) = try Self.startServer(config: Self.makeConfig(remover: nil))
         defer { server.stop() }
@@ -223,7 +219,7 @@ struct WebServerDeleteEndpointTests {
     }
 
     @Test func deleteDeniedReturns403WithoutInvokingRemover() async throws {
-        if Self.skipInCI { return }
+        if skipInCI() { return }
 
         let (server, port) = try Self.startServer(
             config: Self.makeConfig(
