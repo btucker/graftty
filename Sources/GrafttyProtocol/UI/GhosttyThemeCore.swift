@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// @spec IPAD-1.1
 /// Cross-platform snapshot of the ghostty-config-driven theme colors
 /// Graftty applies to app chrome (sidebar, breadcrumb). The Mac wraps
 /// this in `GhosttyTheme` (adding NSColor + NSAppearance accessors);

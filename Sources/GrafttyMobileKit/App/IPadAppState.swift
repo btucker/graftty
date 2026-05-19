@@ -3,7 +3,6 @@ import Foundation
 import Observation
 import GrafttyProtocol
 
-/// @spec IPAD-1.1
 /// Observable selection state for the iPad regular-width layout.
 /// `selectedHostId` and `sidebarWidth` persist to `UserDefaults`;
 /// `selectedWorktreePath`, `focusedPaneId`, and `theme` are in-memory
