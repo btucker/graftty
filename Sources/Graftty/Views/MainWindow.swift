@@ -14,10 +14,6 @@ struct MainWindow: View {
 
     @EnvironmentObject private var updaterController: UpdaterController
 
-    /// Debounces writes of `sidebarWidth` to AppState so a drag doesn't
-    /// generate hundreds of save-to-disk events.
-    @State private var pendingSidebarWidthTask: Task<Void, Never>?
-
     /// Column visibility state — must be a real `@State` rather than a
     /// `.constant(...)` so the toolbar toggle button actually toggles.
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
@@ -145,19 +141,10 @@ struct MainWindow: View {
             }
         }
         .focusedSceneValue(\.addWorktreeAction, addWorktreeAction)
-        .onPreferenceChange(SidebarWidthKey.self) { [$appState, $pendingSidebarWidthTask] width in
-            // Debounce by 250ms so a drag doesn't write on every layout
-            // pass. Only writes if the value actually changed (value-equality
-            // check prevents feedback loops with the onChange save handler).
-            $pendingSidebarWidthTask.wrappedValue?.cancel()
-            $pendingSidebarWidthTask.wrappedValue = Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(250))
-                if Task.isCancelled { return }
-                if $appState.wrappedValue.sidebarWidth != width {
-                    $appState.wrappedValue.sidebarWidth = width
-                }
-            }
-        }
+        .persistSidebarWidth(to: Binding(
+            get: { appState.sidebarWidth },
+            set: { appState.sidebarWidth = $0 }
+        ))
         .onChange(of: appState.selectedWorktreePath, initial: true) { _, newPath in
             guard let newPath else { return }
             terminalManager.surfaceBudget.noteSelected(
