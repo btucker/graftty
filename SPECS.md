@@ -414,7 +414,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.11** When BranchSelection.useExisting is submitted and the same repo already has the branch mounted in another worktree, the application shall reject the create with branchAlreadyMounted(at:) before invoking git.
 
-**GIT-5.12** When BranchSelection.useExisting is submitted with a remoteOnly source, the application shall pass `origin/<name>` so git creates a local tracking branch as a side effect.
+**GIT-5.12** When BranchSelection.useExisting is submitted with a remoteOnly source, the application shall invoke `git worktree add --track -b <name> <path> origin/<name>` so a local branch is created and checked out (not detached HEAD).
 
 **GIT-5.13** While the user is in existing-branch mode, the application shall display branches sorted by last-commit date descending in an always-visible list, with branches mounted in another worktree dimmed and unselectable.
 
