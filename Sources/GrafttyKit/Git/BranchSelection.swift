@@ -8,8 +8,11 @@ public enum BranchSelection: Sendable, Hashable {
     /// New-branch source for `git worktree add -b <name>`.
     case createNew(name: String)
     /// @spec GIT-5.10
-    /// Existing-branch source for `git worktree add <path> <name|origin/name>`
-    /// — no `-b` flag, no start point.
+    /// Existing-branch source. Local branches are checked out via
+    /// `git worktree add <path> <name>`; remote-only branches use
+    /// `git worktree add --track -b <name> <path> origin/<name>` so
+    /// a local tracking branch is created (the bare remote-tracking
+    /// ref would otherwise produce a detached HEAD).
     case useExisting(name: String, source: ExistingSource)
 
     public enum ExistingSource: Sendable, Hashable {

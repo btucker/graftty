@@ -69,6 +69,13 @@ public final class WebSession {
     /// `close()` clears the entry.
     public var inputState: ZmxInputState?
 
+    /// Test seam: override the env `start()` reads for terminal-capability
+    /// resolution. Production callers leave this nil and `start()` reads
+    /// `ProcessInfo.processInfo.environment` directly. Tests inject SHELL
+    /// and GHOSTTY_RESOURCES_DIR through here so the test doesn't depend on
+    /// the CI runner's environment.
+    var processEnvForTesting: [String: String]?
+
     public init(config: Config) {
         self.config = config
     }
@@ -79,10 +86,29 @@ public final class WebSession {
         guard spawned == nil else { throw Error.alreadyStarted }
 
         let launcher = ZmxLauncher(executable: config.zmxExecutable, zmxDir: config.zmxDir)
+        let processEnv = processEnvForTesting ?? ProcessInfo.processInfo.environment
         // subprocessEnv strips ZMX_SESSION in addition to setting ZMX_DIR —
         // see ZmxLauncher for why that matters (an inherited ZMX_SESSION
         // silently overrides the positional session arg).
-        let env = launcher.subprocessEnv(from: ProcessInfo.processInfo.environment)
+        var env = launcher.subprocessEnv(from: processEnv)
+        // WEB-4.10: this `zmx attach` may win the create-session race
+        // against the host pane's own attach (which is delayed behind
+        // `git worktree add` + discovery). Whichever attach reaches the
+        // daemon first sets the user shell's permanent env, so propagate
+        // the same shell-integration env the host pane uses — without
+        // this, the mobile-created shell spawns with no TERM (no color)
+        // and no ZDOTDIR (no OSC PWD → no `onShellReady` → no default
+        // command).
+        let ghosttyResourcesDir = processEnv["GHOSTTY_RESOURCES_DIR"]
+        ZmxSpawnConfiguration.applyTerminalCapabilities(
+            env: &env,
+            ghosttyResourcesDir: ghosttyResourcesDir
+        )
+        ZmxSpawnConfiguration.applyZshShellIntegration(
+            env: &env,
+            userShellPath: processEnv["SHELL"] ?? "/bin/sh",
+            ghosttyResourcesDir: ghosttyResourcesDir
+        )
         do {
             spawned = try PtyProcess.spawn(
                 argv: launcher.attachArgv(sessionName: config.sessionName),

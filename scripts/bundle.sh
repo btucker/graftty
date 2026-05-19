@@ -79,6 +79,11 @@ cp "$BIN_DIR/graftty-cli" "$APP/Contents/Helpers/graftty"
 
 echo "→ copy dynamic frameworks"
 ditto "$BIN_DIR/Sparkle.framework" "$APP/Contents/Frameworks/Sparkle.framework"
+# WebRTC ships as a binary XCFramework via stasel/WebRTC. The Mac
+# binary links it (the iPad-pairing path on GrafttyKit). Without this
+# copy the app dies on launch with `Library not loaded:
+# @rpath/WebRTC.framework/WebRTC` — how v0.1.5 shipped broken.
+ditto "$BIN_DIR/WebRTC.framework" "$APP/Contents/Frameworks/WebRTC.framework"
 
 FRAMEWORK_RPATH="@executable_path/../Frameworks"
 for executable in "$APP/Contents/MacOS/Graftty" "$APP/Contents/Helpers/graftty"; do
@@ -175,6 +180,7 @@ codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework/Versions/B
 codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app"
 codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
 codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework"
+codesign --force --sign - "$APP/Contents/Frameworks/WebRTC.framework"
 codesign --force --sign - "$APP/Contents/Helpers/zmx"
 codesign --force --sign - "$APP/Contents/Helpers/graftty"
 codesign --force --sign - "$APP/Contents/MacOS/Graftty"
@@ -183,6 +189,7 @@ codesign --verify --strict "$APP"
 
 echo "→ verify dynamic framework linkage"
 test -e "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Sparkle"
+test -e "$APP/Contents/Frameworks/WebRTC.framework/Versions/A/WebRTC"
 for executable in "$APP/Contents/MacOS/Graftty" "$APP/Contents/Helpers/graftty"; do
   otool -l "$executable" | grep -q "$FRAMEWORK_RPATH"
 done

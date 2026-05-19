@@ -34,13 +34,13 @@ struct GitWorktreeAddArgsTests {
         #expect(argv == ["worktree", "add", "/repo/.worktrees/feat-x", "feat-x"])
     }
 
-    @Test("@spec GIT-5.12: When BranchSelection.useExisting is submitted with a remoteOnly source, the application shall pass `origin/<name>` so git creates a local tracking branch as a side effect.")
+    @Test("@spec GIT-5.12: When BranchSelection.useExisting is submitted with a remoteOnly source, the application shall invoke `git worktree add --track -b <name> <path> origin/<name>` so a local branch is created and checked out (not detached HEAD).")
     func useExistingRemoteOnly() {
         let argv = GitWorktreeAdd.argvFor(
             branch: .useExisting(name: "feat-x", source: .remoteOnly),
             worktreePath: "/repo/.worktrees/feat-x",
             startPoint: nil
         )
-        #expect(argv == ["worktree", "add", "/repo/.worktrees/feat-x", "origin/feat-x"])
+        #expect(argv == ["worktree", "add", "--track", "-b", "feat-x", "/repo/.worktrees/feat-x", "origin/feat-x"])
     }
 }

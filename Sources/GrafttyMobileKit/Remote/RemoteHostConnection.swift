@@ -36,8 +36,10 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     private let factory: RTCPeerConnectionFactory
     private var peerConnection: RTCPeerConnection?
     private var dataChannel: RTCDataChannel?
-    /// `nonisolated let` so the `nonisolated` `bindIceCandidates`
-    /// can install its callback without crossing the actor boundary.
+    /// `nonisolated let` so `init` can hand the delegate to
+    /// `RTCPeerConnectionFactory.peerConnection(with:...)` without
+    /// crossing the actor boundary, and the delegate's closures can be
+    /// invoked from WebRTC's internal queue without an extra hop.
     /// The delegate classes are `@unchecked Sendable`; their mutable
     /// closure properties carry `nonisolated(unsafe) @Sendable` and
     /// are themselves the explicit synchronization contract with
@@ -54,6 +56,18 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// actor-isolated context for a safe single-resume.
     private var iceGatheringContinuation: CheckedContinuation<Void, Never>?
     private var iceGatheringTimeoutTask: Task<Void, Never>?
+
+    /// Locally-gathered ICE candidates emitted before a forwarding target
+    /// is bound. Drained in arrival order when `bindIceCandidates(to:)`
+    /// runs. Without this buffer, candidates emitted between
+    /// `setLocalDescription` and the caller wiring up a target are
+    /// delivered to a nil sink and lost — which (with no STUN/TURN and
+    /// only host candidates) starves the remote peer of any way to reach
+    /// us, leaving the data channel stuck unconfigured. M1.2 signaling
+    /// will sit between gathering and "target available" the same way,
+    /// so the buffer belongs in production, not just the test path.
+    private var pendingLocalCandidates: [RTCIceCandidate] = []
+    private var iceCandidateTarget: WebRTCIceCandidateReceiver?
 
     /// Bound on how long `waitForIceGatheringComplete` will block when the
     /// SDK never emits `.complete` (iOS simulator, locked-down networks).
@@ -74,6 +88,15 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
         self.delegate = PeerConnectionDelegate()
         self.dataChannelDelegate = DataChannelDelegate()
+
+        // Install the candidate sink up-front so candidates emitted
+        // before `bindIceCandidates(to:)` is called (i.e. during the
+        // first ICE gathering pass) are captured rather than dropped.
+        // The actor hop preserves arrival order even when the delegate
+        // fires on WebRTC's internal queue.
+        self.delegate.onIceCandidate = { [weak self] candidate in
+            Task { await self?.routeLocalIceCandidate(candidate) }
+        }
     }
 
     /// Build the local peer connection and create the data channel.
@@ -176,11 +199,30 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     }
 
     /// Bind locally-gathered ICE candidates so they're routed into the
-    /// peer's connection. Used by the M1.1 loopback test that bypasses
-    /// the signaling endpoint. Real signaling lands in M1.2.
-    nonisolated public func bindIceCandidates(to peer: WebRTCIceCandidateReceiver) {
-        delegate.onIceCandidate = { candidate in
-            Task { try? await peer.addRemoteIceCandidate(candidate) }
+    /// remote peer's connection. Candidates emitted before this call
+    /// are buffered (see `pendingLocalCandidates`) and forwarded in
+    /// arrival order; later candidates are forwarded directly. The
+    /// M1.1 loopback test wires this directly to the answerer; M1.2
+    /// will plug in the signaling endpoint as the `peer` instead.
+    public func bindIceCandidates(to peer: WebRTCIceCandidateReceiver) {
+        self.iceCandidateTarget = peer
+        let drained = pendingLocalCandidates
+        pendingLocalCandidates.removeAll()
+        // Single Task with sequential awaits so the receiving peer
+        // sees candidates in arrival order. Per-candidate Tasks would
+        // race against each other on the peer's executor.
+        Task {
+            for candidate in drained {
+                try? await peer.addRemoteIceCandidate(candidate)
+            }
+        }
+    }
+
+    private func routeLocalIceCandidate(_ candidate: RTCIceCandidate) async {
+        if let target = iceCandidateTarget {
+            try? await target.addRemoteIceCandidate(candidate)
+        } else {
+            pendingLocalCandidates.append(candidate)
         }
     }
 
@@ -213,6 +255,8 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         peerConnection?.close()
         dataChannel = nil
         peerConnection = nil
+        iceCandidateTarget = nil
+        pendingLocalCandidates.removeAll()
         state = .closed
     }
 
