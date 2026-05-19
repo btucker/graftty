@@ -135,12 +135,6 @@ struct PaneControlHandlerTests {
 @spec REMOTE-7.5: A `pane_control` request shall not change the host's `AppState.selectedWorktreePath` or any worktree's `focusedPaneSlotID`. Mac focus is sovereign to the Mac user, mirroring `WEB-7.5`.
 """)
     func handlerHasNoPathToMutateFocus() async throws {
-        // The handler accepts a single mutator closure; the only way an
-        // inbound request can affect host state is through that closure.
-        // The test confirms by construction: handle a request, observe the
-        // mutator is the sole receiver, and the response is the mutator's
-        // verbatim return value. AppState references appearing in this
-        // handler in the future would require breaking this test's setup.
         let recorder = MutatorRecorder()
         let handler = PaneControlHandler(mutator: { [recorder] in await recorder.handle($0) })
         let outboxSpy = OutboxSpy()
@@ -151,9 +145,6 @@ struct PaneControlHandlerTests {
         try await pollUntil(timeout: .seconds(2)) { await outboxSpy.framesCount == 1 }
 
         #expect(await recorder.lastRequest == request)
-        // No other side channel exists — the handler's only collaborators
-        // are the injected mutator and the outbox. The outbox spy proves
-        // exactly one outbound frame was produced.
         #expect(await outboxSpy.framesCount == 1)
     }
 }

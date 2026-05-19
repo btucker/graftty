@@ -1,22 +1,8 @@
 import Foundation
 import GrafttyProtocol
 
-/// Server-side handler for the `pane_control` channel. Decodes incoming
-/// payload frames as `PaneControlRequest`, dispatches to an injected
-/// `mutator` callback (which performs the splittree mutation), and
-/// returns the `PaneControlResponse` as an outbound payload frame.
-///
-/// Production wires `mutator` to the real splittree operations on
-/// `AppState`. Tests pass a fake that records the request and produces
-/// a canned response.
-///
 /// @spec REMOTE-7.5
-/// `PaneControlHandler` has no reference to `AppState`. The only outbound
-/// effect of an inbound request is to invoke the injected `Mutator` and
-/// forward its `PaneControlResponse` back as a payload frame. Per-client
-/// focus sovereignty is therefore enforced by construction: no path
-/// through this type can mutate `selectedWorktreePath` or
-/// `focusedPaneSlotID`. Mirrors `WEB-7.5` on the Mac web client side.
+/// `PaneControlHandler` has no reference to `AppState`; per-client focus sovereignty is enforced by construction.
 public actor PaneControlHandler: ChannelHandler {
     public nonisolated let channelType = "pane_control"
 
