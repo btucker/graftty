@@ -14,21 +14,6 @@ struct IpadTodo {
     func ipad_1_1() async throws { }
 
     @Test("""
-@spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a `HostHeaderRow` at the top showing the selected host's label and a tap target presenting a host-switcher popover.
-""", .disabled("not yet implemented"))
-    func ipad_1_2() async throws { }
-
-    @Test("""
-@spec IPAD-1.3: While `IPadRootLayout` is presented, the sidebar shall render `WorktreeListContent` extracted from `WorktreePickerView`, bound to `WorktreePanesStore`, preserving `WorktreePickerGrouping`, swipe actions, PR badges, attention pills, and divergence gutter.
-""", .disabled("not yet implemented"))
-    func ipad_1_3() async throws { }
-
-    @Test("""
-@spec IPAD-1.4: When the user taps a pane child row in the sidebar at iPad regular width, the application shall set `IPadAppState.focusedPaneId` to that leaf's `sessionName` without pushing a new navigation stack frame.
-""", .disabled("not yet implemented"))
-    func ipad_1_4() async throws { }
-
-    @Test("""
 @spec IPAD-2.1: While a worktree is selected and the iPad layout is regular-width, the detail column shall render `MultiPaneDetailView` over the worktree's `PaneLayoutNode`.
 """, .disabled("not yet implemented"))
     func ipad_2_1() async throws { }
@@ -132,16 +117,6 @@ struct IpadTodo {
 @spec IPAD-5.4: When a previously-focused leaf is no longer present in the foreground-fresh `panes_state` snapshot, the application shall surface a "Pane no longer running" banner on the detail column with a "Back to sidebar" action.
 """, .disabled("not yet implemented"))
     func ipad_5_4() async throws { }
-
-    @Test("""
-@spec IPAD-6.1: When the user selects a different host from the host-switcher popover, the application shall close all open channels on the current `RemoteHostConnection`, tear down the connection, and build a new `RemoteHostConnection` for the selected host.
-""", .disabled("not yet implemented"))
-    func ipad_6_1() async throws { }
-
-    @Test("""
-@spec IPAD-6.2: While the new `RemoteHostConnection` is establishing, the sidebar shall show the new host's label with an in-progress spinner and the detail column shall render `ContentUnavailableView`.
-""", .disabled("not yet implemented"))
-    func ipad_6_2() async throws { }
 
     @Test("""
 @spec IPAD-6.3: When the new `RemoteHostConnection` completes its first `panes_state` snapshot, the application shall clear the spinner and, unless a prior selection has been restored from device state, select the first worktree in the snapshot's ordering as `IPadAppState.selectedWorktreePath`.
