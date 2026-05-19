@@ -95,6 +95,29 @@ struct WorktreeStatsStorePollTickTests {
         #expect(!compute.calledPaths.contains("/r/closed"))
     }
 
+    @MainActor
+    @Test("""
+@spec DIVERGE-4.10: When the divergence-stats polling tick visits a repository whose `git fetch` cooldown has elapsed but which currently has no running worktrees, the application shall not mark that repository as having an in-flight fetch. Without this, the empty-worktrees early-return in `maybeDispatchRepoFetch` leaves the repo's path latched in `inFlightRepos` for the lifetime of the session: every subsequent poll short-circuits at the `inFlightRepos.contains` check, Gate B is skipped, and `WorktreeStatsStore.refresh` is never re-invoked from the polling loop. The user-visible shape is a sidebar gutter whose ↓N count is frozen at whatever value the explicit `refresh` on worktree-open captured — merging `origin/<defaultBranch>` into a feature branch fails to drop the red behind-count, because nothing recomputes the stats until the app is relaunched.
+""")
+    func pollTickWithNoRunningWorktreesDoesNotLeakInFlightRepoSlot() async throws {
+        let compute = RecordingCompute()
+        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in })
+
+        let closedWt = WorktreeEntry(path: "/r/closed", branch: "feature", state: .closed)
+        let repoEmpty = RepoEntry(path: "/r", displayName: "r", worktrees: [closedWt])
+        await store.pollTickForTesting(repos: [repoEmpty])
+
+        // Seed the cooldown so the second tick falls through to Gate B
+        // without entering `performRepoFetch` (which would shell out to
+        // git against the fake `/r` path).
+        store.seedLastRepoFetchForTesting(Date(), forRepo: "/r")
+        let runningWt = WorktreeEntry(path: "/r/running", branch: "feature", state: .running)
+        let repoWithRunning = RepoEntry(path: "/r", displayName: "r", worktrees: [runningWt])
+        await store.pollTickForTesting(repos: [repoWithRunning])
+
+        try await waitUntil(timeout: 2.0) { compute.callCount(for: "/r/running") >= 1 }
+    }
+
     // MARK: - Helpers
 
     private func waitUntil(
