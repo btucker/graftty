@@ -74,6 +74,30 @@ struct PaneControlHandlerTests {
         let resp = try JSONDecoder().decode(PaneControlResponse.self, from: respBody)
         #expect(resp == .error(code: "conflict", message: "target already busy"))
     }
+
+    @Test("""
+@spec REMOTE-7.3: When the host receives a `pane_control` request `{"type":"close","target":<sessionName>}`, the host shall destroy the surface for the leaf whose `sessionName == target` and reply `{"ok":true}` on success.
+""")
+    func decodesAndDispatchesCloseRequest() async throws {
+        let recorder = MutatorRecorder()
+        let handler = PaneControlHandler(mutator: { [recorder] in await recorder.handle($0) })
+        let outboxSpy = OutboxSpy()
+        await handler.onOpen(ChannelID(5), outbox: outboxSpy.outbox)
+
+        let request: PaneControlRequest = .close(target: "session-bravo")
+        let body = try JSONEncoder().encode(request)
+        await handler.onPayload(body)
+
+        try await pollUntil(timeout: .seconds(2)) { await outboxSpy.framesCount == 1 }
+        let frames = await outboxSpy.frames
+        guard case .payload(_, let respBody) = frames[0] else {
+            Issue.record("expected payload frame")
+            return
+        }
+        let resp = try JSONDecoder().decode(PaneControlResponse.self, from: respBody)
+        #expect(resp == .ok)
+        #expect(await recorder.lastRequest == request)
+    }
 }
 
 private actor MutatorRecorder {

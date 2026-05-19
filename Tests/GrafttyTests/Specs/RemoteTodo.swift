@@ -44,11 +44,6 @@ struct RemoteTodo {
     func remote_7_1() async throws { }
 
     @Test("""
-@spec REMOTE-7.3: When the host receives a `pane_control` request `{"type":"close","target":<sessionName>}`, the host shall destroy the surface for the leaf whose `sessionName == target` and reply `{"ok":true}` on success.
-""", .disabled("not yet implemented"))
-    func remote_7_3() async throws { }
-
-    @Test("""
 @spec REMOTE-7.4: When two `pane_control` requests target the same leaf concurrently, the host shall immediately reply to the second request with `{"ok":false,"error":"conflict","code":"conflict"}` and continue processing only the first request. The conflict window for a target leaf ends once the first request's resulting `panes_state` snapshot has been emitted.
 """, .disabled("not yet implemented"))
     func remote_7_4() async throws { }
