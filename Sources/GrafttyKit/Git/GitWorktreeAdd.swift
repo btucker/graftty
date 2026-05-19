@@ -2,10 +2,13 @@ import Foundation
 
 /// Creates a new git worktree for a repository.
 ///
-/// Switches argv based on `BranchSelection`: `.createNew` invokes
-/// `git worktree add -b <branch> <path> [<start>]` (today's behavior);
-/// `.useExisting` invokes `git worktree add <path> <branch|origin/branch>`
-/// (no `-b`, no start point — the existing ref IS the start point).
+/// Switches argv based on `BranchSelection`:
+/// - `.createNew` → `git worktree add -b <branch> <path> [<start>]`.
+/// - `.useExisting(.local)` → `git worktree add <path> <branch>` —
+///   git checks out the existing local branch (not detached).
+/// - `.useExisting(.remoteOnly)` → `git worktree add --track -b <branch> <path> origin/<branch>` —
+///   `--track -b` is required: bare `git worktree add <path> origin/<branch>` treats the
+///   remote-tracking ref as a commit-ish and produces a detached HEAD.
 public enum GitWorktreeAdd {
 
     public enum Error: Swift.Error, Equatable {
@@ -60,12 +63,12 @@ public enum GitWorktreeAdd {
                 startPoint == nil,
                 "GitWorktreeAdd: startPoint must be nil when branch is .useExisting (caller should pass nil)"
             )
-            let ref: String
             switch source {
-            case .local: ref = name
-            case .remoteOnly: ref = "origin/" + name
+            case .local:
+                return ["worktree", "add", worktreePath, name]
+            case .remoteOnly:
+                return ["worktree", "add", "--track", "-b", name, worktreePath, "origin/" + name]
             }
-            return ["worktree", "add", worktreePath, ref]
         }
     }
 }
