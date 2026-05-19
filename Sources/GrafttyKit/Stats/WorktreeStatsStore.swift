@@ -379,12 +379,17 @@ public final class WorktreeStatsStore {
            now.timeIntervalSince(last) < Double(interval.components.seconds) {
             return false
         }
+        // DIVERGE-4.10: claiming an `inFlightRepos` slot here without a
+        // matching `performRepoFetch` (whose `defer` releases the slot)
+        // permanently latches the repo — every subsequent poll then
+        // short-circuits at the contains-check above and Gate B never
+        // re-fires for a worktree the user later opens.
+        guard repo.worktrees.contains(where: shouldPollStats) else { return false }
         inFlightRepos.insert(repo.path)
         let repoPath = repo.path
         let worktrees = repo.worktrees
             .filter(shouldPollStats)
             .map { (path: $0.path, branch: $0.branch) }
-        if worktrees.isEmpty { return false }
 
         Task { [weak self] in
             await self?.performRepoFetch(
