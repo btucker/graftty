@@ -40,6 +40,7 @@ public struct IPadRootLayout: View {
                 }
             }
             .background(appState.theme.sidebarBackground)
+            .publishSidebarWidth()
             .navigationSplitViewColumnWidth(
                 min: 220,
                 ideal: appState.sidebarWidth,
@@ -52,6 +53,10 @@ public struct IPadRootLayout: View {
             )
             .background(appState.theme.background)
         }
+        .persistSidebarWidth(to: Binding(
+            get: { appState.sidebarWidth },
+            set: { appState.sidebarWidth = $0 }
+        ))
         .task(id: selectedHost?.id) {
             await refreshTheme()
         }
