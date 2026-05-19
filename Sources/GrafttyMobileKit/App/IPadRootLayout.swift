@@ -103,6 +103,7 @@ public struct IPadRootLayout: View {
         }
         let capturedHostID = host.id
         let text = await GhosttyConfigFetcher.fetch(baseURL: host.baseURL)
+        guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
         appState.theme = text.map(GhosttyThemeColors.init(parsingConfigText:)) ?? .fallback
     }
