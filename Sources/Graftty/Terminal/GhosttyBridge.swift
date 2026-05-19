@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import GhosttyKit
+import GrafttyProtocol
 import SwiftUI
 
 // MARK: - GhosttyConfig
@@ -84,59 +85,42 @@ final class GhosttyConfig {
 /// app chrome (sidebar, title bar, breadcrumb) so the whole window visually
 /// matches the terminal's appearance.
 ///
-/// Stores the raw RGB triples for background and foreground so we can derive
-/// shifted variants (a slightly-lighter-on-dark / slightly-darker-on-light
-/// sidebar shade) and expose the raw values as NSColor for NSWindow tinting.
+/// Wraps the cross-platform `GhosttyThemeColors` (in GrafttyProtocol) with
+/// Mac-specific accessors (NSColor, NSAppearance, unfocused-split dimming).
+/// Mobile parses the same `GhosttyThemeColors` from the resolved config text.
 struct GhosttyTheme: Equatable {
-    /// RGB triple in 0..1 linear SwiftUI-compatible space.
-    struct RGB: Equatable {
-        let r: Double
-        let g: Double
-        let b: Double
-    }
+    /// Convenience alias so existing call sites (`GhosttyTheme.RGB`) keep compiling.
+    typealias RGB = GhosttyThemeColors.RGB
 
-    let backgroundRGB: RGB
-    let foregroundRGB: RGB
+    let core: GhosttyThemeColors
     let unfocusedSplitFillRGB: RGB
     let unfocusedSplitOpacity: Double
 
-    var background: Color { color(backgroundRGB) }
-    var foreground: Color { color(foregroundRGB) }
-    var unfocusedSplitFill: Color { color(unfocusedSplitFillRGB) }
+    var backgroundRGB: RGB { core.backgroundRGB }
+    var foregroundRGB: RGB { core.foregroundRGB }
+
+    var background: Color { core.background }
+    var foreground: Color { core.foreground }
+    var sidebarBackground: Color { core.sidebarBackground }
+    var isDark: Bool { core.isDark }
+
+    var unfocusedSplitFill: Color {
+        Color(.sRGB,
+            red: unfocusedSplitFillRGB.r,
+            green: unfocusedSplitFillRGB.g,
+            blue: unfocusedSplitFillRGB.b,
+            opacity: 1)
+    }
 
     /// NSColor version of the background, used to tint the NSWindow so the
     /// title-bar area doesn't render as system white behind `.hiddenTitleBar`.
     var backgroundNSColor: NSColor {
         NSColor(
-            srgbRed: backgroundRGB.r,
-            green: backgroundRGB.g,
-            blue: backgroundRGB.b,
+            srgbRed: core.backgroundRGB.r,
+            green: core.backgroundRGB.g,
+            blue: core.backgroundRGB.b,
             alpha: 1
         )
-    }
-
-    /// Slightly shifted background for the sidebar, so there's visible
-    /// separation between chrome and terminal content without introducing
-    /// a color from outside the theme. On dark themes we lighten; on light
-    /// themes we darken.
-    var sidebarBackground: Color {
-        let bg = backgroundRGB
-        let shift = isDark ? 0.06 : -0.06
-        return color(RGB(
-            r: clamp01(bg.r + shift),
-            g: clamp01(bg.g + shift),
-            b: clamp01(bg.b + shift)
-        ))
-    }
-
-    /// True when the ghostty background is closer to black than white.
-    /// Drives NSWindow appearance so the traffic lights and sidebar toggle
-    /// render with the right contrast, and is the single source of truth
-    /// for all light-vs-dark decisions in Graftty chrome.
-    var isDark: Bool {
-        let bg = backgroundRGB
-        let luminance = 0.299 * bg.r + 0.587 * bg.g + 0.114 * bg.b
-        return luminance < 0.5
     }
 
     /// Ghostty-style unfocused split dimming. Ghostty's config value is the
@@ -144,7 +128,7 @@ struct GhosttyTheme: Equatable {
     func paneFocusDimmingStyle(isUnfocused: Bool) -> PaneFocusDimmingStyle {
         guard isUnfocused else { return .hidden }
         return PaneFocusDimmingStyle(
-            overlayOpacity: clamp01(1 - unfocusedSplitOpacity)
+            overlayOpacity: Self.clamp01(1 - unfocusedSplitOpacity)
         )
     }
 
@@ -153,15 +137,15 @@ struct GhosttyTheme: Equatable {
     /// toggle icon, context menus, alert dialogs) picks the right
     /// contrast.
     var nsAppearance: NSAppearance? {
-        NSAppearance(named: isDark ? .darkAqua : .aqua)
+        NSAppearance(named: core.isDark ? .darkAqua : .aqua)
     }
 
     /// Fallback theme used when ghostty config is unavailable or doesn't
     /// specify background/foreground. Matches macOS dark-mode defaults so
     /// things don't look broken.
     static let fallback = GhosttyTheme(
-        backgroundRGB: RGB(r: 0.05, g: 0.05, b: 0.1),
-        foregroundRGB: RGB(r: 0.87, g: 0.87, b: 0.87),
+        core: .fallback,
+        unfocusedSplitFillRGB: GhosttyThemeColors.fallback.backgroundRGB,
         unfocusedSplitOpacity: 0.7
     )
 
@@ -169,40 +153,60 @@ struct GhosttyTheme: Equatable {
     /// `.fallback` component-wise.
     init(config: GhosttyConfig) {
         let backgroundRGB = config.color(forKey: "background").map(Self.toRGB)
-            ?? Self.fallback.backgroundRGB
+            ?? GhosttyThemeColors.fallback.backgroundRGB
         let foregroundRGB = config.color(forKey: "foreground").map(Self.toRGB)
-            ?? Self.fallback.foregroundRGB
+            ?? GhosttyThemeColors.fallback.foregroundRGB
         let unfocusedSplitFillRGB = config.color(forKey: "unfocused-split-fill").map(Self.toRGB)
             ?? backgroundRGB
         let unfocusedSplitOpacity = config.double(forKey: "unfocused-split-opacity")
             ?? Self.fallback.unfocusedSplitOpacity
 
         self.init(
-            backgroundRGB: backgroundRGB,
-            foregroundRGB: foregroundRGB,
+            core: GhosttyThemeColors(
+                backgroundRGB: backgroundRGB,
+                foregroundRGB: foregroundRGB
+            ),
             unfocusedSplitFillRGB: unfocusedSplitFillRGB,
             unfocusedSplitOpacity: unfocusedSplitOpacity
         )
     }
 
+    /// Designated initializer. Accepts the shared core plus Mac-specific fields.
+    init(
+        core: GhosttyThemeColors,
+        unfocusedSplitFillRGB: RGB,
+        unfocusedSplitOpacity: Double
+    ) {
+        self.core = core
+        self.unfocusedSplitFillRGB = unfocusedSplitFillRGB
+        self.unfocusedSplitOpacity = Self.clampUnfocusedSplitOpacity(unfocusedSplitOpacity)
+    }
+
+    /// Convenience initializer preserving the old `(backgroundRGB:foregroundRGB:…)` call shape
+    /// so existing tests and internal callers compile without changes.
     init(
         backgroundRGB: RGB,
         foregroundRGB: RGB,
         unfocusedSplitFillRGB: RGB? = nil,
         unfocusedSplitOpacity: Double = 0.7
     ) {
-        self.backgroundRGB = backgroundRGB
-        self.foregroundRGB = foregroundRGB
-        self.unfocusedSplitFillRGB = unfocusedSplitFillRGB ?? backgroundRGB
-        self.unfocusedSplitOpacity = Self.clampUnfocusedSplitOpacity(unfocusedSplitOpacity)
+        self.init(
+            core: GhosttyThemeColors(backgroundRGB: backgroundRGB, foregroundRGB: foregroundRGB),
+            unfocusedSplitFillRGB: unfocusedSplitFillRGB ?? backgroundRGB,
+            unfocusedSplitOpacity: unfocusedSplitOpacity
+        )
     }
 
     private static func toRGB(_ c: ghostty_config_color_s) -> RGB {
-        RGB(r: Double(c.r) / 255.0, g: Double(c.g) / 255.0, b: Double(c.b) / 255.0)
+        RGB(
+            r: Double(c.r) / 255.0,
+            g: Double(c.g) / 255.0,
+            b: Double(c.b) / 255.0
+        )
     }
 
-    private func color(_ rgb: RGB) -> Color {
-        Color(.sRGB, red: rgb.r, green: rgb.g, blue: rgb.b, opacity: 1)
+    private static func clamp01(_ x: Double) -> Double {
+        min(1.0, max(0.0, x))
     }
 
     private static func clampUnfocusedSplitOpacity(_ value: Double) -> Double {
@@ -218,10 +222,6 @@ struct PaneFocusDimmingStyle: Equatable {
     var isVisible: Bool {
         overlayOpacity > 0
     }
-}
-
-private func clamp01(_ x: Double) -> Double {
-    min(1.0, max(0.0, x))
 }
 
 // MARK: - GhosttyApp
