@@ -128,7 +128,8 @@ struct PaneControlHandlerTests {
         let json = try #require(try JSONSerialization.jsonObject(with: respBody) as? [String: Any])
         #expect(json["ok"] as? Bool == false)
         #expect(json["code"] as? String == "conflict")
-        #expect((json["message"] as? String)?.isEmpty == false)
+        let message = try #require(json["message"] as? String)
+        #expect(!message.isEmpty)
     }
 
     @Test
