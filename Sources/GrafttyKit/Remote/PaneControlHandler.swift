@@ -1,6 +1,15 @@
 import Foundation
 import GrafttyProtocol
 
+/// Server-side handler for the `pane_control` channel. Decodes incoming
+/// payload frames as `PaneControlRequest`, dispatches to an injected
+/// `mutator` callback (which performs the splittree mutation), and
+/// returns the `PaneControlResponse` as an outbound payload frame.
+///
+/// Production wires `mutator` to the real splittree operations on
+/// `AppState`. Tests pass a fake that records the request and produces
+/// a canned response.
+///
 /// @spec REMOTE-7.5
 /// `PaneControlHandler` has no reference to `AppState`; per-client focus sovereignty is enforced by construction.
 public actor PaneControlHandler: ChannelHandler {
