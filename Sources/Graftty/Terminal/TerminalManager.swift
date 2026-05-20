@@ -513,9 +513,7 @@ final class TerminalManager: ObservableObject {
             didCreateSurface(for: terminalID)
             surfaces[terminalID] = handle
             created[terminalID] = handle
-            if let scanner = portScanner, let pid = lookupShellPID(for: terminalID) {
-                Task { await scanner.registerPane(terminalID, shellPID: pid) }
-            }
+            registerForPortScan(terminalID)
         }
         return created
     }
@@ -559,10 +557,22 @@ final class TerminalManager: ObservableObject {
         }
         didCreateSurface(for: terminalID)
         surfaces[terminalID] = handle
-        if let scanner = portScanner, let pid = lookupShellPID(for: terminalID) {
-            Task { await scanner.registerPane(terminalID, shellPID: pid) }
-        }
+        registerForPortScan(terminalID)
         return handle
+    }
+
+    /// PORTS-4.5: At surface-creation time the zmx daemon may not have
+    /// written its `pty spawned ... pid=N` line yet, so `lookupShellPID`
+    /// can transiently return nil. Register as pending in that case so
+    /// the scanner re-attempts resolution on each tick — otherwise the
+    /// pane silently never gets scanned and chips never appear.
+    private func registerForPortScan(_ terminalID: PaneSlotID) {
+        guard let scanner = portScanner else { return }
+        if let pid = lookupShellPID(for: terminalID) {
+            Task { await scanner.registerPane(terminalID, shellPID: pid) }
+        } else {
+            Task { await scanner.registerPanePending(terminalID) }
+        }
     }
 
     private func canAllocatePTY(for terminalID: PaneSlotID) -> Bool {

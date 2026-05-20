@@ -5,10 +5,13 @@ import os
 /// @spec PORTS-1.1: When a pane's foreground process is non-shell, the application shall scan that process subtree's TCP listening sockets every 2 seconds.
 //
 /// @spec PORTS-4.3: When a pane is dragged to another worktree, the application shall preserve its registration and binding snapshot (`PaneSlotID` is stable).
+//
+/// @spec PORTS-4.5: When a pane is registered before its shell PID can be resolved, the application shall record it as pending and re-attempt resolution on each scan tick.
 public actor PortScanner {
     private let runner: LsofRunner
     private let walker: any ProcessTreeWalking
     private var registrations: [PaneSlotID: pid_t] = [:]
+    private var pending: Set<PaneSlotID> = []
     private var snapshots: [PaneSlotID: [PortBinding]] = [:]
     private var inFlight = false
     private let log = Logger(subsystem: "com.btucker.graftty", category: "PortScanner")
@@ -16,6 +19,11 @@ public actor PortScanner {
     /// Closure invoked on the main actor whenever a pane's binding set
     /// changes. Wired by `GrafttyApp` to push into `PortBindingsModel`.
     public private(set) var onChange: (@MainActor @Sendable (PaneSlotID, [PortBinding]) -> Void)?
+
+    /// Resolver consulted on each tick for panes registered via
+    /// `registerPanePending`. Returns the inner-shell PID if it is now
+    /// resolvable, or `nil` if the call should be re-attempted next tick.
+    private var pidResolver: (@Sendable (PaneSlotID) async -> pid_t?)?
 
     public init(runner: LsofRunner, walker: any ProcessTreeWalking) {
         self.runner = runner
@@ -26,11 +34,26 @@ public actor PortScanner {
         self.onChange = callback
     }
 
+    public func setPIDResolver(_ resolver: @escaping @Sendable (PaneSlotID) async -> pid_t?) {
+        self.pidResolver = resolver
+    }
+
     public func registerPane(_ id: PaneSlotID, shellPID: pid_t) {
+        pending.remove(id)
         registrations[id] = shellPID
     }
 
+    /// PORTS-4.5: Register a pane whose shell PID isn't yet resolvable
+    /// (e.g., the zmx daemon hasn't written its `pty spawned` log line).
+    /// The scanner re-attempts resolution via `pidResolver` on each tick
+    /// and promotes the pane to a normal registration once it succeeds.
+    public func registerPanePending(_ id: PaneSlotID) {
+        guard registrations[id] == nil else { return }
+        pending.insert(id)
+    }
+
     public func unregisterPane(_ id: PaneSlotID) {
+        pending.remove(id)
         registrations.removeValue(forKey: id)
         if snapshots.removeValue(forKey: id) != nil {
             let onChange = self.onChange
@@ -46,6 +69,15 @@ public actor PortScanner {
         guard !inFlight else { return }
         inFlight = true
         defer { inFlight = false }
+
+        if let resolver = pidResolver, !pending.isEmpty {
+            for id in pending {
+                if let pid = await resolver(id) {
+                    pending.remove(id)
+                    registrations[id] = pid
+                }
+            }
+        }
 
         let roots = Array(registrations.values)
         let descendantsByRoot = walker.descendants(rootedAt: roots)

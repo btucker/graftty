@@ -1676,6 +1676,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PORTS-4.4** Tick clears bindings when previous scan had them but new scan has none
 
+**PORTS-4.5** When a pane is registered before its shell PID can be resolved (e.g., the zmx daemon log has not yet written the `pty spawned` line), the application shall record the pane as pending and re-attempt resolution on each scan tick until it succeeds; once resolved, the pane shall begin participating in scans.
+
 ## PROJECT — PROJECT
 
 ### PROJECT-1.x
