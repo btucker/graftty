@@ -147,7 +147,6 @@ public struct AgentHookInstaller: Sendable {
         for (basename, homeBasename) in [
             (".zshenv", ".zshenv"),
             (".zprofile", ".zprofile"),
-            (".zlogin", ".zlogin"),
         ] {
             try writeIfChanged(
                 Self.zshSourceShim(homeBasename: homeBasename),
@@ -162,6 +161,13 @@ public struct AgentHookInstaller: Sendable {
         try writeIfChanged(
             Self.zshrcShim(),
             to: zshInitDirectory.appendingPathComponent(".zshrc"),
+            executable: false,
+            written: &written
+        )
+
+        try writeIfChanged(
+            Self.zloginShim(),
+            to: zshInitDirectory.appendingPathComponent(".zlogin"),
             executable: false,
             written: &written
         )
@@ -284,6 +290,45 @@ public struct AgentHookInstaller: Sendable {
             esac
             export PATH="$GRAFTTY_AGENT_HOOKS_BIN:$PATH"
         fi
+
+        \(precmdHookSnippet())
+        """
+    }
+
+    /// Sources `~/.zlogin` (where RVM is conventionally loaded), then
+    /// re-registers `precmdHookSnippet` so our precmd hook is positioned
+    /// behind any precmd / chpwd hooks the user's `.zlogin` added. ZMX-6.8.
+    static func zloginShim() -> String {
+        zshSourceShim(homeBasename: ".zlogin") + "\n\n" + precmdHookSnippet()
+    }
+
+    /// Inline zsh that (re-)installs `_graftty_prepend_wrapper_path` at the
+    /// END of `precmd_functions` via strip-then-append. Embedded in both
+    /// `zshrcShim` and `zloginShim`: the `.zshrc` copy handles interactive
+    /// non-login zsh; the `.zlogin` copy reorders the hook behind any user
+    /// `.zlogin`-registered hooks so ours fires last each prompt. ZMX-6.8.
+    private static func precmdHookSnippet() -> String {
+        """
+        # ZMX-6.8: keep graftty's wrapper bin at PATH position 1 across
+        # every prompt by re-prepending in a precmd hook. Strip-then-append
+        # keeps a single entry in precmd_functions and lets .zlogin reorder
+        # us behind user-init hooks (asdf, mise, nvm-on-cd, etc.).
+        _graftty_prepend_wrapper_path() {
+            [ -z "$GRAFTTY_AGENT_HOOKS_BIN" ] && return
+            case ":$PATH:" in
+                *":$GRAFTTY_AGENT_HOOKS_BIN:"*)
+                    local _gp=":$PATH:"
+                    _gp="${_gp//:$GRAFTTY_AGENT_HOOKS_BIN:/:}"
+                    _gp="${_gp#:}"
+                    _gp="${_gp%:}"
+                    PATH="$_gp"
+                    ;;
+            esac
+            export PATH="$GRAFTTY_AGENT_HOOKS_BIN:$PATH"
+        }
+        typeset -ga precmd_functions
+        precmd_functions=(${precmd_functions[@]:#_graftty_prepend_wrapper_path})
+        precmd_functions+=(_graftty_prepend_wrapper_path)
         """
     }
 
