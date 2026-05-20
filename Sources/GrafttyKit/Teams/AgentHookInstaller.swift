@@ -295,33 +295,24 @@ public struct AgentHookInstaller: Sendable {
         """
     }
 
-    /// Sources the user's `~/.zlogin` (where RVM is conventionally loaded —
-    /// sourcing RVM prepends gem/ruby paths to PATH, pushing our wrapper bin
-    /// off position 1), then re-appends graftty's precmd hook so it runs
-    /// *after* any precmd / chpwd hooks the user's `.zlogin` registered.
-    /// ZMX-6.8.
+    /// Sources `~/.zlogin` (where RVM is conventionally loaded), then
+    /// re-registers `precmdHookSnippet` so our precmd hook is positioned
+    /// behind any precmd / chpwd hooks the user's `.zlogin` added. ZMX-6.8.
     static func zloginShim() -> String {
         zshSourceShim(homeBasename: ".zlogin") + "\n\n" + precmdHookSnippet()
     }
 
-    /// Inline shell block that (re-)installs the `_graftty_prepend_wrapper_path`
-    /// precmd hook at the END of `precmd_functions` using a strip-then-append
-    /// pattern. Embedded in both `zshrcShim` and `zloginShim`: the `.zshrc`
-    /// registration handles cases where the user's `.zlogin` doesn't run
-    /// (e.g. interactive non-login zsh); the `.zlogin` re-registration runs
-    /// after the user's `.zlogin`, so any precmd / chpwd hooks the user's
-    /// init registered (asdf, mise, nvm-on-cd, etc.) are positioned ahead
-    /// of ours in `precmd_functions` and ours fires last each prompt.
-    /// ZMX-6.8.
+    /// Inline zsh that (re-)installs `_graftty_prepend_wrapper_path` at the
+    /// END of `precmd_functions` via strip-then-append. Embedded in both
+    /// `zshrcShim` and `zloginShim`: the `.zshrc` copy handles interactive
+    /// non-login zsh; the `.zlogin` copy reorders the hook behind any user
+    /// `.zlogin`-registered hooks so ours fires last each prompt. ZMX-6.8.
     private static func precmdHookSnippet() -> String {
         """
         # ZMX-6.8: keep graftty's wrapper bin at PATH position 1 across
-        # every prompt by re-prepending in a precmd hook. The hook is
-        # registered with strip-then-append so it appears exactly once in
-        # precmd_functions; re-registering from .zlogin (after the user's
-        # .zlogin has run) reorders us to the end of the chain, so we win
-        # against any precmd / chpwd hooks user init registered (asdf, mise,
-        # nvm-on-cd, etc.).
+        # every prompt by re-prepending in a precmd hook. Strip-then-append
+        # keeps a single entry in precmd_functions and lets .zlogin reorder
+        # us behind user-init hooks (asdf, mise, nvm-on-cd, etc.).
         _graftty_prepend_wrapper_path() {
             [ -z "$GRAFTTY_AGENT_HOOKS_BIN" ] && return
             case ":$PATH:" in
