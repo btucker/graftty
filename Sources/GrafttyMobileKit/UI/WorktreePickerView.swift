@@ -8,15 +8,18 @@ import SwiftUI
 /// `WorktreeListContent` directly with different callbacks.
 public struct WorktreePickerView: View {
     public let host: Host
+    public let theme: GhosttyThemeColors?
     public let onSelect: (WorktreePanes) -> Void
     public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
 
     public init(
         host: Host,
+        theme: GhosttyThemeColors? = nil,
         onSelect: @escaping (WorktreePanes) -> Void,
         onSelectPane: @escaping (PaneLayoutNode.Leaf) -> Void
     ) {
         self.host = host
+        self.theme = theme
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
     }
@@ -24,6 +27,7 @@ public struct WorktreePickerView: View {
     public var body: some View {
         WorktreeListContent(
             host: host,
+            theme: theme,
             onSelect: onSelect,
             onSelectPane: onSelectPane
         )

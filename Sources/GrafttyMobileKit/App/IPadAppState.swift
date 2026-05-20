@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import Foundation
 import Observation
+import SwiftUI
 import GrafttyProtocol
 
 /// Observable selection state for the iPad regular-width layout.
@@ -28,6 +29,12 @@ public final class IPadAppState {
 
     public var selectedWorktreePath: String?
     public var focusedPaneId: String?
+
+    /// Sidebar/detail visibility for the iPad NavigationSplitView.
+    /// In-memory only — a fresh launch always lands on both columns
+    /// visible; user-driven hide/show during a session lives here so the
+    /// binding survives view-tree rebuilds.
+    public var columnVisibility: NavigationSplitViewVisibility = .all
 
     public var sidebarWidth: Double {
         didSet {

@@ -78,4 +78,60 @@ struct GhosttyThemeCoreTests {
         _ = theme.foreground
         _ = theme.sidebarBackground
     }
+
+    // MARK: - Sidebar text-color opacity ladders (shared with Mac sidebar)
+
+    @Test("sidebarPrimaryOpacity: 1.0 when active, 0.8 when inactive")
+    func sidebarPrimaryOpacityLadder() {
+        #expect(GhosttyThemeColors.sidebarPrimaryOpacity(isActive: true) == 1.0)
+        #expect(GhosttyThemeColors.sidebarPrimaryOpacity(isActive: false) == 0.8)
+    }
+
+    @Test("sidebar dim/secondary/stale constants match Mac SidebarView values")
+    func sidebarDimConstants() {
+        #expect(GhosttyThemeColors.sidebarStaleOpacity == 0.5)
+        #expect(GhosttyThemeColors.sidebarSecondaryOpacity == 0.45)
+        #expect(GhosttyThemeColors.sidebarDimIconOpacity == 0.6)
+        #expect(GhosttyThemeColors.sidebarChevronOpacity == 0.55)
+    }
+
+    @Test("paneArrowOpacity ladder: focused=0.75, active-worktree=0.5, inactive=0.35")
+    func paneArrowOpacityLadder() {
+        // Focused beats everything.
+        #expect(GhosttyThemeColors.paneArrowOpacity(isFocusedPane: true, isActiveWorktree: true) == 0.75)
+        #expect(GhosttyThemeColors.paneArrowOpacity(isFocusedPane: true, isActiveWorktree: false) == 0.75)
+        // Non-focused inside the active worktree.
+        #expect(GhosttyThemeColors.paneArrowOpacity(isFocusedPane: false, isActiveWorktree: true) == 0.5)
+        // Non-focused outside the active worktree (baseline dim).
+        #expect(GhosttyThemeColors.paneArrowOpacity(isFocusedPane: false, isActiveWorktree: false) == 0.35)
+    }
+
+    @Test("paneTitleOpacity ladder: focused=1.0, active+title=0.75, active+empty=0.55, inactive+title=0.55, inactive+empty=0.35")
+    func paneTitleOpacityLadder() {
+        // Focused — title content doesn't matter, always full brightness.
+        #expect(GhosttyThemeColors.paneTitleOpacity(isFocusedPane: true, isActiveWorktree: true, hasTitle: true) == 1.0)
+        #expect(GhosttyThemeColors.paneTitleOpacity(isFocusedPane: true, isActiveWorktree: true, hasTitle: false) == 1.0)
+        // Non-focused inside the active worktree: real title brighter than empty.
+        #expect(GhosttyThemeColors.paneTitleOpacity(isFocusedPane: false, isActiveWorktree: true, hasTitle: true) == 0.75)
+        #expect(GhosttyThemeColors.paneTitleOpacity(isFocusedPane: false, isActiveWorktree: true, hasTitle: false) == 0.55)
+        // Inactive worktree: dimmer overall.
+        #expect(GhosttyThemeColors.paneTitleOpacity(isFocusedPane: false, isActiveWorktree: false, hasTitle: true) == 0.55)
+        #expect(GhosttyThemeColors.paneTitleOpacity(isFocusedPane: false, isActiveWorktree: false, hasTitle: false) == 0.35)
+    }
+
+    @Test("Color accessors return SwiftUI Colors derived from foreground at the matching opacity")
+    func colorAccessorsExist() {
+        let theme = GhosttyThemeColors.fallback
+        // Just exercise the accessors so the test fails-to-build if a
+        // signature changes or one is removed. The opacity math is
+        // covered by the ladder tests above.
+        _ = theme.sidebarPrimaryText(isActive: true)
+        _ = theme.sidebarPrimaryText(isActive: false)
+        _ = theme.sidebarStaleText
+        _ = theme.sidebarSecondaryText
+        _ = theme.sidebarDimIcon
+        _ = theme.sidebarChevron
+        _ = theme.paneArrow(isFocusedPane: false, isActiveWorktree: false)
+        _ = theme.paneTitle(isFocusedPane: false, isActiveWorktree: false, hasTitle: true)
+    }
 }

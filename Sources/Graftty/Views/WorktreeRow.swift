@@ -62,7 +62,10 @@ struct PaneTitleRow: View {
             Text("↳")
                 .font(.caption)
                 .fontWeight(isFocusedPane ? .bold : .regular)
-                .foregroundColor(theme.foreground.opacity(arrowOpacity))
+                .foregroundColor(theme.paneArrow(
+                    isFocusedPane: isFocusedPane,
+                    isActiveWorktree: isActiveWorktree
+                ))
             // Title and chips share a FlowLayout container; wrapped chips
             // therefore hang under the title text instead of flushing to
             // the row's leading edge (PORTS-3.3).
@@ -75,7 +78,11 @@ struct PaneTitleRow: View {
                         .fontWeight(isFocusedPane ? .semibold : .regular)
                         .lineLimit(1)
                         .truncationMode(.tail)
-                        .foregroundColor(theme.foreground.opacity(titleOpacity))
+                        .foregroundColor(theme.paneTitle(
+                            isFocusedPane: isFocusedPane,
+                            isActiveWorktree: isActiveWorktree,
+                            hasTitle: !title.isEmpty
+                        ))
                     if shouldRenderPortChips {
                         ForEach(portBindings, id: \.self) { binding in
                             PortChip(binding: binding, theme: theme)
@@ -98,20 +105,6 @@ struct PaneTitleRow: View {
         .contentShape(Rectangle())
     }
 
-    /// Four-way brightness ladder so the eye can parse the hierarchy at a
-    /// glance: focused-in-active > other-pane-in-active > empty-title-in-active
-    /// > inactive-worktree. The numbers are tuned to the 0.16 alpha block
-    /// highlight so contrast stays clean on both light and dark themes.
-    private var titleOpacity: Double {
-        if isFocusedPane { return 1.0 }
-        if isActiveWorktree { return title.isEmpty ? 0.55 : 0.75 }
-        return title.isEmpty ? 0.35 : 0.55
-    }
-
-    private var arrowOpacity: Double {
-        if isFocusedPane { return 0.75 }
-        return isActiveWorktree ? 0.5 : 0.35
-    }
 }
 
 /// Minimal flow layout: wraps subviews to next line at container width
@@ -256,7 +249,7 @@ struct WorktreeRow: View {
 
     private var typeIconColor: Color {
         switch entry.state {
-        case .closed, .creating, .deleting: return theme.foreground.opacity(0.6)
+        case .closed, .creating, .deleting: return theme.sidebarDimIcon
         case .running: return .green
         case .stale: return .yellow
         }
@@ -335,7 +328,7 @@ struct WorktreeRow: View {
             if entry.state == .stale {
                 Text(displayName)
                     .strikethrough()
-                    .foregroundColor(theme.foreground.opacity(0.5))
+                    .foregroundColor(theme.sidebarStaleText)
             } else if isMainCheckout {
                 // Italic distinguishes the main checkout from feature
                 // worktrees; the label itself is the worktree's display
@@ -343,18 +336,10 @@ struct WorktreeRow: View {
                 // identity rather than a generic placeholder.
                 Text(displayName)
                     .italic()
-                    .foregroundColor(
-                        isActive
-                            ? theme.foreground
-                            : theme.foreground.opacity(0.8)
-                    )
+                    .foregroundColor(theme.sidebarPrimaryText(isActive: isActive))
             } else {
                 Text(displayName)
-                    .foregroundColor(
-                        isActive
-                            ? theme.foreground
-                            : theme.foreground.opacity(0.8)
-                    )
+                    .foregroundColor(theme.sidebarPrimaryText(isActive: isActive))
             }
 
             // Secondary label: git branch, dimmed. Skip when it duplicates
@@ -366,7 +351,7 @@ struct WorktreeRow: View {
             if entry.displayBranch != displayName {
                 Text(entry.displayBranch)
                     .font(.caption)
-                    .foregroundColor(theme.foreground.opacity(0.45))
+                    .foregroundColor(theme.sidebarSecondaryText)
             }
         }
     }

@@ -145,6 +145,14 @@ final class TerminalContainerBox {
 struct SingleSessionView: View {
     let step: SessionStep
     @Binding var navigationPath: NavigationPath
+    /// True for the iPhone compact path (fullscreen route via
+    /// NavigationStack push) where the back button and edge-to-edge bleed
+    /// belong; false when this view lives inside the iPad
+    /// `NavigationSplitView` detail column, where the system already owns
+    /// chrome for back-navigation and a hidden navigation bar would also
+    /// hide the sidebar-toggle button — leaving no way to re-show a
+    /// collapsed sidebar (IPAD-1.7).
+    let isFullScreen: Bool
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -185,9 +193,14 @@ struct SingleSessionView: View {
         case ended
     }
 
-    init(step: SessionStep, navigationPath: Binding<NavigationPath>) {
+    init(
+        step: SessionStep,
+        navigationPath: Binding<NavigationPath>,
+        isFullScreen: Bool = true
+    ) {
         self.step = step
         self._navigationPath = navigationPath
+        self.isFullScreen = isFullScreen
     }
 
     var body: some View {
@@ -208,16 +221,19 @@ struct SingleSessionView: View {
         // avoidance is unreliable when the focused responder is the
         // UIKeyInput proxy from IOS-6.6, so we drive it ourselves.
         .padding(.bottom, keyboardBottomInset)
-        // IOS-4.8: fill every edge — top (under the notch), bottom
-        // (under the home indicator), and the landscape side-bands.
-        // libghostty paints its background color behind its view; the
-        // unsafe regions inherit that color.
-        .ignoresSafeArea()
-        .toolbar(.hidden, for: .navigationBar)
+        // IOS-4.8 + IPAD-1.7: fullscreen path bleeds to every edge
+        // (under the notch, home indicator, landscape bands) and hides
+        // the navigation bar so libghostty's background shows through.
+        // The iPad split-column path keeps the navigation bar so its
+        // system sidebar-toggle button stays available, and respects
+        // the column's bounds so the sidebar doesn't visually overlap.
+        .modifier(FullScreenChrome(enabled: isFullScreen))
             .overlay(alignment: .topLeading) {
-                backButton
-                    .padding(.leading, 12)
-                    .padding(.top, 12)
+                if isFullScreen {
+                    backButton
+                        .padding(.leading, 12)
+                        .padding(.top, 12)
+                }
             }
             .overlay(alignment: .top) {
                 if let client, client.connectionState != .live {
@@ -628,6 +644,34 @@ struct SingleSessionView: View {
 extension PaneLayoutNode {
     func title(for sessionName: String) -> String? {
         leaves.first { $0.sessionName == sessionName }?.title
+    }
+}
+
+/// Two distinct chrome behaviors composed into one modifier:
+/// * Edge-to-edge bleed (`.ignoresSafeArea`) is on for BOTH paths — the
+///   terminal fills the entire detail column (and entire screen on
+///   iPhone), matching the Mac sidebar's title-bar-hidden look. Without
+///   this on iPad the nav bar carves ~44pt off the top and the home
+///   indicator carves ~25pt off the bottom, making the terminal short.
+/// * Hiding the navigation bar (`.toolbar(.hidden, …)`) is iPhone-only.
+///   The iPad split-column path keeps the nav bar present but
+///   transparent (`.toolbarBackground(.hidden, …)`) so the system's
+///   sidebar-toggle button floats over the terminal — like the Mac
+///   sidebar toggle floats next to the traffic lights — without
+///   stealing height from the terminal.
+private struct FullScreenChrome: ViewModifier {
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .ignoresSafeArea()
+                .toolbar(.hidden, for: .navigationBar)
+        } else {
+            content
+                .ignoresSafeArea()
+                .toolbarBackground(.hidden, for: .navigationBar)
+        }
     }
 }
 #endif

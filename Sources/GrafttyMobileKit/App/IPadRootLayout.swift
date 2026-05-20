@@ -21,7 +21,16 @@ public struct IPadRootLayout: View {
     }
 
     public var body: some View {
-        NavigationSplitView {
+        // `.balanced` locks in column-style (sidebar permanently to the
+        // left of the detail) rather than letting iPad heuristics pick
+        // `.prominentDetail` (overlay). `columnVisibility` is bound to
+        // appState so the system's sidebar-toggle button can flip it back
+        // to `.all` after a user collapse — without the binding there'd
+        // be no way to re-show a hidden sidebar.
+        NavigationSplitView(columnVisibility: Binding(
+            get: { appState.columnVisibility },
+            set: { appState.columnVisibility = $0 }
+        )) {
             VStack(spacing: 0) {
                 HostHeaderRow(
                     selectedHost: selectedHost,
@@ -31,6 +40,7 @@ public struct IPadRootLayout: View {
                 if let host = selectedHost {
                     WorktreeListContent(
                         host: host,
+                        theme: appState.theme,
                         onSelect: { wt in selectWorktree(wt) },
                         onSelectPane: { leaf in selectPane(leaf) },
                         onListChanged: { list in Self.onWorktreeListChanged(appState: appState, list: list) }
@@ -53,6 +63,7 @@ public struct IPadRootLayout: View {
             )
             .background(appState.theme.background)
         }
+        .navigationSplitViewStyle(.balanced)
         .persistSidebarWidth(to: Binding(
             get: { appState.sidebarWidth },
             set: { appState.sidebarWidth = $0 }
@@ -182,7 +193,8 @@ private struct IPadDetailColumn: View {
                   let host {
             SingleSessionView(
                 step: SessionStep(host: host, sessionName: pane, title: pane),
-                navigationPath: .constant(NavigationPath())
+                navigationPath: .constant(NavigationPath()),
+                isFullScreen: false
             )
             .id("\(host.id)-\(path)-\(pane)")
         } else {

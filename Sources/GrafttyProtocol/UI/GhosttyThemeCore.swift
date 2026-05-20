@@ -64,3 +64,93 @@ public struct GhosttyThemeColors: Sendable, Equatable {
         min(1.0, max(0.0, x))
     }
 }
+
+// MARK: - Sidebar text-color palette
+//
+// Single source of truth for the opacity ladders the Mac sidebar (and now
+// the iPad sidebar) apply on top of `foreground`. Centralized here so the
+// two surfaces don't drift — the Mac was the reference; the constants
+// below are lifted verbatim from `SidebarView.swift` / `WorktreeRow.swift`.
+public extension GhosttyThemeColors {
+
+    /// Primary worktree-row text. Active rows go full-brightness; inactive
+    /// rows dim slightly so the selected row reads as emphasized.
+    static func sidebarPrimaryOpacity(isActive: Bool) -> Double {
+        isActive ? 1.0 : 0.8
+    }
+
+    /// Strikethrough row text for stale (orphaned) worktrees.
+    static let sidebarStaleOpacity: Double = 0.5
+
+    /// Dim secondary label (e.g. branch name beside the worktree name,
+    /// divergence-gutter ahead-side, "Add worktree" plus-button glyph at
+    /// rest).
+    static let sidebarSecondaryOpacity: Double = 0.45
+
+    /// Foreground-derived dim icon — used by the worktree-row type icon
+    /// when the worktree is closed/creating/deleting (states without a
+    /// dedicated state color like running's green or stale's yellow).
+    static let sidebarDimIconOpacity: Double = 0.6
+
+    /// Host-header chevron + section-header caption dim.
+    static let sidebarChevronOpacity: Double = 0.55
+
+    /// Pane-row `↳` arrow brightness ladder. The brightest treatment goes
+    /// to the focused pane (typing lands here); panes inside the active
+    /// worktree are dimmer; panes in inactive worktrees are dimmest.
+    static func paneArrowOpacity(isFocusedPane: Bool, isActiveWorktree: Bool) -> Double {
+        if isFocusedPane { return 0.75 }
+        return isActiveWorktree ? 0.5 : 0.35
+    }
+
+    /// Pane-row title brightness ladder. Four buckets so the eye can parse
+    /// hierarchy at a glance: focused-in-active > non-focused-in-active
+    /// > inactive — with empty titles ("shell" placeholder) dimmer than
+    /// real titles within their bucket. Tuned alongside the 0.16-alpha
+    /// active-block highlight on the Mac so contrast holds on both light
+    /// and dark themes.
+    static func paneTitleOpacity(
+        isFocusedPane: Bool,
+        isActiveWorktree: Bool,
+        hasTitle: Bool
+    ) -> Double {
+        if isFocusedPane { return 1.0 }
+        if isActiveWorktree { return hasTitle ? 0.75 : 0.55 }
+        return hasTitle ? 0.55 : 0.35
+    }
+
+    func sidebarPrimaryText(isActive: Bool) -> Color {
+        foreground.opacity(Self.sidebarPrimaryOpacity(isActive: isActive))
+    }
+
+    var sidebarStaleText: Color {
+        foreground.opacity(Self.sidebarStaleOpacity)
+    }
+
+    var sidebarSecondaryText: Color {
+        foreground.opacity(Self.sidebarSecondaryOpacity)
+    }
+
+    var sidebarDimIcon: Color {
+        foreground.opacity(Self.sidebarDimIconOpacity)
+    }
+
+    var sidebarChevron: Color {
+        foreground.opacity(Self.sidebarChevronOpacity)
+    }
+
+    func paneArrow(isFocusedPane: Bool, isActiveWorktree: Bool) -> Color {
+        foreground.opacity(Self.paneArrowOpacity(
+            isFocusedPane: isFocusedPane,
+            isActiveWorktree: isActiveWorktree
+        ))
+    }
+
+    func paneTitle(isFocusedPane: Bool, isActiveWorktree: Bool, hasTitle: Bool) -> Color {
+        foreground.opacity(Self.paneTitleOpacity(
+            isFocusedPane: isFocusedPane,
+            isActiveWorktree: isActiveWorktree,
+            hasTitle: hasTitle
+        ))
+    }
+}

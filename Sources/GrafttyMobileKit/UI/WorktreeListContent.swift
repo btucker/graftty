@@ -24,17 +24,24 @@ public struct WorktreeListContent: View {
     }
 
     public let host: Host
+    /// Ghostty palette for theming row text. nil keeps the system colors
+    /// in use on the compact (iPhone) path, where the List renders against
+    /// the standard grouped-list background; the iPad sidebar paints a
+    /// themed background so it supplies a non-nil theme here.
+    public let theme: GhosttyThemeColors?
     public let onSelect: (WorktreePanes) -> Void
     public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
     public let onListChanged: ([WorktreePanes]) -> Void
 
     public init(
         host: Host,
+        theme: GhosttyThemeColors? = nil,
         onSelect: @escaping (WorktreePanes) -> Void,
         onSelectPane: @escaping (PaneLayoutNode.Leaf) -> Void,
         onListChanged: @escaping ([WorktreePanes]) -> Void = { _ in }
     ) {
         self.host = host
+        self.theme = theme
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
         self.onListChanged = onListChanged
@@ -63,10 +70,11 @@ public struct WorktreeListContent: View {
             case .loaded(let worktrees):
                 List {
                     ForEach(WorktreePickerGrouping.grouped(worktrees), id: \.0) { repoName, entries in
-                        Section(repoName) {
+                        Section {
                             ForEach(entries, id: \.path) { wt in
                                 WorktreeBlock(
                                     worktree: wt,
+                                    theme: theme,
                                     onSelect: { onSelect(wt) },
                                     onSelectPane: onSelectPane
                                 )
@@ -80,6 +88,9 @@ public struct WorktreeListContent: View {
                                     }
                                 }
                             }
+                        } header: {
+                            Text(repoName)
+                                .foregroundColor(theme?.sidebarPrimaryText(isActive: false))
                         }
                     }
                 }
@@ -253,6 +264,7 @@ public struct WorktreeListContent: View {
 
 private struct WorktreeBlock: View {
     let worktree: WorktreePanes
+    let theme: GhosttyThemeColors?
     let onSelect: () -> Void
     let onSelectPane: (PaneLayoutNode.Leaf) -> Void
 
@@ -260,10 +272,10 @@ private struct WorktreeBlock: View {
         if worktree.state.isInFlight {
             // Non-tappable: on-disk path may not exist yet
             // (`.creating`) or is about to vanish (`.deleting`).
-            WorktreeRowContent(worktree: worktree)
+            WorktreeRowContent(worktree: worktree, theme: theme)
         } else {
             Button(action: onSelect) {
-                WorktreeRowContent(worktree: worktree)
+                WorktreeRowContent(worktree: worktree, theme: theme)
             }
             .buttonStyle(.plain)
         }
@@ -276,10 +288,10 @@ private struct WorktreeBlock: View {
             // targets that do the same thing.
             ForEach(layout.leaves, id: \.sessionName) { leaf in
                 if layout.isLeaf {
-                    PaneTitleRow(leaf: leaf)
+                    PaneTitleRow(leaf: leaf, theme: theme)
                 } else {
                     Button { onSelectPane(leaf) } label: {
-                        PaneTitleRow(leaf: leaf)
+                        PaneTitleRow(leaf: leaf, theme: theme)
                     }
                     .buttonStyle(.plain)
                 }
@@ -288,11 +300,19 @@ private struct WorktreeBlock: View {
     }
 }
 
+/// Wrap a themed `Color` in an `AnyShapeStyle`, falling back to the
+/// system `.secondary` style when no theme is supplied. Used by the row
+/// helpers below so each row site doesn't re-spell the same `if let`.
+private func themedOrSecondary(_ themed: Color?) -> AnyShapeStyle {
+    themed.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.secondary)
+}
+
 /// Type icon + optional PR badge + display name (italic for main
 /// checkout, strikethrough when stale) + optional secondary branch
 /// label + optional attention capsule + trailing divergence gutter.
 private struct WorktreeRowContent: View {
     let worktree: WorktreePanes
+    let theme: GhosttyThemeColors?
 
     var body: some View {
         HStack(spacing: 6) {
@@ -304,13 +324,13 @@ private struct WorktreeRowContent: View {
             if let secondary = secondaryBranch {
                 Text(secondary)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
             }
             if let attention = worktree.attentionText {
                 AttentionCapsule(text: attention)
             }
             Spacer()
-            DivergenceGutter(stats: worktree.stats)
+            DivergenceGutter(stats: worktree.stats, theme: theme)
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
@@ -328,31 +348,36 @@ private struct WorktreeRowContent: View {
                 hasPR: worktree.prBadge != nil
             ))
             .font(.system(size: 11))
-            .foregroundStyle(typeIconColor)
+            .foregroundStyle(typeIconStyle)
             .frame(width: 14)
         }
     }
 
-    /// Dim secondary for closed/creating/deleting, green when running,
-    /// yellow when stale.
-    private var typeIconColor: Color {
+    /// Themed dim for closed/creating/deleting (falls back to system
+    /// `.secondary` when no theme is supplied — i.e., compact iPhone
+    /// path), green when running, yellow when stale.
+    private var typeIconStyle: AnyShapeStyle {
         switch worktree.state {
-        case .closed, .creating, .deleting: return .secondary
-        case .running: return .green
-        case .stale: return .yellow
+        case .closed, .creating, .deleting: return themedOrSecondary(theme?.sidebarDimIcon)
+        case .running: return AnyShapeStyle(Color.green)
+        case .stale: return AnyShapeStyle(Color.yellow)
         }
     }
 
     @ViewBuilder
     private var primaryText: some View {
+        let primary = theme?.sidebarPrimaryText(isActive: false)
         if worktree.state == .stale {
             Text(worktree.displayName)
                 .strikethrough()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(themedOrSecondary(theme?.sidebarStaleText))
         } else if worktree.isMainCheckout {
-            Text(worktree.displayName).italic()
+            Text(worktree.displayName)
+                .italic()
+                .foregroundColor(primary)
         } else {
             Text(worktree.displayName)
+                .foregroundColor(primary)
         }
     }
 
@@ -369,18 +394,29 @@ private struct WorktreeRowContent: View {
 /// capsule when the pane has a shell-integration ping).
 private struct PaneTitleRow: View {
     let leaf: PaneLayoutNode.Leaf
+    let theme: GhosttyThemeColors?
 
     var body: some View {
+        // The iPad sidebar has no active-worktree highlight yet, so every
+        // pane row reads as non-focused / inactive on the ladder; empty
+        // titles ride even dimmer per the Mac sidebar's behavior.
         HStack(spacing: 4) {
             Text("↳")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(themedOrSecondary(theme?.paneArrow(
+                    isFocusedPane: false,
+                    isActiveWorktree: false
+                )))
             if let attentionText = leaf.attentionText {
                 AttentionCapsule(text: attentionText)
             } else {
                 Text(leaf.displayTitle)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(themedOrSecondary(theme?.paneTitle(
+                        isFocusedPane: false,
+                        isActiveWorktree: false,
+                        hasTitle: !leaf.displayTitle.isEmpty
+                    )))
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
@@ -463,6 +499,7 @@ private struct PRBadgeLabel: View {
 /// surfaces; behind side renders in red.
 private struct DivergenceGutter: View {
     let stats: WorktreeWireStats?
+    let theme: GhosttyThemeColors?
 
     var body: some View {
         if let stats, !stats.isEmpty {
@@ -474,8 +511,11 @@ private struct DivergenceGutter: View {
     private func commitsText(_ s: WorktreeWireStats) -> Text {
         let aheadShown = s.ahead > 0 || s.hasUncommittedChanges
         let behindShown = s.behind > 0
+        // Themed dim when available; nil leaves it on the system label
+        // color which the surrounding default-foreground tree already
+        // dims for `.foregroundColor(.secondary)` on the compact path.
         let ahead = Text("↑\(s.ahead)\(s.hasUncommittedChanges ? "+" : "")")
-            .foregroundColor(.secondary)
+            .foregroundColor(theme?.sidebarSecondaryText ?? .secondary)
         let behind = Text("↓\(s.behind)")
             .foregroundColor(.red)
         if aheadShown && behindShown { return ahead + Text(" ") + behind }

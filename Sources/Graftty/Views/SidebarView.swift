@@ -73,7 +73,7 @@ struct SidebarView: View {
             Button(action: onAddRepo) {
                 Label("Add Repository", systemImage: "plus")
                     .frame(maxWidth: .infinity)
-                    .foregroundColor(theme.foreground.opacity(0.8))
+                    .foregroundColor(theme.sidebarPrimaryText(isActive: false))
             }
             .buttonStyle(.plain)
             .padding(8)
@@ -190,7 +190,7 @@ struct SidebarView: View {
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.foreground.opacity(0.6))
+                            .foregroundColor(theme.sidebarDimIcon)
                             .frame(width: 18, height: 18)
                             .contentShape(Rectangle())
                     }

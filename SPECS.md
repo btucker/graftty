@@ -1358,6 +1358,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.4** When the user taps a pane child row in the sidebar at iPad regular width, the application shall set `IPadAppState.focusedPaneId` to that leaf's `sessionName` without pushing a new navigation stack frame.
 
+**IPAD-1.5** While `IPadRootLayout` is presented, the sidebar's row text (worktree name, secondary branch label, type icon for closed/creating/deleting states, pane `↳` arrow and pane title, divergence-gutter ahead side, and the Section repository header) shall be colored from `appState.theme` rather than system label colors, sharing the same opacity ladder the Mac sidebar applies via `GhosttyThemeColors.sidebarPrimaryText`/`sidebarSecondaryText`/`sidebarDimIcon`/`sidebarStaleText`/`paneArrow`/`paneTitle`.
+
+**IPAD-1.6** While `IPadRootLayout` is presented, the sidebar and detail shall render side-by-side as a permanent two-column layout (NavigationSplitView with `.balanced` style and an initial `columnVisibility` of `.all`) rather than the system's overlay default, mirroring the Mac sidebar's always-visible behavior.
+
+**IPAD-1.7** While `IPadRootLayout`'s detail column is rendering a session via `SingleSessionView`, the application shall keep the terminal edge-to-edge (`.ignoresSafeArea()`) but render the navigation bar with a transparent background (`.toolbarBackground(.hidden, for: .navigationBar)`) instead of hiding it. The system-provided sidebar-toggle button then floats over the terminal — preserving full terminal height while keeping a way to re-show a collapsed sidebar. The iPhone compact path keeps the existing fullscreen chrome (hidden navigation bar).
+
 ### IPAD-2.x — Multi-Pane Detail View
 
 **IPAD-2.1** While a worktree is selected and the iPad layout is regular-width, the detail column shall render `MultiPaneDetailView` over the worktree's `PaneLayoutNode`.

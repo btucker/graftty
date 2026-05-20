@@ -104,6 +104,26 @@ struct GhosttyTheme: Equatable {
     var sidebarBackground: Color { core.sidebarBackground }
     var isDark: Bool { core.isDark }
 
+    // Sidebar text-color accessors live on the shared core type so the iPad
+    // sidebar can read them too; forward here for natural call-site reads.
+    func sidebarPrimaryText(isActive: Bool) -> Color {
+        core.sidebarPrimaryText(isActive: isActive)
+    }
+    var sidebarStaleText: Color { core.sidebarStaleText }
+    var sidebarSecondaryText: Color { core.sidebarSecondaryText }
+    var sidebarDimIcon: Color { core.sidebarDimIcon }
+    var sidebarChevron: Color { core.sidebarChevron }
+    func paneArrow(isFocusedPane: Bool, isActiveWorktree: Bool) -> Color {
+        core.paneArrow(isFocusedPane: isFocusedPane, isActiveWorktree: isActiveWorktree)
+    }
+    func paneTitle(isFocusedPane: Bool, isActiveWorktree: Bool, hasTitle: Bool) -> Color {
+        core.paneTitle(
+            isFocusedPane: isFocusedPane,
+            isActiveWorktree: isActiveWorktree,
+            hasTitle: hasTitle
+        )
+    }
+
     var unfocusedSplitFill: Color {
         Color(.sRGB,
             red: unfocusedSplitFillRGB.r,
