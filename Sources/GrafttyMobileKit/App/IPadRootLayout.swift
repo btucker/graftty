@@ -92,10 +92,19 @@ public struct IPadRootLayout: View {
     }
 
     static func onWorktreeListChanged(appState: IPadAppState, list: [WorktreePanes]) {
-        guard let path = appState.selectedWorktreePath else { return }
-        if !list.contains(where: { $0.path == path }) {
+        // Clear a stale selection whose path vanished server-side.
+        if let path = appState.selectedWorktreePath,
+           !list.contains(where: { $0.path == path }) {
             appState.selectedWorktreePath = nil
             appState.focusedPaneId = nil
+        }
+        // IPAD-1.11: recompute the "anything needs attention?" flag from
+        // worktree-scoped and pane-scoped attention text. The detail-
+        // column toolbar reads this to decide whether to surface a
+        // collapsed-sidebar attention indicator.
+        appState.anyWorktreeHasAttention = list.contains { wt in
+            if wt.attentionText != nil { return true }
+            return wt.layout?.leaves.contains { $0.attentionText != nil } ?? false
         }
     }
 
@@ -187,6 +196,26 @@ private struct IPadDetailColumn: View {
     @Bindable var appState: IPadAppState
 
     var body: some View {
+        content
+            .toolbar {
+                // IPAD-1.11: when the sidebar is collapsed and any
+                // worktree carries attention, surface a red dot in the
+                // leading toolbar position alongside the system
+                // sidebar-toggle button. Empty `ToolbarItem` when not
+                // needed so the toolbar doesn't reserve dead space.
+                ToolbarItem(placement: .topBarLeading) {
+                    if shouldShowAttentionDot {
+                        Circle()
+                            .fill(Color.red)
+                            .frame(width: 8, height: 8)
+                            .accessibilityLabel("Attention needed in sidebar")
+                    }
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if host == nil {
             ContentUnavailableView(
                 "Pick a host",
@@ -208,6 +237,10 @@ private struct IPadDetailColumn: View {
                 systemImage: "list.bullet.indent"
             )
         }
+    }
+
+    private var shouldShowAttentionDot: Bool {
+        appState.columnVisibility != .all && appState.anyWorktreeHasAttention
     }
 }
 #endif

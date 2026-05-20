@@ -36,6 +36,15 @@ public final class IPadAppState {
     /// binding survives view-tree rebuilds.
     public var columnVisibility: NavigationSplitViewVisibility = .all
 
+    /// Cached `true` iff any worktree (or any pane leaf) in the most
+    /// recent `GET /worktrees/panes` snapshot has a non-nil
+    /// `attentionText`. Maintained by `IPadRootLayout
+    /// .onWorktreeListChanged`. The detail-column toolbar reads this
+    /// to decide whether to show an attention dot beside the system
+    /// sidebar-toggle button while `columnVisibility != .all`
+    /// (IPAD-1.11).
+    public var anyWorktreeHasAttention: Bool = false
+
     public var sidebarWidth: Double {
         didSet {
             guard oldValue != sidebarWidth else { return }

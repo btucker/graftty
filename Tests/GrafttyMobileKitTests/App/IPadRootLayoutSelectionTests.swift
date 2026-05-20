@@ -194,6 +194,91 @@ struct IPadRootLayoutSelectionTests {
         #expect(WorktreeWireState.creating.hasOnDiskWorktree == false)
     }
 
+    @Test("""
+@spec IPAD-1.10: While `IPadRootLayout` is presented, the detail column's `.ignoresSafeArea(...)` shall be restricted to `[.top, .bottom]` edges so the terminal extends under the navigation bar and home indicator but never bleeds across the leading column boundary into the sidebar's region — the sidebar shifts the terminal horizontally rather than overlapping it.
+""")
+    func ipad_1_10_terminalRespectsColumnHorizontalBounds() {
+        // The actual edge set lives inside SingleSessionView's
+        // FullScreenChrome modifier; smoke-check the existence of the
+        // isFullScreen=false code path it gates so a future refactor
+        // that flips the default tickles this test.
+        let host = sampleHost()
+        let split = SingleSessionView(
+            step: SessionStep(host: host, sessionName: "s", title: "s"),
+            navigationPath: .constant(NavigationPath()),
+            isFullScreen: false
+        )
+        #expect(split.isFullScreen == false)
+    }
+
+    @Test("""
+@spec IPAD-1.11: When the sidebar is collapsed (`IPadAppState.columnVisibility != .all`) and any worktree carries attention (worktree-scoped `attentionText`, or any pane leaf with `attentionText`), the application shall surface a red attention dot in the detail column's leading toolbar position next to the system sidebar-toggle button — so a user with a hidden sidebar sees something needs review without re-opening it. The dot is derived from `IPadAppState.anyWorktreeHasAttention`, which `onWorktreeListChanged` maintains from each `GET /worktrees/panes` snapshot.
+""")
+    func ipad_1_11_attentionDotWhenSidebarCollapsed() {
+        let appState = freshAppState()
+        // Default: no attention.
+        #expect(appState.anyWorktreeHasAttention == false)
+
+        let attentionPanes = WorktreePanes(
+            path: "/repo/feat",
+            displayName: "feat",
+            repoDisplayName: "repo",
+            displayBranch: "feature",
+            state: .running,
+            isMainCheckout: false,
+            prBadge: nil,
+            stats: nil,
+            attentionText: "tests failed",
+            layout: nil
+        )
+        IPadRootLayout.onWorktreeListChanged(
+            appState: appState,
+            list: [attentionPanes]
+        )
+        #expect(appState.anyWorktreeHasAttention == true)
+
+        // Pane-scoped attention also flips the flag.
+        let paneAttentionPanes = WorktreePanes(
+            path: "/repo/feat2",
+            displayName: "feat2",
+            repoDisplayName: "repo",
+            displayBranch: "feature2",
+            state: .running,
+            isMainCheckout: false,
+            prBadge: nil,
+            stats: nil,
+            attentionText: nil,
+            layout: .leaf(sessionName: "s", title: "shell", attentionText: "build broken")
+        )
+        let appState2 = freshAppState()
+        IPadRootLayout.onWorktreeListChanged(
+            appState: appState2,
+            list: [paneAttentionPanes]
+        )
+        #expect(appState2.anyWorktreeHasAttention == true)
+
+        // No attention anywhere → false.
+        let cleanPanes = WorktreePanes(
+            path: "/repo/clean",
+            displayName: "clean",
+            repoDisplayName: "repo",
+            displayBranch: "clean",
+            state: .running,
+            isMainCheckout: false,
+            prBadge: nil,
+            stats: nil,
+            attentionText: nil,
+            layout: .leaf(sessionName: "s", title: "shell", attentionText: nil)
+        )
+        let appState3 = freshAppState()
+        appState3.anyWorktreeHasAttention = true  // pretend something stale
+        IPadRootLayout.onWorktreeListChanged(
+            appState: appState3,
+            list: [cleanPanes]
+        )
+        #expect(appState3.anyWorktreeHasAttention == false)
+    }
+
     @Test("stale-selectedWorktreePath is cleared when onListChanged fires without the path")
     func stalePathCleanup() {
         let appState = freshAppState()

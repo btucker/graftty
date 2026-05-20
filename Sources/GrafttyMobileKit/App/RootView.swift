@@ -669,7 +669,12 @@ private struct FullScreenChrome: ViewModifier {
                 .toolbar(.hidden, for: .navigationBar)
         } else {
             content
-                .ignoresSafeArea()
+                // IPAD-1.10: top/bottom edges only — the terminal
+                // extends under the navigation bar and home indicator
+                // but stays within the column's horizontal bounds so
+                // the sidebar shifts the terminal rather than
+                // overlapping it.
+                .ignoresSafeArea(.container, edges: [.top, .bottom])
                 .toolbarBackground(.hidden, for: .navigationBar)
         }
     }
