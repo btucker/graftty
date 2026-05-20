@@ -248,11 +248,7 @@ struct WorktreeRow: View {
     }
 
     private var typeIconColor: Color {
-        switch entry.state {
-        case .closed, .creating, .deleting: return theme.sidebarDimIcon
-        case .running: return .green
-        case .stale: return .yellow
-        }
+        theme.core.worktreeStateIcon(entry.state.wireState)
     }
 
     @ViewBuilder

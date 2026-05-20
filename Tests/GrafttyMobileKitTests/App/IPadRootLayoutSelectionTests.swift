@@ -182,6 +182,18 @@ struct IPadRootLayoutSelectionTests {
         #expect(GhosttyThemeColors.fallback.isDark == true)
     }
 
+    @Test("""
+@spec IPAD-1.9: The sidebar row contract shall be the cross-platform `WorktreePanes` (in GrafttyProtocol): both the Mac sidebar (via the server-side projection in `GrafttyApp.swift`'s `setWorktreePanesProvider`) and the iPad sidebar (decoded from `GET /worktrees/panes`) flatten onto the same shape — state, displayName, displayBranch, isMainCheckout, prBadge, stats (with baseRef), attentionText, pane layout. The state-icon mapping (`running=green`, `stale=yellow`, otherwise `sidebarDimIcon`) is single-sourced as `GhosttyThemeColors.worktreeStateIcon(_:)` and consumed by both targets. `WorktreeWireState.hasOnDiskWorktree` mirrors the Mac `WorktreeState.hasOnDiskWorktree` so cross-platform sidebar code can gate on-disk-only behavior without referring to the server-only enum.
+""")
+    func ipad_1_9_sharedRowContract() {
+        // Smoke-check the shared accessor.
+        #expect(GhosttyThemeColors.fallback.worktreeStateIcon(.running) == .green)
+        #expect(GhosttyThemeColors.fallback.worktreeStateIcon(.stale) == .yellow)
+        // Smoke-check the cross-platform on-disk parity bridge.
+        #expect(WorktreeWireState.running.hasOnDiskWorktree == true)
+        #expect(WorktreeWireState.creating.hasOnDiskWorktree == false)
+    }
+
     @Test("stale-selectedWorktreePath is cleared when onListChanged fires without the path")
     func stalePathCleanup() {
         let appState = freshAppState()

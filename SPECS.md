@@ -1366,6 +1366,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.8** While `IPadRootLayout` is presented, the application shall apply the shared `themedSidebarSurface(_:)` view modifier (defined in `GrafttyProtocol`) to the sidebar container so the host's ghostty `sidebarBackground` (a ±6% luminance shift of the terminal background) reads through a transparent `List`, and shall apply `.preferredColorScheme(theme.isDark ? .dark : .light)` to the layout so the system-rendered sidebar-toggle button picks contrast that matches the sidebar's text color. The Mac sidebar consumes the same `themedSidebarSurface` helper, single-sourcing the surface treatment.
 
+**IPAD-1.9** The sidebar row contract shall be the cross-platform `WorktreePanes` (in GrafttyProtocol): both the Mac sidebar (via the server-side projection in `GrafttyApp.swift`'s `setWorktreePanesProvider`) and the iPad sidebar (decoded from `GET /worktrees/panes`) flatten onto the same shape — state, displayName, displayBranch, isMainCheckout, prBadge, stats (with baseRef), attentionText, pane layout. The state-icon mapping (`running=green`, `stale=yellow`, otherwise `sidebarDimIcon`) is single-sourced as `GhosttyThemeColors.worktreeStateIcon(_:)` and consumed by both targets. `WorktreeWireState.hasOnDiskWorktree` mirrors the Mac `WorktreeState.hasOnDiskWorktree` so cross-platform sidebar code can gate on-disk-only behavior without referring to the server-only enum.
+
 ### IPAD-2.x — Multi-Pane Detail View
 
 **IPAD-2.1** While a worktree is selected and the iPad layout is regular-width, the detail column shall render `MultiPaneDetailView` over the worktree's `PaneLayoutNode`.

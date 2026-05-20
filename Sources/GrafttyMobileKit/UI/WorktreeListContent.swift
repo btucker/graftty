@@ -362,10 +362,19 @@ private struct WorktreeRowContent: View {
 
     /// Themed dim for closed/creating/deleting (falls back to system
     /// `.secondary` when no theme is supplied — i.e., compact iPhone
-    /// path), green when running, yellow when stale.
+    /// path), green when running, yellow when stale. The themed path
+    /// goes through the shared `GhosttyThemeColors.worktreeStateIcon`
+    /// accessor so the Mac sidebar uses identical state-to-color
+    /// mapping.
     private var typeIconStyle: AnyShapeStyle {
+        if let theme {
+            return AnyShapeStyle(theme.worktreeStateIcon(worktree.state))
+        }
+        // No-theme (compact iPhone) path: keep the system `.secondary`
+        // dim for inactive states so the row reads against the system
+        // grouped-list background.
         switch worktree.state {
-        case .closed, .creating, .deleting: return themedOrSecondary(theme?.sidebarDimIcon)
+        case .closed, .creating, .deleting: return AnyShapeStyle(.secondary)
         case .running: return AnyShapeStyle(Color.green)
         case .stale: return AnyShapeStyle(Color.yellow)
         }

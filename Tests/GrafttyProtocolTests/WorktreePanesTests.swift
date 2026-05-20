@@ -90,6 +90,19 @@ struct WorktreePanesTests {
         }
     }
 
+    @Test("WorktreeWireState.hasOnDiskWorktree mirrors the Mac WorktreeState semantics: closed/running=true, stale/creating/deleting=false")
+    func hasOnDiskWorktreeMirror() {
+        // True only when the on-disk path corresponds to a real git
+        // worktree the host can inspect.
+        #expect(WorktreeWireState.closed.hasOnDiskWorktree == true)
+        #expect(WorktreeWireState.running.hasOnDiskWorktree == true)
+        // False for the three "no usable on-disk worktree" buckets,
+        // matching `WorktreeState.hasOnDiskWorktree` server-side.
+        #expect(WorktreeWireState.stale.hasOnDiskWorktree == false)
+        #expect(WorktreeWireState.creating.hasOnDiskWorktree == false)
+        #expect(WorktreeWireState.deleting.hasOnDiskWorktree == false)
+    }
+
     @Test
     func wireStatsIsEmptyAtParity() {
         #expect(

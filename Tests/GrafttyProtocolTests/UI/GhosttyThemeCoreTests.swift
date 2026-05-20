@@ -134,4 +134,19 @@ struct GhosttyThemeCoreTests {
         _ = theme.paneArrow(isFocusedPane: false, isActiveWorktree: false)
         _ = theme.paneTitle(isFocusedPane: false, isActiveWorktree: false, hasTitle: true)
     }
+
+    @Test("worktreeStateIcon: running=green, stale=yellow, closed/creating/deleting fall back to sidebarDimIcon")
+    func worktreeStateIconMapping() {
+        let theme = GhosttyThemeColors.fallback
+        // Running and stale use platform-defined system colors that
+        // intentionally do NOT pivot on theme.foreground (a green pane
+        // should look green even on a green-themed terminal).
+        #expect(theme.worktreeStateIcon(.running) == Color.green)
+        #expect(theme.worktreeStateIcon(.stale) == Color.yellow)
+        // Inactive states return the themed dim icon — verify by
+        // comparing against the standalone sidebarDimIcon accessor.
+        #expect(theme.worktreeStateIcon(.closed) == theme.sidebarDimIcon)
+        #expect(theme.worktreeStateIcon(.creating) == theme.sidebarDimIcon)
+        #expect(theme.worktreeStateIcon(.deleting) == theme.sidebarDimIcon)
+    }
 }

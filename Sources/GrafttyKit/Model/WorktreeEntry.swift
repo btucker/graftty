@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 
 public enum WorktreeState: String, Codable, Sendable {
     case closed
@@ -53,6 +54,14 @@ public enum WorktreeState: String, Codable, Sendable {
     /// row's interactivity gates on this so it doesn't race the flow.
     public var isInFlight: Bool {
         self == .creating || self == .deleting
+    }
+
+    /// Cross-platform projection used by shared sidebar accessors
+    /// (e.g. `GhosttyThemeColors.worktreeStateIcon`). The Mac enum and
+    /// the wire enum carry identical cases and raw values; the bridge
+    /// is total via the shared `String` raw values.
+    public var wireState: WorktreeWireState {
+        WorktreeWireState(rawValue: rawValue) ?? .closed
     }
 }
 

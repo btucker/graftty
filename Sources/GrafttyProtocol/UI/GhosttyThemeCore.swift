@@ -153,6 +153,22 @@ public extension GhosttyThemeColors {
             hasTitle: hasTitle
         ))
     }
+
+    /// Color for a worktree row's type icon, mapped from the worktree's
+    /// run-state. Running gets `.green` and stale gets `.yellow` —
+    /// platform-defined system colors that read as "live" / "warn"
+    /// regardless of the host's ghostty palette. Closed / creating /
+    /// deleting (no dedicated state color) fall back to the themed
+    /// `sidebarDimIcon`. Single-sourced across the Mac and iPad
+    /// sidebars; before the extraction, both files duplicated this
+    /// switch verbatim.
+    func worktreeStateIcon(_ state: WorktreeWireState) -> Color {
+        switch state {
+        case .running: return .green
+        case .stale: return .yellow
+        case .closed, .creating, .deleting: return sidebarDimIcon
+        }
+    }
 }
 
 // MARK: - Themed sidebar surface (shared with Mac sidebar)
