@@ -3,8 +3,11 @@
 Graftty is distributed as a Homebrew Cask from the personal tap
 [`btucker/homebrew-graftty`](https://github.com/btucker/homebrew-graftty).
 The `.github/workflows/release.yml` workflow handles per-release work:
-it builds the bundle, ad-hoc codesigns it, zips it, attaches the zip to
-a GitHub release, and pushes a version+sha256 bump to the tap.
+it builds the bundle, signs it with the **Developer ID Application:
+Quotably, LLC (67APXH3J92)** identity (hardened runtime + entitlements),
+notarizes it via `xcrun notarytool`, staples the ticket, zips the
+result, attaches the zip to a GitHub release, and pushes a
+version+sha256 bump to the tap.
 
 ## One-time setup
 
@@ -134,13 +137,36 @@ brew install --cask graftty
 graftty --help
 ```
 
-## Migration path: Developer ID + notarization
+## Signing + notarization secrets
 
-Once an Apple Developer ID Application certificate is available, the
-single change is in `scripts/bundle.sh`'s codesign block: swap
-`--sign -` (ad-hoc) for `--sign "Developer ID Application: …"` and
-add `--options runtime`. Then the release workflow gains a
-`xcrun notarytool submit … --wait` step before zipping, plus
-`xcrun stapler staple` after notarization completes. Drop the
-`caveats` stanza from the cask file in the same change. Nothing else
-in this pipeline moves.
+Five GitHub Actions secrets feed the signing and notarization steps.
+They live on `btucker/graftty` → Settings → Secrets and variables →
+Actions.
+
+| Secret | Source |
+|---|---|
+| `DEVELOPER_ID_APPLICATION_P12_BASE64` | `base64 -i devid.p12 -o -` of the `.p12` exported from Keychain Access → My Certificates → right-click *Developer ID Application: Quotably, LLC (67APXH3J92)* → Export. |
+| `DEVELOPER_ID_APPLICATION_P12_PASSWORD` | The password set during the `.p12` export (may be empty). |
+| `APP_STORE_CONNECT_API_KEY_BASE64` | `base64 -i AuthKey_<keyid>.p8 -o -` of the `.p8` downloaded once from App Store Connect → Users and Access → Integrations → Team Keys → "+". The key needs the **Developer** access role (or higher). |
+| `APP_STORE_CONNECT_API_KEY_ID` | The 10-character Key ID shown in the Team Keys row (e.g., `33N7N2TR65`). |
+| `APP_STORE_CONNECT_API_KEY_ISSUER` | The UUID at the top of the Team Keys page (one per team). |
+
+The `Developer ID Application` certificate expires roughly every 9
+months. When it does, re-export the new `.p12` from Keychain and
+re-push the `DEVELOPER_ID_APPLICATION_P12_BASE64` secret — no other
+configuration changes.
+
+Local builds of `scripts/bundle.sh` still ad-hoc sign by default
+(`CODESIGN_IDENTITY=-`). To sign locally with the real identity for
+testing, set the env var:
+
+```bash
+CODESIGN_IDENTITY="Developer ID Application: Quotably, LLC (67APXH3J92)" \
+  CONFIGURATION=release \
+  GRAFTTY_VERSION=0.0.0-local \
+  SPARKLE_PUBLIC_ED_KEY="…" \
+  ./scripts/bundle.sh
+```
+
+The identity must be in your login keychain (you'll already have it
+if you can export the `.p12`).
