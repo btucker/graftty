@@ -127,12 +127,35 @@ struct AgentHookInstallerTests {
         #expect(shim.contains(#"_graftty_path="${_graftty_path//:$GRAFTTY_AGENT_HOOKS_BIN:/:}""#))
     }
 
-    @Test func zshenvProfileLoginShimSourcesUserHome() {
-        for basename in [".zshenv", ".zprofile", ".zlogin"] {
+    @Test func zshenvProfileShimSourcesUserHome() {
+        for basename in [".zshenv", ".zprofile"] {
             let shim = AgentHookInstaller.zshSourceShim(homeBasename: basename)
             #expect(shim.contains("\"$HOME/\(basename)\""))
             #expect(shim.contains("source"))
         }
+    }
+
+    @Test("""
+    @spec ZMX-6.8: When the host-managed `zmx attach` spawn invokes zsh as a login shell with agent hooks enabled, the application shall install a `_graftty_prepend_wrapper_path` precmd hook that strips any existing `$GRAFTTY_AGENT_HOOKS_BIN` occurrence from `$PATH` and re-prepends a fresh one before every prompt. The hook shall be registered first from the `.zshrc` shim (after sourcing `~/.zshrc`) and re-registered from the `.zlogin` shim (after sourcing `~/.zlogin`) using a strip-then-append pattern, so the hook appears exactly once in `precmd_functions` and runs after any hooks the user's shell init registered. Without this, sourcing the user's `~/.zlogin` (which conventionally loads tools like RVM that prepend gem/ruby paths to `$PATH` at source-time) pushes graftty's wrapper bin off position 1, allowing user-installed `claude` / `codex` binaries in `~/.local/bin` / `~/.bun/bin` / etc. to shadow the wrapper if any user-prepended directory ever contained those names. The before-every-prompt re-prepend also defends against any chpwd / precmd-driven PATH-management tool (asdf, mise, nvm-on-cd, etc.) the user's shell init registers — those would otherwise override a one-shot `.zshrc` prepend.
+    """)
+    func zloginShimReregistersPrecmdHookAfterUserZlogin() {
+        let zshrc = AgentHookInstaller.zshrcShim()
+        let zlogin = AgentHookInstaller.zloginShim()
+
+        for shim in [zshrc, zlogin] {
+            #expect(shim.contains("_graftty_prepend_wrapper_path"))
+            // Idempotency: strip first so re-sourcing the shim doesn't
+            // duplicate the hook in precmd_functions.
+            #expect(shim.contains("precmd_functions[@]:#_graftty_prepend_wrapper_path"))
+            #expect(shim.contains("precmd_functions+=(_graftty_prepend_wrapper_path)"))
+        }
+
+        // .zlogin re-registers AFTER sourcing the user's .zlogin so any
+        // precmd / chpwd hooks the user's init added are positioned ahead
+        // of ours in precmd_functions and ours fires last each prompt.
+        let userZloginIdx = zlogin.range(of: #"source "$HOME/.zlogin""#)!.lowerBound
+        let hookRegisterIdx = zlogin.range(of: "precmd_functions+=(_graftty_prepend_wrapper_path)")!.lowerBound
+        #expect(userZloginIdx < hookRegisterIdx)
     }
 
     @Test func installRepairsStaleWrapperMarker() throws {
