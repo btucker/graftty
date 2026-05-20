@@ -156,6 +156,50 @@ struct PortScannerTests {
     }
 
     @Test("""
+@spec PORTS-4.5: When a pane is registered before its shell PID can be resolved (e.g., the zmx daemon log has not yet written the `pty spawned` line), the application shall record the pane as pending and re-attempt resolution on each scan tick until it succeeds; once resolved, the pane shall begin participating in scans.
+""")
+    func resolvesPendingPaneOnLaterTick() async {
+        actor PIDBox {
+            var calls = 0
+            var pid: pid_t? = nil
+            func resolve(_: PaneSlotID) async -> pid_t? {
+                calls += 1
+                return pid
+            }
+            func setPID(_ p: pid_t?) { self.pid = p }
+        }
+        let box = PIDBox()
+        let runner = StubLsofRunner(output: """
+        COMMAND   PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+        node    1234 a       23u  IPv4 0x1           0t0   TCP 127.0.0.1:3000 (LISTEN)
+        """)
+        let scanner = PortScanner(
+            runner: runner,
+            walker: StubProcessTreeWalker(result: [])
+        )
+        await scanner.setPIDResolver { id in await box.resolve(id) }
+        let id = PaneSlotID()
+        await scanner.registerPanePending(id)
+
+        // Tick 1: resolver returns nil, pane stays pending, no scan output.
+        await scanner.tick()
+        #expect(await scanner.bindings(for: id).isEmpty)
+        #expect(await box.calls == 1)
+        #expect(await runner.calls.isEmpty)
+
+        // Resolver now returns a real PID.
+        await box.setPID(1234)
+        await scanner.tick()
+
+        let bindings = await scanner.bindings(for: id)
+        #expect(bindings.count == 1)
+        #expect(bindings.first?.port == 3000)
+        // Tick 3: pane is resolved, resolver shouldn't be re-queried.
+        await scanner.tick()
+        #expect(await box.calls == 2)
+    }
+
+    @Test("""
 @spec PORTS-4.4: Tick clears bindings when previous scan had them but new scan has none
 """)
     func clearOnDisappearance() async {
