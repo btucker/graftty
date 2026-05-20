@@ -154,3 +154,26 @@ public extension GhosttyThemeColors {
         ))
     }
 }
+
+// MARK: - Themed sidebar surface (shared with Mac sidebar)
+
+public extension View {
+    /// Standard themed-sidebar surface treatment used by both the Mac
+    /// SidebarView and the iPad WorktreeListContent host:
+    ///  - `.scrollContentBackground(.hidden)` so the enclosed `List`'s
+    ///    default material doesn't obscure the ghostty palette.
+    ///  - `.background(theme.sidebarBackground)` so the slightly
+    ///    shifted (`±6%` luminance) ghostty background paints behind
+    ///    the rows. Combined with a transparent list, the sidebar reads
+    ///    as a "lighter version" of the terminal area on dark themes
+    ///    (and "darker version" on light themes) — exactly the Mac
+    ///    sidebar appearance.
+    ///
+    /// Apply to the *container* that holds the `List` (typically the
+    /// `VStack` that owns header + list + footer); `scrollContentBackground`
+    /// propagates down to any descendant scroll content.
+    func themedSidebarSurface(_ theme: GhosttyThemeColors) -> some View {
+        scrollContentBackground(.hidden)
+            .background(theme.sidebarBackground)
+    }
+}

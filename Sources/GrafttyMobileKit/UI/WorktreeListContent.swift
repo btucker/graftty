@@ -94,6 +94,13 @@ public struct WorktreeListContent: View {
                         }
                     }
                 }
+                // Mac-parity: `.sidebar` style + transparent scroll content
+                // so the ghostty `sidebarBackground` painted by the
+                // enclosing `IPadRootLayout`'s `themedSidebarSurface`
+                // shows through. Without these, iOS overlays a grouped-
+                // list material that hides the themed background.
+                .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
                 .refreshable { await refresh() }
             }
         }

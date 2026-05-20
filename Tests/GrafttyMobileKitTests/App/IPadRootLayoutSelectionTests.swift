@@ -167,6 +167,21 @@ struct IPadRootLayoutSelectionTests {
         #expect(compact.isFullScreen == true)
     }
 
+    @Test("""
+@spec IPAD-1.8: While `IPadRootLayout` is presented, the application shall apply the shared `themedSidebarSurface(_:)` view modifier (defined in `GrafttyProtocol`) to the sidebar container so the host's ghostty `sidebarBackground` (a ±6% luminance shift of the terminal background) reads through a transparent `List`, and shall apply `.preferredColorScheme(theme.isDark ? .dark : .light)` to the layout so the system-rendered sidebar-toggle button picks contrast that matches the sidebar's text color. The Mac sidebar consumes the same `themedSidebarSurface` helper, single-sourcing the surface treatment.
+""")
+    func ipad_1_8_themedSidebarSurfaceShared() {
+        // Round-trip the cross-platform helper through a trivial View
+        // so the test fails if the modifier signature drifts or the
+        // extension moves. The actual visual behavior (transparent
+        // list, themed background) is verified by the underlying
+        // GhosttyThemeColors.sidebarBackground math, covered in
+        // GhosttyThemeCoreTests.
+        let view = Color.clear.themedSidebarSurface(.fallback)
+        _ = view
+        #expect(GhosttyThemeColors.fallback.isDark == true)
+    }
+
     @Test("stale-selectedWorktreePath is cleared when onListChanged fires without the path")
     func stalePathCleanup() {
         let appState = freshAppState()

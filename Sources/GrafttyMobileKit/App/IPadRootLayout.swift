@@ -49,7 +49,7 @@ public struct IPadRootLayout: View {
                     Spacer()
                 }
             }
-            .background(appState.theme.sidebarBackground)
+            .themedSidebarSurface(appState.theme)
             .publishSidebarWidth()
             .navigationSplitViewColumnWidth(
                 min: 220,
@@ -64,6 +64,11 @@ public struct IPadRootLayout: View {
             .background(appState.theme.background)
         }
         .navigationSplitViewStyle(.balanced)
+        // IPAD-1.8: route the host's ghostty theme through SwiftUI's
+        // color scheme so the system-rendered sidebar-toggle button
+        // (and other built-in chrome) picks contrast that matches the
+        // sidebar text color rather than the OS-level appearance.
+        .preferredColorScheme(appState.theme.isDark ? .dark : .light)
         .persistSidebarWidth(to: Binding(
             get: { appState.sidebarWidth },
             set: { appState.sidebarWidth = $0 }

@@ -62,10 +62,6 @@ struct SidebarView: View {
                 }
             }
             .listStyle(.sidebar)
-            // Remove the default sidebar material so the ghostty background
-            // shows through. The scrollContentBackground hide is what lets
-            // the List render transparently on top of our theme color.
-            .scrollContentBackground(.hidden)
 
             Divider()
                 .opacity(0.4)
@@ -78,7 +74,7 @@ struct SidebarView: View {
             .buttonStyle(.plain)
             .padding(8)
         }
-        .background(theme.sidebarBackground)
+        .themedSidebarSurface(theme.core)
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             handleDrop(providers)
         }
