@@ -24,7 +24,7 @@ struct DistTodo {
     func dist_1_3() async throws { }
 
     @Test("""
-@spec DIST-1.4: The build script shall ad-hoc codesign every Mach-O in the bundle in inner-to-outer order: `Contents/Helpers/zmx`, `Contents/Helpers/graftty`, `Contents/MacOS/Graftty`, then the bundle itself, and shall verify the resulting signature with `codesign --verify --strict`.
+@spec DIST-1.4: The build script shall codesign every Mach-O in the bundle in inner-to-outer order: `Contents/Helpers/zmx`, `Contents/Helpers/graftty`, `Contents/MacOS/Graftty`, then the bundle itself, and shall verify the resulting signature with `codesign --verify --strict`. The signing identity is chosen by the `CODESIGN_IDENTITY` environment variable (defaulting to `-` for ad-hoc); when set to a Developer ID Application identity, the script shall additionally enable hardened runtime (`--options runtime`), secure timestamping (`--timestamp`), and apply `scripts/entitlements/Graftty.entitlements` to the main executable.
 """, .disabled("not yet implemented"))
     func dist_1_4() async throws { }
 
@@ -54,12 +54,12 @@ struct DistTodo {
     func dist_3_1() async throws { }
 
     @Test("""
-@spec DIST-3.2: While the application is ad-hoc signed (not Developer ID notarized), the cask shall display a `caveats` notice explaining that macOS will refuse to open the app on first launch and providing the steps to bypass Gatekeeper.
-""", .disabled("not yet implemented"))
-    func dist_3_2() async throws { }
-
-    @Test("""
 @spec DIST-3.3: When the user runs `brew uninstall --cask --zap graftty`, the cask shall remove `~/Library/Application Support/Graftty`, `~/Library/Preferences/com.graftty.app.plist`, and `~/Library/Caches/com.graftty.app`.
 """, .disabled("not yet implemented"))
     func dist_3_3() async throws { }
+
+    @Test("""
+@spec DIST-3.4: When a tagged release is built in CI, the release workflow shall sign the bundle with the `Developer ID Application: Quotably, LLC (67APXH3J92)` identity, submit it to `xcrun notarytool` using App Store Connect API key credentials, and on success staple the notarization ticket into the bundle with `xcrun stapler staple` before zipping for distribution.
+""", .disabled("not yet implemented"))
+    func dist_3_4() async throws { }
 }

@@ -31,6 +31,11 @@ CONFIGURATION="${CONFIGURATION:-debug}"
 GRAFTTY_VERSION="${GRAFTTY_VERSION:-0.0.0-dev}"
 SPARKLE_PUBLIC_ED_KEY="${SPARKLE_PUBLIC_ED_KEY:-}"
 SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-}"
+# CODESIGN_IDENTITY="-" → ad-hoc (default; works for local dev without an
+# Apple Developer cert). Set to "Developer ID Application: …" in CI to
+# produce a notarizable bundle. When non-ad-hoc, we additionally enable
+# hardened runtime and a secure timestamp, both required by notarytool.
+CODESIGN_IDENTITY="${CODESIGN_IDENTITY:--}"
 if [[ ! "$GRAFTTY_VERSION" =~ ^[A-Za-z0-9._+-]+$ ]]; then
   echo "GRAFTTY_VERSION must match [A-Za-z0-9._+-]+ (got '$GRAFTTY_VERSION')" >&2
   exit 1
@@ -167,24 +172,35 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-echo "→ ad-hoc codesign (inner → outer)"
 # Sign helpers first, then the main binary, then the bundle itself.
 # Apple's nesting rules require nested code to already be signed when
 # the outer container is signed; otherwise the outer signature does
-# not cover them and the runtime rejects the bundle. When we move to
-# Developer ID + notarization, this block grows: real identity,
-# --options runtime, --timestamp, --entitlements, and a separate
-# notarytool/stapler pass after.
-codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc"
-codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc"
-codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app"
-codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
-codesign --force --sign - "$APP/Contents/Frameworks/Sparkle.framework"
-codesign --force --sign - "$APP/Contents/Frameworks/WebRTC.framework"
-codesign --force --sign - "$APP/Contents/Helpers/zmx"
-codesign --force --sign - "$APP/Contents/Helpers/graftty"
-codesign --force --sign - "$APP/Contents/MacOS/Graftty"
-codesign --force --sign - "$APP"
+# not cover them and the runtime rejects the bundle.
+ENTITLEMENTS_FILE="$SCRIPT_DIR/entitlements/Graftty.entitlements"
+SIGN_OPTS=(--force --sign "$CODESIGN_IDENTITY")
+# `${VAR:+$VAR}` (not an array) avoids the bash-3.2 unbound-array splat
+# bug when the variable is empty; this stays single-token-safe because
+# --preserve-metadata=... has no internal whitespace.
+SPARKLE_PRESERVE=""
+if [[ "$CODESIGN_IDENTITY" != "-" ]]; then
+  echo "→ codesign with Developer ID: $CODESIGN_IDENTITY (inner → outer)"
+  SIGN_OPTS+=(--options runtime --timestamp)
+  # Sparkle ships Downloader/Installer XPC services with sandbox + network/admin
+  # entitlements that we must keep when re-signing.
+  SPARKLE_PRESERVE="--preserve-metadata=entitlements,requirements,flags"
+else
+  echo "→ ad-hoc codesign (inner → outer)"
+fi
+codesign "${SIGN_OPTS[@]}" ${SPARKLE_PRESERVE:+$SPARKLE_PRESERVE} "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc"
+codesign "${SIGN_OPTS[@]}" ${SPARKLE_PRESERVE:+$SPARKLE_PRESERVE} "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/XPCServices/Installer.xpc"
+codesign "${SIGN_OPTS[@]}" ${SPARKLE_PRESERVE:+$SPARKLE_PRESERVE} "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Updater.app"
+codesign "${SIGN_OPTS[@]}" ${SPARKLE_PRESERVE:+$SPARKLE_PRESERVE} "$APP/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
+codesign "${SIGN_OPTS[@]}" "$APP/Contents/Frameworks/Sparkle.framework"
+codesign "${SIGN_OPTS[@]}" "$APP/Contents/Frameworks/WebRTC.framework"
+codesign "${SIGN_OPTS[@]}" "$APP/Contents/Helpers/zmx"
+codesign "${SIGN_OPTS[@]}" "$APP/Contents/Helpers/graftty"
+codesign "${SIGN_OPTS[@]}" --entitlements "$ENTITLEMENTS_FILE" "$APP/Contents/MacOS/Graftty"
+codesign "${SIGN_OPTS[@]}" --entitlements "$ENTITLEMENTS_FILE" "$APP"
 codesign --verify --strict "$APP"
 
 echo "→ verify dynamic framework linkage"

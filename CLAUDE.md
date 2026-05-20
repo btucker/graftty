@@ -110,6 +110,6 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-`.github/workflows/release.yml` takes it from there: builds the bundle (picking up `GRAFTTY_VERSION` from the tag), ad-hoc codesigns, zips with `ditto`, attaches the zip to a GitHub release, and pushes a `version`+`sha256` bump to the `btucker/homebrew-graftty` cask tap. Bootstrap + migration notes (Developer ID + notarization) live in `docs/release/README.md`.
+`.github/workflows/release.yml` takes it from there: builds the bundle (picking up `GRAFTTY_VERSION` from the tag), signs with the Developer ID Application identity, notarizes via `xcrun notarytool`, staples the ticket, zips with `ditto`, attaches the zip to a GitHub release, and pushes a `version`+`sha256` bump to the `btucker/homebrew-graftty` cask tap. Secret bootstrap + cert renewal notes live in `docs/release/README.md`.
 
 The release workflow does not run tests — it only runs `swift build`. A flaky `ci.yml` failure on the head commit does not block a release, but confirm the failure is unrelated to the shipped changes before tagging.
