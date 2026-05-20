@@ -147,7 +147,6 @@ public struct AgentHookInstaller: Sendable {
         for (basename, homeBasename) in [
             (".zshenv", ".zshenv"),
             (".zprofile", ".zprofile"),
-            (".zlogin", ".zlogin"),
         ] {
             try writeIfChanged(
                 Self.zshSourceShim(homeBasename: homeBasename),
@@ -162,6 +161,13 @@ public struct AgentHookInstaller: Sendable {
         try writeIfChanged(
             Self.zshrcShim(),
             to: zshInitDirectory.appendingPathComponent(".zshrc"),
+            executable: false,
+            written: &written
+        )
+
+        try writeIfChanged(
+            Self.zloginShim(),
+            to: zshInitDirectory.appendingPathComponent(".zlogin"),
             executable: false,
             written: &written
         )
@@ -284,6 +290,54 @@ public struct AgentHookInstaller: Sendable {
             esac
             export PATH="$GRAFTTY_AGENT_HOOKS_BIN:$PATH"
         fi
+
+        \(precmdHookSnippet())
+        """
+    }
+
+    /// Sources the user's `~/.zlogin` (where RVM is conventionally loaded —
+    /// sourcing RVM prepends gem/ruby paths to PATH, pushing our wrapper bin
+    /// off position 1), then re-appends graftty's precmd hook so it runs
+    /// *after* any precmd / chpwd hooks the user's `.zlogin` registered.
+    /// ZMX-6.8.
+    static func zloginShim() -> String {
+        zshSourceShim(homeBasename: ".zlogin") + "\n\n" + precmdHookSnippet()
+    }
+
+    /// Inline shell block that (re-)installs the `_graftty_prepend_wrapper_path`
+    /// precmd hook at the END of `precmd_functions` using a strip-then-append
+    /// pattern. Embedded in both `zshrcShim` and `zloginShim`: the `.zshrc`
+    /// registration handles cases where the user's `.zlogin` doesn't run
+    /// (e.g. interactive non-login zsh); the `.zlogin` re-registration runs
+    /// after the user's `.zlogin`, so any precmd / chpwd hooks the user's
+    /// init registered (asdf, mise, nvm-on-cd, etc.) are positioned ahead
+    /// of ours in `precmd_functions` and ours fires last each prompt.
+    /// ZMX-6.8.
+    private static func precmdHookSnippet() -> String {
+        """
+        # ZMX-6.8: keep graftty's wrapper bin at PATH position 1 across
+        # every prompt by re-prepending in a precmd hook. The hook is
+        # registered with strip-then-append so it appears exactly once in
+        # precmd_functions; re-registering from .zlogin (after the user's
+        # .zlogin has run) reorders us to the end of the chain, so we win
+        # against any precmd / chpwd hooks user init registered (asdf, mise,
+        # nvm-on-cd, etc.).
+        _graftty_prepend_wrapper_path() {
+            [ -z "$GRAFTTY_AGENT_HOOKS_BIN" ] && return
+            case ":$PATH:" in
+                *":$GRAFTTY_AGENT_HOOKS_BIN:"*)
+                    local _gp=":$PATH:"
+                    _gp="${_gp//:$GRAFTTY_AGENT_HOOKS_BIN:/:}"
+                    _gp="${_gp#:}"
+                    _gp="${_gp%:}"
+                    PATH="$_gp"
+                    ;;
+            esac
+            export PATH="$GRAFTTY_AGENT_HOOKS_BIN:$PATH"
+        }
+        typeset -ga precmd_functions
+        precmd_functions=(${precmd_functions[@]:#_graftty_prepend_wrapper_path})
+        precmd_functions+=(_graftty_prepend_wrapper_path)
         """
     }
 
