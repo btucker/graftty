@@ -380,6 +380,11 @@ public struct AgentHookInstaller: Sendable {
 
         \(trapBlock)
 
+        # TEAM-PRESENCE-1.3: background `team register` so it never delays
+        # exec of the real binary. The CLI silently no-ops outside a
+        # team-tracked worktree, so the unconditional call is safe.
+        \(shellCommandToken(grafttyCLIPath)) team register --runtime \(runtime.rawValue) >/dev/null 2>&1 &
+
         \(runtimeBlock)
         exit $?
         """

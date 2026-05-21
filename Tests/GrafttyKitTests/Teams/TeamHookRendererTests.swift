@@ -47,11 +47,15 @@ struct TeamHookRendererTests {
         let json = try TeamHookRenderer.sessionStart(runtime: .codex, teamContext: "team data here")
         let context = try additionalContext(from: json)
 
-        #expect(context.contains("graftty team register"))
         #expect(context.contains("graftty team inbox"))
         #expect(context.contains("graftty team send"))
         #expect(context.contains("graftty team status"))
         #expect(context.contains("team data here"))
+
+        // TEAM-PRESENCE-1.3: registration is handled by the wrapper, not
+        // typed by the model. The primer must not instruct it — that's the
+        // shape the classifier kept blocking.
+        #expect(!context.contains("graftty team register"))
     }
 
     @Test("Both runtimes produce the identical SessionStart primer text.")
