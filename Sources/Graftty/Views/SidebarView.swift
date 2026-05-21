@@ -62,10 +62,6 @@ struct SidebarView: View {
                 }
             }
             .listStyle(.sidebar)
-            // Remove the default sidebar material so the ghostty background
-            // shows through. The scrollContentBackground hide is what lets
-            // the List render transparently on top of our theme color.
-            .scrollContentBackground(.hidden)
 
             Divider()
                 .opacity(0.4)
@@ -73,12 +69,12 @@ struct SidebarView: View {
             Button(action: onAddRepo) {
                 Label("Add Repository", systemImage: "plus")
                     .frame(maxWidth: .infinity)
-                    .foregroundColor(theme.foreground.opacity(0.8))
+                    .foregroundColor(theme.sidebarPrimaryText(isActive: false))
             }
             .buttonStyle(.plain)
             .padding(8)
         }
-        .background(theme.sidebarBackground)
+        .themedSidebarSurface(theme.core)
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             handleDrop(providers)
         }
@@ -190,7 +186,7 @@ struct SidebarView: View {
                     } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.foreground.opacity(0.6))
+                            .foregroundColor(theme.sidebarDimIcon)
                             .frame(width: 18, height: 18)
                             .contentShape(Rectangle())
                     }

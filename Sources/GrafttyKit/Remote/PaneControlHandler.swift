@@ -9,6 +9,12 @@ import GrafttyProtocol
 /// Production wires `mutator` to the real splittree operations on
 /// `AppState`. Tests pass a fake that records the request and produces
 /// a canned response.
+///
+/// @spec REMOTE-7.5
+/// While the host services `pane_control` requests, the application shall
+/// route mutations through an injected mutator callback without giving
+/// `PaneControlHandler` a reference to `AppState`, enforcing per-client
+/// focus sovereignty by construction.
 public actor PaneControlHandler: ChannelHandler {
     public nonisolated let channelType = "pane_control"
 

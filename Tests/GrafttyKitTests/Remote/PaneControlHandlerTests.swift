@@ -74,6 +74,111 @@ struct PaneControlHandlerTests {
         let resp = try JSONDecoder().decode(PaneControlResponse.self, from: respBody)
         #expect(resp == .error(code: "conflict", message: "target already busy"))
     }
+
+    @Test("""
+@spec REMOTE-7.3: When the host receives a `pane_control` request `{"type":"close","target":<sessionName>}`, the host shall destroy the surface for the leaf whose `sessionName == target` and reply `{"ok":true}` on success.
+""")
+    func decodesAndDispatchesCloseRequest() async throws {
+        let recorder = MutatorRecorder()
+        let handler = PaneControlHandler(mutator: { [recorder] in await recorder.handle($0) })
+        let outboxSpy = OutboxSpy()
+        await handler.onOpen(ChannelID(5), outbox: outboxSpy.outbox)
+
+        let request: PaneControlRequest = .close(target: "session-bravo")
+        let body = try JSONEncoder().encode(request)
+        await handler.onPayload(body)
+
+        try await pollUntil(timeout: .seconds(2)) { await outboxSpy.framesCount == 1 }
+        let frames = await outboxSpy.frames
+        guard case .payload(_, let respBody) = frames[0] else {
+            Issue.record("expected payload frame")
+            return
+        }
+        let resp = try JSONDecoder().decode(PaneControlResponse.self, from: respBody)
+        #expect(resp == .ok)
+        #expect(await recorder.lastRequest == request)
+    }
+
+    @Test("""
+@spec REMOTE-7.4: When two `pane_control` requests target the same leaf concurrently, the host shall immediately reply to the second request with `{"ok":false,"code":"conflict","message":<human-readable>}` and continue processing only the first request. The conflict window for a target leaf ends once the first request's resulting `panes_state` snapshot has been emitted.
+""")
+    func conflictResponseMatchesWireShape() async throws {
+        // The handler delegates per-leaf serialization to the injected
+        // mutator (which production wires to AppState). What this test
+        // pins is the wire contract: a mutator-returned conflict serializes
+        // exactly as `{"ok":false,"code":"conflict","message":...}`.
+        let handler = PaneControlHandler(mutator: { _ in
+            .error(code: "conflict", message: "target already busy")
+        })
+        let outboxSpy = OutboxSpy()
+        await handler.onOpen(ChannelID(9), outbox: outboxSpy.outbox)
+
+        let body = try JSONEncoder().encode(PaneControlRequest.split(target: "session-x", direction: .horizontal))
+        await handler.onPayload(body)
+
+        try await pollUntil(timeout: .seconds(2)) { await outboxSpy.framesCount == 1 }
+        let frames = await outboxSpy.frames
+        guard case .payload(_, let respBody) = frames[0] else {
+            Issue.record("expected payload frame")
+            return
+        }
+
+        // Assert the JSON shape directly, not just the decoded form — the
+        // spec text pins specific key names.
+        let json = try #require(try JSONSerialization.jsonObject(with: respBody) as? [String: Any])
+        #expect(json["ok"] as? Bool == false)
+        #expect(json["code"] as? String == "conflict")
+        let message = try #require(json["message"] as? String)
+        #expect(!message.isEmpty)
+    }
+
+    @Test("""
+@spec REMOTE-7.5: While the host services `pane_control` requests, the application shall route mutations through an injected mutator callback without giving `PaneControlHandler` a reference to `AppState`, enforcing per-client focus sovereignty by construction.
+""")
+    func handlerHasNoAppStateReference() async throws {
+        // Structural assertion: PaneControlHandler.init takes only a
+        // `Mutator` closure. Constructing it here with just that closure
+        // demonstrates by construction that no AppState (or any other
+        // ambient host state) is reachable from the handler — the only
+        // path to mutate host state is through the injected callback.
+        let mutator: PaneControlHandler.Mutator = { _ in .ok }
+        let handler = PaneControlHandler(mutator: mutator)
+        let outboxSpy = OutboxSpy()
+        await handler.onOpen(ChannelID(99), outbox: outboxSpy.outbox)
+
+        let body = try JSONEncoder().encode(PaneControlRequest.close(target: "session-iso"))
+        await handler.onPayload(body)
+
+        try await pollUntil(timeout: .seconds(2)) { await outboxSpy.framesCount == 1 }
+        let frames = await outboxSpy.frames
+        guard case .payload(_, let respBody) = frames[0] else {
+            Issue.record("expected payload frame")
+            return
+        }
+        let resp = try JSONDecoder().decode(PaneControlResponse.self, from: respBody)
+        #expect(resp == .ok)
+    }
+
+    @Test
+    func decodesAndDispatchesSwapRequest() async throws {
+        let recorder = MutatorRecorder()
+        let handler = PaneControlHandler(mutator: { [recorder] in await recorder.handle($0) })
+        let outboxSpy = OutboxSpy()
+        await handler.onOpen(ChannelID(11), outbox: outboxSpy.outbox)
+
+        let request: PaneControlRequest = .swap(source: "a", target: "b")
+        await handler.onPayload(try JSONEncoder().encode(request))
+        try await pollUntil(timeout: .seconds(2)) { await outboxSpy.framesCount == 1 }
+
+        let frames = await outboxSpy.frames
+        guard case .payload(_, let respBody) = frames[0] else {
+            Issue.record("expected payload frame")
+            return
+        }
+        let resp = try JSONDecoder().decode(PaneControlResponse.self, from: respBody)
+        #expect(resp == .ok)
+        #expect(await recorder.lastRequest == request)
+    }
 }
 
 private actor MutatorRecorder {

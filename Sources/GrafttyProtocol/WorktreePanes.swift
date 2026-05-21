@@ -20,6 +20,20 @@ public enum WorktreeWireState: String, Codable, Sendable, Hashable {
     public var isInFlight: Bool {
         self == .creating || self == .deleting
     }
+
+    /// True iff the entry's path corresponds to an actual on-disk
+    /// worktree the host's git can inspect. Polling and per-worktree
+    /// subprocess work should gate on this — `.creating` placeholders
+    /// have no directory yet, `.stale` rows have lost theirs, and
+    /// `.deleting` is about to vanish. Mirror of `WorktreeState
+    /// .hasOnDiskWorktree` so cross-platform sidebar code can ask the
+    /// same question without depending on the server-only enum.
+    public var hasOnDiskWorktree: Bool {
+        switch self {
+        case .closed, .running: return true
+        case .stale, .creating, .deleting: return false
+        }
+    }
 }
 
 /// Divergence stats for a worktree, faithful to the Mac sidebar's
@@ -51,10 +65,26 @@ public struct WorktreeWireStats: Codable, Sendable, Hashable {
     }
 }
 
-/// One entry per worktree, served by `GET /worktrees/panes`. The
-/// mobile client uses these to render a sidebar mirror of the Mac
-/// app: rich rows with state, branch, PR badge, divergence gutter,
-/// attention pings, and a per-worktree pane tree.
+/// One entry per worktree. Dual role:
+///   1. **Wire format** served by `GET /worktrees/panes` — the mobile
+///      client decodes these to render a remote sidebar mirror.
+///   2. **Shared sidebar row model.** Every field a worktree row needs
+///      to display (state, displayName, displayBranch, isMainCheckout,
+///      prBadge, stats with baseRef, attentionText, pane layout) lives
+///      here, so both the Mac sidebar and the iPad sidebar can flatten
+///      onto the same shape. The Mac server-side projection at
+///      `GrafttyApp.swift`'s `setWorktreePanesProvider` builds this
+///      from `RepoEntry` + `WorktreeEntry` + the various stat / PR /
+///      attention stores; the iPad consumes it directly from the wire.
+///
+/// **Known gap (today):** the Mac sidebar's `WorktreeRow` does not yet
+/// consume `WorktreePanes` directly — it still takes the richer
+/// `WorktreeStats` for its hover tooltip (`+I -D lines vs. baseRef`)
+/// which carries `insertions` / `deletions` that `WorktreeWireStats`
+/// drops. Once those two fields are added to the wire (a backwards-
+/// compatible expansion since the mobile decoder is decodeIfPresent-
+/// tolerant), the Mac sidebar can switch to consuming `WorktreePanes`
+/// for its row inputs too, single-sourcing the row contract end-to-end.
 public struct WorktreePanes: Codable, Sendable, Hashable {
     public let path: String
     public let displayName: String
