@@ -126,6 +126,19 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         }
         dc.delegate = dataChannelDelegate
         self.dataChannel = dc
+        // Install the message handler at channel-creation time, NOT
+        // inside `waitForDataChannelOpen`. The previous design only set
+        // `onMessage` inside the open-wait continuation, so the
+        // already-open early-return path (channel reached `.open`
+        // between `applyAnswer`'s `setRemoteDescription` and the first
+        // state-check) left `onMessage` nil and silently dropped every
+        // inbound frame. The loopback test exposed this as the *second*
+        // pollUntil (pong receipt) timing out after 5s — the first
+        // pollUntil (ping receipt on answerer) and an instrumented CI
+        // failure trace narrowed it down.
+        dataChannelDelegate.onMessage = { [weak self] data in
+            Task { await self?.recordReceivedBinary(data) }
+        }
 
         state = .connecting
 
@@ -280,9 +293,10 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             self.dataChannelDelegate.onOpen = { [weak self] in
                 Task { await self?.handleDataChannelOpen() }
             }
-            self.dataChannelDelegate.onMessage = { [weak self] data in
-                Task { await self?.recordReceivedBinary(data) }
-            }
+            // `onMessage` is installed up-front in `createOffer`, so we
+            // do NOT re-install it here. The previous design installed
+            // it here and skipped it on the early-return path above —
+            // see the createOffer comment for the bug that caused.
             // Re-check inside the actor: if the channel transitioned to
             // open between the early-return check above and installing
             // the callback, the callback would never fire. Mirrors the
