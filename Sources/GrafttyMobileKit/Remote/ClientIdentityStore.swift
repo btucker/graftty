@@ -105,7 +105,7 @@ public final class ClientIdentityStore: @unchecked Sendable {
             .appendingPathComponent("Remote")
     }
 
-    // MARK: Private helpers (call only while holding `lock`)
+    // MARK: Private (call only while holding `lock`)
 
     private func _load() throws -> Curve25519.Signing.PrivateKey? {
         let fileURL = directory.appendingPathComponent(Self.fileName)
@@ -133,7 +133,7 @@ public final class ClientIdentityStore: @unchecked Sendable {
         let fileURL = directory.appendingPathComponent(Self.fileName)
         let stored = StoredKey(version: Self.currentVersion, privateKeyData: key.rawRepresentation)
         let data = try JSONEncoder().encode(stored)
-        try data.write(to: fileURL, options: [.atomic])
+        try data.write(to: fileURL, options: .atomic)
         // Restrict to owner-read/write only — this file holds the raw private key.
         try FileManager.default.setAttributes(
             [.posixPermissions: NSNumber(value: Int16(0o600))],
