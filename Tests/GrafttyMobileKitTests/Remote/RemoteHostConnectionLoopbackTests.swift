@@ -39,6 +39,17 @@ struct RemoteHostConnectionLoopbackTests {
         //    channel to reach the `open` state on the offerer side.
         try await client.applyAnswer(answer)
 
+        // 4b. Wait for the answerer to *also* see the channel as `.open`.
+        //    The offerer can be notified of `.open` slightly before the
+        //    answerer fires its own `dataChannelDidChangeState(.open)`;
+        //    sending a ping into that asymmetric window has been observed
+        //    to land before WebRTC fully wires its message-delivery path
+        //    on the answerer, dropping the first frame and failing the
+        //    test's single-ping assertion. Real signaling (M1.2+) won't
+        //    suffer this because production traffic is bidirectional with
+        //    retries, but the loopback test sends exactly one ping.
+        try await answererPeer.waitForDataChannelOpen(timeout: .seconds(10))
+
         // 5. Send a binary ping from the client; the answerer should
         //    receive it within a short window.
         let ping = Data([0xCA, 0xFE, 0xBA, 0xBE])
@@ -186,6 +197,20 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
         gatheringTimeoutTask?.cancel()
         gatheringTimeoutTask = nil
         pending?.resume()
+    }
+
+    /// Poll until `dataChannel?.readyState == .open` or the deadline
+    /// expires. WebRTC delivers state transitions to the offerer and the
+    /// answerer on independent queues, so the answerer can lag by tens
+    /// to hundreds of milliseconds. The loopback test calls this between
+    /// `applyAnswer` and the first send to close that asymmetric window.
+    func waitForDataChannelOpen(timeout: Duration) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while ContinuousClock.now < deadline {
+            if dataChannel?.readyState == .open { return }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        throw NSError(domain: "TestAnswerer", code: 5)
     }
 
     func send(_ data: Data) async throws {
