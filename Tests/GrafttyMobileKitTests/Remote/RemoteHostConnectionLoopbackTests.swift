@@ -70,8 +70,16 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
     private let factory: RTCPeerConnectionFactory
     private var peerConnection: RTCPeerConnection?
     private var dataChannel: RTCDataChannel?
-    private let delegate = AnswererDelegate()
-    private let dataChannelDelegate = AnswererDataChannelDelegate()
+    /// `nonisolated let` so the `onDataChannel` callback (which fires on
+    /// WebRTC's serial queue) can install `dc.delegate` and the
+    /// `onMessage` closure **synchronously**, before any message has a
+    /// chance to race in. The previous design queued a `Task { await
+    /// adopt }`; if the first message arrived during the actor-queue gap
+    /// between Task dispatch and Task execution, `dc.delegate` was nil
+    /// and WebRTC dropped the message. The delegate classes are
+    /// `@unchecked Sendable`.
+    private nonisolated let delegate = AnswererDelegate()
+    private nonisolated let dataChannelDelegate = AnswererDataChannelDelegate()
     private(set) var lastReceived: Data?
     /// Mirror of `RemoteHostConnection.pendingLocalCandidates` — buffer
     /// candidates gathered during `accept` until the test binds a target,
@@ -87,6 +95,23 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
         delegate.onIceCandidate = { [weak self] candidate in
             Task { await self?.routeLocalIceCandidate(candidate) }
         }
+        // Install dc routing synchronously so the first inbound message
+        // is never dropped to a nil delegate during an actor-queue gap.
+        // Stashing the dc reference (for `send`) can still go through
+        // the actor since `send` is only driven by the test after
+        // `applyAnswer` returns.
+        delegate.onDataChannel = { [weak self] dc in
+            guard let self else { return }
+            dc.delegate = self.dataChannelDelegate
+            self.dataChannelDelegate.onMessage = { [weak self] data in
+                Task { await self?.record(data) }
+            }
+            Task { await self.captureDataChannel(dc) }
+        }
+    }
+
+    private func captureDataChannel(_ dc: RTCDataChannel) {
+        self.dataChannel = dc
     }
 
     private func routeLocalIceCandidate(_ candidate: RTCIceCandidate) async {
@@ -104,10 +129,6 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
             throw NSError(domain: "TestAnswerer", code: 1)
         }
         self.peerConnection = pc
-
-        delegate.onDataChannel = { [weak self] dc in
-            Task { await self?.adopt(dc) }
-        }
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             pc.setRemoteDescription(offer) { error in
@@ -212,14 +233,6 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
         peerConnection?.close()
         iceCandidateTarget = nil
         pendingLocalCandidates.removeAll()
-    }
-
-    fileprivate func adopt(_ dc: RTCDataChannel) {
-        self.dataChannel = dc
-        dc.delegate = dataChannelDelegate
-        dataChannelDelegate.onMessage = { [weak self] data in
-            Task { await self?.record(data) }
-        }
     }
 
     fileprivate func record(_ data: Data) {
