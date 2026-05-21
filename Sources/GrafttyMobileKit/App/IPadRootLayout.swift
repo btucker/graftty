@@ -193,6 +193,11 @@ private struct HostMenu: View {
             HStack(spacing: 4) {
                 Text(selectedHost?.label ?? "No host")
                     .font(.body.weight(.semibold))
+                    // Middle-truncate long host labels so the menu
+                    // stays anchored in the principal slot rather than
+                    // pushing the trailing `+` action off the edge.
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                     .foregroundStyle(
                         selectedHost == nil
                             ? appState.theme.foreground.opacity(0.55)
@@ -202,6 +207,12 @@ private struct HostMenu: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(appState.theme.sidebarChevron)
             }
+            // Breathing room from the leading sidebar-toggle button.
+            .padding(.leading, 8)
+            // Cap the menu's natural width so the host name truncates
+            // in the middle instead of pushing into the trailing
+            // toolbar items (the `+` Add Worktree button).
+            .frame(maxWidth: 220, alignment: .leading)
         }
         .sheet(isPresented: $showingAddHost) {
             NavigationStack {
