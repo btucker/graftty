@@ -31,12 +31,7 @@ public struct IPadRootLayout: View {
             get: { appState.columnVisibility },
             set: { appState.columnVisibility = $0 }
         )) {
-            VStack(spacing: 0) {
-                HostHeaderRow(
-                    selectedHost: selectedHost,
-                    hostStore: hostStore,
-                    appState: appState
-                )
+            Group {
                 if let host = selectedHost {
                     WorktreeListContent(
                         host: host,
@@ -50,6 +45,28 @@ public struct IPadRootLayout: View {
                 }
             }
             .themedSidebarSurface(appState.theme)
+            // IPAD-1.2: the host menu lives in the sidebar nav bar's
+            // `.principal` slot so it IS the top row of the sidebar
+            // rather than a redundant chrome row beneath an empty
+            // system nav bar.
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HostMenu(
+                        selectedHost: selectedHost,
+                        hostStore: hostStore,
+                        appState: appState
+                    )
+                }
+            }
+            // IPAD-1.12: explicit 1pt trailing border separates the
+            // sidebar from the detail column (Mac's NSSplitView draws
+            // this automatically; iPad's NavigationSplitView does not).
+            .overlay(alignment: .trailing) {
+                Rectangle()
+                    .fill(appState.theme.foreground.opacity(0.15))
+                    .frame(width: 1)
+                    .ignoresSafeArea()
+            }
             .publishSidebarWidth()
             .navigationSplitViewColumnWidth(
                 min: 220,
@@ -134,10 +151,14 @@ public struct IPadRootLayout: View {
     }
 }
 
-// MARK: - HostHeaderRow (private)
+// MARK: - HostMenu (private)
 
 /// @spec IPAD-1.2
-private struct HostHeaderRow: View {
+///
+/// Toolbar-bound host switcher. Lives in the iPad sidebar's nav bar
+/// `.principal` slot rather than as a row inside the sidebar so it
+/// occupies the space the system would have given a navigation title.
+private struct HostMenu: View {
     let selectedHost: Host?
     @Bindable var hostStore: HostStore
     @Bindable var appState: IPadAppState
@@ -146,9 +167,9 @@ private struct HostHeaderRow: View {
 
     var body: some View {
         Menu {
-            // Saved hosts as Picker-style buttons with a check mark on
-            // the currently-selected one. Tapping a host fires the
-            // standard host switch (clears selection + focused pane).
+            // Saved hosts with a checkmark on the currently-selected
+            // one; tapping fires the standard host switch (clears
+            // worktree selection + focused pane).
             ForEach(hostStore.hosts) { host in
                 Button {
                     IPadRootLayout.applyHostSwitch(appState: appState, to: host.id)
@@ -169,7 +190,7 @@ private struct HostHeaderRow: View {
                 Label("Add Host…", systemImage: "plus")
             }
         } label: {
-            HStack(alignment: .center, spacing: 6) {
+            HStack(spacing: 4) {
                 Text(selectedHost?.label ?? "No host")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(
@@ -180,14 +201,8 @@ private struct HostHeaderRow: View {
                 Image(systemName: "chevron.down")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(appState.theme.sidebarChevron)
-                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(appState.theme.background)
-            .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
         .sheet(isPresented: $showingAddHost) {
             NavigationStack {
                 AddHostView { host in
