@@ -109,10 +109,12 @@ public final class ClientIdentityStore: @unchecked Sendable {
 
     private func _load() throws -> Curve25519.Signing.PrivateKey? {
         let fileURL = directory.appendingPathComponent(Self.fileName)
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+        let data: Data
+        do {
+            data = try Data(contentsOf: fileURL)
+        } catch let error as CocoaError where error.code == .fileReadNoSuchFile {
             return nil
         }
-        let data = try Data(contentsOf: fileURL)
         do {
             let stored = try JSONDecoder().decode(StoredKey.self, from: data)
             guard stored.version == Self.currentVersion else {
