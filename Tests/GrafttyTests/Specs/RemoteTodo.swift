@@ -71,7 +71,7 @@ struct RemoteTodo {
     func remote_8_4() async throws { }
 
     @Test("""
-@spec REMOTE-8.5: The host's SSH cipher allowlist shall be restricted to `chacha20-poly1305@openssh.com` and `aes256-gcm@openssh.com`.
+@spec REMOTE-8.5: While accepting a remote attach, the host shall restrict its SSH cipher allowlist to `chacha20-poly1305@openssh.com` and `aes256-gcm@openssh.com`.
 """, .disabled("not yet implemented"))
     func remote_8_5() async throws { }
 

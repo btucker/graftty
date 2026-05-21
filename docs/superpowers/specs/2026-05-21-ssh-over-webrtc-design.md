@@ -296,7 +296,7 @@ R6 deletes `/ws`, cutting iPhone's current production transport. Mitigation: Tes
 | **REMOTE-8.2** | When the host receives a userauth request, the host shall accept only the `publickey` method and reject `password` and `keyboard-interactive` immediately. |
 | **REMOTE-8.3** | When the host receives a userauth request, the host shall identify the peer solely by the offered public key against `TrustedPeerStore` and shall ignore the username field. |
 | **REMOTE-8.4** | When the client receives a host key during SSH KEX, the client shall verify the key against `PinnedHostStore` and abort the connection on mismatch. |
-| **REMOTE-8.5** | The host's SSH cipher allowlist shall be restricted to `chacha20-poly1305@openssh.com` and `aes256-gcm@openssh.com`. |
+| **REMOTE-8.5** | While accepting a remote attach, the host shall restrict its SSH cipher allowlist to `chacha20-poly1305@openssh.com` and `aes256-gcm@openssh.com`. |
 
 These land in `Tests/GrafttyTests/Specs/RemoteTodo.swift` as disabled inventory in R1 and promote to active tests as their implementations land in R3.
 
