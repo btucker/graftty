@@ -92,7 +92,7 @@ struct ClientIdentityStoreTests {
 
         // A backup file must exist
         let contents = try FileManager.default.contentsOfDirectory(atPath: dir.path)
-        let backupFiles = contents.filter { $0.hasPrefix("client-identity.json.corrupt.") }
+        let backupFiles = contents.filter { $0.hasPrefix("client-identity.json.corrupt-") }
         #expect(!backupFiles.isEmpty, "Expected a backup file; found: \(contents)")
 
         // Recovery: loadOrGenerateAndPersist should succeed
@@ -148,7 +148,7 @@ struct ClientIdentityStoreTests {
 
         // Crucially: no .corrupt backup should be created
         let contents = try FileManager.default.contentsOfDirectory(atPath: dir.path)
-        let backupFiles = contents.filter { $0.hasPrefix("client-identity.json.corrupt.") }
+        let backupFiles = contents.filter { $0.hasPrefix("client-identity.json.corrupt-") }
         #expect(backupFiles.isEmpty, "A missing file must NOT create a .corrupt backup; found: \(contents)")
     }
 
@@ -167,6 +167,42 @@ struct ClientIdentityStoreTests {
 
         #expect(reloaded != nil)
         #expect(reloaded!.rawRepresentation == generated.rawRepresentation)
+    }
+
+    // MARK: - JSON v2 schema version field
+
+    @Test("Persisted JSON includes version: 2 field")
+    func persistedJSONHasVersionField() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = ClientIdentityStore(directory: dir)
+        _ = try store.generateAndPersist()
+
+        let fileURL = dir.appendingPathComponent("client-identity.json")
+        let data = try Data(contentsOf: fileURL)
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        #expect(json?["version"] as? Int == 2, "Expected version: 2 in persisted JSON")
+    }
+
+    // MARK: - Legacy format rejection
+
+    @Test("Legacy JSON without version field is treated as corrupt and load returns nil")
+    func legacyFormatWithoutVersionFieldIsRejected() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let legacyJSON = #"{"privateKeyData":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8="}"#
+        let fileURL = dir.appendingPathComponent("client-identity.json")
+        try legacyJSON.data(using: .utf8)!.write(to: fileURL)
+
+        let store = ClientIdentityStore(directory: dir)
+        let loaded = try store.load()
+        #expect(loaded == nil, "Legacy record should be rejected as corrupt")
+
+        let backupExists = (try? FileManager.default.contentsOfDirectory(atPath: dir.path))?
+            .contains(where: { $0.hasPrefix("client-identity.json.corrupt-") }) ?? false
+        #expect(backupExists, "Legacy file should be backed up with .corrupt-* suffix")
     }
 }
 #endif

@@ -17,8 +17,8 @@ struct ClientPairingSessionTests {
         return dir
     }
 
-    func makePrivateKey() -> Curve25519.KeyAgreement.PrivateKey {
-        Curve25519.KeyAgreement.PrivateKey()
+    func makePrivateKey() -> Curve25519.Signing.PrivateKey {
+        Curve25519.Signing.PrivateKey()
     }
 
     func makePublicKey(byte: UInt8) -> RemoteIdentityPublicKey {
