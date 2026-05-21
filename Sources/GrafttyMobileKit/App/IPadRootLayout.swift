@@ -46,11 +46,13 @@ public struct IPadRootLayout: View {
             }
             .themedSidebarSurface(appState.theme)
             // IPAD-1.2: the host menu lives in the sidebar nav bar's
-            // `.principal` slot so it IS the top row of the sidebar
-            // rather than a redundant chrome row beneath an empty
-            // system nav bar.
+            // `.topBarLeading` slot — adjacent to the system
+            // sidebar-toggle button. Originally `.principal`, but the
+            // centered placement let the menu expand into the trailing
+            // `.primaryAction` (+) item at narrow column widths and
+            // overlap it. Leading placement is naturally bounded.
             .toolbar {
-                ToolbarItem(placement: .principal) {
+                ToolbarItem(placement: .topBarLeading) {
                     HostMenu(
                         selectedHost: selectedHost,
                         hostStore: hostStore,
@@ -194,8 +196,8 @@ private struct HostMenu: View {
                 Text(selectedHost?.label ?? "No host")
                     .font(.body.weight(.semibold))
                     // Middle-truncate long host labels so the menu
-                    // stays anchored in the principal slot rather than
-                    // pushing the trailing `+` action off the edge.
+                    // never crowds the trailing `+` action even at
+                    // the sidebar's minimum column width.
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .foregroundStyle(
@@ -207,12 +209,12 @@ private struct HostMenu: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(appState.theme.sidebarChevron)
             }
-            // Breathing room from the leading sidebar-toggle button.
-            .padding(.leading, 8)
-            // Cap the menu's natural width so the host name truncates
-            // in the middle instead of pushing into the trailing
-            // toolbar items (the `+` Add Worktree button).
-            .frame(maxWidth: 220, alignment: .leading)
+            // Cap the menu's intrinsic width so the host name
+            // truncates rather than pushing trailing toolbar items.
+            // The system handles spacing from the leading
+            // sidebar-toggle automatically when items share
+            // `.topBarLeading`.
+            .frame(maxWidth: 160, alignment: .leading)
         }
         .sheet(isPresented: $showingAddHost) {
             NavigationStack {
