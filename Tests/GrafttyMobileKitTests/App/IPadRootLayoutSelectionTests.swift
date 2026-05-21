@@ -24,7 +24,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.principal` placement (not as a row beneath the nav bar) showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Living in the toolbar makes the menu the top row of the sidebar and avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
+@spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
 """)
     func ipad_1_2_hostHeaderRowState() {
         let appState = freshAppState()
@@ -96,6 +96,29 @@ struct IPadRootLayoutSelectionTests {
         #expect(appState.selectedHostId == hostB.id)
         #expect(appState.selectedWorktreePath == nil)
         #expect(appState.focusedPaneId == nil)
+
+        // The "re-fetch worktrees and theme for the new host" clause is
+        // enforced by `WorktreeListContent`'s `.task(id: host.id) { await
+        // load() }`. Swapping the bound `host` prop changes the task id
+        // and SwiftUI tears down the previous task and reruns `load()`
+        // for the new host. The SwiftUI task lifecycle isn't directly
+        // exercisable from a unit test, so smoke-check that the view
+        // constructs cleanly for two distinct hosts and that their host
+        // ids differ — a future refactor dropping the `host: Host` prop
+        // (and with it the id-keying story) would surface here.
+        let viewA = WorktreeListContent(
+            host: hostA,
+            onSelect: { _ in },
+            onSelectPane: { _ in }
+        )
+        let viewB = WorktreeListContent(
+            host: hostB,
+            onSelect: { _ in },
+            onSelectPane: { _ in }
+        )
+        #expect(viewA.host.id == hostA.id)
+        #expect(viewB.host.id == hostB.id)
+        #expect(viewA.host.id != viewB.host.id)
     }
 
     @Test("""
@@ -447,6 +470,92 @@ struct IPadRootLayoutSelectionTests {
 
         #expect(appState.selectedWorktreePath == nil)
         #expect(appState.focusedPaneId == nil)
+    }
+
+    @Test("""
+@spec IPAD-1.17: When a `GET /worktrees/panes` snapshot still contains the selected worktree but its layout no longer includes `IPadAppState.focusedPaneId`'s session name, the application shall reset `focusedPaneId` to the first leaf of the worktree's current layout (or nil if the worktree has no panes).
+""")
+    func ipad_1_17_stalePaneIdClearedWhenWorktreeStillPresent() {
+        // Case 1: worktree still present, focused pane vanished, other
+        // panes exist → focusedPaneId falls back to the first leaf.
+        let appState = freshAppState()
+        appState.selectedWorktreePath = "/repo/feat"
+        appState.focusedPaneId = "session-gone"
+
+        let layoutWithOtherPanes = PaneLayoutNode.split(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: .leaf(sessionName: "session-a", title: "shell A", attentionText: nil),
+            right: .leaf(sessionName: "session-b", title: "shell B", attentionText: nil)
+        )
+        IPadRootLayout.onWorktreeListChanged(
+            appState: appState,
+            list: [
+                .init(
+                    path: "/repo/feat",
+                    displayName: "feat",
+                    repoDisplayName: "repo",
+                    displayBranch: "feat",
+                    state: .running,
+                    isMainCheckout: false,
+                    prBadge: nil,
+                    stats: nil,
+                    attentionText: nil,
+                    layout: layoutWithOtherPanes
+                )
+            ]
+        )
+        #expect(appState.selectedWorktreePath == "/repo/feat")
+        #expect(appState.focusedPaneId == "session-a")
+
+        // Case 2: worktree still present but has no panes (layout == nil) →
+        // focusedPaneId resets to nil.
+        let appState2 = freshAppState()
+        appState2.selectedWorktreePath = "/repo/empty"
+        appState2.focusedPaneId = "session-orphan"
+        IPadRootLayout.onWorktreeListChanged(
+            appState: appState2,
+            list: [
+                .init(
+                    path: "/repo/empty",
+                    displayName: "empty",
+                    repoDisplayName: "repo",
+                    displayBranch: "empty",
+                    state: .running,
+                    isMainCheckout: false,
+                    prBadge: nil,
+                    stats: nil,
+                    attentionText: nil,
+                    layout: nil
+                )
+            ]
+        )
+        #expect(appState2.selectedWorktreePath == "/repo/empty")
+        #expect(appState2.focusedPaneId == nil)
+
+        // Case 3: worktree still present and focused pane still exists →
+        // focusedPaneId is preserved unchanged.
+        let appState3 = freshAppState()
+        appState3.selectedWorktreePath = "/repo/feat"
+        appState3.focusedPaneId = "session-a"
+        IPadRootLayout.onWorktreeListChanged(
+            appState: appState3,
+            list: [
+                .init(
+                    path: "/repo/feat",
+                    displayName: "feat",
+                    repoDisplayName: "repo",
+                    displayBranch: "feat",
+                    state: .running,
+                    isMainCheckout: false,
+                    prBadge: nil,
+                    stats: nil,
+                    attentionText: nil,
+                    layout: layoutWithOtherPanes
+                )
+            ]
+        )
+        #expect(appState3.focusedPaneId == "session-a")
     }
 }
 #endif

@@ -168,10 +168,10 @@ public struct WorktreeListContent: View {
         }
         // Title is owned by the caller: the iPhone compact path
         // (`WorktreePickerView`) sets `.navigationTitle(host.label)` for
-        // the navigation-stack push; the iPad path uses `HostHeaderRow`
-        // as the sole host indicator, so adding `.navigationTitle` here
-        // would render a redundant title in the sidebar's system nav bar
-        // (IPAD-1.2).
+        // the navigation-stack push; the iPad path uses `HostMenu` (in
+        // the sidebar nav bar's `.topBarLeading` slot) as the sole host
+        // indicator, so adding `.navigationTitle` here would render a
+        // redundant title in the sidebar's system nav bar (IPAD-1.2).
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -187,7 +187,10 @@ public struct WorktreeListContent: View {
                 Task { await handleCreated(response) }
             }
         }
-        .task { await load() }
+        // Keyed on host.id so switching hosts via `HostMenu` (IPAD-6.1)
+        // tears down the previous fetch and re-runs `load()` for the new
+        // host, refreshing worktrees and theme.
+        .task(id: host.id) { await load() }
         .onDisappear { errorToastTask?.cancel() }
     }
 

@@ -32,10 +32,10 @@ public struct WorktreePickerView: View {
             onSelectPane: onSelectPane
         )
         // Set on this iPhone-compact wrapper rather than inside
-        // WorktreeListContent: the iPad sidebar uses HostHeaderRow as
-        // its sole host indicator and a system nav-bar title there
-        // would duplicate the host label as a second row above it
-        // (IPAD-1.2).
+        // WorktreeListContent: the iPad sidebar uses `HostMenu` (in the
+        // sidebar nav bar's `.topBarLeading` slot) as its sole host
+        // indicator and a system nav-bar title there would duplicate
+        // the host label as a second row above it (IPAD-1.2).
         .navigationTitle(host.label)
     }
 }

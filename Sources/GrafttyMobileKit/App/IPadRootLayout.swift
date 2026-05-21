@@ -119,6 +119,16 @@ public struct IPadRootLayout: View {
             appState.selectedWorktreePath = nil
             appState.focusedPaneId = nil
         }
+        // IPAD-1.17: the selected worktree is still present, but its focused
+        // pane was closed/renamed on the host — fall back to the first leaf
+        // (or nil when the worktree has no panes) rather than leaving
+        // focusedPaneId pointing at a dead sessionName.
+        if let path = appState.selectedWorktreePath,
+           let wt = list.first(where: { $0.path == path }),
+           let pane = appState.focusedPaneId,
+           wt.layout?.leaves.contains(where: { $0.sessionName == pane }) != true {
+            appState.focusedPaneId = wt.layout?.leaves.first?.sessionName
+        }
         // IPAD-1.11: recompute the "anything needs attention?" flag from
         // worktree-scoped and pane-scoped attention text. The detail-
         // column toolbar reads this to decide whether to surface a
@@ -157,11 +167,7 @@ public struct IPadRootLayout: View {
 
 // MARK: - HostMenu (private)
 
-/// @spec IPAD-1.2
-///
-/// Toolbar-bound host switcher. Lives in the iPad sidebar's nav bar
-/// `.principal` slot rather than as a row inside the sidebar so it
-/// occupies the space the system would have given a navigation title.
+/// @spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a host-switcher `Menu` in its system navigation bar's `.topBarLeading` placement (not as a row beneath the nav bar) adjacent to the system sidebar-toggle button, showing the selected host's label and a trailing chevron, and tapping it shall present an anchored dropdown containing each saved host (with a checkmark on the currently-selected one) and an "Add Host…" action. Anchoring at the leading edge keeps the menu out of the trailing `+` action item's space even at narrow column widths, and living in the toolbar avoids the column-gesture conflict the previous row-with-Menu had — tapping a Menu wrapped in a tappable row could collapse the sidebar.
 private struct HostMenu: View {
     let selectedHost: Host?
     @Bindable var hostStore: HostStore
@@ -244,10 +250,15 @@ private struct IPadDetailColumn: View {
                 // IPAD-1.11: when the sidebar is collapsed and any
                 // worktree carries attention, surface a red dot in the
                 // leading toolbar position alongside the system
-                // sidebar-toggle button. Empty `ToolbarItem` when not
-                // needed so the toolbar doesn't reserve dead space.
-                ToolbarItem(placement: .topBarLeading) {
-                    if shouldShowAttentionDot {
+                // sidebar-toggle button. The `ToolbarItem` is installed
+                // *conditionally* via `@ToolbarContentBuilder` rather
+                // than wrapping its inner content in an `if`, because
+                // an always-installed `ToolbarItem` with empty content
+                // still reserves a toolbar slot on iOS — leaving dead
+                // space next to the sidebar-toggle button when no
+                // attention is needed.
+                if shouldShowAttentionDot {
+                    ToolbarItem(placement: .topBarLeading) {
                         Circle()
                             .fill(Color.red)
                             .frame(width: 8, height: 8)

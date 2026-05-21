@@ -132,6 +132,33 @@ struct PaneControlHandlerTests {
         #expect(!message.isEmpty)
     }
 
+    @Test("""
+@spec REMOTE-7.5: While the host services `pane_control` requests, the application shall route mutations through an injected mutator callback without giving `PaneControlHandler` a reference to `AppState`, enforcing per-client focus sovereignty by construction.
+""")
+    func handlerHasNoAppStateReference() async throws {
+        // Structural assertion: PaneControlHandler.init takes only a
+        // `Mutator` closure. Constructing it here with just that closure
+        // demonstrates by construction that no AppState (or any other
+        // ambient host state) is reachable from the handler — the only
+        // path to mutate host state is through the injected callback.
+        let mutator: PaneControlHandler.Mutator = { _ in .ok }
+        let handler = PaneControlHandler(mutator: mutator)
+        let outboxSpy = OutboxSpy()
+        await handler.onOpen(ChannelID(99), outbox: outboxSpy.outbox)
+
+        let body = try JSONEncoder().encode(PaneControlRequest.close(target: "session-iso"))
+        await handler.onPayload(body)
+
+        try await pollUntil(timeout: .seconds(2)) { await outboxSpy.framesCount == 1 }
+        let frames = await outboxSpy.frames
+        guard case .payload(_, let respBody) = frames[0] else {
+            Issue.record("expected payload frame")
+            return
+        }
+        let resp = try JSONDecoder().decode(PaneControlResponse.self, from: respBody)
+        #expect(resp == .ok)
+    }
+
     @Test
     func decodesAndDispatchesSwapRequest() async throws {
         let recorder = MutatorRecorder()

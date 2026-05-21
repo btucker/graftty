@@ -12,6 +12,42 @@ import GrafttyProtocol
 ///
 /// Owned at `RootView` level so values survive size-class transitions
 /// (Split View resize from regular → compact and back).
+///
+/// @spec IPAD-7.2
+/// When `horizontalSizeClass` transitions between `.regular` and
+/// `.compact`, the application shall preserve `selectedHostId`,
+/// `selectedWorktreePath`, and `focusedPaneId` so the user lands on
+/// the equivalent leaf in the new layout.
+///
+/// @spec IPAD-1.4
+/// When the user taps a pane child row in the sidebar at iPad regular
+/// width, the application shall set `IPadAppState.focusedPaneId` to
+/// that leaf's `sessionName` without pushing a new navigation stack
+/// frame.
+///
+/// @spec IPAD-1.11
+/// When the sidebar is collapsed (`IPadAppState.columnVisibility !=
+/// .all`) and any worktree carries attention (worktree-scoped
+/// `attentionText`, or any pane leaf with `attentionText`), the
+/// application shall surface a red attention dot in the detail
+/// column's leading toolbar position next to the system sidebar-
+/// toggle button — so a user with a hidden sidebar sees something
+/// needs review without re-opening it. The dot is derived from
+/// `IPadAppState.anyWorktreeHasAttention`, which
+/// `onWorktreeListChanged` maintains from each `GET /worktrees/panes`
+/// snapshot.
+///
+/// @spec IPAD-1.16
+/// While `IPadRootLayout` is presented, the worktree row whose
+/// `path == appState.selectedWorktreePath` shall render with a
+/// rounded-rectangle highlight at `theme.foreground.opacity(0.16)`
+/// spanning the worktree row and its pane rows (Mac-parity active-
+/// block treatment), and the pane row whose
+/// `leaf.sessionName == appState.focusedPaneId` shall use the
+/// brightest brightness bucket via `theme.paneTitle(isFocusedPane:
+/// true, isActiveWorktree: true, …)` plus a bolded arrow + semibold
+/// title. Non-focused panes in the active worktree use the active-
+/// worktree bucket; panes in other worktrees use the inactive bucket.
 @Observable
 @MainActor
 public final class IPadAppState {

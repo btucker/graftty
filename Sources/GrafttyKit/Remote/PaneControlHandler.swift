@@ -11,7 +11,10 @@ import GrafttyProtocol
 /// a canned response.
 ///
 /// @spec REMOTE-7.5
-/// `PaneControlHandler` has no reference to `AppState`; per-client focus sovereignty is enforced by construction.
+/// While the host services `pane_control` requests, the application shall
+/// route mutations through an injected mutator callback without giving
+/// `PaneControlHandler` a reference to `AppState`, enforcing per-client
+/// focus sovereignty by construction.
 public actor PaneControlHandler: ChannelHandler {
     public nonisolated let channelType = "pane_control"
 
