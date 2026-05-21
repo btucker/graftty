@@ -251,6 +251,8 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             openContinuation = nil
             pending.resume(throwing: ConnectionError.closed)
         }
+        openTimeoutTask?.cancel()
+        openTimeoutTask = nil
         dataChannel?.close()
         peerConnection?.close()
         dataChannel = nil
@@ -259,6 +261,14 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         pendingLocalCandidates.removeAll()
         state = .closed
     }
+
+    /// Bound on how long the data channel may stay in `.connecting` after
+    /// `applyAnswer` runs. Without this, a stalled negotiation (e.g. ICE
+    /// agrees no usable path on the iOS simulator) hangs the test/caller
+    /// for the entire 15-min GitHub Actions job timeout — the exact mode
+    /// PR #184 hit before this timeout was added.
+    private static let dataChannelOpenTimeout: Duration = .seconds(30)
+    private var openTimeoutTask: Task<Void, Never>?
 
     private func waitForDataChannelOpen() async throws {
         if dataChannel?.readyState == .open {
@@ -273,14 +283,43 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             self.dataChannelDelegate.onMessage = { [weak self] data in
                 Task { await self?.recordReceivedBinary(data) }
             }
+            // Re-check inside the actor: if the channel transitioned to
+            // open between the early-return check above and installing
+            // the callback, the callback would never fire. Mirrors the
+            // same idempotent re-check in `waitForIceGatheringComplete`.
+            if dataChannel?.readyState == .open {
+                handleDataChannelOpen()
+                return
+            }
+            self.openTimeoutTask = Task { [weak self] in
+                try? await Task.sleep(for: Self.dataChannelOpenTimeout)
+                await self?.handleDataChannelOpenTimeout()
+            }
         }
     }
 
     private func handleDataChannelOpen() {
-        state = .connected
-        let continuation = openContinuation
+        // Guard against a late `.open` arriving after `handleDataChannelOpenTimeout`
+        // already terminated the connection. Without this guard the late
+        // callback would clobber `state = .failed(...)` back to `.connected`.
+        guard let continuation = openContinuation else { return }
         openContinuation = nil
-        continuation?.resume()
+        openTimeoutTask?.cancel()
+        openTimeoutTask = nil
+        state = .connected
+        continuation.resume()
+    }
+
+    private func handleDataChannelOpenTimeout() {
+        guard let continuation = openContinuation else { return }
+        openContinuation = nil
+        openTimeoutTask = nil
+        // Detach the `.open` callback so a late state transition cannot
+        // re-enter `handleDataChannelOpen` after we've failed the
+        // connection. Mirrors `handleIceGatheringComplete`'s cleanup.
+        dataChannelDelegate.onOpen = nil
+        state = .failed(reason: "data channel did not open within \(Self.dataChannelOpenTimeout)")
+        continuation.resume(throwing: ConnectionError.dataChannelOpenTimedOut)
     }
 
     /// Initialise WebRTC's SSL subsystem exactly once per process.
@@ -333,6 +372,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         case notOpen
         case sendFailed
         case closed
+        case dataChannelOpenTimedOut
     }
 }
 
