@@ -177,8 +177,7 @@ public final class SSHNIOTransport: @unchecked Sendable {
                 }
                 self.startCalled = true
 
-                let state = self.dataChannel.readyState
-                switch state {
+                switch self.dataChannel.readyState {
                 case .open:
                     self.fireChannelActive()
                     continuation.resume()
