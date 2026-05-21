@@ -137,6 +137,9 @@ struct SSHOverWebRTCLoopbackTests {
 
         // 10. Tear down. Close client first so the server sees a clean
         //     EOF rather than a yanked SCTP stream.
+        // TODO(R4): shut down NIOAsyncTestingEventLoop instances after
+        //     transport close — currently orphaned but lightweight in a
+        //     one-test process.
         await clientTransport.close()
         await serverTransport.close()
         await offerer.close()
@@ -266,12 +269,12 @@ private final class LoopbackExecResponder: ChannelDuplexHandler {
 /// from there.
 ///
 /// To keep the test simple and avoid hunting for that exact event
-/// type, we drive things off a small retry: try createChannel
-/// immediately at channelActive; if the SSH state machine isn't ready
-/// yet, NIOSSH internally queues the request (see
-/// `NIOSSHHandler.pendingChannelInitializations`) and processes it
-/// once user-auth completes. So a single createChannel call at
-/// channelActive is sufficient.
+/// type, we enqueue the `createChannel` call immediately at
+/// `channelActive`. NIOSSH buffers it in
+/// `NIOSSHHandler.pendingChannelInitializations` and processes it on
+/// the next `channelReadComplete` after `hasActivated` is true (i.e.
+/// after userauth completes). So a single `createChannel` call at
+/// `channelActive` is sufficient — no retry is involved.
 private final class ClientSessionOpener: ChannelInboundHandler {
     typealias InboundIn = Never
 
@@ -357,7 +360,7 @@ private final class LoopbackExecCollector: ChannelDuplexHandler {
         if collected == nil {
             collected = bytes
         } else {
-            collected!.writeBuffer(&bytes)
+            collected?.writeBuffer(&bytes)
         }
     }
 
@@ -560,7 +563,10 @@ private actor LoopbackPeer: WebRTCIceCandidateReceiver {
     /// over once we hand the DataChannel to it. That works because
     /// `RTCDataChannel.delegate` can be reassigned without re-running the
     /// "did open" callback, and the open transition has already occurred by
-    /// the time we hand off.
+    /// the time we hand off. Additionally, `handleDataChannelOpen`'s Task
+    /// body holds no reference to the tracker itself — it only reads actor
+    /// state — so the mid-flight delegate swap is safe even if the Task
+    /// hasn't yet executed when the swap happens.
     private nonisolated(unsafe) var currentOpenTracker: OpenTrackerDelegate?
 
     private func installOpenTracker(on dc: RTCDataChannel) {
