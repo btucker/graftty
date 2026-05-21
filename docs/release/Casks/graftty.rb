@@ -22,18 +22,4 @@ cask "graftty" do
     "~/Library/Preferences/com.graftty.app.plist",
     "~/Library/Caches/com.graftty.app",
   ]
-
-  caveats <<~EOS
-    Graftty is currently ad-hoc signed (not notarized). On first launch,
-    macOS will refuse to open it with a Gatekeeper warning. To approve it:
-
-      1. Try to open Graftty from /Applications (it will fail)
-      2. Open System Settings → Privacy & Security
-      3. Scroll to the "Security" section and click "Open Anyway" next to
-         the Graftty message
-      4. Confirm in the dialog that appears
-
-    (On macOS 14 Sonoma you can alternatively right-click Graftty in
-    Applications and choose "Open".)
-  EOS
 end
