@@ -158,6 +158,7 @@
     "REMOTE.4": "Port Tunnels",
     "REMOTE.5": "Retired Endpoints",
     "REMOTE.6": "panes_state Channel",
-    "REMOTE.7": "pane_control Channel"
+    "REMOTE.7": "pane_control Channel",
+    "REMOTE.8": "SSH session layer"
   }
 }

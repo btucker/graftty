@@ -19,7 +19,7 @@ struct TrustedPeerStoreTests {
         lastSeenAt: Date? = nil,
         pairedAt: Date = Date()
     ) -> TrustedPeer {
-        let privateKey = Curve25519.KeyAgreement.PrivateKey()
+        let privateKey = Curve25519.Signing.PrivateKey()
         let publicKey = try! RemoteIdentityPublicKey(rawRepresentation: privateKey.publicKey.rawRepresentation)
         return TrustedPeer(
             id: .generate(),
@@ -106,7 +106,7 @@ struct TrustedPeerStoreTests {
         let store = TrustedPeerStore(directory: dir)
 
         // Create two peers that share the same public key (same fingerprint)
-        let privateKey = Curve25519.KeyAgreement.PrivateKey()
+        let privateKey = Curve25519.Signing.PrivateKey()
         let publicKey = try RemoteIdentityPublicKey(rawRepresentation: privateKey.publicKey.rawRepresentation)
 
         let peer1 = TrustedPeer(

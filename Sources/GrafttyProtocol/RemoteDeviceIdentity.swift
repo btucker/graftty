@@ -29,14 +29,17 @@ public enum RemoteDeviceKind: String, Codable, Sendable, Equatable, Hashable {
 
 // MARK: - RemoteIdentityError
 
-/// Errors produced by validation on 32-byte X25519-derived value types in this file.
+/// Errors produced by validation on 32-byte Ed25519-derived value types in this file.
 public enum RemoteIdentityError: Swift.Error, Equatable {
     case invalidLength(expected: Int, actual: Int)
 }
 
 // MARK: - RemoteIdentityPublicKey
 
-/// Wraps the raw 32-byte representation of an X25519 static identity key.
+/// Wraps the raw 32-byte representation of an Ed25519 verification key
+/// used as the peer's stable identity. The corresponding private key is
+/// held by `HostIdentityStore` (host side) or `ClientIdentityStore`
+/// (client side).
 public struct RemoteIdentityPublicKey: Codable, Sendable, Equatable, Hashable {
     public let rawRepresentation: Data
 

@@ -36,7 +36,7 @@ struct LocalPairingClientTests {
         let clientPub = try RemoteIdentityPublicKey(rawRepresentation: clientPriv.publicKey.rawRepresentation)
 
         let hostPub = try RemoteIdentityPublicKey(
-            rawRepresentation: Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation
+            rawRepresentation: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
         )
 
         let payload = PairingPayload(
@@ -164,7 +164,7 @@ struct LocalPairingClientTests {
         let fx = try makeFixtures(dir: dir)
 
         let imposterPub = try RemoteIdentityPublicKey(
-            rawRepresentation: Curve25519.KeyAgreement.PrivateKey().publicKey.rawRepresentation
+            rawRepresentation: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
         )
 
         let stub = StubTransport()

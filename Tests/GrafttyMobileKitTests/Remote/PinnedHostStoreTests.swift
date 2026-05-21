@@ -22,7 +22,7 @@ struct PinnedHostStoreTests {
         pinnedAt: Date = Date(timeIntervalSince1970: 1_700_000_000),
         lastConnectedAt: Date? = nil
     ) -> PinnedHost {
-        let privateKey = Curve25519.KeyAgreement.PrivateKey()
+        let privateKey = Curve25519.Signing.PrivateKey()
         let publicKey = try! RemoteIdentityPublicKey(rawRepresentation: privateKey.publicKey.rawRepresentation)
         return PinnedHost(
             id: .generate(),
@@ -117,7 +117,7 @@ struct PinnedHostStoreTests {
 
         let store = PinnedHostStore(directory: dir)
 
-        let privateKey = Curve25519.KeyAgreement.PrivateKey()
+        let privateKey = Curve25519.Signing.PrivateKey()
         let publicKey = try RemoteIdentityPublicKey(rawRepresentation: privateKey.publicKey.rawRepresentation)
 
         let host1 = PinnedHost(
