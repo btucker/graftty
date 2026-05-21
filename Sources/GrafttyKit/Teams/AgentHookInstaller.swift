@@ -348,13 +348,6 @@ public struct AgentHookInstaller: Sendable {
         trap cleanup EXIT
         """
 
-        // TEAM-PRESENCE-1.3: backgrounded so it never delays exec of the
-        // real binary. The `team register` CLI silently no-ops outside a
-        // team-tracked worktree, so the unconditional call is safe.
-        let registerBlock = """
-        \(shellCommandToken(grafttyCLIPath)) team register --runtime \(runtime.rawValue) >/dev/null 2>&1 &
-        """
-
         let runtimeBlock: String
         switch runtime {
         case .claude:
@@ -387,7 +380,10 @@ public struct AgentHookInstaller: Sendable {
 
         \(trapBlock)
 
-        \(registerBlock)
+        # TEAM-PRESENCE-1.3: background `team register` so it never delays
+        # exec of the real binary. The CLI silently no-ops outside a
+        # team-tracked worktree, so the unconditional call is safe.
+        \(shellCommandToken(grafttyCLIPath)) team register --runtime \(runtime.rawValue) >/dev/null 2>&1 &
 
         \(runtimeBlock)
         exit $?
