@@ -125,9 +125,16 @@ public struct IPadRootLayout: View {
         // focusedPaneId pointing at a dead sessionName.
         if let path = appState.selectedWorktreePath,
            let wt = list.first(where: { $0.path == path }),
-           let pane = appState.focusedPaneId,
-           wt.layout?.leaves.contains(where: { $0.sessionName == pane }) != true {
-            appState.focusedPaneId = wt.layout?.leaves.first?.sessionName
+           let pane = appState.focusedPaneId {
+            let leaves = wt.layout?.leaves ?? []
+            if !leaves.contains(where: { $0.sessionName == pane }) {
+                let fallback = leaves.first?.sessionName
+                // Guard the write so unchanged values don't bump
+                // `@Observable` invalidation on every polling snapshot.
+                if appState.focusedPaneId != fallback {
+                    appState.focusedPaneId = fallback
+                }
+            }
         }
         // IPAD-1.11: recompute the "anything needs attention?" flag from
         // worktree-scoped and pane-scoped attention text. The detail-
@@ -247,16 +254,9 @@ private struct IPadDetailColumn: View {
     var body: some View {
         content
             .toolbar {
-                // IPAD-1.11: when the sidebar is collapsed and any
-                // worktree carries attention, surface a red dot in the
-                // leading toolbar position alongside the system
-                // sidebar-toggle button. The `ToolbarItem` is installed
-                // *conditionally* via `@ToolbarContentBuilder` rather
-                // than wrapping its inner content in an `if`, because
-                // an always-installed `ToolbarItem` with empty content
-                // still reserves a toolbar slot on iOS — leaving dead
-                // space next to the sidebar-toggle button when no
-                // attention is needed.
+                // IPAD-1.11: the conditional wraps the whole
+                // `ToolbarItem` (not just its body) so iOS doesn't
+                // reserve a dead leading slot when no attention is set.
                 if shouldShowAttentionDot {
                     ToolbarItem(placement: .topBarLeading) {
                         Circle()

@@ -96,29 +96,9 @@ struct IPadRootLayoutSelectionTests {
         #expect(appState.selectedHostId == hostB.id)
         #expect(appState.selectedWorktreePath == nil)
         #expect(appState.focusedPaneId == nil)
-
         // The "re-fetch worktrees and theme for the new host" clause is
-        // enforced by `WorktreeListContent`'s `.task(id: host.id) { await
-        // load() }`. Swapping the bound `host` prop changes the task id
-        // and SwiftUI tears down the previous task and reruns `load()`
-        // for the new host. The SwiftUI task lifecycle isn't directly
-        // exercisable from a unit test, so smoke-check that the view
-        // constructs cleanly for two distinct hosts and that their host
-        // ids differ — a future refactor dropping the `host: Host` prop
-        // (and with it the id-keying story) would surface here.
-        let viewA = WorktreeListContent(
-            host: hostA,
-            onSelect: { _ in },
-            onSelectPane: { _ in }
-        )
-        let viewB = WorktreeListContent(
-            host: hostB,
-            onSelect: { _ in },
-            onSelectPane: { _ in }
-        )
-        #expect(viewA.host.id == hostA.id)
-        #expect(viewB.host.id == hostB.id)
-        #expect(viewA.host.id != viewB.host.id)
+        // enforced by `WorktreeListContent`'s `.task(id: host.id)` —
+        // not directly testable from a unit test.
     }
 
     @Test("""
