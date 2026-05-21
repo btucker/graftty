@@ -1,5 +1,6 @@
 import Foundation
 import NIO
+import NIOEmbedded
 import WebRTC
 
 /// Adapter that bridges WebRTC's `RTCDataChannel` (a message-stream API)
@@ -7,9 +8,16 @@ import WebRTC
 /// `NIOSSHHandler` can run over an SCTP-backed DataChannel.
 ///
 /// Architecture:
-/// - The transport owns an `EmbeddedChannel` running on a fresh
-///   `EmbeddedEventLoop`. Consumers install their own handlers
+/// - The transport owns a `NIOAsyncTestingChannel` running on a fresh
+///   `NIOAsyncTestingEventLoop`. Consumers install their own handlers
 ///   (e.g. `NIOSSHHandler`) onto `transport.channel.pipeline`.
+/// - `NIOAsyncTestingEventLoop` is used (rather than `EmbeddedEventLoop`)
+///   because its `execute(_:)` from off-loop threads automatically
+///   drains queued tasks via `queue.async { ... _run() }`. The bare
+///   `EmbeddedEventLoop` only queues — its tasks never run without an
+///   explicit `run()` pump, which would hang `start()`, `close()`, and
+///   inbound delivery. R4 may revisit this if production wiring reveals
+///   a problem with the testing primitive in non-test code paths.
 /// - An internal `OutboundRelayHandler` sits at the head of the pipeline
 ///   and forwards every outbound `ByteBuffer` write to
 ///   `RTCDataChannel.sendData(_:)`. ByteBuffers larger than `mtu` are
@@ -18,22 +26,22 @@ import WebRTC
 ///   receiving side.
 /// - `RTCDataChannelDelegate.dataChannel(_:didReceiveMessageWith:)`
 ///   fires on WebRTC's serial dispatch queue. The transport hops onto
-///   the `EmbeddedEventLoop` via `eventLoop.execute { ... }` and calls
+///   the testing loop via `eventLoop.execute { ... }` and calls
 ///   `writeInbound(_:)`, which fires `channelRead` through the pipeline.
 /// - `start()` blocks until the DataChannel reaches `.open`, then fires
-///   `channelActive` (via `EmbeddedChannel.connect`). The SSH handler's
-///   handshake runs from `channelActive`.
+///   `channelActive` (via `NIOAsyncTestingChannel.connect`). The SSH
+///   handler's handshake runs from `channelActive`.
 ///
 /// The transport does not install `NIOSSHHandler` itself — that's the
 /// consumer's responsibility (loopback test in R2, production callers
 /// in R4). The transport just provides the byte-stream `Channel`.
 ///
 /// Concurrency: `@unchecked Sendable` because the transport carries its
-/// own synchronization — all NIO state lives on the
-/// `EmbeddedEventLoop`, and all WebRTC delegate callbacks are bridged
-/// onto that loop via `execute`. The delegate (`DataChannelDelegate`)
-/// is itself `@unchecked Sendable` with the WebRTC SDK serial-queue
-/// invariant documented in `WebRTCHostAgent`.
+/// own synchronization — all NIO state lives on the testing loop, and
+/// all WebRTC delegate callbacks are bridged onto that loop via
+/// `execute`. The delegate (`DataChannelDelegate`) is itself
+/// `@unchecked Sendable` with the WebRTC SDK serial-queue invariant
+/// documented in `WebRTCHostAgent`.
 public final class SSHNIOTransport: @unchecked Sendable {
 
     /// Maximum bytes per outbound SCTP message. WebRTC defaults
@@ -63,8 +71,8 @@ public final class SSHNIOTransport: @unchecked Sendable {
     public var eventLoop: EventLoop { embeddedLoop }
 
     private let dataChannel: RTCDataChannel
-    private let embeddedLoop: EmbeddedEventLoop
-    private let embedded: EmbeddedChannel
+    private let embeddedLoop: NIOAsyncTestingEventLoop
+    private let embedded: NIOAsyncTestingChannel
     /// Strongly held — `RTCDataChannel.delegate` is `weak`. Without a
     /// strong reference here the delegate would deallocate the moment
     /// `init` returns and every inbound message would be dropped.
@@ -84,8 +92,15 @@ public final class SSHNIOTransport: @unchecked Sendable {
 
     public init(dataChannel: RTCDataChannel) {
         self.dataChannel = dataChannel
-        let loop = EmbeddedEventLoop()
+        let loop = NIOAsyncTestingEventLoop()
         self.embeddedLoop = loop
+        // Create the channel without handlers first; register it and
+        // install the OutboundRelayHandler synchronously below using
+        // `submit(...).wait()`. `NIOAsyncTestingEventLoop.execute`
+        // self-pumps via `queue.async { _run() }`, so a synchronous
+        // wait from off-loop completes once the queued task runs.
+        let channel = NIOAsyncTestingChannel(loop: loop)
+        self.embedded = channel
         // OutboundRelayHandler is added at init time so it ends up at
         // the head of the pipeline (closest to the channel core). Every
         // outbound `write` from a handler added later by the consumer
@@ -97,14 +112,24 @@ public final class SSHNIOTransport: @unchecked Sendable {
             dataChannel: dataChannel,
             mtu: Self.mtu
         )
-        self.embedded = EmbeddedChannel(handler: relay, loop: loop)
+        // Add the relay and register the channel synchronously. The
+        // loop auto-pumps on `execute` (which `submit` uses internally),
+        // so `.wait()` returns once the registration task has run.
+        // Failure here would mean NIO has a bug — both `addHandler` and
+        // `register` on an unregistered channel are infallible in this
+        // setup.
+        try! loop.submit {
+            try channel.pipeline.syncOperations.addHandler(relay)
+            channel.register(promise: nil)
+        }.wait()
         self.dcDelegate = DataChannelDelegate()
         dataChannel.delegate = dcDelegate
 
         // Install delegate callbacks before returning so a `.open`
         // transition that fires between `init` and the caller's
-        // `start()` is observed via `startCalled`-guarded re-check
-        // inside `start()` rather than dropped.
+        // `start()` is observed: `start()` checks `readyState` once
+        // synchronously on-loop, and otherwise parks a continuation
+        // that `handleDataChannelOpen` will resume.
         dcDelegate.onOpen = { [weak self] in
             guard let self else { return }
             self.embeddedLoop.execute {
@@ -151,11 +176,14 @@ public final class SSHNIOTransport: @unchecked Sendable {
                     self.fireChannelActive()
                     continuation.resume()
                 case .closing, .closed:
-                    self.startCalled = false
                     continuation.resume(throwing: TransportError.dataChannelClosedBeforeOpen)
                 case .connecting:
                     self.startContinuation = continuation
                 @unknown default:
+                    // Future SDK-introduced pre-open states are treated
+                    // like `.connecting` — park the continuation until
+                    // `handleDataChannelOpen` / `handleDataChannelClosed`
+                    // fires.
                     self.startContinuation = continuation
                 }
             }
@@ -176,29 +204,30 @@ public final class SSHNIOTransport: @unchecked Sendable {
     // MARK: - Embedded-loop-isolated helpers
 
     private func fireChannelActive() {
-        // `EmbeddedChannel.connect(to:)` marks the channel active and
-        // fires `channelActive` through the pipeline. The address is
-        // fake — there is no real socket. A unix-domain-socket path of
-        // "graftty-ssh" gives `localAddress`/`remoteAddress` something
-        // human-readable for diagnostic logs.
-        let address = try? SocketAddress(unixDomainSocketPath: "graftty-ssh")
-        if let address {
-            embedded.connect(to: address, promise: nil)
-        } else {
-            // Path-too-long is impossible for the literal above, but
-            // fall through to a manual channelActive fire if it ever
-            // changes. Future-proof against the SocketAddress init
-            // becoming more restrictive in a later NIO release.
-            embedded.pipeline.fireChannelActive()
-        }
+        // `NIOAsyncTestingChannel.connect(to:)` marks the channel
+        // active and fires `channelActive` through the pipeline. The
+        // address is fake — there is no real socket. A unix-domain-
+        // socket path of "graftty-ssh" gives `localAddress` /
+        // `remoteAddress` something human-readable for diagnostic logs.
+        //
+        // `try!` is safe: unix-domain-socket paths are limited to 104
+        // bytes on Darwin, and the literal "graftty-ssh" is 12 bytes.
+        // Avoid a fallback path here — a `fireChannelActive()`
+        // without `connect` would leave `remoteAddress` nil and
+        // silently diverge from the `connect`-completed state shape.
+        let address = try! SocketAddress(unixDomainSocketPath: "graftty-ssh")
+        embedded.connect(to: address, promise: nil)
     }
 
     private func handleDataChannelOpen() {
+        // Two gates: `closed` (set by `performClose`) prevents firing
+        // channelActive on a torn-down pipeline; `startContinuation`
+        // (set by `start()` when it parks on `.connecting`) ensures
+        // we only fire when a caller is actively awaiting an open.
+        // Without `startContinuation` we'd fire on every `.open`
+        // delegate event, including spurious re-opens if the SDK ever
+        // exposed one.
         guard !closed else { return }
-        // Always fire channelActive if the user called start() and
-        // we hadn't yet fired it. Without the startCalled guard a
-        // post-`close()` reopen (currently not possible, but defensive)
-        // would fire channelActive on a torn-down pipeline.
         if let continuation = startContinuation {
             startContinuation = nil
             fireChannelActive()
@@ -219,18 +248,16 @@ public final class SSHNIOTransport: @unchecked Sendable {
         guard !closed, embedded.isActive else { return }
         var buffer = embedded.allocator.buffer(capacity: data.count)
         buffer.writeBytes(data)
-        // `writeInbound` fires `channelRead` + `channelReadComplete`
-        // synchronously on the embedded loop. Errors that travel past
-        // the tail are stored on the channel; `throwIfErrorCaught`
-        // surfaces them, but the spike treats them as fatal —
-        // production code can add an `ErrorHandler` to the pipeline.
-        do {
-            _ = try embedded.writeInbound(buffer)
-        } catch {
-            // Treat pipeline errors as channel-broken. The embedded
-            // channel will surface the error via `closeFuture`.
-            embedded.pipeline.fireErrorCaught(error)
-        }
+        // We're already on the testing loop (this is invoked from an
+        // `embeddedLoop.execute` block). `NIOAsyncTestingChannel`'s
+        // public `writeInbound` is async because it hops onto the loop
+        // via `executeInContext`; here we bypass that and fire the
+        // pipeline events directly, which is the same work the async
+        // path performs under the hood. Errors that travel past the
+        // tail are surfaced via the channel's stored error, which
+        // production callers can drain by adding an `ErrorHandler`.
+        embedded.pipeline.fireChannelRead(buffer)
+        embedded.pipeline.fireChannelReadComplete()
     }
 
     private func performClose() {
@@ -252,10 +279,14 @@ public final class SSHNIOTransport: @unchecked Sendable {
         // handler's readyState check rather than queued onto a closed
         // channel.
         dataChannel.close()
-        // `finish(acceptAlreadyClosed: true)` flushes any pending
-        // promises and fires channelInactive. We ignore the LeftOverState
-        // — production callers don't replay buffered events on close.
-        _ = try? embedded.finish(acceptAlreadyClosed: true)
+        // We're already on the testing loop; call `close0` via the
+        // channel's `close(mode:promise:)` path. This fires
+        // `channelInactive` through the pipeline and tears down the
+        // channel core. `NIOAsyncTestingChannel.finish()` is async and
+        // does the same plus left-over-state inspection — we don't
+        // need the latter, so call `close` directly to keep this
+        // function synchronous.
+        embedded.close(promise: nil)
     }
 }
 
@@ -301,6 +332,11 @@ private final class OutboundRelayHandler: ChannelOutboundHandler, @unchecked Sen
             let end = min(offset + mtu, bytes.count)
             let slice = bytes.subdata(in: offset..<end)
             let dcBuffer = RTCDataBuffer(data: slice, isBinary: true)
+            // Backpressure note: `RTCDataChannel.bufferedAmount` is not
+            // monitored here. R2's spike accepts this; R4+ should add
+            // a bufferedAmountLowThreshold-driven write gate before
+            // production use, otherwise a stalled receiver can OOM the
+            // sender by ballooning the SCTP send buffer.
             if !dataChannel.sendData(dcBuffer) {
                 // `sendData` returns false when the SCTP send buffer is
                 // full or the channel transitioned to closing. Surface
