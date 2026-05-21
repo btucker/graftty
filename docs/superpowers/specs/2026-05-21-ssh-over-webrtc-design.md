@@ -97,7 +97,7 @@ The on-disk JSON shape is byte-identical between schemes (both keys are 32-byte 
 
 **Migration impact:** existing dev/test pairings are invalidated, requiring a re-pair (one QR-code scan). Acceptable because no shipped release consumes the identity key — the only intended consumer (M1.3 Noise) was deferred and never landed.
 
-**Detection strategy:** at load time, attempt to interpret the stored 32 bytes as an Ed25519 key. If the key was previously written as X25519, it will not happen to be a valid Ed25519 key (different cryptographic interpretation, even if the byte format is identical). Treat parse failure as "no key persisted" and regenerate.
+**Detection strategy:** the persisted JSON schema gains an explicit `version` field. Records written by the new code carry `{"version": 2, "privateKeyData": "<base64 Ed25519 raw bytes>"}`. Legacy records (no `version` field, or `version != 2`) are treated as "no key persisted" — the loader ignores them and regenerates an Ed25519 key on next call. A bare byte-level check would not work: CryptoKit's `Curve25519.Signing.PrivateKey(rawRepresentation:)` accepts arbitrary 32-byte input (it treats any 32 bytes as a seed), so we cannot detect cross-scheme byte content by parse failure.
 
 ### 6.2 Mapping to SSH primitives
 
