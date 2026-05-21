@@ -356,23 +356,33 @@ private func themedOrSecondary(_ themed: Color?) -> AnyShapeStyle {
 }
 
 /// Type icon + optional PR badge + display name (italic for main
-/// checkout, strikethrough when stale) + optional secondary branch
-/// label + optional attention capsule + trailing divergence gutter.
+/// checkout, strikethrough when stale), optional secondary branch
+/// label stacked beneath the display name when present (IPAD-1.15),
+/// and a trailing divergence gutter.
 private struct WorktreeRowContent: View {
     let worktree: WorktreePanes
     let theme: GhosttyThemeColors?
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
             typeIcon
             if let badge = worktree.prBadge {
                 PRBadgeLabel(badge: badge)
             }
-            primaryText
-            if let secondary = secondaryBranch {
-                Text(secondary)
-                    .font(.caption)
-                    .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
+            // IPAD-1.15: the branch label gets its own line beneath
+            // the worktree's display name rather than running inline.
+            // Two-line stack keeps long names + long branches from
+            // squishing each other or pushing the divergence gutter
+            // off the trailing edge at narrow sidebar widths.
+            VStack(alignment: .leading, spacing: 1) {
+                primaryText
+                if let secondary = secondaryBranch {
+                    Text(secondary)
+                        .font(.caption)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
+                }
             }
             // IPAD-1.14: worktree-scoped attentionText is rendered on
             // the first pane row (see WorktreeBlock.paneRows), not

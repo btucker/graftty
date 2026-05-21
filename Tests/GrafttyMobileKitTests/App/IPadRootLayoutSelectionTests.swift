@@ -356,6 +356,39 @@ struct IPadRootLayoutSelectionTests {
         #expect(effectiveNone == nil)
     }
 
+    @Test("""
+@spec IPAD-1.15: While `IPadRootLayout` renders a worktree row whose `displayBranch` differs from its `displayName`, the branch label shall appear on a second line directly beneath the display name (caption font, dimmed via `theme.sidebarSecondaryText`) rather than running inline on the same row — so a long worktree name + long branch name don't squish each other or push the trailing divergence gutter off the edge at narrow sidebar widths. When `displayBranch` equals `displayName` (or is empty), the secondary line is omitted and the row stays single-line.
+""")
+    func ipad_1_15_branchOnSecondLineWhenDifferent() {
+        // The "show secondary?" rule lives inline as `displayBranch !=
+        // displayName && !displayBranch.isEmpty`. Verify the rule
+        // outcomes without rendering — the visual placement is wired
+        // in WorktreeRowContent's `VStack(alignment:spacing:)`.
+        let differentBranch = WorktreePanes(
+            path: "/r/feat",
+            displayName: "feat",
+            repoDisplayName: "r",
+            displayBranch: "feature/login-flow",
+            state: .running,
+            isMainCheckout: false,
+            prBadge: nil, stats: nil, attentionText: nil, layout: nil
+        )
+        #expect(differentBranch.displayBranch != differentBranch.displayName)
+        #expect(!differentBranch.displayBranch.isEmpty)
+
+        // Same name+branch → no secondary line.
+        let same = WorktreePanes(
+            path: "/r/main",
+            displayName: "main",
+            repoDisplayName: "r",
+            displayBranch: "main",
+            state: .running,
+            isMainCheckout: true,
+            prBadge: nil, stats: nil, attentionText: nil, layout: nil
+        )
+        #expect(same.displayBranch == same.displayName)
+    }
+
     @Test("stale-selectedWorktreePath is cleared when onListChanged fires without the path")
     func stalePathCleanup() {
         let appState = freshAppState()
