@@ -1,5 +1,5 @@
 {
-  "originHash" : "d93e851be2ee1c3ea976073df4379070da1890a94faa8eabbc52d5a7baf059bc",
+  "originHash" : "690dba7c91faca4acc65139d5a3d008d2d9b90825467cc3b841f1862554d1c1f",
   "pins" : [
     {
       "identity" : "libghostty-spm",
@@ -65,6 +65,15 @@
       }
     },
     {
+      "identity" : "swift-asn1",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-asn1.git",
+      "state" : {
+        "revision" : "eb50cbd14606a9161cbc5d452f18797c90ef0bab",
+        "version" : "1.7.0"
+      }
+    },
+    {
       "identity" : "swift-atomics",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-atomics.git",
@@ -83,12 +92,30 @@
       }
     },
     {
+      "identity" : "swift-crypto",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-crypto.git",
+      "state" : {
+        "revision" : "1b6b2e274e85105bfa155183145a1dcfd63331f1",
+        "version" : "4.5.0"
+      }
+    },
+    {
       "identity" : "swift-nio",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio.git",
       "state" : {
         "revision" : "cd6710454f25733900e133c6caf5188952763c36",
         "version" : "2.98.0"
+      }
+    },
+    {
+      "identity" : "swift-nio-ssh",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-nio-ssh.git",
+      "state" : {
+        "revision" : "1a915a324afefd4031e396e81a0e210178621be8",
+        "version" : "0.13.0"
       }
     },
     {

@@ -33,6 +33,7 @@ let package = Package(
         .package(url: "https://github.com/btucker/libghostty-spm.git", branch: "expose-selection-api"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.3.0"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
+        .package(url: "https://github.com/apple/swift-nio-ssh.git", from: "0.13.0"),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.26.0"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
         .package(url: "https://github.com/stencilproject/Stencil.git", from: "0.15.1"),
@@ -67,6 +68,8 @@ let package = Package(
             name: "GrafttyHostAgent",
             dependencies: [
                 "GrafttyProtocol",
+                .product(name: "NIO", package: "swift-nio"),
+                .product(name: "NIOSSH", package: "swift-nio-ssh"),
                 .product(name: "WebRTC", package: "WebRTC"),
             ],
             swiftSettings: strictWarnings
@@ -122,6 +125,8 @@ let package = Package(
             name: "GrafttyMobileKit",
             dependencies: [
                 "GrafttyProtocol",
+                .product(name: "NIO", package: "swift-nio"),
+                .product(name: "NIOSSH", package: "swift-nio-ssh"),
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
                 .product(name: "WebRTC", package: "WebRTC"),
             ],
