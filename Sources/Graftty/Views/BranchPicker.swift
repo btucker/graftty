@@ -5,7 +5,7 @@ import GrafttyKit
 /// search text is internal state; the parent sees only the typed
 /// `selection`. Mounted entries are dimmed and unselectable.
 ///
-/// @spec GIT-5.13, GIT-5.16, GIT-5.17, GIT-5.18
+/// @spec GIT-5.13, GIT-5.16, GIT-5.17, GIT-5.18, GIT-5.20
 struct BranchPicker: View {
     let entries: [BranchPickerEntry]
     @Binding var selection: BranchPickerEntry?
@@ -28,7 +28,12 @@ struct BranchPicker: View {
                 }
             }
             .listStyle(.bordered(alternatesRowBackgrounds: false))
-            .frame(maxHeight: 180)
+            // `height:` (not `maxHeight:`) so the List reserves its
+            // 180pt regardless of the parent's proposed height. Inside
+            // the Add Worktree sheet's `Grid` cell, the proposed height
+            // can collapse below 180 — `maxHeight:` would let the List
+            // shrink to zero and disappear (GIT-5.20).
+            .frame(height: 180)
         }
         .onChange(of: filter) { _, _ in
             applyAutoSelect()
