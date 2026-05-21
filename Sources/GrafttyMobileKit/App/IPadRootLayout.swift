@@ -36,6 +36,8 @@ public struct IPadRootLayout: View {
                     WorktreeListContent(
                         host: host,
                         theme: appState.theme,
+                        selectedWorktreePath: appState.selectedWorktreePath,
+                        focusedPaneId: appState.focusedPaneId,
                         onSelect: { wt in selectWorktree(wt) },
                         onSelectPane: { leaf in selectPane(leaf) },
                         onListChanged: { list in Self.onWorktreeListChanged(appState: appState, list: list) }

@@ -29,6 +29,15 @@ public struct WorktreeListContent: View {
     /// the standard grouped-list background; the iPad sidebar paints a
     /// themed background so it supplies a non-nil theme here.
     public let theme: GhosttyThemeColors?
+    /// Path of the currently-active worktree (iPad: `appState
+    /// .selectedWorktreePath`). When non-nil, the matching worktree
+    /// block renders with the active highlight (IPAD-1.16) and its
+    /// pane rows pick the active-worktree brightness bucket.
+    public let selectedWorktreePath: String?
+    /// Session name of the focused pane (iPad: `appState.focusedPaneId`).
+    /// When set, the matching pane row uses the brightest focused
+    /// bucket via `theme.paneTitle(isFocusedPane: true, …)`.
+    public let focusedPaneId: String?
     public let onSelect: (WorktreePanes) -> Void
     public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
     public let onListChanged: ([WorktreePanes]) -> Void
@@ -36,12 +45,16 @@ public struct WorktreeListContent: View {
     public init(
         host: Host,
         theme: GhosttyThemeColors? = nil,
+        selectedWorktreePath: String? = nil,
+        focusedPaneId: String? = nil,
         onSelect: @escaping (WorktreePanes) -> Void,
         onSelectPane: @escaping (PaneLayoutNode.Leaf) -> Void,
         onListChanged: @escaping ([WorktreePanes]) -> Void = { _ in }
     ) {
         self.host = host
         self.theme = theme
+        self.selectedWorktreePath = selectedWorktreePath
+        self.focusedPaneId = focusedPaneId
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
         self.onListChanged = onListChanged
@@ -75,6 +88,8 @@ public struct WorktreeListContent: View {
                                 WorktreeBlock(
                                     worktree: wt,
                                     theme: theme,
+                                    isActive: wt.path == selectedWorktreePath,
+                                    focusedPaneId: focusedPaneId,
                                     onSelect: { onSelect(wt) },
                                     onSelectPane: onSelectPane
                                 )
@@ -277,6 +292,15 @@ public struct WorktreeListContent: View {
 private struct WorktreeBlock: View {
     let worktree: WorktreePanes
     let theme: GhosttyThemeColors?
+    /// True when this worktree's path matches `selectedWorktreePath`
+    /// (IPAD-1.16). Drives both the rounded-rectangle background
+    /// highlight on the whole block and the active brightness bucket
+    /// for pane rows beneath it.
+    let isActive: Bool
+    /// Session name of the focused pane within `appState`. Each pane
+    /// row tests `leaf.sessionName == focusedPaneId` to decide whether
+    /// to use the brightest focused bucket from `theme.paneTitle(…)`.
+    let focusedPaneId: String?
     let onSelect: () -> Void
     let onSelectPane: (PaneLayoutNode.Leaf) -> Void
 
@@ -291,8 +315,29 @@ private struct WorktreeBlock: View {
             worktreeRow
             paneRows
         }
-        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+        // IPAD-1.16: active-worktree block highlight (Mac parity).
+        // Painted on the whole VStack so the rounded rectangle spans
+        // both the worktree row and its pane children — same visual
+        // grouping as the Mac sidebar's `worktreeBlock`.
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(highlightFill)
+        )
+        .listRowInsets(EdgeInsets(top: 4, leading: 10, bottom: 4, trailing: 10))
         .listRowSeparator(.hidden)
+    }
+
+    /// Themed active-worktree fill when available, else `.clear`. The
+    /// 0.16 alpha matches the Mac sidebar's chosen contrast on top of
+    /// `theme.sidebarBackground`.
+    private var highlightFill: Color {
+        guard isActive else { return .clear }
+        if let theme {
+            return theme.foreground.opacity(0.16)
+        }
+        return Color.primary.opacity(0.12)
     }
 
     @ViewBuilder
@@ -300,10 +345,10 @@ private struct WorktreeBlock: View {
         if worktree.state.isInFlight {
             // Non-tappable: on-disk path may not exist yet
             // (`.creating`) or is about to vanish (`.deleting`).
-            WorktreeRowContent(worktree: worktree, theme: theme)
+            WorktreeRowContent(worktree: worktree, theme: theme, isActive: isActive)
         } else {
             Button(action: onSelect) {
-                WorktreeRowContent(worktree: worktree, theme: theme)
+                WorktreeRowContent(worktree: worktree, theme: theme, isActive: isActive)
             }
             .buttonStyle(.plain)
         }
@@ -327,18 +372,23 @@ private struct WorktreeBlock: View {
             ForEach(Array(layout.leaves.enumerated()), id: \.element.sessionName) { index, leaf in
                 let effective = leaf.attentionText
                     ?? (index == 0 ? worktree.attentionText : nil)
+                let isFocused = leaf.sessionName == focusedPaneId
                 if layout.isLeaf {
                     PaneTitleRow(
                         leaf: leaf,
                         theme: theme,
-                        effectiveAttentionText: effective
+                        effectiveAttentionText: effective,
+                        isFocusedPane: isFocused,
+                        isActiveWorktree: isActive
                     )
                 } else {
                     Button { onSelectPane(leaf) } label: {
                         PaneTitleRow(
                             leaf: leaf,
                             theme: theme,
-                            effectiveAttentionText: effective
+                            effectiveAttentionText: effective,
+                            isFocusedPane: isFocused,
+                            isActiveWorktree: isActive
                         )
                     }
                     .buttonStyle(.plain)
@@ -362,6 +412,11 @@ private func themedOrSecondary(_ themed: Color?) -> AnyShapeStyle {
 private struct WorktreeRowContent: View {
     let worktree: WorktreePanes
     let theme: GhosttyThemeColors?
+    /// True when this worktree is the active one — drives the primary
+    /// label's brightness bucket via `theme.sidebarPrimaryText
+    /// (isActive: …)` so the selected row reads brighter than its
+    /// siblings (IPAD-1.16).
+    let isActive: Bool
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -433,7 +488,7 @@ private struct WorktreeRowContent: View {
 
     @ViewBuilder
     private var primaryText: some View {
-        let primary = theme?.sidebarPrimaryText(isActive: false)
+        let primary = theme?.sidebarPrimaryText(isActive: isActive)
         if worktree.state == .stale {
             Text(worktree.displayName)
                 .strikethrough()
@@ -470,26 +525,35 @@ private struct PaneTitleRow: View {
     /// worktree-scoped `graftty notify` ping shows on a pane row
     /// instead of the worktree title row.
     let effectiveAttentionText: String?
+    /// True when this leaf is the currently-focused pane. Drives the
+    /// brightest bucket on `theme.paneArrow` and `theme.paneTitle`
+    /// (IPAD-1.16), and bolds the arrow + title — matching the Mac
+    /// sidebar's focused-pane treatment.
+    let isFocusedPane: Bool
+    /// True when this leaf's worktree is the active one. Drives the
+    /// middle bucket on the brightness ladders so non-focused panes
+    /// inside the active worktree still read brighter than panes in
+    /// other worktrees.
+    let isActiveWorktree: Bool
 
     var body: some View {
-        // The iPad sidebar has no active-worktree highlight yet, so every
-        // pane row reads as non-focused / inactive on the ladder; empty
-        // titles ride even dimmer per the Mac sidebar's behavior.
         HStack(spacing: 4) {
             Text("↳")
                 .font(.caption)
+                .fontWeight(isFocusedPane ? .bold : .regular)
                 .foregroundStyle(themedOrSecondary(theme?.paneArrow(
-                    isFocusedPane: false,
-                    isActiveWorktree: false
+                    isFocusedPane: isFocusedPane,
+                    isActiveWorktree: isActiveWorktree
                 )))
             if let attentionText = effectiveAttentionText {
                 AttentionCapsule(text: attentionText)
             } else {
                 Text(leaf.displayTitle)
                     .font(.caption)
+                    .fontWeight(isFocusedPane ? .semibold : .regular)
                     .foregroundStyle(themedOrSecondary(theme?.paneTitle(
-                        isFocusedPane: false,
-                        isActiveWorktree: false,
+                        isFocusedPane: isFocusedPane,
+                        isActiveWorktree: isActiveWorktree,
                         hasTitle: !leaf.displayTitle.isEmpty
                     )))
                     .lineLimit(1)

@@ -389,6 +389,38 @@ struct IPadRootLayoutSelectionTests {
         #expect(same.displayBranch == same.displayName)
     }
 
+    @Test("""
+@spec IPAD-1.16: While `IPadRootLayout` is presented, the worktree row whose `path == appState.selectedWorktreePath` shall render with a rounded-rectangle highlight at `theme.foreground.opacity(0.16)` spanning the worktree row and its pane rows (Mac-parity active-block treatment), and the pane row whose `leaf.sessionName == appState.focusedPaneId` shall use the brightest brightness bucket via `theme.paneTitle(isFocusedPane: true, isActiveWorktree: true, …)` plus a bolded arrow + semibold title. Non-focused panes in the active worktree use the active-worktree bucket; panes in other worktrees use the inactive bucket.
+""")
+    func ipad_1_16_activeWorktreeHighlightAndFocusedPaneEmphasis() {
+        // Construct WorktreeListContent with selection state set; the
+        // visual rendering is wired in WorktreeBlock/PaneTitleRow.
+        // Smoke-check the parameter pass-through here so a future
+        // signature drift surfaces in this test rather than visually.
+        let view = WorktreeListContent(
+            host: sampleHost(),
+            theme: GhosttyThemeColors.fallback,
+            selectedWorktreePath: "/repo/feat",
+            focusedPaneId: "session-xyz",
+            onSelect: { _ in },
+            onSelectPane: { _ in }
+        )
+        #expect(view.selectedWorktreePath == "/repo/feat")
+        #expect(view.focusedPaneId == "session-xyz")
+
+        // The brightness ladders the visual treatment reads from are
+        // covered by GhosttyThemeCoreTests' paneArrowOpacityLadder /
+        // paneTitleOpacityLadder; spot-check the focused bucket here
+        // so a future drift in the constant surfaces somewhere
+        // labeled IPAD-1.16.
+        #expect(GhosttyThemeColors.paneTitleOpacity(
+            isFocusedPane: true, isActiveWorktree: true, hasTitle: true) == 1.0
+        )
+        #expect(GhosttyThemeColors.paneArrowOpacity(
+            isFocusedPane: true, isActiveWorktree: true) == 0.75
+        )
+    }
+
     @Test("stale-selectedWorktreePath is cleared when onListChanged fires without the path")
     func stalePathCleanup() {
         let appState = freshAppState()
