@@ -72,7 +72,6 @@ public final class ClientIdentityStore: @unchecked Sendable {
     }
 
     /// Deletes the persisted key. A subsequent `load()` will return `nil`.
-    /// Use this to rotate the client identity.
     public func reset() throws {
         lock.lock()
         defer { lock.unlock() }
@@ -84,12 +83,12 @@ public final class ClientIdentityStore: @unchecked Sendable {
         }
     }
 
-    /// Derives the `RemoteIdentityPublicKey` from the currently stored private
-    /// key. Returns `nil` if no key has been persisted yet.
+    /// Returns the public key derived from the persisted private key, or
+    /// `nil` if no key is stored.
     public func currentPublicKey() throws -> RemoteIdentityPublicKey? {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let key = try _load() else { return nil }
+        guard let key = try load() else {
+            return nil
+        }
         return try RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation)
     }
 
