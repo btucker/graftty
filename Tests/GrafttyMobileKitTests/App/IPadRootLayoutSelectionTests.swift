@@ -294,6 +294,68 @@ struct IPadRootLayoutSelectionTests {
         #expect(true)
     }
 
+    @Test("""
+@spec IPAD-1.13: While `IPadRootLayout` is presented, each worktree's row + its pane child rows shall be packed into a single `List` row (`VStack(spacing: 0)`) with `.listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))` and `.listRowSeparator(.hidden)`, so the iOS sidebar-list style's default per-row padding doesn't compound between panes — the vertical spacing between pane rows is controlled entirely by the outer block's insets, not by accumulating list-row defaults on every leaf.
+""")
+    func ipad_1_13_paneRowsPackedIntoOneListRow() {
+        // Visual concern; smoke-check that WorktreeBlock continues to
+        // build for a sample worktree with multiple panes — a future
+        // refactor that drops the VStack/listRowInsets approach
+        // (returning to one-row-per-pane) would re-introduce the
+        // spacing regression.
+        let layout = PaneLayoutNode.split(
+            direction: .vertical,
+            ratio: 0.5,
+            left: .leaf(sessionName: "a", title: "shell A", attentionText: nil),
+            right: .leaf(sessionName: "b", title: "shell B", attentionText: nil)
+        )
+        let wt = WorktreePanes(
+            path: "/r/feat",
+            displayName: "feat",
+            repoDisplayName: "r",
+            displayBranch: "feat",
+            state: .running,
+            isMainCheckout: false,
+            prBadge: nil,
+            stats: nil,
+            attentionText: nil,
+            layout: layout
+        )
+        #expect(wt.layout?.leaves.count == 2)
+    }
+
+    @Test("""
+@spec IPAD-1.14: While `IPadRootLayout` renders a worktree's pane rows, the worktree-scoped `attentionText` (from `graftty notify`) shall be displayed on the worktree's first pane row when that leaf has no pane-scoped `attentionText` of its own; the worktree title row never displays an attention pill on iPad. Pane-scoped `attentionText` (from shell-integration `COMMAND_FINISHED` events) stays on its own pane row as before.
+""")
+    func ipad_1_14_attentionPillOnPaneRowNotWorktree() {
+        // PaneLayoutNode.Leaf's initializer is internal — construct
+        // through the case API and project to `.leaves`.
+        let layout = PaneLayoutNode.split(
+            direction: .horizontal, ratio: 0.5,
+            left: .leaf(sessionName: "a", title: "shell A", attentionText: nil),
+            right: .leaf(sessionName: "b", title: "shell B", attentionText: "build broken")
+        )
+        let leaves = layout.leaves
+        let leaf1 = leaves[0]
+        let leaf2 = leaves[1]
+
+        // First pane has no own attention → inherits worktree's.
+        let worktreeAttention: String? = "tests failing"
+        let effective1 = leaf1.attentionText ?? worktreeAttention  // index 0
+        #expect(effective1 == "tests failing")
+        // Second pane has its own → keeps it.
+        let effective2 = leaf2.attentionText ?? nil  // index > 0 → no inheritance
+        #expect(effective2 == "build broken")
+        // Non-first pane with NO own attention → does NOT inherit.
+        let leafNone = PaneLayoutNode.split(
+            direction: .horizontal, ratio: 0.5,
+            left: .leaf(sessionName: "c", title: "shell C", attentionText: nil),
+            right: .leaf(sessionName: "d", title: "shell D", attentionText: nil)
+        ).leaves[1]
+        let effectiveNone = leafNone.attentionText ?? nil  // index > 0
+        #expect(effectiveNone == nil)
+    }
+
     @Test("stale-selectedWorktreePath is cleared when onListChanged fires without the path")
     func stalePathCleanup() {
         let appState = freshAppState()

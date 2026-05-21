@@ -281,6 +281,22 @@ private struct WorktreeBlock: View {
     let onSelectPane: (PaneLayoutNode.Leaf) -> Void
 
     var body: some View {
+        // IPAD-1.13: pack the worktree row + its pane rows into a
+        // single List row via a tight VStack so the iOS sidebar-list
+        // style's default per-row padding doesn't compound between
+        // panes. The explicit `listRowInsets` controls the outer
+        // vertical breathing room; inside the VStack rows sit
+        // shoulder-to-shoulder.
+        VStack(alignment: .leading, spacing: 0) {
+            worktreeRow
+            paneRows
+        }
+        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+        .listRowSeparator(.hidden)
+    }
+
+    @ViewBuilder
+    private var worktreeRow: some View {
         if worktree.state.isInFlight {
             // Non-tappable: on-disk path may not exist yet
             // (`.creating`) or is about to vanish (`.deleting`).
@@ -291,19 +307,39 @@ private struct WorktreeBlock: View {
             }
             .buttonStyle(.plain)
         }
+    }
+
+    @ViewBuilder
+    private var paneRows: some View {
         if let layout = worktree.layout {
-            // IOS-4.21: pane child rows beneath multi-leaf worktrees are
-            // tappable and route straight to the fullscreen terminal,
-            // skipping the worktree-detail preview screen. Single-leaf
-            // worktrees already shortcut at the worktree row (IOS-4.17),
-            // so their pane row stays informational to avoid two tap
-            // targets that do the same thing.
-            ForEach(layout.leaves, id: \.sessionName) { leaf in
+            // IOS-4.21: pane child rows beneath multi-leaf worktrees
+            // are tappable and route straight to the fullscreen
+            // terminal, skipping the worktree-detail preview screen.
+            // Single-leaf worktrees already shortcut at the worktree
+            // row (IOS-4.17), so their pane row stays informational
+            // to avoid two tap targets that do the same thing.
+            //
+            // IPAD-1.14: the first leaf inherits the worktree-scoped
+            // `attentionText` (from `graftty notify`) when it has no
+            // pane-scoped attention of its own — so "needs input"
+            // pills always live on pane rows, never on the worktree
+            // title row.
+            ForEach(Array(layout.leaves.enumerated()), id: \.element.sessionName) { index, leaf in
+                let effective = leaf.attentionText
+                    ?? (index == 0 ? worktree.attentionText : nil)
                 if layout.isLeaf {
-                    PaneTitleRow(leaf: leaf, theme: theme)
+                    PaneTitleRow(
+                        leaf: leaf,
+                        theme: theme,
+                        effectiveAttentionText: effective
+                    )
                 } else {
                     Button { onSelectPane(leaf) } label: {
-                        PaneTitleRow(leaf: leaf, theme: theme)
+                        PaneTitleRow(
+                            leaf: leaf,
+                            theme: theme,
+                            effectiveAttentionText: effective
+                        )
                     }
                     .buttonStyle(.plain)
                 }
@@ -338,9 +374,9 @@ private struct WorktreeRowContent: View {
                     .font(.caption)
                     .foregroundStyle(themedOrSecondary(theme?.sidebarSecondaryText))
             }
-            if let attention = worktree.attentionText {
-                AttentionCapsule(text: attention)
-            }
+            // IPAD-1.14: worktree-scoped attentionText is rendered on
+            // the first pane row (see WorktreeBlock.paneRows), not
+            // here — "needs input" pills always sit on pane rows.
             Spacer()
             DivergenceGutter(stats: worktree.stats, theme: theme)
         }
@@ -412,10 +448,18 @@ private struct WorktreeRowContent: View {
 }
 
 /// Pane child row: `↳` glyph + caption-sized title (or attention
-/// capsule when the pane has a shell-integration ping).
+/// capsule when the pane has a shell-integration ping, or when the
+/// caller has chosen to attach the worktree-scoped `attentionText`
+/// here per IPAD-1.14).
 private struct PaneTitleRow: View {
     let leaf: PaneLayoutNode.Leaf
     let theme: GhosttyThemeColors?
+    /// The attention text the caller wants this pane row to display.
+    /// Normally `leaf.attentionText`, but the first pane in a worktree
+    /// also inherits `worktree.attentionText` as a fallback so the
+    /// worktree-scoped `graftty notify` ping shows on a pane row
+    /// instead of the worktree title row.
+    let effectiveAttentionText: String?
 
     var body: some View {
         // The iPad sidebar has no active-worktree highlight yet, so every
@@ -428,7 +472,7 @@ private struct PaneTitleRow: View {
                     isFocusedPane: false,
                     isActiveWorktree: false
                 )))
-            if let attentionText = leaf.attentionText {
+            if let attentionText = effectiveAttentionText {
                 AttentionCapsule(text: attentionText)
             } else {
                 Text(leaf.displayTitle)
