@@ -8,12 +8,12 @@ import GrafttyKit
 @MainActor
 struct BranchPickerLayoutTests {
 
-    private func entries(count: Int = 1) -> [BranchPickerEntry] {
+    private func entries(count: Int) -> [BranchPickerEntry] {
         (0..<count).map { i in
             BranchPickerEntry(
                 name: "feat-\(i)",
                 source: .local,
-                lastCommitDate: Date(),
+                lastCommitDate: Date(timeIntervalSince1970: 0),
                 mountedWorktreePath: nil,
                 pr: nil
             )
@@ -29,13 +29,9 @@ struct BranchPickerLayoutTests {
             selection: .constant(nil),
             onCommit: {}
         )
-        // `sizeThatFits(in:)` proposes a constrained size down the view
-        // tree the same way SwiftUI's layout passes a tight height when
-        // the picker sits inside a `Grid` row whose other cells provide
-        // only a baseline. With `.frame(maxHeight: 180)`, the List
-        // collapses to whatever height the parent proposes (≈0); with
-        // a fixed/min height it reserves its declared space.
-        let host = NSHostingController(rootView: picker.frame(width: 360))
+        // Propose a 40pt height to mirror the tight proposal a `Grid`
+        // cell passes when sibling rows dominate intrinsic content.
+        let host = NSHostingController(rootView: picker)
         let preferred = host.sizeThatFits(in: CGSize(width: 360, height: 40))
         #expect(
             preferred.height >= 180,

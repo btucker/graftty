@@ -28,11 +28,9 @@ struct BranchPicker: View {
                 }
             }
             .listStyle(.bordered(alternatesRowBackgrounds: false))
-            // `height:` (not `maxHeight:`) so the List reserves its
-            // 180pt regardless of the parent's proposed height. Inside
-            // the Add Worktree sheet's `Grid` cell, the proposed height
-            // can collapse below 180 — `maxHeight:` would let the List
-            // shrink to zero and disappear (GIT-5.20).
+            // Inside the Add Worktree sheet's `Grid` cell, the proposed
+            // height can collapse below 180 — `maxHeight:` would let
+            // the List shrink to zero and disappear.
             .frame(height: 180)
         }
         .onChange(of: filter) { _, _ in
