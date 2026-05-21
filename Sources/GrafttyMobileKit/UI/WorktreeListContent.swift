@@ -151,7 +151,12 @@ public struct WorktreeListContent: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .navigationTitle(host.label)
+        // Title is owned by the caller: the iPhone compact path
+        // (`WorktreePickerView`) sets `.navigationTitle(host.label)` for
+        // the navigation-stack push; the iPad path uses `HostHeaderRow`
+        // as the sole host indicator, so adding `.navigationTitle` here
+        // would render a redundant title in the sidebar's system nav bar
+        // (IPAD-1.2).
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
