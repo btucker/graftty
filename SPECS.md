@@ -1614,6 +1614,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-7.6** If a trusted peer is revoked while a `pane_control` channel is open, the channel shall close and subsequent open requests from the revoked peer shall be rejected.
 
+### REMOTE-8.x — SSH session layer
+
+**REMOTE-8.1** While accepting a remote attach, the host shall negotiate SSH KEX restricted to the `curve25519-sha256` algorithm and reject any other KEX proposal.
+
+**REMOTE-8.2** When the host receives a userauth request, the host shall accept only the `publickey` method and reject `password` and `keyboard-interactive` immediately.
+
+**REMOTE-8.3** When the host receives a userauth request, the host shall identify the peer solely by the offered public key against `TrustedPeerStore` and shall ignore the username field.
+
+**REMOTE-8.4** When the client receives a host key during SSH KEX, the client shall verify the key against `PinnedHostStore` and abort the connection on mismatch.
+
+**REMOTE-8.5** The host's SSH cipher allowlist shall be restricted to `chacha20-poly1305@openssh.com` and `aes256-gcm@openssh.com`.
+
 ## MEM — MEM
 
 ### MEM-1.x
