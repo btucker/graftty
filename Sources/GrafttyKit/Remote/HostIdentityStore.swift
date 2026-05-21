@@ -115,13 +115,14 @@ public final class HostIdentityStore: @unchecked Sendable {
         do {
             let stored = try JSONDecoder().decode(StoredKey.self, from: data)
             guard stored.version == Self.currentVersion else {
-                try backupCorruptFile(at: fileURL)
+                backupCorruptFile(at: fileURL)
                 return nil
             }
             return try Curve25519.Signing.PrivateKey(rawRepresentation: stored.privateKeyData)
-        } catch is DecodingError {
+        } catch is DecodingError, is CryptoKitError {
             // Legacy schemas (no `version` field) decode-fail here; treat as corrupt.
-            try backupCorruptFile(at: fileURL)
+            // CryptoKitError covers byte-level corruption inside a structurally valid record.
+            backupCorruptFile(at: fileURL)
             return nil
         }
     }
@@ -139,7 +140,7 @@ public final class HostIdentityStore: @unchecked Sendable {
         )
     }
 
-    private func backupCorruptFile(at fileURL: URL) throws {
+    private func backupCorruptFile(at fileURL: URL) {
         let backupURL = fileURL.appendingPathExtension("corrupt-\(Int(Date().timeIntervalSince1970))")
         try? FileManager.default.moveItem(at: fileURL, to: backupURL)
     }
