@@ -107,8 +107,12 @@ jobs:
           # submission ID for the failure-log fetch — without it,
           # notarytool's plain-text summary tells you it failed but not
           # which binary failed which check.
+          # Timeout is 60m to absorb cold-cache scans on first submission
+          # of a new bundle id + signing identity combination — v0.1.7
+          # hit two consecutive 30m timeouts on the maiden notarization
+          # before this bump.
           NOTARY_AUTH=(--key "$KEY_PATH" --key-id "$APP_STORE_CONNECT_API_KEY_ID" --issuer "$APP_STORE_CONNECT_API_KEY_ISSUER")
-          SUBMIT_JSON="$(xcrun notarytool submit "$NOTARIZE_ZIP" "${NOTARY_AUTH[@]}" --wait --timeout 30m --output-format json)"
+          SUBMIT_JSON="$(xcrun notarytool submit "$NOTARIZE_ZIP" "${NOTARY_AUTH[@]}" --wait --timeout 60m --output-format json)"
           echo "$SUBMIT_JSON"
           STATUS="$(printf '%s' "$SUBMIT_JSON" | jq -r '.status')"
           SUBMISSION_ID="$(printf '%s' "$SUBMIT_JSON" | jq -r '.id')"
