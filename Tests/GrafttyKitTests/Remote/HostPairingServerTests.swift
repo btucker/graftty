@@ -15,7 +15,7 @@ struct HostPairingServerTests {
         let dir: URL
         let identityStore: HostIdentityStore
         let peerStore: TrustedPeerStore
-        let privateKey: CryptoKit.Curve25519.KeyAgreement.PrivateKey
+        let privateKey: CryptoKit.Curve25519.Signing.PrivateKey
         let server: HostPairingServer
 
         func cleanup() {
