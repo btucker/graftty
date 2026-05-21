@@ -21,44 +21,71 @@ struct RemoteHostConnectionLoopbackTests {
         let client = RemoteHostConnection()
         let answererPeer = TestAnswerer()
 
-        // 1. Client creates offer.
-        let offer = try await client.createOffer()
+        diag("test start")
+        do {
+            // 1. Client creates offer.
+            let offer = try await client.createOffer()
+            diag("createOffer returned")
 
-        // 2. In a real flow this would be POSTed to /v1/rtc/offer.
-        //    Here we feed it straight into the answerer.
-        let answer = try await answererPeer.accept(offer: offer)
+            // 2. In a real flow this would be POSTed to /v1/rtc/offer.
+            //    Here we feed it straight into the answerer.
+            let answer = try await answererPeer.accept(offer: offer)
+            diag("accept returned")
 
-        // 3. Forward ICE candidates each way. Both sides buffer candidates
-        //    emitted during the initial gathering pass (which happens
-        //    inside `createOffer` / `accept` before this point), then
-        //    drain in arrival order when their target is bound.
-        await client.bindIceCandidates(to: answererPeer)
-        await answererPeer.bindIceCandidates(to: client)
+            // 3. Forward ICE candidates each way. Both sides buffer candidates
+            //    emitted during the initial gathering pass (which happens
+            //    inside `createOffer` / `accept` before this point), then
+            //    drain in arrival order when their target is bound.
+            await client.bindIceCandidates(to: answererPeer)
+            await answererPeer.bindIceCandidates(to: client)
+            diag("bindIceCandidates done both sides")
 
-        // 4. Apply the answer on the client; this waits for the data
-        //    channel to reach the `open` state on the offerer side.
-        try await client.applyAnswer(answer)
+            // 4. Apply the answer on the client; this waits for the data
+            //    channel to reach the `open` state on the offerer side.
+            try await client.applyAnswer(answer)
+            diag("applyAnswer returned (offerer dc reportedly open)")
 
-        // 5. Send a binary ping from the client; the answerer should
-        //    receive it within a short window.
-        let ping = Data([0xCA, 0xFE, 0xBA, 0xBE])
-        try await client.sendBinary(ping)
+            // 5. Send a binary ping from the client; the answerer should
+            //    receive it within a short window.
+            let ping = Data([0xCA, 0xFE, 0xBA, 0xBE])
+            try await client.sendBinary(ping)
+            diag("sendBinary(ping) returned")
 
-        try await pollUntil(timeout: .seconds(5)) {
-            await answererPeer.lastReceived == ping
-        }
+            try await pollUntil(timeout: .seconds(5)) {
+                await answererPeer.lastReceived == ping
+            }
+            diag("pollUntil ping received")
 
-        // 6. Send a binary pong back; the client should receive it.
-        let pong = Data([0xDE, 0xAD, 0xBE, 0xEF])
-        try await answererPeer.send(pong)
+            // 6. Send a binary pong back; the client should receive it.
+            let pong = Data([0xDE, 0xAD, 0xBE, 0xEF])
+            try await answererPeer.send(pong)
+            diag("send(pong) returned")
 
-        try await pollUntil(timeout: .seconds(5)) {
-            await client.lastReceivedBinary == pong
+            try await pollUntil(timeout: .seconds(5)) {
+                await client.lastReceivedBinary == pong
+            }
+            diag("pollUntil pong received")
+        } catch {
+            diag("test FAILED with: \(error)")
+            await answererPeer.dumpDiagnostics()
+            await client.close()
+            await answererPeer.close()
+            throw error
         }
 
         await client.close()
         await answererPeer.close()
     }
+}
+
+/// Print-with-timestamp helper. Output goes to stdout where xcodebuild
+/// captures it into the CI test log. The timestamp uses `Date()` since
+/// `ContinuousClock` doesn't have a wall-clock representation — we want
+/// relative ordering across WebRTC's queues and our actor, not absolute
+/// time, so any monotonic source works.
+private func diag(_ message: String, file: String = #fileID, line: Int = #line) {
+    let ts = Date().timeIntervalSince1970
+    print("[DIAG \(String(format: "%.6f", ts))] \(message) (\(file):\(line))")
 }
 
 /// Test helper that owns the answerer side of the loopback. Production
@@ -86,6 +113,8 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
     /// so the offerer doesn't starve waiting for our host candidates.
     private var pendingLocalCandidates: [RTCIceCandidate] = []
     private var iceCandidateTarget: RemoteHostConnection?
+    /// DIAGNOSTIC: number of times `record(_:)` has been invoked on the actor.
+    private(set) var recordCallCount: Int = 0
 
     init() {
         self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
@@ -101,13 +130,22 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
         // the actor since `send` is only driven by the test after
         // `applyAnswer` returns.
         delegate.onDataChannel = { [weak self] dc in
+            diag("answerer: onDataChannel fired (state=\(dc.readyState.rawValue))")
             guard let self else { return }
             dc.delegate = self.dataChannelDelegate
             self.dataChannelDelegate.onMessage = { [weak self] data in
+                diag("answerer: onMessage closure fired (\(data.count) bytes)")
                 Task { await self?.record(data) }
             }
             Task { await self.captureDataChannel(dc) }
         }
+    }
+
+    /// DIAGNOSTIC: dump final state of all instrumented counters/buffers.
+    func dumpDiagnostics() {
+        diag("answerer DIAG: dataChannel set? \(dataChannel != nil), readyState=\(dataChannel?.readyState.rawValue.description ?? "nil")")
+        diag("answerer DIAG: recordCallCount=\(recordCallCount), lastReceived=\(lastReceived.map { "\($0.count) bytes" } ?? "nil")")
+        diag("answerer DIAG: dataChannelDelegate.didReceiveCount=\(dataChannelDelegate.didReceiveCount), stateChanges=\(dataChannelDelegate.stateChangeLog)")
     }
 
     private func captureDataChannel(_ dc: RTCDataChannel) {
@@ -236,6 +274,8 @@ private actor TestAnswerer: WebRTCIceCandidateReceiver {
     }
 
     fileprivate func record(_ data: Data) {
+        recordCallCount += 1
+        diag("answerer: record() invoked, count=\(recordCallCount)")
         self.lastReceived = data
     }
 }
@@ -265,8 +305,24 @@ private final class AnswererDelegate: NSObject, RTCPeerConnectionDelegate, @unch
 
 private final class AnswererDataChannelDelegate: NSObject, RTCDataChannelDelegate, @unchecked Sendable {
     nonisolated(unsafe) var onMessage: (@Sendable (Data) -> Void)?
-    func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {}
+    /// DIAGNOSTIC: counts every `didReceiveMessageWith` callback from WebRTC.
+    /// If this stays 0 in a failed run, WebRTC never delivered the message
+    /// to the delegate (drop happened upstream of our code). If it's > 0
+    /// but `record()` count is 0, the onMessage Task hop failed.
+    nonisolated(unsafe) private(set) var didReceiveCount: Int = 0
+    /// DIAGNOSTIC: every state transition reported via the delegate. The
+    /// production `RemoteHostConnection.DataChannelDelegate` fires `onOpen`
+    /// on `.open` — we don't fire anything on the answerer side, but we
+    /// log so we can compare with `dataChannel?.readyState` polling.
+    nonisolated(unsafe) private(set) var stateChangeLog: [Int] = []
+    func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
+        let s = dataChannel.readyState.rawValue
+        stateChangeLog.append(s)
+        diag("answerer dc dataChannelDidChangeState: state=\(s)")
+    }
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
+        didReceiveCount += 1
+        diag("answerer dc didReceiveMessageWith: \(buffer.data.count) bytes, count=\(didReceiveCount)")
         onMessage?(buffer.data)
     }
 }
