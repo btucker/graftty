@@ -284,10 +284,10 @@ private struct WorktreeBlock: View {
         // IPAD-1.13: pack the worktree row + its pane rows into a
         // single List row via a tight VStack so the iOS sidebar-list
         // style's default per-row padding doesn't compound between
-        // panes. The explicit `listRowInsets` controls the outer
-        // vertical breathing room; inside the VStack rows sit
-        // shoulder-to-shoulder.
-        VStack(alignment: .leading, spacing: 0) {
+        // panes. A small 3pt inter-row spacing gives breathing room
+        // between consecutive pane rows without re-inflating to the
+        // sidebar-style's full per-row padding.
+        VStack(alignment: .leading, spacing: 3) {
             worktreeRow
             paneRows
         }
