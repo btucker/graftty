@@ -142,50 +142,63 @@ private struct HostHeaderRow: View {
     @Bindable var hostStore: HostStore
     @Bindable var appState: IPadAppState
 
-    @State private var showingPopover = false
+    @State private var showingAddHost = false
 
     var body: some View {
-        Button {
-            showingPopover = true
-        } label: {
-            HStack(alignment: .center, spacing: 8) {
-                VStack(alignment: .leading, spacing: 1) {
-                    if let host = selectedHost {
-                        Text(host.label)
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(appState.theme.foreground)
-                        Text(host.baseURL.absoluteString)
-                            .font(.caption)
-                            .foregroundStyle(appState.theme.foreground.opacity(0.55))
+        Menu {
+            // Saved hosts as Picker-style buttons with a check mark on
+            // the currently-selected one. Tapping a host fires the
+            // standard host switch (clears selection + focused pane).
+            ForEach(hostStore.hosts) { host in
+                Button {
+                    IPadRootLayout.applyHostSwitch(appState: appState, to: host.id)
+                } label: {
+                    if host.id == selectedHost?.id {
+                        Label(host.label, systemImage: "checkmark")
                     } else {
-                        Text("No host selected")
-                            .font(.body.weight(.semibold))
-                            .foregroundStyle(appState.theme.foreground.opacity(0.55))
-                        Text("Tap to pick")
-                            .font(.caption)
-                            .foregroundStyle(appState.theme.foreground.opacity(0.35))
+                        Text(host.label)
                     }
                 }
-                Spacer(minLength: 0)
+            }
+            if !hostStore.hosts.isEmpty {
+                Divider()
+            }
+            Button {
+                showingAddHost = true
+            } label: {
+                Label("Add Host…", systemImage: "plus")
+            }
+        } label: {
+            HStack(alignment: .center, spacing: 6) {
+                Text(selectedHost?.label ?? "No host")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(
+                        selectedHost == nil
+                            ? appState.theme.foreground.opacity(0.55)
+                            : appState.theme.foreground
+                    )
                 Image(systemName: "chevron.down")
                     .font(.caption.weight(.semibold))
-                    .foregroundStyle(appState.theme.foreground.opacity(0.55))
+                    .foregroundStyle(appState.theme.sidebarChevron)
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             .background(appState.theme.background)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
-        .popover(isPresented: $showingPopover) {
+        .menuStyle(.borderlessButton)
+        .sheet(isPresented: $showingAddHost) {
             NavigationStack {
-                HostPickerView(store: hostStore) { newHost in
-                    IPadRootLayout.applyHostSwitch(appState: appState, to: newHost.id)
-                    showingPopover = false
+                AddHostView { host in
+                    try hostStore.add(host)
+                    // Auto-select the freshly-added host so the sidebar
+                    // immediately fetches its worktree list.
+                    IPadRootLayout.applyHostSwitch(appState: appState, to: host.id)
                 }
             }
-            .frame(minWidth: 320, minHeight: 360)
         }
+        .task { await hostStore.loadIfNeeded() }
     }
 }
 

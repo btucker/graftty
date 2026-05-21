@@ -1352,7 +1352,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.1** When `horizontalSizeClass == .regular`, the iPad application shall render `IPadRootLayout` (NavigationSplitView, 2-column) in place of the compact-width `NavigationStack`.
 
-**IPAD-1.2** While `IPadRootLayout` is presented, the sidebar shall display a `HostHeaderRow` at the top showing the selected host's label and a tap target presenting a host-switcher popover.
+**IPAD-1.2** While `IPadRootLayout` is presented, the sidebar shall display a single-line `HostHeaderRow` at the top showing the selected host's label with a trailing chevron, and tapping it shall present a system `Menu` anchored to the header containing each saved host (with a checkmark on the currently-selected one) and an "Add Host…" action — not a popover or half-sheet, which on iPad initial-load animated to a half-screen height that fought the column-style layout.
 
 **IPAD-1.3** While `IPadRootLayout` is presented, the sidebar shall render `WorktreeListContent` extracted from `WorktreePickerView`, preserving `WorktreePickerGrouping`, swipe actions, PR badges, attention pills, and divergence gutter.
 
@@ -1424,7 +1424,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IPAD-6.x — Host Switching
 
-**IPAD-6.1** When the user selects a different host from the host-switcher popover, the application shall reset `selectedWorktreePath` and `focusedPaneId`, dismiss the popover, and re-fetch worktrees and theme for the new host.
+**IPAD-6.1** When the user selects a different host from the host-switcher menu, the application shall reset `selectedWorktreePath` and `focusedPaneId`, dismiss the menu, and re-fetch worktrees and theme for the new host.
 
 **IPAD-6.2** While the new host's worktree fetch is in progress, the sidebar shall show ProgressView and the detail column shall show `ContentUnavailableView`.
 

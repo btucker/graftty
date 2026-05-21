@@ -24,7 +24,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a `HostHeaderRow` at the top showing the selected host's label and a tap target presenting a host-switcher popover.
+@spec IPAD-1.2: While `IPadRootLayout` is presented, the sidebar shall display a single-line `HostHeaderRow` at the top showing the selected host's label with a trailing chevron, and tapping it shall present a system `Menu` anchored to the header containing each saved host (with a checkmark on the currently-selected one) and an "Add Host…" action — not a popover or half-sheet, which on iPad initial-load animated to a half-screen height that fought the column-style layout.
 """)
     func ipad_1_2_hostHeaderRowState() {
         let appState = freshAppState()
@@ -81,7 +81,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-6.1: When the user selects a different host from the host-switcher popover, the application shall reset `selectedWorktreePath` and `focusedPaneId`, dismiss the popover, and re-fetch worktrees and theme for the new host.
+@spec IPAD-6.1: When the user selects a different host from the host-switcher menu, the application shall reset `selectedWorktreePath` and `focusedPaneId`, dismiss the menu, and re-fetch worktrees and theme for the new host.
 """)
     func ipad_6_1_hostSwitchResetsSelection() {
         let appState = freshAppState()
