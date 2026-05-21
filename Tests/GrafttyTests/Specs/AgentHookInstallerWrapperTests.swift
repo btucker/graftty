@@ -73,4 +73,28 @@ struct AgentHookInstallerWrapperTests {
         #expect(script.contains("trap"))
         #expect(script.contains("graftty team unregister --runtime codex"))
     }
+
+    @Test("""
+    @spec TEAM-PRESENCE-1.3: When the graftty wrapper launches an agent runtime with `GRAFTTY_DISABLE_AGENT_HOOKS != 1`, the wrapper shall asynchronously invoke `graftty team register --runtime <runtime>` (output redirected, run in background) before exec'ing the real binary, so the model is not required to type the registration command itself. Pairs with the existing `trap cleanup EXIT` that runs `graftty team unregister` on wrapper exit. The `team register` CLI silently no-ops when the cwd isn't a team-tracked worktree, so the unconditional call is safe.
+    """)
+    func wrapperRegistersAsynchronouslyBeforeExec() {
+        for runtime in [TeamHookRuntime.claude, .codex] {
+            let script = AgentHookInstaller.wrapperScript(
+                runtime: runtime,
+                wrapperDirectory: "/Users/x/agent-hooks/bin",
+                realCommandName: runtime.rawValue,
+                grafttyCLIPath: "/usr/local/bin/graftty",
+                codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
+            )
+            // Async register, fully detached and silent.
+            #expect(script.contains(
+                "/usr/local/bin/graftty team register --runtime \(runtime.rawValue) >/dev/null 2>&1 &"
+            ))
+            // Register fires before any exec of the real binary so it
+            // races with the agent's startup rather than serializing.
+            let registerIdx = script.range(of: "team register --runtime")!.lowerBound
+            let execIdx = script.range(of: #"exec "$real_binary""#)!.lowerBound
+            #expect(registerIdx < execIdx)
+        }
+    }
 }
