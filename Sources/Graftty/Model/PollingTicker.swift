@@ -39,15 +39,7 @@ final class PollingTicker: PollingTickerLike {
         installObservers()
         let interval = self.interval
         let heart = self.heart
-        // `.userInitiated` priority is load-bearing for CI: under
-        // macos-26's 170+ parallel test suites, default `.medium`
-        // detached tasks can starve on the global executor long enough
-        // that the polling loop fires its first tick and then never
-        // gets re-scheduled within a 10s test window. `.userInitiated`
-        // puts the loop above the bulk of test-runner background work
-        // and restores predictable cadence. Doesn't change production
-        // behavior since the app isn't running 170 suites in parallel.
-        task = Task.detached(priority: .userInitiated) { [weak self] in
+        task = Task.detached { [weak self] in
             while !Task.isCancelled {
                 let isPaused = await self?.paused ?? true
                 if !isPaused {
