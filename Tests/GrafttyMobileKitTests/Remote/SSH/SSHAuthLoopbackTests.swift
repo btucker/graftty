@@ -28,7 +28,7 @@ struct SSHAuthLoopbackTests {
     /// Positive baseline: a paired peer's key is in the in-memory peer
     /// set on the server side, and the client pins the server's host
     /// fingerprint. Exec round-trip succeeds.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(3)))
     func pairedPeerSucceeds() async throws {
         let serverKey = Curve25519.Signing.PrivateKey()
         let clientKey = Curve25519.Signing.PrivateKey()
@@ -63,7 +63,7 @@ struct SSHAuthLoopbackTests {
         """
 @spec REMOTE-8.2: When the host receives a userauth request, the host shall accept only the `publickey` method and reject `password` and `keyboard-interactive` immediately.
 """,
-        .timeLimit(.minutes(1))
+        .timeLimit(.minutes(3))
     )
     func nonPublicKeyMethodRejected() async throws {
         let serverKey = Curve25519.Signing.PrivateKey()
@@ -88,7 +88,7 @@ struct SSHAuthLoopbackTests {
         """
 @spec REMOTE-8.3: When the host receives a userauth request, the host shall identify the peer solely by the offered public key against `TrustedPeerStore` and shall ignore the username field.
 """,
-        .timeLimit(.minutes(1))
+        .timeLimit(.minutes(3))
     )
     func differentUsernameSameKeyStillSucceeds() async throws {
         let serverKey = Curve25519.Signing.PrivateKey()
@@ -110,7 +110,7 @@ struct SSHAuthLoopbackTests {
         """
 @spec REMOTE-8.4: When the client receives a host key during SSH KEX, the client shall verify the key against `PinnedHostStore` and abort the connection on mismatch.
 """,
-        .timeLimit(.minutes(1))
+        .timeLimit(.minutes(3))
     )
     func pinnedHostKeyMismatchRejected() async throws {
         let serverKey = Curve25519.Signing.PrivateKey()
@@ -137,7 +137,7 @@ struct SSHAuthLoopbackTests {
         """
 @spec REMOTE-8.5: While accepting a remote attach, the host shall negotiate SSH transport protection from swift-nio-ssh's bundled AEAD ciphers (`aes256-gcm@openssh.com`, `aes128-gcm@openssh.com`) and shall not negotiate any weak or legacy cipher.
 """,
-        .timeLimit(.minutes(1))
+        .timeLimit(.minutes(3))
     )
     func cipherRestrictedToAESGCM() async throws {
         // swift-nio-ssh ships only `aes256-gcm@openssh.com` and
@@ -161,7 +161,7 @@ struct SSHAuthLoopbackTests {
     }
 
     /// Negative — peer key isn't in the trust set, userauth must fail.
-    @Test(.timeLimit(.minutes(1)))
+    @Test(.timeLimit(.minutes(3)))
     func unpairedPeerRejected() async throws {
         let serverKey = Curve25519.Signing.PrivateKey()
         let clientKey = Curve25519.Signing.PrivateKey()
@@ -288,18 +288,21 @@ struct SSHAuthLoopbackTests {
         // `NIOAsyncTestingEventLoop`, where `scheduleTask` doesn't
         // advance time without an explicit `advanceTime(by:)` call —
         // a NIO-side timer would never fire. Pairs with
-        // `.timeLimit(.minutes(1))` from Swift Testing; the R2
+        // `.timeLimit(.minutes(3))` from Swift Testing; the R2
         // lesson is that TaskGroup cancellation can't unwind a stuck
         // NIOSSHHandler future, but failing the promise directly does.
         //
-        // 30s deadline: CI's iPhone 17 simulator on macos-26 runs the
-        // handshake ~3x slower than a local development Mac. 15s was
-        // tight enough that `pairedPeerSucceeds` + `cipherRestrictedToAESGCM`
-        // timed out on the first R3 CI run. 30s gives comfortable
-        // headroom (positive paths complete in ~10s locally) while
-        // still firing well before the `.timeLimit(.minutes(1))` ceiling.
+        // 90s deadline: macos-26's runner pool has significant
+        // variability. The previous R2 success measured ~10s for the
+        // same SSH handshake; today's runs measured ~40s on iOS
+        // Simulator. Successive bumps (15s → 30s → 90s) chased that
+        // variance. 90s gives ~10x headroom over local timing and
+        // covers the worst observed CI day; positive paths still
+        // complete in ~10s on healthy CI. Negative tests intentionally
+        // ride this deadline (NIOSSH doesn't fast-fail when the client
+        // simply runs out of methods or the peer is unknown).
         let timeoutTask = Task {
-            try? await Task.sleep(for: .seconds(30))
+            try? await Task.sleep(for: .seconds(90))
             if !Task.isCancelled {
                 responsePromise.fail(LoopbackError.timedOut)
             }
