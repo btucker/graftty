@@ -292,17 +292,19 @@ struct SSHAuthLoopbackTests {
         // lesson is that TaskGroup cancellation can't unwind a stuck
         // NIOSSHHandler future, but failing the promise directly does.
         //
-        // 90s deadline: macos-26's runner pool has significant
-        // variability. The previous R2 success measured ~10s for the
-        // same SSH handshake; today's runs measured ~40s on iOS
-        // Simulator. Successive bumps (15s → 30s → 90s) chased that
-        // variance. 90s gives ~10x headroom over local timing and
-        // covers the worst observed CI day; positive paths still
-        // complete in ~10s on healthy CI. Negative tests intentionally
-        // ride this deadline (NIOSSH doesn't fast-fail when the client
-        // simply runs out of methods or the peer is unknown).
+        // 180s deadline: macos-26's runner pool has significant
+        // variability — local is ~10s, observed CI ranges 40s → 100s+.
+        // Successive bumps (15s → 30s → 90s → 180s) chased that
+        // variance. 180s gives ~18x headroom over local timing and
+        // covers worst observed CI day; positive paths still complete
+        // in ~10s on healthy CI. Negative tests (`unpairedPeerRejected`,
+        // `nonPublicKeyMethodRejected`) intentionally ride this
+        // deadline as their success condition (NIOSSH doesn't fast-fail
+        // when the client simply runs out of methods or the peer is
+        // unknown) — they each take ~3 min in the worst case, comfortably
+        // under the 15-min iOS CI step ceiling.
         let timeoutTask = Task {
-            try? await Task.sleep(for: .seconds(90))
+            try? await Task.sleep(for: .seconds(180))
             if !Task.isCancelled {
                 responsePromise.fail(LoopbackError.timedOut)
             }
