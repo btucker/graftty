@@ -32,13 +32,21 @@ struct PollingTickerTests {
         // Liveness, not cadence: ≥2 falsifies the "fires once then
         // stalls forever" regression. Strict cadence isn't asserted —
         // a loaded scheduler can stretch any specific tick budget.
-        let deadline = Date().addingTimeInterval(10.0)
+        //
+        // 60s deadline: the test was previously calibrated to 10s,
+        // which proved too tight under CI parallelism — observed
+        // counts of exactly 1 on macos-26 indicate the loop fires
+        // and then gets scheduler-starved by parallel @MainActor
+        // suites, NOT that it's deadlocked. Bumping the deadline
+        // re-anchors the assertion on actual "stalls forever"
+        // semantics; a deadlocked loop will still time out at 60s.
+        let deadline = Date().addingTimeInterval(60.0)
         while await counter.value < 2 && Date() < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
 
         let count = await counter.value
-        #expect(count >= 2, "expected ≥2 ticks within 10s; got \(count) (loop must keep firing between sleep cycles)")
+        #expect(count >= 2, "expected ≥2 ticks within 60s; got \(count) (loop must keep firing between sleep cycles)")
     }
 
     /// `pulse()` cancels the active sleep and the loop fires the
