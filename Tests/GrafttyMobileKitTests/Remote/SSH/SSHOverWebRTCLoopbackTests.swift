@@ -29,30 +29,47 @@ import WebRTC
 @Suite("SSH-over-WebRTC loopback — exec round-trip (R2 gate)")
 struct SSHOverWebRTCLoopbackTests {
 
-    @Test
+    /// `.timeLimit(.minutes(1))` guards against the entire test runner
+    /// hanging on a CI-only path; locally this test completes in ~10s
+    /// (dominated by ICE gathering on the iOS Simulator). If the test
+    /// exceeds 1 minute, Swift Testing kills it and emits a failure with
+    /// the stage prints below, so we can diagnose where it hung instead
+    /// of staring at a 15-minute job timeout.
+    @Test(.timeLimit(.minutes(1)))
     func execRoundTripOverPairedDataChannels() async throws {
+        // Diagnostic prints at each stage so a CI hang surfaces with
+        // a usable trace in the test log. Cheap on a passing run.
+        print("[ssh-loopback] stage=start")
+
         // 1. Build two paired peer connections in-process.
         let offerer = LoopbackPeer(role: .offerer)
         let answerer = LoopbackPeer(role: .answerer)
+        print("[ssh-loopback] stage=peers-built")
 
         // 2. Offerer creates the offer + its outbound DataChannel.
         let offer = try await offerer.createOffer()
+        print("[ssh-loopback] stage=offer-created")
 
         // 3. Hand the offer to the answerer, which constructs its
         //    peer connection, accepts it, and produces an answer.
         let answer = try await answerer.accept(offer: offer)
+        print("[ssh-loopback] stage=answer-built")
 
         // 4. Wire ICE candidates both directions. Each side has buffered
         //    candidates emitted during the gathering pass; this drains
         //    them in arrival order and forwards future candidates live.
         await offerer.bindIceCandidates(to: answerer)
         await answerer.bindIceCandidates(to: offerer)
+        print("[ssh-loopback] stage=ice-bound")
 
         // 5. Apply the answer on the offerer and wait until both sides
         //    have an open DataChannel.
         try await offerer.applyAnswer(answer)
+        print("[ssh-loopback] stage=answer-applied")
         let offererDC = try await offerer.openedDataChannel()
+        print("[ssh-loopback] stage=offerer-dc-open")
         let answererDC = try await answerer.openedDataChannel()
+        print("[ssh-loopback] stage=answerer-dc-open")
 
         // 6. Wrap each side's RTCDataChannel in an SSHNIOTransport and
         //    start them. `start()` blocks until the DataChannel is open
@@ -125,14 +142,23 @@ struct SSHOverWebRTCLoopbackTests {
         //    on channelActive, which `OutboundRelayHandler` ships across
         //    the DataChannel to the peer.
         try await serverTransport.start()
+        print("[ssh-loopback] stage=server-started")
         try await clientTransport.start()
+        print("[ssh-loopback] stage=client-started")
 
-        // 9. Wait for the round-trip. 10 seconds is generous — local
-        //    SSH handshake + exec round-trip over loopback should
-        //    complete in well under a second.
-        let response = try await withTimeout(.seconds(10)) {
-            try await responsePromise.futureResult.get()
+        // 9. Wait for the round-trip. The timeout is driven by NIO's
+        //    own scheduler (failing the promise) rather than a Swift
+        //    TaskGroup so that a hung NIOSSHHandler/EventLoopFuture
+        //    can't pin the TaskGroup's child tasks forever — that
+        //    was the original 15-minute CI hang. Scheduling on the
+        //    event loop means the timeout fires reliably even if
+        //    cooperative cancellation isn't honored downstream.
+        let timeoutTask = clientTransport.eventLoop.scheduleTask(in: .seconds(10)) {
+            responsePromise.fail(LoopbackError.timedOut)
         }
+        defer { timeoutTask.cancel() }
+        let response = try await responsePromise.futureResult.get()
+        print("[ssh-loopback] stage=response-received")
         #expect(response == "loopback-exec-ok\n", "Expected exec response from loopback SSH server")
 
         // 10. Tear down. Close client first so the server sees a clean
@@ -144,6 +170,7 @@ struct SSHOverWebRTCLoopbackTests {
         await serverTransport.close()
         await offerer.close()
         await answerer.close()
+        print("[ssh-loopback] stage=torn-down")
     }
 }
 
@@ -372,30 +399,6 @@ private final class LoopbackExecCollector: ChannelDuplexHandler {
             completePromise.fail(LoopbackError.channelInactiveBeforeResponse)
         }
         context.fireChannelInactive()
-    }
-}
-
-// MARK: - Timeout helper
-
-/// Runs `operation` with a deadline; throws `LoopbackError.timedOut`
-/// if the deadline elapses first. Wraps the assertion call site so a
-/// hang shows up as a clean test failure instead of a 10-minute
-/// runtime timeout.
-private func withTimeout<T: Sendable>(
-    _ duration: Duration,
-    _ operation: @escaping @Sendable () async throws -> T
-) async throws -> T {
-    try await withThrowingTaskGroup(of: T.self) { group in
-        group.addTask {
-            try await operation()
-        }
-        group.addTask {
-            try await Task.sleep(for: duration)
-            throw LoopbackError.timedOut
-        }
-        let result = try await group.next()!
-        group.cancelAll()
-        return result
     }
 }
 
