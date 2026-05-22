@@ -256,6 +256,41 @@ struct TrustedPeerStoreTests {
         #expect(backupFiles.isEmpty, "A missing file must NOT create a .corrupt backup; found: \(contents)")
     }
 
+    // MARK: - get(fingerprint:)
+
+    @Test("get(fingerprint:) returns the matching peer when present")
+    func getByFingerprintReturnsMatch() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = TrustedPeerStore(directory: dir)
+        let alice = makePeer(name: "Alice")
+        let bob = makePeer(name: "Bob")
+        try store.add(alice)
+        try store.add(bob)
+
+        let fetched = try store.get(fingerprint: alice.fingerprint)
+        #expect(fetched?.id == alice.id)
+        #expect(fetched?.displayName == "Alice")
+    }
+
+    @Test("get(fingerprint:) returns nil for unknown fingerprint")
+    func getByFingerprintReturnsNilForUnknown() throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let store = TrustedPeerStore(directory: dir)
+        try store.add(makePeer(name: "Alice"))
+
+        let randomKeyBytes = Data((0..<32).map { _ in UInt8.random(in: 0...255) })
+        let randomFingerprint = RemoteIdentityFingerprint(
+            of: try RemoteIdentityPublicKey(rawRepresentation: randomKeyBytes)
+        )
+
+        let fetched = try store.get(fingerprint: randomFingerprint)
+        #expect(fetched == nil)
+    }
+
     // MARK: - Corruption recovery
 
     @Test("Corrupt trusted-peers.json is backed up and list returns empty without throwing")
