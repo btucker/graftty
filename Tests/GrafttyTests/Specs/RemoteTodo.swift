@@ -71,7 +71,7 @@ struct RemoteTodo {
     func remote_8_4() async throws { }
 
     @Test("""
-@spec REMOTE-8.5: While accepting a remote attach, the host shall restrict its SSH cipher allowlist to `aes256-gcm@openssh.com`.
+@spec REMOTE-8.5: While accepting a remote attach, the host shall negotiate SSH transport protection from swift-nio-ssh's bundled AEAD ciphers (`aes256-gcm@openssh.com`, `aes128-gcm@openssh.com`) and shall not negotiate any weak or legacy cipher.
 """, .disabled("not yet implemented"))
     func remote_8_5() async throws { }
 

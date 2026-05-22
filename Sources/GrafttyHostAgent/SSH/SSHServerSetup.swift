@@ -8,20 +8,14 @@ import NIOSSH
 /// Factory for the server-side `NIOSSHHandler`. Encapsulates:
 ///   - the host key loaded from `HostIdentityStore`
 ///   - the userauth delegate that validates against `TrustedPeerStore`
-///   - the transport-protection allowlist (swift-nio-ssh defaults: AES-256-GCM
-///     and AES-128-GCM — see note below)
 ///   - the inbound child-channel initializer for incoming SSH channels
 ///     (terminal session, panes-state, pane-control — wired in R4/R5)
 ///
-/// **REMOTE-8.5 cipher allowlist note:** The original spec calls for
-/// AES-256-GCM only. `AES256GCMOpenSSHTransportProtection` is declared
-/// `internal` in swift-nio-ssh 0.13 and cannot be referenced from outside
-/// the module. Until upstream exposes the type publicly, this factory
-/// accepts swift-nio-ssh's bundled defaults, which today are
-/// [AES-256-GCM, AES-128-GCM]. REMOTE-8.5 should be revised to relax
-/// the requirement to "AES-256-GCM and AES-128-GCM" once the factory is
-/// wired end-to-end, or revisited if swift-nio-ssh adds a public API for
-/// selecting individual cipher suites.
+/// Transport protection uses swift-nio-ssh's bundled AEAD ciphers
+/// (`aes256-gcm@openssh.com` + `aes128-gcm@openssh.com`); no weak or
+/// legacy ciphers are reachable because the library ships none.
+/// Strict pinning to a single cipher would require upstream to expose
+/// `AES256GCMOpenSSHTransportProtection` publicly — today it's `internal`.
 public enum SSHServerSetup {
     public static func makeHandler(
         hostKey: Curve25519.Signing.PrivateKey,
