@@ -103,7 +103,10 @@ public final class TrustedPeerStore: @unchecked Sendable {
     /// that key. Mirrors `PinnedHostStore.get(fingerprint:)` on the
     /// client side.
     public func get(fingerprint: RemoteIdentityFingerprint) throws -> TrustedPeer? {
-        try list().first { $0.fingerprint == fingerprint }
+        lock.lock()
+        defer { lock.unlock() }
+        let envelope = try _load()
+        return envelope.peers.first(where: { $0.fingerprint == fingerprint })
     }
 
     /// Returns all peers, sorted by `lastSeenAt` descending (most recently
