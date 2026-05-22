@@ -101,13 +101,36 @@ final class PollingTicker: PollingTickerLike {
 /// the next tick fires immediately; if `pulse()` arrives between
 /// sleeps, the `pulsePending` flag makes the next sleep return
 /// without waiting.
+///
+/// The timer uses `DispatchQueue.asyncAfter` rather than
+/// `Task.sleep` deliberately. Under heavy parallel test contention
+/// on macos-26 CI (170+ parallel test suites), the Swift Concurrency
+/// global executor can starve detached tasks for seconds — so a
+/// `Task.detached { try? await Task.sleep(...) }` paired with
+/// `await s.value` could take many seconds longer than the requested
+/// interval. GCD timers fire on libdispatch's own timer infrastructure,
+/// which is unaffected by the Swift Concurrency executor's saturation.
+/// We still hop to the actor's executor at fire time to resume the
+/// continuation, but the *timing* of when the fire occurs is no
+/// longer subject to global-executor pressure.
+///
+/// `generation` is a monotonic token bumped on every `sleepUntilPulseOrInterval`
+/// call and on every `pulse()`. A stale fire (i.e., a timer scheduled
+/// for an earlier sleep, arriving after a pulse already resumed our
+/// continuation and the loop moved on) is filtered out by comparing
+/// the captured generation at schedule-time against the current one.
 private actor PollingHeart {
-    private var sleepTask: Task<Void, Never>?
     private var pulsePending = false
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var generation: Int = 0
 
     func pulse() {
         pulsePending = true
-        sleepTask?.cancel()
+        generation &+= 1
+        if let c = continuation {
+            continuation = nil
+            c.resume()
+        }
     }
 
     func sleepUntilPulseOrInterval(for interval: Duration) async {
@@ -115,15 +138,34 @@ private actor PollingHeart {
             pulsePending = false
             return
         }
-        let s = Task.detached { [interval] in
-            _ = try? await Task.sleep(for: interval)
+        generation &+= 1
+        let myGeneration = generation
+        let nanos = interval.components.seconds * 1_000_000_000
+            + interval.components.attoseconds / 1_000_000_000
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            self.continuation = c
+            DispatchQueue.global().asyncAfter(
+                deadline: .now() + .nanoseconds(Int(nanos))
+            ) { [weak self] in
+                Task { [weak self] in
+                    await self?.timerFired(generation: myGeneration)
+                }
+            }
         }
-        sleepTask = s
-        _ = await s.value
-        sleepTask = nil
-        // Either the sleep completed naturally or `pulse()` cancelled
-        // it; in both cases consume the flag so the next sleep doesn't
-        // also short-circuit.
+        // Either pulse resumed us or the timer did. In both cases the
+        // pulse signal (if any) has been consumed by this iteration;
+        // the next call starts fresh.
         pulsePending = false
+    }
+
+    private func timerFired(generation: Int) {
+        // Reject stale timers from prior generations (a pulse may
+        // have already woken us, or `stop()` may have torn the loop
+        // down).
+        guard generation == self.generation else { return }
+        if let c = continuation {
+            continuation = nil
+            c.resume()
+        }
     }
 }
