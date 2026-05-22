@@ -291,8 +291,15 @@ struct SSHAuthLoopbackTests {
         // `.timeLimit(.minutes(1))` from Swift Testing; the R2
         // lesson is that TaskGroup cancellation can't unwind a stuck
         // NIOSSHHandler future, but failing the promise directly does.
+        //
+        // 30s deadline: CI's iPhone 17 simulator on macos-26 runs the
+        // handshake ~3x slower than a local development Mac. 15s was
+        // tight enough that `pairedPeerSucceeds` + `cipherRestrictedToAESGCM`
+        // timed out on the first R3 CI run. 30s gives comfortable
+        // headroom (positive paths complete in ~10s locally) while
+        // still firing well before the `.timeLimit(.minutes(1))` ceiling.
         let timeoutTask = Task {
-            try? await Task.sleep(for: .seconds(15))
+            try? await Task.sleep(for: .seconds(30))
             if !Task.isCancelled {
                 responsePromise.fail(LoopbackError.timedOut)
             }
