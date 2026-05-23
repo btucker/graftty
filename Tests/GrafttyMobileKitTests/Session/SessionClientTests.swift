@@ -311,5 +311,90 @@ struct SessionClientTests {
         let expected = WebControlEnvelope.resize(cols: 80, rows: 24).encoded()
         #expect(ws.sent.contains(.text(expected)))
     }
+
+    /// Drives `client.lastIOSViewport` to a known `(cols, rows)` so a subsequent
+    /// `claimLeadershipIfNeeded()` has something to report. Uses the same
+    /// `handleViewport` seam other tests in this file use; that path also writes
+    /// `cellWidthPoints`, but the leadership-claim tests don't care about that.
+    private func primeViewport(_ client: SessionClient, columns: UInt16, rows: UInt16) {
+        client.handleViewport(InMemoryTerminalViewport(
+            columns: columns, rows: rows,
+            widthPixels: 0, heightPixels: 0,
+            cellWidthPixels: 12, cellHeightPixels: 24
+        ))
+    }
+
+    @Test("@spec IOS-6.5: When the iOS client receives a leadership-claim event (the first keystroke, the first pinch-begin gesture, or the first long-press-begin gesture on the terminal pane), the client shall set `isSizeLeader = true` and send a `WebControlEnvelope.resize(cols, rows)` to the server with its last-measured viewport. A passive tap shall not claim leadership.")
+    func pinchGestureClaimsLeadership() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        // Prime the viewport so the claim has something to report.
+        primeViewport(client, columns: 80, rows: 24)
+        #expect(!client.isSizeLeader)
+
+        client.claimLeadershipIfNeeded()
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(client.isSizeLeader)
+        let expected = WebControlEnvelope.resize(cols: 80, rows: 24).encoded()
+        #expect(ws.sent.contains(.text(expected)))
+    }
+
+    @Test
+    func leadershipClaimIsIdempotent() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        primeViewport(client, columns: 80, rows: 24)
+
+        client.claimLeadershipIfNeeded()
+        client.claimLeadershipIfNeeded()
+        client.claimLeadershipIfNeeded()
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let resizeCount = ws.sent.filter { frame in
+            if case let .text(t) = frame { return t.contains("\"type\":\"resize\"") }
+            return false
+        }.count
+        #expect(resizeCount == 1)
+    }
+
+    @Test
+    func leadershipClaimNoOpsBeforeViewport() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        // No viewport call — claim should be a no-op.
+        client.claimLeadershipIfNeeded()
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(!client.isSizeLeader)
+        let resizeCount = ws.sent.filter { frame in
+            if case let .text(t) = frame { return t.contains("\"type\":\"resize\"") }
+            return false
+        }.count
+        #expect(resizeCount == 0)
+    }
+
+    @Test
+    func previewRoleNeverClaimsLeadership() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(
+            sessionName: "s",
+            webSocketFactory: { ws },
+            role: .preview
+        )
+        client.start()
+        defer { client.stop() }
+        primeViewport(client, columns: 80, rows: 24)
+        client.claimLeadershipIfNeeded()
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(!client.isSizeLeader)
+    }
 }
 #endif
