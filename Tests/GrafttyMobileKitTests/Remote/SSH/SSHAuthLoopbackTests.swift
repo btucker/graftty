@@ -22,7 +22,17 @@ import WebRTC
 /// Reuses the `LoopbackPeer` pattern from R2's
 /// `SSHOverWebRTCLoopbackTests.swift` (copy-don't-extract per that
 /// suite's precedent; cross-cutting refactor is post-R6 work).
-@Suite("SSH-over-WebRTC auth — PinnedHostStore + key-only identity (R3)")
+/// `.serialized` is load-bearing: each test in this suite spins up
+/// two `RTCPeerConnection`s + two `SSHNIOTransport`s + two
+/// `NIOSSHHandler`s. Running them in parallel on a single iOS
+/// Simulator thrashed the runtime — observed as the SSH handshake
+/// failing to complete within 180s on iOS CI (locally each test
+/// completes in ~10s). Serializing within the suite keeps the
+/// resource footprint to one SSH-over-WebRTC stack at a time.
+@Suite(
+    "SSH-over-WebRTC auth — PinnedHostStore + key-only identity (R3)",
+    .serialized
+)
 struct SSHAuthLoopbackTests {
 
     /// Positive baseline: a paired peer's key is in the in-memory peer
