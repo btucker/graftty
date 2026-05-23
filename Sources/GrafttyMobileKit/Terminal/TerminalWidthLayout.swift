@@ -8,13 +8,9 @@ import CoreGraphics
 /// terminal pane render at the configured font or under a font-size
 /// override sized so `serverCols × cellWidth ≤ containerWidth`?
 ///
-/// Mirrors the math in `PanePreviewFontSizing` so previews and the
-/// fullscreen not-leader path use the same fit logic.
+/// Delegates the cell-width math to `PanePreviewFontSizing` so previews
+/// and the fullscreen not-leader path stay in lockstep.
 public enum TerminalWidthLayout {
-    static let monospaceAspect: CGFloat = 0.6
-    static let safetyScale: CGFloat = 0.95
-    static let minimumFontSize: Float = 2
-
     public enum Decision: Equatable {
         /// Use the base iOS-scaled config font. Caller treats this as
         /// "ensure the override (if any) is removed" while not-leader,
@@ -35,12 +31,15 @@ public enum TerminalWidthLayout {
         guard let serverCols, serverCols > 0, containerWidth > 0 else {
             return .useConfigFont
         }
-        let targetCellWidth = (containerWidth / CGFloat(serverCols)) * safetyScale
-        let targetFontSize = Float(targetCellWidth / monospaceAspect)
-        if targetFontSize >= configFontSize {
-            return .useConfigFont
-        }
-        return .fitFont(pointSize: max(minimumFontSize, targetFontSize))
+        let fitFontSize = PanePreviewFontSizing.fontSize(
+            tileWidth: Double(containerWidth),
+            serverCols: serverCols
+        )
+        // Only override when the fit is *smaller* than the configured
+        // font — otherwise the base config already renders without
+        // wrapping at this container width.
+        guard fitFontSize < configFontSize else { return .useConfigFont }
+        return .fitFont(pointSize: fitFontSize)
     }
 }
 #endif

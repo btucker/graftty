@@ -610,9 +610,10 @@ struct SingleSessionView: View {
         // Freeze-on-claim (IOS-6.10): once leader, stop driving the font.
         guard !client.isSizeLeader else { return }
         guard let baseConfig = baseConfigText else { return }
-        let configSize = GhosttyConfigFetcher.lastFontSize(in: baseConfig)
-            .map { Float($0) }
-            ?? Float(GhosttyConfigFetcher.defaultMacFontSize * GhosttyConfigFetcher.iosFontScale)
+        let configSize = Float(
+            GhosttyConfigFetcher.lastFontSize(in: baseConfig)
+                ?? GhosttyConfigFetcher.defaultIOSFontSize
+        )
 
         let decision = TerminalWidthLayout.decide(
             containerWidth: containerWidth,

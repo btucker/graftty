@@ -297,11 +297,7 @@ struct HostManagedZmxBackendTests {
     @Test("@spec IOS-12.1: A fresh attach with a libghostty viewport callback but no user input shall not resize the zmx PTY. This is the Mac mirror of IOS-6.5 — the PTY's existing cols/rows persist across detach/reattach until the user engages.")
     func reattachWithoutUserInputDoesNotResize() throws {
         let session = FakeHostManagedSession()
-        let backend = HostManagedZmxBackend(
-            spawnConfiguration: Self.spawnConfiguration(),
-            initialSize: (cols: 200, rows: 50),
-            sessionFactory: { _, _, _ in session }
-        )
+        let backend = Self.makeBackend(session: session)
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         try backend.start(surface: Self.fakeSurface())
 
@@ -320,11 +316,7 @@ struct HostManagedZmxBackendTests {
     @Test("First user-input write after a silent-gated viewport callback flushes the queued size to the PTY as a single resize (IOS-12.1).")
     func userInputFlushesPendingResize() throws {
         let session = FakeHostManagedSession()
-        let backend = HostManagedZmxBackend(
-            spawnConfiguration: Self.spawnConfiguration(),
-            initialSize: (cols: 200, rows: 50),
-            sessionFactory: { _, _, _ in session }
-        )
+        let backend = Self.makeBackend(session: session)
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         try backend.start(surface: Self.fakeSurface())
 
@@ -345,11 +337,7 @@ struct HostManagedZmxBackendTests {
     @Test("Once engaged by user input, every subsequent libghostty viewport callback propagates to the PTY as a resize (IOS-12.1).")
     func postEngagementResizesArePropagated() throws {
         let session = FakeHostManagedSession()
-        let backend = HostManagedZmxBackend(
-            spawnConfiguration: Self.spawnConfiguration(),
-            initialSize: (cols: 200, rows: 50),
-            sessionFactory: { _, _, _ in session }
-        )
+        let backend = Self.makeBackend(session: session)
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         try backend.start(surface: Self.fakeSurface())
 
