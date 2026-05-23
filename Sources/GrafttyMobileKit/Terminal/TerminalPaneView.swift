@@ -48,6 +48,10 @@ public struct TerminalPaneView: UIViewRepresentable {
     /// `RootView` wires this to read `UIPasteboard.general.string` and
     /// forward to `SessionClient.sendPaste(_:)`. (IOS-11.8)
     public let onPasteRequested: (() -> Void)?
+    /// Invoked when the user performs a gesture that, per IOS-6.5, should
+    /// claim PTY size-leadership for this session: pinch begin or
+    /// long-press begin. Tap is intentionally excluded.
+    public let onLeadershipClaimGesture: (() -> Void)?
     /// Captures the live `TerminalInputContainerView` so the SwiftUI
     /// layer can call `cancelActiveSelectionIfAny()` from elsewhere
     /// (e.g., terminal control-bar buttons) per IOS-11.7.
@@ -61,6 +65,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         preferredInterfaceStyle: UIUserInterfaceStyle = .unspecified,
         onWillUnmount: ((UIImage?) -> Void)? = nil,
         onPasteRequested: (() -> Void)? = nil,
+        onLeadershipClaimGesture: (() -> Void)? = nil,
         captureContainer: ((TerminalInputContainerView) -> Void)? = nil
     ) {
         self.session = session
@@ -70,6 +75,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.preferredInterfaceStyle = preferredInterfaceStyle
         self.onWillUnmount = onWillUnmount
         self.onPasteRequested = onPasteRequested
+        self.onLeadershipClaimGesture = onLeadershipClaimGesture
         self.captureContainer = captureContainer
     }
 
@@ -88,6 +94,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
         view.onPasteRequested = onPasteRequested
+        view.onLeadershipClaimGesture = onLeadershipClaimGesture
         context.coordinator.lastFocusRequest = focusRequestCount
         context.coordinator.onWillUnmount = onWillUnmount
         captureContainer?(view)
@@ -100,6 +107,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
         view.onPasteRequested = onPasteRequested
+        view.onLeadershipClaimGesture = onLeadershipClaimGesture
         context.coordinator.onWillUnmount = onWillUnmount
         if context.coordinator.lastFocusRequest != focusRequestCount {
             context.coordinator.lastFocusRequest = focusRequestCount
@@ -135,6 +143,10 @@ public final class TerminalInputContainerView: UIView {
     /// menu — the SwiftUI layer wires this to `SessionClient.sendPaste`.
     public var onPasteRequested: (() -> Void)?
 
+    /// Fires when a leadership-claim gesture (pinch begin / long-press
+    /// begin) is recognized on this pane.
+    public var onLeadershipClaimGesture: (() -> Void)?
+
     private lazy var longPressMenu = UIEditMenuInteraction(delegate: self)
     private lazy var selectionMenu = UIEditMenuInteraction(delegate: self)
 
@@ -147,6 +159,12 @@ public final class TerminalInputContainerView: UIView {
     private lazy var selectionPanRecognizer: UIPanGestureRecognizer = {
         let r = UIPanGestureRecognizer(target: self, action: #selector(handleSelectionPan(_:)))
         r.isEnabled = false
+        return r
+    }()
+
+    private lazy var leadershipPinchRecognizer: UIPinchGestureRecognizer = {
+        let r = UIPinchGestureRecognizer(target: self, action: #selector(handleLeadershipPinch(_:)))
+        r.delegate = self
         return r
     }()
 
@@ -197,6 +215,7 @@ public final class TerminalInputContainerView: UIView {
         addInteraction(selectionMenu)
         addGestureRecognizer(longPressRecognizer)
         addGestureRecognizer(selectionPanRecognizer)
+        addGestureRecognizer(leadershipPinchRecognizer)
     }
 
     @objc func focusKeyboardInput() {
@@ -206,10 +225,16 @@ public final class TerminalInputContainerView: UIView {
     /// @spec IOS-11.1: When the user long-presses a focused terminal pane, the application shall present a `UIEditMenuInteraction` menu at the touch point containing **Select**, **Select All**, and (when `UIPasteboard.general.hasStrings` is true at menu-build time) **Paste**.
     @objc private func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
         guard recognizer.state == .began else { return }
+        onLeadershipClaimGesture?()
         let point = recognizer.location(in: self)
         lastLongPressPoint = point
         let config = UIEditMenuConfiguration(identifier: nil, sourcePoint: point)
         longPressMenu.presentEditMenu(with: config)
+    }
+
+    @objc private func handleLeadershipPinch(_ recognizer: UIPinchGestureRecognizer) {
+        guard recognizer.state == .began else { return }
+        onLeadershipClaimGesture?()
     }
 
     @objc private func handleSelectionPan(_ recognizer: UIPanGestureRecognizer) {
@@ -273,6 +298,15 @@ public final class TerminalInputContainerView: UIView {
     private func presentSelectionMenu(near point: CGPoint) {
         let config = UIEditMenuConfiguration(identifier: "selection" as AnyHashable, sourcePoint: point)
         selectionMenu.presentEditMenu(with: config)
+    }
+}
+
+extension TerminalInputContainerView: UIGestureRecognizerDelegate {
+    public func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+    ) -> Bool {
+        return gestureRecognizer === leadershipPinchRecognizer
     }
 }
 
