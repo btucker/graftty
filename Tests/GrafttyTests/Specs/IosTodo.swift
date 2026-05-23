@@ -139,6 +139,11 @@ struct IosTodo {
     func ios_6_6() async throws { }
 
     @Test("""
+@spec IOS-6.10: When the iOS client claims size-leadership (per `IOS-6.5`), the font size currently applied to the terminal controller shall remain in effect as the new baseline — including any active auto-fit override from `IOS-5.6` / `IPAD-2.5`. The application shall stop driving the font from `TerminalWidthLayout.decide` for that session from that point forward; libghostty's pinch-to-zoom (`IOS-6.8`) shall mutate font from this baseline.
+""", .disabled("covered structurally by RootView.reconcileFontOverride's `guard !client.isSizeLeader` gate — promote to a real test once a UI-level harness exists"))
+    func ios_6_10() async throws { }
+
+    @Test("""
 @spec IOS-8.1: The v1 iOS app shall not support connecting to non-Graftty SSH/mosh hosts.
 """, .disabled("not yet implemented"))
     func ios_8_1() async throws { }
