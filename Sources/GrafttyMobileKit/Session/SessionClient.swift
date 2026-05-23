@@ -383,7 +383,12 @@ public final class SessionClient {
         self.start()
     }
 
-    private func claimLeadershipIfNeeded() {
+    /// Idempotent leadership claim. Called by:
+    /// - the keystroke path (`box.onBytes`) — IOS-6.5
+    /// - the pinch and long-press gestures on `TerminalInputContainerView` — IOS-6.5
+    /// No-op when `isSizeLeader`, when the role is `.preview`, when stopped,
+    /// or before libghostty has reported any viewport size.
+    public func claimLeadershipIfNeeded() {
         guard !isSizeLeader, !stopped, role != .preview, let v = lastIOSViewport else { return }
         isSizeLeader = true
         sendResizeToServer(cols: v.cols, rows: v.rows)
