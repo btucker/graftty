@@ -42,7 +42,7 @@ public enum GhosttyConfigFetcher {
 
     /// Default font size to use when the Mac config has no `font-size =`
     /// line to scale. 13 matches upstream Ghostty's built-in default.
-    private static let defaultMacFontSize: Double = 13
+    static let defaultMacFontSize: Double = 13
 
     /// Cached fetch. Prefer this from UI — identical results across
     /// multiple pane views on the same host, one network round-trip per
