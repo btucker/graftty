@@ -31,6 +31,16 @@ final class HostManagedZmxBackend {
         case closed
     }
 
+    /// @spec IOS-12.1
+    /// Tracks user engagement since the most recent attach. While `.silent`,
+    /// libghostty viewport callbacks do not propagate to the zmx PTY — the
+    /// PTY's existing dims persist. The first user input flips to `.engaged`
+    /// and flushes any queued resize.
+    private enum AttachState {
+        case silent
+        case engaged
+    }
+
     private struct PendingResize {
         let cols: UInt16
         let rows: UInt16
@@ -62,6 +72,8 @@ final class HostManagedZmxBackend {
     private var lifecycle: Lifecycle = .idle
     private var session: HostManagedZmxSession?
     private var pendingResize: PendingResize?
+    private var attachState: AttachState = .silent
+    private var lastSilentResize: PendingResize?
     private var userdataPointer: UnsafeMutableRawPointer!
 
     init(
@@ -110,6 +122,14 @@ final class HostManagedZmxBackend {
         lock.lock()
         switch lifecycle {
         case .idle:
+            // IOS-12.1: each fresh attach starts gated. Until the user
+            // produces input on this surface we treat libghostty's viewport
+            // callbacks as advisory — we record the last reported size but
+            // do not propagate it to the zmx PTY. This avoids the
+            // post-reattach width drift caused by libghostty's pre-layout
+            // viewport callback shrinking the PTY.
+            attachState = .silent
+            lastSilentResize = nil
             lifecycle = .starting
             lock.unlock()
         case .starting, .running:
@@ -171,6 +191,10 @@ final class HostManagedZmxBackend {
     func write(_ data: Data) throws {
         guard !data.isEmpty else { return }
 
+        // IOS-12.1: any user input is a leadership-claim signal. Flush any
+        // queued viewport size to the PTY before forwarding the bytes.
+        markUserInput()
+
         let currentSession = try activeSession()
         try currentSession.write(data)
     }
@@ -185,6 +209,9 @@ final class HostManagedZmxBackend {
         let currentSession = session
         session = nil
         pendingResize = nil
+        // IOS-12.1: the next attach starts a fresh engagement window.
+        attachState = .silent
+        lastSilentResize = nil
         lock.unlock()
 
         currentSession?.close()
@@ -218,6 +245,16 @@ final class HostManagedZmxBackend {
         let currentSession: HostManagedZmxSession?
 
         lock.lock()
+        switch attachState {
+        case .silent:
+            // IOS-12.1: record but do not forward. The first user-input event
+            // will flush this to the PTY via `markUserInput()`.
+            lastSilentResize = PendingResize(cols: cols, rows: rows)
+            lock.unlock()
+            return
+        case .engaged:
+            break
+        }
         switch lifecycle {
         case .idle, .starting:
             pendingResize = PendingResize(cols: cols, rows: rows)
@@ -230,6 +267,39 @@ final class HostManagedZmxBackend {
         lock.unlock()
 
         try? currentSession?.resize(cols: cols, rows: rows)
+    }
+
+    /// Marks that the user has acted on the surface since the most recent
+    /// attach. The first call flushes any queued `lastSilentResize` so the
+    /// PTY syncs to libghostty's last-reported dims. IOS-12.1.
+    private func markUserInput() {
+        let flushTarget: HostManagedZmxSession?
+        let flushResize: PendingResize?
+
+        lock.lock()
+        guard case .silent = attachState else {
+            lock.unlock()
+            return
+        }
+        attachState = .engaged
+        flushResize = lastSilentResize
+        lastSilentResize = nil
+        switch lifecycle {
+        case .running:
+            flushTarget = session
+        case .idle, .starting:
+            flushTarget = nil
+            if let flushResize {
+                pendingResize = flushResize
+            }
+        case .closed:
+            flushTarget = nil
+        }
+        lock.unlock()
+
+        if let flushTarget, let flushResize {
+            try? flushTarget.resize(cols: flushResize.cols, rows: flushResize.rows)
+        }
     }
 
     private func activeSession() throws -> HostManagedZmxSession {

@@ -37,12 +37,15 @@ struct HostManagedZmxBackendTests {
         #expect(session.writes() == [Data("abc".utf8)])
     }
 
-    @Test func receiveResizeCallbackForwardsGridSizeToStartedSession() throws {
+    @Test("Viewport callbacks before user input are buffered; the first user input flushes them, then later callbacks pass through (IOS-12.1).")
+    func receiveResizeCallbackForwardsGridSizeToStartedSessionOnlyAfterUserInputEngagement() throws {
         let session = FakeHostManagedSession()
         let backend = Self.makeBackend(session: session)
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         try backend.start(surface: Self.fakeSurface())
 
+        // IOS-12.1: pre-engagement viewport callbacks are recorded but not
+        // forwarded to the PTY. The pre-existing PTY dims persist.
         HostManagedZmxBackend.receiveResizeCallback(
             backend.userdataForTesting,
             132,
@@ -50,11 +53,26 @@ struct HostManagedZmxBackendTests {
             2112,
             1032
         )
+        #expect(session.resizes().isEmpty)
 
+        // First user input engages the attach and flushes the last viewport
+        // size — the PTY now adopts what libghostty has been measuring.
+        try backend.write(Data([0x68]))
         #expect(session.resizes() == [Resize(cols: 132, rows: 43)])
+
+        // Post-engagement viewport callbacks propagate immediately.
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            120,
+            40,
+            1440,
+            960
+        )
+        #expect(session.resizes() == [Resize(cols: 132, rows: 43), Resize(cols: 120, rows: 40)])
     }
 
-    @Test func resizeCallbackBeforeStartIsAppliedAfterSessionStarts() throws {
+    @Test("`start(surface:)` resets the engagement gate and discards stale pre-start viewport callbacks; nothing leaks to the PTY across attaches (IOS-12.1).")
+    func startResetsSilentGateAndDiscardsPreStartViewportCallbacks() throws {
         let session = FakeHostManagedSession()
         let backend = Self.makeBackend(session: session)
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
@@ -76,7 +94,15 @@ struct HostManagedZmxBackendTests {
 
         try backend.start(surface: Self.fakeSurface())
 
-        #expect(session.resizes() == [Resize(cols: 120, rows: 40)])
+        // IOS-12.1: start resets the engagement window. Pre-start viewport
+        // measurements are stale w.r.t. the new surface session and are
+        // dropped. No resize reaches the PTY without user input.
+        #expect(session.resizes().isEmpty)
+
+        // A user input alone does not synthesise a resize — there was no
+        // post-start viewport callback to flush.
+        try backend.write(Data([0x68]))
+        #expect(session.resizes().isEmpty)
     }
 
     @Test func receiveCallbacksIgnoreNilUserdataAndPointers() {
@@ -266,6 +292,85 @@ struct HostManagedZmxBackendTests {
         #expect(backend.userdataForTesting == nil)
         HostManagedZmxBackend.receiveBufferCallback(nil, nil, 0)
         HostManagedZmxBackend.receiveResizeCallback(nil, 80, 24, 800, 600)
+    }
+
+    @Test("@spec IOS-12.1: A fresh attach with a libghostty viewport callback but no user input shall not resize the zmx PTY. This is the Mac mirror of IOS-6.5 — the PTY's existing cols/rows persist across detach/reattach until the user engages.")
+    func reattachWithoutUserInputDoesNotResize() throws {
+        let session = FakeHostManagedSession()
+        let backend = HostManagedZmxBackend(
+            spawnConfiguration: Self.spawnConfiguration(),
+            initialSize: (cols: 200, rows: 50),
+            sessionFactory: { _, _, _ in session }
+        )
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+
+        // libghostty's pre-layout viewport callback fires with a small grid.
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            80,
+            24,
+            960,
+            576
+        )
+
+        #expect(session.resizes().isEmpty)
+    }
+
+    @Test("First user-input write after a silent-gated viewport callback flushes the queued size to the PTY as a single resize (IOS-12.1).")
+    func userInputFlushesPendingResize() throws {
+        let session = FakeHostManagedSession()
+        let backend = HostManagedZmxBackend(
+            spawnConfiguration: Self.spawnConfiguration(),
+            initialSize: (cols: 200, rows: 50),
+            sessionFactory: { _, _, _ in session }
+        )
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            80,
+            24,
+            960,
+            576
+        )
+        #expect(session.resizes().isEmpty)
+
+        try backend.write(Data([0x68]))   // 'h'
+
+        #expect(session.resizes() == [Resize(cols: 80, rows: 24)])
+    }
+
+    @Test("Once engaged by user input, every subsequent libghostty viewport callback propagates to the PTY as a resize (IOS-12.1).")
+    func postEngagementResizesArePropagated() throws {
+        let session = FakeHostManagedSession()
+        let backend = HostManagedZmxBackend(
+            spawnConfiguration: Self.spawnConfiguration(),
+            initialSize: (cols: 200, rows: 50),
+            sessionFactory: { _, _, _ in session }
+        )
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+
+        try backend.write(Data([0x68]))   // engagement, no queued resize
+
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            120,
+            40,
+            1440,
+            960
+        )
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            100,
+            40,
+            1200,
+            960
+        )
+
+        #expect(session.resizes() == [Resize(cols: 120, rows: 40), Resize(cols: 100, rows: 40)])
     }
 
     @Test func defaultSessionFactoryReceivesInitialSizeFromBackend() throws {
