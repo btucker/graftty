@@ -89,4 +89,25 @@ struct LeadershipPinchGateTests {
         #expect(!LeadershipPinchGate.shouldClaim(state: .began, scale: 0))
     }
 }
+
+@Suite("@spec IOS-6.12: while a pane is in selection mode (IOS-11.4 pan-extends a live selection), the leadership-claim pinch recognizer shall be disabled — a mid-selection pinch shall not flip the server's PTY dims out from under the selection geometry.")
+@MainActor
+struct LeadershipPinchSelectionModeTests {
+
+    @Test
+    func enterSelectionModeDisablesLeadershipPinch() {
+        let view = TerminalInputContainerView()
+        #expect(view.leadershipPinchRecognizerIsEnabledForTesting)
+        view.enterSelectionModeForTesting()
+        #expect(!view.leadershipPinchRecognizerIsEnabledForTesting)
+    }
+
+    @Test
+    func exitSelectionModeReenablesLeadershipPinch() {
+        let view = TerminalInputContainerView()
+        view.enterSelectionModeForTesting()
+        view.exitSelectionModeForTesting()
+        #expect(view.leadershipPinchRecognizerIsEnabledForTesting)
+    }
+}
 #endif

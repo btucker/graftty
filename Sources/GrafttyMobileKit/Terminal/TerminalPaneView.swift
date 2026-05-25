@@ -270,11 +270,17 @@ public final class TerminalInputContainerView: UIView {
     private func enterSelectionMode() {
         selectionPanRecognizer.isEnabled = true
         terminalView.gestureRecognizers?.forEach { $0.isEnabled = false }
+        // IOS-6.12: while the user is in selection mode, the server's
+        // grid must stay fixed — a leadership-claim pinch would reflow
+        // the grid mid-drag and dislocate the selection from the cells
+        // it was anchored on. Disable for the duration of selection.
+        leadershipPinchRecognizer.isEnabled = false
     }
 
     private func exitSelectionMode() {
         selectionPanRecognizer.isEnabled = false
         terminalView.gestureRecognizers?.forEach { $0.isEnabled = true }
+        leadershipPinchRecognizer.isEnabled = true
     }
 
     fileprivate func performSelectAtLongPressPoint() {
@@ -315,6 +321,24 @@ public final class TerminalInputContainerView: UIView {
     private func presentSelectionMenu(near point: CGPoint) {
         let config = UIEditMenuConfiguration(identifier: "selection" as AnyHashable, sourcePoint: point)
         selectionMenu.presentEditMenu(with: config)
+    }
+
+    // MARK: - Test seams
+
+    /// Internal-visibility access for unit tests: returns the leadership
+    /// pinch recognizer's enabled flag without exposing the recognizer.
+    var leadershipPinchRecognizerIsEnabledForTesting: Bool {
+        leadershipPinchRecognizer.isEnabled
+    }
+
+    /// Internal-visibility access for unit tests: invokes `enterSelectionMode`.
+    func enterSelectionModeForTesting() {
+        enterSelectionMode()
+    }
+
+    /// Internal-visibility access for unit tests: invokes `exitSelectionMode`.
+    func exitSelectionModeForTesting() {
+        exitSelectionMode()
     }
 }
 
