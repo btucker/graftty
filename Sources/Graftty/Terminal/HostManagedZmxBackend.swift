@@ -267,9 +267,10 @@ final class HostManagedZmxBackend {
         let currentSession = session
         session = nil
         pendingResize = nil
-        // IOS-12.1: the next attach starts a fresh engagement window.
-        attachState = .silent
-        lastSilentResize = nil
+        // No `attachState` / `lastSilentResize` reset here: `.closed` is
+        // terminal and `start()` rejects it (`Error.closed`), so there
+        // is no "next attach" on this instance. Per-process reattach is
+        // handled by constructing a fresh `HostManagedZmxBackend`.
         lock.unlock()
 
         currentSession?.close()
