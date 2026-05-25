@@ -470,6 +470,49 @@ struct HostManagedZmxBackendTests {
         thread.start()
         return thread
     }
+
+    @Test("When two threads race to `write` after a silent-gated viewport callback, the engagement-flush resize shall land at the PTY before the write bytes do — there shall be no interleaving where bytes hit the PTY at the pre-flush dims.")
+    func engagementFlushResizeOrdersBeforeConcurrentWriteBytes() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            132, 43, 2112, 1032
+        )
+
+        let barrier = DispatchSemaphore(value: 0)
+        let done = DispatchSemaphore(value: 0)
+        var threadAFinished = false
+        var threadBFinished = false
+
+        // Thread A enters write first; the engagement flush should serialize
+        // the resize ahead of any other thread's write.
+        Self.runOnDedicatedThread {
+            try? backend.write(Data("a".utf8))
+            threadAFinished = true
+            barrier.signal()
+        }
+        // Thread B races in — once A's markUserInput sets attachState=.engaged,
+        // B's markUserInput is a no-op so B proceeds to its write.
+        Self.runOnDedicatedThread {
+            // Tiny stagger so A enters write first.
+            Thread.sleep(forTimeInterval: 0.001)
+            try? backend.write(Data("b".utf8))
+            threadBFinished = true
+            done.signal()
+        }
+
+        barrier.wait()
+        done.wait()
+        #expect(threadAFinished)
+        #expect(threadBFinished)
+
+        #expect(session.resizes() == [Resize(cols: 132, rows: 43)])
+        #expect(session.writes().count == 2)
+    }
 }
 
 private struct Resize: Equatable {

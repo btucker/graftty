@@ -330,33 +330,35 @@ final class HostManagedZmxBackend {
     /// Marks that the user has acted on the surface since the most recent
     /// attach. The first call flushes any queued `lastSilentResize` so the
     /// PTY syncs to libghostty's last-reported dims. IOS-12.1.
+    ///
+    /// The lock is held across the flush `resize` call so any concurrent
+    /// `write` on another thread cannot ship bytes to the PTY before the
+    /// flush lands — invariant: post-engagement bytes always see the
+    /// post-flush PTY dims.
     private func markUserInput() {
-        let flushTarget: HostManagedZmxSession?
-        let flushResize: PendingResize?
-
         lock.lock()
-        guard case .silent = attachState else {
-            lock.unlock()
-            return
-        }
+        defer { lock.unlock() }
+
+        guard case .silent = attachState else { return }
         attachState = .engaged
-        flushResize = lastSilentResize
+        let flushResize = lastSilentResize
         lastSilentResize = nil
         switch lifecycle {
         case .running:
-            flushTarget = session
+            if let flushResize {
+                // Holding the lock across `resize` serializes us with any
+                // concurrent `write`'s `activeSession()` lookup + session
+                // call. `resize` itself just issues a TIOCSWINSZ ioctl —
+                // milliseconds at most, no nested locking — so the
+                // contention window is bounded.
+                try? session?.resize(cols: flushResize.cols, rows: flushResize.rows)
+            }
         case .idle, .starting:
-            flushTarget = nil
             if let flushResize {
                 pendingResize = flushResize
             }
         case .closed:
-            flushTarget = nil
-        }
-        lock.unlock()
-
-        if let flushTarget, let flushResize {
-            try? flushTarget.resize(cols: flushResize.cols, rows: flushResize.rows)
+            break
         }
     }
 
