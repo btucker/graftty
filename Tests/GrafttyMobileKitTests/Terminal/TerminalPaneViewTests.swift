@@ -56,4 +56,37 @@ struct TerminalPaneViewTests {
         #expect(container.inputProxy.canBecomeFirstResponder)
     }
 }
+
+@Suite("@spec IOS-6.11: The pinch-driven leadership claim from `IOS-6.5` shall fire only on pinch gestures whose scale departure from 1.0 exceeds a small threshold (~5%), so accidental two-finger touches (during scroll, near-tap) do not silently claim leadership.")
+struct LeadershipPinchGateTests {
+
+    @Test
+    func nonBeganStatesDoNotClaim() {
+        for state: UIGestureRecognizer.State in [.possible, .changed, .ended, .cancelled, .failed] {
+            #expect(!LeadershipPinchGate.shouldClaim(state: state, scale: 1.5))
+        }
+    }
+
+    @Test
+    func beganBelowThresholdDoesNotClaim() {
+        // Default threshold is 0.05 (~5% scale change).
+        #expect(!LeadershipPinchGate.shouldClaim(state: .began, scale: 1.0))
+        #expect(!LeadershipPinchGate.shouldClaim(state: .began, scale: 1.03))
+        #expect(!LeadershipPinchGate.shouldClaim(state: .began, scale: 0.97))
+    }
+
+    @Test
+    func beganAboveThresholdClaims() {
+        #expect(LeadershipPinchGate.shouldClaim(state: .began, scale: 1.10))
+        #expect(LeadershipPinchGate.shouldClaim(state: .began, scale: 0.90))
+        #expect(LeadershipPinchGate.shouldClaim(state: .began, scale: 2.0))
+    }
+
+    @Test
+    func zeroScaleNeverClaims() {
+        // A UIPinchGestureRecognizer with scale 0 is degenerate; treat as
+        // no-claim rather than as a maximum-zoom-out claim.
+        #expect(!LeadershipPinchGate.shouldClaim(state: .began, scale: 0))
+    }
+}
 #endif

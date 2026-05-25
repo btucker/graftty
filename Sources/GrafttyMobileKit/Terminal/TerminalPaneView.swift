@@ -4,6 +4,23 @@ import ObjectiveC
 import SwiftUI
 import UIKit
 
+/// Pure decision function: should a UIPinchGestureRecognizer's
+/// `.began` event claim PTY size-leadership? Factored out of
+/// `TerminalInputContainerView.handleLeadershipPinch` so it can be
+/// tested without instantiating a UIView. A small threshold prevents
+/// near-tap two-finger touches (UIKit's pinch recogniser fires
+/// `.began` even for trivial scale changes) from silently flipping
+/// leadership.
+enum LeadershipPinchGate {
+    static let minScaleDelta: CGFloat = 0.05
+
+    static func shouldClaim(state: UIGestureRecognizer.State, scale: CGFloat) -> Bool {
+        guard state == .began else { return false }
+        guard scale > 0 else { return false }
+        return abs(scale - 1.0) >= minScaleDelta
+    }
+}
+
 /// A SwiftUI wrapper around `UITerminalView` backed by an
 /// `InMemoryTerminalSession` (no PTY — safe inside App Sandbox).
 ///
@@ -233,7 +250,7 @@ public final class TerminalInputContainerView: UIView {
     }
 
     @objc private func handleLeadershipPinch(_ recognizer: UIPinchGestureRecognizer) {
-        guard recognizer.state == .began else { return }
+        guard LeadershipPinchGate.shouldClaim(state: recognizer.state, scale: recognizer.scale) else { return }
         onLeadershipClaimGesture?()
     }
 
