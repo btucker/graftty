@@ -36,6 +36,11 @@ protocol SurfaceHandleZmxBackend: AnyObject {
     func start(surface: ghostty_surface_t) throws
     func write(_ data: Data) throws
     func write(_ data: Data, claimEngagement: Bool) throws
+    /// Runs `body` while flagging that any bytes libghostty pushes back
+    /// through the receive callback are automation, not user input. The
+    /// backend gates IOS-12.1 engagement on this flag for the duration
+    /// of `body`. See `HostManagedZmxBackend.withProgrammaticInput`.
+    func withProgrammaticInput(_ body: () -> Void)
     func close()
     func surfaceWasFreed()
 }
@@ -49,6 +54,16 @@ extension HostManagedZmxBackend: SurfaceHandleZmxBackend {
     // engage the IOS-12.1 silent gate.
     func write(_ data: Data) throws {
         try write(data, claimEngagement: true)
+    }
+
+    // Protocol witness for `withProgrammaticInput`. The protocol
+    // requires a void-in/void-out shape; the storage method on
+    // `HostManagedZmxBackend` (`withProgrammaticInputScope`) is
+    // generic + rethrows. Forwarding through a distinct name avoids
+    // the same-name overload ambiguity that turns the witness into
+    // infinite recursion.
+    func withProgrammaticInput(_ body: () -> Void) {
+        withProgrammaticInputScope(body)
     }
 
     func surfaceWasFreed() {
@@ -412,11 +427,34 @@ final class SurfaceHandle {
     /// Synthesize a Return keypress (press + release) via
     /// `ghostty_surface_key`, mirroring what `SurfaceNSView.keyDown`
     /// does for a real Enter key event but constructed without an
-    /// `NSEvent`. Used by the agent-teams idle-delivery nudge to
-    /// commit a typed-in message: `typeText` alone leaves a `\r` byte
-    /// in the PTY that TUI receivers (Codex / Claude in raw mode)
-    /// don't treat as a submit trigger.
-    func pressReturn() {
+    /// `NSEvent`. Used by the agent-teams idle-delivery nudge and the
+    /// send-pane IPC to commit a typed-in message: `typeText` alone
+    /// leaves a `\r` byte in the PTY that TUI receivers (Codex /
+    /// Claude in raw mode) don't treat as a submit trigger.
+    ///
+    /// - Parameter claimEngagement: When `true` (default), the bytes
+    ///   libghostty emits for the synthesized key engage IOS-12.1's
+    ///   silent gate as if a human pressed Return. Automation paths
+    ///   (split-with-command, send-pane IPC, agent nudges) pass
+    ///   `false` so they don't masquerade as a user keystroke — the
+    ///   zmx backend's `receiveBufferCallback` sees the
+    ///   programmatic-input flag and forwards bytes without
+    ///   engagement. The non-zmx libghostty surface has no per-pane
+    ///   engagement state, so the flag is a no-op there.
+    func pressReturn(claimEngagement: Bool = true) {
+        if claimEngagement || zmxBackend == nil {
+            performPressReturn()
+            return
+        }
+        // The block runs synchronously and returns before
+        // `withProgrammaticInput` does, so a strong self capture is
+        // safe — self outlives the call site.
+        zmxBackend?.withProgrammaticInput {
+            self.performPressReturn()
+        }
+    }
+
+    private func performPressReturn() {
         var keyEvent = ghostty_input_key_s()
         keyEvent.mods = GHOSTTY_MODS_NONE
         keyEvent.consumed_mods = GHOSTTY_MODS_NONE

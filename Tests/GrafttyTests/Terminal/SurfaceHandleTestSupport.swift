@@ -147,6 +147,10 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
         try write(data)
     }
 
+    func withProgrammaticInput(_ body: () -> Void) {
+        body()
+    }
+
     func close() {
         closeCount += 1
     }

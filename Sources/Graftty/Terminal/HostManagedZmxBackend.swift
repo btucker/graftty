@@ -54,7 +54,13 @@ final class HostManagedZmxBackend {
         // Host-managed input that arrives before the PTY session is running is
         // intentionally dropped. SurfaceHandle sends explicit extraInitialInput
         // with write(_:) after start succeeds.
-        try? backend.write(data)
+        //
+        // IOS-12.1: when the caller is currently inside a
+        // `withProgrammaticInput` scope (e.g. `SurfaceHandle.pressReturn`
+        // invoked from the send-pane IPC), the bytes libghostty emits
+        // for the synthesized key event should NOT engage the silent
+        // gate — they're automation, not a human keystroke.
+        try? backend.write(data, claimEngagement: !backend.isProgrammaticInputActive)
     }
 
     static let receiveResizeCallback: ghostty_surface_receive_resize_cb = { userdata, cols, rows, _, _ in
@@ -75,6 +81,12 @@ final class HostManagedZmxBackend {
     private var attachState: AttachState = .silent
     private var lastSilentResize: PendingResize?
     private var userdataPointer: UnsafeMutableRawPointer!
+
+    /// Reentrant counter tracking active `withProgrammaticInput` scopes.
+    /// While > 0, `receiveBufferCallback` treats the inbound bytes as
+    /// automation and passes `claimEngagement: false` to `write`.
+    /// IOS-12.1.
+    private var programmaticInputDepth: Int = 0
 
     init(
         spawnConfiguration: ZmxSpawnConfiguration,
@@ -209,6 +221,40 @@ final class HostManagedZmxBackend {
         if claimEngagement {
             markUserInput()
         }
+    }
+
+    /// Runs `body` with the programmatic-input flag raised. Any bytes that
+    /// libghostty emits through `receiveBufferCallback` during `body` are
+    /// treated as automation (synthesized keys, programmatic clipboard
+    /// pastes, etc.) — they reach the PTY but do NOT flip IOS-12.1's
+    /// silent gate. Used by `SurfaceHandle.pressReturn(claimEngagement:
+    /// false)` so the Return synthesized for `graftty pane send … --enter`
+    /// matches the policy that the companion `typeText` write already
+    /// follows. Reentrant via a depth counter.
+    ///
+    /// Named `…Scope` (not `withProgrammaticInput`) so the protocol
+    /// witness in `SurfaceHandle.swift` can forward to it without
+    /// colliding with its own name.
+    func withProgrammaticInputScope<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        programmaticInputDepth += 1
+        lock.unlock()
+        defer {
+            lock.lock()
+            programmaticInputDepth -= 1
+            lock.unlock()
+        }
+        return try body()
+    }
+
+    /// Snapshot of `programmaticInputDepth > 0` used by
+    /// `receiveBufferCallback` to decide whether the imminent `write`
+    /// should engage the gate. Lock-protected so it stays coherent with
+    /// `withProgrammaticInput`'s increment/decrement on the same lock.
+    fileprivate var isProgrammaticInputActive: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return programmaticInputDepth > 0
     }
 
     func close() {
