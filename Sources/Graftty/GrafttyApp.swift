@@ -2799,10 +2799,9 @@ struct GrafttyApp: App {
         case .skip:
             return
         case .type(let trimmedCommand):
-            // `graftty pane send` is automation initiated from another
-            // process — the human user isn't typing into the target
-            // pane. IOS-12.1's silent gate stays closed until the
-            // target pane sees real local input.
+            // The default-command auto-injection runs once when a fresh
+            // pane's shell becomes ready — programmatic input, not a
+            // user keystroke. IOS-12.1's silent gate stays closed.
             terminalManager.handle(for: terminalID)?.typeText(trimmedCommand + "\r", claimEngagement: false)
         }
     }
