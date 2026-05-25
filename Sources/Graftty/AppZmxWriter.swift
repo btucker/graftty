@@ -27,13 +27,10 @@ struct AppZmxWriter: ZmxWriter {
                 throw AppZmxWriterError.noSurfaceForSession(sessionName)
             }
             // Idle-agent delivery is automation. Leave IOS-12.1's
-            // silent gate closed; the receiving pane's first human
+            // silent gate closed for both the text write and the
+            // synthesized Return — the receiving pane's first human
             // keystroke is what should engage.
             handle.typeText(text, claimEngagement: false)
-            // Idle-agent delivery is automation. pressReturn synthesizes
-            // a key event that libghostty re-emits via receiveBufferCallback —
-            // pass claimEngagement: false so the IOS-12.1 silent gate stays
-            // closed, matching the behavior of the preceding typeText call.
             if submit { handle.pressReturn(claimEngagement: false) }
         }
     }
