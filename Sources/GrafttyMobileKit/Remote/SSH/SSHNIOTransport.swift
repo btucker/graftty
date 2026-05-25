@@ -97,8 +97,14 @@ public final class SSHNIOTransport: @unchecked Sendable {
     /// fail fast rather than hang on a never-fired open callback.
     private var closed: Bool = false
 
-    public init(dataChannel: RTCDataChannel) {
+    /// Diagnostic-only tag prefixed to every byte-level log line so the
+    /// two transports (client and server) can be distinguished in the
+    /// log. Default `nil` means no diagnostic logging.
+    public var diagTag: String?
+
+    public init(dataChannel: RTCDataChannel, diagTag: String? = nil) {
         self.dataChannel = dataChannel
+        self.diagTag = diagTag
         let loop = NIOAsyncTestingEventLoop()
         self.embeddedLoop = loop
         // Create the channel without handlers first; register it and
@@ -117,7 +123,8 @@ public final class SSHNIOTransport: @unchecked Sendable {
         // embedded core's pendingOutboundBuffer.
         let relay = OutboundRelayHandler(
             dataChannel: dataChannel,
-            mtu: Self.mtu
+            mtu: Self.mtu,
+            diagTag: diagTag
         )
         // Add the relay and register the channel synchronously. The
         // loop auto-pumps on `execute` (which `submit` uses internally),
@@ -151,7 +158,13 @@ public final class SSHNIOTransport: @unchecked Sendable {
         }
         dcDelegate.onMessage = { [weak self] data in
             guard let self else { return }
+            if let tag = self.diagTag {
+                print("[\(tag)] IN dc bytes=\(data.count)")
+            }
             self.embeddedLoop.execute {
+                if let tag = self.diagTag {
+                    print("[\(tag)] IN loop bytes=\(data.count) active=\(self.embedded.isActive)")
+                }
                 self.deliverInbound(data)
             }
         }
@@ -312,10 +325,12 @@ private final class OutboundRelayHandler: ChannelOutboundHandler, @unchecked Sen
 
     private let dataChannel: RTCDataChannel
     private let mtu: Int
+    private let diagTag: String?
 
-    init(dataChannel: RTCDataChannel, mtu: Int) {
+    init(dataChannel: RTCDataChannel, mtu: Int, diagTag: String?) {
         self.dataChannel = dataChannel
         self.mtu = mtu
+        self.diagTag = diagTag
     }
 
     func write(
@@ -328,6 +343,9 @@ private final class OutboundRelayHandler: ChannelOutboundHandler, @unchecked Sen
         if bytes.isEmpty {
             promise?.succeed(())
             return
+        }
+        if let tag = diagTag {
+            print("[\(tag)] OUT bytes=\(bytes.count) dcReady=\(dataChannel.readyState.rawValue)")
         }
         guard dataChannel.readyState == .open else {
             promise?.fail(ChannelError.ioOnClosedChannel)

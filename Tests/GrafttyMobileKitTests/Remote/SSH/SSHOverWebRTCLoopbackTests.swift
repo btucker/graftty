@@ -77,8 +77,8 @@ struct SSHOverWebRTCLoopbackTests {
         //    (which it already is) and then fires channelActive through
         //    the embedded pipeline so any handlers we add next observe
         //    a live channel.
-        let clientTransport = SSHNIOTransport(dataChannel: offererDC)
-        let serverTransport = SSHNIOTransport(dataChannel: answererDC)
+        let clientTransport = SSHNIOTransport(dataChannel: offererDC, diagTag: "sshtx-client")
+        let serverTransport = SSHNIOTransport(dataChannel: answererDC, diagTag: "sshtx-server")
 
         // 7. Install the server's NIOSSHHandler BEFORE starting the
         //    transport so channelActive (fired by start()) is the
