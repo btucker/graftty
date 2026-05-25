@@ -2165,7 +2165,10 @@ struct GrafttyApp: App {
             return .error("split failed")
         }
         if let command, !command.isEmpty {
-            terminalManager.handle(for: newID)?.typeText(command + "\r")
+            // splitPane's `command` is automation, not a user keystroke
+            // on the newly-created surface — keep IOS-12.1's silent
+            // gate closed.
+            terminalManager.handle(for: newID)?.typeText(command + "\r", claimEngagement: false)
         }
         return .ok
     }
@@ -2790,7 +2793,11 @@ struct GrafttyApp: App {
         case .skip:
             return
         case .type(let trimmedCommand):
-            terminalManager.handle(for: terminalID)?.typeText(trimmedCommand + "\r")
+            // `graftty pane send` is automation initiated from another
+            // process — the human user isn't typing into the target
+            // pane. IOS-12.1's silent gate stays closed until the
+            // target pane sees real local input.
+            terminalManager.handle(for: terminalID)?.typeText(trimmedCommand + "\r", claimEngagement: false)
         }
     }
 

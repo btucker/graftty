@@ -35,6 +35,7 @@ protocol SurfaceHandleZmxBackend: AnyObject {
     func configure(_ config: inout ghostty_surface_config_s)
     func start(surface: ghostty_surface_t) throws
     func write(_ data: Data) throws
+    func write(_ data: Data, claimEngagement: Bool) throws
     func close()
     func surfaceWasFreed()
 }
@@ -268,7 +269,13 @@ final class SurfaceHandle {
                 try backend.start(surface: newSurface)
                 if let extraInitialInput,
                    let data = extraInitialInput.data(using: .utf8) {
-                    try? backend.write(data)
+                    // extraInitialInput is programmatic spawn-time
+                    // injection (e.g., `graftty pane split --command`).
+                    // It is NOT a user keystroke — leave the IOS-12.1
+                    // silent gate closed so libghostty's first
+                    // viewport callback can still be evaluated against
+                    // a real user input.
+                    try? backend.write(data, claimEngagement: false)
                 }
             } catch {
                 backend.close()
@@ -380,10 +387,19 @@ final class SurfaceHandle {
     /// (Regular key events flow through `ghostty_surface_key` via
     /// `sendKeyEvent` instead; `ghostty_surface_text` is the text-input
     /// sibling used for non-key-event writes.)
-    func typeText(_ text: String) {
+    ///
+    /// - Parameter claimEngagement: When `true` (default), the inject
+    ///   counts as user input under IOS-12.1 — flips the host-managed
+    ///   silent gate. Callers that synthesize bytes on behalf of an
+    ///   automation flow (split-with-command, send-pane IPC, idle agent
+    ///   nudges) pass `false` so they don't masquerade as a user
+    ///   keystroke. The non-zmx libghostty `ghostty_surface_text` path
+    ///   has no per-pane engagement state, so the flag only matters for
+    ///   `zmxBackend.write`.
+    func typeText(_ text: String, claimEngagement: Bool = true) {
         guard let data = text.data(using: .utf8) else { return }
         if let zmxBackend {
-            try? zmxBackend.write(data)
+            try? zmxBackend.write(data, claimEngagement: claimEngagement)
             return
         }
         data.withUnsafeBytes { raw in

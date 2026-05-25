@@ -26,7 +26,10 @@ struct AppZmxWriter: ZmxWriter {
             guard let handle = terminalManager.handle(forSessionName: sessionName) else {
                 throw AppZmxWriterError.noSurfaceForSession(sessionName)
             }
-            handle.typeText(text)
+            // Idle-agent delivery is automation. Leave IOS-12.1's
+            // silent gate closed; the receiving pane's first human
+            // keystroke is what should engage.
+            handle.typeText(text, claimEngagement: false)
             if submit { handle.pressReturn() }
         }
     }
