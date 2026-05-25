@@ -596,10 +596,27 @@ struct SingleSessionView: View {
     }
 
     private struct FontFitKey: Hashable {
-        let containerWidth: CGFloat
+        /// Whole-point bucket. SwiftUI delivers containerSize.width
+        /// values that jitter by sub-points across layout passes during
+        /// rotation / keyboard show-hide animations; rounding to whole
+        /// points keeps the `.task(id: FontFitKey)` body from re-firing
+        /// on micro-resizes that produce no perceptible layout change.
+        let containerWidthPoints: Int
         let serverCols: UInt16?
         let isLeader: Bool
         let baseConfig: String?
+
+        init(
+            containerWidth: CGFloat,
+            serverCols: UInt16?,
+            isLeader: Bool,
+            baseConfig: String?
+        ) {
+            self.containerWidthPoints = Int(containerWidth.rounded())
+            self.serverCols = serverCols
+            self.isLeader = isLeader
+            self.baseConfig = baseConfig
+        }
     }
 
     private func reconcileFontOverride(
@@ -607,7 +624,13 @@ struct SingleSessionView: View {
         controller: TerminalController,
         containerWidth: CGFloat
     ) {
-        // Freeze-on-claim (IOS-6.10): once leader, stop driving the font.
+        // Freeze-on-claim (IOS-6.10): once leader, stop driving the
+        // font. The auto-fit override applied just before claim remains
+        // in effect as the user's new baseline. The user can adjust
+        // from here via libghostty's built-in pinch-to-zoom (IOS-6.8) —
+        // there is intentionally no automatic path back to base config
+        // because reverting it would invalidate the cols-the-server-saw
+        // at the moment of claim.
         guard !client.isSizeLeader else { return }
         guard let baseConfig = baseConfigText else { return }
         let configSize = Float(
@@ -635,7 +658,12 @@ struct SingleSessionView: View {
             controller.updateConfigSource(.generated(baseConfig))
             liveFontOverride = nil
         case let .fitFont(pointSize):
-            if liveFontOverride == pointSize { return }
+            // Epsilon dedupe: pointSize is derived from a Double / Float
+            // chain that's sensitive to sub-pixel containerWidth drift.
+            // 0.05pt is well below any visible difference and prevents
+            // a thrash of `controller.updateConfigSource(...)` calls
+            // when the recomputed value differs only in low Float bits.
+            if let live = liveFontOverride, abs(live - pointSize) < 0.05 { return }
             let overridden = MobileTerminalControllerFactory.appendingFontSizeOverride(
                 to: baseConfig,
                 fontSize: pointSize,
