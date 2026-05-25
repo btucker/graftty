@@ -340,6 +340,23 @@ public final class TerminalInputContainerView: UIView {
     func exitSelectionModeForTesting() {
         exitSelectionMode()
     }
+
+    /// Internal-visibility access for unit tests: drives the leadership
+    /// pinch handler with a synthesized recognizer state + scale,
+    /// bypassing UIKit's gesture machinery so unit tests don't need a
+    /// real touch sequence. Same gate as `handleLeadershipPinch`.
+    func simulateLeadershipPinchForTesting(state: UIGestureRecognizer.State, scale: CGFloat) {
+        guard LeadershipPinchGate.shouldClaim(state: state, scale: scale) else { return }
+        onLeadershipClaimGesture?()
+    }
+
+    /// Internal-visibility access for unit tests: simulates the
+    /// long-press handler's `.began` branch firing the leadership
+    /// claim (which it does alongside presenting the edit menu —
+    /// IOS-6.5).
+    func simulateLongPressBeganForTesting() {
+        onLeadershipClaimGesture?()
+    }
 }
 
 extension TerminalInputContainerView: UIGestureRecognizerDelegate {

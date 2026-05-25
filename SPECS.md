@@ -1278,6 +1278,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.13** (first-frame claim resilience): when a gesture fires `claimLeadershipIfNeeded` before any viewport callback has populated `lastIOSViewport`, the claim shall be retained and re-attempted at the next viewport so the user's intentional gesture is not silently dropped.
 
+**IOS-6.14** (gesture wiring): the `onLeadershipClaimGesture` callback shall fire when the pinch recognizer transitions to `.began` with a scale departure above the gate threshold — verifies the handler→callback plumbing that the unit tests for `LeadershipPinchGate` and `SessionClient.claimLeadershipIfNeeded` do not cover.
+
 ### IOS-7.x — Lifecycle
 
 **IOS-7.1** When the application enters the background, it shall close every active `URLSessionWebSocketTask` with WebSocket close code 1000 (normal closure) and tear down every `InMemoryTerminalSession`. The server's response (SIGTERM to each `zmx attach` child per `WEB-4.5`) leaves the zmx daemon alive per `ZMX-4.4`, so reconnect picks up the same session.

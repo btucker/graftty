@@ -110,4 +110,49 @@ struct LeadershipPinchSelectionModeTests {
         #expect(view.leadershipPinchRecognizerIsEnabledForTesting)
     }
 }
+
+@Suite("@spec IOS-6.14 (gesture wiring): the `onLeadershipClaimGesture` callback shall fire when the pinch recognizer transitions to `.began` with a scale departure above the gate threshold — verifies the handler→callback plumbing that the unit tests for `LeadershipPinchGate` and `SessionClient.claimLeadershipIfNeeded` do not cover.")
+@MainActor
+struct LeadershipPinchWiringTests {
+
+    @Test
+    func pinchBeganAboveThresholdInvokesCallback() {
+        let view = TerminalInputContainerView()
+        var claimCount = 0
+        view.onLeadershipClaimGesture = { claimCount += 1 }
+
+        view.simulateLeadershipPinchForTesting(state: .began, scale: 1.2)
+        #expect(claimCount == 1)
+    }
+
+    @Test
+    func pinchBeganBelowThresholdDoesNotInvokeCallback() {
+        let view = TerminalInputContainerView()
+        var claimCount = 0
+        view.onLeadershipClaimGesture = { claimCount += 1 }
+
+        view.simulateLeadershipPinchForTesting(state: .began, scale: 1.02)
+        #expect(claimCount == 0)
+    }
+
+    @Test
+    func pinchChangedDoesNotInvokeCallback() {
+        let view = TerminalInputContainerView()
+        var claimCount = 0
+        view.onLeadershipClaimGesture = { claimCount += 1 }
+
+        view.simulateLeadershipPinchForTesting(state: .changed, scale: 2.0)
+        #expect(claimCount == 0)
+    }
+
+    @Test
+    func longPressInvokesCallback() {
+        let view = TerminalInputContainerView()
+        var claimCount = 0
+        view.onLeadershipClaimGesture = { claimCount += 1 }
+
+        view.simulateLongPressBeganForTesting()
+        #expect(claimCount == 1)
+    }
+}
 #endif
