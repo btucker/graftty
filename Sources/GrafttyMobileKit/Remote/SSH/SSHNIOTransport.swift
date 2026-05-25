@@ -4,6 +4,22 @@ import NIO
 import NIOEmbedded
 import WebRTC
 
+/// Test seam: anything `OutboundRelayHandler` actually needs from
+/// `RTCDataChannel`. Production wraps the concrete WebRTC type;
+/// unit tests can substitute a stub that simulates `sendData`
+/// returning false.
+internal protocol DataChannelSink: AnyObject {
+    var sinkReadyState: RTCDataChannelState { get }
+    func sinkSend(_ buffer: RTCDataBuffer) -> Bool
+    func sinkClose()
+}
+
+extension RTCDataChannel: DataChannelSink {
+    var sinkReadyState: RTCDataChannelState { readyState }
+    func sinkSend(_ buffer: RTCDataBuffer) -> Bool { sendData(buffer) }
+    func sinkClose() { close() }
+}
+
 /// Adapter that bridges WebRTC's `RTCDataChannel` (a message-stream API)
 /// to a swift-nio `Channel` (a byte-stream API) so that handlers like
 /// `NIOSSHHandler` can run over an SCTP-backed DataChannel.
@@ -126,7 +142,7 @@ public final class SSHNIOTransport: @unchecked Sendable {
         // the DataChannel rather than letting it accumulate in the
         // embedded core's pendingOutboundBuffer.
         let relay = OutboundRelayHandler(
-            dataChannel: dataChannel,
+            sink: dataChannel,
             mtu: Self.mtu
         )
         // Add the relay and register the channel synchronously. The
@@ -348,15 +364,15 @@ public final class SSHNIOTransport: @unchecked Sendable {
 /// SSH framing is byte-stream oriented, so the receiver re-assembles
 /// transparently — NIOSSHHandler doesn't care about SCTP message
 /// boundaries.
-private final class OutboundRelayHandler: ChannelOutboundHandler, @unchecked Sendable {
+internal final class OutboundRelayHandler: ChannelOutboundHandler, @unchecked Sendable {
     typealias OutboundIn = ByteBuffer
     typealias OutboundOut = ByteBuffer
 
-    private let dataChannel: RTCDataChannel
+    private let sink: DataChannelSink
     private let mtu: Int
 
-    init(dataChannel: RTCDataChannel, mtu: Int) {
-        self.dataChannel = dataChannel
+    init(sink: DataChannelSink, mtu: Int) {
+        self.sink = sink
         self.mtu = mtu
     }
 
@@ -371,7 +387,7 @@ private final class OutboundRelayHandler: ChannelOutboundHandler, @unchecked Sen
             promise?.succeed(())
             return
         }
-        guard dataChannel.readyState == .open else {
+        guard sink.sinkReadyState == .open else {
             promise?.fail(ChannelError.ioOnClosedChannel)
             return
         }
@@ -385,12 +401,16 @@ private final class OutboundRelayHandler: ChannelOutboundHandler, @unchecked Sen
             // a bufferedAmountLowThreshold-driven write gate before
             // production use, otherwise a stalled receiver can OOM the
             // sender by ballooning the SCTP send buffer.
-            if !dataChannel.sendData(dcBuffer) {
-                // `sendData` returns false when the SCTP send buffer is
-                // full or the channel transitioned to closing. Surface
-                // it through the promise so the consumer's writeAndFlush
-                // future fails rather than silently dropping bytes.
+            if !sink.sinkSend(dcBuffer) {
+                // Partial-write: earlier slices have already shipped. We
+                // cannot safely send any more bytes via this DataChannel
+                // because the peer is mid-frame for an SSH packet and
+                // ANY further write would corrupt the stream. Close
+                // both ends so NIOSSHHandler tears down cleanly rather
+                // than parsing garbage.
                 promise?.fail(ChannelError.outputClosed)
+                sink.sinkClose()
+                context.close(mode: .all, promise: nil)
                 return
             }
             offset = end
