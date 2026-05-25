@@ -14,6 +14,8 @@ struct TerminalWidthLayoutTests {
             containerWidth: 390,
             serverCols: 120,
             configFontSize: 11,
+            measuredCellWidthPoints: nil,
+            measuredAtFontSize: nil,
             isLeader: true
         )
         #expect(d == .useConfigFont)
@@ -25,6 +27,8 @@ struct TerminalWidthLayoutTests {
             containerWidth: 390,
             serverCols: nil,
             configFontSize: 11,
+            measuredCellWidthPoints: nil,
+            measuredAtFontSize: nil,
             isLeader: false
         )
         #expect(d == .useConfigFont)
@@ -36,6 +40,8 @@ struct TerminalWidthLayoutTests {
             containerWidth: 390,
             serverCols: 0,
             configFontSize: 11,
+            measuredCellWidthPoints: nil,
+            measuredAtFontSize: nil,
             isLeader: false
         )
         #expect(d == .useConfigFont)
@@ -47,6 +53,8 @@ struct TerminalWidthLayoutTests {
             containerWidth: 0,
             serverCols: 80,
             configFontSize: 11,
+            measuredCellWidthPoints: nil,
+            measuredAtFontSize: nil,
             isLeader: false
         )
         #expect(d == .useConfigFont)
@@ -61,6 +69,8 @@ struct TerminalWidthLayoutTests {
             containerWidth: 800,
             serverCols: 80,
             configFontSize: 11,
+            measuredCellWidthPoints: nil,
+            measuredAtFontSize: nil,
             isLeader: false
         )
         #expect(d == .useConfigFont)
@@ -75,6 +85,8 @@ struct TerminalWidthLayoutTests {
             containerWidth: 390,
             serverCols: 120,
             configFontSize: 11,
+            measuredCellWidthPoints: nil,
+            measuredAtFontSize: nil,
             isLeader: false
         )
         let expected: Float = Float((390.0 / 120.0) * 0.95 / 0.6)
@@ -93,9 +105,74 @@ struct TerminalWidthLayoutTests {
             containerWidth: 30,
             serverCols: 200,
             configFontSize: 11,
+            measuredCellWidthPoints: nil,
+            measuredAtFontSize: nil,
             isLeader: false
         )
         #expect(d == .fitFont(pointSize: 2))
+    }
+
+    @Test
+    func fitFontUsesMeasuredAspectWhenProvided() {
+        // 120 cols, 390pt container, measured aspect 0.65 (Courier-ish).
+        // target cellWidth = (390/120) * safetyScale = 3.0875
+        // target fontSize = 3.0875 / 0.65 ≈ 4.75pt
+        let d = TerminalWidthLayout.decide(
+            containerWidth: 390,
+            serverCols: 120,
+            configFontSize: 11,
+            measuredCellWidthPoints: 6.5,    // measured at 10pt → aspect 0.65
+            measuredAtFontSize: 10,
+            isLeader: false
+        )
+        switch d {
+        case .useConfigFont:
+            Issue.record("Expected .fitFont")
+        case let .fitFont(p):
+            let expected: Float = Float((390.0 / 120.0) * 0.95 / 0.65)
+            #expect(abs(p - expected) < 0.0001)
+        }
+    }
+
+    @Test
+    func fitFontFallsBackToDefaultAspectWhenNoMeasurement() {
+        // Same call with nil measurement — should match the previous
+        // 0.6-aspect math.
+        let d = TerminalWidthLayout.decide(
+            containerWidth: 390,
+            serverCols: 120,
+            configFontSize: 11,
+            measuredCellWidthPoints: nil,
+            measuredAtFontSize: nil,
+            isLeader: false
+        )
+        switch d {
+        case .useConfigFont:
+            Issue.record("Expected .fitFont")
+        case let .fitFont(p):
+            let expected: Float = Float((390.0 / 120.0) * 0.95 / 0.6)
+            #expect(abs(p - expected) < 0.0001)
+        }
+    }
+
+    @Test
+    func fitFontIgnoresZeroMeasuredFontSize() {
+        // Defensive: a measured-at-zero font size would divide-by-zero.
+        let d = TerminalWidthLayout.decide(
+            containerWidth: 390,
+            serverCols: 120,
+            configFontSize: 11,
+            measuredCellWidthPoints: 6.5,
+            measuredAtFontSize: 0,
+            isLeader: false
+        )
+        switch d {
+        case .useConfigFont:
+            Issue.record("Expected .fitFont")
+        case let .fitFont(p):
+            let expected: Float = Float((390.0 / 120.0) * 0.95 / 0.6)
+            #expect(abs(p - expected) < 0.0001)
+        }
     }
 }
 #endif

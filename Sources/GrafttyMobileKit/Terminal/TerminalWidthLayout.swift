@@ -2,22 +2,25 @@
 import CoreGraphics
 
 /// Pure decision: given the iOS container's width, the server-announced
-/// grid width (may be nil before the first `grid` control frame), the
-/// configured (iOS-scaled) font size from `GhosttyConfigFetcher`, and
-/// whether the iOS client has claimed size-leadership, should the
-/// terminal pane render at the configured font or under a font-size
-/// override sized so `serverCols × cellWidth ≤ containerWidth`?
+/// grid width, the configured (iOS-scaled) font size, and (optionally) a
+/// real font-aspect measurement from libghostty's resize callback,
+/// should the terminal pane render at the configured font or under a
+/// font-size override sized so `serverCols × cellWidth ≤ containerWidth`?
 ///
-/// Delegates the cell-width math to `PanePreviewFontSizing` so previews
-/// and the fullscreen not-leader path stay in lockstep.
+/// The aspect-ratio assumption matters: if it's wrong, libghostty's VT
+/// parser may wrap lines internally. When `measuredCellWidthPoints` and
+/// `measuredAtFontSize` are provided (both > 0), the decision uses
+/// `aspect = measuredCellWidthPoints / measuredAtFontSize`. Otherwise it
+/// falls back to `PanePreviewFontSizing.monospaceAspect` (0.6), which
+/// matches the project's default fonts but undersizes for fonts whose
+/// actual aspect exceeds ~0.632.
 public enum TerminalWidthLayout {
+    static let fallbackAspect: CGFloat = CGFloat(PanePreviewFontSizing.monospaceAspect)
+    static let safetyScale: CGFloat = CGFloat(PanePreviewFontSizing.safetyScale)
+    static let minimumFontSize: Float = PanePreviewFontSizing.minimumFontSize
+
     public enum Decision: Equatable {
-        /// Use the base iOS-scaled config font. Caller treats this as
-        /// "ensure the override (if any) is removed" while not-leader,
-        /// or "leave whatever is applied alone" once leader.
         case useConfigFont
-        /// Apply this font size as an override on the terminal
-        /// controller so that `serverCols × cellWidth ≤ containerWidth`.
         case fitFont(pointSize: Float)
     }
 
@@ -25,21 +28,31 @@ public enum TerminalWidthLayout {
         containerWidth: CGFloat,
         serverCols: UInt16?,
         configFontSize: Float,
+        measuredCellWidthPoints: CGFloat?,
+        measuredAtFontSize: Float?,
         isLeader: Bool
     ) -> Decision {
         if isLeader { return .useConfigFont }
         guard let serverCols, serverCols > 0, containerWidth > 0 else {
             return .useConfigFont
         }
-        let fitFontSize = PanePreviewFontSizing.fontSize(
-            tileWidth: Double(containerWidth),
-            serverCols: serverCols
-        )
-        // Only override when the fit is *smaller* than the configured
-        // font — otherwise the base config already renders without
-        // wrapping at this container width.
-        guard fitFontSize < configFontSize else { return .useConfigFont }
-        return .fitFont(pointSize: fitFontSize)
+
+        let aspect: CGFloat
+        if let measuredCellWidthPoints,
+           let measuredAtFontSize,
+           measuredCellWidthPoints > 0,
+           measuredAtFontSize > 0 {
+            aspect = measuredCellWidthPoints / CGFloat(measuredAtFontSize)
+        } else {
+            aspect = Self.fallbackAspect
+        }
+
+        let targetCellWidth = (containerWidth / CGFloat(serverCols)) * Self.safetyScale
+        let targetFontSize = Float(targetCellWidth / aspect)
+        if targetFontSize >= configFontSize {
+            return .useConfigFont
+        }
+        return .fitFont(pointSize: max(Self.minimumFontSize, targetFontSize))
     }
 }
 #endif

@@ -615,10 +615,18 @@ struct SingleSessionView: View {
                 ?? GhosttyConfigFetcher.defaultIOSFontSize
         )
 
+        // The font size currently applied to the controller — either the
+        // live override or the base config size. We pair this with
+        // libghostty's reported cellWidthPoints to derive the real
+        // monospace aspect of the currently-installed font.
+        let measuredAt: Float = liveFontOverride ?? configSize
+
         let decision = TerminalWidthLayout.decide(
             containerWidth: containerWidth,
             serverCols: client.serverGrid?.cols,
             configFontSize: configSize,
+            measuredCellWidthPoints: client.cellWidthPoints,
+            measuredAtFontSize: measuredAt,
             isLeader: false
         )
         switch decision {
