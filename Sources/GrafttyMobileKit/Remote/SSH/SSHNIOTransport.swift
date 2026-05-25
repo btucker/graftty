@@ -123,6 +123,14 @@ public final class SSHNIOTransport: @unchecked Sendable {
     /// here and replay on `fireChannelActive`.
     private var pendingInbound: [Data] = []
 
+    /// Hard cap on `pendingInbound` total bytes. If the peer sends bytes
+    /// faster than `start()` is called, we close the transport rather
+    /// than grow memory unbounded. 1 MiB is well above the worst-case
+    /// SSH banner+KEX+userauth handshake (~5–10 KB) and large enough
+    /// that legitimate slow-start scenarios don't trip it.
+    private static let pendingInboundByteCap: Int = 1 * 1024 * 1024
+    private var pendingInboundByteCount: Int = 0
+
     public init(dataChannel: RTCDataChannel) {
         self.dataChannel = dataChannel
         let loop = NIOAsyncTestingEventLoop()
@@ -264,6 +272,7 @@ public final class SSHNIOTransport: @unchecked Sendable {
         }
         embedded.pipeline.fireChannelReadComplete()
         pendingInbound.removeAll()
+        pendingInboundByteCount = 0
     }
 
     private func handleDataChannelOpen() {
@@ -303,6 +312,16 @@ public final class SSHNIOTransport: @unchecked Sendable {
         // reach the client's `deliverInbound` before
         // `clientTransport.start()` has connected the embedded channel.
         if !embedded.isActive {
+            pendingInboundByteCount += data.count
+            if pendingInboundByteCount > Self.pendingInboundByteCap {
+                // Bound memory: a peer flooding us before start() shall
+                // not OOM the host. Close the transport so the consumer
+                // sees a clean tear-down rather than silent memory growth.
+                pendingInbound.removeAll()
+                pendingInboundByteCount = 0
+                performClose()
+                return
+            }
             pendingInbound.append(data)
             return
         }
@@ -331,6 +350,7 @@ public final class SSHNIOTransport: @unchecked Sendable {
         // close — the consumer is tearing down so the bytes have
         // nowhere to go.
         pendingInbound.removeAll()
+        pendingInboundByteCount = 0
         // Detach delegate callbacks so any late WebRTC-thread events
         // become no-ops. Delegate itself stays alive (we own it) and
         // remains assigned to the DataChannel — the SDK clears it on
@@ -351,6 +371,22 @@ public final class SSHNIOTransport: @unchecked Sendable {
         // need the latter, so call `close` directly to keep this
         // function synchronous.
         embedded.close(promise: nil)
+    }
+
+    /// Internal test seam: forces an inbound delivery as if WebRTC's
+    /// delegate had fired. Used by `SSHNIOTransportUnitTests` to
+    /// exercise the buffering cap without standing up a real
+    /// `RTCDataChannel` exchange.
+    internal func deliverInboundForTesting(_ data: Data) {
+        embeddedLoop.execute {
+            self.deliverInbound(data)
+        }
+    }
+
+    /// Internal test seam: returns the current byte-count of buffered
+    /// inbound data. For verifying the cap behavior.
+    internal var pendingInboundByteCountForTesting: Int {
+        pendingInboundByteCount
     }
 }
 

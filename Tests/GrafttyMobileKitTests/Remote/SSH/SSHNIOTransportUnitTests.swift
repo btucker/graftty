@@ -56,5 +56,47 @@ struct SSHNIOTransportUnitTests {
         #expect(sink.closedCount == 1)
         #expect(!channel.isActive, "channel must close after partial-write failure")
     }
+
+    @Test("@spec SSH-1.2: When `pendingInbound` accumulates more than 1 MiB without the embedded channel becoming active, `SSHNIOTransport` shall close the underlying DataChannel and transition to closed — bounding memory under a flooding peer.")
+    func pendingInboundCapClosesTransport() async throws {
+        // We need a real-looking RTCDataChannel to construct SSHNIOTransport.
+        // Construct via the existing public init and a real factory.
+        // Then deliver inbound directly via the test seam — the embedded
+        // channel never gets activated because we never call start().
+        let pcFactory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
+        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+        guard let pc = pcFactory.peerConnection(
+            with: RemoteHostConnection.defaultConfig(),
+            constraints: constraints,
+            delegate: nil
+        ) else {
+            Issue.record("could not create RTCPeerConnection")
+            return
+        }
+        defer { pc.close() }
+        let dcConfig = RTCDataChannelConfiguration()
+        dcConfig.isOrdered = true
+        guard let dc = pc.dataChannel(forLabel: "test-cap", configuration: dcConfig) else {
+            Issue.record("could not create RTCDataChannel")
+            return
+        }
+        defer { dc.close() }
+
+        let transport = SSHNIOTransport(dataChannel: dc)
+
+        // Deliver ~1 MiB + 1 KB across small chunks WITHOUT calling start().
+        let chunk = Data(repeating: 0x41, count: 1024)
+        for _ in 0..<1025 {
+            transport.deliverInboundForTesting(chunk)
+        }
+
+        // Let the embedded loop drain.
+        try await Task.sleep(nanoseconds: 200_000_000)
+
+        // After overflow the transport should have closed itself — assert via
+        // the pending byte counter being reset (a successful close resets it).
+        #expect(transport.pendingInboundByteCountForTesting == 0,
+                "pendingInbound should be flushed when transport closes on cap overflow")
+    }
 }
 #endif
