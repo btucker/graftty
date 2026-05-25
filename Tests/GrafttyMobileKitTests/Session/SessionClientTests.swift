@@ -396,5 +396,29 @@ struct SessionClientTests {
 
         #expect(!client.isSizeLeader)
     }
+
+    @Test("@spec IOS-6.13 (first-frame claim resilience): when a gesture fires `claimLeadershipIfNeeded` before any viewport callback has populated `lastIOSViewport`, the claim shall be retained and re-attempted at the next viewport so the user's intentional gesture is not silently dropped.")
+    func firstFrameClaimRetriesOnNextViewport() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+
+        // No primeViewport call — lastIOSViewport is nil.
+        client.claimLeadershipIfNeeded()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(!client.isSizeLeader)
+
+        // Now the first viewport callback arrives. The pending claim should
+        // re-engage and send the resize.
+        primeViewport(client, columns: 100, rows: 30)
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(client.isSizeLeader)
+        let resizeText = ws.sent.compactMap { frame -> String? in
+            if case let .text(t) = frame { return t } else { return nil }
+        }.first(where: { $0.contains("\"type\":\"resize\"") })
+        #expect(resizeText != nil)
+    }
 }
 #endif

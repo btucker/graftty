@@ -1276,6 +1276,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.12** while a pane is in selection mode (IOS-11.4 pan-extends a live selection), the leadership-claim pinch recognizer shall be disabled — a mid-selection pinch shall not flip the server's PTY dims out from under the selection geometry.
 
+**IOS-6.13** (first-frame claim resilience): when a gesture fires `claimLeadershipIfNeeded` before any viewport callback has populated `lastIOSViewport`, the claim shall be retained and re-attempted at the next viewport so the user's intentional gesture is not silently dropped.
+
 ### IOS-7.x — Lifecycle
 
 **IOS-7.1** When the application enters the background, it shall close every active `URLSessionWebSocketTask` with WebSocket close code 1000 (normal closure) and tear down every `InMemoryTerminalSession`. The server's response (SIGTERM to each `zmx attach` child per `WEB-4.5`) leaves the zmx daemon alive per `ZMX-4.4`, so reconnect picks up the same session.

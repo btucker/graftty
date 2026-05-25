@@ -58,6 +58,13 @@ public final class SessionClient {
     /// layout tick; no view reads it, so don't churn observers.
     @ObservationIgnored
     private var lastIOSViewport: (cols: UInt16, rows: UInt16)?
+    /// Set to `true` when a gesture or keystroke called
+    /// `claimLeadershipIfNeeded()` before `lastIOSViewport` was populated
+    /// by libghostty's first `onResize`. The next successful
+    /// `handleViewport` flushes this and re-attempts the claim so the
+    /// gesture is not silently lost. IOS-6.13 (refinement of IOS-6.5).
+    @ObservationIgnored
+    private var pendingLeadershipClaim: Bool = false
     /// True once we've sent our first keystroke-triggered resize. From
     /// then on, libghostty's layout-driven resize events are forwarded
     /// to the server (iOS is the size-leader) and `TerminalWidthLayout`
@@ -196,6 +203,10 @@ public final class SessionClient {
         }
         if isSizeLeader {
             sendResizeToServer(cols: cols, rows: rows)
+        } else if pendingLeadershipClaim {
+            // Replay the early claim that fell through because
+            // lastIOSViewport was nil at the time. IOS-6.13.
+            claimLeadershipIfNeeded()
         }
     }
 
@@ -387,9 +398,17 @@ public final class SessionClient {
     /// - the keystroke path (`box.onBytes`) — IOS-6.5
     /// - the pinch and long-press gestures on `TerminalInputContainerView` — IOS-6.5
     /// No-op when `isSizeLeader`, when the role is `.preview`, when stopped,
-    /// or before libghostty has reported any viewport size.
+    /// or before libghostty has reported any viewport size (in which case the
+    /// claim intent is recorded and retried at the next viewport — IOS-6.13).
     public func claimLeadershipIfNeeded() {
-        guard !isSizeLeader, !stopped, role != .preview, let v = lastIOSViewport else { return }
+        guard !isSizeLeader, !stopped, role != .preview else { return }
+        guard let v = lastIOSViewport else {
+            // No viewport yet — record the claim intent. The first
+            // `handleViewport` will replay it. IOS-6.13.
+            pendingLeadershipClaim = true
+            return
+        }
+        pendingLeadershipClaim = false
         isSizeLeader = true
         sendResizeToServer(cols: v.cols, rows: v.rows)
     }
