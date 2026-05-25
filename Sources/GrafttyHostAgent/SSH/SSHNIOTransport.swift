@@ -89,6 +89,16 @@ public final class SSHNIOTransport: @unchecked Sendable {
     /// Set once the channel has been closed so late `start()` callers
     /// fail fast rather than hang on a never-fired open callback.
     private var closed: Bool = false
+    /// Inbound DataChannel messages that arrived AFTER the SDK callback
+    /// fired but BEFORE the embedded channel became active via
+    /// `fireChannelActive`. WebRTC dispatches `didReceiveMessageWith` on
+    /// its own serial queue, so for an `RTCDataChannel` that is already
+    /// `.open` when this transport is constructed, the first inbound
+    /// message can race the embedded channel's `connect(to:)` — if
+    /// `deliverInbound` runs before `fireChannelActive`, `isActive` is
+    /// still false and the bytes would be silently lost. We buffer them
+    /// here and replay on `fireChannelActive`.
+    private var pendingInbound: [Data] = []
 
     public init(dataChannel: RTCDataChannel) {
         self.dataChannel = dataChannel
@@ -216,6 +226,21 @@ public final class SSHNIOTransport: @unchecked Sendable {
         // silently diverge from the `connect`-completed state shape.
         let address = try! SocketAddress(unixDomainSocketPath: "graftty-ssh")
         embedded.connect(to: address, promise: nil)
+        // Drain any inbound messages that arrived while the embedded
+        // channel was still inactive. See `pendingInbound` for the
+        // race this prevents.
+        flushPendingInbound()
+    }
+
+    private func flushPendingInbound() {
+        guard !pendingInbound.isEmpty, embedded.isActive else { return }
+        for data in pendingInbound {
+            var buffer = embedded.allocator.buffer(capacity: data.count)
+            buffer.writeBytes(data)
+            embedded.pipeline.fireChannelRead(buffer)
+        }
+        embedded.pipeline.fireChannelReadComplete()
+        pendingInbound.removeAll()
     }
 
     private func handleDataChannelOpen() {
@@ -244,7 +269,20 @@ public final class SSHNIOTransport: @unchecked Sendable {
     }
 
     private func deliverInbound(_ data: Data) {
-        guard !closed, embedded.isActive else { return }
+        guard !closed else { return }
+        // Inbound bytes may arrive (via WebRTC's serial queue) before
+        // the consumer has called `start()` and the embedded channel
+        // has transitioned to active. Buffer them rather than dropping —
+        // `fireChannelActive` replays the buffer once the pipeline is
+        // ready. Without this, the SSH-over-WebRTC handshake hangs
+        // intermittently on CI: the server emits its banner the instant
+        // its transport starts, and on a fast peer that banner can
+        // reach the client's `deliverInbound` before
+        // `clientTransport.start()` has connected the embedded channel.
+        if !embedded.isActive {
+            pendingInbound.append(data)
+            return
+        }
         var buffer = embedded.allocator.buffer(capacity: data.count)
         buffer.writeBytes(data)
         // We're already on the testing loop (this is invoked from an
@@ -266,6 +304,10 @@ public final class SSHNIOTransport: @unchecked Sendable {
             startContinuation = nil
             continuation.resume(throwing: TransportError.closed)
         }
+        // Anything we never got around to delivering is dropped at
+        // close — the consumer is tearing down so the bytes have
+        // nowhere to go.
+        pendingInbound.removeAll()
         // Detach delegate callbacks so any late WebRTC-thread events
         // become no-ops. Delegate itself stays alive (we own it) and
         // remains assigned to the DataChannel — the SDK clears it on
