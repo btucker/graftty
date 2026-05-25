@@ -188,15 +188,27 @@ final class HostManagedZmxBackend {
         }
     }
 
-    func write(_ data: Data) throws {
+    /// Forward bytes to the zmx PTY.
+    ///
+    /// - Parameter claimEngagement: When `true` (default), this write
+    ///   counts as user input under IOS-12.1: the silent gate flips to
+    ///   `.engaged` AFTER the write succeeds, flushing any queued
+    ///   viewport size to the PTY. Programmatic call sites (initial
+    ///   `extraInitialInput`, `typeText` from `splitPane`/`send-pane`,
+    ///   the idle-agent nudge writer) pass `false` so they don't
+    ///   silently claim a user-input contract they don't represent.
+    func write(_ data: Data, claimEngagement: Bool = true) throws {
         guard !data.isEmpty else { return }
-
-        // IOS-12.1: any user input is a leadership-claim signal. Flush any
-        // queued viewport size to the PTY before forwarding the bytes.
-        markUserInput()
 
         let currentSession = try activeSession()
         try currentSession.write(data)
+
+        // IOS-12.1: flip the gate only AFTER a successful write — a write
+        // that throws `notStarted` or fails inside the session shall not
+        // disengage the silent gate.
+        if claimEngagement {
+            markUserInput()
+        }
     }
 
     func close() {

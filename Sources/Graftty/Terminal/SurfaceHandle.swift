@@ -40,6 +40,16 @@ protocol SurfaceHandleZmxBackend: AnyObject {
 }
 
 extension HostManagedZmxBackend: SurfaceHandleZmxBackend {
+    // Protocol witness for `write(_:)`. The backend's storage method
+    // takes a defaulted `claimEngagement` parameter, but Swift doesn't
+    // synthesize protocol conformance from defaulted-argument
+    // overloads — this thin shim forwards with the default
+    // (`claimEngagement: true`) so SurfaceHandle keystroke writes still
+    // engage the IOS-12.1 silent gate.
+    func write(_ data: Data) throws {
+        try write(data, claimEngagement: true)
+    }
+
     func surfaceWasFreed() {
         releaseReceiveUserdataAfterSurfaceFree()
     }

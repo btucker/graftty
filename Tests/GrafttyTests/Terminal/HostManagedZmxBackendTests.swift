@@ -390,6 +390,58 @@ struct HostManagedZmxBackendTests {
         #expect(recorded.first??.rows == 43)
     }
 
+    @Test("`write(_:claimEngagement: false)` shall not flip attachState to .engaged — used by programmatic callers (extraInitialInput, typeText for splitPane/send-pane/agent nudges) that should not be treated as IOS-12.1 user input.")
+    func programmaticWriteDoesNotEngageGate() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+
+        // Queue a pre-engagement viewport.
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            132, 43, 2112, 1032
+        )
+        #expect(session.resizes().isEmpty)
+
+        // Programmatic write must NOT engage the gate — the queued resize stays unflushed.
+        try backend.write(Data("hello".utf8), claimEngagement: false)
+        #expect(session.resizes().isEmpty)
+        #expect(session.writes() == [Data("hello".utf8)])
+
+        // Real user input via the keystroke path DOES engage and flush.
+        try backend.write(Data([0x68]))
+        #expect(session.resizes() == [Resize(cols: 132, rows: 43)])
+    }
+
+    @Test("If `write` fails (e.g., backend is in `.idle` and `activeSession()` throws .notStarted), attachState shall remain `.silent` — the engagement gate flips only on writes that actually reached the PTY.")
+    func failedWriteDoesNotEngageGate() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        // Note: no start() — backend is in .idle.
+
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            132, 43, 2112, 1032
+        )
+
+        #expect(throws: HostManagedZmxBackend.Error.notStarted) {
+            try backend.write(Data("h".utf8))
+        }
+
+        // Start the backend now and engage with a real keystroke.
+        try backend.start(surface: Self.fakeSurface())
+        // The pre-start callback was wiped by start() per IOS-12.1.
+        // A fresh post-start callback shall trigger the flush.
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            80, 24, 960, 576
+        )
+        try backend.write(Data([0x68]))
+        #expect(session.resizes() == [Resize(cols: 80, rows: 24)])
+    }
+
     private static func makeBackend(session: FakeHostManagedSession) -> HostManagedZmxBackend {
         HostManagedZmxBackend(
             spawnConfiguration: spawnConfiguration(),
