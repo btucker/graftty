@@ -29,13 +29,14 @@ import WebRTC
 @Suite("SSH-over-WebRTC loopback — exec round-trip (R2 gate)")
 struct SSHOverWebRTCLoopbackTests {
 
-    /// `.timeLimit(.minutes(1))` guards against the entire test runner
-    /// hanging on a CI-only path; locally this test completes in ~10s
-    /// (dominated by ICE gathering on the iOS Simulator). If the test
-    /// exceeds 1 minute, Swift Testing kills it and emits a failure with
-    /// the stage prints below, so we can diagnose where it hung instead
-    /// of staring at a 15-minute job timeout.
-    @Test(.timeLimit(.minutes(1)))
+    /// `.timeLimit(.minutes(5))` (DIAG): bumped from 1 minute while we
+    /// investigate why this test consistently hangs on GH Actions macOS
+    /// runners but completes in ~10s on real hardware. The handshake
+    /// inside the SSH layer adds stage prints (search "ssh-loopback")
+    /// so the CI log shows exactly where bytes stop flowing. If the
+    /// test now passes at 60-180s, the issue is purely slowness; if it
+    /// still hangs at the same stage, there's a real deadlock.
+    @Test(.timeLimit(.minutes(5)))
     func execRoundTripOverPairedDataChannels() async throws {
         // Diagnostic prints at each stage so a CI hang surfaces with
         // a usable trace in the test log. Cheap on a passing run.
@@ -250,9 +251,11 @@ private final class LoopbackExecResponder: ChannelDuplexHandler {
 
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         guard let execRequest = event as? SSHChannelRequestEvent.ExecRequest else {
+            print("[ssh-loopback] server.userEvent type=\(type(of: event))")
             context.fireUserInboundEventTriggered(event)
             return
         }
+        print("[ssh-loopback] server.execRequest received cmd=\(execRequest.command) wantReply=\(execRequest.wantReply)")
         // If the client asked for a reply, ack the exec request first
         // so the client's pipeline doesn't sit waiting for a success
         // event before reading bytes.
@@ -314,11 +317,13 @@ private final class ClientSessionOpener: ChannelInboundHandler {
     }
 
     func channelActive(context: ChannelHandlerContext) {
+        print("[ssh-loopback] client.opener.channelActive — enqueueing session createChannel")
         context.fireChannelActive()
         let sshHandler: NIOSSHHandler
         do {
             sshHandler = try context.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
         } catch {
+            print("[ssh-loopback] client.opener could not locate NIOSSHHandler: \(error)")
             completePromise.fail(error)
             return
         }
@@ -326,6 +331,7 @@ private final class ClientSessionOpener: ChannelInboundHandler {
         let command = self.command
         let completePromise = self.completePromise
         sshHandler.createChannel(promise, channelType: .session) { childChannel, channelType in
+            print("[ssh-loopback] client.session childInit channelType=\(channelType)")
             guard case .session = channelType else {
                 return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
             }
@@ -337,7 +343,11 @@ private final class ClientSessionOpener: ChannelInboundHandler {
                 try childChannel.pipeline.syncOperations.addHandler(collector)
             }
         }
+        promise.futureResult.whenSuccess { _ in
+            print("[ssh-loopback] client.session createChannel succeeded")
+        }
         promise.futureResult.whenFailure { error in
+            print("[ssh-loopback] client.session createChannel failed: \(error)")
             completePromise.fail(error)
         }
     }
@@ -372,8 +382,13 @@ private final class LoopbackExecCollector: ChannelDuplexHandler {
     }
 
     func channelActive(context: ChannelHandlerContext) {
+        print("[ssh-loopback] client.collector.channelActive — sending exec '\(command)'")
         let execRequest = SSHChannelRequestEvent.ExecRequest(command: command, wantReply: true)
+        context.triggerUserOutboundEvent(execRequest).whenSuccess { _ in
+            print("[ssh-loopback] client.collector exec triggered")
+        }
         context.triggerUserOutboundEvent(execRequest).whenFailure { error in
+            print("[ssh-loopback] client.collector exec failed: \(error)")
             self.completePromise.fail(error)
             context.close(promise: nil)
         }
@@ -382,8 +397,10 @@ private final class LoopbackExecCollector: ChannelDuplexHandler {
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let channelData = self.unwrapInboundIn(data)
         guard channelData.type == .channel, case .byteBuffer(var bytes) = channelData.data else {
+            print("[ssh-loopback] client.collector.channelRead non-channel-bytes type=\(channelData.type)")
             return
         }
+        print("[ssh-loopback] client.collector.channelRead bytes=\(bytes.readableBytes)")
         if collected == nil {
             collected = bytes
         } else {
@@ -392,6 +409,8 @@ private final class LoopbackExecCollector: ChannelDuplexHandler {
     }
 
     func channelInactive(context: ChannelHandlerContext) {
+        let n = collected?.readableBytes ?? 0
+        print("[ssh-loopback] client.collector.channelInactive collected=\(n)")
         if let buffer = collected {
             let str = buffer.getString(at: buffer.readerIndex, length: buffer.readableBytes) ?? ""
             completePromise.succeed(str)
