@@ -324,7 +324,7 @@ struct SessionClientTests {
         ))
     }
 
-    @Test("@spec IOS-6.5: When the iOS client receives a leadership-claim event (the first keystroke, the first pinch-begin gesture, or the first long-press-begin gesture on the terminal pane), the client shall set `isSizeLeader = true` and send a `WebControlEnvelope.resize(cols, rows)` to the server with its last-measured viewport. A passive tap shall not claim leadership.")
+    @Test("@spec IOS-6.5: When the iOS client receives a leadership-claim event (the first keystroke, the first pinch-begin gesture above the IOS-6.11 scale threshold, or the first long-press-begin gesture on the terminal pane), the client shall set `isSizeLeader = true` and send a `WebControlEnvelope.resize(cols, rows)` to the server with its last-measured viewport. Subsequent libghostty-reported layout changes shall be forwarded to the server. A passive tap shall not claim leadership.")
     func pinchGestureClaimsLeadership() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })

@@ -619,6 +619,11 @@ struct SingleSessionView: View {
         }
     }
 
+    /// @spec IOS-6.10
+    /// Freeze-on-claim guard: once `client.isSizeLeader` is true, this
+    /// reconciler stops driving the font. The currently-applied font
+    /// (override or base) remains the leader's baseline. Removing this
+    /// guard would regress IOS-6.10.
     private func reconcileFontOverride(
         client: SessionClient,
         controller: TerminalController,
