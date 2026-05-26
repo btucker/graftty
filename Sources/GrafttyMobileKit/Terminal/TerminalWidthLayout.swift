@@ -2,49 +2,57 @@
 import CoreGraphics
 
 /// Pure decision: given the iOS container's width, the server-announced
-/// grid width (may be nil before the first `grid` control frame), and
-/// the current cell width in points, should the terminal pane render at
-/// container width, or be wrapped in a horizontal ScrollView sized to
-/// the server's full grid?
+/// grid width, the configured (iOS-scaled) font size, and (optionally) a
+/// real font-aspect measurement from libghostty's resize callback,
+/// should the terminal pane render at the configured font or under a
+/// font-size override sized so `serverCols × cellWidth ≤ containerWidth`?
 ///
-/// The `frameWidth` returned by `.scrollable` MUST equal
-/// `serverCols * cellWidth` — that's the invariant libghostty relies on.
-/// Its VT parser computes its own internal column count as
-/// `frame.width / realCellWidth`, so feeding it a frame sized with the
-/// real cell width lets it run at exactly `serverCols` and the server's
-/// output flows through without internal line-wrapping.
+/// The aspect-ratio assumption matters: if it's wrong, libghostty's VT
+/// parser may wrap lines internally. When `measuredCellWidthPoints` and
+/// `measuredAtFontSize` are provided (both > 0), the decision uses
+/// `aspect = measuredCellWidthPoints / measuredAtFontSize`. Otherwise it
+/// falls back to `PanePreviewFontSizing.monospaceAspect` (0.6), which
+/// matches the project's default fonts but undersizes for fonts whose
+/// actual aspect exceeds ~0.632.
 public enum TerminalWidthLayout {
-    /// Fallback cell width for the one-frame gap before libghostty's
-    /// first resize callback lands. Chosen to overshoot realistic cell
-    /// widths for iOS-scale fonts — a too-wide frame just scrolls a few
-    /// empty cells, a too-narrow one makes the VT parser wrap.
-    public static let fallbackCellWidth: CGFloat = 7.0
+    static let fallbackAspect: CGFloat = CGFloat(PanePreviewFontSizing.monospaceAspect)
+    static let safetyScale: CGFloat = CGFloat(PanePreviewFontSizing.safetyScale)
+    static let minimumFontSize: Float = PanePreviewFontSizing.minimumFontSize
 
     public enum Decision: Equatable {
-        /// No horizontal scroll — pane takes the container width.
-        case fits
-        /// Wrap in a horizontal ScrollView with the pane pinned to this width.
-        case scrollable(frameWidth: CGFloat)
+        case useConfigFont
+        case fitFont(pointSize: Float)
     }
 
     public static func decide(
         containerWidth: CGFloat,
         serverCols: UInt16?,
-        cellWidth: CGFloat,
+        configFontSize: Float,
+        measuredCellWidthPoints: CGFloat?,
+        measuredAtFontSize: Float?,
         isLeader: Bool
     ) -> Decision {
-        // IOS-5.6: leader owns cols; `serverCols` may be stale mid
-        // resize round-trip and must not pin the layout.
-        if isLeader { return .fits }
-        guard let serverCols, serverCols > 0, cellWidth > 0 else {
-            return .fits
+        if isLeader { return .useConfigFont }
+        guard let serverCols, serverCols > 0, containerWidth > 0 else {
+            return .useConfigFont
         }
-        let visibleCols = containerWidth / cellWidth
-        let server = CGFloat(serverCols)
-        // +0.5 tolerance: don't flip into scroll mode for sub-pixel mismatches
-        // between estimated visibleCols and libghostty's rounding.
-        guard server > visibleCols + 0.5 else { return .fits }
-        return .scrollable(frameWidth: server * cellWidth)
+
+        let aspect: CGFloat
+        if let measuredCellWidthPoints,
+           let measuredAtFontSize,
+           measuredCellWidthPoints > 0,
+           measuredAtFontSize > 0 {
+            aspect = measuredCellWidthPoints / CGFloat(measuredAtFontSize)
+        } else {
+            aspect = Self.fallbackAspect
+        }
+
+        let targetCellWidth = (containerWidth / CGFloat(serverCols)) * Self.safetyScale
+        let targetFontSize = Float(targetCellWidth / aspect)
+        if targetFontSize >= configFontSize {
+            return .useConfigFont
+        }
+        return .fitFont(pointSize: max(Self.minimumFontSize, targetFontSize))
     }
 }
 #endif

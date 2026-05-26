@@ -42,6 +42,7 @@
 		959E08934ACAF3DEEE251931 /* PinnedHostStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43512CF737A58622F747D84F /* PinnedHostStoreTests.swift */; };
 		9869112A7E35C04E54A7395A /* KeyboardFrameInsetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98C28B7B9FD4CB73021407F1 /* KeyboardFrameInsetTests.swift */; };
 		9FC5E92497F5755C7182F797 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 2E297959F982E90ED939C39C /* LaunchScreen.storyboard */; };
+		A4728892B4B24D5A7BBD8712 /* SSHNIOTransportUnitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC0DCD66C68CA001206BFDA5 /* SSHNIOTransportUnitTests.swift */; };
 		A63A9ED30E91C1F8ADE5E21F /* RemoteHostConnectionLoopbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAE37F91AA547A6F65922B34 /* RemoteHostConnectionLoopbackTests.swift */; };
 		AA14A2ACD895768E8B7A2E2B /* HostControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */; };
 		B803FA26B311180F52B5B40D /* HostPickerViewCallbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A1E0255EB1F41513A753E8A /* HostPickerViewCallbackTests.swift */; };
@@ -100,10 +101,10 @@
 		8F512E9DFA7D7EC060D47EAD /* HostStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostStoreTests.swift; sourceTree = "<group>"; };
 		911E37CB1354D7E59EAA1D7E /* SignalingClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignalingClientTests.swift; sourceTree = "<group>"; };
 		91C85B2EFEF3B277843C1777 /* SurfaceProxyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfaceProxyTests.swift; sourceTree = "<group>"; };
+		958D79DB4A2342B3CD1DE350 /* terminal-width */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "terminal-width"; path = ../..; sourceTree = SOURCE_ROOT; };
 		95D1019D3F14627D0AFFE97D /* WorktreeDetailPreviewPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeDetailPreviewPolicyTests.swift; sourceTree = "<group>"; };
 		98C28B7B9FD4CB73021407F1 /* KeyboardFrameInsetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardFrameInsetTests.swift; sourceTree = "<group>"; };
 		9EE4B20F3DAFB771A60100B3 /* WorktreePickerRefreshContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreePickerRefreshContractTests.swift; sourceTree = "<group>"; };
-		A271A48A8D911893C429E2F9 /* webrtc-next-phase */ = {isa = PBXFileReference; lastKnownFileType = folder; name = "webrtc-next-phase"; path = ../..; sourceTree = SOURCE_ROOT; };
 		A9D9235F4AB2E4D6E89AEE13 /* SessionReconnectTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionReconnectTests.swift; sourceTree = "<group>"; };
 		AB040F5D6FAA7EDA4C09F34F /* SessionLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLifecycleTests.swift; sourceTree = "<group>"; };
 		B421842EC5E85ACEB8C2D2BD /* ClientIdentityStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientIdentityStoreTests.swift; sourceTree = "<group>"; };
@@ -118,6 +119,7 @@
 		EAE37F91AA547A6F65922B34 /* RemoteHostConnectionLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteHostConnectionLoopbackTests.swift; sourceTree = "<group>"; };
 		F263C2F1D739C0FD226B2AE7 /* SSHOverWebRTCLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHOverWebRTCLoopbackTests.swift; sourceTree = "<group>"; };
 		F9BE28EEA6673202992718AC /* CreateWorktreeClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CreateWorktreeClientTests.swift; sourceTree = "<group>"; };
+		FC0DCD66C68CA001206BFDA5 /* SSHNIOTransportUnitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHNIOTransportUnitTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -242,6 +244,7 @@
 			isa = PBXGroup;
 			children = (
 				3A376ADDA2C1C0AE92E8A32A /* SSHAuthLoopbackTests.swift */,
+				FC0DCD66C68CA001206BFDA5 /* SSHNIOTransportUnitTests.swift */,
 				F263C2F1D739C0FD226B2AE7 /* SSHOverWebRTCLoopbackTests.swift */,
 			);
 			path = SSH;
@@ -301,7 +304,7 @@
 		EBBD8BB4335B09E0E1E21C3F /* Packages */ = {
 			isa = PBXGroup;
 			children = (
-				A271A48A8D911893C429E2F9 /* webrtc-next-phase */,
+				958D79DB4A2342B3CD1DE350 /* terminal-width */,
 			);
 			name = Packages;
 			sourceTree = "<group>";
@@ -431,6 +434,7 @@
 				4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */,
 				16F9774F4AD6CAB9EB7BA47C /* RootViewSizeClassTests.swift in Sources */,
 				C8AA7E89906CC0B63A14525D /* SSHAuthLoopbackTests.swift in Sources */,
+				A4728892B4B24D5A7BBD8712 /* SSHNIOTransportUnitTests.swift in Sources */,
 				BEBC88F085DA6FBD0AE1B164 /* SSHOverWebRTCLoopbackTests.swift in Sources */,
 				4FC268572A822F79E5CBF517 /* SessionClientTests.swift in Sources */,
 				03C55D51794BAB7E1C6C722A /* SessionIdleRendererTests.swift in Sources */,

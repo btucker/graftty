@@ -4,6 +4,22 @@ import NIO
 import NIOEmbedded
 import WebRTC
 
+/// Test seam: anything `OutboundRelayHandler` actually needs from
+/// `RTCDataChannel`. Production wraps the concrete WebRTC type;
+/// unit tests can substitute a stub that simulates `sendData`
+/// returning false.
+internal protocol DataChannelSink: AnyObject {
+    var sinkReadyState: RTCDataChannelState { get }
+    func sinkSend(_ buffer: RTCDataBuffer) -> Bool
+    func sinkClose()
+}
+
+extension RTCDataChannel: DataChannelSink {
+    var sinkReadyState: RTCDataChannelState { readyState }
+    func sinkSend(_ buffer: RTCDataBuffer) -> Bool { sendData(buffer) }
+    func sinkClose() { close() }
+}
+
 /// Adapter that bridges WebRTC's `RTCDataChannel` (a message-stream API)
 /// to a swift-nio `Channel` (a byte-stream API) so that handlers like
 /// `NIOSSHHandler` can run over an SCTP-backed DataChannel.
@@ -96,6 +112,24 @@ public final class SSHNIOTransport: @unchecked Sendable {
     /// Set once the channel has been closed so late `start()` callers
     /// fail fast rather than hang on a never-fired open callback.
     private var closed: Bool = false
+    /// Inbound DataChannel messages that arrived AFTER the SDK callback
+    /// fired but BEFORE the embedded channel became active via
+    /// `fireChannelActive`. WebRTC dispatches `didReceiveMessageWith` on
+    /// its own serial queue, so for an `RTCDataChannel` that is already
+    /// `.open` when this transport is constructed, the first inbound
+    /// message can race the embedded channel's `connect(to:)` — if
+    /// `deliverInbound` runs before `fireChannelActive`, `isActive` is
+    /// still false and the bytes would be silently lost. We buffer them
+    /// here and replay on `fireChannelActive`.
+    private var pendingInbound: [Data] = []
+
+    /// Hard cap on `pendingInbound` total bytes. If the peer sends bytes
+    /// faster than `start()` is called, we close the transport rather
+    /// than grow memory unbounded. 1 MiB is well above the worst-case
+    /// SSH banner+KEX+userauth handshake (~5–10 KB) and large enough
+    /// that legitimate slow-start scenarios don't trip it.
+    private static let pendingInboundByteCap: Int = 1 * 1024 * 1024
+    private var pendingInboundByteCount: Int = 0
 
     public init(dataChannel: RTCDataChannel) {
         self.dataChannel = dataChannel
@@ -116,7 +150,7 @@ public final class SSHNIOTransport: @unchecked Sendable {
         // the DataChannel rather than letting it accumulate in the
         // embedded core's pendingOutboundBuffer.
         let relay = OutboundRelayHandler(
-            dataChannel: dataChannel,
+            sink: dataChannel,
             mtu: Self.mtu
         )
         // Add the relay and register the channel synchronously. The
@@ -223,6 +257,22 @@ public final class SSHNIOTransport: @unchecked Sendable {
         // silently diverge from the `connect`-completed state shape.
         let address = try! SocketAddress(unixDomainSocketPath: "graftty-ssh")
         embedded.connect(to: address, promise: nil)
+        // Drain any inbound messages that arrived while the embedded
+        // channel was still inactive. See `pendingInbound` for the
+        // race this prevents.
+        flushPendingInbound()
+    }
+
+    private func flushPendingInbound() {
+        guard !pendingInbound.isEmpty, embedded.isActive else { return }
+        for data in pendingInbound {
+            var buffer = embedded.allocator.buffer(capacity: data.count)
+            buffer.writeBytes(data)
+            embedded.pipeline.fireChannelRead(buffer)
+        }
+        embedded.pipeline.fireChannelReadComplete()
+        pendingInbound.removeAll()
+        pendingInboundByteCount = 0
     }
 
     private func handleDataChannelOpen() {
@@ -251,7 +301,30 @@ public final class SSHNIOTransport: @unchecked Sendable {
     }
 
     private func deliverInbound(_ data: Data) {
-        guard !closed, embedded.isActive else { return }
+        guard !closed else { return }
+        // Inbound bytes may arrive (via WebRTC's serial queue) before
+        // the consumer has called `start()` and the embedded channel
+        // has transitioned to active. Buffer them rather than dropping —
+        // `fireChannelActive` replays the buffer once the pipeline is
+        // ready. Without this, the SSH-over-WebRTC handshake hangs
+        // intermittently on CI: the server emits its banner the instant
+        // its transport starts, and on a fast peer that banner can
+        // reach the client's `deliverInbound` before
+        // `clientTransport.start()` has connected the embedded channel.
+        if !embedded.isActive {
+            pendingInboundByteCount += data.count
+            if pendingInboundByteCount > Self.pendingInboundByteCap {
+                // Bound memory: a peer flooding us before start() shall
+                // not OOM the host. Close the transport so the consumer
+                // sees a clean tear-down rather than silent memory growth.
+                pendingInbound.removeAll()
+                pendingInboundByteCount = 0
+                performClose()
+                return
+            }
+            pendingInbound.append(data)
+            return
+        }
         var buffer = embedded.allocator.buffer(capacity: data.count)
         buffer.writeBytes(data)
         // We're already on the testing loop (this is invoked from an
@@ -273,6 +346,11 @@ public final class SSHNIOTransport: @unchecked Sendable {
             startContinuation = nil
             continuation.resume(throwing: TransportError.closed)
         }
+        // Anything we never got around to delivering is dropped at
+        // close — the consumer is tearing down so the bytes have
+        // nowhere to go.
+        pendingInbound.removeAll()
+        pendingInboundByteCount = 0
         // Detach delegate callbacks so any late WebRTC-thread events
         // become no-ops. Delegate itself stays alive (we own it) and
         // remains assigned to the DataChannel — the SDK clears it on
@@ -294,6 +372,22 @@ public final class SSHNIOTransport: @unchecked Sendable {
         // function synchronous.
         embedded.close(promise: nil)
     }
+
+    /// Internal test seam: forces an inbound delivery as if WebRTC's
+    /// delegate had fired. Used by `SSHNIOTransportUnitTests` to
+    /// exercise the buffering cap without standing up a real
+    /// `RTCDataChannel` exchange.
+    internal func deliverInboundForTesting(_ data: Data) {
+        embeddedLoop.execute {
+            self.deliverInbound(data)
+        }
+    }
+
+    /// Internal test seam: returns the current byte-count of buffered
+    /// inbound data. For verifying the cap behavior.
+    internal var pendingInboundByteCountForTesting: Int {
+        pendingInboundByteCount
+    }
 }
 
 /// Pipeline-head outbound handler that diverts NIO `ByteBuffer` writes
@@ -306,15 +400,15 @@ public final class SSHNIOTransport: @unchecked Sendable {
 /// SSH framing is byte-stream oriented, so the receiver re-assembles
 /// transparently — NIOSSHHandler doesn't care about SCTP message
 /// boundaries.
-private final class OutboundRelayHandler: ChannelOutboundHandler, @unchecked Sendable {
+internal final class OutboundRelayHandler: ChannelOutboundHandler, @unchecked Sendable {
     typealias OutboundIn = ByteBuffer
     typealias OutboundOut = ByteBuffer
 
-    private let dataChannel: RTCDataChannel
+    private let sink: DataChannelSink
     private let mtu: Int
 
-    init(dataChannel: RTCDataChannel, mtu: Int) {
-        self.dataChannel = dataChannel
+    init(sink: DataChannelSink, mtu: Int) {
+        self.sink = sink
         self.mtu = mtu
     }
 
@@ -329,7 +423,7 @@ private final class OutboundRelayHandler: ChannelOutboundHandler, @unchecked Sen
             promise?.succeed(())
             return
         }
-        guard dataChannel.readyState == .open else {
+        guard sink.sinkReadyState == .open else {
             promise?.fail(ChannelError.ioOnClosedChannel)
             return
         }
@@ -343,12 +437,16 @@ private final class OutboundRelayHandler: ChannelOutboundHandler, @unchecked Sen
             // a bufferedAmountLowThreshold-driven write gate before
             // production use, otherwise a stalled receiver can OOM the
             // sender by ballooning the SCTP send buffer.
-            if !dataChannel.sendData(dcBuffer) {
-                // `sendData` returns false when the SCTP send buffer is
-                // full or the channel transitioned to closing. Surface
-                // it through the promise so the consumer's writeAndFlush
-                // future fails rather than silently dropping bytes.
+            if !sink.sinkSend(dcBuffer) {
+                // Partial-write: earlier slices have already shipped. We
+                // cannot safely send any more bytes via this DataChannel
+                // because the peer is mid-frame for an SSH packet and
+                // ANY further write would corrupt the stream. Close
+                // both ends so NIOSSHHandler tears down cleanly rather
+                // than parsing garbage.
                 promise?.fail(ChannelError.outputClosed)
+                sink.sinkClose()
+                context.close(mode: .all, promise: nil)
                 return
             }
             offset = end

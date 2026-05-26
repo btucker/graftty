@@ -37,12 +37,15 @@ struct HostManagedZmxBackendTests {
         #expect(session.writes() == [Data("abc".utf8)])
     }
 
-    @Test func receiveResizeCallbackForwardsGridSizeToStartedSession() throws {
+    @Test("Viewport callbacks before user input are buffered; the first user input flushes them, then later callbacks pass through (IOS-12.1).")
+    func receiveResizeCallbackForwardsGridSizeToStartedSessionOnlyAfterUserInputEngagement() throws {
         let session = FakeHostManagedSession()
         let backend = Self.makeBackend(session: session)
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         try backend.start(surface: Self.fakeSurface())
 
+        // IOS-12.1: pre-engagement viewport callbacks are recorded but not
+        // forwarded to the PTY. The pre-existing PTY dims persist.
         HostManagedZmxBackend.receiveResizeCallback(
             backend.userdataForTesting,
             132,
@@ -50,11 +53,26 @@ struct HostManagedZmxBackendTests {
             2112,
             1032
         )
+        #expect(session.resizes().isEmpty)
 
+        // First user input engages the attach and flushes the last viewport
+        // size — the PTY now adopts what libghostty has been measuring.
+        try backend.write(Data([0x68]))
         #expect(session.resizes() == [Resize(cols: 132, rows: 43)])
+
+        // Post-engagement viewport callbacks propagate immediately.
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            120,
+            40,
+            1440,
+            960
+        )
+        #expect(session.resizes() == [Resize(cols: 132, rows: 43), Resize(cols: 120, rows: 40)])
     }
 
-    @Test func resizeCallbackBeforeStartIsAppliedAfterSessionStarts() throws {
+    @Test("`start(surface:)` resets the engagement gate and discards stale pre-start viewport callbacks; nothing leaks to the PTY across attaches (IOS-12.1).")
+    func startResetsSilentGateAndDiscardsPreStartViewportCallbacks() throws {
         let session = FakeHostManagedSession()
         let backend = Self.makeBackend(session: session)
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
@@ -76,7 +94,15 @@ struct HostManagedZmxBackendTests {
 
         try backend.start(surface: Self.fakeSurface())
 
-        #expect(session.resizes() == [Resize(cols: 120, rows: 40)])
+        // IOS-12.1: start resets the engagement window. Pre-start viewport
+        // measurements are stale w.r.t. the new surface session and are
+        // dropped. No resize reaches the PTY without user input.
+        #expect(session.resizes().isEmpty)
+
+        // A user input alone does not synthesise a resize — there was no
+        // post-start viewport callback to flush.
+        try backend.write(Data([0x68]))
+        #expect(session.resizes().isEmpty)
     }
 
     @Test func receiveCallbacksIgnoreNilUserdataAndPointers() {
@@ -268,6 +294,73 @@ struct HostManagedZmxBackendTests {
         HostManagedZmxBackend.receiveResizeCallback(nil, 80, 24, 800, 600)
     }
 
+    @Test("@spec IOS-12.1: A fresh attach with a libghostty viewport callback but no user input shall not resize the zmx PTY. This is the Mac mirror of IOS-6.5 — the PTY's existing cols/rows persist across detach/reattach until the user engages.")
+    func reattachWithoutUserInputDoesNotResize() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+
+        // libghostty's pre-layout viewport callback fires with a small grid.
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            80,
+            24,
+            960,
+            576
+        )
+
+        #expect(session.resizes().isEmpty)
+    }
+
+    @Test("First user-input write after a silent-gated viewport callback flushes the queued size to the PTY as a single resize (IOS-12.1).")
+    func userInputFlushesPendingResize() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            80,
+            24,
+            960,
+            576
+        )
+        #expect(session.resizes().isEmpty)
+
+        try backend.write(Data([0x68]))   // 'h'
+
+        #expect(session.resizes() == [Resize(cols: 80, rows: 24)])
+    }
+
+    @Test("Once engaged by user input, every subsequent libghostty viewport callback propagates to the PTY as a resize (IOS-12.1).")
+    func postEngagementResizesArePropagated() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+
+        try backend.write(Data([0x68]))   // engagement, no queued resize
+
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            120,
+            40,
+            1440,
+            960
+        )
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            100,
+            40,
+            1200,
+            960
+        )
+
+        #expect(session.resizes() == [Resize(cols: 120, rows: 40), Resize(cols: 100, rows: 40)])
+    }
+
     @Test func defaultSessionFactoryReceivesInitialSizeFromBackend() throws {
         final class CapturingSession: HostManagedZmxSession {
             var startCount = 0
@@ -297,6 +390,58 @@ struct HostManagedZmxBackendTests {
         #expect(recorded.first??.rows == 43)
     }
 
+    @Test("`write(_:claimEngagement: false)` shall not flip attachState to .engaged — used by programmatic callers (extraInitialInput, typeText for splitPane/send-pane/agent nudges) that should not be treated as IOS-12.1 user input.")
+    func programmaticWriteDoesNotEngageGate() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+
+        // Queue a pre-engagement viewport.
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            132, 43, 2112, 1032
+        )
+        #expect(session.resizes().isEmpty)
+
+        // Programmatic write must NOT engage the gate — the queued resize stays unflushed.
+        try backend.write(Data("hello".utf8), claimEngagement: false)
+        #expect(session.resizes().isEmpty)
+        #expect(session.writes() == [Data("hello".utf8)])
+
+        // Real user input via the keystroke path DOES engage and flush.
+        try backend.write(Data([0x68]))
+        #expect(session.resizes() == [Resize(cols: 132, rows: 43)])
+    }
+
+    @Test("If `write` fails (e.g., backend is in `.idle` and `activeSession()` throws .notStarted), attachState shall remain `.silent` — the engagement gate flips only on writes that actually reached the PTY.")
+    func failedWriteDoesNotEngageGate() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        // Note: no start() — backend is in .idle.
+
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            132, 43, 2112, 1032
+        )
+
+        #expect(throws: HostManagedZmxBackend.Error.notStarted) {
+            try backend.write(Data("h".utf8))
+        }
+
+        // Start the backend now and engage with a real keystroke.
+        try backend.start(surface: Self.fakeSurface())
+        // The pre-start callback was wiped by start() per IOS-12.1.
+        // A fresh post-start callback shall trigger the flush.
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            80, 24, 960, 576
+        )
+        try backend.write(Data([0x68]))
+        #expect(session.resizes() == [Resize(cols: 80, rows: 24)])
+    }
+
     private static func makeBackend(session: FakeHostManagedSession) -> HostManagedZmxBackend {
         HostManagedZmxBackend(
             spawnConfiguration: spawnConfiguration(),
@@ -324,6 +469,49 @@ struct HostManagedZmxBackendTests {
         let thread = Thread(block: body)
         thread.start()
         return thread
+    }
+
+    @Test("When two threads race to `write` after a silent-gated viewport callback, the engagement-flush resize shall land at the PTY before the write bytes do — there shall be no interleaving where bytes hit the PTY at the pre-flush dims.")
+    func engagementFlushResizeOrdersBeforeConcurrentWriteBytes() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            132, 43, 2112, 1032
+        )
+
+        let barrier = DispatchSemaphore(value: 0)
+        let done = DispatchSemaphore(value: 0)
+        var threadAFinished = false
+        var threadBFinished = false
+
+        // Thread A enters write first; the engagement flush should serialize
+        // the resize ahead of any other thread's write.
+        Self.runOnDedicatedThread {
+            try? backend.write(Data("a".utf8))
+            threadAFinished = true
+            barrier.signal()
+        }
+        // Thread B races in — once A's markUserInput sets attachState=.engaged,
+        // B's markUserInput is a no-op so B proceeds to its write.
+        Self.runOnDedicatedThread {
+            // Tiny stagger so A enters write first.
+            Thread.sleep(forTimeInterval: 0.001)
+            try? backend.write(Data("b".utf8))
+            threadBFinished = true
+            done.signal()
+        }
+
+        barrier.wait()
+        done.wait()
+        #expect(threadAFinished)
+        #expect(threadBFinished)
+
+        #expect(session.resizes() == [Resize(cols: 132, rows: 43)])
+        #expect(session.writes().count == 2)
     }
 }
 

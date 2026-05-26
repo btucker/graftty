@@ -134,14 +134,14 @@ struct IosTodo {
     func ios_6_2() async throws { }
 
     @Test("""
-@spec IOS-6.5: On the first user keystroke within a session, the iOS client shall claim size-leadership by sending its last-measured viewport `(cols, rows)` to the server via a `WebControlEnvelope.resize` frame. Subsequent libghostty-reported layout changes shall be forwarded to the server. Before this moment, layout-driven resize callbacks shall be memoized but not sent, so the Mac pane's `TIOCGWINSZ` dictates the PTY's dimensions and `IOS-5.6`'s scroll-view path governs rendering.
-""", .disabled("not yet implemented"))
-    func ios_6_5() async throws { }
-
-    @Test("""
 @spec IOS-6.6: While a terminal pane is focused on iOS, ordinary software-keyboard text shall be captured by GrafttyMobile's own `UIKeyInput` responder and forwarded to the remote PTY as raw UTF-8 bytes via `SessionClient.sendSoftwareKeyboardText(_:)`, rather than through libghostty's `TerminalSurface.sendText(_:)` path. A single software-keyboard newline shall be translated to CR (`0x0D`) per `IOS-6.3`, and software-keyboard delete shall send DEL (`0x7F`). This prevents normal typing from being wrapped in bracketed-paste delimiters (`ESC [ 200 ~` / `ESC [ 201 ~`) that prompt-driven TUIs can display as stray `[200~` text.
 """, .disabled("not yet implemented"))
     func ios_6_6() async throws { }
+
+    @Test("""
+@spec IOS-6.10: When the iOS client claims size-leadership (per `IOS-6.5`), the font size currently applied to the terminal controller shall remain in effect as the new baseline — including any active auto-fit override from `IOS-5.6` / `IPAD-2.5`. The application shall stop driving the font from `TerminalWidthLayout.decide` for that session from that point forward; libghostty's pinch-to-zoom (`IOS-6.8`) shall mutate font from this baseline.
+""", .disabled("covered structurally by RootView.reconcileFontOverride's `guard !client.isSizeLeader` gate — promote to a real test once a UI-level harness exists"))
+    func ios_6_10() async throws { }
 
     @Test("""
 @spec IOS-8.1: The v1 iOS app shall not support connecting to non-Graftty SSH/mosh hosts.

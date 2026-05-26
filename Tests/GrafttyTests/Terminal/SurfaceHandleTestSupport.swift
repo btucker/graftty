@@ -141,6 +141,16 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
         writes.append(data)
     }
 
+    func write(_ data: Data, claimEngagement: Bool) throws {
+        // Tests don't assert on the engagement flag; forward to the
+        // no-arg path so existing fixtures still see writes in `writes`.
+        try write(data)
+    }
+
+    func withProgrammaticInput(_ body: () -> Void) {
+        body()
+    }
+
     func close() {
         closeCount += 1
     }

@@ -183,6 +183,15 @@ struct SingleSessionView: View {
     /// container so the SwiftUI control-bar buttons can cancel an
     /// active selection per IOS-11.7.
     @State private var paneContainerBox = TerminalContainerBox()
+    /// The iOS-scaled Mac ghostty config used to build `controller`.
+    /// Cached so the not-leader auto-fit path (IOS-5.6) can re-apply
+    /// the base config or a font-size override without re-fetching.
+    @State private var baseConfigText: String?
+    /// Last font-size override applied via TerminalWidthLayout.decide while
+    /// not-leader, so we can detect transitions (e.g. base ↔ override) and
+    /// avoid pointlessly rebuilding the controller config on every layout
+    /// tick. Set to nil while the base config is in effect.
+    @State private var liveFontOverride: Float?
 
     private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
 
@@ -289,6 +298,7 @@ struct SingleSessionView: View {
                 if controller == nil {
                     preferredStyle = GhosttyConfigFetcher.preferredInterfaceStyle(for: text)
                     controller = MobileTerminalControllerFactory.make(configText: text)
+                    baseConfigText = text
                 }
             }
             .onDisappear {
@@ -518,12 +528,10 @@ struct SingleSessionView: View {
         .padding(.bottom, 8)
     }
 
-    /// The terminal body, wrapped in a horizontal ScrollView only when
-    /// the server's grid is wider than the container can render at
-    /// libghostty's actual cell width. The inner TerminalPaneView takes
-    /// the full server-grid width so libghostty's VT parser renders
-    /// every column faithfully — a narrower frame would make its VT
-    /// parser wrap lines at `frame.width / realCellWidth < serverCols`.
+    /// The terminal body. While not the size-leader, applies a font-size
+    /// override to the controller via `reconcileFontOverride` so that
+    /// `serverCols × cellWidth ≤ containerWidth` and the pane renders at
+    /// the full container width with no horizontal ScrollView (IOS-5.6).
     @ViewBuilder
     private func terminalContent(containerSize: CGSize) -> some View {
         if let controller, let client {
@@ -567,22 +575,107 @@ struct SingleSessionView: View {
                 }
                 client.sendPaste(text)
             },
+            onLeadershipClaimGesture: { [weak client] in
+                client?.claimLeadershipIfNeeded()
+            },
             captureContainer: { [paneContainerBox] view in paneContainerBox.view = view }
         )
-        let cellWidth = client.cellWidthPoints ?? TerminalWidthLayout.fallbackCellWidth
+        pane
+            .task(id: FontFitKey(
+                containerWidth: containerSize.width,
+                serverCols: client.serverGrid?.cols,
+                isLeader: client.isSizeLeader,
+                baseConfig: baseConfigText
+            )) {
+                reconcileFontOverride(
+                    client: client,
+                    controller: controller,
+                    containerWidth: containerSize.width
+                )
+            }
+    }
+
+    private struct FontFitKey: Hashable {
+        /// Whole-point bucket. SwiftUI delivers containerSize.width
+        /// values that jitter by sub-points across layout passes during
+        /// rotation / keyboard show-hide animations; rounding to whole
+        /// points keeps the `.task(id: FontFitKey)` body from re-firing
+        /// on micro-resizes that produce no perceptible layout change.
+        let containerWidthPoints: Int
+        let serverCols: UInt16?
+        let isLeader: Bool
+        let baseConfig: String?
+
+        init(
+            containerWidth: CGFloat,
+            serverCols: UInt16?,
+            isLeader: Bool,
+            baseConfig: String?
+        ) {
+            self.containerWidthPoints = Int(containerWidth.rounded())
+            self.serverCols = serverCols
+            self.isLeader = isLeader
+            self.baseConfig = baseConfig
+        }
+    }
+
+    /// @spec IOS-6.10
+    /// Freeze-on-claim guard: once `client.isSizeLeader` is true, this
+    /// reconciler stops driving the font. The currently-applied font
+    /// (override or base) remains the leader's baseline. Removing this
+    /// guard would regress IOS-6.10.
+    private func reconcileFontOverride(
+        client: SessionClient,
+        controller: TerminalController,
+        containerWidth: CGFloat
+    ) {
+        // Freeze-on-claim (IOS-6.10): once leader, stop driving the
+        // font. The auto-fit override applied just before claim remains
+        // in effect as the user's new baseline. The user can adjust
+        // from here via libghostty's built-in pinch-to-zoom (IOS-6.8) —
+        // there is intentionally no automatic path back to base config
+        // because reverting it would invalidate the cols-the-server-saw
+        // at the moment of claim.
+        guard !client.isSizeLeader else { return }
+        guard let baseConfig = baseConfigText else { return }
+        let configSize = Float(
+            GhosttyConfigFetcher.lastFontSize(in: baseConfig)
+                ?? GhosttyConfigFetcher.defaultIOSFontSize
+        )
+
+        // The font size currently applied to the controller — either the
+        // live override or the base config size. We pair this with
+        // libghostty's reported cellWidthPoints to derive the real
+        // monospace aspect of the currently-installed font.
+        let measuredAt: Float = liveFontOverride ?? configSize
+
         let decision = TerminalWidthLayout.decide(
-            containerWidth: containerSize.width,
+            containerWidth: containerWidth,
             serverCols: client.serverGrid?.cols,
-            cellWidth: cellWidth,
-            isLeader: client.isSizeLeader
+            configFontSize: configSize,
+            measuredCellWidthPoints: client.cellWidthPoints,
+            measuredAtFontSize: measuredAt,
+            isLeader: false
         )
         switch decision {
-        case .fits:
-            pane
-        case let .scrollable(frameWidth):
-            ScrollView(.horizontal, showsIndicators: true) {
-                pane.frame(width: frameWidth, height: containerSize.height)
-            }
+        case .useConfigFont:
+            guard liveFontOverride != nil else { return }
+            controller.updateConfigSource(.generated(baseConfig))
+            liveFontOverride = nil
+        case let .fitFont(pointSize):
+            // Epsilon dedupe: pointSize is derived from a Double / Float
+            // chain that's sensitive to sub-pixel containerWidth drift.
+            // 0.05pt is well below any visible difference and prevents
+            // a thrash of `controller.updateConfigSource(...)` calls
+            // when the recomputed value differs only in low Float bits.
+            if let live = liveFontOverride, abs(live - pointSize) < 0.05 { return }
+            let overridden = MobileTerminalControllerFactory.appendingFontSizeOverride(
+                to: baseConfig,
+                fontSize: pointSize,
+                comment: "GrafttyMobile auto-fit — non-leader"
+            )
+            controller.updateConfigSource(.generated(overridden))
+            liveFontOverride = pointSize
         }
     }
 
