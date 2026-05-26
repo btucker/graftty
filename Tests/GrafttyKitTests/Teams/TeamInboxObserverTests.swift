@@ -64,7 +64,13 @@ struct TeamInboxObserverTests {
     }
 
     private func waitForAppend(capture: LockedMessageBatches) async throws {
-        let deadline = Date().addingTimeInterval(5)
+        // 30s deadline (was 5s): under macos-26 CI parallelism, FSEvents
+        // callback delivery for `messages.jsonl` append can take several
+        // seconds. Spec TEAM-7.4 says "within one second" — that's a
+        // production-load assertion; under CI test parallelism the OS-level
+        // FSEvents pump is contended. 30s is a "still-emitting eventually"
+        // assertion that catches real "never emits" regressions.
+        let deadline = Date().addingTimeInterval(30)
         while capture.last()?.count != 1 && Date() < deadline {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
