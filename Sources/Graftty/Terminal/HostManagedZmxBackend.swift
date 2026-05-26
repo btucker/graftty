@@ -31,6 +31,16 @@ final class HostManagedZmxBackend {
         case closed
     }
 
+    /// @spec IOS-12.1
+    /// Tracks user engagement since the most recent attach. While `.silent`,
+    /// libghostty viewport callbacks do not propagate to the zmx PTY — the
+    /// PTY's existing dims persist. The first user input flips to `.engaged`
+    /// and flushes any queued resize.
+    private enum AttachState {
+        case silent
+        case engaged
+    }
+
     private struct PendingResize {
         let cols: UInt16
         let rows: UInt16
@@ -44,7 +54,13 @@ final class HostManagedZmxBackend {
         // Host-managed input that arrives before the PTY session is running is
         // intentionally dropped. SurfaceHandle sends explicit extraInitialInput
         // with write(_:) after start succeeds.
-        try? backend.write(data)
+        //
+        // IOS-12.1: when the caller is currently inside a
+        // `withProgrammaticInput` scope (e.g. `SurfaceHandle.pressReturn`
+        // invoked from the send-pane IPC), the bytes libghostty emits
+        // for the synthesized key event should NOT engage the silent
+        // gate — they're automation, not a human keystroke.
+        try? backend.write(data, claimEngagement: !backend.isProgrammaticInputActive)
     }
 
     static let receiveResizeCallback: ghostty_surface_receive_resize_cb = { userdata, cols, rows, _, _ in
@@ -62,7 +78,15 @@ final class HostManagedZmxBackend {
     private var lifecycle: Lifecycle = .idle
     private var session: HostManagedZmxSession?
     private var pendingResize: PendingResize?
+    private var attachState: AttachState = .silent
+    private var lastSilentResize: PendingResize?
     private var userdataPointer: UnsafeMutableRawPointer!
+
+    /// Reentrant counter tracking active `withProgrammaticInput` scopes.
+    /// While > 0, `receiveBufferCallback` treats the inbound bytes as
+    /// automation and passes `claimEngagement: false` to `write`.
+    /// IOS-12.1.
+    private var programmaticInputDepth: Int = 0
 
     init(
         spawnConfiguration: ZmxSpawnConfiguration,
@@ -110,6 +134,14 @@ final class HostManagedZmxBackend {
         lock.lock()
         switch lifecycle {
         case .idle:
+            // IOS-12.1: each fresh attach starts gated. Until the user
+            // produces input on this surface we treat libghostty's viewport
+            // callbacks as advisory — we record the last reported size but
+            // do not propagate it to the zmx PTY. This avoids the
+            // post-reattach width drift caused by libghostty's pre-layout
+            // viewport callback shrinking the PTY.
+            attachState = .silent
+            lastSilentResize = nil
             lifecycle = .starting
             lock.unlock()
         case .starting, .running:
@@ -168,11 +200,61 @@ final class HostManagedZmxBackend {
         }
     }
 
-    func write(_ data: Data) throws {
+    /// Forward bytes to the zmx PTY.
+    ///
+    /// - Parameter claimEngagement: When `true` (default), this write
+    ///   counts as user input under IOS-12.1: the silent gate flips to
+    ///   `.engaged` AFTER the write succeeds, flushing any queued
+    ///   viewport size to the PTY. Programmatic call sites (initial
+    ///   `extraInitialInput`, `typeText` from `splitPane`/`send-pane`,
+    ///   the idle-agent nudge writer) pass `false` so they don't
+    ///   silently claim a user-input contract they don't represent.
+    func write(_ data: Data, claimEngagement: Bool = true) throws {
         guard !data.isEmpty else { return }
 
         let currentSession = try activeSession()
         try currentSession.write(data)
+
+        // IOS-12.1: flip the gate only AFTER a successful write — a write
+        // that throws `notStarted` or fails inside the session shall not
+        // disengage the silent gate.
+        if claimEngagement {
+            markUserInput()
+        }
+    }
+
+    /// Runs `body` with the programmatic-input flag raised. Any bytes that
+    /// libghostty emits through `receiveBufferCallback` during `body` are
+    /// treated as automation (synthesized keys, programmatic clipboard
+    /// pastes, etc.) — they reach the PTY but do NOT flip IOS-12.1's
+    /// silent gate. Used by `SurfaceHandle.pressReturn(claimEngagement:
+    /// false)` so the Return synthesized for `graftty pane send … --enter`
+    /// matches the policy that the companion `typeText` write already
+    /// follows. Reentrant via a depth counter.
+    ///
+    /// Named `…Scope` (not `withProgrammaticInput`) so the protocol
+    /// witness in `SurfaceHandle.swift` can forward to it without
+    /// colliding with its own name.
+    func withProgrammaticInputScope<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        programmaticInputDepth += 1
+        lock.unlock()
+        defer {
+            lock.lock()
+            programmaticInputDepth -= 1
+            lock.unlock()
+        }
+        return try body()
+    }
+
+    /// Snapshot of `programmaticInputDepth > 0` used by
+    /// `receiveBufferCallback` to decide whether the imminent `write`
+    /// should engage the gate. Lock-protected so it stays coherent with
+    /// `withProgrammaticInput`'s increment/decrement on the same lock.
+    fileprivate var isProgrammaticInputActive: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return programmaticInputDepth > 0
     }
 
     func close() {
@@ -185,6 +267,10 @@ final class HostManagedZmxBackend {
         let currentSession = session
         session = nil
         pendingResize = nil
+        // No `attachState` / `lastSilentResize` reset here: `.closed` is
+        // terminal and `start()` rejects it (`Error.closed`), so there
+        // is no "next attach" on this instance. Per-process reattach is
+        // handled by constructing a fresh `HostManagedZmxBackend`.
         lock.unlock()
 
         currentSession?.close()
@@ -218,6 +304,16 @@ final class HostManagedZmxBackend {
         let currentSession: HostManagedZmxSession?
 
         lock.lock()
+        switch attachState {
+        case .silent:
+            // IOS-12.1: record but do not forward. The first user-input event
+            // will flush this to the PTY via `markUserInput()`.
+            lastSilentResize = PendingResize(cols: cols, rows: rows)
+            lock.unlock()
+            return
+        case .engaged:
+            break
+        }
         switch lifecycle {
         case .idle, .starting:
             pendingResize = PendingResize(cols: cols, rows: rows)
@@ -230,6 +326,41 @@ final class HostManagedZmxBackend {
         lock.unlock()
 
         try? currentSession?.resize(cols: cols, rows: rows)
+    }
+
+    /// Marks that the user has acted on the surface since the most recent
+    /// attach. The first call flushes any queued `lastSilentResize` so the
+    /// PTY syncs to libghostty's last-reported dims. IOS-12.1.
+    ///
+    /// The lock is held across the flush `resize` call so any concurrent
+    /// `write` on another thread cannot ship bytes to the PTY before the
+    /// flush lands — invariant: post-engagement bytes always see the
+    /// post-flush PTY dims.
+    private func markUserInput() {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard case .silent = attachState else { return }
+        attachState = .engaged
+        let flushResize = lastSilentResize
+        lastSilentResize = nil
+        switch lifecycle {
+        case .running:
+            if let flushResize {
+                // Holding the lock across `resize` serializes us with any
+                // concurrent `write`'s `activeSession()` lookup + session
+                // call. `resize` itself just issues a TIOCSWINSZ ioctl —
+                // milliseconds at most, no nested locking — so the
+                // contention window is bounded.
+                try? session?.resize(cols: flushResize.cols, rows: flushResize.rows)
+            }
+        case .idle, .starting:
+            if let flushResize {
+                pendingResize = flushResize
+            }
+        case .closed:
+            break
+        }
     }
 
     private func activeSession() throws -> HostManagedZmxSession {

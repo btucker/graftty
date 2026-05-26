@@ -56,8 +56,14 @@ protocol PaneInputSink: AnyObject {
 private final class SurfaceHandlePaneInputSink: PaneInputSink {
     let handle: SurfaceHandle
     init(handle: SurfaceHandle) { self.handle = handle }
-    func typeText(_ text: String) { handle.typeText(text) }
-    func pressReturn() { handle.pressReturn() }
+    /// Send-pane IPC is programmatic input arriving from another
+    /// process — leave the IOS-12.1 silent gate closed so the next
+    /// human keystroke at the target pane is what engages. Both the
+    /// text write and the synthesized Return must opt out: the Return
+    /// path also flows back through the zmx receive callback and
+    /// would otherwise flip the gate.
+    func typeText(_ text: String) { handle.typeText(text, claimEngagement: false) }
+    func pressReturn() { handle.pressReturn(claimEngagement: false) }
 }
 
 final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate {
@@ -2165,7 +2171,10 @@ struct GrafttyApp: App {
             return .error("split failed")
         }
         if let command, !command.isEmpty {
-            terminalManager.handle(for: newID)?.typeText(command + "\r")
+            // splitPane's `command` is automation, not a user keystroke
+            // on the newly-created surface — keep IOS-12.1's silent
+            // gate closed.
+            terminalManager.handle(for: newID)?.typeText(command + "\r", claimEngagement: false)
         }
         return .ok
     }
@@ -2790,7 +2799,10 @@ struct GrafttyApp: App {
         case .skip:
             return
         case .type(let trimmedCommand):
-            terminalManager.handle(for: terminalID)?.typeText(trimmedCommand + "\r")
+            // The default-command auto-injection runs once when a fresh
+            // pane's shell becomes ready — programmatic input, not a
+            // user keystroke. IOS-12.1's silent gate stays closed.
+            terminalManager.handle(for: terminalID)?.typeText(trimmedCommand + "\r", claimEngagement: false)
         }
     }
 
