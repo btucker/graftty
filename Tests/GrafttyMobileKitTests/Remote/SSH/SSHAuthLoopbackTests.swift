@@ -89,7 +89,11 @@ struct SSHAuthLoopbackTests {
                 trustedPeers: peerStore,
                 clientKey: clientKey,
                 expectedHostFingerprint: Self.fingerprint(of: serverKey),
-                clientOffersNothing: true
+                clientOffersNothing: true,
+                // Short deadline — NIOSSH doesn't surface "client out
+                // of methods" as a fast-fail error, so this test rides
+                // the wall-clock deadline as its success signal.
+                responseDeadline: .seconds(5)
             )
         }
     }
@@ -183,7 +187,11 @@ struct SSHAuthLoopbackTests {
                 serverKey: serverKey,
                 trustedPeers: peerStore,
                 clientKey: clientKey,
-                expectedHostFingerprint: Self.fingerprint(of: serverKey)
+                expectedHostFingerprint: Self.fingerprint(of: serverKey),
+                // Short deadline — NIOSSH doesn't surface "unpaired
+                // peer rejected" as a fast-fail; this test rides the
+                // wall-clock deadline as its success signal.
+                responseDeadline: .seconds(5)
             )
         }
     }
@@ -199,13 +207,20 @@ struct SSHAuthLoopbackTests {
     /// `clientOffersNothing == true` means the client immediately
     /// completes its userauth offer with `nil`, never proposing
     /// publickey. The handshake should fail.
+    /// `responseDeadline` is parameterized so negative tests
+    /// (`unpairedPeerRejected`, `nonPublicKeyMethodRejected`) — which
+    /// EXPECT to ride the wall-clock deadline as their success
+    /// condition since NIOSSH doesn't fast-fail those scenarios — can
+    /// pass a short value (5s) and finish promptly. Positive tests
+    /// keep a long value (180s) as defense against today's slow iOS CI.
     private func runAuthLoopback(
         serverKey: Curve25519.Signing.PrivateKey,
         trustedPeers: InMemoryTrustedPeerSet,
         clientKey: Curve25519.Signing.PrivateKey,
         expectedHostFingerprint: RemoteIdentityFingerprint,
         clientUsername: String = "graftty",
-        clientOffersNothing: Bool = false
+        clientOffersNothing: Bool = false,
+        responseDeadline: Duration = .seconds(180)
     ) async throws -> String {
         let offerer = LoopbackPeer(role: .offerer)
         let answerer = LoopbackPeer(role: .answerer)
@@ -314,7 +329,7 @@ struct SSHAuthLoopbackTests {
         // unknown) — they each take ~3 min in the worst case, comfortably
         // under the 15-min iOS CI step ceiling.
         let timeoutTask = Task {
-            try? await Task.sleep(for: .seconds(180))
+            try? await Task.sleep(for: responseDeadline)
             if !Task.isCancelled {
                 responsePromise.fail(LoopbackError.timedOut)
             }
