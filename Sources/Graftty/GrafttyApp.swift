@@ -325,18 +325,25 @@ struct GrafttyApp: App {
         let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
         let zmxExeCapture = zmxExe
         let zmxDirCapture = zmxDir
-        services.hostAgent = try? WebRTCHostAgent(
-            hostKey: hostIdentityStore.loadOrGenerateAndPersist(),
-            trustedPeerStore: trustedPeerStore,
-            streamFactory: { sessionName in
-                return try ZmxAttachStream(
-                    zmxExecutable: zmxExeCapture,
-                    zmxDir: zmxDirCapture,
-                    sessionName: sessionName,
-                    workingDirectory: nil
-                )
-            }
-        )
+        do {
+            services.hostAgent = WebRTCHostAgent(
+                hostKey: try hostIdentityStore.loadOrGenerateAndPersist(),
+                trustedPeerStore: trustedPeerStore,
+                streamFactory: { sessionName in
+                    return try ZmxAttachStream(
+                        zmxExecutable: zmxExeCapture,
+                        zmxDir: zmxDirCapture,
+                        sessionName: sessionName,
+                        workingDirectory: nil
+                    )
+                }
+            )
+        } catch {
+            // Identity-store I/O failure leaves hostAgent nil; the signaling
+            // endpoint will serve 503. Log so a TestFlight crash dump or
+            // console transcript surfaces the cause.
+            NSLog("[Graftty] failed to construct WebRTCHostAgent: \(error)")
+        }
     }
 
     /// If another Graftty process with our `CFBundleIdentifier` is
