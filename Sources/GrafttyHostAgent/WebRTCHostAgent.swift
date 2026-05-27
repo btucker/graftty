@@ -187,10 +187,7 @@ public actor WebRTCHostAgent {
         self.dataChannel = dc
         dc.delegate = dataChannelDelegate
         dataChannelDelegate.onOpen = { [weak self] in
-            Task { [weak self] in
-                guard let self else { return }
-                await self.installSSHHandler()
-            }
+            Task { await self?.installSSHHandler() }
         }
         dataChannelDelegate.onMessage = { [weak self] data in
             Task { await self?.recordReceivedBinary(data) }

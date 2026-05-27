@@ -90,7 +90,6 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
 
         case let winEvent as SSHChannelRequestEvent.WindowChangeRequest:
             guard let snapshot = stream else { return }
-            // terminalCharacterWidth and terminalRowHeight return Int directly.
             let cols = winEvent.terminalCharacterWidth
             let rows = winEvent.terminalRowHeight
             Task { [snapshot] in

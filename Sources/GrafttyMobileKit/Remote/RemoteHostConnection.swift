@@ -336,10 +336,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             self.openContinuation = continuation
             self.dataChannelDelegate.onOpen = { [weak self] in
-                Task { [weak self] in
-                    guard let self else { return }
-                    await self.installSSHHandlerAndResume()
-                }
+                Task { await self?.installSSHHandlerAndResume() }
             }
             // `onMessage` is installed up-front in `createOffer`, so we
             // do NOT re-install it here. The previous design installed

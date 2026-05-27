@@ -323,16 +323,14 @@ struct GrafttyApp: App {
         // `webController.setSignalingHandler(_:)` once @State is accessible.
         let hostIdentityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
         let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
-        let zmxExeCapture = zmxExe
-        let zmxDirCapture = zmxDir
         do {
             services.hostAgent = WebRTCHostAgent(
                 hostKey: try hostIdentityStore.loadOrGenerateAndPersist(),
                 trustedPeerStore: trustedPeerStore,
                 streamFactory: { sessionName in
-                    return try ZmxAttachStream(
-                        zmxExecutable: zmxExeCapture,
-                        zmxDir: zmxDirCapture,
+                    try ZmxAttachStream(
+                        zmxExecutable: zmxExe,
+                        zmxDir: zmxDir,
                         sessionName: sessionName,
                         workingDirectory: nil
                     )
