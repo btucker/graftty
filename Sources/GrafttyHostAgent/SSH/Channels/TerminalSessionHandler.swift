@@ -33,6 +33,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     private var ptyAccepted = false
     private var stream: TerminalByteStream?
     private var inboundForwardingTask: Task<Void, Never>?
+    private var isShuttingDown = false
 
     public init(streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream) {
         self.streamFactory = streamFactory
@@ -104,6 +105,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     }
 
     public func channelInactive(context: ChannelHandlerContext) {
+        isShuttingDown = true
         inboundForwardingTask?.cancel()
         let snapshot = stream
         stream = nil
@@ -125,7 +127,15 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
             do {
                 let stream = try await factory(sessionName)
                 loop.execute { [weak self] in
-                    guard let self else { return }
+                    guard let self else {
+                        Task { await stream.close() }
+                        return
+                    }
+                    if self.isShuttingDown {
+                        // Channel closed while factory was awaiting — clean up.
+                        Task { await stream.close() }
+                        return
+                    }
                     self.stream = stream
                     if wantReply {
                         pipeline.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)

@@ -10,8 +10,6 @@ final class TerminalSessionHandlerTests: XCTestCase {
 
     // MARK: - env + pty + shell -> attach
 
-    /// @spec R4-TSH-1: When GRAFTTY_SESSION env + pty-req + shell arrive in
-    /// order, the handler shall call streamFactory with the env value.
     func testShellCallsStreamFactoryWithEnvSessionName() throws {
         let factory = RecordingStreamFactory(returning: .success(EchoStream()))
         let channel = EmbeddedChannel()
@@ -29,8 +27,6 @@ final class TerminalSessionHandlerTests: XCTestCase {
         _ = try? channel.finish()
     }
 
-    /// @spec R4-TSH-2: If no GRAFTTY_SESSION env arrives before shell, the
-    /// handler shall reject shell and close the channel.
     func testShellWithoutEnvSessionNameRejected() throws {
         let factory = RecordingStreamFactory(returning: .success(EchoStream()))
         let channel = EmbeddedChannel()
@@ -48,9 +44,6 @@ final class TerminalSessionHandlerTests: XCTestCase {
 
     // MARK: - bytes round-trip
 
-    /// @spec R4-TSH-3: Bytes written to the channel shall forward to
-    /// stream.send(); bytes emitted by the stream's inboundBytes shall
-    /// write back out the channel.
     func testBytesRoundTripThroughStream() throws {
         let stream = EchoStream()
         let factory = RecordingStreamFactory(returning: .success(stream))
@@ -85,8 +78,6 @@ final class TerminalSessionHandlerTests: XCTestCase {
 
     // MARK: - window-change
 
-    /// @spec R4-TSH-4: When window-change channel request arrives after
-    /// shell, the handler shall forward cols/rows to stream.resize().
     func testWindowChangeForwardsToStream() throws {
         let stream = RecordingResizeStream()
         let factory = RecordingStreamFactory(returning: .success(stream))
@@ -118,8 +109,6 @@ final class TerminalSessionHandlerTests: XCTestCase {
 
     // MARK: - close
 
-    /// @spec R4-TSH-5: When the channel becomes inactive, the handler
-    /// shall call stream.close().
     func testChannelCloseClosesStream() throws {
         let stream = ClosableStream()
         let factory = RecordingStreamFactory(returning: .success(stream))
@@ -140,10 +129,36 @@ final class TerminalSessionHandlerTests: XCTestCase {
         XCTAssertTrue(stream.didClose)
     }
 
+    // MARK: - channelInactive race with factory
+
+    /// Channel that closes while streamFactory is awaiting must not leak
+    /// the freshly-obtained stream — channelInactive racing the factory
+    /// completion previously left stream un-closed.
+    func testChannelInactiveDuringFactoryAwaitClosesStream() throws {
+        let stream = ClosableStream()
+        // Slow factory so we can fire channelInactive before it returns.
+        let delayedFactory: @Sendable (String) async throws -> any TerminalByteStream = { _ in
+            try await Task.sleep(for: .milliseconds(100))
+            return stream
+        }
+        let channel = EmbeddedChannel()
+        let handler = TerminalSessionHandler(streamFactory: delayedFactory)
+        try channel.pipeline.syncOperations.addHandler(handler)
+
+        sendEnvRequest(channel: channel, name: "GRAFTTY_SESSION", value: "alpha")
+        sendPtyRequest(channel: channel, term: "xterm", cols: 80, rows: 24)
+        sendShellRequest(channel: channel)
+        // Fire channelInactive while the factory is still sleeping.
+        _ = try? channel.finish()
+
+        // Drain until the factory completes, loop.execute fires, and stream.close() is called.
+        drainAsync(channel: channel, until: { stream.didClose }, timeout: 3.0)
+
+        XCTAssertTrue(stream.didClose, "stream from factory must be closed when channel is already inactive")
+    }
+
     // MARK: - streamFactory throws
 
-    /// @spec R4-TSH-6: If streamFactory throws, the handler shall send
-    /// exit-status: 1 (as a user outbound event) and close the channel.
     func testStreamFactoryThrowsSendsExitStatusAndCloses() throws {
         let factory = RecordingStreamFactory(returning: .failure(FactoryError.notFound))
         let channel = EmbeddedChannel()
