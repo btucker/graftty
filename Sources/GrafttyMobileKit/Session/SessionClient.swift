@@ -47,11 +47,17 @@ public final class SessionClient {
     @ObservationIgnored
     internal var displayScale: CGFloat = UIScreen.main.scale
 
-    nonisolated private let webSocketFactory: @Sendable () -> WebSocketClient
+    nonisolated private let webSocketFactory: @Sendable () async throws -> WebSocketClient
     nonisolated internal let clock: any Clock
     nonisolated internal let backoffSchedule: [TimeInterval]
     @ObservationIgnored
     nonisolated(unsafe) private var ws: WebSocketClient?
+    /// Pending open of the current/next WS. `sendBinary` / `sendText`
+    /// await this so writes emitted before the factory resolves don't
+    /// silently drop. Replaced on every reconnect; nil while stopped or
+    /// before `start()` has run.
+    @ObservationIgnored
+    nonisolated(unsafe) private var wsReadyTask: Task<WebSocketClient?, Never>?
     private var receiveTask: Task<Void, Never>?
     private var stopped = false
     /// Last (cols, rows) libghostty reported for the iOS-side view.
@@ -137,7 +143,7 @@ public final class SessionClient {
 
     public init(
         sessionName: String,
-        webSocketFactory: @Sendable @escaping () -> WebSocketClient,
+        webSocketFactory: @Sendable @escaping () async throws -> WebSocketClient,
         clock: any Clock = SystemClock(),
         backoffSchedule: [TimeInterval] = HostController.backoffSchedule(attempts: 6),
         idleThreshold: TimeInterval = SessionClient.fullscreenIdleThreshold,
@@ -216,10 +222,21 @@ public final class SessionClient {
     public func start() {
         lastActivityAt = clock.now
         startIdleWatchdog()
-        ws = webSocketFactory()
+        // Eagerly install a Task that opens the first WS. Outbound
+        // writes that fire between `start()` returning and the factory
+        // resolving wait on `wsReadyTask` so they don't silently drop
+        // their bytes — important on the SSH-over-WebRTC path where
+        // opening an SSH child channel is genuinely async, and
+        // preserves the in-process test contract on the URL fallback
+        // path (factory there resolves without suspending so writes
+        // emitted right after `start()` still land).
+        let openTask = spawnOpenTask()
         receiveTask = Task { @MainActor [weak self] in
             guard let self else { return }
             var attempt = 0
+            // Wait for the eagerly-spawned open Task to finish so the
+            // receive loop sees a coherent `ws` snapshot.
+            _ = await openTask.value
             while !self.stopped {
                 if self.connectionState != .live {
                     self.connectionState = .live
@@ -257,9 +274,44 @@ public final class SessionClient {
                 } catch {
                     return
                 }
-                self.ws = self.webSocketFactory()
+                if self.stopped { return }
+                // Refresh `wsReadyTask` so outbound writes that fired
+                // during the backoff sleep are released as soon as the
+                // reconnect's WS is in place.
+                let reopenTask = self.spawnOpenTask()
+                _ = await reopenTask.value
             }
         }
+    }
+
+    /// Spawns a `@MainActor` Task that resolves the factory and assigns
+    /// the resulting WS to `self.ws`. Stores the task in `wsReadyTask`
+    /// so outbound writes (via `awaitWS()`) wait on it before sending.
+    /// On factory failure, `self.ws` is left nil; the receive loop
+    /// throws `cannotConnectToHost` and feeds the existing backoff
+    /// path. If `stop()` ran while the factory was pending, the
+    /// freshly-built WS is closed instead of being assigned so it
+    /// doesn't leak past the requested shutdown.
+    @MainActor
+    @discardableResult
+    private func spawnOpenTask() -> Task<WebSocketClient?, Never> {
+        let task: Task<WebSocketClient?, Never> = Task { @MainActor [weak self] in
+            guard let self else { return nil }
+            do {
+                let client = try await self.webSocketFactory()
+                if self.stopped {
+                    client.close()
+                    return nil
+                }
+                self.ws = client
+                return client
+            } catch {
+                self.ws = nil
+                return nil
+            }
+        }
+        self.wsReadyTask = task
+        return task
     }
 
     @MainActor
@@ -384,6 +436,8 @@ public final class SessionClient {
         stopped = true
         receiveTask?.cancel()
         receiveTask = nil
+        wsReadyTask?.cancel()
+        wsReadyTask = nil
         idleWatchdogTask?.cancel()
         idleWatchdogTask = nil
         ws?.close()
@@ -421,11 +475,35 @@ public final class SessionClient {
     }
 
     nonisolated private func sendBinary(_ data: Data) {
-        Task { [ws] in try? await ws?.send(.binary(data)) }
+        // Await the in-flight WS open so writes emitted before the
+        // factory resolves still land. On the synchronous URL path
+        // (`URLSessionWebSocketClient`) the open Task completes
+        // without suspending and this is effectively a no-op; on the
+        // SSH-over-WebRTC path the SSH child-channel open is genuinely
+        // async and this delay is what prevents the first keystroke
+        // from being silently dropped.
+        Task { [weak self] in
+            guard let ws = await self?.awaitWS() else { return }
+            try? await ws.send(.binary(data))
+        }
     }
 
     nonisolated private func sendText(_ text: String) {
-        Task { [ws] in try? await ws?.send(.text(text)) }
+        Task { [weak self] in
+            guard let ws = await self?.awaitWS() else { return }
+            try? await ws.send(.text(text))
+        }
+    }
+
+    /// Wait for the currently-pending `wsReadyTask` to finish (or
+    /// resolve immediately if `ws` is already set and no reconnect is
+    /// pending). Returns nil if `start()` hasn't run or the factory
+    /// failed.
+    nonisolated private func awaitWS() async -> WebSocketClient? {
+        if let pending = wsReadyTask {
+            return await pending.value
+        }
+        return ws
     }
 
     private func handleTextFrame(_ text: String) {
