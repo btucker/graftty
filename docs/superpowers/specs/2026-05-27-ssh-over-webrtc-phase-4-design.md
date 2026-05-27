@@ -107,7 +107,7 @@ One SSH session channel per attached pane. The iPad concurrency budget (`MobileS
 
 ## 7. Test strategy
 
-- **`SSHTerminalLoopbackTests.swift`** (iOS-only, real-PTY). Extends R3's `runAuthLoopback` infrastructure. Real `zmx daemon` in tmp dir, real `zmx attach` via the streamFactory closure, real `RTCPeerConnection` pair. Smoke: `printf 'hi\n' | cat` → expect `hi\n`. `.timeLimit(.minutes(1))` per R3 precedent.
+- **`SSHTerminalLoopbackTests.swift`** (iOS-only). Extends R3's `runAuthLoopback` infrastructure. Real `RTCPeerConnection` pair + real SSH stack; the `streamFactory` returns a fake echoing `TerminalByteStream` rather than spawning `zmx attach` (iOS Simulator doesn't have host binaries). Exercises the SSH wire end-to-end: env→pty→shell, bytes round-trip both directions, `window-change` forwarding, channel-close kills the stream. `.timeLimit(.minutes(3))` per R3 precedent (iOS CI variance). Real `zmx attach` integration is verified at the manual TestFlight gate, not in CI.
 - **`TerminalSessionHandlerTests.swift`** (Mac-runnable, embedded NIO channel). Unit tests for the handler against a fake `TerminalByteStream`. Confirms env→pty→shell parsing, `window-change` forwarding, channel-close kills the stream, factory-throws produces `exit-status: 1`.
 - **No mocking of SSH primitives or `zmx`** in the iOS loopback (parent design §13.2; user feedback `feedback_don't_mock_database`).
 - **macOS `swift test` is insufficient** for the loopback (UIKit-guarded). iOS Simulator via `xcodebuild` is the canonical CI gate, per `feedback_macos_swift_test_misses_uikit_guarded_code`.
