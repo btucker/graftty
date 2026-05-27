@@ -42,7 +42,11 @@ final class PollingTicker: PollingTickerLike {
         task = Task.detached { [weak self] in
             while !Task.isCancelled {
                 let isPaused = await self?.paused ?? true
-                if !isPaused {
+                // Re-check cancellation after the actor hop — without
+                // this, a cancel arriving during the `paused` lookup
+                // would still produce one more tick before the loop
+                // exits (CR-6).
+                if !isPaused && !Task.isCancelled {
                     await onTick()
                 }
                 await heart.sleepUntilPulseOrInterval(for: interval)
@@ -51,11 +55,16 @@ final class PollingTicker: PollingTickerLike {
     }
 
     func stop() {
+        // `task?.cancel()` now wakes the heart's in-flight sleep
+        // directly via the cancellation handler installed in
+        // `sleepUntilPulseOrInterval`, so the loop returns promptly
+        // instead of waiting up to a full interval.
         task?.cancel()
         task = nil
-        // Wake the heart's in-flight sleep so the cancelled polling
-        // loop can return promptly instead of waiting up to a full
-        // interval.
+        // Defensive belt-and-suspenders pulse: also kept as a
+        // deterministic wake path in case the cancellation handler
+        // races with the continuation install. Cheap, and the heart
+        // tolerates a redundant pulse.
         let heart = self.heart
         Task.detached { await heart.pulse() }
         removeObservers()
@@ -142,20 +151,56 @@ private actor PollingHeart {
         let myGeneration = generation
         let nanos = interval.components.seconds * 1_000_000_000
             + interval.components.attoseconds / 1_000_000_000
-        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-            self.continuation = c
-            DispatchQueue.global().asyncAfter(
-                deadline: .now() + .nanoseconds(Int(nanos))
-            ) { [weak self] in
-                Task { [weak self] in
-                    await self?.timerFired(generation: myGeneration)
+
+        // `withTaskCancellationHandler` wraps the continuation so a
+        // cancel arriving on the outer Task wakes the sleep directly
+        // via `cancellationFired()`. Without this, `withCheckedContinuation`
+        // is unresponsive to cancellation and `stop()` would only halt
+        // the loop when the GCD timer (or the defensive pulse) fired —
+        // up to a full interval later under executor pressure.
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                // If cancellation arrived between the actor hop into
+                // this method and now, resume immediately rather than
+                // parking. The `onCancel` handler may have already run
+                // and found `continuation == nil`, so we must check
+                // here too.
+                if Task.isCancelled {
+                    c.resume()
+                    return
+                }
+                self.continuation = c
+                DispatchQueue.global().asyncAfter(
+                    deadline: .now() + .nanoseconds(Int(nanos))
+                ) { [weak self] in
+                    Task { [weak self] in
+                        await self?.timerFired(generation: myGeneration)
+                    }
                 }
             }
+            // Either pulse resumed us, the timer did, or cancellation
+            // did. In all cases the pulse signal (if any) has been
+            // consumed by this iteration; the next call starts fresh.
+            pulsePending = false
+        } onCancel: {
+            // `onCancel` runs synchronously on the cancelling executor,
+            // not on this actor's executor — hop back to safely touch
+            // the continuation.
+            Task { [weak self] in
+                await self?.cancellationFired()
+            }
         }
-        // Either pulse resumed us or the timer did. In both cases the
-        // pulse signal (if any) has been consumed by this iteration;
-        // the next call starts fresh.
-        pulsePending = false
+    }
+
+    private func cancellationFired() {
+        // Cancel may arrive before, during, or after the continuation
+        // is installed. If installed, resume it; otherwise the
+        // pre-install `Task.isCancelled` check inside the continuation
+        // closure handles it.
+        if let c = continuation {
+            continuation = nil
+            c.resume()
+        }
     }
 
     private func timerFired(generation: Int) {
