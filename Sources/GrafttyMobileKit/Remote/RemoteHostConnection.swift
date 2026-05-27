@@ -1,6 +1,9 @@
 #if canImport(UIKit)
+import CryptoKit
 import Foundation
 import GrafttyProtocol
+import NIOCore
+import NIOSSH
 import WebRTC
 
 /// Common interface for "thing that can accept ICE candidates from a
@@ -81,13 +84,26 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// via `@testable import`.
     internal private(set) var lastReceivedBinary: Data?
 
-    public init() {
+    private let clientKey: Curve25519.Signing.PrivateKey
+    private let expectedHostFingerprint: RemoteIdentityFingerprint
+    private var sshTransport: SSHNIOTransport?
+    /// `NIOSSHHandler` is not declared `Sendable`; wrap in an
+    /// `@unchecked Sendable` box so the actor can hold it as a stored
+    /// property. All accesses go through actor-isolated methods, so
+    /// the lack of internal Sendable enforcement is safe here.
+    private var sshHandlerBox: SSHHandlerBox?
+
+    public init(
+        clientKey: Curve25519.Signing.PrivateKey,
+        expectedHostFingerprint: RemoteIdentityFingerprint
+    ) {
         // SSL and codec subsystems are process-wide; initialize once.
         Self.initializeWebRTC()
-        // nil factories: DataChannel-only — no video codec work needed.
-        self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
+        self.factory = RTCPeerConnectionFactory()
         self.delegate = PeerConnectionDelegate()
         self.dataChannelDelegate = DataChannelDelegate()
+        self.clientKey = clientKey
+        self.expectedHostFingerprint = expectedHostFingerprint
 
         // Install the candidate sink up-front so candidates emitted
         // before `bindIceCandidates(to:)` is called (i.e. during the
@@ -254,7 +270,31 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         lastReceivedBinary = data
     }
 
+    /// Open a new SSH terminal session over the established connection.
+    /// Throws `ConnectionError.notConnected` if the SSH handshake has not
+    /// completed yet (i.e. `applyAnswer` has not returned successfully).
+    public func openTerminalSession(sessionName: String) async throws -> TerminalSessionClient {
+        guard
+            let transport = sshTransport,
+            let box = sshHandlerBox
+        else {
+            throw ConnectionError.notConnected
+        }
+        let client = TerminalSessionClient(
+            parentChannel: transport.channel,
+            parentHandler: box.handler,
+            sessionName: sessionName
+        )
+        try await client.connect()
+        return client
+    }
+
     public func close() {
+        if let transport = sshTransport {
+            Task { await transport.close() }
+            sshTransport = nil
+            sshHandlerBox = nil
+        }
         if let pending = iceGatheringContinuation {
             iceGatheringContinuation = nil
             delegate.onIceGatheringComplete = nil
@@ -285,13 +325,21 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
 
     private func waitForDataChannelOpen() async throws {
         if dataChannel?.readyState == .open {
-            state = .connected
+            // DataChannel was already open before we got here; install SSH
+            // directly (no continuation needed — we're already on the actor).
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                self.openContinuation = continuation
+                Task { await self.installSSHHandlerAndResume() }
+            }
             return
         }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             self.openContinuation = continuation
             self.dataChannelDelegate.onOpen = { [weak self] in
-                Task { await self?.handleDataChannelOpen() }
+                Task { [weak self] in
+                    guard let self else { return }
+                    await self.installSSHHandlerAndResume()
+                }
             }
             // `onMessage` is installed up-front in `createOffer`, so we
             // do NOT re-install it here. The previous design installed
@@ -302,7 +350,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             // the callback, the callback would never fire. Mirrors the
             // same idempotent re-check in `waitForIceGatheringComplete`.
             if dataChannel?.readyState == .open {
-                handleDataChannelOpen()
+                Task { await self.installSSHHandlerAndResume() }
                 return
             }
             self.openTimeoutTask = Task { [weak self] in
@@ -312,16 +360,35 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         }
     }
 
-    private func handleDataChannelOpen() {
-        // Guard against a late `.open` arriving after `handleDataChannelOpenTimeout`
-        // already terminated the connection. Without this guard the late
-        // callback would clobber `state = .failed(...)` back to `.connected`.
-        guard let continuation = openContinuation else { return }
-        openContinuation = nil
-        openTimeoutTask?.cancel()
-        openTimeoutTask = nil
-        state = .connected
-        continuation.resume()
+    private func installSSHHandlerAndResume() async {
+        guard let dc = dataChannel else { return }
+        let transport = SSHNIOTransport(dataChannel: dc)
+        do {
+            // Wrap the handler in an SSHHandlerBox inside the event-loop
+            // submit closure so only the `@unchecked Sendable` box
+            // crosses the async boundary, not the bare `NIOSSHHandler`.
+            let box: SSHHandlerBox = try await transport.eventLoop.submit { [clientKey, expectedHostFingerprint] in
+                let h = SSHClientSetup.makeHandler(
+                    clientKey: clientKey,
+                    expectedHostFingerprint: expectedHostFingerprint,
+                    allocator: transport.channel.allocator
+                )
+                try transport.channel.pipeline.syncOperations.addHandler(h)
+                return SSHHandlerBox(h)
+            }.get()
+            try await transport.start()
+            self.sshTransport = transport
+            self.sshHandlerBox = box
+            openTimeoutTask?.cancel()
+            openTimeoutTask = nil
+            self.state = .connected
+            self.openContinuation?.resume(returning: ())
+            self.openContinuation = nil
+        } catch {
+            self.state = .failed(reason: "SSH handshake failed: \(error)")
+            self.openContinuation?.resume(throwing: error)
+            self.openContinuation = nil
+        }
     }
 
     private func handleDataChannelOpenTimeout() {
@@ -383,6 +450,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         case dataChannelInitFailed
         case sdpGenerationFailed
         case notConfigured
+        case notConnected
         case notOpen
         case sendFailed
         case closed
@@ -417,6 +485,20 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate,
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {}
+}
+
+/// Sendable-compatible container for `NIOSSHHandler`.
+///
+/// `NIOSSHHandler` is not declared `Sendable` by swift-nio-ssh, but it is
+/// safe to transfer across actor boundaries when every call site accesses it
+/// exclusively through the event-loop it was created on — which is the case
+/// here: `installSSHHandlerAndResume` hands the handler off to
+/// `TerminalSessionClient`, which always dispatches via `parentChannel.eventLoop`.
+/// The `@unchecked` annotation satisfies the Swift compiler's actor-isolation
+/// check while relying on the caller's event-loop discipline for actual safety.
+private final class SSHHandlerBox: @unchecked Sendable {
+    let handler: NIOSSHHandler
+    init(_ handler: NIOSSHHandler) { self.handler = handler }
 }
 
 /// `RTCDataChannelDelegate` glue. The actor sets `onOpen` / `onMessage`

@@ -82,7 +82,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         }
         let buffer = child.allocator.buffer(bytes: bytes)
         let data = SSHChannelData(type: .channel, data: .byteBuffer(buffer))
-        try await child.writeAndFlush(NIOAny(data)).get()
+        try await child.writeAndFlush(data).get()
     }
 
     public func receive() async throws -> WebSocketFrame {
@@ -184,7 +184,11 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
 
 /// Inbound relay installed on the SSH child channel. Forwards inbound
 /// `SSHChannelData` to the owning `TerminalSessionClient`.
-private final class InboundRelay: ChannelInboundHandler {
+///
+/// `@unchecked Sendable`: `owner` is a `weak var` to `TerminalSessionClient`
+/// which is itself `@unchecked Sendable`. All mutations go through the NIO
+/// event-loop thread that drives this handler, so cross-actor access is safe.
+private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = SSHChannelData
 
     weak var owner: TerminalSessionClient?
