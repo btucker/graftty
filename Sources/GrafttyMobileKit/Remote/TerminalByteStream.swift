@@ -20,6 +20,16 @@ public protocol TerminalByteStream: Sendable {
     /// A conformer that releases resources without calling
     /// `continuation.finish()` synchronously will leak that task.
     func close() async
+
+    /// Adjust the underlying PTY's window size. Default implementation
+    /// is a no-op so existing conformers don't break; the production
+    /// `zmx attach` Process conformer overrides this to invoke
+    /// `ioctl(TIOCSWINSZ, ...)` (or equivalent).
+    func resize(cols: Int, rows: Int) async
+}
+
+public extension TerminalByteStream {
+    func resize(cols: Int, rows: Int) async {}
 }
 
 public typealias TerminalByteStreamFactory = @Sendable (String) async throws -> TerminalByteStream
