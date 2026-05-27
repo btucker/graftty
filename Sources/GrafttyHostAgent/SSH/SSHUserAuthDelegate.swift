@@ -63,6 +63,17 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
     /// `internal`. The cleanest public path is to round-trip through
     /// `String(openSSHPublicKey:)` (which serialises via the same
     /// internal `writeSSHHostKey`) and base64-decode the result.
+    ///
+    /// **DRIFT-RISK SYNC POINT.** This implementation is a verbatim
+    /// mirror of `PinnedHostKeyAuthDelegate.fingerprint(of:)` in
+    /// `GrafttyMobileKit`. The two cannot share code because
+    /// `GrafttyMobileKit` can't import `GrafttyHostAgent`
+    /// (`GrafttyKit` imports AppKit). If you ever broaden the
+    /// `typeName == "ssh-ed25519"` check (e.g., to add ECDSA support),
+    /// you MUST update BOTH copies — silent client/server divergence
+    /// would break host-key pinning and userauth fingerprints. The
+    /// inlined test mirror in `SSHAuthLoopbackTests.swift` is a third
+    /// sync point.
     static func fingerprint(of key: NIOSSHPublicKey) throws -> RemoteIdentityFingerprint {
         // String form: "<algorithm-id> <base64-of-wire-format>"
         // — exactly two components for our purposes (no comment).
