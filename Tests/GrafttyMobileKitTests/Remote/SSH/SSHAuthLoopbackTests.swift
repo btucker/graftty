@@ -196,6 +196,37 @@ struct SSHAuthLoopbackTests {
         }
     }
 
+    /// Negative — a `TrustedPeerStore.get` I/O failure (or unsupported
+    /// key format in fingerprint(of:)) must be converted into a clean
+    /// SSH auth-failure rather than a channel error. Verifies the
+    /// production `SSHUserAuthDelegate` catch branch (CR-1 fix:
+    /// `succeed(.failure)` instead of `fail(error)`).
+    @Test(.timeLimit(.minutes(3)))
+    func storeIOErrorRejectsCleanly() async throws {
+        let serverKey = Curve25519.Signing.PrivateKey()
+        let clientKey = Curve25519.Signing.PrivateKey()
+        // Trust set says yes, BUT the lookup throws — the catch branch
+        // must funnel that to `succeed(.failure)`, not `fail(error)`,
+        // so the handshake fails at the SSH-userauth layer rather than
+        // tearing the channel down with a raw error.
+        let peerStore = InMemoryTrustedPeerSet()
+        peerStore.add(fingerprint: Self.fingerprint(of: clientKey))
+        peerStore.injectLookupError(InjectedLookupError.ioFailure)
+
+        await #expect(throws: (any Error).self) {
+            _ = try await runAuthLoopback(
+                serverKey: serverKey,
+                trustedPeers: peerStore,
+                clientKey: clientKey,
+                expectedHostFingerprint: Self.fingerprint(of: serverKey),
+                // Short deadline — like `unpairedPeerRejected`, NIOSSH
+                // doesn't fast-fail "auth-failure into out-of-methods";
+                // this rides the wall-clock deadline.
+                responseDeadline: .seconds(5)
+            )
+        }
+    }
+
     // MARK: - Loopback driver
 
     /// Pairs two RTCPeerConnections in-process, layers SSH on each
@@ -259,47 +290,66 @@ struct SSHAuthLoopbackTests {
             try serverTransport.channel.pipeline.syncOperations.addHandler(sshHandler)
         }.get()
 
-        // Client: in the production path we'd call
-        // `SSHClientSetup.makeHandler(...)`. For override cases
-        // (alternate username, offer-nothing variant) we need to
-        // bypass the production factory and build the handler with a
-        // tailored userauth delegate — keeps SSHClientSetup's API
-        // small. The pinned-host delegate is always the real one.
+        // Client: prefer the production factory `SSHClientSetup.makeHandler`
+        // whenever the test doesn't need to override the default
+        // userauth shape — keeps positive paths (paired peer, different-
+        // username, cipher restriction, pinned-host mismatch) exercising
+        // the real production wiring. Override cases (alternate username,
+        // offer-nothing variant) bypass the factory and build the handler
+        // manually with a tailored userauth delegate; keeps SSHClientSetup's
+        // API small.
         let responsePromise = clientTransport.eventLoop.makePromise(of: String.self)
+        let completer = PromiseCompleter(responsePromise)
         try await clientTransport.eventLoop.submit {
-            let userAuth: NIOSSHClientUserAuthenticationDelegate
-            if clientOffersNothing {
-                userAuth = OfferNothingClientUserAuthDelegate()
+            let sshHandler: NIOSSHHandler
+            let needsCustomUserAuth = clientOffersNothing || clientUsername != "graftty"
+            if needsCustomUserAuth {
+                // Test-override path: build NIOSSHHandler manually so we
+                // can swap in `TestClientUserAuthDelegate` (custom
+                // username) or `OfferNothingClientUserAuthDelegate`.
+                let userAuth: NIOSSHClientUserAuthenticationDelegate
+                if clientOffersNothing {
+                    userAuth = OfferNothingClientUserAuthDelegate()
+                } else {
+                    userAuth = TestClientUserAuthDelegate(
+                        username: clientUsername,
+                        key: clientKey
+                    )
+                }
+                let clientConfig = SSHClientConfiguration(
+                    userAuthDelegate: userAuth,
+                    serverAuthDelegate: PinnedHostKeyAuthDelegate(
+                        expectedFingerprint: expectedHostFingerprint
+                    )
+                )
+                sshHandler = NIOSSHHandler(
+                    role: .client(clientConfig),
+                    allocator: clientTransport.channel.allocator,
+                    inboundChildChannelInitializer: nil
+                )
             } else {
-                userAuth = TestClientUserAuthDelegate(
-                    username: clientUsername,
-                    key: clientKey
+                // Production-equivalent path: route through the real
+                // factory so the positive baseline exercises
+                // `SSHClientSetup.makeHandler`.
+                sshHandler = SSHClientSetup.makeHandler(
+                    clientKey: clientKey,
+                    expectedHostFingerprint: expectedHostFingerprint,
+                    allocator: clientTransport.channel.allocator
                 )
             }
-            let clientConfig = SSHClientConfiguration(
-                userAuthDelegate: userAuth,
-                serverAuthDelegate: PinnedHostKeyAuthDelegate(
-                    expectedFingerprint: expectedHostFingerprint
-                )
-            )
-            let sshHandler = NIOSSHHandler(
-                role: .client(clientConfig),
-                allocator: clientTransport.channel.allocator,
-                inboundChildChannelInitializer: nil
-            )
             try clientTransport.channel.pipeline.syncOperations.addHandler(sshHandler)
-            // Fail the response promise if the SSH parent channel ever
+            // Fail the response completer if the SSH parent channel ever
             // closes before the response arrives — this is how
             // userauth failure / host-key mismatch / handshake error
             // surfaces (the auth-failure case never opens a session
             // child channel, so `LoopbackExecCollector.channelInactive`
             // never fires).
             try clientTransport.channel.pipeline.syncOperations.addHandler(
-                ParentChannelFailureRelay(completePromise: responsePromise)
+                ParentChannelFailureRelay(completer: completer)
             )
             let opener = ClientSessionOpener(
                 command: "ls",
-                completePromise: responsePromise
+                completer: completer
             )
             try clientTransport.channel.pipeline.syncOperations.addHandler(opener)
         }.get()
@@ -328,17 +378,22 @@ struct SSHAuthLoopbackTests {
         // when the client simply runs out of methods or the peer is
         // unknown) — they each take ~3 min in the worst case, comfortably
         // under the 15-min iOS CI step ceiling.
+        // The completer is a first-write-wins gate (see PromiseCompleter)
+        // so this fail is a no-op if `ParentChannelFailureRelay` or
+        // `LoopbackExecCollector` already completed the promise. The
+        // earlier `Task.isCancelled` guard was racy: the defer's
+        // `timeoutTask.cancel()` only runs after `get()` returns, so
+        // by the time the timeout task wakes the promise may already
+        // be completed AND the task not yet cancelled.
         let timeoutTask = Task {
             try? await Task.sleep(for: responseDeadline)
-            if !Task.isCancelled {
-                responsePromise.fail(LoopbackError.timedOut)
-            }
+            completer.fail(LoopbackError.timedOut)
         }
         defer { timeoutTask.cancel() }
 
         let response: String
         do {
-            response = try await responsePromise.futureResult.get()
+            response = try await completer.future.get()
         } catch {
             // Tear down on failure too so we don't leak transports
             // across test boundaries.
@@ -378,20 +433,38 @@ struct SSHAuthLoopbackTests {
 /// the iOS test target where `GrafttyKit.TrustedPeerStore` isn't
 /// importable. Holds the set of trusted fingerprints; the server-side
 /// userauth delegate consults it on every publickey offer.
+///
+/// `lookupError` lets a test inject an I/O-style failure into the
+/// throwing lookup path so the production-mirror delegate's catch
+/// branch can be exercised — the real `TrustedPeerStore.get` is
+/// `throws`, but `Set.contains` is not, so without this seam the
+/// throwing case is unreachable from the test side.
 fileprivate final class InMemoryTrustedPeerSet: @unchecked Sendable {
     private let lock = NSLock()
     private var fingerprints: Set<RemoteIdentityFingerprint> = []
+    private var lookupError: (any Error)?
 
     func add(fingerprint: RemoteIdentityFingerprint) {
         lock.lock(); defer { lock.unlock() }
         fingerprints.insert(fingerprint)
     }
 
-    func contains(fingerprint: RemoteIdentityFingerprint) -> Bool {
+    /// Throwing mirror of `TrustedPeerStore.get(fingerprint:)`.
+    /// Returns `true` if the fingerprint is trusted, `false` otherwise.
+    /// Throws if a lookup error was injected via `injectLookupError`.
+    func get(fingerprint: RemoteIdentityFingerprint) throws -> Bool {
         lock.lock(); defer { lock.unlock() }
+        if let error = lookupError { throw error }
         return fingerprints.contains(fingerprint)
     }
+
+    func injectLookupError(_ error: any Error) {
+        lock.lock(); defer { lock.unlock() }
+        lookupError = error
+    }
 }
+
+fileprivate enum InjectedLookupError: Error { case ioFailure }
 
 /// Test mirror of `GrafttyHostAgent.SSHUserAuthDelegate`. The
 /// production delegate isn't reachable from this iOS-only test target
@@ -414,13 +487,20 @@ fileprivate struct TrustSetServerUserAuthDelegate: NIOSSHServerUserAuthenticatio
         case .publicKey(let publicKeyRequest):
             do {
                 let fp = try Self.fingerprint(of: publicKeyRequest.publicKey)
-                if store.contains(fingerprint: fp) {
+                // Use the throwing `get` to mirror the production
+                // `TrustedPeerStore.get(fingerprint:)` shape — keeps
+                // the catch branch reachable from tests.
+                if try store.get(fingerprint: fp) {
                     responsePromise.succeed(.success)
                 } else {
                     responsePromise.succeed(.failure)
                 }
             } catch {
-                responsePromise.fail(error)
+                // Mirror SSHUserAuthDelegate's catch: convert a
+                // throwing lookup into a clean auth-failure rather
+                // than fail(error), which would tear the channel
+                // down with no SSH-layer error message.
+                responsePromise.succeed(.failure)
             }
         // REMOTE-8.2: reject every non-publickey method immediately.
         case .password, .hostBased, .none:
@@ -563,28 +643,78 @@ fileprivate final class LoopbackExecResponder: ChannelDuplexHandler {
     }
 }
 
+/// First-write-wins gate around `EventLoopPromise<String>`. Multiple
+/// sites in the loopback driver can complete the same response promise
+/// (timeout task, `ParentChannelFailureRelay.errorCaught`,
+/// `ParentChannelFailureRelay.channelInactive`,
+/// `LoopbackExecCollector.channelInactive`). NIO silently drops
+/// completions after the first — see `_setValue` / `_setError` in
+/// `EventLoopFuture.swift` — so the second-writer doesn't crash, but
+/// in the timeout case the *real* failure can be obscured by a later
+/// "channelInactive before response" relay call that loses the race.
+/// This gate makes the racing explicit: whichever site fires first
+/// wins, the rest become no-ops. Coordinates CR-2 (timeout task race)
+/// and CR-9 (transport teardown firing channelInactive on a parent
+/// pipeline whose promise was already succeeded by
+/// `LoopbackExecCollector`).
+fileprivate final class PromiseCompleter: @unchecked Sendable {
+    private let promise: EventLoopPromise<String>
+    private let lock = NSLock()
+    private var completed = false
+
+    init(_ promise: EventLoopPromise<String>) {
+        self.promise = promise
+    }
+
+    var future: EventLoopFuture<String> { promise.futureResult }
+
+    func succeed(_ value: String) {
+        guard claim() else { return }
+        promise.succeed(value)
+    }
+
+    func fail(_ error: any Error) {
+        guard claim() else { return }
+        promise.fail(error)
+    }
+
+    private func claim() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if completed { return false }
+        completed = true
+        return true
+    }
+}
+
 /// Client-side parent-channel handler that fails the response
-/// promise if the parent channel closes (or errors) before the
+/// completer if the parent channel closes (or errors) before the
 /// session round-trip completes. This is how auth/handshake failures
 /// surface in the negative tests — without this handler, a userauth
 /// rejection or pinned-host-key mismatch closes the parent channel
 /// silently and the test waits on a promise nothing will resolve.
+///
+/// `channelInactive` also fires during normal teardown (CR-9):
+/// `SSHNIOTransport.close()` propagates `channelInactive` through the
+/// parent pipeline after `LoopbackExecCollector.channelInactive` has
+/// already succeeded the completer. The `PromiseCompleter` flag keeps
+/// that second call a no-op rather than letting it obscure the real
+/// outcome.
 fileprivate final class ParentChannelFailureRelay: ChannelInboundHandler {
     typealias InboundIn = Any
 
-    private let completePromise: EventLoopPromise<String>
+    private let completer: PromiseCompleter
 
-    init(completePromise: EventLoopPromise<String>) {
-        self.completePromise = completePromise
+    init(completer: PromiseCompleter) {
+        self.completer = completer
     }
 
     func errorCaught(context: ChannelHandlerContext, error: Error) {
-        completePromise.fail(error)
+        completer.fail(error)
         context.fireErrorCaught(error)
     }
 
     func channelInactive(context: ChannelHandlerContext) {
-        completePromise.fail(LoopbackError.channelInactiveBeforeResponse)
+        completer.fail(LoopbackError.channelInactiveBeforeResponse)
         context.fireChannelInactive()
     }
 }
@@ -593,11 +723,11 @@ fileprivate final class ClientSessionOpener: ChannelInboundHandler {
     typealias InboundIn = Never
 
     private let command: String
-    private let completePromise: EventLoopPromise<String>
+    private let completer: PromiseCompleter
 
-    init(command: String, completePromise: EventLoopPromise<String>) {
+    init(command: String, completer: PromiseCompleter) {
         self.command = command
-        self.completePromise = completePromise
+        self.completer = completer
     }
 
     func channelActive(context: ChannelHandlerContext) {
@@ -606,12 +736,12 @@ fileprivate final class ClientSessionOpener: ChannelInboundHandler {
         do {
             sshHandler = try context.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
         } catch {
-            completePromise.fail(error)
+            completer.fail(error)
             return
         }
         let promise = context.eventLoop.makePromise(of: Channel.self)
         let command = self.command
-        let completePromise = self.completePromise
+        let completer = self.completer
         sshHandler.createChannel(promise, channelType: .session) { childChannel, channelType in
             guard case .session = channelType else {
                 return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
@@ -619,13 +749,13 @@ fileprivate final class ClientSessionOpener: ChannelInboundHandler {
             return childChannel.eventLoop.makeCompletedFuture {
                 let collector = LoopbackExecCollector(
                     command: command,
-                    completePromise: completePromise
+                    completer: completer
                 )
                 try childChannel.pipeline.syncOperations.addHandler(collector)
             }
         }
         promise.futureResult.whenFailure { error in
-            completePromise.fail(error)
+            completer.fail(error)
         }
     }
 }
@@ -637,12 +767,12 @@ fileprivate final class LoopbackExecCollector: ChannelDuplexHandler {
     typealias OutboundOut = SSHChannelData
 
     private let command: String
-    private let completePromise: EventLoopPromise<String>
+    private let completer: PromiseCompleter
     private var collected: ByteBuffer?
 
-    init(command: String, completePromise: EventLoopPromise<String>) {
+    init(command: String, completer: PromiseCompleter) {
         self.command = command
-        self.completePromise = completePromise
+        self.completer = completer
     }
 
     func handlerAdded(context: ChannelHandlerContext) {
@@ -654,7 +784,7 @@ fileprivate final class LoopbackExecCollector: ChannelDuplexHandler {
     func channelActive(context: ChannelHandlerContext) {
         let execRequest = SSHChannelRequestEvent.ExecRequest(command: command, wantReply: true)
         context.triggerUserOutboundEvent(execRequest).whenFailure { error in
-            self.completePromise.fail(error)
+            self.completer.fail(error)
             context.close(promise: nil)
         }
     }
@@ -674,9 +804,9 @@ fileprivate final class LoopbackExecCollector: ChannelDuplexHandler {
     func channelInactive(context: ChannelHandlerContext) {
         if let buffer = collected {
             let str = buffer.getString(at: buffer.readerIndex, length: buffer.readableBytes) ?? ""
-            completePromise.succeed(str)
+            completer.succeed(str)
         } else {
-            completePromise.fail(LoopbackError.channelInactiveBeforeResponse)
+            completer.fail(LoopbackError.channelInactiveBeforeResponse)
         }
         context.fireChannelInactive()
     }
