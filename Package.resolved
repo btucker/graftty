@@ -1,5 +1,5 @@
 {
-  "originHash" : "690dba7c91faca4acc65139d5a3d008d2d9b90825467cc3b841f1862554d1c1f",
+  "originHash" : "9ee562d26b63005cdb7a6e7bd9c434b9a489a67a7bbb9f36ef5b66e68c0c3789",
   "pins" : [
     {
       "identity" : "libghostty-spm",
@@ -7,7 +7,7 @@
       "location" : "https://github.com/btucker/libghostty-spm.git",
       "state" : {
         "branch" : "expose-selection-api",
-        "revision" : "c6e7ae48241ae8021c5274bcf995fb886c38157a"
+        "revision" : "83f1cd4709f5e65d47c3ff5d2493479d0dcc413f"
       }
     },
     {

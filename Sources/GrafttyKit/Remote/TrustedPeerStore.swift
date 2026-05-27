@@ -98,6 +98,17 @@ public final class TrustedPeerStore: @unchecked Sendable {
         return envelope.peers.contains(where: { $0.fingerprint == fingerprint })
     }
 
+    /// Returns the peer whose `publicKey`'s fingerprint matches the
+    /// provided fingerprint, or `nil` if no peer has been paired with
+    /// that key. Mirrors `PinnedHostStore.get(fingerprint:)` on the
+    /// client side.
+    public func get(fingerprint: RemoteIdentityFingerprint) throws -> TrustedPeer? {
+        lock.lock()
+        defer { lock.unlock() }
+        let envelope = try _load()
+        return envelope.peers.first(where: { $0.fingerprint == fingerprint })
+    }
+
     /// Returns all peers, sorted by `lastSeenAt` descending (most recently
     /// seen first), with `pairedAt` descending as a tiebreak for peers that
     /// have never been seen (nil `lastSeenAt`).

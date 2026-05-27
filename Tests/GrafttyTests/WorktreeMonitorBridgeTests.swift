@@ -83,16 +83,16 @@ struct WorktreeMonitorBridgeTests {
         // Phase 1: immediate path. List runs once, hasRemote flips,
         // the immediate refresh fetches nil → worktree marked absent,
         // and both follow-ups get recorded by the injected scheduler.
-        try await waitUntil(timeout: 5.0) {
+        try await waitUntil(timeout: 30.0) {
             await remoteBranchLister.invocations(for: "/repo") == 1
         }
-        try await waitUntil(timeout: 5.0) {
+        try await waitUntil(timeout: 30.0) {
             remoteBranchStore.hasRemote(repoPath: "/repo", branch: "feature")
         }
-        try await waitUntil(timeout: 5.0) {
+        try await waitUntil(timeout: 30.0) {
             prStore.absent.contains("/repo/wt")
         }
-        try await waitUntil(timeout: 5.0) {
+        try await waitUntil(timeout: 30.0) {
             await followUps.count == 2
         }
         #expect(await fetcher.invocations == 1)
@@ -102,14 +102,14 @@ struct WorktreeMonitorBridgeTests {
         // latency bounds each `waitUntil` — never a cumulative
         // sleep+hop budget that CI parallelism can blow past.
         await followUps.fireNext()
-        try await waitUntil(timeout: 5.0) {
+        try await waitUntil(timeout: 30.0) {
             prStore.infos["/repo/wt"]?.number == 42
         }
         #expect(await fetcher.invocations == 2)
         #expect(!prStore.absent.contains("/repo/wt"))
 
         await followUps.fireNext()
-        try await waitUntil(timeout: 5.0) {
+        try await waitUntil(timeout: 30.0) {
             await fetcher.invocations == 3
         }
         #expect(prStore.infos["/repo/wt"]?.number == 42)

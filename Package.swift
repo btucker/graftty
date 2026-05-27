@@ -67,6 +67,7 @@ let package = Package(
         .target(
             name: "GrafttyHostAgent",
             dependencies: [
+                "GrafttyKit",
                 "GrafttyProtocol",
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),

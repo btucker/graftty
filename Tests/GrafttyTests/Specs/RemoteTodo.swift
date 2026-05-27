@@ -52,27 +52,7 @@ struct RemoteTodo {
 
     @Test("""
 @spec REMOTE-8.1: While accepting a remote attach, the host shall negotiate SSH KEX restricted to the `curve25519-sha256` algorithm and reject any other KEX proposal.
-""", .disabled("not yet implemented"))
+""", .disabled("awaits upstream swift-nio-ssh algorithm-allowlist feature"))
     func remote_8_1() async throws { }
-
-    @Test("""
-@spec REMOTE-8.2: When the host receives a userauth request, the host shall accept only the `publickey` method and reject `password` and `keyboard-interactive` immediately.
-""", .disabled("not yet implemented"))
-    func remote_8_2() async throws { }
-
-    @Test("""
-@spec REMOTE-8.3: When the host receives a userauth request, the host shall identify the peer solely by the offered public key against `TrustedPeerStore` and shall ignore the username field.
-""", .disabled("not yet implemented"))
-    func remote_8_3() async throws { }
-
-    @Test("""
-@spec REMOTE-8.4: When the client receives a host key during SSH KEX, the client shall verify the key against `PinnedHostStore` and abort the connection on mismatch.
-""", .disabled("not yet implemented"))
-    func remote_8_4() async throws { }
-
-    @Test("""
-@spec REMOTE-8.5: While accepting a remote attach, the host shall restrict its SSH cipher allowlist to `chacha20-poly1305@openssh.com` and `aes256-gcm@openssh.com`.
-""", .disabled("not yet implemented"))
-    func remote_8_5() async throws { }
 
 }

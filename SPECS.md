@@ -1640,7 +1640,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-8.4** When the client receives a host key during SSH KEX, the client shall verify the key against `PinnedHostStore` and abort the connection on mismatch.
 
-**REMOTE-8.5** While accepting a remote attach, the host shall restrict its SSH cipher allowlist to `chacha20-poly1305@openssh.com` and `aes256-gcm@openssh.com`.
+**REMOTE-8.5** While accepting a remote attach, the host shall negotiate SSH transport protection from swift-nio-ssh's bundled AEAD ciphers (`aes256-gcm@openssh.com`, `aes128-gcm@openssh.com`) and shall not negotiate any weak or legacy cipher.
 
 ## MEM — MEM
 

@@ -29,13 +29,16 @@ import WebRTC
 @Suite("SSH-over-WebRTC loopback — exec round-trip (R2 gate)")
 struct SSHOverWebRTCLoopbackTests {
 
-    /// `.timeLimit(.minutes(1))` guards against the entire test runner
+    /// `.timeLimit(.minutes(3))` guards against the entire test runner
     /// hanging on a CI-only path; locally this test completes in ~10s
     /// (dominated by ICE gathering on the iOS Simulator). If the test
-    /// exceeds 1 minute, Swift Testing kills it and emits a failure with
+    /// exceeds 3 minutes, Swift Testing kills it and emits a failure with
     /// the stage prints below, so we can diagnose where it hung instead
-    /// of staring at a 15-minute job timeout.
-    @Test(.timeLimit(.minutes(1)))
+    /// of staring at a 15-minute job timeout. The 3-minute ceiling is
+    /// chased upward across R2/R3 iterations as macos-26 runner-pool
+    /// variability has surfaced (10s typical, 40-60s on slow days);
+    /// 3 minutes is roughly 10x the worst observed CI time.
+    @Test(.timeLimit(.minutes(3)))
     func execRoundTripOverPairedDataChannels() async throws {
         // Diagnostic prints at each stage so a CI hang surfaces with
         // a usable trace in the test log. Cheap on a passing run.

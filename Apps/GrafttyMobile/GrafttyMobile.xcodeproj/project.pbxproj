@@ -50,6 +50,7 @@
 		BFAB69C16EF825DE58B94270 /* PanePreviewFontApplicationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CACB0C8C5BC2E635F2AA70BC /* PanePreviewFontApplicationTests.swift */; };
 		C0A3025E89B3FB9D1A6C744A /* SessionsFetcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 340D909E38FF8ABE9EA6B38B /* SessionsFetcherTests.swift */; };
 		C55600CC2CAE99D7769B31A8 /* LaunchScreenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D25E071713009F00061D699 /* LaunchScreenTests.swift */; };
+		C8AA7E89906CC0B63A14525D /* SSHAuthLoopbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A376ADDA2C1C0AE92E8A32A /* SSHAuthLoopbackTests.swift */; };
 		CAF2F1261BE1D2E9862B28E7 /* PreviewCapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6717C8CFDA2A367AD3F5421F /* PreviewCapTests.swift */; };
 		CF1B96880484830545D4DD92 /* WorktreePanesStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC57C9F746D99FF6B7BEADFD /* WorktreePanesStoreTests.swift */; };
 		D6E07827478D558EA22701E3 /* MobileNavigationDecisionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9F5598DDE610D5D1567DBB2 /* MobileNavigationDecisionTests.swift */; };
@@ -73,6 +74,7 @@
 		30604C1C39FF21FE6B6A74D5 /* TerminalSelectionControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSelectionControllerTests.swift; sourceTree = "<group>"; };
 		340D909E38FF8ABE9EA6B38B /* SessionsFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsFetcherTests.swift; sourceTree = "<group>"; };
 		351F85648DBEE2F8B555AE7F /* VirtualClock.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualClock.swift; sourceTree = "<group>"; };
+		3A376ADDA2C1C0AE92E8A32A /* SSHAuthLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHAuthLoopbackTests.swift; sourceTree = "<group>"; };
 		3A4E23E7D15FDB354063BF2C /* RootViewSizeClassTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootViewSizeClassTests.swift; sourceTree = "<group>"; };
 		3B5DBD2CC8F2E2A00F94D044 /* IPadAppStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IPadAppStateTests.swift; sourceTree = "<group>"; };
 		3D25E071713009F00061D699 /* LaunchScreenTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaunchScreenTests.swift; sourceTree = "<group>"; };
@@ -241,6 +243,7 @@
 		839F582204CF9814431E7D2A /* SSH */ = {
 			isa = PBXGroup;
 			children = (
+				3A376ADDA2C1C0AE92E8A32A /* SSHAuthLoopbackTests.swift */,
 				FC0DCD66C68CA001206BFDA5 /* SSHNIOTransportUnitTests.swift */,
 				F263C2F1D739C0FD226B2AE7 /* SSHOverWebRTCLoopbackTests.swift */,
 			);
@@ -430,6 +433,7 @@
 				A63A9ED30E91C1F8ADE5E21F /* RemoteHostConnectionLoopbackTests.swift in Sources */,
 				4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */,
 				16F9774F4AD6CAB9EB7BA47C /* RootViewSizeClassTests.swift in Sources */,
+				C8AA7E89906CC0B63A14525D /* SSHAuthLoopbackTests.swift in Sources */,
 				A4728892B4B24D5A7BBD8712 /* SSHNIOTransportUnitTests.swift in Sources */,
 				BEBC88F085DA6FBD0AE1B164 /* SSHOverWebRTCLoopbackTests.swift in Sources */,
 				4FC268572A822F79E5CBF517 /* SessionClientTests.swift in Sources */,

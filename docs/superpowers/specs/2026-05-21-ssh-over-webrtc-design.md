@@ -154,10 +154,10 @@ iOS                                                Mac
 
 | Layer | Pinned |
 |---|---|
-| KEX | `curve25519-sha256` only |
+| KEX | swift-nio-ssh's bundled modern ECDH algorithms (`curve25519-sha256`, `curve25519-sha256@libssh.org`, `ecdh-sha2-nistp{256,384,521}`); no weak/legacy KEX. Strict pinning to a single algorithm awaits upstream swift-nio-ssh feature support — see REMOTE-8.1 footnote. |
 | Host key | `ssh-ed25519` only |
 | User auth | `publickey` only (no `password`, no `keyboard-interactive`) |
-| Cipher | `chacha20-poly1305@openssh.com`, `aes256-gcm@openssh.com` |
+| Cipher | swift-nio-ssh's bundled AEAD ciphers: `aes256-gcm@openssh.com` and `aes128-gcm@openssh.com`. ChaCha20-Poly1305 is not shipped by swift-nio-ssh 0.13. Strict pinning to AES-256-GCM only awaits upstream — `AES256GCMOpenSSHTransportProtection` is currently `internal` and cannot be referenced from outside the module to override `transportProtectionSchemes`. |
 | MAC | implicit in AEAD ciphers |
 
 Rejecting any other negotiation is the responsibility of `SSHServerSetup` (server side) and `SSHClientSetup` (client side). The corresponding `REMOTE-8.x` specs encode each pin as observable behavior.
@@ -296,7 +296,7 @@ R6 deletes `/ws`, cutting iPhone's current production transport. Mitigation: Tes
 | **REMOTE-8.2** | When the host receives a userauth request, the host shall accept only the `publickey` method and reject `password` and `keyboard-interactive` immediately. |
 | **REMOTE-8.3** | When the host receives a userauth request, the host shall identify the peer solely by the offered public key against `TrustedPeerStore` and shall ignore the username field. |
 | **REMOTE-8.4** | When the client receives a host key during SSH KEX, the client shall verify the key against `PinnedHostStore` and abort the connection on mismatch. |
-| **REMOTE-8.5** | While accepting a remote attach, the host shall restrict its SSH cipher allowlist to `chacha20-poly1305@openssh.com` and `aes256-gcm@openssh.com`. |
+| **REMOTE-8.5** | While accepting a remote attach, the host shall negotiate SSH transport protection from swift-nio-ssh's bundled AEAD ciphers (`aes256-gcm@openssh.com`, `aes128-gcm@openssh.com`) and shall not negotiate any weak or legacy cipher. |
 
 These land in `Tests/GrafttyTests/Specs/RemoteTodo.swift` as disabled inventory in R1 and promote to active tests as their implementations land in R3.
 
