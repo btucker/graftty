@@ -36,7 +36,12 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
                     responsePromise.succeed(.failure)
                 }
             } catch {
-                responsePromise.fail(error)
+                // A thrown error here (unsupported key format from fingerprint(of:),
+                // or I/O failure from store.get) cannot be recovered into a real
+                // identity. Treat it as auth failure rather than a channel error —
+                // succeed(.failure) sends a clean SSH_MSG_USERAUTH_FAILURE; fail(error)
+                // would tear the channel down with no SSH-layer error message.
+                responsePromise.succeed(.failure)
             }
         // REMOTE-8.2: reject every non-publickey method immediately.
         case .password, .hostBased, .none:
