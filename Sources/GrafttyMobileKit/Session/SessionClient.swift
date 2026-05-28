@@ -52,7 +52,7 @@ public final class SessionClient {
     nonisolated internal let clock: any Clock
     nonisolated internal let backoffSchedule: [TimeInterval]
     /// NIOLock protects `_ws` and `_wsReadyTask` which are read from
-    /// nonisolated async contexts (`awaitWS`, `sendBinary`, `sendText`)
+    /// nonisolated async contexts (`awaitWS`, `sendBinary`)
     /// while written on @MainActor (`spawnOpenTask`, `stop`).
     /// `nonisolated(unsafe)` is safe here because all reads and writes
     /// go through the `stateLock`-guarded accessors; the lock is the
@@ -60,10 +60,9 @@ public final class SessionClient {
     nonisolated private let stateLock = NIOLock()
     @ObservationIgnored
     nonisolated(unsafe) private var _ws: WebSocketClient?
-    /// Pending open of the current/next WS. `sendBinary` / `sendText`
-    /// await this so writes emitted before the factory resolves don't
-    /// silently drop. Replaced on every reconnect; nil while stopped or
-    /// before `start()` has run.
+    /// Pending open of the current/next WS. `sendBinary` awaits this
+    /// so writes emitted before the factory resolves don't silently drop.
+    /// Replaced on every reconnect; nil while stopped or before `start()` has run.
     @ObservationIgnored
     nonisolated(unsafe) private var _wsReadyTask: Task<WebSocketClient?, Never>?
 
@@ -510,13 +509,6 @@ public final class SessionClient {
         Task { [weak self] in
             guard let ws = await self?.awaitWS() else { return }
             try? await ws.send(.binary(data))
-        }
-    }
-
-    nonisolated private func sendText(_ text: String) {
-        Task { [weak self] in
-            guard let ws = await self?.awaitWS() else { return }
-            try? await ws.send(.text(text))
         }
     }
 

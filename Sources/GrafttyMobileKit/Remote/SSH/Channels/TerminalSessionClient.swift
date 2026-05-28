@@ -262,7 +262,7 @@ private final class ShellAckWaiter: ChannelInboundHandler, RemovableChannelHandl
     func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
         switch event {
         case is ChannelSuccessEvent:
-            promise.succeed(())
+            promise.succeed()
             context.pipeline.removeHandler(self, promise: nil)
         case is ChannelFailureEvent:
             promise.fail(TerminalSessionClient.ClientError.openFailed(ShellRejectedError()))

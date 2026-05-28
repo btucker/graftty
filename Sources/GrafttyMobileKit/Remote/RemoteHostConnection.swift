@@ -377,20 +377,20 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             self.sshHandlerBox = box
             openTimeoutTask?.cancel()
             openTimeoutTask = nil
-            // Guard: if openContinuation is nil, the open already timed out
-            // or close() resumed it; don't overwrite .failed/.closed with .connected.
-            if openContinuation != nil {
-                self.state = .connected
-                openContinuation?.resume(returning: ())
+            // If openContinuation is nil, the open already timed out or
+            // close() resumed it; don't overwrite .failed/.closed with .connected.
+            if let cont = openContinuation {
                 openContinuation = nil
+                self.state = .connected
+                cont.resume(returning: ())
             }
         } catch {
             await transport.close()
             self.sshTransport = nil
-            if openContinuation != nil {
-                self.state = .failed(reason: "SSH handshake failed: \(error)")
-                openContinuation?.resume(throwing: error)
+            if let cont = openContinuation {
                 openContinuation = nil
+                self.state = .failed(reason: "SSH handshake failed: \(error)")
+                cont.resume(throwing: error)
             }
         }
     }
