@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import GrafttyKit
 
@@ -12,11 +13,12 @@ import GrafttyKit
 /// `GrafttyKit.WebSession`; duplication is intentional for R4 —
 /// R6 consolidates after `/ws` deletion.
 ///
-/// `resize(cols:rows:)` uses the default no-op protocol implementation
-/// for R4. R6 (or a follow-up) wires `ioctl(TIOCSWINSZ)` on the master
-/// PTY — see the equivalent path in `WebSession`. R4 ships without
-/// this because libghostty client-side resize plus the next attach's
-/// env defaults are enough to keep dimensions roughly correct.
+/// `resize(cols:rows:)` issues `ioctl(TIOCSWINSZ)` on the stdin pipe fd.
+/// Because `zmx attach` connects to a PTY owned by the zmx daemon (not
+/// this process), the ioctl lands on a pipe and silently no-ops (ENOTTY),
+/// which matches the best-effort posture of `WebSession.resize`. The
+/// important resize path on the SSH-over-WebRTC route is the SSH
+/// `window-change` channel request issued by `TerminalSessionClient`.
 final class ZmxAttachStream: TerminalByteStream, @unchecked Sendable {
     private let process: Process
     private let stdinPipe: Pipe
@@ -66,6 +68,17 @@ final class ZmxAttachStream: TerminalByteStream, @unchecked Sendable {
 
     func send(_ bytes: Data) async throws {
         try stdinPipe.fileHandleForWriting.write(contentsOf: bytes)
+    }
+
+    func resize(cols: Int, rows: Int) async {
+        var ws = winsize()
+        ws.ws_col = UInt16(cols)
+        ws.ws_row = UInt16(rows)
+        let fd = stdinPipe.fileHandleForWriting.fileDescriptor
+        _ = ioctl(fd, UInt(TIOCSWINSZ), &ws)
+        // Best-effort: ignore ioctl failures (process gone, fd closed, or
+        // ENOTTY because fd is a pipe rather than a PTY master).
+        // /ws's WebSession.resize takes the same posture.
     }
 
     func close() async {

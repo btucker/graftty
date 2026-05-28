@@ -24,6 +24,10 @@ struct SessionClientTests {
             throw CancellationError()
         }
         func close() { closed = true }
+        func resize(cols: Int, rows: Int) async {
+            let payload = WebControlEnvelope.resize(cols: UInt16(cols), rows: UInt16(rows)).encoded()
+            try? await send(.text(payload))
+        }
     }
 
     @Test

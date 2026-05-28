@@ -114,16 +114,16 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         child?.close(promise: nil)
     }
 
-    public func resize(cols: Int, rows: Int) async throws {
+    public func resize(cols: Int, rows: Int) async {
         let child = lock.withLock { childChannel }
-        guard let child else { throw ClientError.notConnected }
+        guard let child else { return }
         let event = SSHChannelRequestEvent.WindowChangeRequest(
             terminalCharacterWidth: cols,
             terminalRowHeight: rows,
             terminalPixelWidth: 0,
             terminalPixelHeight: 0
         )
-        try await child.triggerUserOutboundEvent(event).get()
+        try? await child.triggerUserOutboundEvent(event).get()
     }
 
     // MARK: - Inbound bytes from the SSH channel

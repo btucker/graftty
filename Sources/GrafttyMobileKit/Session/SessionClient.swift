@@ -471,7 +471,11 @@ public final class SessionClient {
     }
 
     private func sendResizeToServer(cols: UInt16, rows: UInt16) {
-        sendText(WebControlEnvelope.resize(cols: cols, rows: rows).encoded())
+        Task { [weak self] in
+            guard let self else { return }
+            guard let ws = await self.awaitWS() else { return }
+            await ws.resize(cols: Int(cols), rows: Int(rows))
+        }
     }
 
     nonisolated private func sendBinary(_ data: Data) {
