@@ -100,7 +100,8 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     ) {
         // SSL and codec subsystems are process-wide; initialize once.
         Self.initializeWebRTC()
-        self.factory = RTCPeerConnectionFactory()
+        // nil factories: DataChannel-only — no video codec work needed.
+        self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
         self.delegate = PeerConnectionDelegate()
         self.dataChannelDelegate = DataChannelDelegate()
         self.clientKey = clientKey

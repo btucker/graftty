@@ -3,6 +3,7 @@ import CoreGraphics
 import Foundation
 import GhosttyTerminal
 import GrafttyProtocol
+import NIOConcurrencyHelpers
 import Observation
 import UIKit
 
@@ -50,14 +51,30 @@ public final class SessionClient {
     nonisolated private let webSocketFactory: @Sendable () async throws -> WebSocketClient
     nonisolated internal let clock: any Clock
     nonisolated internal let backoffSchedule: [TimeInterval]
+    /// NIOLock protects `_ws` and `_wsReadyTask` which are read from
+    /// nonisolated async contexts (`awaitWS`, `sendBinary`, `sendText`)
+    /// while written on @MainActor (`spawnOpenTask`, `stop`).
+    /// `nonisolated(unsafe)` is safe here because all reads and writes
+    /// go through the `stateLock`-guarded accessors; the lock is the
+    /// actual synchronization contract, not Swift's actor isolation.
+    nonisolated private let stateLock = NIOLock()
     @ObservationIgnored
-    nonisolated(unsafe) private var ws: WebSocketClient?
+    nonisolated(unsafe) private var _ws: WebSocketClient?
     /// Pending open of the current/next WS. `sendBinary` / `sendText`
     /// await this so writes emitted before the factory resolves don't
     /// silently drop. Replaced on every reconnect; nil while stopped or
     /// before `start()` has run.
     @ObservationIgnored
-    nonisolated(unsafe) private var wsReadyTask: Task<WebSocketClient?, Never>?
+    nonisolated(unsafe) private var _wsReadyTask: Task<WebSocketClient?, Never>?
+
+    nonisolated private func currentWS() -> WebSocketClient? { stateLock.withLock { _ws } }
+    nonisolated private func currentWSReadyTask() -> Task<WebSocketClient?, Never>? {
+        stateLock.withLock { _wsReadyTask }
+    }
+    nonisolated private func setWS(_ value: WebSocketClient?) { stateLock.withLock { _ws = value } }
+    nonisolated private func setWSReadyTask(_ value: Task<WebSocketClient?, Never>?) {
+        stateLock.withLock { _wsReadyTask = value }
+    }
     private var receiveTask: Task<Void, Never>?
     private var stopped = false
     /// Last (cols, rows) libghostty reported for the iOS-side view.
@@ -242,7 +259,7 @@ public final class SessionClient {
                     self.connectionState = .live
                 }
                 do {
-                    guard let ws = self.ws else {
+                    guard let ws = self.currentWS() else {
                         throw URLError(.cannotConnectToHost)
                     }
                     while !self.stopped {
@@ -303,14 +320,14 @@ public final class SessionClient {
                     client.close()
                     return nil
                 }
-                self.ws = client
+                self.setWS(client)
                 return client
             } catch {
-                self.ws = nil
+                self.setWS(nil)
                 return nil
             }
         }
-        self.wsReadyTask = task
+        self.setWSReadyTask(task)
         return task
     }
 
@@ -436,16 +453,20 @@ public final class SessionClient {
         stopped = true
         receiveTask?.cancel()
         receiveTask = nil
-        wsReadyTask?.cancel()
-        wsReadyTask = nil
+        currentWSReadyTask()?.cancel()
+        setWSReadyTask(nil)
         idleWatchdogTask?.cancel()
         idleWatchdogTask = nil
-        ws?.close()
-        ws = nil
+        currentWS()?.close()
+        setWS(nil)
     }
 
     public func forceReconnectNow() {
         guard !stopped else { return }
+        currentWSReadyTask()?.cancel()
+        setWSReadyTask(nil)
+        currentWS()?.close()
+        setWS(nil)
         receiveTask?.cancel()
         receiveTask = nil
         self.start()
@@ -504,10 +525,10 @@ public final class SessionClient {
     /// pending). Returns nil if `start()` hasn't run or the factory
     /// failed.
     nonisolated private func awaitWS() async -> WebSocketClient? {
-        if let pending = wsReadyTask {
+        if let pending = currentWSReadyTask() {
             return await pending.value
         }
-        return ws
+        return currentWS()
     }
 
     private func handleTextFrame(_ text: String) {
