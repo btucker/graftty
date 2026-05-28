@@ -29,6 +29,7 @@ public actor WebRTCHostAgent {
     private let trustedPeerStore: TrustedPeerStore
     private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
     private var sshTransport: SSHNIOTransport?
+    private var sshInstallStarted = false
 
     private let factory: RTCPeerConnectionFactory
     private var peerConnection: RTCPeerConnection?
@@ -202,8 +203,11 @@ public actor WebRTCHostAgent {
     }
 
     private func installSSHHandler() async {
+        guard !sshInstallStarted else { return }
+        sshInstallStarted = true
         guard let dc = dataChannel else { return }
         let transport = SSHNIOTransport(dataChannel: dc)
+        self.sshTransport = transport  // assign before start so close() can find it
         let factory = streamFactory
         do {
             try await transport.eventLoop.submit { [hostKey, trustedPeerStore] in
@@ -224,9 +228,10 @@ public actor WebRTCHostAgent {
                 try transport.channel.pipeline.syncOperations.addHandler(handler)
             }.get()
             try await transport.start()
-            self.sshTransport = transport
             self.state = .connected
         } catch {
+            await transport.close()
+            self.sshTransport = nil
             self.state = .failed(reason: "SSH install failed: \(error)")
         }
     }

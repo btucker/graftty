@@ -87,6 +87,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     private let clientKey: Curve25519.Signing.PrivateKey
     private let expectedHostFingerprint: RemoteIdentityFingerprint
     private var sshTransport: SSHNIOTransport?
+    private var sshInstallStarted = false
     /// `NIOSSHHandler` is not declared `Sendable`; wrap in an
     /// `@unchecked Sendable` box so the actor can hold it as a stored
     /// property. All accesses go through actor-isolated methods, so
@@ -342,14 +343,9 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             // do NOT re-install it here. The previous design installed
             // it here and skipped it on the early-return path above —
             // see the createOffer comment for the bug that caused.
-            // Re-check inside the actor: if the channel transitioned to
-            // open between the early-return check above and installing
-            // the callback, the callback would never fire. Mirrors the
-            // same idempotent re-check in `waitForIceGatheringComplete`.
-            if dataChannel?.readyState == .open {
-                Task { await self.installSSHHandlerAndResume() }
-                return
-            }
+            // No redundant re-check here: the early-return path at the
+            // top of waitForDataChannelOpen handles the already-open case,
+            // and installSSHHandlerAndResume is guarded by sshInstallStarted.
             self.openTimeoutTask = Task { [weak self] in
                 try? await Task.sleep(for: Self.dataChannelOpenTimeout)
                 await self?.handleDataChannelOpenTimeout()
@@ -358,8 +354,11 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     }
 
     private func installSSHHandlerAndResume() async {
+        guard !sshInstallStarted else { return }
+        sshInstallStarted = true
         guard let dc = dataChannel else { return }
         let transport = SSHNIOTransport(dataChannel: dc)
+        self.sshTransport = transport  // assign before start so close() can find it
         do {
             // Wrap the handler in an SSHHandlerBox inside the event-loop
             // submit closure so only the `@unchecked Sendable` box
@@ -374,17 +373,24 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
                 return SSHHandlerBox(h)
             }.get()
             try await transport.start()
-            self.sshTransport = transport
             self.sshHandlerBox = box
             openTimeoutTask?.cancel()
             openTimeoutTask = nil
-            self.state = .connected
-            self.openContinuation?.resume(returning: ())
-            self.openContinuation = nil
+            // Guard: if openContinuation is nil, the open already timed out
+            // or close() resumed it; don't overwrite .failed/.closed with .connected.
+            if openContinuation != nil {
+                self.state = .connected
+                openContinuation?.resume(returning: ())
+                openContinuation = nil
+            }
         } catch {
-            self.state = .failed(reason: "SSH handshake failed: \(error)")
-            self.openContinuation?.resume(throwing: error)
-            self.openContinuation = nil
+            await transport.close()
+            self.sshTransport = nil
+            if openContinuation != nil {
+                self.state = .failed(reason: "SSH handshake failed: \(error)")
+                openContinuation?.resume(throwing: error)
+                openContinuation = nil
+            }
         }
     }
 
