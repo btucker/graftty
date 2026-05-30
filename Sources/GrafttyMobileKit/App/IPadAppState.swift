@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import Foundation
 import Observation
+import os
 import SwiftUI
 import GrafttyProtocol
 
@@ -91,5 +92,52 @@ public final class IPadAppState {
         static let selectedHostId = "iPadAppState.selectedHostId"
         static let sidebarWidth = "iPadAppState.sidebarWidth"
     }
+
+    // MARK: - RemoteHostConnection wiring (R4)
+
+    /// Per-host `RemoteHostConnection` cache keyed by `Host.id`. iPad's
+    /// `SessionClient.live` calls reach for these via
+    /// `remoteHostConnection(for:)` so terminal traffic rides
+    /// SSH-over-WebRTC when a paired connection is available, falling
+    /// back to `/ws` when not.
+    ///
+    /// Today this cache stays empty: production iPad has no signaling
+    /// path to negotiate `RemoteHostConnection.createOffer` /
+    /// `applyAnswer` with the Mac yet (R4 wires the consumer side of
+    /// the connection; the negotiation half lands in a follow-up).
+    /// Once signaling lands, the connection-construction site populates
+    /// this map per paired host on first iPad-side connect.
+    @ObservationIgnored
+    private var remoteHostConnectionsByHostId: [UUID: RemoteHostConnection] = [:]
+
+    /// Returns the `RemoteHostConnection` for `host` if one has been
+    /// negotiated, or `nil` otherwise (which causes
+    /// `SessionClient.live` to use the `/ws` fallback). Call sites on
+    /// the iPad path log when this returns nil so a wiring regression
+    /// after signaling lands is visible in console.
+    public func remoteHostConnection(for host: Host) -> RemoteHostConnection? {
+        remoteHostConnectionsByHostId[host.id]
+    }
+
+    /// Setter for the connection cache — used by the signaling layer
+    /// (not yet wired) to register a freshly-negotiated connection.
+    /// Exposed now so the iPad call sites in `RootView` /
+    /// `WorktreeDetailView` can read from a single source of truth and
+    /// the future signaling code only needs to write to one place.
+    public func setRemoteHostConnection(_ connection: RemoteHostConnection?, for host: Host) {
+        if let connection {
+            remoteHostConnectionsByHostId[host.id] = connection
+        } else {
+            remoteHostConnectionsByHostId.removeValue(forKey: host.id)
+        }
+    }
+
+    /// Shared `os.Logger` for iPad WebRTC wiring diagnostics. Surfaces
+    /// the nil-fallback warning when the iPad ends up on `/ws` because
+    /// no `RemoteHostConnection` is registered for the active host.
+    public static let remoteWiringLogger = Logger(
+        subsystem: "com.quotably.graftty",
+        category: "ipad-remote-wiring"
+    )
 }
 #endif

@@ -33,18 +33,28 @@ extension SessionClient {
     public nonisolated static let previewIdleThreshold: TimeInterval = 10
     public nonisolated static let fullscreenIdleThreshold: TimeInterval = 30
 
-    /// One-stop factory for the `URLSessionWebSocketClient` + `SessionClient`
+    /// One-stop factory for the WebSocket transport + `SessionClient`
     /// pair. Both `SingleSessionView` (initial / re-dial) and
     /// `WorktreeDetailView` (preview pool) need the same triplet — URL
     /// composition + WS construction + SessionClient binding.
+    ///
+    /// When `remoteHost` is non-nil (iPad paired-host path), the factory
+    /// opens an SSH terminal session over WebRTC via
+    /// `RemoteHostConnection.openTerminalSession(sessionName:)`. When nil
+    /// (iPhone path, or iPad before signaling lands), the factory falls
+    /// back to a plain `URLSessionWebSocketClient` pointed at `/ws`.
     static func live(
         baseURL: URL,
         sessionName: String,
-        role: Role = .fullscreen
+        role: Role = .fullscreen,
+        remoteHost: RemoteHostConnection? = nil
     ) -> SessionClient {
         SessionClient(
             sessionName: sessionName,
             webSocketFactory: {
+                if let remoteHost {
+                    return try await remoteHost.openTerminalSession(sessionName: sessionName)
+                }
                 let wsURL = RootView.makeWebSocketURL(base: baseURL, session: sessionName)
                 return URLSessionWebSocketClient(url: wsURL)
             },

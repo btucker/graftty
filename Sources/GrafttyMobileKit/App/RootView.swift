@@ -153,6 +153,12 @@ struct SingleSessionView: View {
     /// hide the sidebar-toggle button — leaving no way to re-show a
     /// collapsed sidebar (IPAD-1.7).
     let isFullScreen: Bool
+    /// Injected on the iPad path so `openWebSocket()` can fetch the
+    /// per-host `RemoteHostConnection` for SSH-over-WebRTC. nil on the
+    /// iPhone path (and on iPad before any signaling has registered a
+    /// connection), in which case `SessionClient.live` falls back to
+    /// `URLSessionWebSocketClient` against `/ws`.
+    let iPadAppState: IPadAppState?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -205,11 +211,13 @@ struct SingleSessionView: View {
     init(
         step: SessionStep,
         navigationPath: Binding<NavigationPath>,
-        isFullScreen: Bool = true
+        isFullScreen: Bool = true,
+        iPadAppState: IPadAppState? = nil
     ) {
         self.step = step
         self._navigationPath = navigationPath
         self.isFullScreen = isFullScreen
+        self.iPadAppState = iPadAppState
     }
 
     var body: some View {
@@ -359,7 +367,22 @@ struct SingleSessionView: View {
         // SessionClient.live(), so guard before the dial — otherwise we
         // burn a TCP/TLS handshake on a connection we'd immediately abort.
         if Task.isCancelled || connection == .ended { return }
-        let new = SessionClient.live(baseURL: step.host.baseURL, sessionName: step.sessionName)
+        let remoteHost = iPadAppState?.remoteHostConnection(for: step.host)
+        if remoteHost == nil, iPadAppState != nil {
+            // iPad path landed on the `/ws` fallback. Today this is
+            // expected (signaling has not landed yet) so the message
+            // logs at `.debug`. Once signaling lands and the cache is
+            // populated on first iPad-side connect, promote to
+            // `.warning` so a wiring regression is visible in console.
+            IPadAppState.remoteWiringLogger.debug(
+                "iPad has no RemoteHostConnection for host \(step.host.id, privacy: .public); falling back to /ws for session \(step.sessionName, privacy: .public)"
+            )
+        }
+        let new = SessionClient.live(
+            baseURL: step.host.baseURL,
+            sessionName: step.sessionName,
+            remoteHost: remoteHost
+        )
         if Task.isCancelled || connection == .ended {
             // Re-backgrounded (or ended) between WS construction and
             // assignment. Stop the orphan so the WS task doesn't leak.

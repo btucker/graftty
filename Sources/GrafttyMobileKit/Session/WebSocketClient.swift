@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import Foundation
+import GrafttyProtocol
 
 public enum WebSocketFrame: Equatable {
     case text(String)
@@ -11,6 +12,15 @@ public protocol WebSocketClient: AnyObject {
     /// Receives the next frame. Errors surface as thrown errors.
     func receive() async throws -> WebSocketFrame
     func close()
+    /// Adjust the remote terminal's window size. URLSessionWebSocketClient
+    /// sends a WebControlEnvelope text frame (/ws server intercepts).
+    /// TerminalSessionClient issues an SSH window-change channel request.
+    /// Default: no-op so non-PTY consumers don't have to implement.
+    func resize(cols: Int, rows: Int) async
+}
+
+public extension WebSocketClient {
+    func resize(cols: Int, rows: Int) async {}
 }
 
 public final class URLSessionWebSocketClient: WebSocketClient {
@@ -43,6 +53,11 @@ public final class URLSessionWebSocketClient: WebSocketClient {
 
     public func close() {
         task.cancel(with: .normalClosure, reason: nil)
+    }
+
+    public func resize(cols: Int, rows: Int) async {
+        let payload = WebControlEnvelope.resize(cols: UInt16(cols), rows: UInt16(rows)).encoded()
+        try? await send(.text(payload))
     }
 }
 #endif

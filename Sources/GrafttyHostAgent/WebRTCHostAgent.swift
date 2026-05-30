@@ -1,5 +1,9 @@
+import CryptoKit
 import Foundation
+import GrafttyKit
 import GrafttyProtocol
+import NIOCore
+import NIOSSH
 import WebRTC
 
 /// Mac-side actor that accepts incoming WebRTC offers, completes the
@@ -20,6 +24,12 @@ public actor WebRTCHostAgent {
     }
 
     public private(set) var state: State = .idle
+
+    private let hostKey: Curve25519.Signing.PrivateKey
+    private let trustedPeerStore: TrustedPeerStore
+    private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
+    private var sshTransport: SSHNIOTransport?
+    private var sshInstallStarted = false
 
     private let factory: RTCPeerConnectionFactory
     private var peerConnection: RTCPeerConnection?
@@ -42,9 +52,16 @@ public actor WebRTCHostAgent {
     /// `internal` so the in-target test can read it via `@testable import`.
     internal private(set) var lastReceivedBinary: Data?
 
-    public init() {
+    public init(
+        hostKey: Curve25519.Signing.PrivateKey,
+        trustedPeerStore: TrustedPeerStore,
+        streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream
+    ) {
         // SSL and codec subsystems are process-wide; initialize once.
         Self.initializeWebRTC()
+        self.hostKey = hostKey
+        self.trustedPeerStore = trustedPeerStore
+        self.streamFactory = streamFactory
         // nil factories: DataChannel-only — no video codec work needed.
         self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
         self.delegate = PeerConnectionDelegate()
@@ -147,11 +164,17 @@ public actor WebRTCHostAgent {
             delegate.onIceGatheringComplete = nil
             pending.resume()
         }
-        dataChannel?.close()
-        peerConnection?.close()
-        dataChannel = nil
-        peerConnection = nil
+        if let transport = sshTransport {
+            Task { await transport.close() }
+            sshTransport = nil
+        }
         state = .closed
+        if let pc = peerConnection {
+            pc.close()
+            peerConnection = nil
+        }
+        dataChannel?.close()
+        dataChannel = nil
     }
 
     private func adoptDataChannel(_ dc: RTCDataChannel) {
@@ -165,22 +188,56 @@ public actor WebRTCHostAgent {
         self.dataChannel = dc
         dc.delegate = dataChannelDelegate
         dataChannelDelegate.onOpen = { [weak self] in
-            Task { await self?.handleDataChannelOpen() }
+            Task { await self?.installSSHHandler() }
         }
         dataChannelDelegate.onMessage = { [weak self] data in
             Task { await self?.recordReceivedBinary(data) }
         }
         if dc.readyState == .open {
-            state = .connected
+            Task { await installSSHHandler() }
         }
-    }
-
-    private func handleDataChannelOpen() {
-        state = .connected
     }
 
     private func recordReceivedBinary(_ data: Data) {
         lastReceivedBinary = data
+    }
+
+    private func installSSHHandler() async {
+        guard !sshInstallStarted else { return }
+        sshInstallStarted = true
+        guard let dc = dataChannel else { return }
+        let transport = SSHNIOTransport(dataChannel: dc)
+        self.sshTransport = transport  // assign before start so close() can find it
+        let factory = streamFactory
+        do {
+            try await transport.eventLoop.submit { [hostKey, trustedPeerStore] in
+                let handler = SSHServerSetup.makeHandler(
+                    hostKey: hostKey,
+                    trustedPeerStore: trustedPeerStore,
+                    allocator: transport.channel.allocator,
+                    inboundChildChannelInitializer: { child, channelType in
+                        guard case .session = channelType else {
+                            return child.eventLoop.makeFailedFuture(WebRTCHostAgentError.unsupportedChannelType)
+                        }
+                        return child.eventLoop.makeCompletedFuture {
+                            let sessionHandler = TerminalSessionHandler(streamFactory: factory)
+                            try child.pipeline.syncOperations.addHandler(sessionHandler)
+                        }
+                    }
+                )
+                try transport.channel.pipeline.syncOperations.addHandler(handler)
+            }.get()
+            try await transport.start()
+            self.state = .connected
+        } catch {
+            await transport.close()
+            self.sshTransport = nil
+            self.state = .failed(reason: "SSH install failed: \(error)")
+        }
+    }
+
+    private enum WebRTCHostAgentError: Error {
+        case unsupportedChannelType
     }
 
     /// `RTCInitializeSSL` is process-wide and not refcounted in every SDK

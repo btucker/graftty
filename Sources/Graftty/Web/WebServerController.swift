@@ -42,6 +42,10 @@ final class WebServerController: ObservableObject {
     /// main actor. Nil before injection causes the endpoint to respond
     /// `503 service unavailable`.
     private var worktreeRemover: (@Sendable (WebServer.DeleteWorktreeRequest) async -> WebServer.DeleteWorktreeOutcome)?
+    /// Drives `POST /v1/rtc/offer`. Nil (default) causes the endpoint
+    /// to respond `503 service unavailable`. Injected by `GrafttyApp`
+    /// once `WebRTCHostAgent` is constructed.
+    private var signalingHandler: (@Sendable (SignalingOffer) async -> WebServer.SignalingHandlerOutcome)?
 
     /// Last `(isEnabled, port)` tuple we reconciled against. Used to suppress
     /// no-op reconciles — `objectWillChange` on `@AppStorage` fires on every
@@ -128,6 +132,16 @@ final class WebServerController: ObservableObject {
         _ remover: @escaping @Sendable (WebServer.DeleteWorktreeRequest) async -> WebServer.DeleteWorktreeOutcome
     ) {
         worktreeRemover = remover
+        rebuildIfRunning()
+    }
+
+    /// Install the signaling handler for `POST /v1/rtc/offer`. Pre-injection
+    /// requests get `503 service unavailable`. Wired in `GrafttyApp.startup()`
+    /// once `WebRTCHostAgent` is constructed with its production params.
+    func setSignalingHandler(
+        _ handler: @escaping @Sendable (SignalingOffer) async -> WebServer.SignalingHandlerOutcome
+    ) {
+        signalingHandler = handler
         rebuildIfRunning()
     }
 
@@ -255,6 +269,7 @@ final class WebServerController: ObservableObject {
         let repos = reposProvider ?? { [] }
         let creator = worktreeCreator
         let remover = worktreeRemover
+        let signalingHandler = self.signalingHandler
         let s = WebServer(
             config: .init(
                 port: port,
@@ -266,7 +281,8 @@ final class WebServerController: ObservableObject {
                 worktreeCreator: creator,
                 worktreeRemover: remover,
                 ghosttyConfigProvider: { GhosttyConfigReader.resolvedConfig() },
-                worktreePanesProvider: worktreePanesProvider ?? { [] }
+                worktreePanesProvider: worktreePanesProvider ?? { [] },
+                signalingHandler: signalingHandler
             ),
             auth: auth,
             bindAddresses: bindAddresses,

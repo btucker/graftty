@@ -1,8 +1,10 @@
 import SwiftUI
 import AppKit
 import UserNotifications
+import GrafttyHostAgent
 import GrafttyKit
 import GrafttyProtocol
+import WebRTC
 
 /// Callbacks injected into `TeamInboxRequestHandler` from the app's
 /// idle-delivery pipeline. Constructed once in `GrafttyApp.startup()` and
@@ -163,6 +165,14 @@ final class AppServices {
     /// sources are never installed.
     var inboxObservers: [TeamInboxObserver] = []
 
+    // MARK: - WebRTC (R4)
+
+    /// Mac-side WebRTC host agent. Accepts incoming offers from paired iPads
+    /// and opens SSH sessions over the resulting DataChannel. Constructed in
+    /// `GrafttyApp.init()` and wired to the `/v1/rtc/offer` signaling route
+    /// in `startup()`. Retained here so it outlives the SwiftUI init cycle.
+    var hostAgent: WebRTCHostAgent?
+
     init(socketPath: String) {
         self.socketServer = SocketServer(socketPath: socketPath)
 
@@ -305,6 +315,33 @@ struct GrafttyApp: App {
             zmxDir: zmxDir
         ))
         _updaterController = StateObject(wrappedValue: UpdaterController())
+
+        // R4: Construct the Mac-side WebRTC host agent. The agent accepts
+        // incoming offers from paired iPads over `POST /v1/rtc/offer` and
+        // opens SSH sessions over the resulting DataChannel → zmx attach.
+        // The signaling handler is wired in startup() via
+        // `webController.setSignalingHandler(_:)` once @State is accessible.
+        let hostIdentityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
+        let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
+        do {
+            services.hostAgent = WebRTCHostAgent(
+                hostKey: try hostIdentityStore.loadOrGenerateAndPersist(),
+                trustedPeerStore: trustedPeerStore,
+                streamFactory: { sessionName in
+                    try ZmxAttachStream(
+                        zmxExecutable: zmxExe,
+                        zmxDir: zmxDir,
+                        sessionName: sessionName,
+                        workingDirectory: nil
+                    )
+                }
+            )
+        } catch {
+            // Identity-store I/O failure leaves hostAgent nil; the signaling
+            // endpoint will serve 503. Log so a TestFlight crash dump or
+            // console transcript surfaces the cause.
+            NSLog("[Graftty] failed to construct WebRTCHostAgent: \(error)")
+        }
     }
 
     /// If another Graftty process with our `CFBundleIdentifier` is
@@ -1280,6 +1317,25 @@ struct GrafttyApp: App {
                 return .gitFailedForceable(stderr: stderr, shortStatus: status)
             case .failure(.gitFailedFinal(let msg)):
                 return .gitFailedFinal(msg)
+            }
+        }
+
+        // R4: Wire `POST /v1/rtc/offer` → WebRTCHostAgent.acceptOffer.
+        // The signalingHandler closure bridges between the HTTP layer's
+        // plain-string SDP (SignalingOffer) and the WebRTC SDK's typed
+        // RTCSessionDescription. If hostAgent construction failed at init
+        // time (e.g. keystore error), the closure is not installed and
+        // the endpoint responds 503.
+        if let hostAgent = services.hostAgent {
+            webController.setSignalingHandler { offer in
+                let rtcOffer = RTCSessionDescription(type: .offer, sdp: offer.sdp)
+                do {
+                    let answer = try await hostAgent.acceptOffer(rtcOffer)
+                    return .success(SignalingAnswer(sdp: answer.sdp))
+                } catch {
+                    NSLog("[Graftty] WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
+                    return .internalFailure("acceptOffer failed: \(error)")
+                }
             }
         }
 

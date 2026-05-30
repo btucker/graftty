@@ -282,7 +282,8 @@ private struct IPadDetailColumn: View {
             SingleSessionView(
                 step: SessionStep(host: host, sessionName: pane, title: pane),
                 navigationPath: .constant(NavigationPath()),
-                isFullScreen: false
+                isFullScreen: false,
+                iPadAppState: appState
             )
             .id("\(host.id)-\(path)-\(pane)")
         } else {

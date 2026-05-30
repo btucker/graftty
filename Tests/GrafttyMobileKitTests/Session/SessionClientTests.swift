@@ -24,6 +24,10 @@ struct SessionClientTests {
             throw CancellationError()
         }
         func close() { closed = true }
+        func resize(cols: Int, rows: Int) async {
+            let payload = WebControlEnvelope.resize(cols: UInt16(cols), rows: UInt16(rows)).encoded()
+            try? await send(.text(payload))
+        }
     }
 
     @Test
@@ -214,11 +218,16 @@ struct SessionClientTests {
     }
 
     @Test
-    func stopClosesWebSocket() {
+    func stopClosesWebSocket() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         client.stop()
+        // The factory is now async, so the first WS is constructed in
+        // an open Task. `stop()` flags `stopped`, the open Task sees it
+        // when the factory resolves, and closes the WS without
+        // assigning it to `self.ws`. Quiesce so the open Task runs.
+        try await Task.sleep(nanoseconds: 50_000_000)
         #expect(ws.closed)
     }
 

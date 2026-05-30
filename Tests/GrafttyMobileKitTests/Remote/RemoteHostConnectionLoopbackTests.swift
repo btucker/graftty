@@ -1,5 +1,7 @@
 #if canImport(UIKit)
+import CryptoKit
 import Foundation
+import GrafttyProtocol
 import Testing
 import WebRTC
 @testable import GrafttyMobileKit
@@ -16,9 +18,24 @@ import WebRTC
 @Suite("WebRTC SDK integration — loopback DataChannel ping-pong (M1.1 foundation).")
 struct RemoteHostConnectionLoopbackTests {
 
-    @Test
+    @Test(.disabled("""
+        RemoteHostConnection now installs an SSH handshake after the \
+        DataChannel opens (R4). TestAnswerer does not speak SSH, so \
+        applyAnswer() would hang until the 30-second timeout fires and \
+        then throw. DataChannel connectivity is still verified by \
+        SSHAuthLoopbackTests (R3) which adds an SSH server on the \
+        answerer side.
+        """))
     func twoConnectionsExchangeBytesOverDataChannel() async throws {
-        let client = RemoteHostConnection()
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let hostFingerprint = RemoteIdentityFingerprint(
+            of: try RemoteIdentityPublicKey(rawRepresentation: hostKey.publicKey.rawRepresentation)
+        )
+        let client = RemoteHostConnection(
+            clientKey: clientKey,
+            expectedHostFingerprint: hostFingerprint
+        )
         let answererPeer = TestAnswerer()
 
         // 1. Client creates offer.
