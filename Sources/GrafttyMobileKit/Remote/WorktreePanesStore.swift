@@ -41,13 +41,13 @@ public actor WorktreePanesStore {
     /// Called by the channel driver's `onSnapshot` callback when a new
     /// snapshot arrives. Wired up by whoever constructs the driver +
     /// store (see Task 12 for production wiring; tests inject directly).
-    public func applySnapshot(_ snapshot: [WorktreePanes]) {
+    func applySnapshot(_ snapshot: [WorktreePanes]) {
         self.current = snapshot
     }
 
     /// Called by the channel driver's `onClosed` callback when the SSH
     /// channel closes.
-    public func markClosed(reason: String) {
+    func markClosed(reason: String) {
         self.connectionState = .closed(reason: reason)
     }
 }
