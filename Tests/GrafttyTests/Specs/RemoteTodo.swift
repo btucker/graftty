@@ -34,16 +34,6 @@ struct RemoteTodo {
     func remote_5_1() async throws { }
 
     @Test("""
-@spec REMOTE-6.1: When a client opens a channel with `channel_type: "panes_state"` over an authenticated `RemoteHostConnection`, the host shall accept the channel for any trusted peer holding the `terminal_control` capability.
-""", .disabled("not yet implemented"))
-    func remote_6_1() async throws { }
-
-    @Test("""
-@spec REMOTE-7.1: When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability.
-""", .disabled("not yet implemented"))
-    func remote_7_1() async throws { }
-
-    @Test("""
 @spec REMOTE-7.6: If a trusted peer is revoked while a `pane_control` channel is open, the channel shall close and subsequent open requests from the revoked peer shall be rejected.
 """, .disabled("not yet implemented"))
     func remote_7_6() async throws { }
