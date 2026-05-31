@@ -1,6 +1,7 @@
 import Foundation
 import GrafttyKit
 import GrafttyProtocol
+import NIOConcurrencyHelpers
 import NIOCore
 
 /// Server-side handler for the `panes-state@graftty.dev` SSH channel.
@@ -15,7 +16,10 @@ import NIOCore
 /// change. Each fire serializes a `PanesStateMessage.snapshot(...)` and
 /// writes it to the channel. On `channelInactive`, the subscription is
 /// cancelled.
-public final class PanesStateChannelHandler: ChannelInboundHandler {
+///
+/// Concurrency: `@unchecked Sendable` because all mutable state
+/// (`isInactive`, `cancellable`) is guarded by `lock`.
+public final class PanesStateChannelHandler: ChannelInboundHandler, @unchecked Sendable {
     public typealias InboundIn = ByteBuffer
     public typealias OutboundOut = ByteBuffer
 
@@ -30,7 +34,8 @@ public final class PanesStateChannelHandler: ChannelInboundHandler {
     }
 
     private let subscribe: Subscribe
-    private let lock = NSLock()
+    private let lock = NIOLock()
+    private var isInactive = false
     private var cancellable: Cancellable?
 
     public init(subscribe: @escaping Subscribe) {
@@ -44,8 +49,12 @@ public final class PanesStateChannelHandler: ChannelInboundHandler {
         let subscribe = self.subscribe
         let storeCancellable: @Sendable (Cancellable) -> Void = { [weak self] c in
             guard let self else { c.cancel(); return }
-            self.lock.lock(); defer { self.lock.unlock() }
-            self.cancellable = c
+            let shouldCancel: Bool = self.lock.withLock {
+                if self.isInactive { return true }
+                self.cancellable = c
+                return false
+            }
+            if shouldCancel { c.cancel() }
         }
 
         Task { [storeCancellable] in
@@ -67,25 +76,19 @@ public final class PanesStateChannelHandler: ChannelInboundHandler {
     }
 
     public func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        // `panes_state` is server-pushed; clients should not write payload
-        // frames. Silently drop — parent design §8.1 ("Server pushes
+        // `panes-state@graftty.dev` is server-pushed; clients should not write
+        // payload frames. Silently drop — parent design §8.1 ("Server pushes
         // length-prefixed JSON ... envelopes").
     }
 
     public func channelInactive(context: ChannelHandlerContext) {
         let c = lock.withLock { () -> Cancellable? in
+            isInactive = true
             let snapshot = cancellable
             cancellable = nil
             return snapshot
         }
         c?.cancel()
         context.fireChannelInactive()
-    }
-}
-
-private extension NSLock {
-    func withLock<R>(_ body: () -> R) -> R {
-        self.lock(); defer { self.unlock() }
-        return body()
     }
 }
