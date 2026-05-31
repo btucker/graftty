@@ -1,5 +1,3 @@
-import Foundation
-
 /// Wire-string identifiers for graftty's custom SSH channel types. These
 /// strings are sent in `SSH_MSG_CHANNEL_OPEN` payloads and arrive on the
 /// server side as `SSHChannelType.unknown(String)` per swift-nio-ssh.
@@ -10,9 +8,9 @@ import Foundation
 public enum SSHChannelTypeNames {
     /// Server-pushed snapshots of `[WorktreePanes]`. One channel per
     /// `RemoteHostConnection`.
-    public static let panesState = "panes-state@graftty.dev"
+    public static let panesState: String = "panes-state@graftty.dev"
 
     /// Client→server RPC for splittree mutations (`split`, `close`,
     /// `swap`). One channel per connection; RPCs serialised by the client.
-    public static let paneControl = "pane-control@graftty.dev"
+    public static let paneControl: String = "pane-control@graftty.dev"
 }
