@@ -291,6 +291,49 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         return client
     }
 
+    /// Opens a `panes-state@graftty.dev` SSH subsystem channel. The
+    /// supplied callbacks fire each time the server pushes a snapshot or
+    /// the channel closes. Throws `ConnectionError.notConnected` if the
+    /// SSH handshake has not completed.
+    public func openPanesStateChannel(
+        onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
+        onClosed: @escaping @Sendable (String) async -> Void
+    ) async throws -> PanesStateChannelClient {
+        guard
+            let transport = sshTransport,
+            let box = sshHandlerBox
+        else {
+            throw ConnectionError.notConnected
+        }
+        let client = PanesStateChannelClient(
+            parentChannel: transport.channel,
+            parentHandler: box.handler,
+            onSnapshot: onSnapshot,
+            onClosed: onClosed
+        )
+        try await client.open()
+        return client
+    }
+
+    /// Opens the `pane-control@graftty.dev` SSH subsystem channel. Returns
+    /// a client ready for typed RPCs (`split`, `close`, `swap`). Throws
+    /// `ConnectionError.notConnected` if the SSH handshake has not
+    /// completed.
+    public func openPaneControlChannel() async throws -> PaneControlChannelClient {
+        guard
+            let transport = sshTransport,
+            let box = sshHandlerBox
+        else {
+            throw ConnectionError.notConnected
+        }
+        let client = PaneControlChannelClient(
+            parentChannel: transport.channel,
+            parentHandler: box.handler
+        )
+        try await client.open()
+        return client
+    }
+
     public func close() {
         if let transport = sshTransport {
             Task { await transport.close() }

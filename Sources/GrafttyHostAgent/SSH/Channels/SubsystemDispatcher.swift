@@ -97,7 +97,7 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
                 // Reverse-order install: pipeline at dispatch time is [self];
                 // each `.after(self)` insert lands immediately after self,
                 // pushing earlier inserts further down. Calling in reverse
-                // order yields [self, decoder, prepender, panesHandler].
+                // order yields [self, codec, decoder, prepender, panesHandler].
                 try context.pipeline.syncOperations.addHandler(
                     PanesStateChannelHandler(subscribe: panesStateSubscribe),
                     position: .after(self)
@@ -108,6 +108,12 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
                 )
                 try context.pipeline.syncOperations.addHandler(
                     LengthPrefixedFraming.makeFrameDecoder(),
+                    position: .after(self)
+                )
+                // SSHChannelDataCodec bridges SSHChannelData ↔ ByteBuffer
+                // so the downstream framing handlers operate on raw bytes.
+                try context.pipeline.syncOperations.addHandler(
+                    SSHChannelDataCodec(),
                     position: .after(self)
                 )
                 if request.wantReply {
@@ -134,6 +140,12 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
                 )
                 try context.pipeline.syncOperations.addHandler(
                     LengthPrefixedFraming.makeFrameDecoder(),
+                    position: .after(self)
+                )
+                // SSHChannelDataCodec bridges SSHChannelData ↔ ByteBuffer
+                // so the downstream framing handlers operate on raw bytes.
+                try context.pipeline.syncOperations.addHandler(
+                    SSHChannelDataCodec(),
                     position: .after(self)
                 )
                 if request.wantReply {

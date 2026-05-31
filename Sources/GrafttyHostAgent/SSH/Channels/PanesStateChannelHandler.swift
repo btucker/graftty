@@ -42,7 +42,23 @@ public final class PanesStateChannelHandler: ChannelInboundHandler, @unchecked S
         self.subscribe = subscribe
     }
 
+    public func handlerAdded(context: ChannelHandlerContext) {
+        // If the channel is already active (i.e. we were installed after
+        // channelActive fired — the normal case when SubsystemDispatcher
+        // routes a subsystem request on an already-active channel), start
+        // the subscription immediately. NIO won't re-fire channelActive
+        // for handlers added to an already-active pipeline.
+        if context.channel.isActive {
+            startSubscription(context: context)
+        }
+    }
+
     public func channelActive(context: ChannelHandlerContext) {
+        startSubscription(context: context)
+        context.fireChannelActive()
+    }
+
+    private func startSubscription(context: ChannelHandlerContext) {
         let channel = context.channel
         let loop = context.eventLoop
         let allocator = context.channel.allocator
@@ -72,7 +88,6 @@ public final class PanesStateChannelHandler: ChannelInboundHandler, @unchecked S
             }
             storeCancellable(cancellable)
         }
-        context.fireChannelActive()
     }
 
     public func channelRead(context: ChannelHandlerContext, data: NIOAny) {

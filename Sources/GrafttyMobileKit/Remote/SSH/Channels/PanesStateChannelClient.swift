@@ -58,6 +58,9 @@ public final class PanesStateChannelClient: @unchecked Sendable {
                 return child.eventLoop.makeFailedFuture(ClientError.channelClosed)
             }
             do {
+                // SSHChannelDataCodec bridges SSHChannelData ↔ ByteBuffer
+                // so the downstream framing handlers operate on raw bytes.
+                try child.pipeline.syncOperations.addHandler(SSHChannelDataCodec())
                 try child.pipeline.syncOperations.addHandler(LengthPrefixedFraming.makeFrameDecoder())
                 try child.pipeline.syncOperations.addHandler(LengthPrefixedFraming.makeFramePrepender())
                 try child.pipeline.syncOperations.addHandler(
