@@ -30,10 +30,15 @@ public final class PanesStateChannelClient: @unchecked Sendable {
 
     private let parentChannel: Channel
     private let parentHandler: NIOSSHHandler
-    private let onSnapshot: OnSnapshot
-    private let onClosed: OnClosed
 
     private let lock = NIOLock()
+    /// Callbacks are mutable so the construction site can build the
+    /// client with placeholders, hand it to its owning store, then
+    /// backfill the closures pointing at the store. Production wiring
+    /// (`buildPaneEnvironment`) uses that flow to break the
+    /// store↔driver chicken-and-egg without a placeholder driver swap.
+    private var onSnapshot: OnSnapshot
+    private var onClosed: OnClosed
     private var childChannel: Channel?
     private var closed = false
 
@@ -47,6 +52,21 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         self.parentHandler = parentHandler
         self.onSnapshot = onSnapshot
         self.onClosed = onClosed
+    }
+
+    /// Overwrites the snapshot + close callbacks installed at init.
+    /// Lets `buildPaneEnvironment` construct the client first, hand it
+    /// to its `WorktreePanesStore`, then point the callbacks at the
+    /// store — avoiding the chicken-and-egg "store needs the client at
+    /// init, client needs the store in its callbacks" cycle.
+    public func setCallbacks(
+        onSnapshot: @escaping OnSnapshot,
+        onClosed: @escaping OnClosed
+    ) {
+        lock.withLock {
+            self.onSnapshot = onSnapshot
+            self.onClosed = onClosed
+        }
     }
 
     /// Opens the SSH child channel. Resolves when the subsystem request has
@@ -103,7 +123,9 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     // MARK: - Inbound
 
     fileprivate func deliverInbound(_ bytes: Data) {
-        let onSnapshot = self.onSnapshot
+        // Snapshot the closure under the lock so a concurrent
+        // setCallbacks(...) doesn't race with the read.
+        let onSnapshot = lock.withLock { self.onSnapshot }
         Task {
             guard
                 let message = try? JSONDecoder().decode(PanesStateMessage.self, from: bytes)
@@ -116,7 +138,7 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     }
 
     private func handleChildClose() {
-        let onClosed = self.onClosed
+        let onClosed = lock.withLock { self.onClosed }
         Task { await onClosed("channel-closed") }
     }
 }

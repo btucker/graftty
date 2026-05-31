@@ -299,15 +299,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
         onClosed: @escaping @Sendable (String) async -> Void
     ) async throws -> PanesStateChannelClient {
-        guard
-            let transport = sshTransport,
-            let box = sshHandlerBox
-        else {
-            throw ConnectionError.notConnected
-        }
-        let client = PanesStateChannelClient(
-            parentChannel: transport.channel,
-            parentHandler: box.handler,
+        let client = try makePanesStateClient(
             onSnapshot: onSnapshot,
             onClosed: onClosed
         )
@@ -315,23 +307,57 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         return client
     }
 
-    /// Opens the `pane-control@graftty.dev` SSH subsystem channel. Returns
-    /// a client ready for typed RPCs (`split`, `close`, `swap`). Throws
-    /// `ConnectionError.notConnected` if the SSH handshake has not
-    /// completed.
-    public func openPaneControlChannel() async throws -> PaneControlChannelClient {
+    /// Constructs a `PanesStateChannelClient` against the current SSH
+    /// transport but does NOT call `open()` on it. Used by
+    /// `buildPaneEnvironment`, where the channel client is wrapped in a
+    /// `WorktreePanesStore` and the store's `subscribe()` performs the
+    /// single open. Throws `ConnectionError.notConnected` if the SSH
+    /// handshake has not completed.
+    public func makePanesStateClient(
+        onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
+        onClosed: @escaping @Sendable (String) async -> Void
+    ) throws -> PanesStateChannelClient {
         guard
             let transport = sshTransport,
             let box = sshHandlerBox
         else {
             throw ConnectionError.notConnected
         }
-        let client = PaneControlChannelClient(
+        return PanesStateChannelClient(
+            parentChannel: transport.channel,
+            parentHandler: box.handler,
+            onSnapshot: onSnapshot,
+            onClosed: onClosed
+        )
+    }
+
+    /// Opens the `pane-control@graftty.dev` SSH subsystem channel. Returns
+    /// a client ready for typed RPCs (`split`, `close`, `swap`). Throws
+    /// `ConnectionError.notConnected` if the SSH handshake has not
+    /// completed.
+    public func openPaneControlChannel() async throws -> PaneControlChannelClient {
+        let client = try makePaneControlClient()
+        try await client.open()
+        return client
+    }
+
+    /// Constructs a `PaneControlChannelClient` against the current SSH
+    /// transport but does NOT call `open()` on it. Used by
+    /// `buildPaneEnvironment`, where the channel client is wrapped in a
+    /// `PaneControlClient` and `PaneControlClient.open()` performs the
+    /// single open. Throws `ConnectionError.notConnected` if the SSH
+    /// handshake has not completed.
+    public func makePaneControlClient() throws -> PaneControlChannelClient {
+        guard
+            let transport = sshTransport,
+            let box = sshHandlerBox
+        else {
+            throw ConnectionError.notConnected
+        }
+        return PaneControlChannelClient(
             parentChannel: transport.channel,
             parentHandler: box.handler
         )
-        try await client.open()
-        return client
     }
 
     public func close() {
