@@ -49,8 +49,8 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         self.onClosed = onClosed
     }
 
-    /// Opens the SSH child channel. Resolves when the subsystem request is
-    /// acknowledged by the server.
+    /// Opens the SSH child channel. Resolves when the subsystem request has
+    /// been written to the wire (wantReply: false — no server acknowledgement).
     public func open() async throws {
         let promise = parentChannel.eventLoop.makePromise(of: Channel.self)
         parentHandler.createChannel(promise, channelType: .session) { [weak self] child, _ in
@@ -78,8 +78,8 @@ public final class PanesStateChannelClient: @unchecked Sendable {
                 subsystem: SSHChannelTypeNames.panesState,
                 wantReply: false
             )
-            try await child.triggerUserOutboundEvent(subsystem).get()
             lock.withLock { self.childChannel = child }
+            try await child.triggerUserOutboundEvent(subsystem).get()
             child.closeFuture.whenComplete { [weak self] _ in
                 self?.handleChildClose()
             }
