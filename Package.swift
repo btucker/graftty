@@ -129,6 +129,7 @@ let package = Package(
             dependencies: [
                 "GrafttyProtocol",
                 .product(name: "NIO", package: "swift-nio"),
+                .product(name: "NIOExtras", package: "swift-nio-extras"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
                 .product(name: "WebRTC", package: "WebRTC"),
