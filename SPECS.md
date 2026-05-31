@@ -1610,11 +1610,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-6.1** A trusted peer with `terminalControl: .allowed` authenticates successfully.
 
-**REMOTE-6.2** Immediately after accepting a `panes_state` channel, the host shall send a `{"type":"snapshot","worktrees":[…]}` frame containing the current `[WorktreePanes]` array.
+**REMOTE-6.2** Immediately after accepting a `panes-state@graftty.dev` channel, the host shall send a `{"type":"snapshot","worktrees":[…]}` frame containing the current `[WorktreePanes]` array.
 
-**REMOTE-6.3** While a `panes_state` channel is open, on any change to the host's `AppState.repos[*].worktrees`, splittree, attention state, or PR status, the host shall send a fresh `{"type":"snapshot","worktrees":[…]}` frame.
+**REMOTE-6.3** While a `panes-state@graftty.dev` channel is open, on any change to the host's `AppState.repos[*].worktrees`, splittree, attention state, or PR status, the host shall send a fresh `{"type":"snapshot","worktrees":[…]}` frame.
 
-**REMOTE-6.4** When the `RemoteHostConnection` tears down (client background, host switch, network failure, peer revocation), any open `panes_state` channels shall close.
+**REMOTE-6.4** When the channel closes (channelInactive), the handler shall cancel the subscription so the snapshot pipeline stops firing.
 
 ### REMOTE-7.x — pane_control Channel
 

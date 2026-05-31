@@ -35,6 +35,7 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.65.0"),
         .package(url: "https://github.com/apple/swift-nio-ssh.git", from: "0.13.0"),
         .package(url: "https://github.com/apple/swift-nio-ssl.git", from: "2.26.0"),
+        .package(url: "https://github.com/apple/swift-nio-extras.git", from: "1.22.0"),
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
         .package(url: "https://github.com/stencilproject/Stencil.git", from: "0.15.1"),
         .package(url: "https://github.com/stasel/WebRTC.git", from: "137.0.0"),
@@ -71,6 +72,7 @@ let package = Package(
                 "GrafttyProtocol",
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
+                .product(name: "NIOExtras", package: "swift-nio-extras"),
                 .product(name: "WebRTC", package: "WebRTC"),
             ],
             swiftSettings: strictWarnings
