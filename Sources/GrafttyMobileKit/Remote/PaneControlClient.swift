@@ -7,8 +7,8 @@ import GrafttyProtocol
 /// `PaneControlChannelDriver` and serialises concurrent caller
 /// invocations through the actor's executor.
 ///
-/// Public method surface unchanged from the pre-R5 ChannelRouter-based
-/// version — `RootView` consumers don't need to change.
+/// Public method surface unchanged from R4 — `RootView` consumers don't
+/// need to change.
 public actor PaneControlClient {
 
     public enum ClientError: Error, Equatable, Sendable {

@@ -9,8 +9,8 @@ import GrafttyProtocol
 /// as actor-isolated observable state the sidebar can read.
 ///
 /// The public method surface (`subscribe`, `unsubscribe`, `current`,
-/// `connectionState`) is unchanged from the pre-R5 ChannelRouter-based
-/// version — `RootView` consumers don't need to change.
+/// `connectionState`) is unchanged from R4 — `RootView` consumers don't
+/// need to change.
 public actor WorktreePanesStore {
 
     public enum ConnectionState: Sendable, Equatable {
