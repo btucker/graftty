@@ -83,7 +83,10 @@ public final class PaneControlChannelClient: @unchecked Sendable {
         let body = try JSONEncoder().encode(request)
         let buf = child.allocator.buffer(bytes: body)
         return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<PaneControlResponse, Error>) in
-            lock.withLock { pending = cont }
+            lock.withLock {
+                precondition(pending == nil, "PaneControlChannelClient.send called concurrently — callers must serialise RPCs")
+                pending = cont
+            }
             child.writeAndFlush(buf).whenFailure { [weak self] error in
                 self?.failPending(error)
             }
@@ -107,10 +110,11 @@ public final class PaneControlChannelClient: @unchecked Sendable {
             return snapshot
         }
         guard let cont else { return }
-        if let response = try? JSONDecoder().decode(PaneControlResponse.self, from: bytes) {
+        do {
+            let response = try JSONDecoder().decode(PaneControlResponse.self, from: bytes)
             cont.resume(returning: response)
-        } else {
-            cont.resume(returning: .error(code: "malformed-response", message: "decode failed"))
+        } catch {
+            cont.resume(returning: .error(code: "malformed-response", message: String(describing: error)))
         }
     }
 

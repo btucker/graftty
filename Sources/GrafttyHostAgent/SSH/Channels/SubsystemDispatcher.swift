@@ -93,74 +93,57 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
         switch request.subsystem {
         case SSHChannelTypeNames.panesState:
             dispatched = true
-            do {
+            installSubsystem(
                 // Reverse-order install: pipeline at dispatch time is [self];
                 // each `.after(self)` insert lands immediately after self,
                 // pushing earlier inserts further down. Calling in reverse
                 // order yields [self, codec, decoder, prepender, panesHandler].
-                try context.pipeline.syncOperations.addHandler(
-                    PanesStateChannelHandler(subscribe: panesStateSubscribe),
-                    position: .after(self)
-                )
-                try context.pipeline.syncOperations.addHandler(
-                    LengthPrefixedFraming.makeFramePrepender(),
-                    position: .after(self)
-                )
-                try context.pipeline.syncOperations.addHandler(
-                    LengthPrefixedFraming.makeFrameDecoder(),
-                    position: .after(self)
-                )
-                // SSHChannelDataCodec bridges SSHChannelData ↔ ByteBuffer
-                // so the downstream framing handlers operate on raw bytes.
-                try context.pipeline.syncOperations.addHandler(
-                    SSHChannelDataCodec(),
-                    position: .after(self)
-                )
-                if request.wantReply {
-                    context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
-                }
-                context.pipeline.syncOperations.removeHandler(context: context, promise: nil)
-            } catch {
-                if request.wantReply {
-                    context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil)
-                }
-                context.close(promise: nil)
-            }
+                handler: PanesStateChannelHandler(subscribe: panesStateSubscribe),
+                request: request,
+                context: context
+            )
 
         case SSHChannelTypeNames.paneControl:
             dispatched = true
-            do {
-                try context.pipeline.syncOperations.addHandler(
-                    PaneControlChannelHandler(mutator: paneControlMutator),
-                    position: .after(self)
-                )
-                try context.pipeline.syncOperations.addHandler(
-                    LengthPrefixedFraming.makeFramePrepender(),
-                    position: .after(self)
-                )
-                try context.pipeline.syncOperations.addHandler(
-                    LengthPrefixedFraming.makeFrameDecoder(),
-                    position: .after(self)
-                )
-                // SSHChannelDataCodec bridges SSHChannelData ↔ ByteBuffer
-                // so the downstream framing handlers operate on raw bytes.
-                try context.pipeline.syncOperations.addHandler(
-                    SSHChannelDataCodec(),
-                    position: .after(self)
-                )
-                if request.wantReply {
-                    context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
-                }
-                context.pipeline.syncOperations.removeHandler(context: context, promise: nil)
-            } catch {
-                if request.wantReply {
-                    context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil)
-                }
-                context.close(promise: nil)
-            }
+            installSubsystem(
+                handler: PaneControlChannelHandler(mutator: paneControlMutator),
+                request: request,
+                context: context
+            )
 
         default:
             // Unknown subsystem — refuse cleanly.
+            if request.wantReply {
+                context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil)
+            }
+            context.close(promise: nil)
+        }
+    }
+
+    /// Installs the shared framing stack (codec → decoder → prepender → `handler`)
+    /// after `self` in the pipeline, acks or nacks the subsystem request, then
+    /// removes `self`. The reverse-insertion order ensures the pipeline reads as
+    /// `[codec, decoder, prepender, handler]` from the channel inward.
+    private func installSubsystem(
+        handler: any NIOCore.ChannelHandler,
+        request: SSHChannelRequestEvent.SubsystemRequest,
+        context: ChannelHandlerContext
+    ) {
+        do {
+            try context.pipeline.syncOperations.addHandler(handler, position: .after(self))
+            try context.pipeline.syncOperations.addHandler(
+                LengthPrefixedFraming.makeFramePrepender(), position: .after(self))
+            try context.pipeline.syncOperations.addHandler(
+                LengthPrefixedFraming.makeFrameDecoder(), position: .after(self))
+            // SSHChannelDataCodec bridges SSHChannelData ↔ ByteBuffer
+            // so the downstream framing handlers operate on raw bytes.
+            try context.pipeline.syncOperations.addHandler(
+                SSHChannelDataCodec(), position: .after(self))
+            if request.wantReply {
+                context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
+            }
+            context.pipeline.syncOperations.removeHandler(context: context, promise: nil)
+        } catch {
             if request.wantReply {
                 context.triggerUserOutboundEvent(ChannelFailureEvent(), promise: nil)
             }

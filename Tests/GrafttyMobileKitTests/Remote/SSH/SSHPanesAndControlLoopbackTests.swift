@@ -223,7 +223,7 @@ struct SSHPanesAndControlLoopbackTests {
         // Poll for the snapshot to arrive (the server fires it on handlerAdded/channelActive).
         let received: [WorktreePanes]
         do {
-            received = try await snapshotBox.wait(timeout: responseDeadline)
+            received = try await snapshotBox.wait()
         } catch {
             client.close()
             await clientTransport.close()
@@ -390,7 +390,7 @@ private actor SnapshotBox {
         }
     }
 
-    func wait(timeout: Duration) async throws -> [WorktreePanes] {
+    func wait() async throws -> [WorktreePanes] {
         if let v = value { return v }
         return try await withCheckedThrowingContinuation { cont in
             continuation = cont
