@@ -28,8 +28,8 @@ public actor WebRTCHostAgent {
     private let hostKey: Curve25519.Signing.PrivateKey
     private let trustedPeerStore: TrustedPeerStore
     private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
-    private let panesStateSubscribe: PanesStateChannelHandler.Subscribe
-    private let paneControlMutator: PaneControlChannelHandler.Mutator
+    private var panesStateSubscribe: PanesStateChannelHandler.Subscribe
+    private var paneControlMutator: PaneControlChannelHandler.Mutator
     private var sshTransport: SSHNIOTransport?
     private var sshInstallStarted = false
 
@@ -72,6 +72,24 @@ public actor WebRTCHostAgent {
         self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
         self.delegate = PeerConnectionDelegate()
         self.dataChannelDelegate = DataChannelDelegate()
+    }
+
+    /// Replace the `panes-state` subscription callback. The R5 wiring path
+    /// constructs the host agent in `GrafttyApp.init()` (before SwiftUI
+    /// `@State` is accessible) with a stub, then swaps in the production
+    /// closure from `startup()`. Safe to call multiple times — the snapshotted
+    /// value is re-read on every `installSSHHandler` call. Must be invoked
+    /// before the signaling handler is wired so no data channel can open
+    /// with the stub still in place.
+    public func setPanesStateSubscribe(_ subscribe: @escaping PanesStateChannelHandler.Subscribe) {
+        self.panesStateSubscribe = subscribe
+    }
+
+    /// Replace the `pane-control` mutator callback. See `setPanesStateSubscribe`
+    /// for the timing contract — both setters share the same init/startup
+    /// split and the same "wire before signaling" ordering requirement.
+    public func setPaneControlMutator(_ mutator: @escaping PaneControlChannelHandler.Mutator) {
+        self.paneControlMutator = mutator
     }
 
     /// Accept an incoming offer and return the answer.
