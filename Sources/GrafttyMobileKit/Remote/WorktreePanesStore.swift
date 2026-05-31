@@ -2,10 +2,15 @@
 import Foundation
 import GrafttyProtocol
 
-/// Mobile-side façade for the `panes_state` channel. Opens the channel on
-/// the supplied `ChannelRouter`, decodes inbound snapshots, and exposes
-/// `current: [WorktreePanes]` as actor-isolated observable state the
-/// sidebar can read.
+/// Mobile-side façade for the `panes-state@graftty.dev` SSH subsystem.
+/// Opens the channel via the supplied `PanesStateChannelDriver`,
+/// receives decoded `[WorktreePanes]` snapshots from the driver's
+/// inbound-snapshot callback, and exposes `current: [WorktreePanes]`
+/// as actor-isolated observable state the sidebar can read.
+///
+/// The public method surface (`subscribe`, `unsubscribe`, `current`,
+/// `connectionState`) is unchanged from the pre-R5 ChannelRouter-based
+/// version — `RootView` consumers don't need to change.
 public actor WorktreePanesStore {
 
     public enum ConnectionState: Sendable, Equatable {
@@ -17,86 +22,42 @@ public actor WorktreePanesStore {
     public private(set) var current: [WorktreePanes] = []
     public private(set) var connectionState: ConnectionState = .idle
 
-    private let router: ChannelRouter
-    private var channelID: ChannelID?
+    private let driver: PanesStateChannelDriver
 
-    public init(router: ChannelRouter) {
-        self.router = router
+    public init(driver: PanesStateChannelDriver) {
+        self.driver = driver
     }
 
-    /// Open the `panes_state` channel. Returns when the initial open
-    /// frame has been sent — snapshot frames arrive asynchronously.
     public func subscribe() async throws {
-        let handler = SubscriberHandler(
-            onSnapshot: { [weak self] snapshot in
-                await self?.applySnapshot(snapshot)
-            },
-            onClosed: { [weak self] reason in
-                await self?.markClosed(reason: reason)
-            }
-        )
-        let id = try await router.open(type: "panes_state", handler: handler)
-        self.channelID = id
+        try await driver.open()
         self.connectionState = .subscribed
     }
 
     public func unsubscribe() async {
-        guard let id = channelID else { return }
-        channelID = nil
-        connectionState = .closed(reason: "unsubscribed")
-        try? await router.close(id)
+        driver.close()
+        self.connectionState = .closed(reason: "unsubscribed")
     }
 
-    private func applySnapshot(_ snapshot: [WorktreePanes]) {
+    /// Called by the channel driver's `onSnapshot` callback when a new
+    /// snapshot arrives. Wired up by whoever constructs the driver +
+    /// store (see Task 12 for production wiring; tests inject directly).
+    public func applySnapshot(_ snapshot: [WorktreePanes]) {
         self.current = snapshot
     }
 
-    private func markClosed(reason: String) {
+    /// Called by the channel driver's `onClosed` callback when the SSH
+    /// channel closes.
+    public func markClosed(reason: String) {
         self.connectionState = .closed(reason: reason)
-        self.channelID = nil
     }
 }
 
-/// Handler installed by `WorktreePanesStore.subscribe()`. Reads inbound
-/// `payload` frames, decodes each as a `PanesStateMessage`, and forwards
-/// `snapshot` payloads to the store.
-private actor SubscriberHandler: ChannelHandler {
-    nonisolated let channelType = "panes_state"
-
-    private let onSnapshot: @Sendable ([WorktreePanes]) async -> Void
-    private let onClosed: @Sendable (String) async -> Void
-
-    init(
-        onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
-        onClosed: @escaping @Sendable (String) async -> Void
-    ) {
-        self.onSnapshot = onSnapshot
-        self.onClosed = onClosed
-    }
-
-    func onOpen(_ id: ChannelID, outbox: ChannelOutbox) async {
-        // No-op: the server pushes; the client doesn't send.
-    }
-
-    func onPayload(_ data: Data) async {
-        let message: PanesStateMessage
-        do {
-            message = try JSONDecoder().decode(PanesStateMessage.self, from: data)
-        } catch {
-            return
-        }
-        switch message {
-        case .snapshot(let worktrees):
-            await onSnapshot(worktrees)
-        }
-    }
-
-    func onClose() async {
-        await onClosed("channel-closed")
-    }
-
-    func onError(_ code: String, message: String) async {
-        await onClosed("\(code): \(message)")
-    }
+/// Protocol exposed for test substitution. `PanesStateChannelClient`
+/// conforms; tests substitute a fake driver.
+public protocol PanesStateChannelDriver: Sendable {
+    func open() async throws
+    func close()
 }
+
+extension PanesStateChannelClient: PanesStateChannelDriver {}
 #endif
