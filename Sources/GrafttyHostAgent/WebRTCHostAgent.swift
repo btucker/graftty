@@ -28,6 +28,8 @@ public actor WebRTCHostAgent {
     private let hostKey: Curve25519.Signing.PrivateKey
     private let trustedPeerStore: TrustedPeerStore
     private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
+    private let panesStateSubscribe: PanesStateChannelHandler.Subscribe
+    private let paneControlMutator: PaneControlChannelHandler.Mutator
     private var sshTransport: SSHNIOTransport?
     private var sshInstallStarted = false
 
@@ -55,13 +57,17 @@ public actor WebRTCHostAgent {
     public init(
         hostKey: Curve25519.Signing.PrivateKey,
         trustedPeerStore: TrustedPeerStore,
-        streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream
+        streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
+        panesStateSubscribe: @escaping PanesStateChannelHandler.Subscribe,
+        paneControlMutator: @escaping PaneControlChannelHandler.Mutator
     ) {
         // SSL and codec subsystems are process-wide; initialize once.
         Self.initializeWebRTC()
         self.hostKey = hostKey
         self.trustedPeerStore = trustedPeerStore
         self.streamFactory = streamFactory
+        self.panesStateSubscribe = panesStateSubscribe
+        self.paneControlMutator = paneControlMutator
         // nil factories: DataChannel-only — no video codec work needed.
         self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
         self.delegate = PeerConnectionDelegate()
@@ -209,6 +215,8 @@ public actor WebRTCHostAgent {
         let transport = SSHNIOTransport(dataChannel: dc)
         self.sshTransport = transport  // assign before start so close() can find it
         let factory = streamFactory
+        let panesStateSubscribe = self.panesStateSubscribe
+        let paneControlMutator = self.paneControlMutator
         do {
             try await transport.eventLoop.submit { [hostKey, trustedPeerStore] in
                 let handler = SSHServerSetup.makeHandler(
@@ -220,8 +228,12 @@ public actor WebRTCHostAgent {
                             return child.eventLoop.makeFailedFuture(WebRTCHostAgentError.unsupportedChannelType)
                         }
                         return child.eventLoop.makeCompletedFuture {
-                            let sessionHandler = TerminalSessionHandler(streamFactory: factory)
-                            try child.pipeline.syncOperations.addHandler(sessionHandler)
+                            let dispatcher = SubsystemDispatcher(
+                                streamFactory: factory,
+                                panesStateSubscribe: panesStateSubscribe,
+                                paneControlMutator: paneControlMutator
+                            )
+                            try child.pipeline.syncOperations.addHandler(dispatcher)
                         }
                     }
                 )

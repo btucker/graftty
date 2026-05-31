@@ -334,6 +334,16 @@ struct GrafttyApp: App {
                         sessionName: sessionName,
                         workingDirectory: nil
                     )
+                },
+                // TODO(R5 Task 11): wire to AppState-backed subscription
+                // and pane-control mutator. Until Task 11 lands, both
+                // hooks no-op so the host-agent can still be constructed
+                // and the SSH transport scaffolding stays exercised.
+                panesStateSubscribe: { _ in
+                    PanesStateChannelHandler.Cancellable(cancel: {})
+                },
+                paneControlMutator: { _ in
+                    .error(code: "unimplemented", message: "pane-control not wired to AppState yet")
                 }
             )
         } catch {
