@@ -1646,13 +1646,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### AGENT-1.x
 
-**AGENT-1.1** When the registry refreshes, the application shall key each claude session's busy/idle status by the `ZMX_SESSION` it inherited from its Graftty pane.
+**AGENT-1.0** Liveness of a claude agent session as reported by `claude agents --json`. The JSON exposes exactly two states; richer "needs input"/"completed" states live only in the interactive Agent View, not the JSON.
 
-**AGENT-1.2** If a claude session reports no `ZMX_SESSION` (it is not running inside a Graftty pane), then the application shall omit it from the liveness map.
+**AGENT-1.1** parse claude agents --json + ps env into busy/idle keyed by inherited ZMX_SESSION.
 
-**AGENT-1.3** If a session's `ZMX_SESSION` matches no live pane, then the application shall ignore it.
+**AGENT-1.2** a session with no ZMX_SESSION is omitted.") func dropsSessionsWithoutZmxSession() { let psNoEnv = "100 claude --some-flag\n200 claude ZMX_SESSION=graftty-bbbb2222" let map = AgentLivenessParsing.liveness(agentsJSON: json, psOutput: psNoEnv) #expect(map["graftty-bbbb2222"] == .idle) #expect(map.count == 1) } @Test("@spec AGENT-1.4: when two sessions share a pane, busy wins.") func busyWinsWithinPane() { let json2 =
 
-**AGENT-1.4** When multiple claude sessions resolve to the same pane, the application shall report that pane as busy if any of its sessions is busy.
+**AGENT-1.3** paneSlot(forSessionName:) resolves a zmx session name to its pane slot or nil when unmatched.
+
+**AGENT-1.4** when two sessions share a pane, busy wins.") func busyWinsWithinPane() { let json2 =
 
 ### AGENT-2.x
 
@@ -1660,7 +1662,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.2** While a pane has no live attention ping, the application shall render `working…` when its claude session is busy and render nothing when it is idle.
 
-**AGENT-2.3** If the `claude agents --json` invocation fails or returns unparseable output, then the application shall produce an empty liveness map without crashing.
+**AGENT-2.3** malformed JSON yields an empty map, no throw.
 
 ### AGENT-3.x
 
