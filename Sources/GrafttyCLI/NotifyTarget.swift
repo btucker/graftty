@@ -17,7 +17,15 @@ public enum NotifyTarget {
     ) throws -> NotificationMessage {
         if session != nil && worktree != nil { throw NotifyTargetError.conflictingTargets }
         let path = try resolveWorktreePath()
-        let pane = session ?? (worktree == nil ? env["ZMX_SESSION"] : nil)
+        let pane = paneSessionName(session: session, worktree: worktree, env: env)
         return .notify(path: path, text: text, clearAfter: clearAfter, paneSessionName: pane)
+    }
+
+    /// The pane a notification scopes to: `--session` wins; otherwise an
+    /// in-pane caller (`$ZMX_SESSION`) targets its own pane — unless an
+    /// explicit `--worktree` was given, which is worktree-scoped (nil pane).
+    /// Shared by `message(...)` and the `--clear` path so they can't drift.
+    public static func paneSessionName(session: String?, worktree: String?, env: [String: String]) -> String? {
+        session ?? (worktree == nil ? env["ZMX_SESSION"] : nil)
     }
 }

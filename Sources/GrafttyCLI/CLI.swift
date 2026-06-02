@@ -131,7 +131,8 @@ struct Notify: ParsableCommand {
         let message: NotificationMessage
         if clear {
             let path = try resolveTargetWorktreePath()
-            let pane = session ?? (worktree == nil ? ProcessInfo.processInfo.environment["ZMX_SESSION"] : nil)
+            let pane = NotifyTarget.paneSessionName(
+                session: session, worktree: worktree, env: ProcessInfo.processInfo.environment)
             message = .clear(path: path, paneSessionName: pane)
         } else {
             message = try NotifyTarget.message(

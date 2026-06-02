@@ -49,24 +49,16 @@ public final class ClaudeSessionRegistry {
             let agents = try await executor.capture(
                 command: claudePath, args: ["agents", "--json"], at: ".")
             guard agents.exitCode == 0 else { return [:] }
-            let pids = pidList(from: agents.stdout)
+            let pids = AgentLivenessParsing.pids(agentsJSON: agents.stdout)
             guard !pids.isEmpty else { return [:] }
             let ps = try await executor.capture(
                 command: "ps",
-                args: ["eww", "-o", "pid=,command=", "-p", pids.joined(separator: ",")],
+                args: ["eww", "-o", "pid=,command=", "-p", pids.map(String.init).joined(separator: ",")],
                 at: ".")
             return AgentLivenessParsing.liveness(agentsJSON: agents.stdout, psOutput: ps.stdout)
         } catch {
             logger.debug("claude agents poll failed: \(String(describing: error))")
             return [:]
         }
-    }
-
-    private static func pidList(from json: String) -> [String] {
-        struct S: Decodable { let pid: Int }
-        guard let data = json.data(using: .utf8),
-              let sessions = try? JSONDecoder().decode([S].self, from: data)
-        else { return [] }
-        return sessions.map { String($0.pid) }
     }
 }
