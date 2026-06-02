@@ -534,15 +534,10 @@ struct GrafttyApp: App {
             return
         }
         appState.selectedWorktreePath = path
-        if let paneSlot {
-            for repoIdx in appState.repos.indices {
-                for wtIdx in appState.repos[repoIdx].worktrees.indices
-                where appState.repos[repoIdx].worktrees[wtIdx].path == path {
-                    let wt = appState.repos[repoIdx].worktrees[wtIdx]
-                    if wt.state == .running, wt.paneSessions[paneSlot] != nil {
-                        appState.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = paneSlot
-                    }
-                }
+        if let paneSlot, let idx = appState.indices(forWorktreePath: path) {
+            let wt = appState.repos[idx.repo].worktrees[idx.worktree]
+            if wt.state == .running, wt.paneSessions[paneSlot] != nil {
+                appState.repos[idx.repo].worktrees[idx.worktree].focusedPaneSlotID = paneSlot
             }
         }
         NSApp.activate(ignoringOtherApps: true)
