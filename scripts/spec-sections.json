@@ -25,7 +25,8 @@
     "IPAD",
     "TEAM",
     "EDITOR",
-    "REMOTE"
+    "REMOTE",
+    "URL"
   ],
   "sections": {
     "LAYOUT": "App Layout",
@@ -52,7 +53,8 @@
     "IPAD": "iPad Layout",
     "TEAM": "Agent Teams",
     "EDITOR": "Editor Integration",
-    "REMOTE": "Secure Remote Access"
+    "REMOTE": "Secure Remote Access",
+    "URL": "Worktree URL Handler"
   },
   "subsections": {
     "LAYOUT.1": "Window Structure",
