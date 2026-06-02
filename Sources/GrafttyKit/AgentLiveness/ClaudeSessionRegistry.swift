@@ -13,7 +13,7 @@ public final class ClaudeSessionRegistry {
     @ObservationIgnored private let executor: CLIExecutor
     @ObservationIgnored private let claudePath: String
     @ObservationIgnored private var ticker: PollingTickerLike?
-    @ObservationIgnored private var generation = 0
+    @ObservationIgnored internal var generation = 0
     @ObservationIgnored private let logger =
         Logger(subsystem: "com.btucker.graftty", category: "ClaudeSessionRegistry")
 
@@ -25,6 +25,7 @@ public final class ClaudeSessionRegistry {
     /// Begin polling on the supplied ticker (the app wires the real
     /// `PollingTicker`; tests call `refresh()` directly).
     public func start(ticker: PollingTickerLike) {
+        stop()
         self.ticker = ticker
         ticker.start { [weak self] in await self?.refresh() }
     }
