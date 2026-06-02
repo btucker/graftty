@@ -67,7 +67,8 @@ struct IPadRootLayoutSelectionTests {
         let node = PaneLayoutNode.leaf(
             sessionName: "session-xyz",
             title: "shell",
-            attentionText: nil
+            attentionText: nil,
+            isBusy: false
         )
         guard let leaf = node.leaves.first else {
             Issue.record("expected a leaf")
