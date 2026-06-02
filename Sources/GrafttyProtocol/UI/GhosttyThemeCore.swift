@@ -146,8 +146,18 @@ public extension GhosttyThemeColors {
         ))
     }
 
-    func paneTitle(isFocusedPane: Bool, isActiveWorktree: Bool, hasTitle: Bool) -> Color {
-        foreground.opacity(Self.paneTitleOpacity(
+    func paneTitle(
+        isFocusedPane: Bool,
+        isActiveWorktree: Bool,
+        hasTitle: Bool,
+        isBusy: Bool = false
+    ) -> Color {
+        // AGENT-2.2: a busy pane reuses the running-state green
+        // (worktreeStateIcon's `.green`) as the title base so "actively
+        // working" is scannable, while keeping the same brightness ladder
+        // so focus hierarchy still reads. Idle keeps the foreground base.
+        let base: Color = isBusy ? .green : foreground
+        return base.opacity(Self.paneTitleOpacity(
             isFocusedPane: isFocusedPane,
             isActiveWorktree: isActiveWorktree,
             hasTitle: hasTitle

@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import GrafttyProtocol
 
@@ -126,6 +127,14 @@ struct WorktreePanesTests {
         } else {
             Issue.record("expected leaf")
         }
+    }
+
+    @Test("@spec AGENT-2.2: busy pane title is tinted differently from an idle pane title in the same brightness bucket.")
+    func busyTitleColorDiffersFromIdle() {
+        let theme = GhosttyThemeColors.fallback
+        let idle = theme.paneTitle(isFocusedPane: true, isActiveWorktree: true, hasTitle: true, isBusy: false)
+        let busy = theme.paneTitle(isFocusedPane: true, isActiveWorktree: true, hasTitle: true, isBusy: true)
+        #expect(idle != busy)
     }
 
     @Test
