@@ -12,8 +12,10 @@ public enum DeepLinkTarget: Equatable, Sendable {
     case worktree(repo: String, worktree: String)
 }
 
-/// @spec URL-1.0
-/// Why a deep-link resolution failed.
+/// Why a deep-link resolution failed. The valid set of reasons is
+/// enforced behaviorally by the resolver specs (URL-1.2 / URL-1.3);
+/// this type carries no separate `@spec` ID to avoid a duplicate
+/// type-location for URL-1.0 (`DeepLinkTarget` owns that ID).
 public enum DeepLinkNotFoundReason: Equatable, Sendable {
     case unknownSession
     case unknownRepo

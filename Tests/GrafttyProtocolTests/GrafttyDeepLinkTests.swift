@@ -50,6 +50,11 @@ struct GrafttyDeepLinkParseTests {
         #expect(GrafttyDeepLink.parse(URL(string: "graftty://open?worktree=url-handler")!) == nil)
     }
 
+    @Test("nil when repo present without worktree")
+    func nilWhenRepoWithoutWorktree() {
+        #expect(GrafttyDeepLink.parse(URL(string: "graftty://open?repo=graftty")!) == nil)
+    }
+
     @Test("empty session value is not a target")
     func emptySessionIsNil() {
         #expect(GrafttyDeepLink.parse(URL(string: "graftty://open?session=")!) == nil)
