@@ -1773,7 +1773,9 @@ struct GrafttyApp: App {
         terminalManager: TerminalManager
     ) {
         switch message {
-        case .notify(let path, let text, let clearAfter):
+        case .notify(let path, let text, let clearAfter, _):
+            // `paneSessionName` is decoded but not yet routed to a pane
+            // slot here — pane-scoped resolution lands in a follow-up.
             // Defense-in-depth behind the CLI's ATTN-1.7 guard: reject
             // empty / whitespace-only text silently so a raw socket
             // client (`nc -U`, custom script, web surface) can't write
@@ -1813,7 +1815,7 @@ struct GrafttyApp: App {
                     }
                 }
             }
-        case .clear(let path):
+        case .clear(let path, _):
             for repoIdx in appState.wrappedValue.repos.indices {
                 for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                     if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path == path {

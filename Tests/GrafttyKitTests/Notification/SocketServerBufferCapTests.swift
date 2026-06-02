@@ -56,7 +56,7 @@ struct SocketServerBufferCapTests {
         // Shrink the cap to 4 KB so the test finishes in milliseconds.
         server.maxPerClientBytes = 4 * 1024
         server.onMessage = { msg in
-            if case .notify(_, let text, _) = msg {
+            if case .notify(_, let text, _, _) = msg {
                 received.value.append(text)
             }
         }
