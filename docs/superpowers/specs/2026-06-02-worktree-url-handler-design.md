@@ -31,6 +31,16 @@ macOS app and the iOS app.
   `graftty url` command. Links are authored by hand or by external
   tooling for now. (macOS `open "graftty://…"` exercises the handler
   without any new generation code.)
+- **iOS `.onOpenURL` wiring is deferred to a follow-up PR.** The shared
+  parser and the iOS snapshot resolver ship now (in `GrafttyProtocol`,
+  fully covered by `swift test`), and the iOS `Info.plist` registers the
+  scheme. But the iOS UI is multi-host and fetches the worktree snapshot
+  asynchronously per host across two layouts (iPhone `NavigationStack`
+  push-flow vs. iPad `IPadAppState`); there is no single in-memory
+  snapshot to resolve against, and the UI is `#if canImport(UIKit)`
+  (compiled out on macOS, so unverifiable by `swift test`/`swift build`
+  here). Wiring it correctly — and verifying on-device / via iOS CI — is
+  a tracked follow-up. This first PR is end-to-end verifiable locally.
 
 ## Why a session id is the right key
 
@@ -56,10 +66,12 @@ graftty://open?repo=<repoName>&worktree=<worktreeName>
 ```
 
 - Scheme: `graftty`. Host/action: `open`. Any other host → ignored.
-- `session=<sessionId>`: accepts either the zmx session name
-  (`graftty-ab12cd34`) or a raw pane-session UUID; the parser normalizes
-  to a canonical form before resolution. **Takes precedence** if both
-  forms' params are present.
+- `session=<sessionId>`: the zmx session name (`graftty-ab12cd34`) — the
+  durable, user-visible session identifier surfaced in snapshots and
+  `graftty pane list`. (Raw pane-session UUIDs are intentionally *not*
+  accepted: a session name is only the first 8 hex of the UUID, so the
+  two can't round-trip; matching compares names. YAGNI.) **Takes
+  precedence** if both forms' params are present.
 - `repo=<repoName>`: matched against `RepoEntry.displayName`.
 - `worktree=<worktreeName>`: matched against
   `WorktreeNameSanitizer.sanitize(branch)` — the same canonical
@@ -73,29 +85,44 @@ The resolution logic is pulled out of the UI into pure, shared functions
 so it is testable under `swift test` on macOS and reused verbatim by both
 apps. Only the thin `.onOpenURL` glue lives in app-specific scenes.
 
+Module placement is forced by the dependency graph: `GrafttyMobileKit`
+depends on `GrafttyProtocol` **but not `GrafttyKit`**. So anything shared
+by both apps lives in `GrafttyProtocol`; the Mac-only `[RepoEntry]`
+resolver (which needs `GrafttyKit` types) lives in `GrafttyKit`.
+
 | Component | Location | Responsibility |
 |---|---|---|
-| `GrafttyDeepLink.parse(_ url: URL) -> DeepLinkTarget?` | `GrafttyKit` (shared) | Pure parser. Validates `graftty://open`, reads query params, normalizes the session id, applies session-wins precedence. Returns a `DeepLinkTarget` or `nil`. |
-| `DeepLinkResolver.resolve(_ target:in:) -> DeepLinkOutcome` | `GrafttyKit` (shared) | Pure resolution against a `[RepoEntry]` (Mac) or the host snapshot (iOS). `.session` → scans `paneSessions` for the owning `(worktreePath, paneSlot)`; `.worktree` → matches repo `displayName` + sanitized branch. Returns `.resolved(worktreePath, paneSlot?)` or `.notFound(reason)`. |
-| `.onOpenURL { … }` wiring | `Graftty` (macOS scene) + `GrafttyMobileKit` (iOS scene) | ~10 lines each: parse → resolve → select worktree, focus pane if present, activate/foreground. |
+| `GrafttyDeepLink.parse(_ url: URL) -> DeepLinkTarget?` | `GrafttyProtocol` (shared) | Pure parser. Validates `graftty://open`, reads query params, applies session-wins precedence. Returns a `DeepLinkTarget` or `nil`. Needs only `URL` + `WorktreeNameSanitizer` (both in `GrafttyProtocol`). |
+| `GrafttyDeepLink.resolve(_:inSnapshot:) -> SnapshotDeepLinkOutcome` | `GrafttyProtocol` (iOS) | Pure resolution against `[WorktreePanes]`. `.session` → finds the worktree with a pane leaf whose `sessionName` matches; `.worktree` → matches `repoDisplayName` + `WorktreeNameSanitizer.sanitize(displayBranch)`. Returns `.resolved(worktreePath, sessionName: String?)` or `.notFound(reason)`. Used by the deferred iOS wiring; testable now under `swift test`. |
+| `DeepLinkResolver.resolve(_:inRepos:) -> MacDeepLinkOutcome` | `GrafttyKit` (Mac) | Pure resolution against `[RepoEntry]`. `.session` → scans each worktree's `paneSessions`, comparing `ZmxLauncher.sessionName(for:)` to the target; `.worktree` → matches `RepoEntry.displayName` + `WorktreeNameSanitizer.sanitize(branch)`. Returns `.resolved(worktreePath, paneSlot: PaneSlotID?)` or `.notFound(reason)`. |
+| Mac `.onOpenURL { … }` wiring | `Graftty` (macOS `WindowGroup`) | parse → `resolve(_:inRepos:)` → set `selectedWorktreePath`, set the worktree's `focusedPaneSlotID` if a pane resolved and it's running, `NSApp.activate`. |
+| iOS `.onOpenURL` wiring | `GrafttyMobileKit` | **Deferred to follow-up PR** (see Scope). Will consume `resolve(_:inSnapshot:)`. |
 
 ### Types (data shapes — carry `@spec` doc comments)
 
 ```swift
+// GrafttyProtocol (shared)
 enum DeepLinkTarget: Equatable {
-    case session(String)                       // normalized session id
+    case session(String)                       // zmx session name, e.g. "graftty-ab12cd34"
     case worktree(repo: String, worktree: String)
-}
-
-enum DeepLinkOutcome: Equatable {
-    case resolved(worktreePath: String, paneSlot: PaneSlotID?)
-    case notFound(DeepLinkNotFoundReason)
 }
 
 enum DeepLinkNotFoundReason: Equatable {
     case unknownSession
     case unknownRepo
     case unknownWorktree
+}
+
+// GrafttyProtocol (iOS resolver result; focus key is the sessionName string)
+enum SnapshotDeepLinkOutcome: Equatable {
+    case resolved(worktreePath: String, sessionName: String?)
+    case notFound(DeepLinkNotFoundReason)
+}
+
+// GrafttyKit (Mac resolver result; focus key is PaneSlotID)
+enum MacDeepLinkOutcome: Equatable {
+    case resolved(worktreePath: String, paneSlot: PaneSlotID?)
+    case notFound(DeepLinkNotFoundReason)
 }
 ```
 
