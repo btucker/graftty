@@ -9,16 +9,6 @@ import Testing
 @Suite("AGENT — pending specs")
 struct AgentTodo {
     @Test("""
-@spec AGENT-3.1: When an agent-stop event carries a `paneSessionName` resolving to a live pane, the application shall attach the "needs input" attention to that pane rather than the worktree.
-""", .disabled("not yet implemented"))
-    func agent_3_1() async throws { }
-
-    @Test("""
-@spec AGENT-3.2: If an agent-stop event has no pane session (the agent is not in a Graftty pane), then the application shall fall back to worktree-scoped "needs input" attention.
-""", .disabled("not yet implemented"))
-    func agent_3_2() async throws { }
-
-    @Test("""
 @spec AGENT-4.1: When `graftty notify` is given `--session <zmx-session>`, the application shall target that pane's attention overlay.
 """, .disabled("not yet implemented"))
     func agent_4_1() async throws { }
