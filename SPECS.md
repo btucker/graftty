@@ -1658,9 +1658,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### AGENT-2.x
 
-**AGENT-2.1** While a pane has a live `notify` attention ping, the application shall render that ping in preference to any derived busy/idle status.
-
-**AGENT-2.2** While a pane has no live attention ping, the application shall render `working…` when its claude session is busy and render nothing when it is idle.
+**AGENT-2.1** /2.2: pane attention merge — live notify ping wins; else busy→working…, idle→nil.
 
 **AGENT-2.3** malformed JSON yields an empty map, no throw.
 

@@ -9,16 +9,6 @@ import Testing
 @Suite("AGENT — pending specs")
 struct AgentTodo {
     @Test("""
-@spec AGENT-2.1: While a pane has a live `notify` attention ping, the application shall render that ping in preference to any derived busy/idle status.
-""", .disabled("not yet implemented"))
-    func agent_2_1() async throws { }
-
-    @Test("""
-@spec AGENT-2.2: While a pane has no live attention ping, the application shall render `working…` when its claude session is busy and render nothing when it is idle.
-""", .disabled("not yet implemented"))
-    func agent_2_2() async throws { }
-
-    @Test("""
 @spec AGENT-3.1: When an agent-stop event carries a `paneSessionName` resolving to a live pane, the application shall attach the "needs input" attention to that pane rather than the worktree.
 """, .disabled("not yet implemented"))
     func agent_3_1() async throws { }
