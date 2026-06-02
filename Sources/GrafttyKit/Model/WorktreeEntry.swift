@@ -236,6 +236,17 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         paneSessions.removeAll()
     }
 
+    /// Inverts `paneSessions` to find the pane slot whose zmx session name
+    /// matches `sessionName` (the `ZMX_SESSION` an agent inherited). Shared
+    /// by busy/idle rendering, agent-stop attribution, and `notify --session`.
+    public func paneSlot(forSessionName sessionName: String) -> PaneSlotID? {
+        for (slot, paneSession) in paneSessions
+        where ZmxLauncher.sessionName(for: paneSession) == sessionName {
+            return slot
+        }
+        return nil
+    }
+
     /// Transitions this entry from `.stale` back to `.closed`, returning
     /// the list of leaf `PaneSlotID`s whose surfaces the caller MUST
     /// destroy via `TerminalManager.destroySurfaces(terminalIDs:)` before
