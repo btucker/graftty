@@ -89,12 +89,36 @@ jobs:
           swift --version
           xcodebuild -version
 
+      # D: cache the xcodegen binary + its Cellar so brew doesn't pay the
+      # install cost on every run.
+      - name: Cache xcodegen install
+        id: cache-xcodegen
+        uses: actions/cache@v4
+        with:
+          path: |
+            /opt/homebrew/bin/xcodegen
+            /opt/homebrew/Cellar/xcodegen
+          key: ${{ runner.os }}-xcodegen-1
+
       - name: Install XcodeGen
+        if: steps.cache-xcodegen.outputs.cache-hit != 'true'
         run: brew install xcodegen
 
       - name: Regenerate GrafttyMobile.xcodeproj
         working-directory: Apps/GrafttyMobile
         run: xcodegen generate
+
+      # A: cache the SwiftPM artifacts that xcodebuild downloads into
+      # DerivedData/SourcePackages — most notably WebRTC.xcframework, which
+      # is the dominant first-run download cost. Keyed on Package.resolved
+      # so any dep bump invalidates cleanly.
+      - name: Cache iOS DerivedData SwiftPM artifacts
+        uses: actions/cache@v4
+        with:
+          path: DerivedData/SourcePackages
+          key: ${{ runner.os }}-ios-deriveddata-${{ hashFiles('Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-ios-deriveddata-
 
       - name: Build & test GrafttyMobile (iOS Simulator SDK)
         timeout-minutes: 15
@@ -102,6 +126,11 @@ jobs:
         # (with application-identifier entitlement) — CODE_SIGN_IDENTITY=-
         # in project.yml handles signing. Without a real signature the
         # iOS Keychain rejects every SecItemAdd with errSecMissingEntitlement.
+        #
+        # -derivedDataPath ./DerivedData makes the SwiftPM artifacts cache
+        # path predictable. COMPILER_INDEX_STORE_ENABLE=NO disables index
+        # emission (CI doesn't consume the index store; saves compile time).
+        # -quiet suppresses per-file build output (final summary still prints).
         run: |
           xcodebuild \
             -project Apps/GrafttyMobile/GrafttyMobile.xcodeproj \
@@ -110,4 +139,7 @@ jobs:
             -configuration Debug \
             -skipPackagePluginValidation \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -derivedDataPath ./DerivedData \
+            -quiet \
+            COMPILER_INDEX_STORE_ENABLE=NO \
             test
