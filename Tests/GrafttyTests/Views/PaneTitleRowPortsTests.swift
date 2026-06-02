@@ -72,8 +72,8 @@ struct PaneTitleRowPortsTests {
     }
 
     @MainActor
-    @Test("@spec LAYOUT-2.30: When a pane has an active attention capsule, the application shall render the capsule to the right of the pane title (not in place of it), truncating the title — so the row stays a single line rather than stacking the pill under the title.")
-    func attentionPillRendersBesideTitleOnOneLine() {
+    @Test("@spec LAYOUT-2.30: When a pane has an active attention capsule, the application shall render the capsule to the right of the pane title (not in place of it), truncating the title so the capsule keeps its intrinsic width — the row stays a single line (pill beside, not stacked under) and its width stays bounded by the row.")
+    func attentionPillRendersBesideTitleNotInPlaceOfIt() {
         let containerWidth: CGFloat = 220
         func height(attention: String?) -> CGFloat {
             let row = PaneTitleRow(
@@ -83,21 +83,19 @@ struct PaneTitleRowPortsTests {
             return NSHostingController(rootView: row)
                 .sizeThatFits(in: CGSize(width: containerWidth, height: 1000)).height
         }
-        // A pill beside a (truncated) title occupies one line — within ~4pt
-        // of the no-pill single-line height. Stacking the pill under the
+        // A pill beside a (truncated) title occupies one line — within a few
+        // pt of the no-pill single-line height. Stacking the pill under the
         // title would roughly double it.
         #expect(abs(height(attention: "Claude needs input") - height(attention: nil)) < 6)
-    }
 
-    @MainActor
-    @Test("@spec LAYOUT-2.22: A PaneTitleRow with a long title AND an attention capsule stays bounded by the row width (title truncates; pill keeps intrinsic size).")
-    func longTitlePlusPillStaysBounded() {
-        let containerWidth: CGFloat = 220
-        let row = PaneTitleRow(
+        // A long title plus a pill stays bounded by the row width: the title
+        // truncates while the pill keeps its intrinsic size (preserves the
+        // LAYOUT-2.22 outdent invariant for the pill-present case).
+        let longRow = PaneTitleRow(
             title: String(repeating: "really-long-pane-title-segment-", count: 6),
             isActiveWorktree: true, isFocusedPane: true, isBusy: false,
             theme: .fallback, attentionText: "Claude needs input", portBindings: [])
-        let preferred = NSHostingController(rootView: row)
+        let preferred = NSHostingController(rootView: longRow)
             .sizeThatFits(in: CGSize(width: containerWidth, height: 1000))
         #expect(preferred.width <= containerWidth + 0.5)
     }

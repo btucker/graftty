@@ -129,7 +129,11 @@ struct WorktreePanesTests {
         }
     }
 
-    @Test("@spec AGENT-2.2: busy pane title is tinted differently from an idle pane title in the same brightness bucket.")
+    // Supports AGENT-2.2 (whose behavioral spec lives in
+    // AgentLivenessMergeTests): the busy tint must actually change the
+    // rendered title color, not just flip a flag. Untagged so AGENT-2.2
+    // keeps a single behavioral location per the SPECS.md rules.
+    @Test
     func busyTitleColorDiffersFromIdle() {
         let theme = GhosttyThemeColors.fallback
         let idle = theme.paneTitle(isFocusedPane: true, isActiveWorktree: true, hasTitle: true, isBusy: false)
