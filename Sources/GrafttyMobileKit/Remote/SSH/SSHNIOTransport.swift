@@ -25,9 +25,8 @@ extension RTCDataChannel: DataChannelSink {
 /// `NIOSSHHandler` can run over an SCTP-backed DataChannel.
 ///
 /// Mirror of `Sources/GrafttyHostAgent/SSH/SSHNIOTransport.swift`. The
-/// two files are kept as near-duplicates per the codebase precedent
-/// (`ChannelRouter` on Mac/mobile) so the Mac-side host agent and the
-/// iOS mobile client speak the same byte-stream-over-DataChannel
+/// two files are kept as near-duplicates so the Mac-side host agent and
+/// the iOS mobile client speak the same byte-stream-over-DataChannel
 /// shape without a shared module.
 ///
 /// Architecture:

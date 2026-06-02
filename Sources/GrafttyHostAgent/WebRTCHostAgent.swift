@@ -28,6 +28,8 @@ public actor WebRTCHostAgent {
     private let hostKey: Curve25519.Signing.PrivateKey
     private let trustedPeerStore: TrustedPeerStore
     private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
+    private var panesStateSubscribe: PanesStateChannelHandler.Subscribe
+    private var paneControlMutator: PaneControlChannelHandler.Mutator
     private var sshTransport: SSHNIOTransport?
     private var sshInstallStarted = false
 
@@ -55,21 +57,49 @@ public actor WebRTCHostAgent {
     public init(
         hostKey: Curve25519.Signing.PrivateKey,
         trustedPeerStore: TrustedPeerStore,
-        streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream
+        streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
+        panesStateSubscribe: @escaping PanesStateChannelHandler.Subscribe,
+        paneControlMutator: @escaping PaneControlChannelHandler.Mutator
     ) {
         // SSL and codec subsystems are process-wide; initialize once.
         Self.initializeWebRTC()
         self.hostKey = hostKey
         self.trustedPeerStore = trustedPeerStore
         self.streamFactory = streamFactory
+        self.panesStateSubscribe = panesStateSubscribe
+        self.paneControlMutator = paneControlMutator
         // nil factories: DataChannel-only — no video codec work needed.
         self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
         self.delegate = PeerConnectionDelegate()
         self.dataChannelDelegate = DataChannelDelegate()
     }
 
+    /// Replace the `panes-state` subscription callback. The R5 wiring path
+    /// constructs the host agent in `GrafttyApp.init()` (before SwiftUI
+    /// `@State` is accessible) with a stub, then swaps in the production
+    /// closure from `startup()`. Safe to call multiple times — the snapshotted
+    /// value is re-read on every `installSSHHandler` call. Must be invoked
+    /// before the signaling handler is wired so no data channel can open
+    /// with the stub still in place.
+    public func setPanesStateSubscribe(_ subscribe: @escaping PanesStateChannelHandler.Subscribe) {
+        self.panesStateSubscribe = subscribe
+    }
+
+    /// Replace the `pane-control` mutator callback. See `setPanesStateSubscribe`
+    /// for the timing contract — both setters share the same init/startup
+    /// split and the same "wire before signaling" ordering requirement.
+    public func setPaneControlMutator(_ mutator: @escaping PaneControlChannelHandler.Mutator) {
+        self.paneControlMutator = mutator
+    }
+
     /// Accept an incoming offer and return the answer.
     public func acceptOffer(_ offer: RTCSessionDescription) async throws -> RTCSessionDescription {
+        // Reject concurrent / re-entered offers — two parallel offers
+        // would otherwise clobber `peerConnection`, `dataChannel`, and
+        // the delegate's onDataChannel closure.
+        guard state == .idle || state == .closed else {
+            throw HostError.busy
+        }
         let config = Self.defaultConfig()
         let constraints = RTCMediaConstraints(
             mandatoryConstraints: nil,
@@ -209,6 +239,8 @@ public actor WebRTCHostAgent {
         let transport = SSHNIOTransport(dataChannel: dc)
         self.sshTransport = transport  // assign before start so close() can find it
         let factory = streamFactory
+        let panesStateSubscribe = self.panesStateSubscribe
+        let paneControlMutator = self.paneControlMutator
         do {
             try await transport.eventLoop.submit { [hostKey, trustedPeerStore] in
                 let handler = SSHServerSetup.makeHandler(
@@ -220,19 +252,31 @@ public actor WebRTCHostAgent {
                             return child.eventLoop.makeFailedFuture(WebRTCHostAgentError.unsupportedChannelType)
                         }
                         return child.eventLoop.makeCompletedFuture {
-                            let sessionHandler = TerminalSessionHandler(streamFactory: factory)
-                            try child.pipeline.syncOperations.addHandler(sessionHandler)
+                            let dispatcher = SubsystemDispatcher(
+                                streamFactory: factory,
+                                panesStateSubscribe: panesStateSubscribe,
+                                paneControlMutator: paneControlMutator
+                            )
+                            try child.pipeline.syncOperations.addHandler(dispatcher)
                         }
                     }
                 )
                 try transport.channel.pipeline.syncOperations.addHandler(handler)
             }.get()
             try await transport.start()
-            self.state = .connected
+            // Preserve `.closed` if `close()` ran during the await above —
+            // otherwise we'd flip state back to `.connected` after the
+            // transport has been torn down, claiming a working connection
+            // when the underlying transport is gone.
+            if self.state != .closed {
+                self.state = .connected
+            }
         } catch {
             await transport.close()
             self.sshTransport = nil
-            self.state = .failed(reason: "SSH install failed: \(error)")
+            if self.state != .closed {
+                self.state = .failed(reason: "SSH install failed: \(error)")
+            }
         }
     }
 
@@ -285,6 +329,11 @@ public actor WebRTCHostAgent {
         case sdpGenerationFailed
         case notOpen
         case sendFailed
+        /// `acceptOffer` was called while a prior offer was still in flight
+        /// or the agent was already connected. Only one peer connection at
+        /// a time — the second offer is rejected rather than clobbering
+        /// the live one.
+        case busy
     }
 }
 

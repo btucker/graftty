@@ -2,9 +2,6 @@
 import Foundation
 
 /// Duplex byte stream for a single terminal session on the mobile side.
-/// Currently used by `TerminalChannelClient`'s outbound-bytes path; the
-/// inbound bytes flow through the channel framing into a higher-level
-/// consumer (eventually `InMemoryTerminalSession`).
 ///
 /// Mirror of the Mac-side `TerminalByteStream` protocol. Forced cross-
 /// target duplication: `GrafttyMobileKit` cannot import `GrafttyKit`.

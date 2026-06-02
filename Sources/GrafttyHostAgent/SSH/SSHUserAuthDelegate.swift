@@ -6,10 +6,22 @@ import NIOSSH
 
 /// @spec REMOTE-8.2
 /// @spec REMOTE-8.3
+/// @spec REMOTE-6.1
+/// @spec REMOTE-7.1
 /// Server-side userauth delegate that backs SSH authentication against
 /// graftty's `TrustedPeerStore`. Identity is key-only — the SSH
 /// userauth `username` field is deliberately ignored; the peer is
 /// resolved entirely by the offered Ed25519 public key.
+///
+/// REMOTE-6.1 / REMOTE-7.1 capability enforcement happens here, not at
+/// channel-open: all R5-scope channel types (session/pty, panes-state,
+/// pane-control) require the same `terminalControl == .allowed`
+/// capability, so a peer without it cannot authenticate at all.
+/// SSH_MSG_USERAUTH_FAILURE closes every R5 channel-open gate by
+/// exclusion. When per-channel capability differentiation actually
+/// matters (port-tunnel REMOTE-4.x with `askEachTime`), that PR will
+/// introduce a per-connection `AuthenticatedPeerBox` and migrate the
+/// check to channel-open time.
 public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
     public let supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods = .publicKey
 
@@ -28,11 +40,16 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
         case .publicKey(let publicKeyRequest):
             do {
                 let fingerprint = try Self.fingerprint(of: publicKeyRequest.publicKey)
-                if try store.get(fingerprint: fingerprint) != nil {
+                if let peer = try store.get(fingerprint: fingerprint),
+                   peer.capabilities.terminalControl == .allowed {
                     responsePromise.succeed(.success)
                 } else {
-                    // No matching trusted peer — reject. The peer is
-                    // either unpaired or has been revoked since pairing.
+                    // Either no matching trusted peer (unpaired / revoked) or the
+                    // peer's terminalControl capability has been disabled. Reject
+                    // with the same SSH_MSG_USERAUTH_FAILURE — clients can't tell
+                    // the difference, which prevents probing for revoked-vs-unpaired
+                    // status. REMOTE-6.1 / REMOTE-7.1 are satisfied by exclusion:
+                    // a peer that can't authenticate can't open any channel.
                     responsePromise.succeed(.failure)
                 }
             } catch {

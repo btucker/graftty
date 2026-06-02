@@ -334,6 +334,20 @@ struct GrafttyApp: App {
                         sessionName: sessionName,
                         workingDirectory: nil
                     )
+                },
+                // R5 Task 11: init-time placeholder closures. The host
+                // agent is constructed in `init()` (before SwiftUI `@State`
+                // is accessible), then `startup()` calls
+                // `setPanesStateSubscribe(_:)` and `setPaneControlMutator(_:)`
+                // with the production wiring that actually reads from
+                // `AppState`. The actor's FIFO ordering guarantees the
+                // setter hops run before any `acceptOffer` hop, so no
+                // incoming WebRTC offer ever sees these placeholders.
+                panesStateSubscribe: { _ in
+                    PanesStateChannelHandler.Cancellable(cancel: {})
+                },
+                paneControlMutator: { _ in
+                    .error(code: "starting", message: "host not yet wired (startup did not run)")
                 }
             )
         } catch {
@@ -1210,50 +1224,57 @@ struct GrafttyApp: App {
         // client's sidebar mirror. Includes non-running worktrees so
         // closed/stale/creating rows render their state via icon +
         // color, same as on macOS.
+        //
+        // Hoisted out of `setWorktreePanesProvider` so the R5 SSH
+        // `panes-state@graftty.dev` channel can re-use the same snapshot
+        // shape. The two consumers (`/worktrees/panes` HTTP poll and
+        // `panes-state` SSH channel) MUST produce identical envelopes
+        // so the iPad's sidebar renders the same regardless of transport.
         let terminalManager = tm
         let panesStatsStore = services.statsStore
         let panesPRStore = services.prStatusStore
-        webController.setWorktreePanesProvider {
-            await MainActor.run { () -> [WorktreePanes] in
-                var out: [WorktreePanes] = []
-                for repo in appStateBinding.wrappedValue.repos {
-                    let defaultBranch = panesRemoteBranchStore.resolvedDefaultBranch(
-                        forRepoAt: repo.path,
-                        hint: repo.defaultBranchHint
-                    )
-                    let labels = SidebarWorktreeLabel.texts(
-                        for: repo.worktrees,
-                        inRepoAtPath: repo.path,
-                        defaultBranch: defaultBranch
-                    )
-                    for wt in repo.worktrees {
-                        let stats = wt.state.hasOnDiskWorktree
-                            ? panesStatsStore.stats[wt.path]
-                            : nil
-                        out.append(WorktreePanes(
-                            path: wt.path,
-                            displayName: labels[wt.id] ?? "",
-                            repoDisplayName: repo.displayName,
-                            displayBranch: wt.displayBranch,
-                            state: WorktreeWireState(wt.state),
-                            isMainCheckout: wt.path == repo.path,
-                            prBadge: panesPRStore.infos[wt.path].map(PRBadge.init(from:)),
-                            stats: stats?.toWire(),
-                            attentionText: wt.attention?.text,
-                            layout: (wt.state == .running ? wt.splitTree.root : nil)
-                                .map {
-                                    paneLayoutNode(
-                                        from: $0,
-                                        paneSessions: wt.paneSessions,
-                                        titles: terminalManager.titles,
-                                        paneAttention: wt.paneAttention
-                                    )
-                                }
-                        ))
-                    }
+        let buildWorktreePanesSnapshot: @Sendable @MainActor () -> [WorktreePanes] = {
+            var out: [WorktreePanes] = []
+            for repo in appStateBinding.wrappedValue.repos {
+                let defaultBranch = panesRemoteBranchStore.resolvedDefaultBranch(
+                    forRepoAt: repo.path,
+                    hint: repo.defaultBranchHint
+                )
+                let labels = SidebarWorktreeLabel.texts(
+                    for: repo.worktrees,
+                    inRepoAtPath: repo.path,
+                    defaultBranch: defaultBranch
+                )
+                for wt in repo.worktrees {
+                    let stats = wt.state.hasOnDiskWorktree
+                        ? panesStatsStore.stats[wt.path]
+                        : nil
+                    out.append(WorktreePanes(
+                        path: wt.path,
+                        displayName: labels[wt.id] ?? "",
+                        repoDisplayName: repo.displayName,
+                        displayBranch: wt.displayBranch,
+                        state: WorktreeWireState(wt.state),
+                        isMainCheckout: wt.path == repo.path,
+                        prBadge: panesPRStore.infos[wt.path].map(PRBadge.init(from:)),
+                        stats: stats?.toWire(),
+                        attentionText: wt.attention?.text,
+                        layout: (wt.state == .running ? wt.splitTree.root : nil)
+                            .map {
+                                paneLayoutNode(
+                                    from: $0,
+                                    paneSessions: wt.paneSessions,
+                                    titles: terminalManager.titles,
+                                    paneAttention: wt.paneAttention
+                                )
+                            }
+                    ))
                 }
-                return out
             }
+            return out
+        }
+        webController.setWorktreePanesProvider {
+            await MainActor.run { buildWorktreePanesSnapshot() }
         }
 
         // WEB-7.1: feed the web server the repo list for the "Add
@@ -1341,21 +1362,135 @@ struct GrafttyApp: App {
             }
         }
 
-        // R4: Wire `POST /v1/rtc/offer` → WebRTCHostAgent.acceptOffer.
-        // The signalingHandler closure bridges between the HTTP layer's
-        // plain-string SDP (SignalingOffer) and the WebRTC SDK's typed
-        // RTCSessionDescription. If hostAgent construction failed at init
-        // time (e.g. keystore error), the closure is not installed and
-        // the endpoint responds 503.
+        // R5 Task 11: wire production panes-state + pane-control closures
+        // into the host agent. Must run BEFORE `setSignalingHandler` below
+        // so no incoming WebRTC offer can complete its data-channel handshake
+        // with the Task 9 stubs still in place — `installSSHHandler` reads
+        // the actor's stored closures synchronously when the DC opens.
+        //
+        // `panesStateSubscribe`: emits initial snapshot, then polls
+        // `buildWorktreePanesSnapshot` on a 1Hz cadence and re-emits when
+        // the snapshot differs from the previously-sent one. Polling
+        // (rather than a pub-sub source) is intentional — AppState is a
+        // SwiftUI `@State` value type with no Combine/AsyncStream publisher,
+        // and the `/ws` HTTP path the desktop sidebar/web client uses is
+        // itself poll-based, so the SSH transport doesn't promise tighter
+        // freshness than the HTTP transport already provides. A pub-sub
+        // hook is left as a post-R6 follow-up.
+        //
+        // `paneControlMutator`: maps session-name targets to `PaneSlotID`
+        // via `TerminalManager.paneID(forSessionName:)` and dispatches to
+        // the same `splitPane` / `closePane` static methods the Mac sidebar
+        // context menu drives. `swap` returns `unsupported` — no native
+        // implementation exists yet; tracked as a post-R5 follow-up.
         if let hostAgent = services.hostAgent {
-            webController.setSignalingHandler { offer in
-                let rtcOffer = RTCSessionDescription(type: .offer, sdp: offer.sdp)
-                do {
-                    let answer = try await hostAgent.acceptOffer(rtcOffer)
-                    return .success(SignalingAnswer(sdp: answer.sdp))
-                } catch {
-                    NSLog("[Graftty] WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
-                    return .internalFailure("acceptOffer failed: \(error)")
+            let panesStateSubscribe: PanesStateChannelHandler.Subscribe = { onChange in
+                // Initial snapshot fires synchronously so the first frame
+                // hits the wire before the polling loop's first sleep.
+                let initial = await MainActor.run { buildWorktreePanesSnapshot() }
+                await onChange(initial)
+
+                let task = Task {
+                    var last = initial
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .seconds(1))
+                        if Task.isCancelled { return }
+                        let next = await MainActor.run { buildWorktreePanesSnapshot() }
+                        if next != last {
+                            last = next
+                            await onChange(next)
+                        }
+                    }
+                }
+                return PanesStateChannelHandler.Cancellable {
+                    task.cancel()
+                }
+            }
+
+            let paneControlMutator: PaneControlChannelHandler.Mutator = { request in
+                await MainActor.run { () -> PaneControlResponse in
+                    switch request {
+                    case .split(let target, let direction):
+                        guard let paneID = terminalManager.paneID(forSessionName: target) else {
+                            return .error(
+                                code: "not-found",
+                                message: "no pane with session name '\(target)'"
+                            )
+                        }
+                        // Mobile sends a coarse axis; we pick the "natural"
+                        // direction on each axis (right / down) so the new
+                        // pane appears after the target, matching what the
+                        // Mac sidebar context menu's "Split Right" / "Split
+                        // Down" defaults produce.
+                        let split: PaneSplit = direction == .horizontal ? .right : .down
+                        let slot = PaneSlotID(id: paneID)
+                        guard Self.splitPane(
+                            appState: appStateBinding,
+                            terminalManager: terminalManager,
+                            targetID: slot,
+                            split: split
+                        ) != nil else {
+                            return .error(
+                                code: "conflict",
+                                message: "split rejected (target not in a running worktree, or surface creation failed)"
+                            )
+                        }
+                        return .ok
+                    case .close(let target):
+                        guard let paneID = terminalManager.paneID(forSessionName: target) else {
+                            return .error(
+                                code: "not-found",
+                                message: "no pane with session name '\(target)'"
+                            )
+                        }
+                        let slot = PaneSlotID(id: paneID)
+                        Self.closePane(
+                            appState: appStateBinding,
+                            terminalManager: terminalManager,
+                            targetID: slot,
+                            userInitiated: true
+                        )
+                        return .ok
+                    case .swap:
+                        // No `swapPanes` exists on the desktop side yet —
+                        // the AppState splittree API doesn't expose a swap
+                        // primitive, and adding one is out of scope for R5
+                        // per the plan's "don't refactor AppState" guidance.
+                        // Follow-up: REMOTE-7.x swap support.
+                        return .error(
+                            code: "unsupported",
+                            message: "swap is not implemented on this host yet"
+                        )
+                    }
+                }
+            }
+
+            // Await the setters BEFORE registering the signaling handler.
+            // Spawning a Task does NOT enqueue onto the actor — only the
+            // Task body's `await` does. A simultaneous HTTP offer could
+            // otherwise race the setter Task and reach `installSSHHandler`
+            // with the stub closures still in place. Install the signaling
+            // handler inside the Task body, after both setters complete,
+            // so no offer can fire before the production closures are live.
+            let controller = webController
+            Task { @MainActor in
+                await hostAgent.setPanesStateSubscribe(panesStateSubscribe)
+                await hostAgent.setPaneControlMutator(paneControlMutator)
+                // R4: Wire `POST /v1/rtc/offer` → WebRTCHostAgent.acceptOffer.
+                // The signalingHandler closure bridges between the HTTP layer's
+                // plain-string SDP (SignalingOffer) and the WebRTC SDK's typed
+                // RTCSessionDescription. If hostAgent construction failed at init
+                // time (e.g. keystore error), the closure is not installed and
+                // the endpoint responds 503.
+                controller.setSignalingHandler { offer in
+                    let rtcOffer = RTCSessionDescription(type: .offer, sdp: offer.sdp)
+                    do {
+                        let answer = try await hostAgent.acceptOffer(rtcOffer)
+                        return .success(SignalingAnswer(sdp: answer.sdp))
+                    } catch {
+                        NSLog("[Graftty] WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
+                        return .internalFailure("acceptOffer failed: \(error)")
+                    }
                 }
             }
         }

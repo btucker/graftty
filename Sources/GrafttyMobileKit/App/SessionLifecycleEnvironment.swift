@@ -63,6 +63,86 @@ extension SessionClient {
         )
     }
 }
+
+// MARK: - PaneEnvironment
+
+/// Bundles the iPad-only pane façades that ride the per-host
+/// `RemoteHostConnection`'s SSH session: a `WorktreePanesStore` for the
+/// sidebar's worktree+pane snapshot, and a `PaneControlClient` for typed
+/// `split`/`close`/`swap` RPCs. Both fields are `nil` on the iPhone path
+/// (and on iPad before signaling has wired up a `RemoteHostConnection`),
+/// where the existing `/ws` flow handles terminal traffic and there is
+/// no SSH session to multiplex these subsystem channels onto. R6's
+/// iPhone cutover will populate them on that path too.
+///
+/// No UI surfaces consume these yet — the env is infrastructure
+/// plumbing landed in R5 so the signaling layer (and future sidebar /
+/// pane-control UI work) can read both from a single source of truth.
+public struct PaneEnvironment: Sendable {
+    public let worktreePanesStore: WorktreePanesStore?
+    public let paneControlClient: PaneControlClient?
+
+    public static let empty = PaneEnvironment(worktreePanesStore: nil, paneControlClient: nil)
+
+    public init(
+        worktreePanesStore: WorktreePanesStore?,
+        paneControlClient: PaneControlClient?
+    ) {
+        self.worktreePanesStore = worktreePanesStore
+        self.paneControlClient = paneControlClient
+    }
+}
+
+/// Constructs a `PaneEnvironment` over the supplied per-host
+/// `RemoteHostConnection`. Returns `.empty` when `remoteHost` is nil
+/// (iPhone, or iPad before signaling lands) or when either subsystem
+/// channel fails to open.
+///
+/// Construction shape: the channel client is built first with no-op
+/// callbacks (via `RemoteHostConnection.makePanesStateClient`), then the
+/// store is built around it as its driver, then `setCallbacks(...)`
+/// backfills the closures pointing at the store, and finally
+/// `store.subscribe()` performs the single SSH channel open. This avoids
+/// the chicken-and-egg "store needs the client at init, client needs the
+/// store in its callbacks" cycle without a placeholder-driver swap.
+/// The `pane-control` side is simpler — `PaneControlChannelClient` has
+/// no inbound callbacks at construction, so we build, wrap, and open in
+/// one chain.
+public func buildPaneEnvironment(remoteHost: RemoteHostConnection?) async -> PaneEnvironment {
+    guard let remoteHost else { return .empty }
+    do {
+        // Build panes-state side: client first (with no-op callbacks),
+        // then store, then backfill callbacks pointing at the store,
+        // then store.subscribe() opens the SSH channel exactly once.
+        let panesClient = try await remoteHost.makePanesStateClient(
+            onSnapshot: { _ in },
+            onClosed: { _ in }
+        )
+        let worktreePanesStore = WorktreePanesStore(driver: panesClient)
+        panesClient.setCallbacks(
+            onSnapshot: { [weak worktreePanesStore] snapshot in
+                await worktreePanesStore?.applySnapshot(snapshot)
+            },
+            onClosed: { [weak worktreePanesStore] reason in
+                await worktreePanesStore?.markClosed(reason: reason)
+            }
+        )
+        try await worktreePanesStore.subscribe()
+
+        // Build pane-control side: build client, wrap, open via the
+        // PaneControlClient façade (which forwards to driver.open()).
+        let controlChannel = try await remoteHost.makePaneControlClient()
+        let paneControlClient = PaneControlClient(driver: controlChannel)
+        try await paneControlClient.open()
+
+        return PaneEnvironment(
+            worktreePanesStore: worktreePanesStore,
+            paneControlClient: paneControlClient
+        )
+    } catch {
+        return .empty
+    }
+}
 #endif
 
 /// Re-dialing while locked would open WSes behind the lock overlay,

@@ -1608,17 +1608,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### REMOTE-6.x — panes_state Channel
 
-**REMOTE-6.1** When a client opens a channel with `channel_type: "panes_state"` over an authenticated `RemoteHostConnection`, the host shall accept the channel for any trusted peer holding the `terminal_control` capability.
+**REMOTE-6.1** A trusted peer with `terminalControl: .allowed` authenticates successfully.
 
-**REMOTE-6.2** Immediately after accepting a `panes_state` channel, the host shall send a `{"type":"snapshot","worktrees":[…]}` frame containing the current `[WorktreePanes]` array.
+**REMOTE-6.2** Immediately after accepting a `panes-state@graftty.dev` channel, the host shall send a `{"type":"snapshot","worktrees":[…]}` frame containing the current `[WorktreePanes]` array.
 
-**REMOTE-6.3** While a `panes_state` channel is open, on any change to the host's `AppState.repos[*].worktrees`, splittree, attention state, or PR status, the host shall send a fresh `{"type":"snapshot","worktrees":[…]}` frame.
+**REMOTE-6.3** While a `panes-state@graftty.dev` channel is open, on any change to the host's `AppState.repos[*].worktrees`, splittree, attention state, or PR status, the host shall send a fresh `{"type":"snapshot","worktrees":[…]}` frame.
 
-**REMOTE-6.4** When the `RemoteHostConnection` tears down (client background, host switch, network failure, peer revocation), any open `panes_state` channels shall close.
+**REMOTE-6.4** When the channel closes (channelInactive), the handler shall cancel the subscription so the snapshot pipeline stops firing.
 
 ### REMOTE-7.x — pane_control Channel
 
-**REMOTE-7.1** When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability.
+**REMOTE-7.1** When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability. (Enforced at userauth: a peer with `terminalControl: .disabled` is rejected.)
 
 **REMOTE-7.2** When the host receives a `pane_control` request `{"type":"split","target":<sessionName>,"direction":<axis>}`, the host shall replace the leaf whose `sessionName == target` with a new split node of the requested `direction` whose left/top child is the original leaf and whose right/bottom child is a freshly-spawned leaf, applied on the main actor, and reply `{"ok":true}` on success.
 
