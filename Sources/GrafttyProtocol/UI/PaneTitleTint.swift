@@ -6,10 +6,12 @@
 /// could ship false-green.
 public enum PaneTitleTint {
     /// @spec AGENT-2.1
-    /// A live attention ping is rendered in preference to the derived busy
-    /// state: the green "working" tint applies only when the pane has no
-    /// active attention capsule. A needs-input ping means claude is
-    /// waiting (capsule beside the title), not working.
+    /// A live attention capsule is rendered in preference to the derived
+    /// busy state: the green "working" tint applies only when the pane has
+    /// no active capsule. The capsule (needs-input notify pings, or the
+    /// transient NOTIF-2.x ✓/! command-finished markers) owns the row's
+    /// secondary surface for its brief lifetime, so the title defers to its
+    /// normal color while one is showing rather than competing with it.
     ///
     /// `hasAttentionCapsule` is each surface's *resolved* notion of an
     /// active capsule — the iPad folds in IPAD-1.14 worktree-scoped

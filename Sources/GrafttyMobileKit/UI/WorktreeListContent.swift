@@ -561,7 +561,10 @@ private struct PaneTitleRow: View {
                 .foregroundStyle(themedOrSecondary(theme?.paneTitle(
                     isFocusedPane: isFocusedPane,
                     isActiveWorktree: isActiveWorktree,
-                    hasTitle: !leaf.displayTitle.isEmpty,
+                    // Use the raw title (not displayTitle, which falls back
+                    // to a non-empty "shell"): an unset title should hit the
+                    // dimmer placeholder bucket, matching the Mac sidebar.
+                    hasTitle: !leaf.title.isEmpty,
                     isBusy: tintBusy
                 )))
                 .lineLimit(1)
