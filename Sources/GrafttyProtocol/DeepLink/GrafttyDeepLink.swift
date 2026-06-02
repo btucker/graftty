@@ -50,3 +50,42 @@ public enum GrafttyDeepLink {
         return nil
     }
 }
+
+/// @spec URL-1.2
+/// Result of resolving a deep link against an iOS worktree-panes
+/// snapshot. The focus key on iOS is the pane `sessionName` string
+/// (see `IPadAppState.focusedPaneId`).
+public enum SnapshotDeepLinkOutcome: Equatable, Sendable {
+    case resolved(worktreePath: String, sessionName: String?)
+    case notFound(DeepLinkNotFoundReason)
+}
+
+extension GrafttyDeepLink {
+    /// Resolve a target against an iOS `[WorktreePanes]` snapshot.
+    public static func resolve(
+        _ target: DeepLinkTarget,
+        inSnapshot worktrees: [WorktreePanes]
+    ) -> SnapshotDeepLinkOutcome {
+        switch target {
+        case .session(let name):
+            for wt in worktrees where sessionNames(of: wt).contains(name) {
+                return .resolved(worktreePath: wt.path, sessionName: name)
+            }
+            return .notFound(.unknownSession)
+        case .worktree(let repo, let worktree):
+            let inRepo = worktrees.filter { $0.repoDisplayName == repo }
+            guard !inRepo.isEmpty else { return .notFound(.unknownRepo) }
+            guard let match = inRepo.first(where: {
+                WorktreeNameSanitizer.sanitize($0.displayBranch) == worktree
+            }) else { return .notFound(.unknownWorktree) }
+            return .resolved(worktreePath: match.path, sessionName: nil)
+        }
+    }
+
+    /// All pane session names in a `WorktreePanes` entry.
+    /// `layout` is `PaneLayoutNode?`; `.leaves` does an in-order walk
+    /// returning `[PaneLayoutNode.Leaf]`, each with a `.sessionName`.
+    private static func sessionNames(of wt: WorktreePanes) -> [String] {
+        wt.layout?.leaves.map(\.sessionName) ?? []
+    }
+}

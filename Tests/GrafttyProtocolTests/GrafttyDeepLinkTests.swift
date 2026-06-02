@@ -55,3 +55,77 @@ struct GrafttyDeepLinkParseTests {
         #expect(GrafttyDeepLink.parse(URL(string: "graftty://open?session=")!) == nil)
     }
 }
+
+@Suite("@spec URL-1.2: Given a worktree-panes snapshot, the application shall resolve a deep-link target to a worktree path (and, for a session target, the matching pane session name), or report which part was unknown.")
+struct GrafttyDeepLinkSnapshotResolveTests {
+
+    /// Build a two-worktree snapshot for repo "graftty":
+    ///   - "/wt/url-handler" branch "url-handler" with panes graftty-aaaa1111 + graftty-bbbb2222
+    ///   - "/wt/main" branch "main" with pane graftty-cccc3333
+    private func snapshot() -> [WorktreePanes] {
+        let urlHandlerLayout = PaneLayoutNode.split(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: .leaf(sessionName: "graftty-aaaa1111", title: "zsh", attentionText: nil),
+            right: .leaf(sessionName: "graftty-bbbb2222", title: "zsh", attentionText: nil)
+        )
+        let mainLayout = PaneLayoutNode.leaf(
+            sessionName: "graftty-cccc3333",
+            title: "zsh",
+            attentionText: nil
+        )
+        return [
+            WorktreePanes(
+                path: "/wt/url-handler",
+                displayName: "url-handler",
+                repoDisplayName: "graftty",
+                displayBranch: "url-handler",
+                state: .running,
+                isMainCheckout: false,
+                prBadge: nil,
+                stats: nil,
+                attentionText: nil,
+                layout: urlHandlerLayout
+            ),
+            WorktreePanes(
+                path: "/wt/main",
+                displayName: "main",
+                repoDisplayName: "graftty",
+                displayBranch: "main",
+                state: .running,
+                isMainCheckout: true,
+                prBadge: nil,
+                stats: nil,
+                attentionText: nil,
+                layout: mainLayout
+            ),
+        ]
+    }
+
+    @Test("session resolves to its worktree + session name")
+    func sessionResolves() {
+        #expect(GrafttyDeepLink.resolve(.session("graftty-bbbb2222"), inSnapshot: snapshot())
+            == .resolved(worktreePath: "/wt/url-handler", sessionName: "graftty-bbbb2222"))
+    }
+
+    @Test("worktree form resolves to path with nil session")
+    func worktreeResolves() {
+        #expect(GrafttyDeepLink.resolve(.worktree(repo: "graftty", worktree: "url-handler"), inSnapshot: snapshot())
+            == .resolved(worktreePath: "/wt/url-handler", sessionName: nil))
+    }
+
+    @Test("unknown session reported")
+    func unknownSession() {
+        #expect(GrafttyDeepLink.resolve(.session("graftty-zzzz9999"), inSnapshot: snapshot()) == .notFound(.unknownSession))
+    }
+
+    @Test("unknown repo reported")
+    func unknownRepo() {
+        #expect(GrafttyDeepLink.resolve(.worktree(repo: "nope", worktree: "url-handler"), inSnapshot: snapshot()) == .notFound(.unknownRepo))
+    }
+
+    @Test("known repo, unknown worktree reported")
+    func unknownWorktree() {
+        #expect(GrafttyDeepLink.resolve(.worktree(repo: "graftty", worktree: "nope"), inSnapshot: snapshot()) == .notFound(.unknownWorktree))
+    }
+}
