@@ -1785,9 +1785,7 @@ struct GrafttyApp: App {
         terminalManager: TerminalManager
     ) {
         switch message {
-        case .notify(let path, let text, let clearAfter, _):
-            // `paneSessionName` is decoded but not yet routed to a pane
-            // slot here — pane-scoped resolution lands in a follow-up.
+        case .notify(let path, let text, let clearAfter, let paneSessionName):
             // Defense-in-depth behind the CLI's ATTN-1.7 guard: reject
             // empty / whitespace-only text silently so a raw socket
             // client (`nc -U`, custom script, web surface) can't write
@@ -1800,6 +1798,37 @@ struct GrafttyApp: App {
             // server a single source of truth for what actually
             // schedules.
             let effectiveClearAfter = Attention.effectiveClearAfter(clearAfter)
+            // AGENT-4.1/4.2: when the message carries a pane session name,
+            // resolve it to a pane slot within the targeted worktree and
+            // write pane-scoped attention. Reuse `setAttentionForTerminal`
+            // for the auto-clear path; for the no-clear case write the slot
+            // directly. Falls through to worktree-scoped if it resolves no
+            // live pane (e.g. the session ended).
+            if let paneSessionName {
+                for repoIdx in appState.wrappedValue.repos.indices {
+                    for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices
+                        where appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path == path {
+                        guard let slot = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                            .paneSlot(forSessionName: paneSessionName) else { continue }
+                        if let effectiveClearAfter {
+                            setAttentionForTerminal(
+                                appState: appState,
+                                terminalID: slot,
+                                text: text,
+                                clearAfter: effectiveClearAfter
+                            )
+                        } else {
+                            appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                                .paneAttention[slot] = Attention(
+                                    text: text,
+                                    timestamp: Date(),
+                                    clearAfter: nil
+                                )
+                        }
+                        return
+                    }
+                }
+            }
             // Pin the timestamp the attention carries AND the auto-clear
             // timer closes over, so the timer can verify it's still OUR
             // notification when it fires (cf. WorktreeEntry.clearAttentionIfTimestamp).
@@ -1827,7 +1856,23 @@ struct GrafttyApp: App {
                     }
                 }
             }
-        case .clear(let path, _):
+        case .clear(let path, let paneSessionName):
+            // AGENT-4.x: a pane-scoped clear targets just that pane's
+            // attention slot; resolve the session name within the worktree
+            // and fall through to worktree-scoped clear if unresolved.
+            if let paneSessionName {
+                for repoIdx in appState.wrappedValue.repos.indices {
+                    for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices
+                        where appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path == path {
+                        if let slot = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                            .paneSlot(forSessionName: paneSessionName) {
+                            appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                                .paneAttention[slot] = nil
+                            return
+                        }
+                    }
+                }
+            }
             for repoIdx in appState.wrappedValue.repos.indices {
                 for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                     if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path == path {
