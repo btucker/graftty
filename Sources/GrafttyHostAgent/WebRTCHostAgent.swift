@@ -94,6 +94,12 @@ public actor WebRTCHostAgent {
 
     /// Accept an incoming offer and return the answer.
     public func acceptOffer(_ offer: RTCSessionDescription) async throws -> RTCSessionDescription {
+        // Reject concurrent / re-entered offers — two parallel offers
+        // would otherwise clobber `peerConnection`, `dataChannel`, and
+        // the delegate's onDataChannel closure.
+        guard state == .idle || state == .closed else {
+            throw HostError.busy
+        }
         let config = Self.defaultConfig()
         let constraints = RTCMediaConstraints(
             mandatoryConstraints: nil,
@@ -258,11 +264,19 @@ public actor WebRTCHostAgent {
                 try transport.channel.pipeline.syncOperations.addHandler(handler)
             }.get()
             try await transport.start()
-            self.state = .connected
+            // Preserve `.closed` if `close()` ran during the await above —
+            // otherwise we'd flip state back to `.connected` after the
+            // transport has been torn down, claiming a working connection
+            // when the underlying transport is gone.
+            if self.state != .closed {
+                self.state = .connected
+            }
         } catch {
             await transport.close()
             self.sshTransport = nil
-            self.state = .failed(reason: "SSH install failed: \(error)")
+            if self.state != .closed {
+                self.state = .failed(reason: "SSH install failed: \(error)")
+            }
         }
     }
 
@@ -315,6 +329,11 @@ public actor WebRTCHostAgent {
         case sdpGenerationFailed
         case notOpen
         case sendFailed
+        /// `acceptOffer` was called while a prior offer was still in flight
+        /// or the agent was already connected. Only one peer connection at
+        /// a time — the second offer is rejected rather than clobbering
+        /// the live one.
+        case busy
     }
 }
 

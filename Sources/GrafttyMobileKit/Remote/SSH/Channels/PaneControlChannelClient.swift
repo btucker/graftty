@@ -22,7 +22,23 @@ public final class PaneControlChannelClient: @unchecked Sendable {
     public enum ClientError: Error, Sendable {
         case openFailed(any Error)
         case channelClosed
+        /// A `send(_:)` call was issued while another RPC was already
+        /// in flight. The wrapping `PaneControlClient` is an actor but
+        /// actors are reentrant at await boundaries — a concurrent caller
+        /// can re-enter the actor while a prior `driver.send` is suspended.
+        /// We return this soft error rather than crashing on a precondition.
+        case busy
+        /// The RPC didn't receive a response within `rpcDeadline`. The host
+        /// is presumed wedged (mutator deadlock, etc.); the channel is
+        /// left open so subsequent RPCs can attempt to make progress.
+        case timedOut
     }
+
+    /// Per-RPC deadline. If the host doesn't respond within this window we
+    /// fail the continuation with `.timedOut`; otherwise a hung mutator
+    /// would park the caller forever and the next RPC would trip the
+    /// `.busy` path.
+    public static let rpcDeadline: Duration = .seconds(30)
 
     private let parentChannel: Channel
     private let parentHandler: NIOSSHHandler
@@ -30,6 +46,7 @@ public final class PaneControlChannelClient: @unchecked Sendable {
     private let lock = NIOLock()
     private var childChannel: Channel?
     private var pending: CheckedContinuation<PaneControlResponse, Error>?
+    private var deadline: Scheduled<Void>?
     private var closed = false
 
     public init(parentChannel: Channel, parentHandler: NIOSSHHandler) {
@@ -61,6 +78,13 @@ public final class PaneControlChannelClient: @unchecked Sendable {
         do {
             let child = try await promise.futureResult.get()
             lock.withLock { self.childChannel = child }
+            // Register the close handler IMMEDIATELY — before the subsystem
+            // request — so a partial-open failure still propagates onClosed
+            // (and fails any pending RPC). Without this, a NACK after the
+            // child opens would leak the half-open channel.
+            child.closeFuture.whenComplete { [weak self] _ in
+                self?.handleChildClose()
+            }
             let subsystem = SSHChannelRequestEvent.SubsystemRequest(
                 subsystem: SSHChannelTypeNames.paneControl,
                 wantReply: true
@@ -69,10 +93,11 @@ public final class PaneControlChannelClient: @unchecked Sendable {
             // future that completes on ChannelSuccess (subsystem accepted)
             // or fails on ChannelFailure (unknown subsystem / refused).
             try await child.triggerUserOutboundEvent(subsystem).get()
-            child.closeFuture.whenComplete { [weak self] _ in
-                self?.handleChildClose()
-            }
         } catch {
+            // Defense-in-depth: if the open failed after we stashed
+            // childChannel, make sure the half-open channel is torn down.
+            let child = lock.withLock { childChannel }
+            child?.close(promise: nil)
             throw ClientError.openFailed(error)
         }
     }
@@ -82,11 +107,30 @@ public final class PaneControlChannelClient: @unchecked Sendable {
         guard let child else { throw ClientError.channelClosed }
         let body = try JSONEncoder().encode(request)
         let buf = child.allocator.buffer(bytes: body)
+        // Schedule a deadline on the channel's event loop. If it fires
+        // before deliverInbound/failPending resolves the pending continuation,
+        // we fail it with `.timedOut` so callers don't hang forever on a
+        // wedged host mutator. Without this, the next RPC would trip the
+        // `.busy` path forever.
+        let loop = child.eventLoop
         return try await withCheckedThrowingContinuation { (cont: CheckedContinuation<PaneControlResponse, Error>) in
-            lock.withLock {
-                precondition(pending == nil, "PaneControlChannelClient.send called concurrently — callers must serialise RPCs")
-                pending = cont
+            // Reentrancy guard: `PaneControlClient` is an actor but actors
+            // are reentrant at awaits, so a concurrent caller CAN re-enter
+            // this method while a prior call is suspended. Return a soft
+            // `.busy` instead of crashing on a precondition.
+            let isBusy: Bool = self.lock.withLock {
+                if self.pending != nil { return true }
+                self.pending = cont
+                return false
             }
+            if isBusy {
+                cont.resume(throwing: ClientError.busy)
+                return
+            }
+            let deadline = loop.scheduleTask(in: .seconds(30)) { [weak self] () -> Void in
+                self?.failPending(ClientError.timedOut)
+            }
+            self.lock.withLock { self.deadline = deadline }
             child.writeAndFlush(buf).whenFailure { [weak self] error in
                 self?.failPending(error)
             }
@@ -107,6 +151,8 @@ public final class PaneControlChannelClient: @unchecked Sendable {
         let cont = lock.withLock { () -> CheckedContinuation<PaneControlResponse, Error>? in
             let snapshot = pending
             pending = nil
+            self.deadline?.cancel()
+            self.deadline = nil
             return snapshot
         }
         guard let cont else { return }
@@ -122,6 +168,8 @@ public final class PaneControlChannelClient: @unchecked Sendable {
         let cont = lock.withLock { () -> CheckedContinuation<PaneControlResponse, Error>? in
             let snapshot = pending
             pending = nil
+            self.deadline?.cancel()
+            self.deadline = nil
             return snapshot
         }
         cont?.resume(throwing: error)
@@ -132,15 +180,25 @@ public final class PaneControlChannelClient: @unchecked Sendable {
     }
 }
 
-private final class InboundResponseRelay: ChannelInboundHandler {
+/// Inbound relay installed on the SSH child channel. Forwards inbound
+/// `ByteBuffer` frames to the owning `PaneControlChannelClient`.
+///
+/// Holds a **STRONG** reference to `owner` — a weak ref would silently
+/// drop bytes if the caller releases their strong ref while the channel
+/// is alive. The retain cycle (PaneControlChannelClient → child pipeline →
+/// InboundResponseRelay → owner) is bounded: NIO removes all handlers
+/// from the pipeline when the child channel closes, breaking the cycle
+/// at that point. This matches the R4 `TerminalSessionClient.InboundRelay`
+/// pattern.
+private final class InboundResponseRelay: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
-    weak var owner: PaneControlChannelClient?
+    let owner: PaneControlChannelClient
 
     init(owner: PaneControlChannelClient) { self.owner = owner }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let buf = unwrapInboundIn(data)
-        owner?.deliverInbound(Data(buf.readableBytesView))
+        owner.deliverInbound(Data(buf.readableBytesView))
     }
 }
 #endif

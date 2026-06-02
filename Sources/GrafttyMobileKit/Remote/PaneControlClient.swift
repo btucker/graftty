@@ -4,8 +4,15 @@ import GrafttyProtocol
 
 /// Mobile-side actor that exposes typed RPC methods over the
 /// `pane-control@graftty.dev` SSH subsystem. Wraps a
-/// `PaneControlChannelDriver` and serialises concurrent caller
-/// invocations through the actor's executor.
+/// `PaneControlChannelDriver` and routes typed calls to the driver's
+/// untyped `send(_:)` entry point.
+///
+/// Concurrency: Swift actors are **reentrant** at `await` boundaries.
+/// While a `split(...)` call is suspended on `driver.send`, another
+/// caller can enter the actor (e.g. via `close(target:)`) and reach the
+/// driver again. Callers MUST therefore not issue concurrent RPCs
+/// against the same `PaneControlClient`; the underlying driver will
+/// throw `PaneControlChannelClient.ClientError.busy` if they do.
 ///
 /// Public method surface unchanged from R4 — `RootView` consumers don't
 /// need to change.

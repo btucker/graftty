@@ -36,6 +36,12 @@ public final class PanesStateChannelHandler: ChannelInboundHandler, @unchecked S
     private let subscribe: Subscribe
     private let lock = NIOLock()
     private var isInactive = false
+    /// Idempotency flag for `startSubscription`. `handlerAdded` and
+    /// `channelActive` both call it on the same handler instance in some
+    /// installation orders; without this guard, two subscriptions would
+    /// run concurrently and the second `storeCancellable` would overwrite
+    /// the first cancellable, leaking the first subscription.
+    private var started = false
     private var cancellable: Cancellable?
 
     public init(subscribe: @escaping Subscribe) {
@@ -59,6 +65,12 @@ public final class PanesStateChannelHandler: ChannelInboundHandler, @unchecked S
     }
 
     private func startSubscription(context: ChannelHandlerContext) {
+        let shouldStart: Bool = lock.withLock {
+            if started || isInactive { return false }
+            started = true
+            return true
+        }
+        guard shouldStart else { return }
         let channel = context.channel
         let loop = context.eventLoop
         let allocator = context.channel.allocator

@@ -41,6 +41,17 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     private var onClosed: OnClosed
     private var childChannel: Channel?
     private var closed = false
+    private var drainTask: Task<Void, Never>?
+
+    /// Serial inbound queue. `deliverInbound` yields raw frame bytes onto
+    /// this stream; a single drain Task spawned in `open()` consumes them
+    /// in order and dispatches to `onSnapshot`. A per-frame `Task { ... }`
+    /// would NOT preserve wire order — Tasks awaiting an actor enqueue
+    /// when their body awaits, not when they're spawned, so two snapshots
+    /// arriving back-to-back could be applied to `WorktreePanesStore`
+    /// out of order, leaving stale state.
+    private let inboundContinuation: AsyncStream<Data>.Continuation
+    private let inboundStream: AsyncStream<Data>
 
     public init(
         parentChannel: Channel,
@@ -52,6 +63,9 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         self.parentHandler = parentHandler
         self.onSnapshot = onSnapshot
         self.onClosed = onClosed
+        var cont: AsyncStream<Data>.Continuation!
+        self.inboundStream = AsyncStream { c in cont = c }
+        self.inboundContinuation = cont
     }
 
     /// Overwrites the snapshot + close callbacks installed at init.
@@ -93,6 +107,33 @@ public final class PanesStateChannelClient: @unchecked Sendable {
         }
         do {
             let child = try await promise.futureResult.get()
+            lock.withLock { self.childChannel = child }
+            // Register the close handler IMMEDIATELY — before the subsystem
+            // request — so that a partial-open failure still propagates
+            // `onClosed` to the store. Otherwise the store's
+            // `connectionState` would stay `.subscribed` indefinitely on
+            // any post-open failure path.
+            child.closeFuture.whenComplete { [weak self] _ in
+                self?.handleChildClose()
+            }
+            // Spawn the single serial drain task that dispatches inbound
+            // snapshots in wire order. See `inboundStream` for rationale.
+            let drain = Task { [inboundStream, weak self] in
+                for await bytes in inboundStream {
+                    guard let self else { return }
+                    // Snapshot the closure under the lock so a concurrent
+                    // setCallbacks(...) doesn't race with the read.
+                    let onSnapshot = self.lock.withLock { self.onSnapshot }
+                    guard
+                        let message = try? JSONDecoder().decode(PanesStateMessage.self, from: bytes)
+                    else { continue }
+                    switch message {
+                    case .snapshot(let worktrees):
+                        await onSnapshot(worktrees)
+                    }
+                }
+            }
+            lock.withLock { self.drainTask = drain }
             // Send the subsystem request that identifies this session as a
             // panes-state channel. wantReply: false — the server is expected
             // to accept all subsystem requests for known names and we don't
@@ -101,12 +142,16 @@ public final class PanesStateChannelClient: @unchecked Sendable {
                 subsystem: SSHChannelTypeNames.panesState,
                 wantReply: false
             )
-            lock.withLock { self.childChannel = child }
             try await child.triggerUserOutboundEvent(subsystem).get()
-            child.closeFuture.whenComplete { [weak self] _ in
-                self?.handleChildClose()
-            }
         } catch {
+            // Defense-in-depth: if the open failed after we stashed
+            // childChannel, make sure the half-open channel is torn down
+            // and the drain task is finished. `handleChildClose` (via the
+            // already-registered closeFuture handler) will also fire and
+            // finish the continuation, but we belt-and-suspenders it here
+            // so a synchronous error path still cleans up.
+            let child = lock.withLock { childChannel }
+            child?.close(promise: nil)
             throw ClientError.openFailed(error)
         }
     }
@@ -117,35 +162,37 @@ public final class PanesStateChannelClient: @unchecked Sendable {
             closed = true
             return childChannel
         }
+        inboundContinuation.finish()
         child?.close(promise: nil)
     }
 
     // MARK: - Inbound
 
     fileprivate func deliverInbound(_ bytes: Data) {
-        // Snapshot the closure under the lock so a concurrent
-        // setCallbacks(...) doesn't race with the read.
-        let onSnapshot = lock.withLock { self.onSnapshot }
-        Task {
-            guard
-                let message = try? JSONDecoder().decode(PanesStateMessage.self, from: bytes)
-            else { return }
-            switch message {
-            case .snapshot(let worktrees):
-                await onSnapshot(worktrees)
-            }
-        }
+        inboundContinuation.yield(bytes)
     }
 
     private func handleChildClose() {
         let onClosed = lock.withLock { self.onClosed }
+        // Finish the inbound stream so the drain task exits cleanly.
+        inboundContinuation.finish()
         Task { await onClosed("channel-closed") }
     }
 }
 
-private final class InboundSnapshotRelay: ChannelInboundHandler {
+/// Inbound relay installed on the SSH child channel. Forwards inbound
+/// `ByteBuffer` frames to the owning `PanesStateChannelClient`.
+///
+/// Holds a **STRONG** reference to `owner` — a weak ref would silently
+/// drop bytes if the caller releases their strong ref while the channel
+/// is alive. The retain cycle (PanesStateChannelClient → child pipeline →
+/// InboundSnapshotRelay → owner) is bounded: NIO removes all handlers
+/// from the pipeline when the child channel closes, breaking the cycle
+/// at that point. This matches the R4 `TerminalSessionClient.InboundRelay`
+/// pattern.
+private final class InboundSnapshotRelay: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = ByteBuffer
-    weak var owner: PanesStateChannelClient?
+    let owner: PanesStateChannelClient
 
     init(owner: PanesStateChannelClient) {
         self.owner = owner
@@ -153,7 +200,7 @@ private final class InboundSnapshotRelay: ChannelInboundHandler {
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         let buf = unwrapInboundIn(data)
-        owner?.deliverInbound(Data(buf.readableBytesView))
+        owner.deliverInbound(Data(buf.readableBytesView))
     }
 }
 #endif

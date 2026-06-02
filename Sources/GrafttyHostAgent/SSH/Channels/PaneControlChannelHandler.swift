@@ -1,5 +1,6 @@
 import Foundation
 import GrafttyProtocol
+import NIOConcurrencyHelpers
 import NIOCore
 
 /// Server-side handler for the `pane-control@graftty.dev` SSH channel.
@@ -13,8 +14,8 @@ import NIOCore
 /// over the same channel are not supported at this layer — clients
 /// serialise their own RPCs (parent design §8.1).
 ///
-/// Stateless handler (no mutable state beyond the injected `Mutator`),
-/// so `@unchecked Sendable` is trivially safe.
+/// Concurrency: mutable in-flight task tracking is guarded by `lock`,
+/// so `@unchecked Sendable` is safe.
 public final class PaneControlChannelHandler: ChannelInboundHandler, @unchecked Sendable {
     public typealias InboundIn = ByteBuffer
     public typealias OutboundOut = ByteBuffer
@@ -22,6 +23,13 @@ public final class PaneControlChannelHandler: ChannelInboundHandler, @unchecked 
     public typealias Mutator = @Sendable (PaneControlRequest) async -> PaneControlResponse
 
     private let mutator: Mutator
+    private let lock = NIOLock()
+    /// In-flight mutator Tasks. Tracked so that `channelInactive` can
+    /// cancel them — otherwise a mutator suspended on MainActor after the
+    /// channel closes would still apply state mutations to AppState from
+    /// a dead connection.
+    private var inFlightTasks: [Task<Void, Never>] = []
+    private var isInactive = false
 
     public init(mutator: @escaping Mutator) {
         self.mutator = mutator
@@ -35,14 +43,19 @@ public final class PaneControlChannelHandler: ChannelInboundHandler, @unchecked 
         let allocator = context.channel.allocator
         let mutator = self.mutator
 
-        Task {
+        let task = Task {
+            // Check cancellation at each boundary so a channel-close mid-RPC
+            // stops the mutator before it touches AppState.
+            if Task.isCancelled { return }
             let response: PaneControlResponse
             do {
                 let request = try JSONDecoder().decode(PaneControlRequest.self, from: bytes)
+                if Task.isCancelled { return }
                 response = await mutator(request)
             } catch {
                 response = .error(code: "malformed-request", message: String(describing: error))
             }
+            if Task.isCancelled { return }
             guard let body = try? JSONEncoder().encode(response) else { return }
             let buf = allocator.buffer(bytes: body)
             // Marshal back to the event loop thread before writing —
@@ -54,5 +67,25 @@ public final class PaneControlChannelHandler: ChannelInboundHandler, @unchecked 
                 channel.writeAndFlush(buf, promise: nil)
             }
         }
+        lock.withLock {
+            if isInactive {
+                // Lost the race against channelInactive — cancel immediately
+                // rather than appending to a list we'll never drain again.
+                task.cancel()
+            } else {
+                inFlightTasks.append(task)
+            }
+        }
+    }
+
+    public func channelInactive(context: ChannelHandlerContext) {
+        let tasks: [Task<Void, Never>] = lock.withLock {
+            isInactive = true
+            let snapshot = inFlightTasks
+            inFlightTasks.removeAll()
+            return snapshot
+        }
+        for task in tasks { task.cancel() }
+        context.fireChannelInactive()
     }
 }

@@ -1444,30 +1444,32 @@ struct GrafttyApp: App {
                 }
             }
 
-            // Submitted from sync `startup()` via a Task — the actor's FIFO
-            // job ordering guarantees these setter hops run before any
-            // `acceptOffer` job submitted from `setSignalingHandler` below,
-            // because that handler isn't registered until the next statement
-            // here and can't possibly fire before then.
-            Task {
+            // Await the setters BEFORE registering the signaling handler.
+            // Spawning a Task does NOT enqueue onto the actor — only the
+            // Task body's `await` does. A simultaneous HTTP offer could
+            // otherwise race the setter Task and reach `installSSHHandler`
+            // with the stub closures still in place. Install the signaling
+            // handler inside the Task body, after both setters complete,
+            // so no offer can fire before the production closures are live.
+            let controller = webController
+            Task { @MainActor in
                 await hostAgent.setPanesStateSubscribe(panesStateSubscribe)
                 await hostAgent.setPaneControlMutator(paneControlMutator)
-            }
-
-            // R4: Wire `POST /v1/rtc/offer` → WebRTCHostAgent.acceptOffer.
-            // The signalingHandler closure bridges between the HTTP layer's
-            // plain-string SDP (SignalingOffer) and the WebRTC SDK's typed
-            // RTCSessionDescription. If hostAgent construction failed at init
-            // time (e.g. keystore error), the closure is not installed and
-            // the endpoint responds 503.
-            webController.setSignalingHandler { offer in
-                let rtcOffer = RTCSessionDescription(type: .offer, sdp: offer.sdp)
-                do {
-                    let answer = try await hostAgent.acceptOffer(rtcOffer)
-                    return .success(SignalingAnswer(sdp: answer.sdp))
-                } catch {
-                    NSLog("[Graftty] WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
-                    return .internalFailure("acceptOffer failed: \(error)")
+                // R4: Wire `POST /v1/rtc/offer` → WebRTCHostAgent.acceptOffer.
+                // The signalingHandler closure bridges between the HTTP layer's
+                // plain-string SDP (SignalingOffer) and the WebRTC SDK's typed
+                // RTCSessionDescription. If hostAgent construction failed at init
+                // time (e.g. keystore error), the closure is not installed and
+                // the endpoint responds 503.
+                controller.setSignalingHandler { offer in
+                    let rtcOffer = RTCSessionDescription(type: .offer, sdp: offer.sdp)
+                    do {
+                        let answer = try await hostAgent.acceptOffer(rtcOffer)
+                        return .success(SignalingAnswer(sdp: answer.sdp))
+                    } catch {
+                        NSLog("[Graftty] WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
+                        return .internalFailure("acceptOffer failed: \(error)")
+                    }
                 }
             }
         }
