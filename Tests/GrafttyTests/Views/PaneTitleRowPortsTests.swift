@@ -13,6 +13,7 @@ struct PaneTitleRowPortsTests {
             title: "vite",
             isActiveWorktree: true,
             isFocusedPane: true,
+            isBusy: false,
             theme: .fallback,
             attentionText: nil,
             portBindings: [
@@ -37,6 +38,7 @@ struct PaneTitleRowPortsTests {
             title: "vite",
             isActiveWorktree: true,
             isFocusedPane: true,
+            isBusy: false,
             theme: .fallback,
             attentionText: "Done",
             portBindings: [
@@ -54,6 +56,7 @@ struct PaneTitleRowPortsTests {
             title: String(repeating: "really-long-pane-title-segment-", count: 6),
             isActiveWorktree: true,
             isFocusedPane: true,
+            isBusy: false,
             theme: .fallback,
             attentionText: nil,
             portBindings: [
@@ -65,6 +68,37 @@ struct PaneTitleRowPortsTests {
         // overflow this test guards against.
         let host = NSHostingController(rootView: row)
         let preferred = host.sizeThatFits(in: CGSize(width: containerWidth, height: 1000))
+        #expect(preferred.width <= containerWidth + 0.5)
+    }
+
+    @MainActor
+    @Test("@spec LAYOUT-2.30: When a pane has an active attention capsule, the application shall render the capsule to the right of the pane title (not in place of it), truncating the title — so the row stays a single line rather than stacking the pill under the title.")
+    func attentionPillRendersBesideTitleOnOneLine() {
+        let containerWidth: CGFloat = 220
+        func height(attention: String?) -> CGFloat {
+            let row = PaneTitleRow(
+                title: "Refactoring the parser module thoroughly",
+                isActiveWorktree: true, isFocusedPane: true, isBusy: false,
+                theme: .fallback, attentionText: attention, portBindings: [])
+            return NSHostingController(rootView: row)
+                .sizeThatFits(in: CGSize(width: containerWidth, height: 1000)).height
+        }
+        // A pill beside a (truncated) title occupies one line — within ~4pt
+        // of the no-pill single-line height. Stacking the pill under the
+        // title would roughly double it.
+        #expect(abs(height(attention: "Claude needs input") - height(attention: nil)) < 6)
+    }
+
+    @MainActor
+    @Test("@spec LAYOUT-2.22: A PaneTitleRow with a long title AND an attention capsule stays bounded by the row width (title truncates; pill keeps intrinsic size).")
+    func longTitlePlusPillStaysBounded() {
+        let containerWidth: CGFloat = 220
+        let row = PaneTitleRow(
+            title: String(repeating: "really-long-pane-title-segment-", count: 6),
+            isActiveWorktree: true, isFocusedPane: true, isBusy: false,
+            theme: .fallback, attentionText: "Claude needs input", portBindings: [])
+        let preferred = NSHostingController(rootView: row)
+            .sizeThatFits(in: CGSize(width: containerWidth, height: 1000))
         #expect(preferred.width <= containerWidth + 0.5)
     }
 }

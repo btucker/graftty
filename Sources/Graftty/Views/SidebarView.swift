@@ -295,6 +295,10 @@ struct SidebarView: View {
                             isActiveWorktree: isActive,
                             isFocusedPane: isActive
                                 && worktree.focusedPaneSlotID == terminalID,
+                            isBusy: AgentLivenessMerge.isPaneBusy(
+                                sessionName: worktree.paneSessions[terminalID]
+                                    .map(ZmxLauncher.sessionName(for:)),
+                                liveness: claudeSessionRegistry.livenessBySession),
                             theme: theme,
                             attentionText: AgentLivenessMerge.effectivePaneText(
                                 paneAttentionText: attention.paneCapsules[terminalID],
