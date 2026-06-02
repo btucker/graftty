@@ -534,11 +534,10 @@ struct GrafttyApp: App {
             return
         }
         appState.selectedWorktreePath = path
-        if let paneSlot, let idx = appState.indices(forWorktreePath: path) {
-            let wt = appState.repos[idx.repo].worktrees[idx.worktree]
-            if wt.state == .running, wt.paneSessions[paneSlot] != nil {
-                appState.repos[idx.repo].worktrees[idx.worktree].focusedPaneSlotID = paneSlot
-            }
+        if let paneSlot,
+           let wt = appState.worktree(forPath: path),
+           wt.state == .running, wt.paneSessions[paneSlot] != nil {
+            appState.setFocusedTerminal(paneSlot, forWorktreePath: path)
         }
         NSApp.activate(ignoringOtherApps: true)
     }

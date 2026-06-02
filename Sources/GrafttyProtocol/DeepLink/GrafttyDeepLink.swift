@@ -33,9 +33,10 @@ public enum GrafttyDeepLink {
     /// `session` and a `repo`+`worktree` pair are present, the session
     /// wins.
     public static func parse(_ url: URL) -> DeepLinkTarget? {
-        guard url.scheme == "graftty" else { return nil }
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
-        guard components.host == "open" else { return nil }
+        guard url.scheme == "graftty",
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.host == "open"
+        else { return nil }
 
         let items = components.queryItems ?? []
         func value(_ name: String) -> String? {
@@ -70,24 +71,25 @@ extension GrafttyDeepLink {
     ) -> SnapshotDeepLinkOutcome {
         switch target {
         case .session(let name):
-            for wt in worktrees where sessionNames(of: wt).contains(name) {
+            // `layout?.leaves` is an in-order pane walk; short-circuit on
+            // the first leaf whose `sessionName` matches.
+            for wt in worktrees
+            where wt.layout?.leaves.contains(where: { $0.sessionName == name }) == true {
                 return .resolved(worktreePath: wt.path, sessionName: name)
             }
             return .notFound(.unknownSession)
         case .worktree(let repo, let worktree):
-            let inRepo = worktrees.filter { $0.repoDisplayName == repo }
-            guard !inRepo.isEmpty else { return .notFound(.unknownRepo) }
-            guard let match = inRepo.first(where: {
-                WorktreeNameSanitizer.sanitize($0.displayBranch) == worktree
-            }) else { return .notFound(.unknownWorktree) }
-            return .resolved(worktreePath: match.path, sessionName: nil)
+            // Single pass: distinguish "repo not present" from "repo
+            // present but worktree missing" without materializing a
+            // filtered array.
+            var repoSeen = false
+            for wt in worktrees where wt.repoDisplayName == repo {
+                repoSeen = true
+                if WorktreeNameSanitizer.sanitize(wt.displayBranch) == worktree {
+                    return .resolved(worktreePath: wt.path, sessionName: nil)
+                }
+            }
+            return .notFound(repoSeen ? .unknownWorktree : .unknownRepo)
         }
-    }
-
-    /// All pane session names in a `WorktreePanes` entry.
-    /// `layout` is `PaneLayoutNode?`; `.leaves` does an in-order walk
-    /// returning `[PaneLayoutNode.Leaf]`, each with a `.sessionName`.
-    private static func sessionNames(of wt: WorktreePanes) -> [String] {
-        wt.layout?.leaves.map(\.sessionName) ?? []
     }
 }
