@@ -2042,6 +2042,7 @@ struct GrafttyApp: App {
                     callerPath: callerPath,
                     runtime: runtime,
                     sessionID: sessionID,
+                    paneSessionName: paneSessionName,
                     appState: appState
                 )
             }
@@ -2058,6 +2059,7 @@ struct GrafttyApp: App {
         callerPath: String,
         runtime: TeamHookRuntime,
         sessionID: String?,
+        paneSessionName: String?,
         appState: Binding<AppState>
     ) {
         let timestamp = Date()
@@ -2067,10 +2069,18 @@ struct GrafttyApp: App {
                 let worktree = appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
                 let worktreeName = WorktreeNameSanitizer.sanitize(worktree.branch)
                 let resolvedSessionID = sessionID ?? "\(runtime.rawValue):\(worktreeName):\(callerPath)"
-                appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex].attention = Attention(
+                let attention = Attention(
                     text: "\(AgentStopNotification.displayName(runtime)) needs input",
                     timestamp: timestamp
                 )
+                switch AgentStopAttentionTarget.resolve(worktree: worktree, paneSessionName: paneSessionName) {
+                case let .pane(slot):
+                    appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
+                        .paneAttention[slot] = attention
+                case .worktree:
+                    appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
+                        .attention = attention
+                }
                 AgentNotificationRouter.shared.post(
                     AgentStopNotification.content(
                         runtime: runtime,
