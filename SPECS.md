@@ -1642,6 +1642,26 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-8.5** While accepting a remote attach, the host shall negotiate SSH transport protection from swift-nio-ssh's bundled AEAD ciphers (`aes256-gcm@openssh.com`, `aes128-gcm@openssh.com`) and shall not negotiate any weak or legacy cipher.
 
+## URL — Worktree URL Handler
+
+### URL-1.x
+
+**URL-1.0** A deep-link target parsed from a `graftty://open` URL: either a specific pane session (which implies its worktree and pane) or a repo+worktree pair (worktree-level, pane-agnostic).
+
+**URL-1.1** The application shall parse a graftty://open URL into a worktree-or-session deep-link target, accepting a session name, a repo+worktree pair, and preferring the session when both are present.
+
+**URL-1.2** Given a worktree-panes snapshot, the application shall resolve a deep-link target to a worktree path (and, for a session target, the matching pane session name), or report which part was unknown.
+
+**URL-1.3** Given the tracked repos, the application shall resolve a deep-link target to a worktree path (and, for a session target, the owning pane slot), or report which part was unknown.
+
+### URL-2.x
+
+**URL-2.1** When the macOS app opens a `graftty://open` URL that resolves to a tracked worktree, the application shall select that worktree, focus the resolved pane when one is present and the worktree is running, and bring the app to the foreground.
+
+### URL-3.x
+
+**URL-3.1** When the iOS app opens a graftty://open URL that resolves against the connected host's worktree-panes snapshot, the application shall select that worktree and focus the resolved pane session.
+
 ## AGENT — AGENT
 
 ### AGENT-1.x
