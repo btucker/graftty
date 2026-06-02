@@ -41,7 +41,7 @@ public struct PaneLayoutView: View {
     /// opaque `some View` that references itself.
     private func render(_ node: PaneLayoutNode, in size: CGSize) -> AnyView {
         switch node {
-        case let .leaf(sessionName, title, _):
+        case let .leaf(sessionName, title, _, _):
             return AnyView(PaneTile(
                 title: title.isEmpty ? sessionName : title,
                 baseConfig: baseConfig,

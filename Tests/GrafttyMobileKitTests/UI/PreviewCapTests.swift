@@ -18,12 +18,12 @@ struct PreviewPoolTests {
     private static let threeLeaves = PaneLayoutNode.split(
         direction: .horizontal,
         ratio: 0.5,
-        left: .leaf(sessionName: "a", title: "A", attentionText: nil),
+        left: .leaf(sessionName: "a", title: "A", attentionText: nil, isBusy: false),
         right: .split(
             direction: .vertical,
             ratio: 0.5,
-            left: .leaf(sessionName: "b", title: "B", attentionText: nil),
-            right: .leaf(sessionName: "c", title: "C", attentionText: nil)
+            left: .leaf(sessionName: "b", title: "B", attentionText: nil, isBusy: false),
+            right: .leaf(sessionName: "c", title: "C", attentionText: nil, isBusy: false)
         )
     )
 

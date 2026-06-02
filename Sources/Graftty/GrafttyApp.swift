@@ -3587,7 +3587,8 @@ private func paneLayoutNode(
             attentionText: AgentLivenessMerge.effectivePaneText(
                 paneAttentionText: paneAttention[id]?.text,
                 sessionName: sessionName,
-                liveness: liveness)
+                liveness: liveness),
+            isBusy: false
         )
     case let .split(s):
         return .split(

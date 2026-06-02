@@ -31,8 +31,8 @@ struct WorktreePanesTests {
             layout: .split(
                 direction: .horizontal,
                 ratio: 0.5,
-                left: .leaf(sessionName: "L", title: "left", attentionText: nil),
-                right: .leaf(sessionName: "R", title: "right", attentionText: "build broken")
+                left: .leaf(sessionName: "L", title: "left", attentionText: nil, isBusy: false),
+                right: .leaf(sessionName: "R", title: "right", attentionText: "build broken", isBusy: false)
             )
         )
         let data = try JSONEncoder().encode(original)
@@ -69,7 +69,7 @@ struct WorktreePanesTests {
 
     @Test
     func paneAttentionRoundTrips() throws {
-        let leaf = PaneLayoutNode.leaf(sessionName: "s", title: "t", attentionText: "ping")
+        let leaf = PaneLayoutNode.leaf(sessionName: "s", title: "t", attentionText: "ping", isBusy: false)
         let data = try JSONEncoder().encode(leaf)
         let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: data)
         #expect(decoded == leaf)
@@ -81,7 +81,7 @@ struct WorktreePanesTests {
         {"kind":"leaf","sessionName":"s","title":"t"}
         """.data(using: .utf8)!
         let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: legacy)
-        if case let .leaf(sessionName, title, attentionText) = decoded {
+        if case let .leaf(sessionName, title, attentionText, _) = decoded {
             #expect(sessionName == "s")
             #expect(title == "t")
             #expect(attentionText == nil)
@@ -101,6 +101,31 @@ struct WorktreePanesTests {
         #expect(WorktreeWireState.stale.hasOnDiskWorktree == false)
         #expect(WorktreeWireState.creating.hasOnDiskWorktree == false)
         #expect(WorktreeWireState.deleting.hasOnDiskWorktree == false)
+    }
+
+    @Test
+    func busyLeafRoundTrips() throws {
+        let leaf = PaneLayoutNode.leaf(
+            sessionName: "s", title: "t", attentionText: nil, isBusy: true)
+        let data = try JSONEncoder().encode(leaf)
+        let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: data)
+        #expect(decoded == leaf)
+        if case let .leaf(_, _, _, isBusy) = decoded {
+            #expect(isBusy == true)
+        } else {
+            Issue.record("expected leaf")
+        }
+    }
+
+    @Test
+    func legacyLeafWithoutIsBusyDecodesAsFalse() throws {
+        let legacy = #"{"kind":"leaf","sessionName":"s","title":"t"}"#.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: legacy)
+        if case let .leaf(_, _, _, isBusy) = decoded {
+            #expect(isBusy == false)
+        } else {
+            Issue.record("expected leaf")
+        }
     }
 
     @Test

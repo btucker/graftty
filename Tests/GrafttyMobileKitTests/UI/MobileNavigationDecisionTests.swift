@@ -10,7 +10,8 @@ struct MobileNavigationDecisionTests {
         let layout: PaneLayoutNode = .leaf(
             sessionName: "abc",
             title: "Sass",
-            attentionText: nil
+            attentionText: nil,
+            isBusy: false
         )
         #expect(
             MobileNavigationDecision.decide(layout: layout)
@@ -23,7 +24,8 @@ struct MobileNavigationDecisionTests {
         let layout: PaneLayoutNode = .leaf(
             sessionName: "abc",
             title: "",
-            attentionText: nil
+            attentionText: nil,
+            isBusy: false
         )
         #expect(
             MobileNavigationDecision.decide(layout: layout)
@@ -36,8 +38,8 @@ struct MobileNavigationDecisionTests {
         let layout = PaneLayoutNode.split(
             direction: .horizontal,
             ratio: 0.5,
-            left: .leaf(sessionName: "a", title: "A", attentionText: nil),
-            right: .leaf(sessionName: "b", title: "B", attentionText: nil)
+            left: .leaf(sessionName: "a", title: "A", attentionText: nil, isBusy: false),
+            right: .leaf(sessionName: "b", title: "B", attentionText: nil, isBusy: false)
         )
         #expect(MobileNavigationDecision.decide(layout: layout) == .worktreeDetail)
     }
@@ -51,7 +53,7 @@ struct MobileNavigationDecisionTests {
 @spec IOS-4.21: When the user taps a pane child row beneath a multi-leaf worktree in the worktree picker (`IOS-4.1`), the application shall push the fullscreen terminal for that pane directly onto the navigation stack, bypassing the worktree-detail screen (`IOS-4.10`). The system edge-swipe-back gesture returns the user to the worktree picker.
 """)
     func paneRowTapDecidesToSession() {
-        let node: PaneLayoutNode = .leaf(sessionName: "abc", title: "Editor", attentionText: nil)
+        let node: PaneLayoutNode = .leaf(sessionName: "abc", title: "Editor", attentionText: nil, isBusy: false)
         let leaf = node.leaves[0]
         #expect(
             MobileNavigationDecision.decide(paneRow: leaf)
