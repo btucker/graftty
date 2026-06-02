@@ -62,7 +62,10 @@ struct PaneTitleRow: View {
     }
 
     /// Busy tint applies only when no capsule is shown (ping supersedes).
-    private var titleIsBusyTinted: Bool { isBusy && attentionText == nil }
+    /// Shared with the iPad row via `PaneTitleTint` so the rule can't drift.
+    private var titleIsBusyTinted: Bool {
+        PaneTitleTint.showsBusyTint(isBusy: isBusy, hasAttentionCapsule: attentionText != nil)
+    }
 
     @ViewBuilder
     private var titleText: some View {

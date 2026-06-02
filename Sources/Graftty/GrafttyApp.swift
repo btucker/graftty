@@ -3584,10 +3584,7 @@ private func paneLayoutNode(
         return .leaf(
             sessionName: sessionName ?? "",
             title: titles[id] ?? "",
-            attentionText: AgentLivenessMerge.effectivePaneText(
-                paneAttentionText: paneAttention[id]?.text,
-                sessionName: sessionName,
-                liveness: liveness),
+            attentionText: paneAttention[id]?.text,
             isBusy: AgentLivenessMerge.isPaneBusy(
                 sessionName: sessionName,
                 liveness: liveness)

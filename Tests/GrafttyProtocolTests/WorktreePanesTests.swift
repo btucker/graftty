@@ -129,6 +129,20 @@ struct WorktreePanesTests {
         }
     }
 
+    @Test("""
+@spec AGENT-2.1: While a pane has a live notify attention ping, the application shall render that ping in preference to any derived busy/idle status.
+""")
+    func pingSupersedesBusyTint() {
+        // A live capsule wins: the busy "working" tint is suppressed so the
+        // capsule (rendered beside the title) is the unambiguous signal.
+        #expect(PaneTitleTint.showsBusyTint(isBusy: true, hasAttentionCapsule: true) == false)
+        // No capsule: a busy session tints the title.
+        #expect(PaneTitleTint.showsBusyTint(isBusy: true, hasAttentionCapsule: false) == true)
+        // Not busy: never tinted, capsule or not.
+        #expect(PaneTitleTint.showsBusyTint(isBusy: false, hasAttentionCapsule: true) == false)
+        #expect(PaneTitleTint.showsBusyTint(isBusy: false, hasAttentionCapsule: false) == false)
+    }
+
     // Supports AGENT-2.2 (whose behavioral spec lives in
     // AgentLivenessMergeTests): the busy tint must actually change the
     // rendered title color, not just flip a flag. Untagged so AGENT-2.2

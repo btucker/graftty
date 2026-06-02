@@ -542,8 +542,10 @@ private struct PaneTitleRow: View {
 
     var body: some View {
         // Busy tint applies only when no capsule is shown — a needs-input
-        // ping (claude waiting) supersedes "working" (AGENT-2.2).
-        let tintBusy = leaf.isBusy && effectiveAttentionText == nil
+        // ping (claude waiting) supersedes "working". Shared with the Mac
+        // row via PaneTitleTint so the precedence rule can't drift.
+        let tintBusy = PaneTitleTint.showsBusyTint(
+            isBusy: leaf.isBusy, hasAttentionCapsule: effectiveAttentionText != nil)
         HStack(spacing: 4) {
             Text("↳")
                 .font(.caption)

@@ -287,6 +287,8 @@ struct SidebarView: View {
 
             if worktree.state == .running {
                 ForEach(worktree.splitTree.allLeaves, id: \.self) { terminalID in
+                    let sessionName = worktree.paneSessions[terminalID]
+                        .map(ZmxLauncher.sessionName(for:))
                     Button {
                         onSelectPane(worktree.path, terminalID)
                     } label: {
@@ -296,15 +298,12 @@ struct SidebarView: View {
                             isFocusedPane: isActive
                                 && worktree.focusedPaneSlotID == terminalID,
                             isBusy: AgentLivenessMerge.isPaneBusy(
-                                sessionName: worktree.paneSessions[terminalID]
-                                    .map(ZmxLauncher.sessionName(for:)),
+                                sessionName: sessionName,
                                 liveness: claudeSessionRegistry.livenessBySession),
                             theme: theme,
-                            attentionText: AgentLivenessMerge.effectivePaneText(
-                                paneAttentionText: attention.paneCapsules[terminalID],
-                                sessionName: worktree.paneSessions[terminalID]
-                                    .map(ZmxLauncher.sessionName(for:)),
-                                liveness: claudeSessionRegistry.livenessBySession),
+                            // The pane-scoped notify ping renders as the
+                            // capsule directly; busy/idle no longer feed it.
+                            attentionText: attention.paneCapsules[terminalID],
                             portBindings: portBindings.bindings[terminalID] ?? []
                         )
                     }
