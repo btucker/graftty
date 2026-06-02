@@ -26,8 +26,8 @@ public extension TeamHookEvent {
 }
 
 public enum NotificationMessage: Sendable, Equatable {
-    case notify(path: String, text: String, clearAfter: TimeInterval? = nil)
-    case clear(path: String)
+    case notify(path: String, text: String, clearAfter: TimeInterval? = nil, paneSessionName: String? = nil)
+    case clear(path: String, paneSessionName: String? = nil)
     case listPanes(path: String)
     case addPane(path: String, direction: PaneSplit, command: String?)
     case closePane(path: String, index: Int)
@@ -55,14 +55,16 @@ extension NotificationMessage: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .notify(let path, let text, let clearAfter):
+        case .notify(let path, let text, let clearAfter, let paneSessionName):
             try container.encode("notify", forKey: .type)
             try container.encode(path, forKey: .path)
             try container.encode(text, forKey: .text)
             try container.encodeIfPresent(clearAfter, forKey: .clearAfter)
-        case .clear(let path):
+            try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
+        case .clear(let path, let paneSessionName):
             try container.encode("clear", forKey: .type)
             try container.encode(path, forKey: .path)
+            try container.encodeIfPresent(paneSessionName, forKey: .paneSessionName)
         case .listPanes(let path):
             try container.encode("list_panes", forKey: .type)
             try container.encode(path, forKey: .path)
@@ -136,10 +138,12 @@ extension NotificationMessage: Codable {
             let path = try container.decode(String.self, forKey: .path)
             let text = try container.decode(String.self, forKey: .text)
             let clearAfter = try container.decodeIfPresent(TimeInterval.self, forKey: .clearAfter)
-            self = .notify(path: path, text: text, clearAfter: clearAfter)
+            let paneSessionName = try container.decodeIfPresent(String.self, forKey: .paneSessionName)
+            self = .notify(path: path, text: text, clearAfter: clearAfter, paneSessionName: paneSessionName)
         case "clear":
             let path = try container.decode(String.self, forKey: .path)
-            self = .clear(path: path)
+            let paneSessionName = try container.decodeIfPresent(String.self, forKey: .paneSessionName)
+            self = .clear(path: path, paneSessionName: paneSessionName)
         case "list_panes":
             let path = try container.decode(String.self, forKey: .path)
             self = .listPanes(path: path)

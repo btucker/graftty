@@ -8,6 +8,7 @@ struct MainWindow: View {
     @ObservedObject var terminalManager: TerminalManager
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
+    let claudeSessionRegistry: ClaudeSessionRegistry
     let remoteBranchStore: RemoteBranchStore
     let worktreeMonitor: WorktreeMonitor
     let teamEventDispatcher: TeamEventDispatcher
@@ -34,6 +35,7 @@ struct MainWindow: View {
                 theme: terminalManager.theme,
                 statsStore: statsStore,
                 prStatusStore: prStatusStore,
+                claudeSessionRegistry: claudeSessionRegistry,
                 remoteBranchStore: remoteBranchStore,
                 onSelect: selectWorktree,
                 onSelectPane: selectPane,

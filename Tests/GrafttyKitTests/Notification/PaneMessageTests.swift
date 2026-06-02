@@ -162,7 +162,7 @@ struct NotificationMessagePaneTests {
         // Regression: make sure adding cases didn't break the original two.
         let json = #"{"type":"notify","path":"/tmp/wt","text":"hi"}"#
         let msg = try JSONDecoder().decode(NotificationMessage.self, from: json.data(using: .utf8)!)
-        if case .notify(_, let text, _) = msg {
+        if case .notify(_, let text, _, _) = msg {
             #expect(text == "hi")
         } else { Issue.record("Expected .notify") }
     }

@@ -111,22 +111,45 @@ struct Notify: ParsableCommand {
     @Option(name: .long, help: "Auto-clear the notification after N seconds")
     var clearAfter: Int?
 
+    @Option(name: .long, help: "Target a specific pane by its zmx session name")
+    var session: String?
+
+    @Option(name: .long, help: "Target a specific worktree by name")
+    var worktree: String?
+
     func validate() throws {
         let result = NotifyInputValidation.validate(text: text, clear: clear, clearAfter: clearAfter)
         if let message = result.message {
             throw ValidationError(message)
         }
+        if session != nil && worktree != nil {
+            throw ValidationError("--session and --worktree are mutually exclusive")
+        }
     }
 
     func run() throws {
-        let worktreePath = try CLIEnv.resolveWorktree()
         let message: NotificationMessage
         if clear {
-            message = .clear(path: worktreePath)
+            let path = try resolveTargetWorktreePath()
+            let pane = NotifyTarget.paneSessionName(
+                session: session, worktree: worktree, env: ProcessInfo.processInfo.environment)
+            message = .clear(path: path, paneSessionName: pane)
         } else {
-            message = .notify(path: worktreePath, text: text!, clearAfter: clearAfter.map { TimeInterval($0) })
+            message = try NotifyTarget.message(
+                text: text!, session: session, worktree: worktree,
+                env: ProcessInfo.processInfo.environment,
+                resolveWorktreePath: { try resolveTargetWorktreePath() },
+                clearAfter: clearAfter.map { TimeInterval($0) })
         }
         try CLIEnv.sendFireAndForget(message)
+    }
+
+    private func resolveTargetWorktreePath() throws -> String {
+        if let worktree,
+           let path = WorktreeResolver.resolveWorktreeName(worktree, stateDirectory: AppState.defaultDirectory) {
+            return path
+        }
+        return try CLIEnv.resolveWorktree()
     }
 }
 

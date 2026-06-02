@@ -49,7 +49,7 @@ struct SocketIntegrationTests {
         server.stop()
 
         #expect(received.value != nil)
-        if case .notify(let path, let text, _) = received.value {
+        if case .notify(let path, let text, _, _) = received.value {
             #expect(path == "/tmp/wt")
             #expect(text == "test")
         } else { Issue.record("Expected .notify message") }
@@ -131,7 +131,7 @@ struct SocketIntegrationTests {
         try await Task.sleep(for: .milliseconds(200))
 
         #expect(received.value != nil)
-        if case .notify(_, let text, _) = received.value {
+        if case .notify(_, let text, _, _) = received.value {
             #expect(text == "after-crash")
         } else { Issue.record("Expected .notify message after stale-file recovery") }
     }

@@ -132,6 +132,7 @@ final class AppServices {
     let statsStore: WorktreeStatsStore
     let remoteBranchStore: RemoteBranchStore
     let prStatusStore: PRStatusStore
+    let claudeSessionRegistry: ClaudeSessionRegistry
     let teamInbox: TeamInbox
     let teamEventDispatcher: TeamEventDispatcher
     var worktreeMonitorBridge: WorktreeMonitorBridge?
@@ -181,6 +182,7 @@ final class AppServices {
         let remoteBranchStore = RemoteBranchStore()
         self.remoteBranchStore = remoteBranchStore
         self.prStatusStore = PRStatusStore(remoteBranchStore: remoteBranchStore)
+        self.claudeSessionRegistry = ClaudeSessionRegistry()
 
         // Lift the team inbox up here so the request handler
         // (`teamInboxRequestHandler()`) and the dispatcher share one
@@ -381,6 +383,7 @@ struct GrafttyApp: App {
                 terminalManager: terminalManager,
                 statsStore: services.statsStore,
                 prStatusStore: services.prStatusStore,
+                claudeSessionRegistry: services.claudeSessionRegistry,
                 remoteBranchStore: services.remoteBranchStore,
                 worktreeMonitor: services.worktreeMonitor,
                 teamEventDispatcher: services.teamEventDispatcher
@@ -941,6 +944,13 @@ struct GrafttyApp: App {
             getRepos: { binding.wrappedValue.repos }
         )
 
+        // Poll `claude agents --json` on a fast cadence to derive per-pane
+        // busy/idle liveness. The registry retains this ticker internally
+        // (like prStatusStore), so the local var is sufficient — the
+        // registry itself outlives startup() via AppServices.
+        let claudeAgentsTicker = PollingTicker(interval: .seconds(2))
+        services.claudeSessionRegistry.start(ticker: claudeAgentsTicker)
+
         // Sweep dangling presence files left behind by SIGKILL'd agents
         // whose wrapper trap never fired. The wrapper trap is the primary
         // cleanup path (TEAM-PRESENCE-1.3); this fallback runs on a slow
@@ -1233,6 +1243,7 @@ struct GrafttyApp: App {
         let terminalManager = tm
         let panesStatsStore = services.statsStore
         let panesPRStore = services.prStatusStore
+        let panesClaudeRegistry = services.claudeSessionRegistry
         let buildWorktreePanesSnapshot: @Sendable @MainActor () -> [WorktreePanes] = {
             var out: [WorktreePanes] = []
             for repo in appStateBinding.wrappedValue.repos {
@@ -1265,7 +1276,8 @@ struct GrafttyApp: App {
                                     from: $0,
                                     paneSessions: wt.paneSessions,
                                     titles: terminalManager.titles,
-                                    paneAttention: wt.paneAttention
+                                    paneAttention: wt.paneAttention,
+                                    liveness: panesClaudeRegistry.livenessBySession
                                 )
                             }
                     ))
@@ -1929,7 +1941,7 @@ struct GrafttyApp: App {
         terminalManager: TerminalManager
     ) {
         switch message {
-        case .notify(let path, let text, let clearAfter):
+        case .notify(let path, let text, let clearAfter, let paneSessionName):
             // Defense-in-depth behind the CLI's ATTN-1.7 guard: reject
             // empty / whitespace-only text silently so a raw socket
             // client (`nc -U`, custom script, web surface) can't write
@@ -1942,6 +1954,37 @@ struct GrafttyApp: App {
             // server a single source of truth for what actually
             // schedules.
             let effectiveClearAfter = Attention.effectiveClearAfter(clearAfter)
+            // AGENT-4.1/4.2: when the message carries a pane session name,
+            // resolve it to a pane slot within the targeted worktree and
+            // write pane-scoped attention. Reuse `setAttentionForTerminal`
+            // for the auto-clear path; for the no-clear case write the slot
+            // directly. Falls through to worktree-scoped if it resolves no
+            // live pane (e.g. the session ended).
+            if let paneSessionName {
+                for repoIdx in appState.wrappedValue.repos.indices {
+                    for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices
+                        where appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path == path {
+                        guard let slot = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                            .paneSlot(forSessionName: paneSessionName) else { continue }
+                        if let effectiveClearAfter {
+                            setAttentionForTerminal(
+                                appState: appState,
+                                terminalID: slot,
+                                text: text,
+                                clearAfter: effectiveClearAfter
+                            )
+                        } else {
+                            appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                                .paneAttention[slot] = Attention(
+                                    text: text,
+                                    timestamp: Date(),
+                                    clearAfter: nil
+                                )
+                        }
+                        return
+                    }
+                }
+            }
             // Pin the timestamp the attention carries AND the auto-clear
             // timer closes over, so the timer can verify it's still OUR
             // notification when it fires (cf. WorktreeEntry.clearAttentionIfTimestamp).
@@ -1969,7 +2012,23 @@ struct GrafttyApp: App {
                     }
                 }
             }
-        case .clear(let path):
+        case .clear(let path, let paneSessionName):
+            // AGENT-4.x: a pane-scoped clear targets just that pane's
+            // attention slot; resolve the session name within the worktree
+            // and fall through to worktree-scoped clear if unresolved.
+            if let paneSessionName {
+                for repoIdx in appState.wrappedValue.repos.indices {
+                    for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices
+                        where appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path == path {
+                        if let slot = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                            .paneSlot(forSessionName: paneSessionName) {
+                            appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
+                                .paneAttention[slot] = nil
+                            return
+                        }
+                    }
+                }
+            }
             for repoIdx in appState.wrappedValue.repos.indices {
                 for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                     if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path == path {
@@ -2184,6 +2243,7 @@ struct GrafttyApp: App {
                     callerPath: callerPath,
                     runtime: runtime,
                     sessionID: sessionID,
+                    paneSessionName: paneSessionName,
                     appState: appState
                 )
             }
@@ -2200,6 +2260,7 @@ struct GrafttyApp: App {
         callerPath: String,
         runtime: TeamHookRuntime,
         sessionID: String?,
+        paneSessionName: String?,
         appState: Binding<AppState>
     ) {
         let timestamp = Date()
@@ -2209,10 +2270,18 @@ struct GrafttyApp: App {
                 let worktree = appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
                 let worktreeName = WorktreeNameSanitizer.sanitize(worktree.branch)
                 let resolvedSessionID = sessionID ?? "\(runtime.rawValue):\(worktreeName):\(callerPath)"
-                appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex].attention = Attention(
+                let attention = Attention(
                     text: "\(AgentStopNotification.displayName(runtime)) needs input",
                     timestamp: timestamp
                 )
+                switch AgentStopAttentionTarget.resolve(worktree: worktree, paneSessionName: paneSessionName) {
+                case let .pane(slot):
+                    appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
+                        .paneAttention[slot] = attention
+                case .worktree:
+                    appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
+                        .attention = attention
+                }
                 AgentNotificationRouter.shared.post(
                     AgentStopNotification.content(
                         runtime: runtime,
@@ -3506,14 +3575,19 @@ private func paneLayoutNode(
     from node: SplitTree.Node,
     paneSessions: [PaneSlotID: PaneSessionID],
     titles: [PaneSlotID: String],
-    paneAttention: [PaneSlotID: Attention]
+    paneAttention: [PaneSlotID: Attention],
+    liveness: [String: AgentLiveness]
 ) -> PaneLayoutNode {
     switch node {
     case let .leaf(id):
+        let sessionName = paneSessions[id].map(ZmxLauncher.sessionName(for:))
         return .leaf(
-            sessionName: paneSessions[id].map(ZmxLauncher.sessionName(for:)) ?? "",
+            sessionName: sessionName ?? "",
             title: titles[id] ?? "",
-            attentionText: paneAttention[id]?.text
+            attentionText: AgentLivenessMerge.effectivePaneText(
+                paneAttentionText: paneAttention[id]?.text,
+                sessionName: sessionName,
+                liveness: liveness)
         )
     case let .split(s):
         return .split(
@@ -3523,13 +3597,15 @@ private func paneLayoutNode(
                 from: s.left,
                 paneSessions: paneSessions,
                 titles: titles,
-                paneAttention: paneAttention
+                paneAttention: paneAttention,
+                liveness: liveness
             ),
             right: paneLayoutNode(
                 from: s.right,
                 paneSessions: paneSessions,
                 titles: titles,
-                paneAttention: paneAttention
+                paneAttention: paneAttention,
+                liveness: liveness
             )
         )
     }

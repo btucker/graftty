@@ -14,6 +14,9 @@ struct SidebarView: View {
     let theme: GhosttyTheme
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
+    /// Injected by GrafttyApp so each pane row can merge derived claude
+    /// busy/idle liveness (notify pings still win) into its attention pill.
+    let claudeSessionRegistry: ClaudeSessionRegistry
     let remoteBranchStore: RemoteBranchStore
     let onSelect: (String) -> Void
     let onSelectPane: (String, PaneSlotID) -> Void
@@ -293,7 +296,11 @@ struct SidebarView: View {
                             isFocusedPane: isActive
                                 && worktree.focusedPaneSlotID == terminalID,
                             theme: theme,
-                            attentionText: attention.paneCapsules[terminalID],
+                            attentionText: AgentLivenessMerge.effectivePaneText(
+                                paneAttentionText: attention.paneCapsules[terminalID],
+                                sessionName: worktree.paneSessions[terminalID]
+                                    .map(ZmxLauncher.sessionName(for:)),
+                                liveness: claudeSessionRegistry.livenessBySession),
                             portBindings: portBindings.bindings[terminalID] ?? []
                         )
                     }
