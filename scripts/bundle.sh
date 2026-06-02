@@ -166,6 +166,17 @@ cat > "$APP/Contents/Info.plist" <<PLIST
     <string>CE9gods92d0ACzxxj85iTEaMxeF/kdJNjKRBdoLaOFY=</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>CFBundleURLTypes</key>
+    <array>
+      <dict>
+        <key>CFBundleURLName</key>
+        <string>com.graftty.app.worktree</string>
+        <key>CFBundleURLSchemes</key>
+        <array>
+          <string>graftty</string>
+        </array>
+      </dict>
+    </array>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>
