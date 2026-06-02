@@ -132,6 +132,7 @@ final class AppServices {
     let statsStore: WorktreeStatsStore
     let remoteBranchStore: RemoteBranchStore
     let prStatusStore: PRStatusStore
+    let claudeSessionRegistry: ClaudeSessionRegistry
     let teamInbox: TeamInbox
     let teamEventDispatcher: TeamEventDispatcher
     var worktreeMonitorBridge: WorktreeMonitorBridge?
@@ -181,6 +182,7 @@ final class AppServices {
         let remoteBranchStore = RemoteBranchStore()
         self.remoteBranchStore = remoteBranchStore
         self.prStatusStore = PRStatusStore(remoteBranchStore: remoteBranchStore)
+        self.claudeSessionRegistry = ClaudeSessionRegistry()
 
         // Lift the team inbox up here so the request handler
         // (`teamInboxRequestHandler()`) and the dispatcher share one
@@ -367,6 +369,7 @@ struct GrafttyApp: App {
                 terminalManager: terminalManager,
                 statsStore: services.statsStore,
                 prStatusStore: services.prStatusStore,
+                claudeSessionRegistry: services.claudeSessionRegistry,
                 remoteBranchStore: services.remoteBranchStore,
                 worktreeMonitor: services.worktreeMonitor,
                 teamEventDispatcher: services.teamEventDispatcher
@@ -906,6 +909,13 @@ struct GrafttyApp: App {
             getRepos: { binding.wrappedValue.repos }
         )
 
+        // Poll `claude agents --json` on a fast cadence to derive per-pane
+        // busy/idle liveness. The registry retains this ticker internally
+        // (like prStatusStore), so the local var is sufficient — the
+        // registry itself outlives startup() via AppServices.
+        let claudeAgentsTicker = PollingTicker(interval: .seconds(2))
+        services.claudeSessionRegistry.start(ticker: claudeAgentsTicker)
+
         // Sweep dangling presence files left behind by SIGKILL'd agents
         // whose wrapper trap never fired. The wrapper trap is the primary
         // cleanup path (TEAM-PRESENCE-1.3); this fallback runs on a slow
@@ -1192,6 +1202,7 @@ struct GrafttyApp: App {
         let terminalManager = tm
         let panesStatsStore = services.statsStore
         let panesPRStore = services.prStatusStore
+        let panesClaudeRegistry = services.claudeSessionRegistry
         webController.setWorktreePanesProvider {
             await MainActor.run { () -> [WorktreePanes] in
                 var out: [WorktreePanes] = []
@@ -1225,7 +1236,8 @@ struct GrafttyApp: App {
                                         from: $0,
                                         paneSessions: wt.paneSessions,
                                         titles: terminalManager.titles,
-                                        paneAttention: wt.paneAttention
+                                        paneAttention: wt.paneAttention,
+                                        liveness: panesClaudeRegistry.livenessBySession
                                     )
                                 }
                         ))
@@ -3352,14 +3364,19 @@ private func paneLayoutNode(
     from node: SplitTree.Node,
     paneSessions: [PaneSlotID: PaneSessionID],
     titles: [PaneSlotID: String],
-    paneAttention: [PaneSlotID: Attention]
+    paneAttention: [PaneSlotID: Attention],
+    liveness: [String: AgentLiveness]
 ) -> PaneLayoutNode {
     switch node {
     case let .leaf(id):
+        let sessionName = paneSessions[id].map(ZmxLauncher.sessionName(for:))
         return .leaf(
-            sessionName: paneSessions[id].map(ZmxLauncher.sessionName(for:)) ?? "",
+            sessionName: sessionName ?? "",
             title: titles[id] ?? "",
-            attentionText: paneAttention[id]?.text
+            attentionText: AgentLivenessMerge.effectivePaneText(
+                paneAttentionText: paneAttention[id]?.text,
+                sessionName: sessionName,
+                liveness: liveness)
         )
     case let .split(s):
         return .split(
@@ -3369,13 +3386,15 @@ private func paneLayoutNode(
                 from: s.left,
                 paneSessions: paneSessions,
                 titles: titles,
-                paneAttention: paneAttention
+                paneAttention: paneAttention,
+                liveness: liveness
             ),
             right: paneLayoutNode(
                 from: s.right,
                 paneSessions: paneSessions,
                 titles: titles,
-                paneAttention: paneAttention
+                paneAttention: paneAttention,
+                liveness: liveness
             )
         )
     }
