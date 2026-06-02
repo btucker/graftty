@@ -515,10 +515,11 @@ private struct WorktreeRowContent: View {
     }
 }
 
-/// Pane child row: `↳` glyph + caption-sized title (or attention
-/// capsule when the pane has a shell-integration ping, or when the
-/// caller has chosen to attach the worktree-scoped `attentionText`
-/// here per IPAD-1.14).
+/// Pane child row: `↳` glyph + caption-sized title. When the pane has
+/// a shell-integration ping (or the caller has attached the
+/// worktree-scoped `attentionText` here per IPAD-1.14), an attention
+/// capsule renders to the *right* of the title — not in place of it —
+/// truncating the title to make room (LAYOUT-2.30).
 private struct PaneTitleRow: View {
     let leaf: PaneLayoutNode.Leaf
     let theme: GhosttyThemeColors?
@@ -540,6 +541,9 @@ private struct PaneTitleRow: View {
     let isActiveWorktree: Bool
 
     var body: some View {
+        // Busy tint applies only when no capsule is shown — a needs-input
+        // ping (claude waiting) supersedes "working" (AGENT-2.2).
+        let tintBusy = leaf.isBusy && effectiveAttentionText == nil
         HStack(spacing: 4) {
             Text("↳")
                 .font(.caption)
@@ -548,19 +552,22 @@ private struct PaneTitleRow: View {
                     isFocusedPane: isFocusedPane,
                     isActiveWorktree: isActiveWorktree
                 )))
+            // LAYOUT-2.30: title (truncates) then pill (intrinsic width).
+            Text(leaf.displayTitle)
+                .font(.caption)
+                .fontWeight(isFocusedPane ? .semibold : .regular)
+                .foregroundStyle(themedOrSecondary(theme?.paneTitle(
+                    isFocusedPane: isFocusedPane,
+                    isActiveWorktree: isActiveWorktree,
+                    hasTitle: !leaf.displayTitle.isEmpty,
+                    isBusy: tintBusy
+                )))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .layoutPriority(0)
             if let attentionText = effectiveAttentionText {
                 AttentionCapsule(text: attentionText)
-            } else {
-                Text(leaf.displayTitle)
-                    .font(.caption)
-                    .fontWeight(isFocusedPane ? .semibold : .regular)
-                    .foregroundStyle(themedOrSecondary(theme?.paneTitle(
-                        isFocusedPane: isFocusedPane,
-                        isActiveWorktree: isActiveWorktree,
-                        hasTitle: !leaf.displayTitle.isEmpty
-                    )))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                    .layoutPriority(1)
             }
             Spacer(minLength: 0)
         }
