@@ -90,8 +90,16 @@ struct SSHNIOTransportUnitTests {
             transport.deliverInboundForTesting(chunk)
         }
 
-        // Let the embedded loop drain.
-        try await Task.sleep(nanoseconds: 200_000_000)
+        // Poll for the embedded loop to drain the 1025 enqueued tasks. On the
+        // iOS Simulator under CI load (cooperative pool contending with other
+        // tests' Tasks — AsyncStream drains, scheduled deadlines, etc.), a
+        // single fixed sleep is fragile. Poll up to 5s; tests typically finish
+        // in well under a second.
+        let deadline = Date().addingTimeInterval(5.0)
+        while transport.pendingInboundByteCountForTesting != 0 {
+            if Date() >= deadline { break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
 
         // After overflow the transport should have closed itself — assert via
         // the pending byte counter being reset (a successful close resets it).
