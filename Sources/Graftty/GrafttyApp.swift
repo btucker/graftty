@@ -391,6 +391,9 @@ struct GrafttyApp: App {
                         NSLog("[Graftty] AppState.save failed: %@", String(describing: error))
                     }
                 }
+                .onOpenURL { url in
+                    handleDeepLink(url)
+                }
         }
         // Hide the macOS title bar so the breadcrumb row sits directly
         // under the traffic lights — Andy wanted a terminal-multiplexer
@@ -519,6 +522,30 @@ struct GrafttyApp: App {
                     .frame(minWidth: 480, minHeight: 360)
             }
         }
+    }
+
+    /// @spec URL-2.1: When the macOS app opens a `graftty://open` URL
+    /// that resolves to a tracked worktree, the application shall select
+    /// that worktree, focus the resolved pane when one is present and the
+    /// worktree is running, and bring the app to the foreground.
+    private func handleDeepLink(_ url: URL) {
+        guard let target = GrafttyDeepLink.parse(url) else { return }
+        guard case let .resolved(path, paneSlot) = DeepLinkResolver.resolve(target, inRepos: appState.repos) else {
+            return
+        }
+        appState.selectedWorktreePath = path
+        if let paneSlot {
+            for repoIdx in appState.repos.indices {
+                for wtIdx in appState.repos[repoIdx].worktrees.indices
+                where appState.repos[repoIdx].worktrees[wtIdx].path == path {
+                    let wt = appState.repos[repoIdx].worktrees[wtIdx]
+                    if wt.state == .running, wt.paneSessions[paneSlot] != nil {
+                        appState.repos[repoIdx].worktrees[wtIdx].focusedPaneSlotID = paneSlot
+                    }
+                }
+            }
+        }
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func startup() {
