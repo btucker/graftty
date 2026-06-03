@@ -2288,6 +2288,7 @@ struct GrafttyApp: App {
                         worktreeName: worktreeName,
                         worktreePath: callerPath,
                         sessionID: resolvedSessionID,
+                        paneSessionName: paneSessionName,
                         timestamp: timestamp
                     )
                 )
@@ -2309,8 +2310,27 @@ struct GrafttyApp: App {
             timestamp: payload.attentionTimestamp
         )
         if let worktree = appState.wrappedValue.worktree(forPath: payload.worktreePath),
-           let terminalID = worktree.firstPane {
+           let terminalID = agentStopFocusTarget(
+               worktree: worktree, paneSessionName: payload.paneSessionName) {
             terminalManager.setFocus(terminalID)
+        }
+    }
+
+    /// AGENT-3.3: the pane to focus when an agent-stop notification is
+    /// activated — the pane whose session produced it (resolved by the
+    /// same `AgentStopAttentionTarget` rule the post path uses to place
+    /// the attention capsule, so focus and capsule can't disagree),
+    /// falling back to the worktree's first pane when it no longer
+    /// resolves (e.g. the agent's pane was closed, or it was a
+    /// worktree-scoped ping).
+    static func agentStopFocusTarget(
+        worktree: WorktreeEntry,
+        paneSessionName: String?
+    ) -> PaneSlotID? {
+        switch AgentStopAttentionTarget.resolve(
+            worktree: worktree, paneSessionName: paneSessionName) {
+        case let .pane(slot): return slot
+        case .worktree: return worktree.firstPane
         }
     }
 
