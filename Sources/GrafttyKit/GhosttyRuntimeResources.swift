@@ -24,7 +24,7 @@ public enum GhosttyRuntimeResources {
     /// bundle, or nil when the payload is missing (mis-declared resource,
     /// corrupt install).
     public static func bundledResourcesDir() -> URL? {
-        bundledResourcesDir(bundle: .module)
+        bundledResourcesDir(bundle: GrafttyKitResourceBundle.bundle)
     }
 
     /// Test seam: resolve against an explicit bundle rather than .module.

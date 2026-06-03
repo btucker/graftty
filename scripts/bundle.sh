@@ -97,10 +97,14 @@ for executable in "$APP/Contents/MacOS/Graftty" "$APP/Contents/Helpers/graftty";
   fi
 done
 
-# Copy SwiftPM resource bundles. `Bundle.module` resolves relative to
-# Bundle.main.resourceURL first, which maps to Contents/Resources/ for an
-# .app. Without this, WebStaticResources and anything else using
-# Bundle.module fails at runtime inside the installed app.
+# Copy SwiftPM resource bundles into Contents/Resources/ (Apple's required
+# layout — a foreign item at the .app root would fail `codesign --strict`).
+# NOTE: SwiftPM's generated `Bundle.module` accessor does NOT probe
+# Contents/Resources — it only checks the .app root and the compiling
+# machine's .build path, so it traps here at runtime (the v0.1.10 launch
+# crash). GrafttyKitResourceBundle.resolve() (CONFIG-2.6) bridges the gap by
+# locating the bundle under Contents/Resources first; this copy is what it
+# finds. Do not "simplify" by dropping either side.
 for b in "$BIN_DIR"/*_GrafttyKit.bundle "$BIN_DIR"/*_GrafttyCLI.bundle; do
     [[ -e "$b" ]] || continue
     cp -R "$b" "$APP/Contents/Resources/$(basename "$b")"
