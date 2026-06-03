@@ -80,6 +80,13 @@ struct PaneTitleRow: View {
         PaneTitleBusyStyle.applies(isBusy: isBusy, hasAttentionCapsule: attentionStyle != nil)
     }
 
+    /// LAYOUT-2.31: the agent "needs input" state colors the title red too
+    /// (alongside the red icon) so it's scannable, not just a small glyph.
+    private var isNeedsInput: Bool {
+        if case .needsInput = attentionStyle { return true }
+        return false
+    }
+
     @ViewBuilder
     private var titleText: some View {
         // AGENT-2.2: a busy pane renders its (already-animating) title in
@@ -94,7 +101,7 @@ struct PaneTitleRow: View {
         (titleIsBusy ? base.italic() : base)
             .lineLimit(1)
             .truncationMode(.tail)
-            .foregroundColor(theme.paneTitle(
+            .foregroundColor(isNeedsInput ? .red : theme.paneTitle(
                 isFocusedPane: isFocusedPane,
                 isActiveWorktree: isActiveWorktree,
                 hasTitle: !title.isEmpty

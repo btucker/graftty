@@ -170,7 +170,7 @@ struct WorktreePanesTests {
     }
 
     @Test("""
-@spec LAYOUT-2.31: The agent "needs input" attention capsule (source .agentStop) shall render as the `rectangle.and.pencil.and.ellipsis` SF Symbol with the text retained as its accessibility label; user-notify and command-finished capsules shall render as text.
+@spec LAYOUT-2.31: The agent "needs input" attention (source .agentStop) shall render as a bare red `rectangle.and.pencil.and.ellipsis` SF Symbol (no pill) beside a red-colored pane title, with the text retained as the icon's accessibility label; user-notify and command-finished capsules shall render as text in a red pill.
 """)
     func agentStopCapsuleIsIconOthersAreText() {
         #expect(AttentionCapsuleStyle.from(text: "Claude needs input", source: .agentStop)

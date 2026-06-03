@@ -553,6 +553,12 @@ private struct PaneTitleRow: View {
         // row via PaneTitleBusyStyle so the precedence rule can't drift.
         let busyStyle = PaneTitleBusyStyle.applies(
             isBusy: leaf.isBusy, hasAttentionCapsule: attentionStyle != nil)
+        // LAYOUT-2.31: the agent "needs input" state colors the title red
+        // (alongside the red icon) so it's scannable.
+        let isNeedsInput: Bool = {
+            if case .needsInput = attentionStyle { return true }
+            return false
+        }()
         HStack(spacing: 4) {
             Text("↳")
                 .font(.caption)
@@ -570,7 +576,7 @@ private struct PaneTitleRow: View {
                 .font(.caption)
                 .fontWeight(isFocusedPane ? .semibold : .regular)
             (busyStyle ? titleBase.italic() : titleBase)
-                .foregroundStyle(themedOrSecondary(theme?.paneTitle(
+                .foregroundStyle(isNeedsInput ? AnyShapeStyle(.red) : themedOrSecondary(theme?.paneTitle(
                     isFocusedPane: isFocusedPane,
                     isActiveWorktree: isActiveWorktree,
                     // Use the raw title (not displayTitle, which falls back
