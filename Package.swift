@@ -62,6 +62,13 @@ let package = Package(
             ],
             resources: [
                 .copy("Web/Resources"),
+                // Vendored ghostty runtime resources (CONFIG-2.5) — see
+                // GhosttyResources/ghostty/PROVENANCE.md. `ghostty` and
+                // `terminfo` land at the bundle root as siblings, mirroring
+                // Ghostty.app's Contents/Resources layout, which is what
+                // ZmxSpawnConfiguration.availableGhosttyTerminfoDir probes.
+                .copy("GhosttyResources/ghostty"),
+                .copy("GhosttyResources/terminfo"),
             ],
             swiftSettings: strictWarnings
         ),

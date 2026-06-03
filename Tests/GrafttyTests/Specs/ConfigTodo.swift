@@ -28,18 +28,4 @@ struct ConfigTodo {
 """, .disabled("not yet implemented"))
     func config_2_1() async throws { }
 
-    @Test("""
-@spec CONFIG-2.2: If `GHOSTTY_RESOURCES_DIR` is already set in the process environment, the application shall not override it; the user's explicit setting wins.
-""", .disabled("not yet implemented"))
-    func config_2_2() async throws { }
-
-    @Test("""
-@spec CONFIG-2.3: Otherwise, the application shall probe standard locations (`/Applications/Ghostty.app/Contents/Resources/ghostty` and `~/Applications/Ghostty.app/Contents/Resources/ghostty`) and, on first match, set `GHOSTTY_RESOURCES_DIR` to the match.
-""", .disabled("not yet implemented"))
-    func config_2_3() async throws { }
-
-    @Test("""
-@spec CONFIG-2.4: If no Ghostty.app installation is found, shell integration features (OSC 7 auto-reporting, OSC 133 prompt marks, `COMMAND_FINISHED`, and `PROGRESS_REPORT`) shall silently be unavailable rather than surfacing an error; spawned shells shall still function.
-""", .disabled("not yet implemented"))
-    func config_2_4() async throws { }
 }
