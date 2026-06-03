@@ -3,6 +3,7 @@ import Testing
 import SwiftUI
 import AppKit
 import GrafttyKit
+import GrafttyProtocol
 @testable import Graftty
 
 @Suite("PaneTitleRow port chip rendering and attention precedence")
@@ -15,7 +16,7 @@ struct PaneTitleRowPortsTests {
             isFocusedPane: true,
             isBusy: false,
             theme: .fallback,
-            attentionText: nil,
+            attentionStyle: nil,
             portBindings: [
                 PortBinding(port: 3000, scope: .loopback, processName: "node", pid: 1),
                 PortBinding(port: 9229, scope: .loopback, processName: "node", pid: 1)
@@ -40,7 +41,7 @@ struct PaneTitleRowPortsTests {
             isFocusedPane: true,
             isBusy: false,
             theme: .fallback,
-            attentionText: "Done",
+            attentionStyle: .text("Done"),
             portBindings: [
                 PortBinding(port: 3000, scope: .loopback, processName: "node", pid: 1)
             ]
@@ -58,7 +59,7 @@ struct PaneTitleRowPortsTests {
             isFocusedPane: true,
             isBusy: false,
             theme: .fallback,
-            attentionText: nil,
+            attentionStyle: nil,
             portBindings: [
                 PortBinding(port: 3000, scope: .loopback, processName: "node", pid: 1)
             ]
@@ -75,18 +76,18 @@ struct PaneTitleRowPortsTests {
     @Test("@spec LAYOUT-2.30: When a pane has an active attention capsule, the application shall render the capsule to the right of the pane title (not in place of it), truncating the title so the capsule keeps its intrinsic width — the row stays a single line (pill beside, not stacked under) and its width stays bounded by the row.")
     func attentionPillRendersBesideTitleNotInPlaceOfIt() {
         let containerWidth: CGFloat = 220
-        func height(attention: String?) -> CGFloat {
+        func height(attention: AttentionCapsuleStyle?) -> CGFloat {
             let row = PaneTitleRow(
                 title: "Refactoring the parser module thoroughly",
                 isActiveWorktree: true, isFocusedPane: true, isBusy: false,
-                theme: .fallback, attentionText: attention, portBindings: [])
+                theme: .fallback, attentionStyle: attention, portBindings: [])
             return NSHostingController(rootView: row)
                 .sizeThatFits(in: CGSize(width: containerWidth, height: 1000)).height
         }
         // A pill beside a (truncated) title occupies one line — within a few
         // pt of the no-pill single-line height. Stacking the pill under the
         // title would roughly double it.
-        #expect(abs(height(attention: "Claude needs input") - height(attention: nil)) < 6)
+        #expect(abs(height(attention: .needsInput(label: "Claude needs input")) - height(attention: nil)) < 6)
 
         // A long title plus a pill stays bounded by the row width: the title
         // truncates while the pill keeps its intrinsic size (preserves the
@@ -94,7 +95,7 @@ struct PaneTitleRowPortsTests {
         let longRow = PaneTitleRow(
             title: String(repeating: "really-long-pane-title-segment-", count: 6),
             isActiveWorktree: true, isFocusedPane: true, isBusy: false,
-            theme: .fallback, attentionText: "Claude needs input", portBindings: [])
+            theme: .fallback, attentionStyle: .needsInput(label: "Claude needs input"), portBindings: [])
         let preferred = NSHostingController(rootView: longRow)
             .sizeThatFits(in: CGSize(width: containerWidth, height: 1000))
         #expect(preferred.width <= containerWidth + 0.5)

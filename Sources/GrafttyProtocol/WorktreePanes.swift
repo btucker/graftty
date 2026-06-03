@@ -165,13 +165,16 @@ public struct WorktreePanes: Codable, Sendable, Hashable {
 ///
 /// Wire format uses a `"kind"` discriminator so the JSON is stable across
 /// Swift changes to indirect-enum Codable synthesis:
-///   - leaf:  `{"kind":"leaf","sessionName":"…","title":"…","attentionText":"…"?,"isBusy":true?}`
+///   - leaf:  `{"kind":"leaf","sessionName":"…","title":"…","attentionText":"…"?,"isBusy":true?,"attentionSource":"…"?}`
 ///           (`isBusy` is omitted from the JSON when false, so idle leaves
-///           keep their compact shape and legacy decoders are unaffected.)
+///           keep their compact shape and legacy decoders are unaffected.
+///           `attentionSource` is likewise optional — absent when the pane
+///           has no attention or the source is unknown — so legacy decoders
+///           that predate it still decode cleanly.)
 ///   - split: `{"kind":"split","direction":"horizontal","ratio":0.5,
 ///             "left":{…},"right":{…}}`
 public indirect enum PaneLayoutNode: Sendable, Hashable {
-    case leaf(sessionName: String, title: String, attentionText: String?, isBusy: Bool)
+    case leaf(sessionName: String, title: String, attentionText: String?, isBusy: Bool, attentionSource: AttentionSource?)
     case split(direction: SplitAxis, ratio: Double, left: PaneLayoutNode, right: PaneLayoutNode)
 
     public enum SplitAxis: String, Codable, Sendable, Hashable {
@@ -186,6 +189,11 @@ public indirect enum PaneLayoutNode: Sendable, Hashable {
         /// True while this pane's claude session is busy (AGENT-2.2).
         /// Renderers tint the title green rather than showing a capsule.
         public let isBusy: Bool
+        /// Source of this pane's attention, when one is active. Lets the
+        /// iPad renderer show a distinct icon for agent-stop "needs input"
+        /// (`.agentStop`) versus other attention sources. nil when the pane
+        /// has no attention or the source is unknown.
+        public let attentionSource: AttentionSource?
 
         /// Falls back to the literal `"shell"` when the libghostty
         /// `SET_TITLE` action hasn't fired yet. Centralizing the
@@ -214,9 +222,10 @@ public indirect enum PaneLayoutNode: Sendable, Hashable {
 
     private func collectLeaves(into out: inout [Leaf]) {
         switch self {
-        case let .leaf(sessionName, title, attentionText, isBusy):
+        case let .leaf(sessionName, title, attentionText, isBusy, attentionSource):
             out.append(Leaf(sessionName: sessionName, title: title,
-                            attentionText: attentionText, isBusy: isBusy))
+                            attentionText: attentionText, isBusy: isBusy,
+                            attentionSource: attentionSource))
         case let .split(_, _, left, right):
             left.collectLeaves(into: &out)
             right.collectLeaves(into: &out)
@@ -231,7 +240,7 @@ extension PaneLayoutNode: Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case kind, sessionName, title, attentionText, isBusy, direction, ratio, left, right
+        case kind, sessionName, title, attentionText, isBusy, attentionSource, direction, ratio, left, right
     }
 
     public init(from decoder: Decoder) throws {
@@ -243,7 +252,8 @@ extension PaneLayoutNode: Codable {
                 sessionName: try c.decode(String.self, forKey: .sessionName),
                 title: try c.decode(String.self, forKey: .title),
                 attentionText: try c.decodeIfPresent(String.self, forKey: .attentionText),
-                isBusy: try c.decodeIfPresent(Bool.self, forKey: .isBusy) ?? false
+                isBusy: try c.decodeIfPresent(Bool.self, forKey: .isBusy) ?? false,
+                attentionSource: try c.decodeIfPresent(AttentionSource.self, forKey: .attentionSource)
             )
         case .split:
             self = .split(
@@ -258,12 +268,13 @@ extension PaneLayoutNode: Codable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case let .leaf(sessionName, title, attentionText, isBusy):
+        case let .leaf(sessionName, title, attentionText, isBusy, attentionSource):
             try c.encode(Kind.leaf, forKey: .kind)
             try c.encode(sessionName, forKey: .sessionName)
             try c.encode(title, forKey: .title)
             try c.encodeIfPresent(attentionText, forKey: .attentionText)
             if isBusy { try c.encode(true, forKey: .isBusy) }
+            try c.encodeIfPresent(attentionSource, forKey: .attentionSource)
         case let .split(direction, ratio, left, right):
             try c.encode(Kind.split, forKey: .kind)
             try c.encode(direction, forKey: .direction)

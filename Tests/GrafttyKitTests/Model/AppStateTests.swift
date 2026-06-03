@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyProtocol
 
 @Suite("AppState Tests")
 struct AppStateTests {

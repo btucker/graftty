@@ -250,7 +250,7 @@ struct SidebarView: View {
                             url: $0.url
                         )
                     },
-                    attentionText: attention.worktreeCapsule
+                    attentionStyle: attention.worktreeCapsule
                 )
             }
             .buttonStyle(.plain)
@@ -301,9 +301,10 @@ struct SidebarView: View {
                                 sessionName: sessionName,
                                 liveness: claudeSessionRegistry.livenessBySession),
                             theme: theme,
-                            // The pane-scoped notify ping renders as the
-                            // capsule directly; busy/idle no longer feed it.
-                            attentionText: attention.paneCapsules[terminalID],
+                            // The pane-scoped capsule (agent-stop icon, or
+                            // notify/✓! text) renders directly; busy/idle no
+                            // longer feed it.
+                            attentionStyle: attention.paneCapsules[terminalID],
                             portBindings: portBindings.bindings[terminalID] ?? []
                         )
                     }

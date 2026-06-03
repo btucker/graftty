@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import GrafttyKit
+import GrafttyProtocol
 @testable import Graftty
 
 @Suite("Agent-stop notification activation focuses the pane that produced it.")

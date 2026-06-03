@@ -1,13 +1,9 @@
 import Foundation
+import GrafttyProtocol
 
-/// Where an attention overlay came from. Lets clear logic be precise — the
-/// resume rule (AGENT-3.4) clears only `.agentStop` pings, leaving a
-/// deliberate `.userNotify` ping or a transient `.commandFinished` marker.
-public enum AttentionSource: String, Codable, Sendable {
-    case agentStop        // "<Agent> needs input" from a Stop hook
-    case userNotify       // `graftty notify` — a deliberate user ping
-    case commandFinished  // ✓ / ! shell-integration COMMAND_FINISHED
-}
+// `AttentionSource` now lives in GrafttyProtocol so the PaneLayoutNode wire
+// model can reference it too (the iPad/web surface needs the source to pick
+// icon-vs-text). The resume rule (AGENT-3.4) still clears only `.agentStop`.
 
 public struct Attention: Codable, Sendable, Equatable {
     public let text: String

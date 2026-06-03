@@ -78,6 +78,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.30** When a pane has an active attention capsule, the application shall render the capsule to the right of the pane title (not in place of it), truncating the title so the capsule keeps its intrinsic width — the row stays a single line (pill beside, not stacked under) and its width stays bounded by the row.
 
+**LAYOUT-2.31** The agent "needs input" attention capsule (source .agentStop) shall render as the `rectangle.and.pencil.and.ellipsis` SF Symbol with the text retained as its accessibility label; user-notify and command-finished capsules shall render as text.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.

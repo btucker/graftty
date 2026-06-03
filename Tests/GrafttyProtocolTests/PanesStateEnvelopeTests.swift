@@ -7,7 +7,7 @@ struct PanesStateEnvelopeTests {
 
     @Test
     func snapshotRoundTrips() throws {
-        let layout: PaneLayoutNode = .leaf(sessionName: "abc", title: "shell", attentionText: nil, isBusy: false)
+        let layout: PaneLayoutNode = .leaf(sessionName: "abc", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil)
         let worktree = WorktreePanes(
             path: "/repo/wt-1",
             displayName: "feature-branch",

@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyProtocol
 
 @Suite("Agent Stop Notification")
 struct AgentStopNotificationTests {

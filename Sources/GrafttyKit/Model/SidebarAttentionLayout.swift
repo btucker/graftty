@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 
 /// Sidebar rendering split for attention overlays (STATE-2.3).
 ///
@@ -12,10 +13,13 @@ import Foundation
 /// capsule, independent of pane count.
 public enum SidebarAttentionLayout {
     public struct Layout: Equatable {
-        public let worktreeCapsule: String?
-        public let paneCapsules: [PaneSlotID: String]
+        public let worktreeCapsule: AttentionCapsuleStyle?
+        public let paneCapsules: [PaneSlotID: AttentionCapsuleStyle]
 
-        public init(worktreeCapsule: String?, paneCapsules: [PaneSlotID: String]) {
+        public init(
+            worktreeCapsule: AttentionCapsuleStyle?,
+            paneCapsules: [PaneSlotID: AttentionCapsuleStyle]
+        ) {
             self.worktreeCapsule = worktreeCapsule
             self.paneCapsules = paneCapsules
         }
@@ -23,8 +27,12 @@ public enum SidebarAttentionLayout {
 
     public static func layout(for worktree: WorktreeEntry) -> Layout {
         Layout(
-            worktreeCapsule: worktree.attention?.text,
-            paneCapsules: worktree.paneAttention.mapValues { $0.text }
+            worktreeCapsule: worktree.attention.map {
+                AttentionCapsuleStyle.from(text: $0.text, source: $0.source)
+            },
+            paneCapsules: worktree.paneAttention.mapValues {
+                AttentionCapsuleStyle.from(text: $0.text, source: $0.source)
+            }
         )
     }
 }

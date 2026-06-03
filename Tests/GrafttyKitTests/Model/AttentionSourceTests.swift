@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyProtocol
 
 @Suite("Attention.source — carries provenance so the resume rule can target agent-stop pings; legacy payloads decode as .userNotify.")
 struct AttentionSourceTests {

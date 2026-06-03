@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import GrafttyKit
+import GrafttyProtocol
 
 @Suite("WorktreeEntry attention API — single place to set, acknowledge, and resume-clear.")
 struct WorktreeEntryAttentionTests {

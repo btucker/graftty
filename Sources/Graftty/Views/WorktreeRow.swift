@@ -8,19 +8,33 @@ import GrafttyProtocol
 /// a restyle — font, padding, color — lands in one place and the two
 /// scopes can't drift visually.
 struct AttentionCapsule: View {
-    let text: String
+    let style: AttentionCapsuleStyle
 
     var body: some View {
-        Text(text)
+        capsuleContent
             .font(.caption)
             .fontWeight(.semibold)
-            .lineLimit(1)
-            .truncationMode(.tail)
             .padding(.horizontal, 6)
             .padding(.vertical, 1)
             .background(Color.red)
             .foregroundColor(.white)
             .clipShape(Capsule())
+    }
+
+    @ViewBuilder
+    private var capsuleContent: some View {
+        switch style {
+        case let .needsInput(label):
+            // Agent "needs input" renders as an icon; keep the human text
+            // as the accessibility label + tooltip.
+            Image(systemName: AttentionCapsuleStyle.needsInputSymbol)
+                .accessibilityLabel(label)
+                .help(label)
+        case let .text(text):
+            Text(text)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
     }
 }
 
@@ -47,25 +61,25 @@ struct PaneTitleRow: View {
     let theme: GhosttyTheme
     /// When non-nil, an attention capsule renders to the *right* of the
     /// pane title (LAYOUT-2.30); the title truncates to make room rather
-    /// than being replaced. Driven by shell-integration / `graftty notify`
-    /// pings (NOTIF-2.x). Cleared when the user clicks the worktree
-    /// (STATE-2.4). Worktree-scoped pings render on the worktree row
-    /// instead (STATE-2.3).
-    let attentionText: String?
+    /// than being replaced. Agent "needs input" (`.needsInput`) shows an
+    /// icon; `graftty notify` / ✓! (`.text`) show their text. Cleared when
+    /// the user clicks the worktree (STATE-2.4). Worktree-scoped pings
+    /// render on the worktree row instead (STATE-2.3).
+    let attentionStyle: AttentionCapsuleStyle?
     /// Port bindings detected for this pane's process subtree (PORTS-3.1).
-    /// Hidden while `attentionText` is non-nil (PORTS-3.4) so an active
+    /// Hidden while an attention capsule is shown (PORTS-3.4) so an active
     /// attention ping owns the row's secondary surface unambiguously.
     let portBindings: [PortBinding]
 
     var shouldRenderPortChips: Bool {
-        attentionText == nil && !portBindings.isEmpty
+        attentionStyle == nil && !portBindings.isEmpty
     }
 
     /// Busy style applies only when no capsule is shown (ping supersedes).
     /// Shared with the iPad row via `PaneTitleBusyStyle` so the rule can't
     /// drift.
     private var titleIsBusy: Bool {
-        PaneTitleBusyStyle.applies(isBusy: isBusy, hasAttentionCapsule: attentionText != nil)
+        PaneTitleBusyStyle.applies(isBusy: isBusy, hasAttentionCapsule: attentionStyle != nil)
     }
 
     @ViewBuilder
@@ -98,14 +112,14 @@ struct PaneTitleRow: View {
                     isFocusedPane: isFocusedPane,
                     isActiveWorktree: isActiveWorktree
                 ))
-            if let attentionText {
+            if let attentionStyle {
                 // LAYOUT-2.30: title (yields/truncates) + pill (keeps
                 // intrinsic width) on one line. A plain HStack — NOT
                 // FlowLayout — so the title truncates instead of the pill
                 // wrapping below it.
                 titleText
                     .layoutPriority(0)
-                AttentionCapsule(text: attentionText)
+                AttentionCapsule(style: attentionStyle)
                     .layoutPriority(1)
             } else {
                 // Title + port chips share a FlowLayout so wrapped chips
@@ -222,11 +236,12 @@ struct WorktreeRow: View {
     /// deliberately narrower than `PRInfo` so unrelated changes (CI
     /// checks, title, fetchedAt) don't invalidate the row on each poll.
     let prBadge: PRBadge?
-    /// Worktree-scoped attention text (STATE-2.3). Driven by the CLI's
-    /// `graftty notify` path. Rendered as a red capsule next to the
-    /// branch label, visible regardless of the worktree's running state
-    /// so a ping set on a closed worktree stays reachable.
-    let attentionText: String?
+    /// Worktree-scoped attention (STATE-2.3). Driven by the CLI's
+    /// `graftty notify` path (or a worktree-scoped agent stop). Rendered as
+    /// a red capsule next to the branch label, visible regardless of the
+    /// worktree's running state so a ping set on a closed worktree stays
+    /// reachable.
+    let attentionStyle: AttentionCapsuleStyle?
 
     var body: some View {
         HStack(spacing: 6) {
@@ -235,8 +250,8 @@ struct WorktreeRow: View {
                 prBadgeLabel(prBadge)
             }
             branchLabel
-            if let attentionText {
-                AttentionCapsule(text: attentionText)
+            if let attentionStyle {
+                AttentionCapsule(style: attentionStyle)
             }
             Spacer()
             WorktreeRowGutter(

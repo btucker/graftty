@@ -71,14 +71,15 @@ struct GrafttyDeepLinkSnapshotResolveTests {
         let urlHandlerLayout = PaneLayoutNode.split(
             direction: .horizontal,
             ratio: 0.5,
-            left: .leaf(sessionName: "graftty-aaaa1111", title: "zsh", attentionText: nil, isBusy: false),
-            right: .leaf(sessionName: "graftty-bbbb2222", title: "zsh", attentionText: nil, isBusy: false)
+            left: .leaf(sessionName: "graftty-aaaa1111", title: "zsh", attentionText: nil, isBusy: false, attentionSource: nil),
+            right: .leaf(sessionName: "graftty-bbbb2222", title: "zsh", attentionText: nil, isBusy: false, attentionSource: nil)
         )
         let mainLayout = PaneLayoutNode.leaf(
             sessionName: "graftty-cccc3333",
             title: "zsh",
             attentionText: nil,
-            isBusy: false
+            isBusy: false,
+            attentionSource: nil
         )
         return [
             WorktreePanes(

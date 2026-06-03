@@ -32,8 +32,8 @@ struct WorktreePanesTests {
             layout: .split(
                 direction: .horizontal,
                 ratio: 0.5,
-                left: .leaf(sessionName: "L", title: "left", attentionText: nil, isBusy: false),
-                right: .leaf(sessionName: "R", title: "right", attentionText: "build broken", isBusy: false)
+                left: .leaf(sessionName: "L", title: "left", attentionText: nil, isBusy: false, attentionSource: nil),
+                right: .leaf(sessionName: "R", title: "right", attentionText: "build broken", isBusy: false, attentionSource: nil)
             )
         )
         let data = try JSONEncoder().encode(original)
@@ -70,7 +70,7 @@ struct WorktreePanesTests {
 
     @Test
     func paneAttentionRoundTrips() throws {
-        let leaf = PaneLayoutNode.leaf(sessionName: "s", title: "t", attentionText: "ping", isBusy: false)
+        let leaf = PaneLayoutNode.leaf(sessionName: "s", title: "t", attentionText: "ping", isBusy: false, attentionSource: nil)
         let data = try JSONEncoder().encode(leaf)
         let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: data)
         #expect(decoded == leaf)
@@ -82,7 +82,7 @@ struct WorktreePanesTests {
         {"kind":"leaf","sessionName":"s","title":"t"}
         """.data(using: .utf8)!
         let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: legacy)
-        if case let .leaf(sessionName, title, attentionText, _) = decoded {
+        if case let .leaf(sessionName, title, attentionText, _, _) = decoded {
             #expect(sessionName == "s")
             #expect(title == "t")
             #expect(attentionText == nil)
@@ -107,11 +107,11 @@ struct WorktreePanesTests {
     @Test
     func busyLeafRoundTrips() throws {
         let leaf = PaneLayoutNode.leaf(
-            sessionName: "s", title: "t", attentionText: nil, isBusy: true)
+            sessionName: "s", title: "t", attentionText: nil, isBusy: true, attentionSource: nil)
         let data = try JSONEncoder().encode(leaf)
         let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: data)
         #expect(decoded == leaf)
-        if case let .leaf(_, _, _, isBusy) = decoded {
+        if case let .leaf(_, _, _, isBusy, _) = decoded {
             #expect(isBusy == true)
         } else {
             Issue.record("expected leaf")
@@ -122,8 +122,34 @@ struct WorktreePanesTests {
     func legacyLeafWithoutIsBusyDecodesAsFalse() throws {
         let legacy = #"{"kind":"leaf","sessionName":"s","title":"t"}"#.data(using: .utf8)!
         let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: legacy)
-        if case let .leaf(_, _, _, isBusy) = decoded {
+        if case let .leaf(_, _, _, isBusy, _) = decoded {
             #expect(isBusy == false)
+        } else {
+            Issue.record("expected leaf")
+        }
+    }
+
+    @Test
+    func leafWithAttentionSourceRoundTrips() throws {
+        let leaf = PaneLayoutNode.leaf(
+            sessionName: "s", title: "t", attentionText: "needs input",
+            isBusy: false, attentionSource: .agentStop)
+        let data = try JSONEncoder().encode(leaf)
+        let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: data)
+        #expect(decoded == leaf)
+        if case let .leaf(_, _, _, _, attentionSource) = decoded {
+            #expect(attentionSource == .agentStop)
+        } else {
+            Issue.record("expected leaf")
+        }
+    }
+
+    @Test
+    func legacyLeafWithoutAttentionSourceDecodesAsNil() throws {
+        let legacy = #"{"kind":"leaf","sessionName":"s","title":"t"}"#.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: legacy)
+        if case let .leaf(_, _, _, _, attentionSource) = decoded {
+            #expect(attentionSource == nil)
         } else {
             Issue.record("expected leaf")
         }
@@ -141,6 +167,18 @@ struct WorktreePanesTests {
         // Not busy: never styled, capsule or not.
         #expect(PaneTitleBusyStyle.applies(isBusy: false, hasAttentionCapsule: true) == false)
         #expect(PaneTitleBusyStyle.applies(isBusy: false, hasAttentionCapsule: false) == false)
+    }
+
+    @Test("""
+@spec LAYOUT-2.31: The agent "needs input" attention capsule (source .agentStop) shall render as the `rectangle.and.pencil.and.ellipsis` SF Symbol with the text retained as its accessibility label; user-notify and command-finished capsules shall render as text.
+""")
+    func agentStopCapsuleIsIconOthersAreText() {
+        #expect(AttentionCapsuleStyle.from(text: "Claude needs input", source: .agentStop)
+            == .needsInput(label: "Claude needs input"))
+        #expect(AttentionCapsuleStyle.from(text: "build broken", source: .userNotify) == .text("build broken"))
+        #expect(AttentionCapsuleStyle.from(text: "✓", source: .commandFinished) == .text("✓"))
+        #expect(AttentionCapsuleStyle.from(text: "x", source: nil) == .text("x"))
+        #expect(AttentionCapsuleStyle.needsInputSymbol == "rectangle.and.pencil.and.ellipsis")
     }
 
     @Test
