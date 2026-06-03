@@ -114,6 +114,49 @@ public struct AppState: Codable, Sendable, Equatable {
         }
     }
 
+    /// STATE-2.4: the user focused one pane (clicked its terminal or sidebar
+    /// row) — clear just that pane's attention. Kept separate from
+    /// `setFocusedTerminal` so programmatic focus restores (e.g. TERM-2.3
+    /// after a worktree switch) don't wipe a pending "needs input".
+    public mutating func acknowledgePaneAttention(
+        _ pane: PaneSlotID,
+        forWorktreePath path: String
+    ) {
+        for repoIdx in repos.indices {
+            for wtIdx in repos[repoIdx].worktrees.indices
+                where repos[repoIdx].worktrees[wtIdx].path == path
+            {
+                repos[repoIdx].worktrees[wtIdx].acknowledgePaneAttention(pane)
+            }
+        }
+    }
+
+    /// Fans the AGENT-3.4 resume rule out across every worktree on a
+    /// liveness update (the per-worktree rule lives on `WorktreeEntry`):
+    /// each pane whose session is now busy has its agent-stop "needs
+    /// input" overlay cleared (busy and needs-input are mutually
+    /// exclusive). No-op when nothing is busy.
+    public mutating func clearAgentStopAttentionForBusyPanes(liveness: [String: AgentLiveness]) {
+        let busy = Set(liveness.compactMap { $0.value == .busy ? $0.key : nil })
+        guard !busy.isEmpty else { return }
+        // Cheap early-out before any mutation: this runs on every liveness
+        // change, which is frequent during active work. Only touch the model
+        // when a pane-scoped agent-stop pill actually exists to clear (the
+        // common steady state has none), so the @State write-back and its
+        // re-render diff are skipped.
+        let hasPaneAgentStop = repos.contains { repo in
+            repo.worktrees.contains { wt in
+                wt.paneAttention.values.contains { $0.source == .agentStop }
+            }
+        }
+        guard hasPaneAgentStop else { return }
+        for repoIdx in repos.indices {
+            for wtIdx in repos[repoIdx].worktrees.indices {
+                repos[repoIdx].worktrees[wtIdx].clearAgentStopAttention(forBusySessionNames: busy)
+            }
+        }
+    }
+
     /// Shared primitive for the Delete Worktree (GIT-4.x) and Dismiss
     /// (GIT-3.6) paths. Removes the worktree at `path` from its
     /// enclosing repo's `worktrees` list, clears `selectedWorktreePath`

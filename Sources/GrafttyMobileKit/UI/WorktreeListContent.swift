@@ -375,12 +375,20 @@ private struct WorktreeBlock: View {
             ForEach(Array(layout.leaves.enumerated()), id: \.element.sessionName) { index, leaf in
                 let effective = leaf.attentionText
                     ?? (index == 0 ? worktree.attentionText : nil)
+                // Use the leaf's own source for the icon decision; an
+                // inherited worktree-scoped ping carries no wire source
+                // here, so it renders as text.
+                let style: AttentionCapsuleStyle? = effective.map {
+                    AttentionCapsuleStyle.from(
+                        text: $0,
+                        source: leaf.attentionText != nil ? leaf.attentionSource : nil)
+                }
                 let isFocused = leaf.sessionName == focusedPaneId
                 if layout.isLeaf {
                     PaneTitleRow(
                         leaf: leaf,
                         theme: theme,
-                        effectiveAttentionText: effective,
+                        attentionStyle: style,
                         isFocusedPane: isFocused,
                         isActiveWorktree: isActive
                     )
@@ -389,7 +397,7 @@ private struct WorktreeBlock: View {
                         PaneTitleRow(
                             leaf: leaf,
                             theme: theme,
-                            effectiveAttentionText: effective,
+                            attentionStyle: style,
                             isFocusedPane: isFocused,
                             isActiveWorktree: isActive
                         )
@@ -515,19 +523,19 @@ private struct WorktreeRowContent: View {
     }
 }
 
-/// Pane child row: `↳` glyph + caption-sized title (or attention
-/// capsule when the pane has a shell-integration ping, or when the
-/// caller has chosen to attach the worktree-scoped `attentionText`
-/// here per IPAD-1.14).
+/// Pane child row: `↳` glyph + caption-sized title. When the pane has
+/// a shell-integration ping (or the caller has attached the
+/// worktree-scoped `attentionText` here per IPAD-1.14), an attention
+/// capsule renders to the *right* of the title — not in place of it —
+/// truncating the title to make room (LAYOUT-2.30).
 private struct PaneTitleRow: View {
     let leaf: PaneLayoutNode.Leaf
     let theme: GhosttyThemeColors?
-    /// The attention text the caller wants this pane row to display.
-    /// Normally `leaf.attentionText`, but the first pane in a worktree
-    /// also inherits `worktree.attentionText` as a fallback so the
-    /// worktree-scoped `graftty notify` ping shows on a pane row
-    /// instead of the worktree title row.
-    let effectiveAttentionText: String?
+    /// The attention capsule this pane row should display (agent-stop icon,
+    /// or notify/✓! text), or nil. Normally derived from `leaf`, but the
+    /// first pane in a worktree also inherits the worktree-scoped ping as a
+    /// fallback so "needs input" always lives on a pane row.
+    let attentionStyle: AttentionCapsuleStyle?
     /// True when this leaf is the currently-focused pane. Drives the
     /// brightest bucket on `theme.paneArrow` and `theme.paneTitle`
     /// (IPAD-1.16), and bolds the arrow + title — matching the Mac
@@ -540,6 +548,17 @@ private struct PaneTitleRow: View {
     let isActiveWorktree: Bool
 
     var body: some View {
+        // Busy style applies only when no capsule is shown — a needs-input
+        // ping (claude waiting) supersedes "working". Shared with the Mac
+        // row via PaneTitleBusyStyle so the precedence rule can't drift.
+        let busyStyle = PaneTitleBusyStyle.applies(
+            isBusy: leaf.isBusy, hasAttentionCapsule: attentionStyle != nil)
+        // LAYOUT-2.31: the agent "needs input" state colors the title red
+        // (alongside the red icon) so it's scannable.
+        let isNeedsInput: Bool = {
+            if case .needsInput = attentionStyle { return true }
+            return false
+        }()
         HStack(spacing: 4) {
             Text("↳")
                 .font(.caption)
@@ -548,19 +567,29 @@ private struct PaneTitleRow: View {
                     isFocusedPane: isFocusedPane,
                     isActiveWorktree: isActiveWorktree
                 )))
-            if let attentionText = effectiveAttentionText {
-                AttentionCapsule(text: attentionText)
-            } else {
-                Text(leaf.displayTitle)
-                    .font(.caption)
-                    .fontWeight(isFocusedPane ? .semibold : .regular)
-                    .foregroundStyle(themedOrSecondary(theme?.paneTitle(
-                        isFocusedPane: isFocusedPane,
-                        isActiveWorktree: isActiveWorktree,
-                        hasTitle: !leaf.displayTitle.isEmpty
-                    )))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+            // LAYOUT-2.30: title (truncates) then pill (intrinsic width).
+            // AGENT-2.2: a busy pane renders its title in italic. Apply it
+            // at the Text level (Text.italic()) so it composes with the
+            // focused pane's `.semibold`; the View-level `.italic(_:)`
+            // modifier is dropped when a Text-level fontWeight is set.
+            let titleBase = Text(leaf.displayTitle)
+                .font(.caption)
+                .fontWeight(isFocusedPane ? .semibold : .regular)
+            (busyStyle ? titleBase.italic() : titleBase)
+                .foregroundStyle(isNeedsInput ? AnyShapeStyle(.red) : themedOrSecondary(theme?.paneTitle(
+                    isFocusedPane: isFocusedPane,
+                    isActiveWorktree: isActiveWorktree,
+                    // Use the raw title (not displayTitle, which falls back
+                    // to a non-empty "shell"): an unset title should hit the
+                    // dimmer placeholder bucket, matching the Mac sidebar.
+                    hasTitle: !leaf.title.isEmpty
+                )))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .layoutPriority(0)
+            if let attentionStyle {
+                AttentionCapsule(style: attentionStyle)
+                    .layoutPriority(1)
             }
             Spacer(minLength: 0)
         }
@@ -571,19 +600,30 @@ private struct PaneTitleRow: View {
 /// Red status pill — worktree row uses it for CLI `graftty notify`
 /// pings; pane row uses it for shell-integration pings.
 private struct AttentionCapsule: View {
-    let text: String
+    let style: AttentionCapsuleStyle
 
     var body: some View {
-        Text(text)
-            .font(.caption)
-            .fontWeight(.semibold)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(Color.red)
-            .foregroundStyle(.white)
-            .clipShape(Capsule())
+        switch style {
+        case let .needsInput(label):
+            // Agent "needs input" is a bare red icon (no pill); text kept
+            // for accessibility.
+            Image(systemName: AttentionCapsuleStyle.needsInputSymbol)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.red)
+                .accessibilityLabel(label)
+        case let .text(text):
+            Text(text)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(Color.red)
+                .foregroundStyle(.white)
+                .clipShape(Capsule())
+        }
     }
 }
 

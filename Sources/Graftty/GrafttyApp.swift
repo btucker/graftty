@@ -794,7 +794,8 @@ struct GrafttyApp: App {
                     appState: appState,
                     terminalID: terminalID,
                     text: exitCode == 0 ? "✓" : "!",
-                    clearAfter: exitCode == 0 ? 3 : 8
+                    clearAfter: exitCode == 0 ? 3 : 8,
+                    source: .commandFinished
                 )
             }
         }
@@ -949,6 +950,13 @@ struct GrafttyApp: App {
         // (like prStatusStore), so the local var is sufficient — the
         // registry itself outlives startup() via AppServices.
         let claudeAgentsTicker = PollingTicker(interval: .seconds(2))
+        // AGENT-3.4: apply the resume rule at the model layer on every
+        // liveness change, so the iPad/web snapshot and the headless
+        // (window-closed) case stay consistent — not just the on-screen
+        // Mac sidebar.
+        services.claudeSessionRegistry.onLivenessChange = { [appState = $appState] liveness in
+            appState.wrappedValue.clearAgentStopAttentionForBusyPanes(liveness: liveness)
+        }
         services.claudeSessionRegistry.start(ticker: claudeAgentsTicker)
 
         // Sweep dangling presence files left behind by SIGKILL'd agents
@@ -1971,14 +1979,14 @@ struct GrafttyApp: App {
                                 appState: appState,
                                 terminalID: slot,
                                 text: text,
-                                clearAfter: effectiveClearAfter
+                                clearAfter: effectiveClearAfter,
+                                source: .userNotify
                             )
                         } else {
                             appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                                .paneAttention[slot] = Attention(
-                                    text: text,
-                                    timestamp: Date(),
-                                    clearAfter: nil
+                                .setAttention(
+                                    Attention(text: text, timestamp: Date(), source: .userNotify),
+                                    pane: slot
                                 )
                         }
                         return
@@ -1992,10 +2000,14 @@ struct GrafttyApp: App {
             for repoIdx in appState.wrappedValue.repos.indices {
                 for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                     if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path == path {
-                        appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].attention = Attention(
-                            text: text,
-                            timestamp: stamp,
-                            clearAfter: effectiveClearAfter
+                        appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].setAttention(
+                            Attention(
+                                text: text,
+                                timestamp: stamp,
+                                clearAfter: effectiveClearAfter,
+                                source: .userNotify
+                            ),
+                            pane: nil
                         )
 
                         if let effectiveClearAfter {
@@ -2272,22 +2284,23 @@ struct GrafttyApp: App {
                 let resolvedSessionID = sessionID ?? "\(runtime.rawValue):\(worktreeName):\(callerPath)"
                 let attention = Attention(
                     text: "\(AgentStopNotification.displayName(runtime)) needs input",
-                    timestamp: timestamp
+                    timestamp: timestamp,
+                    source: .agentStop
                 )
+                let pane: PaneSlotID?
                 switch AgentStopAttentionTarget.resolve(worktree: worktree, paneSessionName: paneSessionName) {
-                case let .pane(slot):
-                    appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
-                        .paneAttention[slot] = attention
-                case .worktree:
-                    appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
-                        .attention = attention
+                case let .pane(slot): pane = slot
+                case .worktree: pane = nil
                 }
+                appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
+                    .setAttention(attention, pane: pane)
                 AgentNotificationRouter.shared.post(
                     AgentStopNotification.content(
                         runtime: runtime,
                         worktreeName: worktreeName,
                         worktreePath: callerPath,
                         sessionID: resolvedSessionID,
+                        paneSessionName: paneSessionName,
                         timestamp: timestamp
                     )
                 )
@@ -2305,12 +2318,30 @@ struct GrafttyApp: App {
         NSApp.activate(ignoringOtherApps: true)
         AgentStopNotification.acknowledgeSelection(
             appState: &appState.wrappedValue,
-            worktreePath: payload.worktreePath,
-            timestamp: payload.attentionTimestamp
+            worktreePath: payload.worktreePath
         )
         if let worktree = appState.wrappedValue.worktree(forPath: payload.worktreePath),
-           let terminalID = worktree.firstPane {
+           let terminalID = agentStopFocusTarget(
+               worktree: worktree, paneSessionName: payload.paneSessionName) {
             terminalManager.setFocus(terminalID)
+        }
+    }
+
+    /// AGENT-3.3: the pane to focus when an agent-stop notification is
+    /// activated — the pane whose session produced it (resolved by the
+    /// same `AgentStopAttentionTarget` rule the post path uses to place
+    /// the attention capsule, so focus and capsule can't disagree),
+    /// falling back to the worktree's first pane when it no longer
+    /// resolves (e.g. the agent's pane was closed, or it was a
+    /// worktree-scoped ping).
+    static func agentStopFocusTarget(
+        worktree: WorktreeEntry,
+        paneSessionName: String?
+    ) -> PaneSlotID? {
+        switch AgentStopAttentionTarget.resolve(
+            worktree: worktree, paneSessionName: paneSessionName) {
+        case let .pane(slot): return slot
+        case .worktree: return worktree.firstPane
         }
     }
 
@@ -2669,7 +2700,8 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         terminalID: PaneSlotID,
         text: String,
-        clearAfter: TimeInterval
+        clearAfter: TimeInterval,
+        source: AttentionSource
     ) {
         // Pin a single Date so the stored attention AND the closure
         // share the same generation token (same shape as the
@@ -2683,10 +2715,9 @@ struct GrafttyApp: App {
                 if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                     .splitTree.containsLeaf(terminalID) {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                        .paneAttention[terminalID] = Attention(
-                            text: text,
-                            timestamp: stamp,
-                            clearAfter: clearAfter
+                        .setAttention(
+                            Attention(text: text, timestamp: stamp, clearAfter: clearAfter, source: source),
+                            pane: terminalID
                         )
                     let path = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path
                     DispatchQueue.main.asyncAfter(deadline: .now() + clearAfter) {
@@ -3584,10 +3615,11 @@ private func paneLayoutNode(
         return .leaf(
             sessionName: sessionName ?? "",
             title: titles[id] ?? "",
-            attentionText: AgentLivenessMerge.effectivePaneText(
-                paneAttentionText: paneAttention[id]?.text,
+            attentionText: paneAttention[id]?.text,
+            isBusy: AgentLivenessMerge.isPaneBusy(
                 sessionName: sessionName,
-                liveness: liveness)
+                liveness: liveness),
+            attentionSource: paneAttention[id]?.source
         )
     case let .split(s):
         return .split(

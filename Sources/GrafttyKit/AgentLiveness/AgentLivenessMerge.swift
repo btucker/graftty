@@ -1,18 +1,21 @@
 import Foundation
 
-/// The single notify-wins merge used by both render surfaces (Mac sidebar
-/// and the iPad/web wire model). A live `notify` ping always wins; derived
-/// busy/idle only fills the gap. Idle shows nothing to avoid visual noise.
+/// Derives a pane's busy state from claude liveness, host-side. A live
+/// `notify` ping is rendered as the red attention capsule (callers pass it
+/// straight through to the view); busy is surfaced as an italic title style,
+/// not a capsule — the title already animates, so a busy pane needs no
+/// separate pill. The ping-vs-busy *render precedence* lives in
+/// `GrafttyProtocol.PaneTitleBusyStyle` because both render surfaces share
+/// it; this enum only computes busy from liveness, which only the host does.
 public enum AgentLivenessMerge {
-    public static let busyText = "working…"
-
-    public static func effectivePaneText(
-        paneAttentionText: String?,
+    /// AGENT-2.2: true when the pane's claude session is busy. Purely
+    /// liveness-derived; `PaneTitleBusyStyle.applies` decides whether a
+    /// concurrent ping suppresses the style.
+    public static func isPaneBusy(
         sessionName: String?,
         liveness: [String: AgentLiveness]
-    ) -> String? {
-        if let paneAttentionText { return paneAttentionText }   // AGENT-2.1
-        guard let sessionName, liveness[sessionName] == .busy else { return nil }
-        return busyText                                          // AGENT-2.2
+    ) -> Bool {
+        guard let sessionName else { return false }
+        return liveness[sessionName] == .busy
     }
 }

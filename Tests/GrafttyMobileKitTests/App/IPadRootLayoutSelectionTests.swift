@@ -67,7 +67,9 @@ struct IPadRootLayoutSelectionTests {
         let node = PaneLayoutNode.leaf(
             sessionName: "session-xyz",
             title: "shell",
-            attentionText: nil
+            attentionText: nil,
+            isBusy: false,
+            attentionSource: nil
         )
         guard let leaf = node.leaves.first else {
             Issue.record("expected a leaf")
@@ -251,7 +253,7 @@ struct IPadRootLayoutSelectionTests {
             prBadge: nil,
             stats: nil,
             attentionText: nil,
-            layout: .leaf(sessionName: "s", title: "shell", attentionText: "build broken")
+            layout: .leaf(sessionName: "s", title: "shell", attentionText: "build broken", isBusy: false, attentionSource: nil)
         )
         let appState2 = freshAppState()
         IPadRootLayout.onWorktreeListChanged(
@@ -271,7 +273,7 @@ struct IPadRootLayoutSelectionTests {
             prBadge: nil,
             stats: nil,
             attentionText: nil,
-            layout: .leaf(sessionName: "s", title: "shell", attentionText: nil)
+            layout: .leaf(sessionName: "s", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil)
         )
         let appState3 = freshAppState()
         appState3.anyWorktreeHasAttention = true  // pretend something stale
@@ -309,8 +311,8 @@ struct IPadRootLayoutSelectionTests {
         let layout = PaneLayoutNode.split(
             direction: .vertical,
             ratio: 0.5,
-            left: .leaf(sessionName: "a", title: "shell A", attentionText: nil),
-            right: .leaf(sessionName: "b", title: "shell B", attentionText: nil)
+            left: .leaf(sessionName: "a", title: "shell A", attentionText: nil, isBusy: false, attentionSource: nil),
+            right: .leaf(sessionName: "b", title: "shell B", attentionText: nil, isBusy: false, attentionSource: nil)
         )
         let wt = WorktreePanes(
             path: "/r/feat",
@@ -335,8 +337,8 @@ struct IPadRootLayoutSelectionTests {
         // through the case API and project to `.leaves`.
         let layout = PaneLayoutNode.split(
             direction: .horizontal, ratio: 0.5,
-            left: .leaf(sessionName: "a", title: "shell A", attentionText: nil),
-            right: .leaf(sessionName: "b", title: "shell B", attentionText: "build broken")
+            left: .leaf(sessionName: "a", title: "shell A", attentionText: nil, isBusy: false, attentionSource: nil),
+            right: .leaf(sessionName: "b", title: "shell B", attentionText: "build broken", isBusy: false, attentionSource: nil)
         )
         let leaves = layout.leaves
         let leaf1 = leaves[0]
@@ -352,8 +354,8 @@ struct IPadRootLayoutSelectionTests {
         // Non-first pane with NO own attention → does NOT inherit.
         let leafNone = PaneLayoutNode.split(
             direction: .horizontal, ratio: 0.5,
-            left: .leaf(sessionName: "c", title: "shell C", attentionText: nil),
-            right: .leaf(sessionName: "d", title: "shell D", attentionText: nil)
+            left: .leaf(sessionName: "c", title: "shell C", attentionText: nil, isBusy: false, attentionSource: nil),
+            right: .leaf(sessionName: "d", title: "shell D", attentionText: nil, isBusy: false, attentionSource: nil)
         ).leaves[1]
         let effectiveNone = leafNone.attentionText ?? nil  // index > 0
         #expect(effectiveNone == nil)
@@ -465,8 +467,8 @@ struct IPadRootLayoutSelectionTests {
         let layoutWithOtherPanes = PaneLayoutNode.split(
             direction: .horizontal,
             ratio: 0.5,
-            left: .leaf(sessionName: "session-a", title: "shell A", attentionText: nil),
-            right: .leaf(sessionName: "session-b", title: "shell B", attentionText: nil)
+            left: .leaf(sessionName: "session-a", title: "shell A", attentionText: nil, isBusy: false, attentionSource: nil),
+            right: .leaf(sessionName: "session-b", title: "shell B", attentionText: nil, isBusy: false, attentionSource: nil)
         )
         IPadRootLayout.onWorktreeListChanged(
             appState: appState,

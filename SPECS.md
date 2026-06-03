@@ -76,6 +76,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **LAYOUT-2.29** Repository's default branch as resolved by `GitOriginDefaultBranch.resolve` (origin/HEAD symbolic-ref with main/master/develop probe fallback). `nil` when no default branch can be identified.
 
+**LAYOUT-2.30** When a pane has an active attention capsule, the application shall render the capsule to the right of the pane title (not in place of it), truncating the title so the capsule keeps its intrinsic width — the row stays a single line (pill beside, not stacked under) and its width stays bounded by the row.
+
+**LAYOUT-2.31** The agent "needs input" attention (source .agentStop) shall render as a bare red `rectangle.and.pencil.and.ellipsis` SF Symbol (no pill) beside a red-colored pane title, with the text retained as the icon's accessibility label; user-notify and command-finished capsules shall render as text in a red pill.
+
 ### LAYOUT-3.x — Adding Repositories
 
 **LAYOUT-3.1** When the user clicks "Add Repository", the application shall present a standard macOS open panel for selecting a directory.
@@ -1680,7 +1684,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.1** While a pane has a live notify attention ping, the application shall render that ping in preference to any derived busy/idle status.
 
-**AGENT-2.2** While a pane has no live attention ping, the application shall render `working…` when its claude session is busy and render nothing when it is idle.
+**AGENT-2.2** While a pane has no live attention ping, the application shall surface a busy claude session by rendering the pane title in italic (not a capsule), and render the title upright when idle.
 
 **AGENT-2.3** If the `claude agents --json` invocation fails or returns unparseable output, then the application shall produce an empty liveness map without crashing.
 
@@ -1691,6 +1695,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-3.1** When an agent-stop event carries a `paneSessionName` resolving to a live pane, the application shall attach the "needs input" attention to that pane rather than the worktree.
 
 **AGENT-3.2** If an agent-stop event has no pane session (the agent is not in a Graftty pane), then the application shall fall back to worktree-scoped "needs input" attention.
+
+**AGENT-3.3** When the user activates an agent-stop desktop notification, the application shall focus the pane whose session produced it, falling back to the worktree's first pane when the session no longer resolves.
+
+**AGENT-3.4** When a pane's agent transitions to busy, the application shall clear that pane's agent-stop "needs input" attention (leaving user notify pings and command-finished markers), so busy and needs-input are mutually exclusive.
 
 ### AGENT-4.x
 

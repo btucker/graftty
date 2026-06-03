@@ -92,6 +92,11 @@ struct MainWindow: View {
                             // on the next return visit.
                             if let wtPath = appState.selectedWorktreePath {
                                 appState.setFocusedTerminal(terminalID, forWorktreePath: wtPath)
+                                // STATE-2.4: clicking a pane's terminal to
+                                // focus it acknowledges that pane's attention
+                                // (e.g. the agent-stop "needs input" icon),
+                                // same as clicking its sidebar row.
+                                appState.acknowledgePaneAttention(terminalID, forWorktreePath: wtPath)
                             }
                             terminalManager.setFocus(terminalID)
                         }
@@ -154,6 +159,10 @@ struct MainWindow: View {
                 splitTreesByPath: appState.runningSplitTreesByPath()
             )
         }
+        // AGENT-3.4 resume rule runs at the model layer via
+        // ClaudeSessionRegistry.onLivenessChange (wired in startup), so it
+        // applies to the iPad/web snapshot and the window-closed case too —
+        // not just while this view is on screen.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in
             applyAppVisibility(isVisible: false)
         }
@@ -382,11 +391,11 @@ struct MainWindow: View {
                 if appState.repos[repoIdx].worktrees[wtIdx].path == path {
                     // Clicking a worktree dismisses both levels of
                     // attention — worktree-level (CLI notify) and any
-                    // outstanding per-pane badges from shell integration
-                    // — so the user sees a clean slate once they're
-                    // looking at the worktree.
-                    appState.repos[repoIdx].worktrees[wtIdx].attention = nil
-                    appState.repos[repoIdx].worktrees[wtIdx].paneAttention.removeAll()
+                    // outstanding per-pane badges — so the user sees a
+                    // clean slate once they're looking at the worktree.
+                    // Same `acknowledgeAttention()` the notification-
+                    // activation path uses, so the two can't drift.
+                    appState.repos[repoIdx].worktrees[wtIdx].acknowledgeAttention()
                 }
             }
         }

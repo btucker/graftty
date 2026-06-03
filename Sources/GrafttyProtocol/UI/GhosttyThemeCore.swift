@@ -146,7 +146,11 @@ public extension GhosttyThemeColors {
         ))
     }
 
-    func paneTitle(isFocusedPane: Bool, isActiveWorktree: Bool, hasTitle: Bool) -> Color {
+    func paneTitle(
+        isFocusedPane: Bool,
+        isActiveWorktree: Bool,
+        hasTitle: Bool
+    ) -> Color {
         foreground.opacity(Self.paneTitleOpacity(
             isFocusedPane: isFocusedPane,
             isActiveWorktree: isActiveWorktree,

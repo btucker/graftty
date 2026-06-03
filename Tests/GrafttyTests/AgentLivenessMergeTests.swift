@@ -1,40 +1,21 @@
 import Testing
 @testable import GrafttyKit
 
-@Suite("AgentLivenessMerge — pane attention merge: live notify ping wins; else busy→working…, idle→nil.")
+@Suite("AgentLivenessMerge — isPaneBusy derives a pane's busy state from claude liveness (host-side).")
 struct AgentLivenessMergeTests {
     @Test("""
-@spec AGENT-2.1: While a pane has a live notify attention ping, the application shall render that ping in preference to any derived busy/idle status.
+@spec AGENT-2.2: While a pane has no live attention ping, the application shall surface a busy claude session by rendering the pane title in italic (not a capsule), and render the title upright when idle.
 """)
-    func notifyPingWinsOverBusy() {
-        let text = AgentLivenessMerge.effectivePaneText(
-            paneAttentionText: "build failed",
+    func busyDerivedFromLiveness() {
+        #expect(AgentLivenessMerge.isPaneBusy(
             sessionName: "graftty-aaaa1111",
-            liveness: ["graftty-aaaa1111": .busy])
-        #expect(text == "build failed")
+            liveness: ["graftty-aaaa1111": .busy]) == true)
+        #expect(AgentLivenessMerge.isPaneBusy(
+            sessionName: "graftty-aaaa1111",
+            liveness: ["graftty-aaaa1111": .idle]) == false)
     }
 
-    @Test("""
-@spec AGENT-2.2: While a pane has no live attention ping, the application shall render `working…` when its claude session is busy and render nothing when it is idle.
-""")
-    func busyRendersWorkingWhenNoPing() {
-        let text = AgentLivenessMerge.effectivePaneText(
-            paneAttentionText: nil,
-            sessionName: "graftty-aaaa1111",
-            liveness: ["graftty-aaaa1111": .busy])
-        #expect(text == "working…")
-    }
-
-    @Test func idleRendersNothing() {
-        let text = AgentLivenessMerge.effectivePaneText(
-            paneAttentionText: nil,
-            sessionName: "graftty-aaaa1111",
-            liveness: ["graftty-aaaa1111": .idle])
-        #expect(text == nil)
-    }
-
-    @Test func unknownSessionRendersNothing() {
-        #expect(AgentLivenessMerge.effectivePaneText(
-            paneAttentionText: nil, sessionName: nil, liveness: [:]) == nil)
+    @Test func unknownSessionIsNotBusy() {
+        #expect(AgentLivenessMerge.isPaneBusy(sessionName: nil, liveness: [:]) == false)
     }
 }

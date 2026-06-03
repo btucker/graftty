@@ -250,7 +250,7 @@ struct SidebarView: View {
                             url: $0.url
                         )
                     },
-                    attentionText: attention.worktreeCapsule
+                    attentionStyle: attention.worktreeCapsule
                 )
             }
             .buttonStyle(.plain)
@@ -287,6 +287,8 @@ struct SidebarView: View {
 
             if worktree.state == .running {
                 ForEach(worktree.splitTree.allLeaves, id: \.self) { terminalID in
+                    let sessionName = worktree.paneSessions[terminalID]
+                        .map(ZmxLauncher.sessionName(for:))
                     Button {
                         onSelectPane(worktree.path, terminalID)
                     } label: {
@@ -295,12 +297,14 @@ struct SidebarView: View {
                             isActiveWorktree: isActive,
                             isFocusedPane: isActive
                                 && worktree.focusedPaneSlotID == terminalID,
-                            theme: theme,
-                            attentionText: AgentLivenessMerge.effectivePaneText(
-                                paneAttentionText: attention.paneCapsules[terminalID],
-                                sessionName: worktree.paneSessions[terminalID]
-                                    .map(ZmxLauncher.sessionName(for:)),
+                            isBusy: AgentLivenessMerge.isPaneBusy(
+                                sessionName: sessionName,
                                 liveness: claudeSessionRegistry.livenessBySession),
+                            theme: theme,
+                            // The pane-scoped capsule (agent-stop icon, or
+                            // notify/✓! text) renders directly; busy/idle no
+                            // longer feed it.
+                            attentionStyle: attention.paneCapsules[terminalID],
                             portBindings: portBindings.bindings[terminalID] ?? []
                         )
                     }

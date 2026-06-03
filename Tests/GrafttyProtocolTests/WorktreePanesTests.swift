@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import Testing
 @testable import GrafttyProtocol
 
@@ -31,8 +32,8 @@ struct WorktreePanesTests {
             layout: .split(
                 direction: .horizontal,
                 ratio: 0.5,
-                left: .leaf(sessionName: "L", title: "left", attentionText: nil),
-                right: .leaf(sessionName: "R", title: "right", attentionText: "build broken")
+                left: .leaf(sessionName: "L", title: "left", attentionText: nil, isBusy: false, attentionSource: nil),
+                right: .leaf(sessionName: "R", title: "right", attentionText: "build broken", isBusy: false, attentionSource: nil)
             )
         )
         let data = try JSONEncoder().encode(original)
@@ -69,7 +70,7 @@ struct WorktreePanesTests {
 
     @Test
     func paneAttentionRoundTrips() throws {
-        let leaf = PaneLayoutNode.leaf(sessionName: "s", title: "t", attentionText: "ping")
+        let leaf = PaneLayoutNode.leaf(sessionName: "s", title: "t", attentionText: "ping", isBusy: false, attentionSource: nil)
         let data = try JSONEncoder().encode(leaf)
         let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: data)
         #expect(decoded == leaf)
@@ -81,7 +82,7 @@ struct WorktreePanesTests {
         {"kind":"leaf","sessionName":"s","title":"t"}
         """.data(using: .utf8)!
         let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: legacy)
-        if case let .leaf(sessionName, title, attentionText) = decoded {
+        if case let .leaf(sessionName, title, attentionText, _, _) = decoded {
             #expect(sessionName == "s")
             #expect(title == "t")
             #expect(attentionText == nil)
@@ -101,6 +102,83 @@ struct WorktreePanesTests {
         #expect(WorktreeWireState.stale.hasOnDiskWorktree == false)
         #expect(WorktreeWireState.creating.hasOnDiskWorktree == false)
         #expect(WorktreeWireState.deleting.hasOnDiskWorktree == false)
+    }
+
+    @Test
+    func busyLeafRoundTrips() throws {
+        let leaf = PaneLayoutNode.leaf(
+            sessionName: "s", title: "t", attentionText: nil, isBusy: true, attentionSource: nil)
+        let data = try JSONEncoder().encode(leaf)
+        let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: data)
+        #expect(decoded == leaf)
+        if case let .leaf(_, _, _, isBusy, _) = decoded {
+            #expect(isBusy == true)
+        } else {
+            Issue.record("expected leaf")
+        }
+    }
+
+    @Test
+    func legacyLeafWithoutIsBusyDecodesAsFalse() throws {
+        let legacy = #"{"kind":"leaf","sessionName":"s","title":"t"}"#.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: legacy)
+        if case let .leaf(_, _, _, isBusy, _) = decoded {
+            #expect(isBusy == false)
+        } else {
+            Issue.record("expected leaf")
+        }
+    }
+
+    @Test
+    func leafWithAttentionSourceRoundTrips() throws {
+        let leaf = PaneLayoutNode.leaf(
+            sessionName: "s", title: "t", attentionText: "needs input",
+            isBusy: false, attentionSource: .agentStop)
+        let data = try JSONEncoder().encode(leaf)
+        let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: data)
+        #expect(decoded == leaf)
+        if case let .leaf(_, _, _, _, attentionSource) = decoded {
+            #expect(attentionSource == .agentStop)
+        } else {
+            Issue.record("expected leaf")
+        }
+    }
+
+    @Test
+    func legacyLeafWithoutAttentionSourceDecodesAsNil() throws {
+        let legacy = #"{"kind":"leaf","sessionName":"s","title":"t"}"#.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(PaneLayoutNode.self, from: legacy)
+        if case let .leaf(_, _, _, _, attentionSource) = decoded {
+            #expect(attentionSource == nil)
+        } else {
+            Issue.record("expected leaf")
+        }
+    }
+
+    @Test("""
+@spec AGENT-2.1: While a pane has a live notify attention ping, the application shall render that ping in preference to any derived busy/idle status.
+""")
+    func pingSupersedesBusyStyle() {
+        // A live capsule wins: the busy italic style is suppressed so the
+        // capsule (rendered beside the title) is the unambiguous signal.
+        #expect(PaneTitleBusyStyle.applies(isBusy: true, hasAttentionCapsule: true) == false)
+        // No capsule: a busy session styles the title.
+        #expect(PaneTitleBusyStyle.applies(isBusy: true, hasAttentionCapsule: false) == true)
+        // Not busy: never styled, capsule or not.
+        #expect(PaneTitleBusyStyle.applies(isBusy: false, hasAttentionCapsule: true) == false)
+        #expect(PaneTitleBusyStyle.applies(isBusy: false, hasAttentionCapsule: false) == false)
+    }
+
+    @Test("""
+@spec LAYOUT-2.31: The agent "needs input" attention (source .agentStop) shall render as a bare red `rectangle.and.pencil.and.ellipsis` SF Symbol (no pill) beside a red-colored pane title, with the text retained as the icon's accessibility label; user-notify and command-finished capsules shall render as text in a red pill.
+""")
+    func agentStopCapsuleIsIconOthersAreText() {
+        #expect(AttentionCapsuleStyle.from(text: "Claude needs input", source: .agentStop)
+            == .needsInput(label: "Claude needs input"))
+        #expect(AttentionCapsuleStyle.from(text: "build broken", source: .userNotify) == .text("build broken"))
+        #expect(AttentionCapsuleStyle.from(text: "✓", source: .commandFinished) == .text("✓"))
+        #expect(AttentionCapsuleStyle.from(text: "x", source: nil) == .text("x"))
+        #expect(AttentionCapsuleStyle.needsInputSymbol == "rectangle.and.pencil.and.ellipsis")
     }
 
     @Test

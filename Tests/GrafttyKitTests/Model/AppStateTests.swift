@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyProtocol
 
 @Suite("AppState Tests")
 struct AppStateTests {
@@ -16,6 +17,27 @@ struct AppStateTests {
         let state = AppState()
         #expect(state.repos.isEmpty)
         #expect(state.selectedWorktreePath == nil)
+    }
+
+    @Test func clearAgentStopAttentionForBusyPanesAppliesAcrossWorktrees() {
+        let slotA = PaneSlotID(id: UUID()); let sA = PaneSessionID(id: UUID())
+        let slotB = PaneSlotID(id: UUID()); let sB = PaneSessionID(id: UUID())
+        func wt(_ path: String, _ slot: PaneSlotID, _ session: PaneSessionID) -> WorktreeEntry {
+            var e = WorktreeEntry(path: path, branch: "b")
+            e.paneSessions = [slot: session]
+            e.paneAttention[slot] = Attention(
+                text: "needs input", timestamp: Date(timeIntervalSince1970: 1), source: .agentStop)
+            return e
+        }
+        var state = AppState(repos: [RepoEntry(
+            path: "/r", displayName: "r",
+            worktrees: [wt("/r/a", slotA, sA), wt("/r/b", slotB, sB)])])
+
+        state.clearAgentStopAttentionForBusyPanes(
+            liveness: [ZmxLauncher.sessionName(for: sA): .busy])
+
+        #expect(state.repos[0].worktrees[0].paneAttention[slotA] == nil)   // busy → cleared
+        #expect(state.repos[0].worktrees[1].paneAttention[slotB] != nil)   // idle → kept
     }
 
     @Test func addRepo() {

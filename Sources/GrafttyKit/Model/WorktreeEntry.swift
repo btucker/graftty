@@ -165,6 +165,55 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.offeredDeleteForResolvedPR = resolved ?? legacyMerged
     }
 
+    /// Single setter for attention: pane-scoped when `pane` is non-nil,
+    /// worktree-scoped otherwise. All three sources (agent-stop, user
+    /// notify, command-finished) route through here so the scoping rule
+    /// lives in one place.
+    public mutating func setAttention(_ attention: Attention, pane: PaneSlotID?) {
+        if let pane {
+            paneAttention[pane] = attention
+        } else {
+            self.attention = attention
+        }
+    }
+
+    /// The user is now looking at this worktree (sidebar click or
+    /// notification activation): clear ALL attention — worktree-scoped and
+    /// every pane (STATE-2.4). One method so both acknowledgement paths
+    /// can't drift on scope.
+    public mutating func acknowledgeAttention() {
+        attention = nil
+        paneAttention.removeAll()
+    }
+
+    /// The user focused one specific pane (clicked its terminal, or its
+    /// sidebar row): clear just that pane's attention (STATE-2.4). The
+    /// worktree-scoped overlay and sibling panes are left alone — the user
+    /// only attended to this one.
+    public mutating func acknowledgePaneAttention(_ pane: PaneSlotID) {
+        paneAttention[pane] = nil
+    }
+
+    /// @spec AGENT-3.4
+    /// An agent resumed work in a busy pane, so it no longer needs input:
+    /// clear that pane's `.agentStop` attention. `.userNotify` and
+    /// `.commandFinished` overlays are deliberately left alone.
+    ///
+    /// Only PANE-scoped attention is cleared. A worktree-scoped `.agentStop`
+    /// ping is placed precisely because the agent is *not* in a tracked pane
+    /// (`AgentStopAttentionTarget.resolve` → `.worktree`), so there's no
+    /// session to correlate against liveness — clearing it on "some pane in
+    /// this worktree is busy" would wipe a still-waiting agent's ping. It's
+    /// left to acknowledge / auto-clear instead.
+    public mutating func clearAgentStopAttention(forBusySessionNames busy: Set<String>) {
+        guard !busy.isEmpty else { return }
+        for (slot, session) in paneSessions
+        where paneAttention[slot]?.source == .agentStop
+            && busy.contains(ZmxLauncher.sessionName(for: session)) {
+            paneAttention[slot] = nil
+        }
+    }
+
     /// Clears the worktree-scoped attention overlay iff it still has the
     /// given `timestamp`. Used by the auto-clear timer scheduled for a
     /// `--clear-after` notification: if the attention has been replaced

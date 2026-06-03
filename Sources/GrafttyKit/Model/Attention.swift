@@ -1,14 +1,41 @@
 import Foundation
+import GrafttyProtocol
+
+// `AttentionSource` now lives in GrafttyProtocol so the PaneLayoutNode wire
+// model can reference it too (the iPad/web surface needs the source to pick
+// icon-vs-text). The resume rule (AGENT-3.4) still clears only `.agentStop`.
 
 public struct Attention: Codable, Sendable, Equatable {
     public let text: String
     public let timestamp: Date
     public let clearAfter: TimeInterval?
+    public let source: AttentionSource
 
-    public init(text: String, timestamp: Date, clearAfter: TimeInterval? = nil) {
+    public init(
+        text: String,
+        timestamp: Date,
+        clearAfter: TimeInterval? = nil,
+        source: AttentionSource = .userNotify
+    ) {
         self.text = text
         self.timestamp = timestamp
         self.clearAfter = clearAfter
+        self.source = source
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case text, timestamp, clearAfter, source
+    }
+
+    // Custom decode so a persisted payload from before `source` existed
+    // still decodes (→ `.userNotify`, the conservative default that the
+    // resume rule won't auto-clear). `encode(to:)` stays synthesized.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        text = try c.decode(String.self, forKey: .text)
+        timestamp = try c.decode(Date.self, forKey: .timestamp)
+        clearAfter = try c.decodeIfPresent(TimeInterval.self, forKey: .clearAfter)
+        source = try c.decodeIfPresent(AttentionSource.self, forKey: .source) ?? .userNotify
     }
 
     /// Upper bound for attention text, in `Character` (grapheme cluster)

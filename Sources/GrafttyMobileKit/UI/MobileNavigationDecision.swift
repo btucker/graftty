@@ -10,7 +10,7 @@ public enum MobileNavigationDecision: Equatable {
     case worktreeDetail
 
     public static func decide(layout: PaneLayoutNode?) -> MobileNavigationDecision {
-        if case let .leaf(sessionName, title, _) = layout {
+        if case let .leaf(sessionName, title, _, _, _) = layout {
             return .session(sessionName: sessionName, title: title)
         }
         return .worktreeDetail

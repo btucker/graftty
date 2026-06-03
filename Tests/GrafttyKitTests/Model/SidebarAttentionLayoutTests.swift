@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyProtocol
 
 /// Pins the spec STATE-2.3 rendering split: worktree-scoped attention
 /// lives on the worktree row, pane-scoped attention lives on each
@@ -23,7 +24,7 @@ struct SidebarAttentionLayoutTests {
         entry.splitTree = SplitTree(root: .leaf(PaneSlotID()))
         let layout = SidebarAttentionLayout.layout(for: entry)
 
-        #expect(layout.worktreeCapsule == "build failed")
+        #expect(layout.worktreeCapsule == .text("build failed"))
         #expect(layout.paneCapsules.isEmpty,
                 "STATE-2.3: worktree-scoped attention must not duplicate onto pane rows")
     }
@@ -39,7 +40,7 @@ struct SidebarAttentionLayoutTests {
         let layout = SidebarAttentionLayout.layout(for: entry)
 
         #expect(layout.worktreeCapsule == nil)
-        #expect(layout.paneCapsules[t1] == "✗")
+        #expect(layout.paneCapsules[t1] == .text("✗"))
         #expect(layout.paneCapsules[t2] == nil)
     }
 
@@ -50,8 +51,8 @@ struct SidebarAttentionLayoutTests {
         entry.paneAttention[t1] = Attention(text: "✗", timestamp: Date())
         let layout = SidebarAttentionLayout.layout(for: entry)
 
-        #expect(layout.worktreeCapsule == "deploying")
-        #expect(layout.paneCapsules[t1] == "✗")
+        #expect(layout.worktreeCapsule == .text("deploying"))
+        #expect(layout.paneCapsules[t1] == .text("✗"))
     }
 
     @Test func noAttentionYieldsEmptyLayout() {

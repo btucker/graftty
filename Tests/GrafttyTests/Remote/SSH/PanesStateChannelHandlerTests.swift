@@ -131,7 +131,7 @@ final class PanesStateChannelHandlerTests: XCTestCase {
                 prBadge: nil,
                 stats: nil,
                 attentionText: nil,
-                layout: .leaf(sessionName: "s\(idx)", title: "shell", attentionText: nil)
+                layout: .leaf(sessionName: "s\(idx)", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil)
             )
         }
     }

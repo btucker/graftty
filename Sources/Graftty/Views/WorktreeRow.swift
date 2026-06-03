@@ -8,19 +8,31 @@ import GrafttyProtocol
 /// a restyle — font, padding, color — lands in one place and the two
 /// scopes can't drift visually.
 struct AttentionCapsule: View {
-    let text: String
+    let style: AttentionCapsuleStyle
 
     var body: some View {
-        Text(text)
-            .font(.caption)
-            .fontWeight(.semibold)
-            .lineLimit(1)
-            .truncationMode(.tail)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(Color.red)
-            .foregroundColor(.white)
-            .clipShape(Capsule())
+        switch style {
+        case let .needsInput(label):
+            // Agent "needs input" is a bare red icon (no pill) — the glyph
+            // itself is the badge. Text is kept for accessibility + tooltip.
+            Image(systemName: AttentionCapsuleStyle.needsInputSymbol)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(.red)
+                .accessibilityLabel(label)
+                .help(label)
+        case let .text(text):
+            Text(text)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(Color.red)
+                .foregroundColor(.white)
+                .clipShape(Capsule())
+        }
     }
 }
 
@@ -40,21 +52,60 @@ struct PaneTitleRow: View {
     /// within the active worktree. Gets the brightest text treatment and a
     /// bolder `↳` glyph so the user can see "typing goes here".
     let isFocusedPane: Bool
+    /// True while this pane's claude session is busy (AGENT-2.2). Tints the
+    /// title green — but only when no attention capsule is present, since a
+    /// needs-input ping (claude waiting) supersedes "working".
+    let isBusy: Bool
     let theme: GhosttyTheme
-    /// When non-nil, the pane title text is replaced by this string
-    /// rendered inside a red capsule — a pane-scoped attention ping
-    /// driven by shell-integration events (`NOTIF-2.x`). Cleared when
-    /// the user clicks the worktree (STATE-2.4). Worktree-scoped
-    /// `graftty notify` text renders on the enclosing worktree row
-    /// instead; see STATE-2.3.
-    let attentionText: String?
+    /// When non-nil, an attention capsule renders to the *right* of the
+    /// pane title (LAYOUT-2.30); the title truncates to make room rather
+    /// than being replaced. Agent "needs input" (`.needsInput`) shows an
+    /// icon; `graftty notify` / ✓! (`.text`) show their text. Cleared when
+    /// the user clicks the worktree (STATE-2.4). Worktree-scoped pings
+    /// render on the worktree row instead (STATE-2.3).
+    let attentionStyle: AttentionCapsuleStyle?
     /// Port bindings detected for this pane's process subtree (PORTS-3.1).
-    /// Hidden while `attentionText` is non-nil (PORTS-3.4) so an active
+    /// Hidden while an attention capsule is shown (PORTS-3.4) so an active
     /// attention ping owns the row's secondary surface unambiguously.
     let portBindings: [PortBinding]
 
     var shouldRenderPortChips: Bool {
-        attentionText == nil && !portBindings.isEmpty
+        attentionStyle == nil && !portBindings.isEmpty
+    }
+
+    /// Busy style applies only when no capsule is shown (ping supersedes).
+    /// Shared with the iPad row via `PaneTitleBusyStyle` so the rule can't
+    /// drift.
+    private var titleIsBusy: Bool {
+        PaneTitleBusyStyle.applies(isBusy: isBusy, hasAttentionCapsule: attentionStyle != nil)
+    }
+
+    /// LAYOUT-2.31: the agent "needs input" state colors the title red too
+    /// (alongside the red icon) so it's scannable, not just a small glyph.
+    private var isNeedsInput: Bool {
+        if case .needsInput = attentionStyle { return true }
+        return false
+    }
+
+    @ViewBuilder
+    private var titleText: some View {
+        // AGENT-2.2: a busy pane renders its (already-animating) title in
+        // italic — a quiet "working" cue rather than a color shift. Apply
+        // italic at the *Text* level (Text.italic(), not the View
+        // `.italic(_:)` modifier): when a Text-level `.fontWeight` is set,
+        // the focused pane's `.semibold` wins over the View-level italic and
+        // drops it, so the slant only showed on non-focused (regular) rows.
+        let base = Text(title.isEmpty ? "shell" : title)
+            .font(.caption)
+            .fontWeight(isFocusedPane ? .semibold : .regular)
+        (titleIsBusy ? base.italic() : base)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .foregroundColor(isNeedsInput ? .red : theme.paneTitle(
+                isFocusedPane: isFocusedPane,
+                isActiveWorktree: isActiveWorktree,
+                hasTitle: !title.isEmpty
+            ))
     }
 
     var body: some View {
@@ -66,23 +117,20 @@ struct PaneTitleRow: View {
                     isFocusedPane: isFocusedPane,
                     isActiveWorktree: isActiveWorktree
                 ))
-            // Title and chips share a FlowLayout container; wrapped chips
-            // therefore hang under the title text instead of flushing to
-            // the row's leading edge (PORTS-3.3).
-            FlowLayout(spacing: 4, rowSpacing: 3) {
-                if let attentionText {
-                    AttentionCapsule(text: attentionText)
-                } else {
-                    Text(title.isEmpty ? "shell" : title)
-                        .font(.caption)
-                        .fontWeight(isFocusedPane ? .semibold : .regular)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .foregroundColor(theme.paneTitle(
-                            isFocusedPane: isFocusedPane,
-                            isActiveWorktree: isActiveWorktree,
-                            hasTitle: !title.isEmpty
-                        ))
+            if let attentionStyle {
+                // LAYOUT-2.30: title (yields/truncates) + pill (keeps
+                // intrinsic width) on one line. A plain HStack — NOT
+                // FlowLayout — so the title truncates instead of the pill
+                // wrapping below it.
+                titleText
+                    .layoutPriority(0)
+                AttentionCapsule(style: attentionStyle)
+                    .layoutPriority(1)
+            } else {
+                // Title + port chips share a FlowLayout so wrapped chips
+                // hang under the title text (PORTS-3.3).
+                FlowLayout(spacing: 4, rowSpacing: 3) {
+                    titleText
                     if shouldRenderPortChips {
                         ForEach(portBindings, id: \.self) { binding in
                             PortChip(binding: binding, theme: theme)
@@ -193,11 +241,12 @@ struct WorktreeRow: View {
     /// deliberately narrower than `PRInfo` so unrelated changes (CI
     /// checks, title, fetchedAt) don't invalidate the row on each poll.
     let prBadge: PRBadge?
-    /// Worktree-scoped attention text (STATE-2.3). Driven by the CLI's
-    /// `graftty notify` path. Rendered as a red capsule next to the
-    /// branch label, visible regardless of the worktree's running state
-    /// so a ping set on a closed worktree stays reachable.
-    let attentionText: String?
+    /// Worktree-scoped attention (STATE-2.3). Driven by the CLI's
+    /// `graftty notify` path (or a worktree-scoped agent stop). Rendered as
+    /// a red capsule next to the branch label, visible regardless of the
+    /// worktree's running state so a ping set on a closed worktree stays
+    /// reachable.
+    let attentionStyle: AttentionCapsuleStyle?
 
     var body: some View {
         HStack(spacing: 6) {
@@ -206,8 +255,8 @@ struct WorktreeRow: View {
                 prBadgeLabel(prBadge)
             }
             branchLabel
-            if let attentionText {
-                AttentionCapsule(text: attentionText)
+            if let attentionStyle {
+                AttentionCapsule(style: attentionStyle)
             }
             Spacer()
             WorktreeRowGutter(
