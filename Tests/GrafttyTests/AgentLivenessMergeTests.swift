@@ -4,7 +4,7 @@ import Testing
 @Suite("AgentLivenessMerge — isPaneBusy derives a pane's busy state from claude liveness (host-side).")
 struct AgentLivenessMergeTests {
     @Test("""
-@spec AGENT-2.2: While a pane has no live attention ping, the application shall surface a busy claude session by tinting the pane title with the running/active color (not a capsule), and render the title unchanged when idle.
+@spec AGENT-2.2: While a pane has no live attention ping, the application shall surface a busy claude session by rendering the pane title in italic (not a capsule), and render the title upright when idle.
 """)
     func busyDerivedFromLiveness() {
         #expect(AgentLivenessMerge.isPaneBusy(

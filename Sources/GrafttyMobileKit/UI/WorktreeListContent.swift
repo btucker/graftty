@@ -541,10 +541,10 @@ private struct PaneTitleRow: View {
     let isActiveWorktree: Bool
 
     var body: some View {
-        // Busy tint applies only when no capsule is shown — a needs-input
+        // Busy style applies only when no capsule is shown — a needs-input
         // ping (claude waiting) supersedes "working". Shared with the Mac
-        // row via PaneTitleTint so the precedence rule can't drift.
-        let tintBusy = PaneTitleTint.showsBusyTint(
+        // row via PaneTitleBusyStyle so the precedence rule can't drift.
+        let busyStyle = PaneTitleBusyStyle.applies(
             isBusy: leaf.isBusy, hasAttentionCapsule: effectiveAttentionText != nil)
         HStack(spacing: 4) {
             Text("↳")
@@ -555,17 +555,18 @@ private struct PaneTitleRow: View {
                     isActiveWorktree: isActiveWorktree
                 )))
             // LAYOUT-2.30: title (truncates) then pill (intrinsic width).
+            // AGENT-2.2: a busy pane renders its title in italic.
             Text(leaf.displayTitle)
                 .font(.caption)
                 .fontWeight(isFocusedPane ? .semibold : .regular)
+                .italic(busyStyle)
                 .foregroundStyle(themedOrSecondary(theme?.paneTitle(
                     isFocusedPane: isFocusedPane,
                     isActiveWorktree: isActiveWorktree,
                     // Use the raw title (not displayTitle, which falls back
                     // to a non-empty "shell"): an unset title should hit the
                     // dimmer placeholder bucket, matching the Mac sidebar.
-                    hasTitle: !leaf.title.isEmpty,
-                    isBusy: tintBusy
+                    hasTitle: !leaf.title.isEmpty
                 )))
                 .lineLimit(1)
                 .truncationMode(.tail)

@@ -116,12 +116,11 @@ struct GhosttyTheme: Equatable {
     func paneArrow(isFocusedPane: Bool, isActiveWorktree: Bool) -> Color {
         core.paneArrow(isFocusedPane: isFocusedPane, isActiveWorktree: isActiveWorktree)
     }
-    func paneTitle(isFocusedPane: Bool, isActiveWorktree: Bool, hasTitle: Bool, isBusy: Bool = false) -> Color {
+    func paneTitle(isFocusedPane: Bool, isActiveWorktree: Bool, hasTitle: Bool) -> Color {
         core.paneTitle(
             isFocusedPane: isFocusedPane,
             isActiveWorktree: isActiveWorktree,
-            hasTitle: hasTitle,
-            isBusy: isBusy
+            hasTitle: hasTitle
         )
     }
 

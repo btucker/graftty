@@ -1682,7 +1682,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-2.1** While a pane has a live notify attention ping, the application shall render that ping in preference to any derived busy/idle status.
 
-**AGENT-2.2** While a pane has no live attention ping, the application shall surface a busy claude session by tinting the pane title with the running/active color (not a capsule), and render the title unchanged when idle.
+**AGENT-2.2** While a pane has no live attention ping, the application shall surface a busy claude session by rendering the pane title in italic (not a capsule), and render the title upright when idle.
 
 **AGENT-2.3** If the `claude agents --json` invocation fails or returns unparseable output, then the application shall produce an empty liveness map without crashing.
 

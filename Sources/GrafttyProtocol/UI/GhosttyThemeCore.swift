@@ -149,15 +149,9 @@ public extension GhosttyThemeColors {
     func paneTitle(
         isFocusedPane: Bool,
         isActiveWorktree: Bool,
-        hasTitle: Bool,
-        isBusy: Bool = false
+        hasTitle: Bool
     ) -> Color {
-        // AGENT-2.2: a busy pane reuses the running-state green as the
-        // title base so "actively working" is scannable, while keeping the
-        // same brightness ladder so focus hierarchy still reads. Idle keeps
-        // the foreground base.
-        let base: Color = isBusy ? Self.runningStateColor : foreground
-        return base.opacity(Self.paneTitleOpacity(
+        foreground.opacity(Self.paneTitleOpacity(
             isFocusedPane: isFocusedPane,
             isActiveWorktree: isActiveWorktree,
             hasTitle: hasTitle
@@ -174,15 +168,11 @@ public extension GhosttyThemeColors {
     /// switch verbatim.
     func worktreeStateIcon(_ state: WorktreeWireState) -> Color {
         switch state {
-        case .running: return Self.runningStateColor
+        case .running: return .green
         case .stale: return .yellow
         case .closed, .creating, .deleting: return sidebarDimIcon
         }
     }
-
-    /// The "live / active" accent. Single-sourced so the running worktree
-    /// icon and the busy-pane title tint (AGENT-2.2) stay the same color.
-    static let runningStateColor: Color = .green
 }
 
 // MARK: - Themed sidebar surface (shared with Mac sidebar)

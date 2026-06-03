@@ -1,12 +1,21 @@
-# Busy-title tint + attention pill beside the title
+# Busy-title style + attention pill beside the title
 
 **Date:** 2026-06-02
-**Status:** Approved, pending implementation
+**Status:** Implemented
 **Branch:** `dont-show-working`
+
+> **Update (during implementation):** the busy cue is **italic**, not a
+> green tint. Green read as too aggressive in the running app, so the busy
+> pane title is now rendered *italic* (the title already animates, so a
+> quiet style shift is enough). Everywhere this doc says "green tint" below,
+> read "italic style" — the mechanism is otherwise identical: the busy
+> signal still flows through `isPaneBusy` + the wire `isBusy` field, the
+> ping-supersedes-busy precedence still lives in the shared helper (now
+> `PaneTitleBusyStyle.applies`), and `paneTitle(…)` stays color-only.
 
 Two related sidebar pane-row changes:
 
-1. Replace the busy `working…` red pill with a green tint on the (still
+1. Replace the busy `working…` red pill with an italic style on the (still
    visible, already animating) pane title.
 2. Render the attention pill ("Claude needs input" and other notify pings)
    **to the right of** the pane title rather than in place of it; the title

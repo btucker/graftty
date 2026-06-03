@@ -61,24 +61,27 @@ struct PaneTitleRow: View {
         attentionText == nil && !portBindings.isEmpty
     }
 
-    /// Busy tint applies only when no capsule is shown (ping supersedes).
-    /// Shared with the iPad row via `PaneTitleTint` so the rule can't drift.
-    private var titleIsBusyTinted: Bool {
-        PaneTitleTint.showsBusyTint(isBusy: isBusy, hasAttentionCapsule: attentionText != nil)
+    /// Busy style applies only when no capsule is shown (ping supersedes).
+    /// Shared with the iPad row via `PaneTitleBusyStyle` so the rule can't
+    /// drift.
+    private var titleIsBusy: Bool {
+        PaneTitleBusyStyle.applies(isBusy: isBusy, hasAttentionCapsule: attentionText != nil)
     }
 
     @ViewBuilder
     private var titleText: some View {
+        // AGENT-2.2: a busy pane renders its (already-animating) title in
+        // italic — a quiet "working" cue rather than a color shift.
         Text(title.isEmpty ? "shell" : title)
             .font(.caption)
             .fontWeight(isFocusedPane ? .semibold : .regular)
+            .italic(titleIsBusy)
             .lineLimit(1)
             .truncationMode(.tail)
             .foregroundColor(theme.paneTitle(
                 isFocusedPane: isFocusedPane,
                 isActiveWorktree: isActiveWorktree,
-                hasTitle: !title.isEmpty,
-                isBusy: titleIsBusyTinted
+                hasTitle: !title.isEmpty
             ))
     }
 
