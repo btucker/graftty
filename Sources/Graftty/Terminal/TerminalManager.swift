@@ -320,11 +320,10 @@ final class TerminalManager: ObservableObject {
         // It reads `GHOSTTY_RESOURCES_DIR` to locate shell-integration
         // scripts (zsh hooks that emit OSC 7 for PWD changes, OSC 133 for
         // prompt marks, etc.). libghostty-spm doesn't ship these, so
-        // without this Graftty shells are "dumb" — no auto-PWD reporting,
-        // no prompt integration. Borrow them from Ghostty.app if the user
-        // has it installed; silently skip otherwise (shells still work,
-        // just without integration features).
-        Self.pointAtGhosttyResourcesIfAvailable()
+        // Graftty vendors them in GrafttyKit's resource bundle
+        // (CONFIG-2.5) and points the env at that copy unless the user
+        // set an explicit override.
+        Self.pointAtGhosttyResources()
 
         // ghostty_init must run before ghostty_config_new / ghostty_app_new.
         // It takes argc/argv; we pass 0/null since we don't forward CLI args.
@@ -901,26 +900,28 @@ final class TerminalManager: ObservableObject {
         paneSlotIDsBySessionName.removeValue(forKey: ZmxLauncher.sessionName(for: sessionID))
     }
 
-    /// If `GHOSTTY_RESOURCES_DIR` isn't already set and Ghostty.app is
-    /// installed, borrow its resources directory. Respects an existing
-    /// value (user overrides from the shell environment win) and respects
-    /// the user's choice to install Ghostty elsewhere by walking a couple
-    /// of standard locations before giving up.
-    private static func pointAtGhosttyResourcesIfAvailable() {
-        if let existing = ProcessInfo.processInfo.environment["GHOSTTY_RESOURCES_DIR"],
-           !existing.isEmpty {
-            return
+    /// Resolve `GHOSTTY_RESOURCES_DIR` before `ghostty_init` (CONFIG-2.x).
+    /// An explicit env setting wins (CONFIG-2.2); otherwise point at the
+    /// copy vendored in GrafttyKit's resource bundle (CONFIG-2.3/2.5) so
+    /// shell integration never depends on a separately installed
+    /// Ghostty.app. libghostty reads the variable to locate its
+    /// shell-integration scripts; `resolveZmxSpawnConfiguration` and `WebSession`
+    /// read it when constructing spawn environments.
+    private static func pointAtGhosttyResources() {
+        switch GhosttyRuntimeResources.resolve(
+            processEnv: ProcessInfo.processInfo.environment,
+            bundledDir: GhosttyRuntimeResources.bundledResourcesDir()
+        ) {
+        case .environmentOverride:
+            break
+        case .bundled(let dir):
+            setenv("GHOSTTY_RESOURCES_DIR", dir, 1)
+        case .unavailable:
+            // CONFIG-2.4: warn visibly (not today's silent skip) and
+            // degrade gracefully — shells still work, OSC 7/133-driven
+            // features go quiet, TERM falls back per ZMX-6.5.
+            NSLog("[Graftty] vendored ghostty resources missing from GrafttyKit bundle; shell integration disabled")
         }
-        let candidates = [
-            "/Applications/Ghostty.app/Contents/Resources/ghostty",
-            (NSHomeDirectory() as NSString).appendingPathComponent(
-                "Applications/Ghostty.app/Contents/Resources/ghostty"
-            ),
-        ]
-        guard let dir = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) else {
-            return
-        }
-        setenv("GHOSTTY_RESOURCES_DIR", dir, 1)
     }
 
     /// Snapshot the given leaf's position inside a worktree's tree so we

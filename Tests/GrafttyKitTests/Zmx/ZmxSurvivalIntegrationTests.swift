@@ -423,9 +423,8 @@ struct ZmxSurvivalIntegrationTests {
         }
     }
 
-    /// Locate Ghostty's shell-integration root the same way
-    /// TerminalManager.pointAtGhosttyResourcesIfAvailable does — checks
-    /// `/Applications` then `~/Applications`. Returns nil on machines
+    /// Locate Ghostty's shell-integration root by checking the standard
+    /// `/Applications` then `~/Applications` paths. Returns nil on machines
     /// without Ghostty.app.
     static func locateGhosttyResourcesDir() -> String? {
         let candidates = [
