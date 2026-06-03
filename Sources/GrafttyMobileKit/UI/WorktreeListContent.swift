@@ -597,27 +597,26 @@ private struct AttentionCapsule: View {
     let style: AttentionCapsuleStyle
 
     var body: some View {
-        capsuleContent
-            .font(.caption)
-            .fontWeight(.semibold)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(Color.red)
-            .foregroundStyle(.white)
-            .clipShape(Capsule())
-    }
-
-    @ViewBuilder
-    private var capsuleContent: some View {
         switch style {
         case let .needsInput(label):
-            // Agent "needs input" → icon; keep the text for accessibility.
+            // Agent "needs input" is a bare red icon (no pill); text kept
+            // for accessibility.
             Image(systemName: AttentionCapsuleStyle.needsInputSymbol)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundStyle(.red)
                 .accessibilityLabel(label)
         case let .text(text):
             Text(text)
+                .font(.caption)
+                .fontWeight(.semibold)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(Color.red)
+                .foregroundStyle(.white)
+                .clipShape(Capsule())
         }
     }
 }

@@ -11,29 +11,27 @@ struct AttentionCapsule: View {
     let style: AttentionCapsuleStyle
 
     var body: some View {
-        capsuleContent
-            .font(.caption)
-            .fontWeight(.semibold)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 1)
-            .background(Color.red)
-            .foregroundColor(.white)
-            .clipShape(Capsule())
-    }
-
-    @ViewBuilder
-    private var capsuleContent: some View {
         switch style {
         case let .needsInput(label):
-            // Agent "needs input" renders as an icon; keep the human text
-            // as the accessibility label + tooltip.
+            // Agent "needs input" is a bare red icon (no pill) — the glyph
+            // itself is the badge. Text is kept for accessibility + tooltip.
             Image(systemName: AttentionCapsuleStyle.needsInputSymbol)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .foregroundColor(.red)
                 .accessibilityLabel(label)
                 .help(label)
         case let .text(text):
             Text(text)
+                .font(.caption)
+                .fontWeight(.semibold)
                 .lineLimit(1)
                 .truncationMode(.tail)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1)
+                .background(Color.red)
+                .foregroundColor(.white)
+                .clipShape(Capsule())
         }
     }
 }
