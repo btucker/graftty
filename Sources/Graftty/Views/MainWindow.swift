@@ -154,6 +154,12 @@ struct MainWindow: View {
                 splitTreesByPath: appState.runningSplitTreesByPath()
             )
         }
+        // AGENT-3.4: when a pane's agent resumes (busy), it no longer needs
+        // input — clear its agent-stop pill so busy and needs-input stay
+        // mutually exclusive (and the busy style is no longer suppressed).
+        .onChange(of: claudeSessionRegistry.livenessBySession) { _, liveness in
+            appState.clearAgentStopAttentionForBusyPanes(liveness: liveness)
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in
             applyAppVisibility(isVisible: false)
         }
@@ -382,11 +388,11 @@ struct MainWindow: View {
                 if appState.repos[repoIdx].worktrees[wtIdx].path == path {
                     // Clicking a worktree dismisses both levels of
                     // attention — worktree-level (CLI notify) and any
-                    // outstanding per-pane badges from shell integration
-                    // — so the user sees a clean slate once they're
-                    // looking at the worktree.
-                    appState.repos[repoIdx].worktrees[wtIdx].attention = nil
-                    appState.repos[repoIdx].worktrees[wtIdx].paneAttention.removeAll()
+                    // outstanding per-pane badges — so the user sees a
+                    // clean slate once they're looking at the worktree.
+                    // Same `acknowledgeAttention()` the notification-
+                    // activation path uses, so the two can't drift.
+                    appState.repos[repoIdx].worktrees[wtIdx].acknowledgeAttention()
                 }
             }
         }

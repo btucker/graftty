@@ -165,6 +165,46 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.offeredDeleteForResolvedPR = resolved ?? legacyMerged
     }
 
+    /// Single setter for attention: pane-scoped when `pane` is non-nil,
+    /// worktree-scoped otherwise. All three sources (agent-stop, user
+    /// notify, command-finished) route through here so the scoping rule
+    /// lives in one place.
+    public mutating func setAttention(_ attention: Attention, pane: PaneSlotID?) {
+        if let pane {
+            paneAttention[pane] = attention
+        } else {
+            self.attention = attention
+        }
+    }
+
+    /// The user is now looking at this worktree (sidebar click or
+    /// notification activation): clear ALL attention — worktree-scoped and
+    /// every pane (STATE-2.4). One method so both acknowledgement paths
+    /// can't drift on scope.
+    public mutating func acknowledgeAttention() {
+        attention = nil
+        paneAttention.removeAll()
+    }
+
+    /// @spec AGENT-3.4
+    /// An agent resumed work in one of `busy`'s sessions, so it no longer
+    /// needs input: clear only `.agentStop` attention (pane-scoped for the
+    /// matching busy pane, and worktree-scoped when any of this worktree's
+    /// sessions is busy). `.userNotify` and `.commandFinished` overlays are
+    /// deliberately left alone.
+    public mutating func clearAgentStopAttention(forBusySessionNames busy: Set<String>) {
+        guard !busy.isEmpty else { return }
+        for (slot, session) in paneSessions
+        where paneAttention[slot]?.source == .agentStop
+            && busy.contains(ZmxLauncher.sessionName(for: session)) {
+            paneAttention[slot] = nil
+        }
+        if attention?.source == .agentStop,
+           paneSessions.values.contains(where: { busy.contains(ZmxLauncher.sessionName(for: $0)) }) {
+            attention = nil
+        }
+    }
+
     /// Clears the worktree-scoped attention overlay iff it still has the
     /// given `timestamp`. Used by the auto-clear timer scheduled for a
     /// `--clear-after` notification: if the attention has been replaced

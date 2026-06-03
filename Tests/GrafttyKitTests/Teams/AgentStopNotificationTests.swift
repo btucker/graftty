@@ -65,32 +65,30 @@ struct AgentStopNotificationTests {
         #expect(payload.paneSessionName == nil)
     }
 
-    @Test func acknowledgeSelectionClearsOnlyMatchingAttentionTimestamp() {
-        let timestamp = Date(timeIntervalSince1970: 1_800_000_000)
-        let newer = timestamp.addingTimeInterval(1)
+    @Test func acknowledgeSelectionSelectsAndClearsAllAttention() {
+        let ts = Date(timeIntervalSince1970: 1_800_000_000)
         var state = AppState(
             repos: [
                 TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "feature-auth"]),
             ],
             selectedWorktreePath: nil
         )
-        state.repos[0].worktrees[1].attention = Attention(text: "Codex needs input", timestamp: newer)
+        // Both worktree-scoped and a pane-scoped pill are present; the
+        // notification-activation acknowledge must clear both (the pane
+        // pill used to survive — the "never went away" bug).
+        let slot = PaneSlotID(id: UUID())
+        state.repos[0].worktrees[1].attention =
+            Attention(text: "Codex needs input", timestamp: ts, source: .agentStop)
+        state.repos[0].worktrees[1].paneAttention[slot] =
+            Attention(text: "Codex needs input", timestamp: ts, source: .agentStop)
 
         AgentStopNotification.acknowledgeSelection(
             appState: &state,
-            worktreePath: "/repo/.worktrees/feature-auth",
-            timestamp: timestamp
+            worktreePath: "/repo/.worktrees/feature-auth"
         )
 
         #expect(state.selectedWorktreePath == "/repo/.worktrees/feature-auth")
-        #expect(state.repos[0].worktrees[1].attention?.timestamp == newer)
-
-        AgentStopNotification.acknowledgeSelection(
-            appState: &state,
-            worktreePath: "/repo/.worktrees/feature-auth",
-            timestamp: newer
-        )
-
         #expect(state.repos[0].worktrees[1].attention == nil)
+        #expect(state.repos[0].worktrees[1].paneAttention.isEmpty)
     }
 }

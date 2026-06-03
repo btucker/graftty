@@ -794,7 +794,8 @@ struct GrafttyApp: App {
                     appState: appState,
                     terminalID: terminalID,
                     text: exitCode == 0 ? "✓" : "!",
-                    clearAfter: exitCode == 0 ? 3 : 8
+                    clearAfter: exitCode == 0 ? 3 : 8,
+                    source: .commandFinished
                 )
             }
         }
@@ -1971,14 +1972,14 @@ struct GrafttyApp: App {
                                 appState: appState,
                                 terminalID: slot,
                                 text: text,
-                                clearAfter: effectiveClearAfter
+                                clearAfter: effectiveClearAfter,
+                                source: .userNotify
                             )
                         } else {
                             appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                                .paneAttention[slot] = Attention(
-                                    text: text,
-                                    timestamp: Date(),
-                                    clearAfter: nil
+                                .setAttention(
+                                    Attention(text: text, timestamp: Date(), source: .userNotify),
+                                    pane: slot
                                 )
                         }
                         return
@@ -2272,16 +2273,16 @@ struct GrafttyApp: App {
                 let resolvedSessionID = sessionID ?? "\(runtime.rawValue):\(worktreeName):\(callerPath)"
                 let attention = Attention(
                     text: "\(AgentStopNotification.displayName(runtime)) needs input",
-                    timestamp: timestamp
+                    timestamp: timestamp,
+                    source: .agentStop
                 )
+                let pane: PaneSlotID?
                 switch AgentStopAttentionTarget.resolve(worktree: worktree, paneSessionName: paneSessionName) {
-                case let .pane(slot):
-                    appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
-                        .paneAttention[slot] = attention
-                case .worktree:
-                    appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
-                        .attention = attention
+                case let .pane(slot): pane = slot
+                case .worktree: pane = nil
                 }
+                appState.wrappedValue.repos[repoIndex].worktrees[worktreeIndex]
+                    .setAttention(attention, pane: pane)
                 AgentNotificationRouter.shared.post(
                     AgentStopNotification.content(
                         runtime: runtime,
@@ -2306,8 +2307,7 @@ struct GrafttyApp: App {
         NSApp.activate(ignoringOtherApps: true)
         AgentStopNotification.acknowledgeSelection(
             appState: &appState.wrappedValue,
-            worktreePath: payload.worktreePath,
-            timestamp: payload.attentionTimestamp
+            worktreePath: payload.worktreePath
         )
         if let worktree = appState.wrappedValue.worktree(forPath: payload.worktreePath),
            let terminalID = agentStopFocusTarget(
@@ -2689,7 +2689,8 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         terminalID: PaneSlotID,
         text: String,
-        clearAfter: TimeInterval
+        clearAfter: TimeInterval,
+        source: AttentionSource
     ) {
         // Pin a single Date so the stored attention AND the closure
         // share the same generation token (same shape as the
@@ -2703,10 +2704,9 @@ struct GrafttyApp: App {
                 if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
                     .splitTree.containsLeaf(terminalID) {
                     appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
-                        .paneAttention[terminalID] = Attention(
-                            text: text,
-                            timestamp: stamp,
-                            clearAfter: clearAfter
+                        .setAttention(
+                            Attention(text: text, timestamp: stamp, clearAfter: clearAfter, source: source),
+                            pane: terminalID
                         )
                     let path = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path
                     DispatchQueue.main.asyncAfter(deadline: .now() + clearAfter) {

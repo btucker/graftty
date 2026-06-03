@@ -91,16 +91,21 @@ public enum AgentStopNotification {
         )
     }
 
+    /// Activating a notification selects the worktree and fully clears its
+    /// attention — worktree-scoped AND every pane — exactly like a sidebar
+    /// worktree click (both route through `WorktreeEntry.acknowledgeAttention`
+    /// so they can't drift). Previously this cleared only worktree-scoped
+    /// attention with a timestamp guard, leaving a pane "needs input" pill
+    /// stuck after the click.
     public static func acknowledgeSelection(
         appState: inout AppState,
-        worktreePath: String,
-        timestamp: Date
+        worktreePath: String
     ) {
         appState.selectedWorktreePath = worktreePath
         for repoIndex in appState.repos.indices {
             for worktreeIndex in appState.repos[repoIndex].worktrees.indices
                 where appState.repos[repoIndex].worktrees[worktreeIndex].path == worktreePath {
-                appState.repos[repoIndex].worktrees[worktreeIndex].clearAttentionIfTimestamp(timestamp)
+                appState.repos[repoIndex].worktrees[worktreeIndex].acknowledgeAttention()
             }
         }
     }

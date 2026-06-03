@@ -114,6 +114,21 @@ public struct AppState: Codable, Sendable, Equatable {
         }
     }
 
+    /// Fans the AGENT-3.4 resume rule out across every worktree on a
+    /// liveness update (the per-worktree rule lives on `WorktreeEntry`):
+    /// each pane whose session is now busy has its agent-stop "needs
+    /// input" overlay cleared (busy and needs-input are mutually
+    /// exclusive). No-op when nothing is busy.
+    public mutating func clearAgentStopAttentionForBusyPanes(liveness: [String: AgentLiveness]) {
+        let busy = Set(liveness.compactMap { $0.value == .busy ? $0.key : nil })
+        guard !busy.isEmpty else { return }
+        for repoIdx in repos.indices {
+            for wtIdx in repos[repoIdx].worktrees.indices {
+                repos[repoIdx].worktrees[wtIdx].clearAgentStopAttention(forBusySessionNames: busy)
+            }
+        }
+    }
+
     /// Shared primitive for the Delete Worktree (GIT-4.x) and Dismiss
     /// (GIT-3.6) paths. Removes the worktree at `path` from its
     /// enclosing repo's `worktrees` list, clears `selectedWorktreePath`
