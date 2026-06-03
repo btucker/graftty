@@ -21,6 +21,19 @@ struct WorktreeEntryAttentionTests {
         #expect(e.attention == wt)
     }
 
+    @Test func acknowledgePaneClearsOnlyThatPane() {
+        var e = WorktreeEntry(path: "/wt", branch: "f")
+        let focused = PaneSlotID(id: UUID())
+        let other = PaneSlotID(id: UUID())
+        e.attention = att("w", .userNotify)
+        e.paneAttention[focused] = att("needs input", .agentStop)
+        e.paneAttention[other] = att("needs input", .agentStop)
+        e.acknowledgePaneAttention(focused)
+        #expect(e.paneAttention[focused] == nil)   // focused pane cleared
+        #expect(e.paneAttention[other] != nil)      // sibling pane untouched
+        #expect(e.attention != nil)                 // worktree-scoped untouched
+    }
+
     @Test func acknowledgeClearsWorktreeAndAllPanes() {
         var e = WorktreeEntry(path: "/wt", branch: "f")
         let slot = PaneSlotID(id: UUID())

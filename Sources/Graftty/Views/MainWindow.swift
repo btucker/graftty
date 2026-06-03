@@ -92,6 +92,11 @@ struct MainWindow: View {
                             // on the next return visit.
                             if let wtPath = appState.selectedWorktreePath {
                                 appState.setFocusedTerminal(terminalID, forWorktreePath: wtPath)
+                                // STATE-2.4: clicking a pane's terminal to
+                                // focus it acknowledges that pane's attention
+                                // (e.g. the agent-stop "needs input" icon),
+                                // same as clicking its sidebar row.
+                                appState.acknowledgePaneAttention(terminalID, forWorktreePath: wtPath)
                             }
                             terminalManager.setFocus(terminalID)
                         }

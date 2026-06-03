@@ -114,6 +114,23 @@ public struct AppState: Codable, Sendable, Equatable {
         }
     }
 
+    /// STATE-2.4: the user focused one pane (clicked its terminal or sidebar
+    /// row) — clear just that pane's attention. Kept separate from
+    /// `setFocusedTerminal` so programmatic focus restores (e.g. TERM-2.3
+    /// after a worktree switch) don't wipe a pending "needs input".
+    public mutating func acknowledgePaneAttention(
+        _ pane: PaneSlotID,
+        forWorktreePath path: String
+    ) {
+        for repoIdx in repos.indices {
+            for wtIdx in repos[repoIdx].worktrees.indices
+                where repos[repoIdx].worktrees[wtIdx].path == path
+            {
+                repos[repoIdx].worktrees[wtIdx].acknowledgePaneAttention(pane)
+            }
+        }
+    }
+
     /// Fans the AGENT-3.4 resume rule out across every worktree on a
     /// liveness update (the per-worktree rule lives on `WorktreeEntry`):
     /// each pane whose session is now busy has its agent-stop "needs

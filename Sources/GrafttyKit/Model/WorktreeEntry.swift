@@ -186,6 +186,14 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         paneAttention.removeAll()
     }
 
+    /// The user focused one specific pane (clicked its terminal, or its
+    /// sidebar row): clear just that pane's attention (STATE-2.4). The
+    /// worktree-scoped overlay and sibling panes are left alone — the user
+    /// only attended to this one.
+    public mutating func acknowledgePaneAttention(_ pane: PaneSlotID) {
+        paneAttention[pane] = nil
+    }
+
     /// @spec AGENT-3.4
     /// An agent resumed work in a busy pane, so it no longer needs input:
     /// clear that pane's `.agentStop` attention. `.userNotify` and
