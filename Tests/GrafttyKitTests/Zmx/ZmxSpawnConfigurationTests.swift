@@ -92,7 +92,10 @@ struct ZmxSpawnConfigurationTests {
         #expect(config.env["GHOSTTY_ZSH_ZDOTDIR"] == nil)
     }
 
-    @Test func missingGhosttyResourcesOmitZshIntegrationEnv() throws {
+    @Test("""
+    @spec ZMX-6.9: If agent hooks are enabled for a zsh shell and `GHOSTTY_RESOURCES_DIR` is unavailable, the host-managed `zmx attach` environment shall set `ZDOTDIR` directly to Graftty's agent-hook zsh init directory (with `GHOSTTY_ZSH_ZDOTDIR` omitted) so the ZMX-6.8 wrapper-bin PATH shim still runs without Ghostty's shell integration. Without this fallback, the spawn-time PATH prepend is the only defense and `/etc/zprofile`'s `path_helper` demotes the wrapper bin to the PATH tail in the login shell zmx spawns, so `claude` / `codex` resolve to the user's unwrapped installs.
+    """)
+    func missingGhosttyResourcesFallBackToAgentHookZDOTDIR() throws {
         let config = makeConfig(
             processEnv: [
                 "SHELL": "/bin/zsh",
@@ -101,17 +104,31 @@ struct ZmxSpawnConfigurationTests {
             ghosttyResourcesDir: nil
         )
 
+        #expect(config.env["ZDOTDIR"] == AgentHookInstaller.zshInitDirectory(rootDirectory: agentHooksRoot).path)
+        #expect(config.env["GHOSTTY_ZSH_ZDOTDIR"] == nil)
+    }
+
+    @Test func missingGhosttyResourcesWithDisabledHooksOmitZshIntegrationEnv() throws {
+        let config = makeConfig(
+            processEnv: [
+                "SHELL": "/bin/zsh",
+                "PATH": "/usr/bin",
+            ],
+            ghosttyResourcesDir: nil,
+            agentHooksDisabled: true
+        )
+
         #expect(config.env["ZDOTDIR"] == nil)
         #expect(config.env["GHOSTTY_ZSH_ZDOTDIR"] == nil)
     }
 
-    @Test func missingGhosttyResourcesRemoveInheritedZshIntegrationEnv() throws {
+    @Test func missingGhosttyResourcesReplaceInheritedZshIntegrationEnv() throws {
         let config = makeConfig(
             processEnv: staleHookEnv(shell: "/bin/zsh"),
             ghosttyResourcesDir: nil
         )
 
-        #expect(config.env["ZDOTDIR"] == nil)
+        #expect(config.env["ZDOTDIR"] == AgentHookInstaller.zshInitDirectory(rootDirectory: agentHooksRoot).path)
         #expect(config.env["GHOSTTY_ZSH_ZDOTDIR"] == nil)
     }
 

@@ -56,10 +56,23 @@ public struct ZmxSpawnConfiguration: Sendable, Equatable {
             userShellPath: rawUserShell,
             ghosttyResourcesDir: ghosttyResourcesDir
         )
-        if hooksEnabled, shellBasename == "zsh", env["ZDOTDIR"] != nil {
-            env["GHOSTTY_ZSH_ZDOTDIR"] = AgentHookInstaller
+        if hooksEnabled, shellBasename == "zsh" {
+            let zshInitDir = AgentHookInstaller
                 .zshInitDirectory(rootDirectory: agentHooksRoot)
                 .path
+            if env["ZDOTDIR"] != nil {
+                // Ghostty integration active (ZMX-6.3): its .zshenv restores
+                // ZDOTDIR from GHOSTTY_ZSH_ZDOTDIR and sources our shim.
+                env["GHOSTTY_ZSH_ZDOTDIR"] = zshInitDir
+            } else {
+                // ZMX-6.9: no Ghostty resources on this machine — point
+                // ZDOTDIR straight at the agent-hook zsh init so the
+                // wrapper-bin PATH shim (ZMX-6.8) still runs. Without it,
+                // the spawn-time PATH prepend is the only defense and
+                // /etc/zprofile's path_helper demotes the wrapper bin to
+                // the PATH tail in the login shell zmx spawns.
+                env["ZDOTDIR"] = zshInitDir
+            }
         }
 
         // ZMX-6.6/6.7: For non-bash shells (and bash with hooks disabled),
