@@ -555,11 +555,14 @@ private struct PaneTitleRow: View {
                     isActiveWorktree: isActiveWorktree
                 )))
             // LAYOUT-2.30: title (truncates) then pill (intrinsic width).
-            // AGENT-2.2: a busy pane renders its title in italic.
-            Text(leaf.displayTitle)
+            // AGENT-2.2: a busy pane renders its title in italic. Apply it
+            // at the Text level (Text.italic()) so it composes with the
+            // focused pane's `.semibold`; the View-level `.italic(_:)`
+            // modifier is dropped when a Text-level fontWeight is set.
+            let titleBase = Text(leaf.displayTitle)
                 .font(.caption)
                 .fontWeight(isFocusedPane ? .semibold : .regular)
-                .italic(busyStyle)
+            (busyStyle ? titleBase.italic() : titleBase)
                 .foregroundStyle(themedOrSecondary(theme?.paneTitle(
                     isFocusedPane: isFocusedPane,
                     isActiveWorktree: isActiveWorktree,

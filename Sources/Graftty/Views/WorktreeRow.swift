@@ -71,11 +71,15 @@ struct PaneTitleRow: View {
     @ViewBuilder
     private var titleText: some View {
         // AGENT-2.2: a busy pane renders its (already-animating) title in
-        // italic — a quiet "working" cue rather than a color shift.
-        Text(title.isEmpty ? "shell" : title)
+        // italic — a quiet "working" cue rather than a color shift. Apply
+        // italic at the *Text* level (Text.italic(), not the View
+        // `.italic(_:)` modifier): when a Text-level `.fontWeight` is set,
+        // the focused pane's `.semibold` wins over the View-level italic and
+        // drops it, so the slant only showed on non-focused (regular) rows.
+        let base = Text(title.isEmpty ? "shell" : title)
             .font(.caption)
             .fontWeight(isFocusedPane ? .semibold : .regular)
-            .italic(titleIsBusy)
+        (titleIsBusy ? base.italic() : base)
             .lineLimit(1)
             .truncationMode(.tail)
             .foregroundColor(theme.paneTitle(
