@@ -10,6 +10,15 @@ import os
 public final class ClaudeSessionRegistry {
     public private(set) var livenessBySession: [String: AgentLiveness] = [:]
 
+    /// Fired on the main actor after each poll that *changes* liveness, with
+    /// the new map. The app wires this to apply the AGENT-3.4 resume rule to
+    /// `AppState` at the model layer — so every consumer (Mac sidebar AND the
+    /// iPad/web `WorktreePanes` snapshot, which reads attention straight from
+    /// the model) sees busy panes with no stale agent-stop pill, even when no
+    /// window is on screen. Keeping this rule in a view modifier left the
+    /// remote/headless surface inconsistent.
+    @ObservationIgnored public var onLivenessChange: (([String: AgentLiveness]) -> Void)?
+
     @ObservationIgnored private let executor: CLIExecutor
     @ObservationIgnored private let claudePath: String
     @ObservationIgnored private var ticker: PollingTickerLike?
@@ -39,7 +48,10 @@ public final class ClaudeSessionRegistry {
         let mine = generation
         let map = await Self.poll(executor: executor, claudePath: claudePath, logger: logger)
         guard mine == generation else { return }
-        if livenessBySession != map { livenessBySession = map }
+        if livenessBySession != map {
+            livenessBySession = map
+            onLivenessChange?(map)
+        }
     }
 
     private static func poll(

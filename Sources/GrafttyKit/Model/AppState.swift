@@ -122,6 +122,17 @@ public struct AppState: Codable, Sendable, Equatable {
     public mutating func clearAgentStopAttentionForBusyPanes(liveness: [String: AgentLiveness]) {
         let busy = Set(liveness.compactMap { $0.value == .busy ? $0.key : nil })
         guard !busy.isEmpty else { return }
+        // Cheap early-out before any mutation: this runs on every liveness
+        // change, which is frequent during active work. Only touch the model
+        // when a pane-scoped agent-stop pill actually exists to clear (the
+        // common steady state has none), so the @State write-back and its
+        // re-render diff are skipped.
+        let hasPaneAgentStop = repos.contains { repo in
+            repo.worktrees.contains { wt in
+                wt.paneAttention.values.contains { $0.source == .agentStop }
+            }
+        }
+        guard hasPaneAgentStop else { return }
         for repoIdx in repos.indices {
             for wtIdx in repos[repoIdx].worktrees.indices {
                 repos[repoIdx].worktrees[wtIdx].clearAgentStopAttention(forBusySessionNames: busy)

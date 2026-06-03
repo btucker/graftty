@@ -187,21 +187,22 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
     }
 
     /// @spec AGENT-3.4
-    /// An agent resumed work in one of `busy`'s sessions, so it no longer
-    /// needs input: clear only `.agentStop` attention (pane-scoped for the
-    /// matching busy pane, and worktree-scoped when any of this worktree's
-    /// sessions is busy). `.userNotify` and `.commandFinished` overlays are
-    /// deliberately left alone.
+    /// An agent resumed work in a busy pane, so it no longer needs input:
+    /// clear that pane's `.agentStop` attention. `.userNotify` and
+    /// `.commandFinished` overlays are deliberately left alone.
+    ///
+    /// Only PANE-scoped attention is cleared. A worktree-scoped `.agentStop`
+    /// ping is placed precisely because the agent is *not* in a tracked pane
+    /// (`AgentStopAttentionTarget.resolve` → `.worktree`), so there's no
+    /// session to correlate against liveness — clearing it on "some pane in
+    /// this worktree is busy" would wipe a still-waiting agent's ping. It's
+    /// left to acknowledge / auto-clear instead.
     public mutating func clearAgentStopAttention(forBusySessionNames busy: Set<String>) {
         guard !busy.isEmpty else { return }
         for (slot, session) in paneSessions
         where paneAttention[slot]?.source == .agentStop
             && busy.contains(ZmxLauncher.sessionName(for: session)) {
             paneAttention[slot] = nil
-        }
-        if attention?.source == .agentStop,
-           paneSessions.values.contains(where: { busy.contains(ZmxLauncher.sessionName(for: $0)) }) {
-            attention = nil
         }
     }
 

@@ -950,6 +950,13 @@ struct GrafttyApp: App {
         // (like prStatusStore), so the local var is sufficient — the
         // registry itself outlives startup() via AppServices.
         let claudeAgentsTicker = PollingTicker(interval: .seconds(2))
+        // AGENT-3.4: apply the resume rule at the model layer on every
+        // liveness change, so the iPad/web snapshot and the headless
+        // (window-closed) case stay consistent — not just the on-screen
+        // Mac sidebar.
+        services.claudeSessionRegistry.onLivenessChange = { [appState = $appState] liveness in
+            appState.wrappedValue.clearAgentStopAttentionForBusyPanes(liveness: liveness)
+        }
         services.claudeSessionRegistry.start(ticker: claudeAgentsTicker)
 
         // Sweep dangling presence files left behind by SIGKILL'd agents
@@ -1993,10 +2000,14 @@ struct GrafttyApp: App {
             for repoIdx in appState.wrappedValue.repos.indices {
                 for wtIdx in appState.wrappedValue.repos[repoIdx].worktrees.indices {
                     if appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].path == path {
-                        appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].attention = Attention(
-                            text: text,
-                            timestamp: stamp,
-                            clearAfter: effectiveClearAfter
+                        appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].setAttention(
+                            Attention(
+                                text: text,
+                                timestamp: stamp,
+                                clearAfter: effectiveClearAfter,
+                                source: .userNotify
+                            ),
+                            pane: nil
                         )
 
                         if let effectiveClearAfter {

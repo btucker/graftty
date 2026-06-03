@@ -50,12 +50,16 @@ struct WorktreeEntryAttentionTests {
         #expect(e.paneAttention[idle] != nil)       // agent-stop but not busy → kept
     }
 
-    @Test func resumeClearsWorktreeScopedAgentStopWhenASessionIsBusy() {
+    @Test func resumeLeavesWorktreeScopedAgentStop() {
+        // A worktree-scoped agent-stop ping means the agent isn't in a
+        // tracked pane, so there's no session to correlate against liveness.
+        // The resume rule must NOT clear it (a busy *sibling* pane is not
+        // evidence the waiting agent resumed); acknowledge/auto-clear owns it.
         var e = WorktreeEntry(path: "/wt", branch: "f")
         let slot = PaneSlotID(id: UUID()); let s = PaneSessionID(id: UUID())
         e.paneSessions = [slot: s]
         e.attention = att("needs input", .agentStop)
         e.clearAgentStopAttention(forBusySessionNames: [name(s)])
-        #expect(e.attention == nil)
+        #expect(e.attention != nil)
     }
 }
