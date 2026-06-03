@@ -298,14 +298,11 @@ struct ZmxSurvivalIntegrationTests {
     /// direct ZDOTDIR env construction, the shell zmx spawns never sources
     /// the integration and `cd` emits no OSC 7.
     ///
-    /// Requires an installed Ghostty.app for its shell-integration dir;
-    /// skipped cleanly on machines that don't have one.
+    /// Uses the shell-integration scripts vendored in GrafttyKit's resource
+    /// bundle (CONFIG-2.5) — the same copy production resolves — so the test
+    /// runs everywhere, including CI runners without Ghostty.app.
     @Test func innerShellEmitsOsc7AfterCdWhenGhosttyIntegrationPresent() throws {
-        // Silently skip when Ghostty.app isn't installed (e.g., CI runners) —
-        // `try #require(nil)` reports as a failure in Swift Testing, but this
-        // test is legitimately environmental and shouldn't fail the suite on
-        // machines that happen not to have Ghostty.
-        guard let ghosttyRes = Self.locateGhosttyResourcesDir() else { return }
+        let ghosttyRes = try #require(GhosttyRuntimeResources.bundledResourcesDir()?.path)
         try Self.withScopedZmxDir { launcher in
             // Clean HOME stops the developer's own .zshrc from emitting its
             // own OSC 7 and confusing the assertion.
@@ -423,17 +420,4 @@ struct ZmxSurvivalIntegrationTests {
         }
     }
 
-    /// Locate Ghostty's shell-integration root by checking the standard
-    /// `/Applications` then `~/Applications` paths. Returns nil on machines
-    /// without Ghostty.app.
-    static func locateGhosttyResourcesDir() -> String? {
-        let candidates = [
-            "/Applications/Ghostty.app/Contents/Resources/ghostty",
-            (NSHomeDirectory() as NSString)
-                .appendingPathComponent("Applications/Ghostty.app/Contents/Resources/ghostty"),
-        ]
-        return candidates.first { path in
-            FileManager.default.fileExists(atPath: "\(path)/shell-integration/zsh/.zshenv")
-        }
-    }
 }
