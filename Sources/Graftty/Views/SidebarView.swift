@@ -184,10 +184,15 @@ struct SidebarView: View {
                     } label: {
                         ForgeLogoMark(mark: presentation.mark, color: theme.sidebarDimIcon)
                             .frame(width: 13, height: 13)
+                            // Pad the tap area out to the same 18x18
+                            // the trailing "+" button uses; 13x13 alone
+                            // is an uncomfortably small click target.
+                            .frame(width: 18, height: 18)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .help(presentation.helpText(slug: origin.slug))
+                    .accessibilityLabel(presentation.helpText(slug: origin.slug))
                 }
                 Text(repo.displayName)
                     .foregroundColor(theme.foreground)
