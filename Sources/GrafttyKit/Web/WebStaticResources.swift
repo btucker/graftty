@@ -23,7 +23,7 @@ public enum WebStaticResources {
         let filename = try resolveFilename(urlPath)
         let ext = (filename as NSString).pathExtension
         let base = (filename as NSString).deletingPathExtension
-        guard let url = Bundle.module.url(forResource: base, withExtension: ext) else {
+        guard let url = GrafttyKitResourceBundle.bundle.url(forResource: base, withExtension: ext) else {
             throw Error.missingResource(filename)
         }
         let data = try Data(contentsOf: url)
