@@ -103,6 +103,22 @@ struct SVGPathParserTests {
         #expect(abs(rectMalformed.width - rectClean.width) < 0.001)
         #expect(abs(rectMalformed.height - rectClean.height) < 0.001)
     }
+
+    @Test("GitHub mark parses non-empty within its 16x16 viewBox")
+    func githubMarkGeometry() {
+        let rect = bounds(ForgePresentation.Mark.github.pathData)
+        #expect(!rect.isEmpty)
+        #expect(rect.minX >= -0.1 && rect.minY >= -0.1)
+        #expect(rect.maxX <= 16.1 && rect.maxY <= 16.1)
+    }
+
+    @Test("GitLab mark parses non-empty within its 24x24 viewBox")
+    func gitlabMarkGeometry() {
+        let rect = bounds(ForgePresentation.Mark.gitlab.pathData)
+        #expect(!rect.isEmpty)
+        #expect(rect.minX >= -0.1 && rect.minY >= -0.1)
+        #expect(rect.maxX <= 24.1 && rect.maxY <= 24.1)
+    }
 }
 
 @Suite("SVGPathShape — viewBox scaling")
