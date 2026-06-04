@@ -48,6 +48,7 @@ enum SVGPathParser {
 
         var command: Character = " "
         while index < tokens.count {
+            let indexBefore = index
             if case .command(let c) = tokens[index] {
                 command = c
                 index += 1
@@ -119,6 +120,10 @@ enum SVGPathParser {
             default:
                 return path
             }
+            // No-progress guard: if neither a command token nor any
+            // numbers were consumed this iteration, bail to avoid an
+            // infinite loop on malformed input like "M0 0 Z 5 5".
+            if index == indexBefore { return path }
         }
         return path
     }
