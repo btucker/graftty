@@ -221,7 +221,9 @@ struct ForgePresentationMenuTests {
     @Test("Help text names the slug and forge")
     func helpText() {
         let gh = HostingOrigin(provider: .github, host: "github.com", owner: "a", repo: "b")
+        let gl = HostingOrigin(provider: .gitlab, host: "gitlab.com", owner: "a", repo: "b")
         #expect(ForgePresentation(origin: gh)?.helpText(slug: "a/b") == "Open a/b on GitHub")
+        #expect(ForgePresentation(origin: gl)?.helpText(slug: "a/b") == "Open a/b on GitLab")
     }
 }
 

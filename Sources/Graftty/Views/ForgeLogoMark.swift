@@ -62,6 +62,9 @@ struct ForgeLogoMark: View {
     let color: Color
 
     var body: some View {
+        // eoFill matches the fill-rule="evenodd" the Octicons SVGs
+        // declare; equivalent to nonzero for today's single-contour
+        // marks, but correct if upstream path data ever gains holes.
         SVGPathShape(pathData: mark.pathData, viewBox: mark.viewBox)
             .fill(color, style: FillStyle(eoFill: true))
     }
