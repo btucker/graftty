@@ -79,8 +79,17 @@ struct PRStatusStoreOriginPublishTests {
             repos: [Self.repoEntry(path: "/repoA")]
         )
         await ticker.fire()
-        // Give the detect Task time to land, then confirm nothing was published.
-        try await Task.sleep(for: .milliseconds(300))
+        // Poll until the in-flight Task finishes rather than sleeping a fixed
+        // duration. `dispatchRepoFetch` sets `inFlightSince` synchronously
+        // before spawning the Task, so after `ticker.fire()` returns the repo
+        // is guaranteed to be in-flight. When `performRepoFetch` completes its
+        // `defer` clears `inFlightSince`, meaning `isInFlightForTesting` false
+        // reliably means the detect closure ran and returned nil — so
+        // `originByRepo` is definitively empty.
+        for _ in 0..<50 {
+            if await !store.isInFlightForTesting("/repoA") { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
         #expect(await store.originByRepo.isEmpty)
         await MainActor.run { store.stop() }
     }
