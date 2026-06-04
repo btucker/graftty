@@ -117,8 +117,21 @@ struct SidebarView: View {
         )
     }
 
+    /// Sidebar presentation + destination for the repo's forge link,
+    /// or nil when the origin is unresolved or unsupported, in which
+    /// case the row renders with no forge affordance (PROJECT-2.2).
+    private func forgeLink(
+        for repo: RepoEntry
+    ) -> (presentation: ForgePresentation, url: URL, slug: String)? {
+        guard let origin = prStatusStore.originByRepo[repo.path],
+              let presentation = ForgePresentation(origin: origin),
+              let url = origin.webURL else { return nil }
+        return (presentation, url, origin.slug)
+    }
+
     @ViewBuilder
     private func repoSection(_ repo: RepoEntry) -> some View {
+        let forgeLink = forgeLink(for: repo)
         let resolvedDefaultBranch = remoteBranchStore.resolvedDefaultBranch(
             forRepoAt: repo.path,
             hint: repo.defaultBranchHint
@@ -176,13 +189,11 @@ struct SidebarView: View {
             // .buttonStyle(.plain) on both buttons keeps their taps
             // from toggling the enclosing disclosure.
             HStack(spacing: 6) {
-                if let origin = prStatusStore.originByRepo[repo.path],
-                   let presentation = ForgePresentation(origin: origin),
-                   let url = origin.webURL {
+                if let forge = forgeLink {
                     Button {
-                        NSWorkspace.shared.open(url)
+                        NSWorkspace.shared.open(forge.url)
                     } label: {
-                        ForgeLogoMark(mark: presentation.mark, color: theme.sidebarDimIcon)
+                        ForgeLogoMark(mark: forge.presentation.mark, color: theme.sidebarDimIcon)
                             .frame(width: 13, height: 13)
                             // Pad the tap area out to the same 18x18
                             // the trailing "+" button uses; 13x13 alone
@@ -191,8 +202,8 @@ struct SidebarView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help(presentation.helpText(slug: origin.slug))
-                    .accessibilityLabel(presentation.helpText(slug: origin.slug))
+                    .help(forge.presentation.helpText(slug: forge.slug))
+                    .accessibilityLabel(forge.presentation.helpText(slug: forge.slug))
                 }
                 Text(repo.displayName)
                     .foregroundColor(theme.foreground)
@@ -225,11 +236,9 @@ struct SidebarView: View {
                     }
                 }
                 // PROJECT-2.3: context-menu forge link.
-                if let origin = prStatusStore.originByRepo[repo.path],
-                   let presentation = ForgePresentation(origin: origin),
-                   let url = origin.webURL {
-                    Button(presentation.menuTitle) {
-                        NSWorkspace.shared.open(url)
+                if let forge = forgeLink {
+                    Button(forge.presentation.menuTitle) {
+                        NSWorkspace.shared.open(forge.url)
                     }
                 }
                 Button("Remove Repository") {

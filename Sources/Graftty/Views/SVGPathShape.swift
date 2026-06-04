@@ -7,11 +7,22 @@ import SwiftUI
 /// this project has shipped broken releases from resource-bundling
 /// gaps, so geometry-in-code is deliberate.
 struct SVGPathShape: Shape {
-    let pathData: String
+    let parsed: Path
     let viewBox: CGSize
 
+    /// Parses on construction. Callers rendering constant data on
+    /// every layout pass should prefer `init(parsed:viewBox:)` with a
+    /// cached `Path` (see `ForgePresentation.Mark.parsedPath`).
+    init(pathData: String, viewBox: CGSize) {
+        self.init(parsed: SVGPathParser.parse(pathData), viewBox: viewBox)
+    }
+
+    init(parsed: Path, viewBox: CGSize) {
+        self.parsed = parsed
+        self.viewBox = viewBox
+    }
+
     func path(in rect: CGRect) -> Path {
-        let parsed = SVGPathParser.parse(pathData)
         let scale = min(rect.width / viewBox.width, rect.height / viewBox.height)
         let transform = CGAffineTransform(translationX: rect.minX, y: rect.minY)
             .scaledBy(x: scale, y: scale)

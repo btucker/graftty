@@ -54,6 +54,21 @@ struct ForgePresentation: Equatable {
     func helpText(slug: String) -> String { "Open \(slug) on \(forgeName)" }
 }
 
+extension ForgePresentation.Mark {
+    /// Parsed once per process — the path data is constant, and
+    /// `Shape.path(in:)` runs on every layout pass for every visible
+    /// repo row.
+    var parsedPath: Path {
+        switch self {
+        case .github: return Self.githubParsed
+        case .gitlab: return Self.gitlabParsed
+        }
+    }
+
+    private static let githubParsed = SVGPathParser.parse(Self.github.pathData)
+    private static let gitlabParsed = SVGPathParser.parse(Self.gitlab.pathData)
+}
+
 /// Monochrome forge logo for the sidebar's project rows, tinted by
 /// the caller (theme.sidebarDimIcon) to match the other sidebar
 /// chrome. @spec PROJECT-2.0
@@ -65,7 +80,7 @@ struct ForgeLogoMark: View {
         // eoFill matches the fill-rule="evenodd" the Octicons SVGs
         // declare; equivalent to nonzero for today's single-contour
         // marks, but correct if upstream path data ever gains holes.
-        SVGPathShape(pathData: mark.pathData, viewBox: mark.viewBox)
+        SVGPathShape(parsed: mark.parsedPath, viewBox: mark.viewBox)
             .fill(color, style: FillStyle(eoFill: true))
     }
 }
