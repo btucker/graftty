@@ -117,16 +117,17 @@ struct SidebarView: View {
         )
     }
 
-    /// Sidebar presentation + destination for the repo's forge link,
-    /// or nil when the origin is unresolved or unsupported, in which
-    /// case the row renders with no forge affordance (PROJECT-2.2).
+    /// Title + destination for the repo's "Open on <forge>…"
+    /// context-menu item, or nil when the origin is unresolved or
+    /// unsupported, in which case the menu omits the item
+    /// (PROJECT-2.2).
     private func forgeLink(
         for repo: RepoEntry
-    ) -> (presentation: ForgePresentation, url: URL, slug: String)? {
+    ) -> (menuTitle: String, url: URL)? {
         guard let origin = prStatusStore.originByRepo[repo.path],
               let presentation = ForgePresentation(origin: origin),
               let url = origin.webURL else { return nil }
-        return (presentation, url, origin.slug)
+        return (presentation.menuTitle, url)
     }
 
     @ViewBuilder
@@ -179,32 +180,16 @@ struct SidebarView: View {
                 )
             }
         } label: {
-            // The only leading glyph is the forge mark, and only when
-            // the repo's origin resolves to GitHub/GitLab — it carries
-            // real information (where the project lives, click to
-            // open), unlike a folder icon, which would be tautological
-            // noise at a projects-only top level. The disclosure arrow
-            // and semibold weight carry the "expandable heading" cues
-            // on their own. Trailing "+" opens the add-worktree sheet;
-            // .buttonStyle(.plain) on both buttons keeps their taps
-            // from toggling the enclosing disclosure.
+            // No leading glyph — the top level is always projects, so
+            // a folder icon would be tautological noise, and even an
+            // informative forge logo proved to be repeated clutter in
+            // practice (the "Open on GitHub…" affordance lives in the
+            // context menu instead). The disclosure arrow and semibold
+            // weight carry the "expandable heading" cues on their own.
+            // Trailing "+" opens the add-worktree sheet;
+            // .buttonStyle(.plain) keeps its tap from toggling the
+            // enclosing disclosure.
             HStack(spacing: 6) {
-                if let forge = forgeLink {
-                    Button {
-                        NSWorkspace.shared.open(forge.url)
-                    } label: {
-                        ForgeLogoMark(mark: forge.presentation.mark, color: theme.sidebarDimIcon)
-                            .frame(width: 13, height: 13)
-                            // Pad the tap area out to the same 18x18
-                            // the trailing "+" button uses; 13x13 alone
-                            // is an uncomfortably small click target.
-                            .frame(width: 18, height: 18)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .help(forge.presentation.helpText(slug: forge.slug))
-                    .accessibilityLabel(forge.presentation.helpText(slug: forge.slug))
-                }
                 Text(repo.displayName)
                     .foregroundColor(theme.foreground)
                     .fontWeight(.semibold)
@@ -237,7 +222,7 @@ struct SidebarView: View {
                 }
                 // PROJECT-2.3: context-menu forge link.
                 if let forge = forgeLink {
-                    Button(forge.presentation.menuTitle) {
+                    Button(forge.menuTitle) {
                         NSWorkspace.shared.open(forge.url)
                     }
                 }

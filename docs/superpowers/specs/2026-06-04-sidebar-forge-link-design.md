@@ -1,7 +1,17 @@
 # Sidebar Forge Link — Design
 
 **Date:** 2026-06-04
-**Status:** Approved
+**Status:** Approved — amended 2026-06-04
+
+> **Amendment (2026-06-04):** After seeing the icon in the running
+> app, the always-visible forge logo proved to be visual clutter —
+> repeated across every project row it competed with the worktree
+> glyphs below. The icon (PROJECT-2.0) and its rendering stack
+> (SVGPathShape parser, code-drawn marks) were removed; the feature
+> ships as the context-menu item only (PROJECT-2.3), with
+> PROJECT-2.1/2.2 reworded accordingly. PROJECT-2.4 (observable
+> origin publication) is unchanged. The sections below describe the
+> original icon-based design for the record.
 
 ## Summary
 

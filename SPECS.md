@@ -1822,11 +1822,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### PROJECT-2.x
 
-**PROJECT-2.0** While a repo's origin remote resolves to a supported forge (GitHub or GitLab, including self-hosted hosts), the application shall display that forge's logo to the left of the project name in the sidebar.
+**PROJECT-2.1** When the Open on GitHub…/Open on GitLab… context-menu item is chosen, the application shall open https://<host>/<owner>/<repo> in the default browser.
 
-**PROJECT-2.1** When the forge logo is clicked, the application shall open https://<host>/<owner>/<repo> in the default browser.
-
-**PROJECT-2.2** If a repo has no origin remote or the origin's provider is unsupported, then the application shall render the project row with no forge icon.
+**PROJECT-2.2** If a repo has no origin remote or the origin's provider is unsupported, then the application shall omit the forge item from the repo context menu.
 
 **PROJECT-2.3** While a repo's origin resolves to a supported forge, the repo context menu shall include an Open on GitHub…/Open on GitLab… item opening the project URL.
 

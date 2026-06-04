@@ -164,7 +164,7 @@ private final class ManualPollingTicker: PollingTickerLike {
     func fire() async { await onTick?() }
 }
 
-@Suite("@spec PROJECT-2.1: When the forge logo is clicked, the application shall open https://<host>/<owner>/<repo> in the default browser.")
+@Suite("@spec PROJECT-2.1: When the Open on GitHub…/Open on GitLab… context-menu item is chosen, the application shall open https://<host>/<owner>/<repo> in the default browser.")
 struct HostingOriginWebURLTests {
     @Test("github.com origin composes the canonical project URL")
     func githubDotCom() {
@@ -179,22 +179,7 @@ struct HostingOriginWebURLTests {
     }
 }
 
-@Suite("@spec PROJECT-2.0: While a repo's origin remote resolves to a supported forge (GitHub or GitLab, including self-hosted hosts), the application shall display that forge's logo to the left of the project name in the sidebar.")
-struct ForgePresentationMarkTests {
-    @Test("GitHub provider maps to the GitHub mark")
-    func githubMark() {
-        let origin = HostingOrigin(provider: .github, host: "github.com", owner: "a", repo: "b")
-        #expect(ForgePresentation(origin: origin)?.mark == .github)
-    }
-
-    @Test("GitLab provider maps to the GitLab mark, self-hosted included")
-    func gitlabMark() {
-        let origin = HostingOrigin(provider: .gitlab, host: "gitlab.corp.example", owner: "a", repo: "b")
-        #expect(ForgePresentation(origin: origin)?.mark == .gitlab)
-    }
-}
-
-@Suite("@spec PROJECT-2.2: If a repo has no origin remote or the origin's provider is unsupported, then the application shall render the project row with no forge icon.")
+@Suite("@spec PROJECT-2.2: If a repo has no origin remote or the origin's provider is unsupported, then the application shall omit the forge item from the repo context menu.")
 struct ForgePresentationAbsentTests {
     @Test("Unsupported provider yields no presentation")
     func unsupportedProvider() {
@@ -216,14 +201,6 @@ struct ForgePresentationMenuTests {
         let gl = HostingOrigin(provider: .gitlab, host: "gitlab.com", owner: "a", repo: "b")
         #expect(ForgePresentation(origin: gh)?.menuTitle == "Open on GitHub…")
         #expect(ForgePresentation(origin: gl)?.menuTitle == "Open on GitLab…")
-    }
-
-    @Test("Help text names the slug and forge")
-    func helpText() {
-        let gh = HostingOrigin(provider: .github, host: "github.com", owner: "a", repo: "b")
-        let gl = HostingOrigin(provider: .gitlab, host: "gitlab.com", owner: "a", repo: "b")
-        #expect(ForgePresentation(origin: gh)?.helpText(slug: "a/b") == "Open a/b on GitHub")
-        #expect(ForgePresentation(origin: gl)?.helpText(slug: "a/b") == "Open a/b on GitLab")
     }
 }
 
