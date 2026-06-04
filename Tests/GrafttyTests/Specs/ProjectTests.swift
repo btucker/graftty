@@ -164,6 +164,21 @@ private final class ManualPollingTicker: PollingTickerLike {
     func fire() async { await onTick?() }
 }
 
+@Suite("@spec PROJECT-2.1: When the forge logo is clicked, the application shall open https://<host>/<owner>/<repo> in the default browser.")
+struct HostingOriginWebURLTests {
+    @Test("github.com origin composes the canonical project URL")
+    func githubDotCom() {
+        let origin = HostingOrigin(provider: .github, host: "github.com", owner: "btucker", repo: "graftty")
+        #expect(origin.webURL == URL(string: "https://github.com/btucker/graftty"))
+    }
+
+    @Test("Self-hosted GitLab origin uses its own host")
+    func selfHostedGitLab() {
+        let origin = HostingOrigin(provider: .gitlab, host: "gitlab.corp.example", owner: "team", repo: "tool")
+        #expect(origin.webURL == URL(string: "https://gitlab.corp.example/team/tool"))
+    }
+}
+
 @Suite("@spec PROJECT-1.3: When the user selects Initialize Git Repository on a non-git repo's row, the application shall run `git init` + `git commit --allow-empty`, set `isGitTracked` to true, and rediscover its worktrees via `git worktree list --porcelain`.")
 struct PromoteToGitTests {
     @Test("After GitInit + flag flip, WorktreeDiscovery returns real porcelain output")
