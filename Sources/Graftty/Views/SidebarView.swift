@@ -166,13 +166,29 @@ struct SidebarView: View {
                 )
             }
         } label: {
-            // No leading glyph — the top level is always projects, so
-            // a folder icon would be tautological noise. The disclosure
-            // arrow and semibold weight carry the "expandable heading"
-            // cues on their own. Trailing "+" opens the add-worktree
-            // sheet; .buttonStyle(.plain) keeps its tap from toggling
-            // the enclosing disclosure.
+            // The only leading glyph is the forge mark, and only when
+            // the repo's origin resolves to GitHub/GitLab — it carries
+            // real information (where the project lives, click to
+            // open), unlike a folder icon, which would be tautological
+            // noise at a projects-only top level. The disclosure arrow
+            // and semibold weight carry the "expandable heading" cues
+            // on their own. Trailing "+" opens the add-worktree sheet;
+            // .buttonStyle(.plain) on both buttons keeps their taps
+            // from toggling the enclosing disclosure.
             HStack(spacing: 6) {
+                if let origin = prStatusStore.originByRepo[repo.path],
+                   let presentation = ForgePresentation(origin: origin),
+                   let url = origin.webURL {
+                    Button {
+                        NSWorkspace.shared.open(url)
+                    } label: {
+                        ForgeLogoMark(mark: presentation.mark, color: theme.sidebarDimIcon)
+                            .frame(width: 13, height: 13)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(presentation.helpText(slug: origin.slug))
+                }
                 Text(repo.displayName)
                     .foregroundColor(theme.foreground)
                     .fontWeight(.semibold)
@@ -201,6 +217,14 @@ struct SidebarView: View {
                 if !repo.isGitTracked {
                     Button("Initialize Git Repository") {
                         onInitializeGit(repo)
+                    }
+                }
+                // PROJECT-2.3: context-menu forge link.
+                if let origin = prStatusStore.originByRepo[repo.path],
+                   let presentation = ForgePresentation(origin: origin),
+                   let url = origin.webURL {
+                    Button(presentation.menuTitle) {
+                        NSWorkspace.shared.open(url)
                     }
                 }
                 Button("Remove Repository") {
