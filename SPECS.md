@@ -1835,3 +1835,5 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SYNC-1.1** When building a presence document from a repo's worktrees, the application shall include only worktrees with an on-disk checkout, mapping running to running and closed to idle.
 
 **SYNC-1.2** Presence documents shall round-trip through JSON with ISO-8601 timestamps and stable key ordering.
+
+**SYNC-1.3** The application shall derive the presence slug from the git user.email by lowercasing and replacing each run of non-alphanumeric characters with a single hyphen.
