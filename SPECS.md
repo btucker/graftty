@@ -1827,3 +1827,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SSH-1.1** When `RTCDataChannel.sendData` returns false mid-loop in `OutboundRelayHandler.write` (SCTP backpressure on a multi-slice write), the handler shall close both the DataChannel AND the NIO embedded channel — the peer cannot safely continue interpreting bytes after a partial SSH frame.
 
 **SSH-1.2** When `pendingInbound` accumulates more than 1 MiB without the embedded channel becoming active, `SSHNIOTransport` shall close the underlying DataChannel and transition to closed — bounding memory under a flooding peer.
+
+## SYNC — SYNC
+
+### SYNC-1.x
+
+**SYNC-1.1** When building a presence document from a repo's worktrees, the application shall include only worktrees with an on-disk checkout, mapping running to \
+
+**SYNC-1.2** Presence documents shall round-trip through JSON with ISO-8601 timestamps and stable key ordering.
