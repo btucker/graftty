@@ -14,4 +14,11 @@ public struct HostingOrigin: Codable, Sendable, Equatable {
     }
 
     public var slug: String { "\(owner)/\(repo)" }
+
+    /// Project home page on the forge (PROJECT-2.1). `host` comes from
+    /// a parsed remote URL, so this composes for self-hosted instances
+    /// (e.g. `gitlab.corp.example`) as well as github.com/gitlab.com.
+    public var webURL: URL? {
+        URL(string: "https://\(host)/\(owner)/\(repo)")
+    }
 }

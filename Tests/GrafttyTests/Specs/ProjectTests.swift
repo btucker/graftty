@@ -164,6 +164,46 @@ private final class ManualPollingTicker: PollingTickerLike {
     func fire() async { await onTick?() }
 }
 
+@Suite("@spec PROJECT-2.1: When the Open on GitHub…/Open on GitLab… context-menu item is chosen, the application shall open https://<host>/<owner>/<repo> in the default browser.")
+struct HostingOriginWebURLTests {
+    @Test("github.com origin composes the canonical project URL")
+    func githubDotCom() {
+        let origin = HostingOrigin(provider: .github, host: "github.com", owner: "btucker", repo: "graftty")
+        #expect(origin.webURL == URL(string: "https://github.com/btucker/graftty"))
+    }
+
+    @Test("Self-hosted GitLab origin uses its own host")
+    func selfHostedGitLab() {
+        let origin = HostingOrigin(provider: .gitlab, host: "gitlab.corp.example", owner: "team", repo: "tool")
+        #expect(origin.webURL == URL(string: "https://gitlab.corp.example/team/tool"))
+    }
+}
+
+@Suite("@spec PROJECT-2.2: If a repo has no origin remote or the origin's provider is unsupported, then the application shall omit the forge item from the repo context menu.")
+struct ForgePresentationAbsentTests {
+    @Test("Unsupported provider yields no presentation")
+    func unsupportedProvider() {
+        let origin = HostingOrigin(provider: .unsupported, host: "bitbucket.org", owner: "a", repo: "b")
+        #expect(ForgePresentation(origin: origin) == nil)
+    }
+
+    @Test("Absent origin yields no presentation")
+    func absentOrigin() {
+        #expect(ForgePresentation(origin: nil) == nil)
+    }
+}
+
+@Suite("@spec PROJECT-2.3: While a repo's origin resolves to a supported forge, the repo context menu shall include an Open on GitHub…/Open on GitLab… item opening the project URL.")
+struct ForgePresentationMenuTests {
+    @Test("Menu title names the forge")
+    func menuTitles() {
+        let gh = HostingOrigin(provider: .github, host: "github.com", owner: "a", repo: "b")
+        let gl = HostingOrigin(provider: .gitlab, host: "gitlab.com", owner: "a", repo: "b")
+        #expect(ForgePresentation(origin: gh)?.menuTitle == "Open on GitHub…")
+        #expect(ForgePresentation(origin: gl)?.menuTitle == "Open on GitLab…")
+    }
+}
+
 @Suite("@spec PROJECT-1.3: When the user selects Initialize Git Repository on a non-git repo's row, the application shall run `git init` + `git commit --allow-empty`, set `isGitTracked` to true, and rediscover its worktrees via `git worktree list --porcelain`.")
 struct PromoteToGitTests {
     @Test("After GitInit + flag flip, WorktreeDiscovery returns real porcelain output")
