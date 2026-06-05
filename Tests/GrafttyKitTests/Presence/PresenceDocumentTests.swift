@@ -12,8 +12,8 @@ struct PresenceDocumentTests {
             email: "sarah@example.com",
             updatedAt: Date(timeIntervalSince1970: 1_780_000_000),
             worktrees: [
-                .init(name: "auth-refactor", branch: "auth-refactor", state: "running"),
-                .init(name: "fix-pairing", branch: "fix/pairing", state: "idle"),
+                .init(name: "auth-refactor", branch: "auth-refactor", state: .running),
+                .init(name: "fix-pairing", branch: "fix/pairing", state: .idle),
             ]
         )
         let data = try PresenceDocument.encode(doc)
@@ -26,7 +26,7 @@ struct PresenceDocumentTests {
         #expect(json.contains("Z\"") || json.contains("+00:00"))
     }
 
-    @Test("@spec SYNC-1.1: When building a presence document from a repo's worktrees, the application shall include only worktrees with an on-disk checkout, mapping running to \"running\" and closed to \"idle\".")
+    @Test("@spec SYNC-1.1: When building a presence document from a repo's worktrees, the application shall include only worktrees with an on-disk checkout, mapping running to running and closed to idle.")
     func buildFiltersAndMapsStates() throws {
         var running = WorktreeEntry(path: "/tmp/wt/auth-refactor", branch: "auth-refactor")
         running.state = .running
@@ -46,8 +46,8 @@ struct PresenceDocumentTests {
         )
         #expect(doc.updatedAt == now)
         #expect(doc.worktrees == [
-            .init(name: "auth-refactor", branch: "auth-refactor", state: "running"),
-            .init(name: "fix-pairing", branch: "fix/pairing", state: "idle"),
+            .init(name: "auth-refactor", branch: "auth-refactor", state: .running),
+            .init(name: "fix-pairing", branch: "fix/pairing", state: .idle),
         ])
     }
 

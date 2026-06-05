@@ -1832,6 +1832,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### SYNC-1.x
 
-**SYNC-1.1** When building a presence document from a repo's worktrees, the application shall include only worktrees with an on-disk checkout, mapping running to \
+**SYNC-1.1** When building a presence document from a repo's worktrees, the application shall include only worktrees with an on-disk checkout, mapping running to running and closed to idle.
 
 **SYNC-1.2** Presence documents shall round-trip through JSON with ISO-8601 timestamps and stable key ordering.
