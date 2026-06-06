@@ -1846,6 +1846,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **SYNC-2.3** When presence sharing is disabled for a repo, the application shall delete the publishing user's presence ref from origin.
 
+### SYNC-3.x
+
+**SYNC-3.1** While presence sharing is disabled for a repo, the application shall neither publish nor fetch presence for that repo.
+
+**SYNC-3.2** When updating the remote-worktree store, the application shall exclude the local user's own presence document.
+
+**SYNC-3.3** If the published worktree set is unchanged and the last publish is younger than the 10-minute heartbeat interval, then the application shall not push again; once the heartbeat interval elapses, the application shall republish so updatedAt outruns teammates' staleness cutoff.
+
+**SYNC-3.4** If a fetched presence document is older than 30 minutes, then the application shall omit it from the remote-worktree store.
+
 ### SYNC-4.x
 
 **SYNC-4.1** If a persisted RepoEntry predates presence sharing, then the application shall decode presenceSharingEnabled as false.
