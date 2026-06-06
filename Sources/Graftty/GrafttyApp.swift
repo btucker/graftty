@@ -136,17 +136,15 @@ final class AppServices {
     let teamInbox: TeamInbox
     let teamEventDispatcher: TeamEventDispatcher
     /// Observable store the sidebar reads to render teammates' worktrees
-    /// (SYNC-5.1). The sync service (Task 8) is constructed around this
-    /// same instance and drives its `remoteWorktrees`.
+    /// (SYNC-5.1). The sync service is constructed around this same
+    /// instance and drives its `remoteWorktrees`.
     let teamPresenceSyncStore = TeamPresenceSyncStore()
     /// Publishes our presence and fetches teammates' for every
     /// sharing-enabled repo, driving `teamPresenceSyncStore`. Constructed
     /// around the store above; started in `startup()` on a poll cadence.
+    /// Retains its own ticker, so the sharing toggle pulses through the
+    /// service rather than holding a separate ticker reference here.
     let teamPresenceSync: TeamPresenceSync
-    /// Drives `TeamPresenceSync.tick` on a poll cadence (assigned in
-    /// `startup()` by Task 8). `pulse()` here lets the sharing-toggle
-    /// publish/fetch immediately rather than waiting a full interval.
-    var teamPresenceTicker: PollingTicker?
     var worktreeMonitorBridge: WorktreeMonitorBridge?
     /// Drives `TeamPresenceMonitor.cleanupStale` on a slow cadence so
     /// SIGKILL'd agents (whose wrapper trap never fired) don't leave
@@ -401,7 +399,7 @@ struct GrafttyApp: App {
                 worktreeMonitor: services.worktreeMonitor,
                 teamEventDispatcher: services.teamEventDispatcher,
                 teamPresenceSyncStore: services.teamPresenceSyncStore,
-                teamPresenceTickerPulse: { [services] in services.teamPresenceTicker?.pulse() }
+                teamPresenceSync: services.teamPresenceSync
             )
                 .environmentObject(webController)
                 .environmentObject(updaterController)
@@ -952,7 +950,8 @@ struct GrafttyApp: App {
             interval: .seconds(60),
             pauseWhenInactive: { false }
         )
-        services.teamPresenceTicker = teamPresenceTicker
+        // The service retains this ticker, so the sharing toggle can pulse
+        // it through `teamPresenceSync.pulse()` without a separate ref here.
         services.teamPresenceSync.start(
             ticker: teamPresenceTicker,
             getRepos: { binding.wrappedValue.repos }

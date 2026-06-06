@@ -116,6 +116,35 @@ struct TeamPresenceSyncTests {
         #expect(await published.count == 2)
     }
 
+    @Test("leave clears the repo's entries immediately and deletes the published ref.")
+    func leaveClearsAndDeletes() async {
+        let store = TeamPresenceSyncStore()
+        let identity = PresenceIdentity(name: "Ben", email: "ben@btucker.net")
+        let theirs = PresenceDocument(version: 1, user: "Sarah", email: "sarah@example.com", updatedAt: Self.now,
+                                      worktrees: [.init(name: "auth-refactor", branch: "auth-refactor", state: .running)])
+        let deletes = DeleteLog()
+        let fixedNow = Self.now
+        let sync = TeamPresenceSync(
+            store: store,
+            identityProvider: { _ in identity },
+            publisher: { _, _, _ in },
+            fetcher: { _ in [theirs] },
+            deleter: { slug, repoPath in await deletes.append((slug, repoPath)) },
+            now: { fixedNow }
+        )
+
+        // Seed the store via a normal tick that fetches a teammate's doc.
+        await sync.tick(repos: [makeRepo(sharing: true)])
+        #expect(store.remoteWorktrees["/tmp/repo"]?.isEmpty == false)
+
+        await sync.leave(repoPath: "/tmp/repo")
+
+        #expect(store.remoteWorktrees["/tmp/repo"] == nil)
+        #expect(await deletes.calls.count == 1)
+        #expect(await deletes.calls.first?.slug == identity.slug)
+        #expect(await deletes.calls.first?.repoPath == "/tmp/repo")
+    }
+
     @Test("Remote entries are sorted by owner then name for stable rendering.")
     func entriesSorted() async {
         let store = TeamPresenceSyncStore()
@@ -137,6 +166,12 @@ actor PublishLog {
     private(set) var calls: [(doc: PresenceDocument, slug: String, repoPath: String)] = []
     func append(_ call: (PresenceDocument, String, String)) { calls.append(call) }
     var count: Int { calls.count }
+}
+
+/// Thread-safe delete-call recorder for tests.
+actor DeleteLog {
+    private(set) var calls: [(slug: String, repoPath: String)] = []
+    func append(_ call: (String, String)) { calls.append(call) }
 }
 
 /// Advanceable clock for heartbeat tests. @unchecked Sendable is fine here:

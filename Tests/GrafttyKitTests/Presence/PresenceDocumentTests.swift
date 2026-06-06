@@ -16,11 +16,11 @@ struct PresenceDocumentTests {
                 .init(name: "fix-pairing", branch: "fix/pairing", state: .idle),
             ]
         )
-        let data = try PresenceDocument.encode(doc)
+        let data = try doc.encoded()
         let decoded = try PresenceDocument.decode(data)
         #expect(decoded == doc)
         // Deterministic output (sorted keys) so unchanged docs compare equal as bytes.
-        #expect(try PresenceDocument.encode(doc) == data)
+        #expect(try doc.encoded() == data)
         // ISO-8601 wire format, not epoch seconds.
         let json = String(decoding: data, as: UTF8.self)
         #expect(json.contains("Z\"") || json.contains("+00:00"))

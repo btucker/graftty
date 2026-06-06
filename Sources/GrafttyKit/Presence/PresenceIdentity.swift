@@ -51,17 +51,14 @@ public struct PresenceIdentity: Sendable, Equatable {
     /// required (it keys the presence ref); name falls back to the email's
     /// local part.
     public static func load(repoPath: String, scope: ConfigScope = .any) async throws -> PresenceIdentity {
-        @Sendable func probe(_ key: String) async -> String? {
-            guard let out = try? await GitRunner.captureAll(
-                args: ["config"] + scope.extraArgs + [key], at: repoPath
-            ), out.exitCode == 0 else { return nil }
-            let value = out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-            return value.isEmpty ? nil : value
-        }
-        guard let email = await probe("user.email") else {
+        guard let email = await GitRunner.configValue(
+            "user.email", extraArgs: scope.extraArgs, at: repoPath
+        ) else {
             throw IdentityError.missingEmail
         }
-        let name = await probe("user.name") ?? String(email.prefix(while: { $0 != "@" }))
+        let name = await GitRunner.configValue(
+            "user.name", extraArgs: scope.extraArgs, at: repoPath
+        ) ?? String(email.prefix(while: { $0 != "@" }))
         return PresenceIdentity(name: name, email: email)
     }
 }

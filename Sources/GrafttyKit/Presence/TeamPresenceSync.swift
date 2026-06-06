@@ -2,34 +2,6 @@ import Foundation
 import Combine
 import os
 
-/// One teammate worktree as rendered in the sidebar.
-public struct RemoteWorktreePresence: Sendable, Equatable, Identifiable {
-    public let ownerName: String
-    public let ownerSlug: String
-    public let name: String
-    public let branch: String
-    public let state: PresenceDocument.Worktree.State
-    public let updatedAt: Date
-
-    public var id: String { "\(ownerSlug)/\(name)" }
-
-    public init(
-        ownerName: String,
-        ownerSlug: String,
-        name: String,
-        branch: String,
-        state: PresenceDocument.Worktree.State,
-        updatedAt: Date
-    ) {
-        self.ownerName = ownerName
-        self.ownerSlug = ownerSlug
-        self.name = name
-        self.branch = branch
-        self.state = state
-        self.updatedAt = updatedAt
-    }
-}
-
 /// Observable store the sidebar reads: repoPath -> teammates' worktrees.
 @MainActor
 public final class TeamPresenceSyncStore: ObservableObject {
@@ -38,10 +10,12 @@ public final class TeamPresenceSyncStore: ObservableObject {
     public init() {}
 
     func update(repoPath: String, entries: [RemoteWorktreePresence]) {
+        guard remoteWorktrees[repoPath] != entries else { return }
         remoteWorktrees[repoPath] = entries
     }
 
     func clear(repoPath: String) {
+        guard remoteWorktrees[repoPath] != nil else { return }
         remoteWorktrees.removeValue(forKey: repoPath)
     }
 }
@@ -54,6 +28,7 @@ public final class TeamPresenceSync {
     public typealias IdentityProvider = @Sendable (_ repoPath: String) async throws -> PresenceIdentity
     public typealias Publisher = @Sendable (_ doc: PresenceDocument, _ slug: String, _ repoPath: String) async throws -> Void
     public typealias Fetcher = @Sendable (_ repoPath: String) async throws -> [PresenceDocument]
+    public typealias Deleter = @Sendable (_ slug: String, _ repoPath: String) async throws -> Void
 
     /// @spec SYNC-3.4 (behavioral spec on TeamPresenceSyncTests)
     public static let staleAfter: TimeInterval = 30 * 60
@@ -66,6 +41,7 @@ public final class TeamPresenceSync {
     private let identityProvider: IdentityProvider
     private let publisher: Publisher
     private let fetcher: Fetcher
+    private let deleter: Deleter
     private let now: @Sendable () -> Date
 
     private struct LastPublish {
@@ -76,6 +52,9 @@ public final class TeamPresenceSync {
     private static let logger = Logger(subsystem: "com.btucker.graftty", category: "TeamPresenceSync")
 
     private var lastPublished: [String: LastPublish] = [:]
+    /// Retained so `pulse()` can trigger an immediate tick. Assigned in
+    /// `start`; the app target's `PollingTicker` outlives `startup()`.
+    private var ticker: PollingTickerLike?
     /// A hung git subprocess must not stack a second tick's git work on the
     /// same refs; the next ticker fire retries.
     private var isTicking = false
@@ -85,12 +64,14 @@ public final class TeamPresenceSync {
         identityProvider: @escaping IdentityProvider = { try await PresenceIdentity.load(repoPath: $0) },
         publisher: @escaping Publisher = { try await PresenceRefSync.publish($0, slug: $1, repoPath: $2) },
         fetcher: @escaping Fetcher = { try await PresenceRefSync.fetchAll(repoPath: $0) },
+        deleter: @escaping Deleter = { try await PresenceRefSync.delete(slug: $0, repoPath: $1) },
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.store = store
         self.identityProvider = identityProvider
         self.publisher = publisher
         self.fetcher = fetcher
+        self.deleter = deleter
         self.now = now
     }
 
@@ -100,8 +81,30 @@ public final class TeamPresenceSync {
         ticker: PollingTickerLike,
         getRepos: @escaping @MainActor () -> [RepoEntry]
     ) {
+        self.ticker = ticker
         ticker.start { [weak self] in
             await self?.tick(repos: getRepos())
+        }
+    }
+
+    /// Triggers an immediate tick without waiting for the polling interval
+    /// (e.g. right after a repo enables sharing).
+    public func pulse() {
+        ticker?.pulse()
+    }
+
+    /// Tears down this user's presence for a repo after sharing is disabled:
+    /// clears the local store immediately and deletes the published ref from
+    /// origin. Best-effort — a failed remote delete is logged; the periodic
+    /// tick keeps the local store clear regardless.
+    public func leave(repoPath: String) async {
+        store.clear(repoPath: repoPath)
+        lastPublished.removeValue(forKey: repoPath)
+        do {
+            let identity = try await identityProvider(repoPath)
+            try await deleter(identity.slug, repoPath)
+        } catch {
+            Self.logger.debug("presence ref not deleted for \(repoPath): \(error) (best-effort)")
         }
     }
 
@@ -141,12 +144,12 @@ public final class TeamPresenceSync {
             guard let docs = try? await fetcher(repo.path) else { continue }
             let cutoff = tickNow.addingTimeInterval(-Self.staleAfter)
             let ownSlug = identity.slug
-            let sluggedDocs = docs.map { ($0, PresenceIdentity.slug(forEmail: $0.email)) }
-            let entries: [RemoteWorktreePresence] = sluggedDocs
-                .filter { _, slug in slug != ownSlug }
-                .filter { doc, _ in doc.updatedAt > cutoff }
-                .flatMap { peer, peerSlug in
-                    peer.worktrees.map {
+            let entries: [RemoteWorktreePresence] = docs
+                .filter { $0.updatedAt > cutoff }
+                .flatMap { peer -> [RemoteWorktreePresence] in
+                    let peerSlug = PresenceIdentity.slug(forEmail: peer.email)
+                    guard peerSlug != ownSlug else { return [] }
+                    return peer.worktrees.map {
                         RemoteWorktreePresence(
                             ownerName: peer.user,
                             ownerSlug: peerSlug,

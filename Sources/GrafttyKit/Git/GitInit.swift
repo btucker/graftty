@@ -54,24 +54,11 @@ public enum GitInit {
 
     /// Returns true iff both `user.name` and `user.email` resolve to
     /// non-empty values in this repo's effective git config. Uses
-    /// `GitRunner.captureAll` so a non-zero exit (unset key) is observable
+    /// `GitRunner.configValue` so a non-zero exit (unset key) is observable
     /// without throwing.
     private static func hasConfiguredIdentity(at path: String) async -> Bool {
-        @Sendable func probe(_ key: String) async -> Bool {
-            do {
-                let out = try await GitRunner.captureAll(
-                    args: ["config", key], at: path
-                )
-                guard out.exitCode == 0 else { return false }
-                return !out.stdout
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .isEmpty
-            } catch {
-                return false
-            }
-        }
-        async let hasEmail = probe("user.email")
-        async let hasName = probe("user.name")
+        async let hasEmail = GitRunner.configValue("user.email", at: path) != nil
+        async let hasName = GitRunner.configValue("user.name", at: path) != nil
         let (email, name) = await (hasEmail, hasName)
         return email && name
     }

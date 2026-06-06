@@ -72,11 +72,11 @@ public struct PresenceDocument: Codable, Sendable, Equatable {
         )
     }
 
-    public static func encode(_ doc: PresenceDocument) throws -> Data {
+    public func encoded() throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
-        return try encoder.encode(doc)
+        return try encoder.encode(self)
     }
 
     public static func decode(_ data: Data) throws -> PresenceDocument {

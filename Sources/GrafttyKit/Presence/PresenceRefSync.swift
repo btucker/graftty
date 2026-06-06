@@ -12,7 +12,7 @@ public enum PresenceRefSync {
 
     /// @spec SYNC-2.1 (behavioral spec on PresenceRefSyncTests)
     public static func publish(_ doc: PresenceDocument, slug: String, repoPath: String) async throws {
-        let json = String(decoding: try PresenceDocument.encode(doc), as: UTF8.self)
+        let json = String(decoding: try doc.encoded(), as: UTF8.self)
         // The empty tree is a fixed, well-known object; -w ensures it exists
         // in this repo's object store.
         let tree = try await GitRunner.run(

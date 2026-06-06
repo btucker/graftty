@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import os
 import GrafttyKit
 import GrafttyProtocol
 
@@ -17,12 +16,10 @@ struct MainWindow: View {
     /// sidebar (SYNC-5.1). Shared with the sync service constructed in
     /// `GrafttyApp.startup()`.
     let teamPresenceSyncStore: TeamPresenceSyncStore
-    /// Lets the sharing-toggle handler pulse the presence ticker so a
-    /// freshly-enabled repo publishes/fetches without waiting a full
-    /// poll interval.
-    let teamPresenceTickerPulse: () -> Void
-
-    private static let presenceLogger = Logger(subsystem: "com.btucker.graftty", category: "MainWindow.Presence")
+    /// Drives the sharing-toggle handler's immediate publish/fetch (pulse)
+    /// and presence teardown (leave) so this view doesn't name the
+    /// underlying PresenceIdentity / PresenceRefSync machinery.
+    let teamPresenceSync: TeamPresenceSync
 
     @EnvironmentObject private var updaterController: UpdaterController
 
@@ -867,24 +864,17 @@ struct MainWindow: View {
 
     /// SYNC-5.1 / SYNC-2.3. Flips the repo's persisted
     /// `presenceSharingEnabled`. Enabling pulses the presence ticker so
-    /// the first publish/fetch happens immediately; disabling deletes our
-    /// presence ref from origin (best-effort — the sync service also
-    /// clears the local store on its next tick).
-    private func toggleTeamSharing(repoPath: String) {
+    /// the first publish/fetch happens immediately; disabling tears down
+    /// our presence (clears the local store and deletes the origin ref)
+    /// via the sync service.
+    func toggleTeamSharing(repoPath: String) {
         guard let idx = appState.repos.firstIndex(where: { $0.path == repoPath }) else { return }
         appState.repos[idx].presenceSharingEnabled.toggle()
-        let enabled = appState.repos[idx].presenceSharingEnabled
-        if enabled {
-            teamPresenceTickerPulse()
+        if appState.repos[idx].presenceSharingEnabled {
+            // First publish/fetch without waiting a full poll interval.
+            teamPresenceSync.pulse()
         } else {
-            Task {
-                do {
-                    let identity = try await PresenceIdentity.load(repoPath: repoPath)
-                    try await PresenceRefSync.delete(slug: identity.slug, repoPath: repoPath)
-                } catch {
-                    Self.presenceLogger.debug("presence ref not deleted for \(repoPath): \(error) (best-effort)")
-                }
-            }
+            Task { await teamPresenceSync.leave(repoPath: repoPath) }
         }
     }
 

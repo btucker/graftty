@@ -45,4 +45,18 @@ public enum GitRunner {
     ) async throws -> CLIOutput {
         try await executor.capture(command: "git", args: args, at: directory)
     }
+
+    /// Returns the trimmed, non-empty value of `git config [extraArgs] <key>`
+    /// at `path`, or nil if the key is unset or empty.
+    public static func configValue(
+        _ key: String,
+        extraArgs: [String] = [],
+        at path: String
+    ) async -> String? {
+        guard let out = try? await captureAll(
+            args: ["config"] + extraArgs + [key], at: path
+        ), out.exitCode == 0 else { return nil }
+        let value = out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
 }
