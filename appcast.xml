@@ -6,18 +6,32 @@
         <description>Updates for Graftty.</description>
         <language>en</language>
         <item>
+            <title>Version 0.1.11</title>
+            <sparkle:version>0.1.11</sparkle:version>
+            <sparkle:shortVersionString>0.1.11</sparkle:shortVersionString>
+            <pubDate>Thu, 04 Jun 2026 12:54:49 +0000</pubDate>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
+<ul dir="auto">
+<li>appcast: v0.1.10 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4583855795" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/210" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/210/hovercard" href="https://github.com/btucker/graftty/pull/210">#210</a></li>
+<li>fix(CONFIG-2.6): resolve GrafttyKit resource bundle in the packaged .app (v0.1.10 launch crash) by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4584195634" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/211" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/211/hovercard" href="https://github.com/btucker/graftty/pull/211">#211</a></li>
+</ul>
+<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.1.10...v0.1.11"><tt>v0.1.10...v0.1.11</tt></a></p>]]></description>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.1.11/Graftty-0.1.11.zip" length="29244421" type="application/octet-stream" sparkle:edSignature="MGkbhyS+gfYKbC6zfcO7mOSpbOTAQ8ib/lc+K/rfyehN9FyldGJEpSukHuf9Xg/GTVMdmoMyh3CL442VrBwrAw=="/>
+        </item>
+        <item>
             <title>Version 0.1.10</title>
             <sparkle:version>0.1.10</sparkle:version>
             <sparkle:shortVersionString>0.1.10</sparkle:shortVersionString>
             <pubDate>Wed, 03 Jun 2026 21:41:11 +0000</pubDate>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
-<ul dir="auto">
-<li>appcast: v0.1.9 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4581085563" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/207" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/207/hovercard" href="https://github.com/btucker/graftty/pull/207">#207</a></li>
-<li>fix(ZMX-6.9): agent-hooks zsh shim falls back to direct ZDOTDIR when Ghostty resources are missing by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4582709937" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/208" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/208/hovercard" href="https://github.com/btucker/graftty/pull/208">#208</a></li>
-<li>feat(CONFIG-2.x): vendor ghostty runtime resources — drop the Ghostty.app dependency by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4583760352" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/209" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/209/hovercard" href="https://github.com/btucker/graftty/pull/209">#209</a></li>
-</ul>
-<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.1.9...v0.1.10"><tt>v0.1.9...v0.1.10</tt></a></p>]]></description>
+            <description>&lt;h2 dir="auto"&gt;What's Changed&lt;/h2&gt;
+&lt;ul dir="auto"&gt;
+&lt;li&gt;appcast: v0.1.9 by @github-actions[bot] in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4581085563" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/207" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/207/hovercard" href="https://github.com/btucker/graftty/pull/207"&gt;#207&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;fix(ZMX-6.9): agent-hooks zsh shim falls back to direct ZDOTDIR when Ghostty resources are missing by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4582709937" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/208" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/208/hovercard" href="https://github.com/btucker/graftty/pull/208"&gt;#208&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;feat(CONFIG-2.x): vendor ghostty runtime resources — drop the Ghostty.app dependency by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4583760352" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/209" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/209/hovercard" href="https://github.com/btucker/graftty/pull/209"&gt;#209&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.1.9...v0.1.10"&gt;&lt;tt&gt;v0.1.9...v0.1.10&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
             <enclosure url="https://github.com/btucker/graftty/releases/download/v0.1.10/Graftty-0.1.10.zip" length="29242018" type="application/octet-stream" sparkle:edSignature="gGGB08CcDk/dYb76WK6qzFXhRr+/WOfWcH4C6C26weN5fndKOP9NGZAXc1AZox/0ySVGAlNAqwqyTLn7YWKADw=="/>
         </item>
         <item>

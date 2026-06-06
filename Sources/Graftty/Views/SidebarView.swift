@@ -124,8 +124,22 @@ struct SidebarView: View {
         )
     }
 
+    /// Title + destination for the repo's "Open on <forge>…"
+    /// context-menu item, or nil when the origin is unresolved or
+    /// unsupported, in which case the menu omits the item
+    /// (PROJECT-2.2).
+    private func forgeLink(
+        for repo: RepoEntry
+    ) -> (menuTitle: String, url: URL)? {
+        guard let origin = prStatusStore.originByRepo[repo.path],
+              let presentation = ForgePresentation(origin: origin),
+              let url = origin.webURL else { return nil }
+        return (presentation.menuTitle, url)
+    }
+
     @ViewBuilder
     private func repoSection(_ repo: RepoEntry) -> some View {
+        let forgeLink = forgeLink(for: repo)
         let resolvedDefaultBranch = remoteBranchStore.resolvedDefaultBranch(
             forRepoAt: repo.path,
             hint: repo.defaultBranchHint
@@ -184,11 +198,14 @@ struct SidebarView: View {
             }
         } label: {
             // No leading glyph — the top level is always projects, so
-            // a folder icon would be tautological noise. The disclosure
-            // arrow and semibold weight carry the "expandable heading"
-            // cues on their own. Trailing "+" opens the add-worktree
-            // sheet; .buttonStyle(.plain) keeps its tap from toggling
-            // the enclosing disclosure.
+            // a folder icon would be tautological noise, and even an
+            // informative forge logo proved to be repeated clutter in
+            // practice (the "Open on GitHub…" affordance lives in the
+            // context menu instead). The disclosure arrow and semibold
+            // weight carry the "expandable heading" cues on their own.
+            // Trailing "+" opens the add-worktree sheet;
+            // .buttonStyle(.plain) keeps its tap from toggling the
+            // enclosing disclosure.
             HStack(spacing: 6) {
                 Text(repo.displayName)
                     .foregroundColor(theme.foreground)
@@ -218,6 +235,12 @@ struct SidebarView: View {
                 if !repo.isGitTracked {
                     Button("Initialize Git Repository") {
                         onInitializeGit(repo)
+                    }
+                }
+                // PROJECT-2.3: context-menu forge link.
+                if let forge = forgeLink {
+                    Button(forge.menuTitle) {
+                        NSWorkspace.shared.open(forge.url)
                     }
                 }
                 // SYNC-5.1: opt-in presence sharing. Git-tracked repos
