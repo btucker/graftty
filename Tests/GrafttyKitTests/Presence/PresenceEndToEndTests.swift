@@ -2,6 +2,12 @@ import Testing
 import Foundation
 @testable import GrafttyKit
 
+// Deliberately a composition/integration test with NO @spec ID — the behavioral specs live on the
+// unit suites (SYNC-1.x/2.x/3.x); this test exercises the production-default seams those suites
+// stub.  Per project rules a spec ID may appear in only one behavioral location, so duplicating
+// one here is prohibited.
+
+// @MainActor required because TeamPresenceSync and its store are @MainActor.
 @MainActor
 @Suite("Presence end to end over a real shared remote", .serialized)
 struct PresenceEndToEndTests {
@@ -11,7 +17,9 @@ struct PresenceEndToEndTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let cloneB = root.appendingPathComponent("cloneB")
         try shellInRepo("git clone \(upstream.path) \(cloneB.path)", at: root)
-        try shellInRepo("git config user.name 'Ben' && git config user.email 'ben@btucker.net'", at: cloneA)
+        // Local repo config is what PresenceIdentity reads; publish itself uses a synthetic -c
+        // identity, so the test has no dependency on machine-global gitconfig.
+        try shellInRepo("git config user.name 'Ben' && git config user.email 'ben@example.com'", at: cloneA)
         try shellInRepo("git config user.name 'Sarah' && git config user.email 'sarah@example.com'", at: cloneB)
 
         // Sarah (cloneB) publishes via her own sync service (production defaults).
