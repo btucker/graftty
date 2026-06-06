@@ -1837,3 +1837,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SYNC-1.2** Presence documents shall round-trip through JSON with ISO-8601 timestamps and stable key ordering.
 
 **SYNC-1.3** The application shall derive the presence slug from the git user.email by lowercasing and replacing each run of non-alphanumeric characters with a single hyphen.
+
+### SYNC-2.x
+
+**SYNC-2.1** When publishing presence, the application shall push an empty-tree commit carrying the presence JSON in its message to refs/graftty/presence/<slug> on origin, replacing any previous value.
+
+**SYNC-2.2** When fetching presence, the application shall mirror refs/graftty/presence/* from origin and decode each document, skipping undecodable refs.
+
+**SYNC-2.3** When presence sharing is disabled for a repo, the application shall delete the publishing user's presence ref from origin.
