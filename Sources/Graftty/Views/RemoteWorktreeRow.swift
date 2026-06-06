@@ -33,6 +33,6 @@ struct RemoteWorktreeRow: View {
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityLabel("\(presence.ownerName) worktree \(presence.branch)")
+        .accessibilityLabel("\(presence.ownerName) worktree \(presence.branch)" + (presence.state == .running ? ", running" : ""))
     }
 }

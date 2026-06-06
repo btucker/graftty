@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import os
 import GrafttyKit
 import GrafttyProtocol
 
@@ -20,6 +21,8 @@ struct MainWindow: View {
     /// freshly-enabled repo publishes/fetches without waiting a full
     /// poll interval.
     let teamPresenceTickerPulse: () -> Void
+
+    private static let presenceLogger = Logger(subsystem: "com.btucker.graftty", category: "MainWindow.Presence")
 
     @EnvironmentObject private var updaterController: UpdaterController
 
@@ -875,8 +878,11 @@ struct MainWindow: View {
             teamPresenceTickerPulse()
         } else {
             Task {
-                if let identity = try? await PresenceIdentity.load(repoPath: repoPath) {
-                    try? await PresenceRefSync.delete(slug: identity.slug, repoPath: repoPath)
+                do {
+                    let identity = try await PresenceIdentity.load(repoPath: repoPath)
+                    try await PresenceRefSync.delete(slug: identity.slug, repoPath: repoPath)
+                } catch {
+                    Self.presenceLogger.debug("presence ref not deleted for \(repoPath): \(error) (best-effort)")
                 }
             }
         }
