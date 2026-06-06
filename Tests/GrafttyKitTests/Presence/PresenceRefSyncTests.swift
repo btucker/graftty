@@ -46,6 +46,21 @@ struct PresenceRefSyncTests {
         let doc = makeDoc(email: "sarah@example.com")
         try await PresenceRefSync.publish(doc, slug: "sarah-example-com", repoPath: cloneB.path)
 
+        // Push a commit whose message is not valid JSON so fetchAll must skip it.
+        let junkTree = try await GitRunner.run(
+            args: ["hash-object", "-w", "-t", "tree", "/dev/null"], at: cloneB.path
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let junkCommit = try await GitRunner.run(
+            args: ["-c", "user.name=x", "-c", "user.email=x@x",
+                   "commit-tree", junkTree, "-m", "this is not json"],
+            at: cloneB.path
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        _ = try await GitRunner.run(
+            args: ["push", "--quiet", "--force", "origin",
+                   "\(junkCommit):refs/graftty/presence/legacy-tool"],
+            at: cloneB.path
+        )
+
         let fetched = try await PresenceRefSync.fetchAll(repoPath: cloneA.path)
         #expect(fetched == [doc])
     }
