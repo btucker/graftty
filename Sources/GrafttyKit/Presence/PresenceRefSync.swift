@@ -3,9 +3,12 @@ import Foundation
 /// Publishes and fetches presence documents via git refs on the repo's
 /// `origin` remote (`refs/graftty/presence/<slug>`). The JSON document rides
 /// in the commit message of an empty-tree commit: no working-tree writes, no
-/// stdin-dependent plumbing, and `git show -s --format=%B` reads it back.
+/// stdin-dependent plumbing, and `git for-each-ref --format=%(contents)` reads
+/// all documents in a single subprocess call.
 public enum PresenceRefSync {
-    static func refName(slug: String) -> String { "refs/graftty/presence/\(slug)" }
+    private static let refPrefix = "refs/graftty/presence/"
+
+    static func refName(slug: String) -> String { "\(refPrefix)\(slug)" }
 
     /// @spec SYNC-2.1 (behavioral spec on PresenceRefSyncTests)
     public static func publish(_ doc: PresenceDocument, slug: String, repoPath: String) async throws {
@@ -37,23 +40,27 @@ public enum PresenceRefSync {
         _ = try await GitRunner.run(
             args: [
                 "fetch", "--quiet", "--force", "--prune", "origin",
-                "+refs/graftty/presence/*:refs/graftty/presence/*",
+                "+\(refPrefix)*:\(refPrefix)*",
             ],
             at: repoPath
         )
-        let refList = try await GitRunner.run(
-            args: ["for-each-ref", "--format=%(refname)", "refs/graftty/presence/"],
+        // Single subprocess: %(contents) embeds each commit message on the
+        // same line as its refname, separated by a tab. Presence JSON is
+        // always single-line (sortedKeys, non-pretty), so each record appears
+        // as exactly one line: `refs/graftty/presence/<slug>\t{json}`.
+        // Multi-line messages from foreign tools produce additional continuation
+        // lines that do not start with the ref prefix — those are silently ignored.
+        let output = try await GitRunner.run(
+            args: ["for-each-ref", "--format=%(refname)%09%(contents)", refPrefix],
             at: repoPath
         )
         var docs: [PresenceDocument] = []
-        for ref in refList.split(separator: "\n").map(String.init) where !ref.isEmpty {
-            guard let message = try? await GitRunner.run(
-                args: ["show", "-s", "--format=%B", ref], at: repoPath
-            ) else { continue }
-            let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        for line in output.split(whereSeparator: \.isNewline) {
+            guard line.hasPrefix(refPrefix), let tabIdx = line.firstIndex(of: "\t") else { continue }
+            let jsonSubstring = line[line.index(after: tabIdx)...].trimmingCharacters(in: .whitespaces)
             // Skip undecodable refs (foreign tools, future versions) rather
             // than failing the whole fetch.
-            if let doc = try? PresenceDocument.decode(Data(trimmed.utf8)) {
+            if let doc = try? PresenceDocument.decode(Data(jsonSubstring.utf8)) {
                 docs.append(doc)
             }
         }
@@ -66,7 +73,8 @@ public enum PresenceRefSync {
             args: ["push", "--quiet", "origin", ":\(refName(slug: slug))"],
             at: repoPath
         )
-        // Drop the local mirror immediately as well.
+        // best-effort — the remote delete already succeeded; a stale local
+        // mirror is pruned by the next fetch anyway.
         _ = try? await GitRunner.run(
             args: ["update-ref", "-d", refName(slug: slug)], at: repoPath
         )
