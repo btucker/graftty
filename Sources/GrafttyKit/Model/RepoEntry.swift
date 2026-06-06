@@ -23,6 +23,10 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
     /// when `RemoteBranchSnapshot.defaultBranch` is not yet resolved
     /// (no remote, network failure, fresh launch before first poll).
     public var defaultBranchHint: String?
+    /// @spec SYNC-4.1
+    /// Opt-in: while false (the default), the application shall neither publish
+    /// presence for this repo nor fetch teammates' presence refs.
+    public var presenceSharingEnabled: Bool
 
     public init(
         path: String,
@@ -31,7 +35,8 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
         worktrees: [WorktreeEntry] = [],
         bookmark: Data? = nil,
         isGitTracked: Bool = true,
-        defaultBranchHint: String? = nil
+        defaultBranchHint: String? = nil,
+        presenceSharingEnabled: Bool = false
     ) {
         self.id = UUID()
         self.path = path
@@ -41,15 +46,18 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
         self.bookmark = bookmark
         self.isGitTracked = isGitTracked
         self.defaultBranchHint = defaultBranchHint
+        self.presenceSharingEnabled = presenceSharingEnabled
     }
 
-    // Custom Decodable so `bookmark` (added in LAYOUT-4.5) is optional on
-    // disk. Matches the pattern `WorktreeEntry.init(from:)` uses for
+    // Custom Decodable so `bookmark` (added in LAYOUT-4.5) and
+    // `presenceSharingEnabled` (added in SYNC-4.1) are optional on disk.
+    // Matches the pattern `WorktreeEntry.init(from:)` uses for
     // `paneAttention` / `offeredDeleteForResolvedPR` — pre-fix persisted
     // state blobs don't carry the key, `decodeIfPresent` defaults it to
-    // nil, and existing users keep their state across the upgrade.
+    // nil/false, and existing users keep their state across the upgrade.
     private enum CodingKeys: String, CodingKey {
         case id, path, displayName, isCollapsed, worktrees, bookmark, isGitTracked, defaultBranchHint
+        case presenceSharingEnabled
     }
 
     public init(from decoder: Decoder) throws {
@@ -62,6 +70,7 @@ public struct RepoEntry: Codable, Sendable, Identifiable, Equatable {
         self.bookmark = try container.decodeIfPresent(Data.self, forKey: .bookmark)
         self.isGitTracked = try container.decodeIfPresent(Bool.self, forKey: .isGitTracked) ?? true
         self.defaultBranchHint = try container.decodeIfPresent(String.self, forKey: .defaultBranchHint)
+        self.presenceSharingEnabled = try container.decodeIfPresent(Bool.self, forKey: .presenceSharingEnabled) ?? false
     }
 }
 

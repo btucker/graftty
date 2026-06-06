@@ -1845,3 +1845,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **SYNC-2.2** When fetching presence, the application shall mirror refs/graftty/presence/* from origin and decode each document, skipping undecodable refs.
 
 **SYNC-2.3** When presence sharing is disabled for a repo, the application shall delete the publishing user's presence ref from origin.
+
+### SYNC-4.x
+
+**SYNC-4.1** If a persisted RepoEntry predates presence sharing, then the application shall decode presenceSharingEnabled as false.
