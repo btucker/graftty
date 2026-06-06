@@ -98,6 +98,24 @@ struct TeamPresenceSyncTests {
         #expect(entries.map(\.ownerName) == ["Sarah"])
     }
 
+    @Test("Publish fires immediately when the worktree set changes, without waiting for the heartbeat.")
+    func publishOnWorktreeChange() async {
+        let store = TeamPresenceSyncStore()
+        let published = PublishLog()
+        let sync = makeSync(store: store, published: published)
+        var repo = makeRepo(sharing: true)
+
+        await sync.tick(repos: [repo])           // initial publish
+        #expect(await published.count == 1)
+
+        // Mutate the worktree set (add a second branch) without advancing the clock.
+        let extraWt = WorktreeEntry(path: "/tmp/repo/wt/extra-branch", branch: "extra-branch")
+        repo.worktrees.append(extraWt)
+
+        await sync.tick(repos: [repo])           // worktrees changed -> immediate republish
+        #expect(await published.count == 2)
+    }
+
     @Test("Remote entries are sorted by owner then name for stable rendering.")
     func entriesSorted() async {
         let store = TeamPresenceSyncStore()

@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import os
 
 /// One teammate worktree as rendered in the sidebar.
 public struct RemoteWorktreePresence: Sendable, Equatable, Identifiable {
@@ -72,7 +73,12 @@ public final class TeamPresenceSync {
         let at: Date
     }
 
+    private static let logger = Logger(subsystem: "com.btucker.graftty", category: "TeamPresenceSync")
+
     private var lastPublished: [String: LastPublish] = [:]
+    /// A hung git subprocess must not stack a second tick's git work on the
+    /// same refs; the next ticker fire retries.
+    private var isTicking = false
 
     public init(
         store: TeamPresenceSyncStore,
@@ -88,8 +94,8 @@ public final class TeamPresenceSync {
         self.now = now
     }
 
-    /// Start the polling loop with a caller-provided ticker. Mirrors
-    /// `WorktreeStatsStore.start(ticker:getRepos:)`.
+    /// Start the polling loop with a caller-provided ticker. Uses the same
+    /// ticker-injection seam as `WorktreeStatsStore.start(ticker:getRepos:)`.
     public func start(
         ticker: PollingTickerLike,
         getRepos: @escaping @MainActor () -> [RepoEntry]
@@ -100,40 +106,50 @@ public final class TeamPresenceSync {
     }
 
     public func tick(repos: [RepoEntry]) async {
+        guard !isTicking else { return }
+        isTicking = true
+        defer { isTicking = false }
+
         for repo in repos {
             guard repo.presenceSharingEnabled, repo.isGitTracked else {
                 store.clear(repoPath: repo.path)
                 lastPublished.removeValue(forKey: repo.path)
                 continue
             }
-            guard let identity = try? await identityProvider(repo.path) else { continue }
+            guard let identity = try? await identityProvider(repo.path) else {
+                Self.logger.debug("presence sync skipped for \(repo.path): identity unavailable (set git config user.email)")
+                continue
+            }
+
+            let tickNow = now()
 
             // Publish when the worktree set changed OR the heartbeat is due
             // (so updatedAt keeps outrunning teammates' staleness cutoff).
             let doc = PresenceDocument.build(
                 user: identity.name, email: identity.email,
-                worktrees: repo.worktrees, now: now()
+                worktrees: repo.worktrees, now: tickNow
             )
             let last = lastPublished[repo.path]
-            let heartbeatDue = last.map { now().timeIntervalSince($0.at) > Self.heartbeatInterval } ?? true
+            let heartbeatDue = last.map { tickNow.timeIntervalSince($0.at) > Self.heartbeatInterval } ?? true
             if last?.worktrees != doc.worktrees || heartbeatDue {
                 if (try? await publisher(doc, identity.slug, repo.path)) != nil {
-                    lastPublished[repo.path] = LastPublish(worktrees: doc.worktrees, at: now())
+                    lastPublished[repo.path] = LastPublish(worktrees: doc.worktrees, at: tickNow)
                 }
             }
 
             // Fetch teammates.
             guard let docs = try? await fetcher(repo.path) else { continue }
-            let cutoff = now().addingTimeInterval(-Self.staleAfter)
+            let cutoff = tickNow.addingTimeInterval(-Self.staleAfter)
             let ownSlug = identity.slug
-            let entries: [RemoteWorktreePresence] = docs
-                .filter { PresenceIdentity.slug(forEmail: $0.email) != ownSlug }
-                .filter { $0.updatedAt > cutoff }
-                .flatMap { peer in
+            let sluggedDocs = docs.map { ($0, PresenceIdentity.slug(forEmail: $0.email)) }
+            let entries: [RemoteWorktreePresence] = sluggedDocs
+                .filter { _, slug in slug != ownSlug }
+                .filter { doc, _ in doc.updatedAt > cutoff }
+                .flatMap { peer, peerSlug in
                     peer.worktrees.map {
                         RemoteWorktreePresence(
                             ownerName: peer.user,
-                            ownerSlug: PresenceIdentity.slug(forEmail: peer.email),
+                            ownerSlug: peerSlug,
                             name: $0.name, branch: $0.branch, state: $0.state,
                             updatedAt: peer.updatedAt
                         )
