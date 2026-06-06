@@ -139,6 +139,10 @@ final class AppServices {
     /// (SYNC-5.1). The sync service (Task 8) is constructed around this
     /// same instance and drives its `remoteWorktrees`.
     let teamPresenceSyncStore = TeamPresenceSyncStore()
+    /// Publishes our presence and fetches teammates' for every
+    /// sharing-enabled repo, driving `teamPresenceSyncStore`. Constructed
+    /// around the store above; started in `startup()` on a poll cadence.
+    let teamPresenceSync: TeamPresenceSync
     /// Drives `TeamPresenceSync.tick` on a poll cadence (assigned in
     /// `startup()` by Task 8). `pulse()` here lets the sharing-toggle
     /// publish/fetch immediately rather than waiting a full interval.
@@ -191,6 +195,7 @@ final class AppServices {
         self.remoteBranchStore = remoteBranchStore
         self.prStatusStore = PRStatusStore(remoteBranchStore: remoteBranchStore)
         self.claudeSessionRegistry = ClaudeSessionRegistry()
+        self.teamPresenceSync = TeamPresenceSync(store: teamPresenceSyncStore)
 
         // Lift the team inbox up here so the request handler
         // (`teamInboxRequestHandler()`) and the dispatcher share one
@@ -939,6 +944,19 @@ struct GrafttyApp: App {
         for repo in binding.wrappedValue.repos {
             services.remoteBranchStore.refresh(repoPath: repo.path)
         }
+
+        // SYNC: team presence publish/fetch. 60s cadence; presence is ambient,
+        // so it keeps polling while the app is backgrounded (teammates still
+        // see us, we still see them).
+        let teamPresenceTicker = PollingTicker(
+            interval: .seconds(60),
+            pauseWhenInactive: { false }
+        )
+        services.teamPresenceTicker = teamPresenceTicker
+        services.teamPresenceSync.start(
+            ticker: teamPresenceTicker,
+            getRepos: { binding.wrappedValue.repos }
+        )
 
         // Same reasoning for the PR poller: open→merged transitions
         // happen on GitHub while Graftty is backgrounded, and the only
