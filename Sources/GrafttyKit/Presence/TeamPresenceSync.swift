@@ -52,6 +52,9 @@ public final class TeamPresenceSync {
     private static let logger = Logger(subsystem: "com.btucker.graftty", category: "TeamPresenceSync")
 
     private var lastPublished: [String: LastPublish] = [:]
+    /// Repos whose leave() ran while a tick was suspended mid-processing; the
+    /// resumed tick must not write stale results back for them.
+    private var pendingLeaves: Set<String> = []
     /// Retained so `pulse()` can trigger an immediate tick. Assigned in
     /// `start`; the app target's `PollingTicker` outlives `startup()`.
     private var ticker: PollingTickerLike?
@@ -98,6 +101,7 @@ public final class TeamPresenceSync {
     /// origin. Best-effort — a failed remote delete is logged; the periodic
     /// tick keeps the local store clear regardless.
     public func leave(repoPath: String) async {
+        pendingLeaves.insert(repoPath)
         store.clear(repoPath: repoPath)
         lastPublished.removeValue(forKey: repoPath)
         do {
@@ -113,12 +117,19 @@ public final class TeamPresenceSync {
         isTicking = true
         defer { isTicking = false }
 
+        // Known limitation (P1, not fixed): if two RepoEntry objects share one
+        // origin remote, their publishes overwrite the same presence ref (last
+        // writer wins). Uncommon setup; acceptable for now.
         for repo in repos {
             guard repo.presenceSharingEnabled, repo.isGitTracked else {
                 store.clear(repoPath: repo.path)
                 lastPublished.removeValue(forKey: repo.path)
+                pendingLeaves.remove(repo.path)
                 continue
             }
+            // A fresh enabled snapshot means any previous leave completed; no
+            // await interleaves between here and the publish gate below.
+            pendingLeaves.remove(repo.path)
             guard let identity = try? await identityProvider(repo.path) else {
                 Self.logger.debug("presence sync skipped for \(repo.path): identity unavailable (set git config user.email)")
                 continue
@@ -136,12 +147,18 @@ public final class TeamPresenceSync {
             let heartbeatDue = last.map { tickNow.timeIntervalSince($0.at) > Self.heartbeatInterval } ?? true
             if last?.worktrees != doc.worktrees || heartbeatDue {
                 if (try? await publisher(doc, identity.slug, repo.path)) != nil {
+                    // leave() may have run while we were suspended in the
+                    // publisher; don't record a publish the user just tore down.
+                    guard !pendingLeaves.contains(repo.path) else { continue }
                     lastPublished[repo.path] = LastPublish(worktrees: doc.worktrees, at: tickNow)
                 }
             }
 
             // Fetch teammates.
             guard let docs = try? await fetcher(repo.path) else { continue }
+            // leave() may have run while we were suspended in the fetcher;
+            // don't repopulate rows the user just removed.
+            guard !pendingLeaves.contains(repo.path) else { continue }
             let cutoff = tickNow.addingTimeInterval(-Self.staleAfter)
             let ownSlug = identity.slug
             let entries: [RemoteWorktreePresence] = docs

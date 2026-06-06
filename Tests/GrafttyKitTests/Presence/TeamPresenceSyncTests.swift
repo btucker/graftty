@@ -145,6 +145,38 @@ struct TeamPresenceSyncTests {
         #expect(await deletes.calls.first?.repoPath == "/tmp/repo")
     }
 
+    @Test("leave during a suspended tick prevents stale results from re-populating the store.")
+    func leaveDuringSuspendedTickPreventsStaleRepopulation() async {
+        let store = TeamPresenceSyncStore()
+        let identity = PresenceIdentity(name: "Ben", email: "ben@btucker.net")
+        let theirsDoc = PresenceDocument(version: 1, user: "Sarah", email: "sarah@example.com", updatedAt: Self.now,
+                                         worktrees: [.init(name: "auth-refactor", branch: "auth-refactor", state: .running)])
+        let deletes = DeleteLog()
+        let trigger = LeaveTrigger()
+        let fixedNow = Self.now
+        let sync = TeamPresenceSync(
+            store: store,
+            identityProvider: { _ in identity },
+            publisher: { _, _, _ in },
+            fetcher: { _ in
+                // Simulate the user disabling sharing mid-tick: leave() runs at
+                // this await suspension point, clearing the store.
+                await trigger.fire(repoPath: "/tmp/repo")
+                return [theirsDoc]
+            },
+            deleter: { slug, repoPath in await deletes.append((slug, repoPath)) },
+            now: { fixedNow }
+        )
+        trigger.sync = sync
+
+        await sync.tick(repos: [makeRepo(sharing: true)])
+
+        // The fetch result must NOT be written back over the leave that ran
+        // while the tick was suspended in the fetcher.
+        #expect(store.remoteWorktrees["/tmp/repo"]?.isEmpty != false)
+        #expect(await deletes.calls.count == 1)
+    }
+
     @Test("Remote entries are sorted by owner then name for stable rendering.")
     func entriesSorted() async {
         let store = TeamPresenceSyncStore()
@@ -166,6 +198,14 @@ actor PublishLog {
     private(set) var calls: [(doc: PresenceDocument, slug: String, repoPath: String)] = []
     func append(_ call: (PresenceDocument, String, String)) { calls.append(call) }
     var count: Int { calls.count }
+}
+
+/// Lets a fetcher closure call back into the sync instance to fire leave()
+/// mid-tick. The sync is assigned after construction (the closure captures the
+/// box, not the not-yet-built sync).
+@MainActor final class LeaveTrigger {
+    var sync: TeamPresenceSync?
+    func fire(repoPath: String) async { await sync?.leave(repoPath: repoPath) }
 }
 
 /// Thread-safe delete-call recorder for tests.
