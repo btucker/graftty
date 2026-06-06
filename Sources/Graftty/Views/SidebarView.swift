@@ -18,6 +18,9 @@ struct SidebarView: View {
     /// busy/idle liveness (notify pings still win) into its attention pill.
     let claudeSessionRegistry: ClaudeSessionRegistry
     let remoteBranchStore: RemoteBranchStore
+    /// Teammates' worktrees, keyed by repo path. Rendered as read-only
+    /// ambient rows beneath each repo's local worktrees (SYNC-5.1).
+    @ObservedObject var presenceStore: TeamPresenceSyncStore
     let onSelect: (String) -> Void
     let onSelectPane: (String, PaneSlotID) -> Void
     let onAddRepo: () -> Void
@@ -31,6 +34,10 @@ struct SidebarView: View {
     /// on success, or a user-visible error string (typically git's
     /// stderr) on failure so the sheet can display it inline.
     let onAddWorktree: (RepoEntry, String, BranchSelection) async -> String?
+    /// Toggles presence sharing for the repo at the given path (SYNC-5.1 /
+    /// SYNC-2.3). Wired from MainWindow so the publish/leave side effects
+    /// live alongside the other repo handlers.
+    let onToggleTeamSharing: (String) -> Void
 
     /// Injected by GrafttyApp so the pane-row context menu can gate the
     /// "Copy web URL" item on `controller.status == .listening` and read
@@ -165,6 +172,16 @@ struct SidebarView: View {
                     toIndex: toOffset
                 )
             }
+
+            // SYNC-5.1: teammates' worktrees, read-only and ambient,
+            // rendered after the local worktrees. No Button/action, no
+            // drag/drop, no context menu, no selection highlight.
+            ForEach(presenceStore.remoteWorktrees[repo.path] ?? []) { remote in
+                RemoteWorktreeRow(presence: remote, theme: theme)
+                    // Match the local rows' outdent so the person icon
+                    // lines up under the repo header's leading column.
+                    .listRowInsets(EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0))
+            }
         } label: {
             // No leading glyph — the top level is always projects, so
             // a folder icon would be tautological noise. The disclosure
@@ -201,6 +218,18 @@ struct SidebarView: View {
                 if !repo.isGitTracked {
                     Button("Initialize Git Repository") {
                         onInitializeGit(repo)
+                    }
+                }
+                // SYNC-5.1: opt-in presence sharing. Git-tracked repos
+                // only — non-git projects have no origin to publish a
+                // presence ref to.
+                if repo.isGitTracked {
+                    Button(
+                        repo.presenceSharingEnabled
+                            ? "Stop Sharing Worktrees with Team"
+                            : "Share Worktrees with Team"
+                    ) {
+                        onToggleTeamSharing(repo.path)
                     }
                 }
                 Button("Remove Repository") {

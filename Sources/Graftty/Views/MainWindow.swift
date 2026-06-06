@@ -12,6 +12,14 @@ struct MainWindow: View {
     let remoteBranchStore: RemoteBranchStore
     let worktreeMonitor: WorktreeMonitor
     let teamEventDispatcher: TeamEventDispatcher
+    /// Teammates' worktree presence, rendered as ambient rows in the
+    /// sidebar (SYNC-5.1). Shared with the sync service constructed in
+    /// `GrafttyApp.startup()`.
+    let teamPresenceSyncStore: TeamPresenceSyncStore
+    /// Lets the sharing-toggle handler pulse the presence ticker so a
+    /// freshly-enabled repo publishes/fetches without waiting a full
+    /// poll interval.
+    let teamPresenceTickerPulse: () -> Void
 
     @EnvironmentObject private var updaterController: UpdaterController
 
@@ -37,6 +45,7 @@ struct MainWindow: View {
                 prStatusStore: prStatusStore,
                 claudeSessionRegistry: claudeSessionRegistry,
                 remoteBranchStore: remoteBranchStore,
+                presenceStore: teamPresenceSyncStore,
                 onSelect: selectWorktree,
                 onSelectPane: selectPane,
                 onAddRepo: addRepository,
@@ -47,6 +56,7 @@ struct MainWindow: View {
                 onDeleteWorktree: deleteWorktreeWithConfirmation,
                 onMovePane: movePane,
                 onAddWorktree: addWorktree,
+                onToggleTeamSharing: toggleTeamSharing,
                 pendingAddWorktree: $pendingAddWorktree
             )
             .navigationSplitViewColumnWidth(
@@ -849,6 +859,26 @@ struct MainWindow: View {
                 WorktreeEntry(path: $0.path, branch: $0.branch)
             }
             remoteBranchStore.refresh(repoPath: repo.path)
+        }
+    }
+
+    /// SYNC-5.1 / SYNC-2.3. Flips the repo's persisted
+    /// `presenceSharingEnabled`. Enabling pulses the presence ticker so
+    /// the first publish/fetch happens immediately; disabling deletes our
+    /// presence ref from origin (best-effort — the sync service also
+    /// clears the local store on its next tick).
+    private func toggleTeamSharing(repoPath: String) {
+        guard let idx = appState.repos.firstIndex(where: { $0.path == repoPath }) else { return }
+        appState.repos[idx].presenceSharingEnabled.toggle()
+        let enabled = appState.repos[idx].presenceSharingEnabled
+        if enabled {
+            teamPresenceTickerPulse()
+        } else {
+            Task {
+                if let identity = try? await PresenceIdentity.load(repoPath: repoPath) {
+                    try? await PresenceRefSync.delete(slug: identity.slug, repoPath: repoPath)
+                }
+            }
         }
     }
 

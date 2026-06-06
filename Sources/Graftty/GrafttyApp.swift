@@ -135,6 +135,14 @@ final class AppServices {
     let claudeSessionRegistry: ClaudeSessionRegistry
     let teamInbox: TeamInbox
     let teamEventDispatcher: TeamEventDispatcher
+    /// Observable store the sidebar reads to render teammates' worktrees
+    /// (SYNC-5.1). The sync service (Task 8) is constructed around this
+    /// same instance and drives its `remoteWorktrees`.
+    let teamPresenceSyncStore = TeamPresenceSyncStore()
+    /// Drives `TeamPresenceSync.tick` on a poll cadence (assigned in
+    /// `startup()` by Task 8). `pulse()` here lets the sharing-toggle
+    /// publish/fetch immediately rather than waiting a full interval.
+    var teamPresenceTicker: PollingTicker?
     var worktreeMonitorBridge: WorktreeMonitorBridge?
     /// Drives `TeamPresenceMonitor.cleanupStale` on a slow cadence so
     /// SIGKILL'd agents (whose wrapper trap never fired) don't leave
@@ -386,7 +394,9 @@ struct GrafttyApp: App {
                 claudeSessionRegistry: services.claudeSessionRegistry,
                 remoteBranchStore: services.remoteBranchStore,
                 worktreeMonitor: services.worktreeMonitor,
-                teamEventDispatcher: services.teamEventDispatcher
+                teamEventDispatcher: services.teamEventDispatcher,
+                teamPresenceSyncStore: services.teamPresenceSyncStore,
+                teamPresenceTickerPulse: { [services] in services.teamPresenceTicker?.pulse() }
             )
                 .environmentObject(webController)
                 .environmentObject(updaterController)

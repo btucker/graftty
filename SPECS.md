@@ -1859,3 +1859,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### SYNC-4.x
 
 **SYNC-4.1** If a persisted RepoEntry predates presence sharing, then the application shall decode presenceSharingEnabled as false.
+
+### SYNC-5.x
+
+**SYNC-5.1** While presence sharing is enabled for a repo, the sidebar shall render teammates' worktrees inside that repo's section with an owner badge and ambient styling.
