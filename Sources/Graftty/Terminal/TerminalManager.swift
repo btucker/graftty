@@ -905,6 +905,11 @@ final class TerminalManager: ObservableObject {
     /// TERM-11.4: the last remote client detached from `sessionName`; give
     /// any still-silent pane on that session the chance to sync its PTY to
     /// the current grid.
+    ///
+    /// Deliberately scans `handle.zmxSessionName` (the session each
+    /// backend is actually attached to) rather than reusing
+    /// `handle(forSessionName:)` — `paneSlotIDsBySessionName` is pruned by
+    /// `forgetPaneSession` and can drift from a still-live handle.
     func remoteClientsDetached(fromSession sessionName: String) {
         for handle in surfaces.values where handle.zmxSessionName == sessionName {
             handle.remoteClientsDidDetach()

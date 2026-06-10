@@ -78,6 +78,32 @@ struct SurfaceHandleHostManagedTests {
         #expect(backend.writes == [Data("nvim Sources/main.swift\r".utf8)])
     }
 
+    @Test("SurfaceHandle.init shall bind the surface-sync closures exactly once, wire the layout-settled notifier to the backend, and forward remoteClientsDidDetach to the backend (TERM-11.1/11.3/11.4 glue).")
+    func surfaceSyncAndDetachWiring() throws {
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let handle = try #require(SurfaceHandle(
+            terminalID: Self.terminalID(),
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _, _, _ in backend }
+        ))
+
+        #expect(backend.bindSurfaceSyncCount == 1)
+        #expect(handle.zmxSessionName == testSurfaceHandleSpawnConfiguration().sessionName)
+
+        let surfaceView = try #require(handle.view as? SurfaceNSView)
+        let notifier = try #require(surfaceView.hostManagedLayoutNotifier)
+        notifier()
+        #expect(backend.markLayoutSettledCount == 1)
+
+        handle.remoteClientsDidDetach()
+        #expect(backend.remoteClientsDidDetachCount == 1)
+    }
+
     @Test func typeTextUsesBackendForZmxBackedSurface() throws {
         let backend = FakeSurfaceHandleZmxBackend()
         let harness = SurfaceHandleTestHarness(surface: fakeSurface())
