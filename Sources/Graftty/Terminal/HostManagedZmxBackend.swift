@@ -152,12 +152,11 @@ final class HostManagedZmxBackend {
         lock.lock()
         switch lifecycle {
         case .idle:
-            // IOS-12.1: each fresh attach starts gated. Until the user
-            // produces input on this surface we treat libghostty's viewport
-            // callbacks as advisory — we record the last reported size but
-            // do not propagate it to the zmx PTY. This avoids the
-            // post-reattach width drift caused by libghostty's pre-layout
-            // viewport callback shrinking the PTY.
+            // IOS-12.1: each fresh attach starts silent. Pre-layout
+            // viewport callbacks are recorded but never propagated (the
+            // post-reattach width-drift bug from libghostty's pre-layout
+            // callback); once layout settles, silent-state callbacks
+            // forward unless a remote client is attached (TERM-11.2).
             attachState = .silent
             lastSilentResize = nil
             lifecycle = .starting
