@@ -116,6 +116,9 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
     private(set) var releaseCount = 0
     private(set) var writes: [Data] = []
     private(set) var observedSetSizeCountAtStart = 0
+    private(set) var bindSurfaceSyncCount = 0
+    private(set) var markLayoutSettledCount = 0
+    private(set) var remoteClientsDidDetachCount = 0
 
     init(startError: Error? = nil, setSizeCountSource: @escaping () -> Int = { 0 }) {
         self.startError = startError
@@ -149,6 +152,21 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
 
     func withProgrammaticInput(_ body: () -> Void) {
         body()
+    }
+
+    func bindSurfaceSync(
+        currentGridSize: @escaping () -> (cols: UInt16, rows: UInt16)?,
+        requestRefresh: @escaping () -> Void
+    ) {
+        bindSurfaceSyncCount += 1
+    }
+
+    func markLayoutSettled() {
+        markLayoutSettledCount += 1
+    }
+
+    func remoteClientsDidDetach() {
+        remoteClientsDidDetachCount += 1
     }
 
     func close() {

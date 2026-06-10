@@ -116,6 +116,11 @@ final class TerminalManager: ObservableObject {
     /// fall back to libghostty's default $SHELL spawn.
     var zmxLauncher: ZmxLauncher?
 
+    /// TERM-11.x: per-session remote attach counts; injected by
+    /// GrafttyApp.startup() like zmxLauncher. Consulted (via SurfaceHandle)
+    /// to decide whether the IOS-12.1 silent gate withholds PTY resizes.
+    var remoteAttachmentRegistry: RemoteAttachmentRegistry?
+
     /// Set by `GrafttyApp` after construction. When non-nil, pane add /
     /// remove flows propagate registration so the scanner can poll
     /// listening sockets for each pane's process subtree.
@@ -504,6 +509,7 @@ final class TerminalManager: ObservableObject {
                 zmxSpawnConfiguration: zmxSpawnConfiguration,
                 terminalManager: self,
                 inputActivityObserver: inputActivityObserver,
+                remoteAttachmentRegistry: remoteAttachmentRegistry,
                 initialGridSize: consumeCachedGridSize(for: terminalID)
             ) else {
                 forgetPaneSession(for: terminalID)
@@ -549,6 +555,7 @@ final class TerminalManager: ObservableObject {
             extraInitialInput: extraInitialInput,
             terminalManager: self,
             inputActivityObserver: inputActivityObserver,
+            remoteAttachmentRegistry: remoteAttachmentRegistry,
             initialGridSize: consumeCachedGridSize(for: terminalID)
         ) else {
             forgetPaneSession(for: terminalID)
@@ -893,6 +900,15 @@ final class TerminalManager: ObservableObject {
     func zmxSessionName(for terminalID: PaneSlotID) -> String? {
         guard let sessionID = paneSessionIDs[terminalID] else { return nil }
         return ZmxLauncher.sessionName(for: sessionID)
+    }
+
+    /// TERM-11.4: the last remote client detached from `sessionName`; give
+    /// any still-silent pane on that session the chance to sync its PTY to
+    /// the current grid.
+    func remoteClientsDetached(fromSession sessionName: String) {
+        for handle in surfaces.values where handle.zmxSessionName == sessionName {
+            handle.remoteClientsDidDetach()
+        }
     }
 
     private func forgetPaneSession(for terminalID: PaneSlotID) {
