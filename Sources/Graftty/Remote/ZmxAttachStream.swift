@@ -28,12 +28,15 @@ final class ZmxAttachStream: TerminalByteStream, @unchecked Sendable {
     let inboundBytes: AsyncStream<Data>
     private let lock = NIOLock()
     private var closed = false
+    private let attachmentRegistry: RemoteAttachmentRegistry?
+    private let sessionName: String
 
     init(
         zmxExecutable: URL,
         zmxDir: URL,
         sessionName: String,
-        workingDirectory: URL?
+        workingDirectory: URL?,
+        attachmentRegistry: RemoteAttachmentRegistry? = nil
     ) throws {
         let process = Process()
         process.executableURL = zmxExecutable
@@ -52,6 +55,8 @@ final class ZmxAttachStream: TerminalByteStream, @unchecked Sendable {
         self.process = process
         self.stdinPipe = stdin
         self.stdoutPipe = stdout
+        self.sessionName = sessionName
+        self.attachmentRegistry = attachmentRegistry
 
         var cont: AsyncStream<Data>.Continuation!
         self.inboundBytes = AsyncStream { c in cont = c }
@@ -70,6 +75,9 @@ final class ZmxAttachStream: TerminalByteStream, @unchecked Sendable {
         }
 
         try process.run()
+        // TERM-11.5: only a successfully running attach child counts as a
+        // remote client; a throwing run() leaves the registry untouched.
+        attachmentRegistry?.attach(sessionName: sessionName)
     }
 
     func send(_ bytes: Data) async throws {
@@ -113,5 +121,8 @@ final class ZmxAttachStream: TerminalByteStream, @unchecked Sendable {
         if process.isRunning {
             process.terminate()
         }
+        // TERM-11.5: detach outside the lock so that onLastDetach observers
+        // may safely call isRemoteAttached without deadlocking.
+        attachmentRegistry?.detach(sessionName: sessionName)
     }
 }
