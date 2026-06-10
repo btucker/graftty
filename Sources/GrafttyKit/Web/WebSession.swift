@@ -71,9 +71,10 @@ public final class WebSession {
 
     /// TERM-11.5: per-session remote attach counts. Set by the owning
     /// WebSocket bridge before `start()`; `start()` registers this attach
-    /// and `close()` deregisters it exactly once.
+    /// and `close()` deregisters it exactly once (`spawned != nil` is the
+    /// registered-attach marker — both are set by the same successful
+    /// spawn, and `isClosed` makes close() single-entry).
     public var attachmentRegistry: RemoteAttachmentRegistry?
-    private var didRegisterAttach = false
 
     /// Test seam: override the env `start()` reads for terminal-capability
     /// resolution. Production callers leave this nil and `start()` reads
@@ -129,7 +130,6 @@ public final class WebSession {
         // has nothing to deregister. Safe under stateLock because attach
         // fires no observer (unlike detach, which close() calls unlocked).
         attachmentRegistry?.attach(sessionName: config.sessionName)
-        didRegisterAttach = true
         startReaderThread()
         startSizePoller()
     }
@@ -163,10 +163,9 @@ public final class WebSession {
         onPTYData = nil
         onExit = nil
         onPTYSize = nil
-        // TERM-11.5: the isClosed guard above is what makes close()
-        // single-entry; clearing the flag here is defense-in-depth.
-        let shouldDetach = didRegisterAttach
-        didRegisterAttach = false
+        // TERM-11.5: a non-nil spawned means start() registered an attach;
+        // the isClosed guard above makes this deregistration single-entry.
+        let shouldDetach = spawned != nil
         stateLock.unlock()
 
         // Detach OUTSIDE stateLock: the registry's onLastDetach observer

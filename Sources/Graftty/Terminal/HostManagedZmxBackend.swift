@@ -284,6 +284,13 @@ final class HostManagedZmxBackend {
         lock.unlock()
     }
 
+    /// The single spelling of the silent-state gate (TERM-11.2 /
+    /// IOS-12.1): withhold PTY resizes iff layout hasn't settled or a
+    /// remote client is attached. Caller holds `lock`.
+    private func shouldWithholdResizeLocked() -> Bool {
+        !layoutSettled || hasRemoteClient()
+    }
+
     /// TERM-11.1: the owning NSView received its first nonzero frame.
     /// One-shot: if the pane is still silent and no remote client is
     /// attached, sync the PTY to the current grid so zmx formats output
@@ -293,19 +300,19 @@ final class HostManagedZmxBackend {
         defer { lock.unlock() }
         guard !layoutSettled else { return }
         layoutSettled = true
-        guard case .silent = attachState, !hasRemoteClient() else { return }
+        guard case .silent = attachState, !shouldWithholdResizeLocked() else { return }
         flushSizeToPtyLocked(refresh: false)
     }
 
     /// TERM-11.4: the last remote client detached from this session. A
     /// still-silent pane syncs the PTY to the current grid immediately —
     /// there is no longer anyone whose width we must preserve. Re-checks
-    /// `hasRemoteClient` because the registry fires its observer outside
-    /// its lock: another client may have re-attached by the time this runs.
+    /// the gate because the registry fires its observer outside its lock:
+    /// another client may have re-attached by the time this runs.
     func remoteClientsDidDetach() {
         lock.lock()
         defer { lock.unlock() }
-        guard case .silent = attachState, layoutSettled, !hasRemoteClient() else { return }
+        guard case .silent = attachState, !shouldWithholdResizeLocked() else { return }
         flushSizeToPtyLocked(refresh: true)
     }
 
@@ -371,11 +378,14 @@ final class HostManagedZmxBackend {
             // (pre-layout libghostty noise) or while a remote client is
             // attached (the Mac must not steal the session width without
             // user engagement). Otherwise forward without engaging.
-            if !layoutSettled || hasRemoteClient() {
+            if shouldWithholdResizeLocked() {
                 lastSilentResize = PendingResize(cols: cols, rows: rows)
                 lock.unlock()
                 return
             }
+            // Forwarding live dims supersedes anything withheld earlier;
+            // clearing keeps the engagement flush's fallback from
+            // resurrecting a stale size when no grid provider is bound.
             lastSilentResize = nil
         }
         switch lifecycle {
