@@ -14,15 +14,19 @@ import Foundation
 /// Locking: `onLastDetach` is invoked OUTSIDE the registry lock, on the
 /// detaching caller's thread. Observers may take their own locks (the
 /// host-managed backend does) without deadlocking against `isRemoteAttached`
-/// calls made under those locks.
+/// calls made under those locks. Because the lock is released before the
+/// callback runs, the count may have gone positive again by the time the
+/// observer executes — observers should re-check `isRemoteAttached` rather
+/// than treat the callback as authoritative.
 public final class RemoteAttachmentRegistry: @unchecked Sendable {
     private let lock = NSLock()
     private var counts: [String: Int] = [:]
-    private var storedOnLastDetach: ((String) -> Void)?
+    private var storedOnLastDetach: (@Sendable (String) -> Void)?
 
-    /// Fires when a session's attach count drops to zero. Invoked outside
-    /// the registry's lock, on the detaching caller's thread.
-    public var onLastDetach: ((String) -> Void)? {
+    /// Fires when a session's attach count drops to zero. Single observer
+    /// slot — assigning replaces any prior observer. Invoked outside the
+    /// registry's lock, on the detaching caller's thread.
+    public var onLastDetach: (@Sendable (String) -> Void)? {
         get {
             lock.lock()
             defer { lock.unlock() }
