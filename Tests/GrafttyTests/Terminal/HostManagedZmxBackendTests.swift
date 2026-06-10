@@ -37,15 +37,16 @@ struct HostManagedZmxBackendTests {
         #expect(session.writes() == [Data("abc".utf8)])
     }
 
-    @Test("Pre-layout viewport callbacks are withheld; the first user input flushes the last one, then later callbacks pass through (IOS-12.1).")
+    @Test("Remote-gated viewport callbacks are withheld; the first user input flushes the last one, then later callbacks pass through (IOS-12.1).")
     func receiveResizeCallbackForwardsGridSizeToStartedSessionOnlyAfterUserInputEngagement() throws {
         let session = FakeHostManagedSession()
-        let backend = Self.makeBackend(session: session)
+        let backend = Self.makeBackend(session: session, hasRemoteClient: { true })
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
 
-        // IOS-12.1: pre-engagement viewport callbacks are recorded but not
-        // forwarded to the PTY. The pre-existing PTY dims persist.
+        // IOS-12.1: remote attached — pre-engagement viewport callbacks are
+        // recorded but not forwarded to the PTY. The PTY dims persist.
         HostManagedZmxBackend.receiveResizeCallback(
             backend.userdataForTesting,
             132,
@@ -310,12 +311,13 @@ struct HostManagedZmxBackendTests {
         #expect(session.resizes().isEmpty)
     }
 
-    @Test("First user-input write after a withheld viewport callback flushes the queued size to the PTY as a single resize (IOS-12.1).")
+    @Test("First user-input write after a remote-withheld viewport callback flushes the queued size to the PTY as a single resize (IOS-12.1).")
     func userInputFlushesPendingResize() throws {
         let session = FakeHostManagedSession()
-        let backend = Self.makeBackend(session: session)
+        let backend = Self.makeBackend(session: session, hasRemoteClient: { true })
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
 
         HostManagedZmxBackend.receiveResizeCallback(
             backend.userdataForTesting,
@@ -337,6 +339,7 @@ struct HostManagedZmxBackendTests {
         let backend = Self.makeBackend(session: session)
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
 
         try backend.write(Data([0x68]))   // engagement, no queued resize
 
@@ -390,11 +393,12 @@ struct HostManagedZmxBackendTests {
     @Test("`write(_:claimEngagement: false)` shall not flip attachState to .engaged — used by programmatic callers (extraInitialInput, typeText for splitPane/send-pane/agent nudges) that should not be treated as IOS-12.1 user input.")
     func programmaticWriteDoesNotEngageGate() throws {
         let session = FakeHostManagedSession()
-        let backend = Self.makeBackend(session: session)
+        let backend = Self.makeBackend(session: session, hasRemoteClient: { true })
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
 
-        // Queue a pre-engagement viewport.
+        // Queue a pre-engagement viewport (withheld: remote attached).
         HostManagedZmxBackend.receiveResizeCallback(
             backend.userdataForTesting,
             132, 43, 2112, 1032
@@ -429,8 +433,10 @@ struct HostManagedZmxBackendTests {
 
         // Start the backend now and engage with a real keystroke.
         try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
         // The pre-start callback was wiped by start() per IOS-12.1.
-        // A fresh post-start callback shall trigger the flush.
+        // A fresh post-settle callback forwards immediately (TERM-11.2);
+        // the engagement write that follows has nothing further to flush.
         HostManagedZmxBackend.receiveResizeCallback(
             backend.userdataForTesting,
             80, 24, 960, 576
@@ -629,6 +635,105 @@ struct HostManagedZmxBackendTests {
         #expect(session.resizes().isEmpty)
     }
 
+    // MARK: - TERM-11.6/11.7/11.8 — pre-layout engagement + opt-in engagement
+
+    @Test("@spec TERM-11.6: When user input engages the silent gate before layout has settled, the application shall defer the engagement PTY sync until layout settles rather than resize the PTY to the pre-layout grid.")
+    func preLayoutEngagementDefersFlushUntilLayoutSettles() throws {
+        let session = FakeHostManagedSession()
+        let settled = LockedFlag(false)
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        // The grid reports the bogus pre-layout placeholder (49x17) until
+        // layout lands, then the real dims — mirroring the trace captured
+        // on 2026-06-10 (flush(engagement) -> 49x17 at attach).
+        backend.bindSurfaceSync(
+            currentGridSize: { settled.value() ? (cols: 194, rows: 74) : (cols: 49, rows: 17) },
+            requestRefresh: {}
+        )
+        try backend.start(surface: Self.fakeSurface())
+
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            49, 17, 588, 272
+        )
+        // Engagement before the first real layout (early keystroke).
+        try backend.write(Data([0x68]))
+        #expect(session.resizes().isEmpty)
+
+        settled.set(true)
+        backend.markLayoutSettled()
+        #expect(session.resizes() == [Resize(cols: 194, rows: 74)])
+    }
+
+    @Test("@spec TERM-11.7: While layout has not settled, the application shall not forward viewport callbacks to the zmx PTY regardless of engagement state.")
+    func preLayoutCallbackWithheldEvenWhenEngaged() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+
+        try backend.write(Data([0x68]))   // engaged before layout
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            49, 17, 588, 272
+        )
+        #expect(session.resizes().isEmpty)
+
+        // Settling flushes the best available size (the withheld callback,
+        // since no grid provider is bound), then live callbacks flow.
+        backend.markLayoutSettled()
+        #expect(session.resizes() == [Resize(cols: 49, rows: 17)])
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            120, 40, 1440, 960
+        )
+        #expect(session.resizes() == [Resize(cols: 49, rows: 17), Resize(cols: 120, rows: 40)])
+    }
+
+    @Test("@spec TERM-11.8: If libghostty emits PTY-bound bytes outside a user-input scope (terminal query auto-responses, automation), then the application shall not treat them as engaging user input; bytes emitted inside the scope shall engage.")
+    func callbackBytesOutsideUserInputScopeDoNotEngage() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session, hasRemoteClient: { true })
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 142, rows: 38) },
+            requestRefresh: {}
+        )
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+
+        // A terminal-query auto-response (e.g. DA1 reply) arrives through
+        // the receive-buffer callback with no key event in flight.
+        let response = Array("\u{1b}[?1;2c".utf8)
+        response.withUnsafeBufferPointer { ptr in
+            HostManagedZmxBackend.receiveBufferCallback(
+                backend.userdataForTesting,
+                ptr.baseAddress,
+                ptr.count
+            )
+        }
+        // Still silent: the remote-gated viewport callback stays withheld.
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            132, 43, 2112, 1032
+        )
+        #expect(session.resizes().isEmpty)
+
+        // The same callback inside a user-input scope (a real key dispatch)
+        // engages and flushes the current grid.
+        let key = Array("h".utf8)
+        backend.withUserInputScope {
+            key.withUnsafeBufferPointer { ptr in
+                HostManagedZmxBackend.receiveBufferCallback(
+                    backend.userdataForTesting,
+                    ptr.baseAddress,
+                    ptr.count
+                )
+            }
+        }
+        #expect(session.resizes() == [Resize(cols: 142, rows: 38)])
+    }
+
     private static func makeBackend(
         session: FakeHostManagedSession,
         hasRemoteClient: @escaping () -> Bool = { false }
@@ -665,9 +770,10 @@ struct HostManagedZmxBackendTests {
     @Test("When two threads race to `write` after a silent-gated viewport callback, the engagement-flush resize shall land at the PTY before the write bytes do — there shall be no interleaving where bytes hit the PTY at the pre-flush dims.")
     func engagementFlushResizeOrdersBeforeConcurrentWriteBytes() throws {
         let session = FakeHostManagedSession()
-        let backend = Self.makeBackend(session: session)
+        let backend = Self.makeBackend(session: session, hasRemoteClient: { true })
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
 
         HostManagedZmxBackend.receiveResizeCallback(
             backend.userdataForTesting,

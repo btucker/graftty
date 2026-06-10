@@ -119,6 +119,7 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
     private(set) var bindSurfaceSyncCount = 0
     private(set) var markLayoutSettledCount = 0
     private(set) var remoteClientsDidDetachCount = 0
+    private(set) var userInputScopeCount = 0
 
     init(startError: Error? = nil, setSizeCountSource: @escaping () -> Int = { 0 }) {
         self.startError = startError
@@ -151,6 +152,11 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
     }
 
     func withProgrammaticInput(_ body: () -> Void) {
+        body()
+    }
+
+    func withUserInput(_ body: () -> Void) {
+        userInputScopeCount += 1
         body()
     }
 

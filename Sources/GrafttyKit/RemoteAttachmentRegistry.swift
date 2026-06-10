@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// @spec TERM-11.5
 /// The application shall track the number of remote clients attached to each
@@ -19,6 +20,9 @@ import Foundation
 /// observer executes — observers should re-check `isRemoteAttached` rather
 /// than treat the callback as authoritative.
 public final class RemoteAttachmentRegistry: @unchecked Sendable {
+    /// Render-desync diagnostic trail (TERM-11.x): `log stream --predicate
+    /// 'subsystem == "com.graftty.app" AND category == "resize-trace"'`.
+    private static let trace = Logger(subsystem: "com.graftty.app", category: "resize-trace")
     private let lock = NSLock()
     private var counts: [String: Int] = [:]
     private var storedOnLastDetach: (@Sendable (String) -> Void)?
@@ -44,7 +48,9 @@ public final class RemoteAttachmentRegistry: @unchecked Sendable {
     public func attach(sessionName: String) {
         lock.lock()
         counts[sessionName, default: 0] += 1
+        let newCount = counts[sessionName] ?? 0
         lock.unlock()
+        Self.trace.notice("attach \(sessionName, privacy: .public) count=\(newCount)")
     }
 
     public func detach(sessionName: String) {
@@ -58,6 +64,7 @@ public final class RemoteAttachmentRegistry: @unchecked Sendable {
         }
         let callback = droppedToZero ? storedOnLastDetach : nil
         lock.unlock()
+        Self.trace.notice("detach \(sessionName, privacy: .public) count=\(max(0, current - 1)) wasTracked=\(current > 0)")
         callback?(sessionName)
     }
 

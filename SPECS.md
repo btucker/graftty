@@ -288,6 +288,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.5** The application shall track the number of remote clients attached to each zmx session; a session is remote-attached while its count is positive, and an observer fires when the count returns to zero.
 
+**TERM-11.6** When user input engages the silent gate before layout has settled, the application shall defer the engagement PTY sync until layout settles rather than resize the PTY to the pre-layout grid.
+
+**TERM-11.7** While layout has not settled, the application shall not forward viewport callbacks to the zmx PTY regardless of engagement state.
+
+**TERM-11.8** If libghostty emits PTY-bound bytes outside a user-input scope (terminal query auto-responses, automation), then the application shall not treat them as engaging user input; bytes emitted inside the scope shall engage.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery

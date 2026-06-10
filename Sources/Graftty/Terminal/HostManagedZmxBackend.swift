@@ -1,6 +1,7 @@
 import Foundation
 import GhosttyKit
 import GrafttyKit
+import os
 
 protocol HostManagedZmxSession: AnyObject {
     func start() throws
@@ -11,7 +12,17 @@ protocol HostManagedZmxSession: AnyObject {
 
 extension NativePtySession: HostManagedZmxSession {}
 
+/// Render-desync diagnostic trail (TERM-11.x): every PTY-resize decision
+/// the host-managed backend makes, with the inputs that drove it.
+/// `log stream --predicate 'subsystem == "com.graftty.app" AND
+/// category == "resize-trace"'`.
+enum ResizeTrace {
+    static let log = Logger(subsystem: "com.graftty.app", category: "resize-trace")
+}
+
 final class HostManagedZmxBackend {
+    private static var trace: Logger { ResizeTrace.log }
+
     typealias SessionFactory = (
         _ surface: ghostty_surface_t,
         _ spawnConfiguration: ZmxSpawnConfiguration,
@@ -37,7 +48,9 @@ final class HostManagedZmxBackend {
     /// layout has settled AND no remote client is attached to the session
     /// (TERM-11.2); otherwise they are recorded and the PTY's existing dims
     /// persist. The first user input flips to `.engaged` and syncs the PTY
-    /// to the current grid (TERM-11.3).
+    /// to the current grid (TERM-11.3) — deferred to layout-settle when it
+    /// fires pre-layout (TERM-11.6). Only bytes emitted during a real user
+    /// key dispatch count as user input (TERM-11.8).
     private enum AttachState {
         case silent
         case engaged
@@ -57,12 +70,16 @@ final class HostManagedZmxBackend {
         // intentionally dropped. SurfaceHandle sends explicit extraInitialInput
         // with write(_:) after start succeeds.
         //
-        // IOS-12.1: when the caller is currently inside a
-        // `withProgrammaticInput` scope (e.g. `SurfaceHandle.pressReturn`
-        // invoked from the send-pane IPC), the bytes libghostty emits
-        // for the synthesized key event should NOT engage the silent
-        // gate — they're automation, not a human keystroke.
-        try? backend.write(data, claimEngagement: !backend.isProgrammaticInputActive)
+        // TERM-11.8: engagement is opt-in. Only bytes emitted while a
+        // user key dispatch is in flight (`withUserInputScope`, entered
+        // by the view around `ghostty_surface_key` for real key events)
+        // count as IOS-12.1 user input. Everything else libghostty
+        // emits on its own — terminal-query auto-responses (DA/DSR),
+        // mouse reporting, focus events — reaches the PTY without
+        // engaging. The programmatic scope (`withProgrammaticInput`,
+        // e.g. the send-pane IPC's synthesized Return) still vetoes
+        // engagement even inside a user scope.
+        try? backend.write(data, claimEngagement: backend.emittedBytesClaimEngagement)
     }
 
     static let receiveResizeCallback: ghostty_surface_receive_resize_cb = { userdata, cols, rows, _, _ in
@@ -90,6 +107,15 @@ final class HostManagedZmxBackend {
     /// IOS-12.1.
     private var programmaticInputDepth: Int = 0
 
+    /// Reentrant counter tracking active `withUserInputScope` bodies.
+    /// TERM-11.8: engagement is opt-in — `receiveBufferCallback` claims
+    /// IOS-12.1 engagement only while a user key dispatch is in flight
+    /// (the view wraps `ghostty_surface_key` for real key events in this
+    /// scope). Bytes libghostty emits on its own — terminal-query
+    /// auto-responses (DA/DSR replies), mouse-reporting sequences,
+    /// focus events — never engage.
+    private var userInputDepth: Int = 0
+
     /// TERM-11.x gating inputs. `hasRemoteClient` is injected at init
     /// (default false — direct-shell/test backends have no remote peers).
     /// The surface-sync closures are bound by SurfaceHandle after
@@ -99,9 +125,9 @@ final class HostManagedZmxBackend {
     private var requestRefresh: () -> Void = {}
 
     /// Flips true (once) when the owning NSView first receives a nonzero
-    /// frame. While still `.silent`, pre-settle viewport callbacks are
-    /// never forwarded — they are libghostty pre-layout noise (the
-    /// original PR #201 bug). An engaged pane bypasses this gate.
+    /// frame. Pre-settle viewport callbacks are never forwarded in ANY
+    /// engagement state — they are libghostty pre-layout noise (the
+    /// original PR #201 bug; TERM-11.7).
     private var layoutSettled = false
 
     init(
@@ -253,12 +279,21 @@ final class HostManagedZmxBackend {
     /// witness in `SurfaceHandle.swift` can forward to it without
     /// colliding with its own name.
     func withProgrammaticInputScope<T>(_ body: () throws -> T) rethrows -> T {
+        try withDepthScope(\.programmaticInputDepth, body)
+    }
+
+    /// Shared lock/increment/decrement shape for the two reentrant input
+    /// scopes (`withProgrammaticInputScope` / `withUserInputScope`).
+    private func withDepthScope<T>(
+        _ depth: ReferenceWritableKeyPath<HostManagedZmxBackend, Int>,
+        _ body: () throws -> T
+    ) rethrows -> T {
         lock.lock()
-        programmaticInputDepth += 1
+        self[keyPath: depth] += 1
         lock.unlock()
         defer {
             lock.lock()
-            programmaticInputDepth -= 1
+            self[keyPath: depth] -= 1
             lock.unlock()
         }
         return try body()
@@ -284,26 +319,40 @@ final class HostManagedZmxBackend {
         lock.unlock()
     }
 
-    /// The single spelling of the silent-state gate (TERM-11.2 /
-    /// IOS-12.1): withhold PTY resizes iff layout hasn't settled or a
-    /// remote client is attached. Caller holds `lock`.
+    /// The single spelling of the resize gate — two orthogonal withhold
+    /// conditions:
+    /// 1. Layout hasn't settled: pre-layout dims are libghostty
+    ///    placeholder noise, withheld in EVERY engagement state
+    ///    (TERM-11.7).
+    /// 2. The pane is still silent with a remote client attached: the
+    ///    Mac must not steal the session width without user engagement
+    ///    (TERM-11.2 / IOS-12.1).
+    /// Caller holds `lock`.
     private func shouldWithholdResizeLocked() -> Bool {
-        !layoutSettled || hasRemoteClient()
+        if !layoutSettled { return true }
+        if case .silent = attachState { return hasRemoteClient() }
+        return false
     }
 
-    /// TERM-11.1: the owning NSView received its first nonzero frame.
-    /// One-shot: if the pane is still silent and no remote client is
-    /// attached, sync the PTY to the current grid so zmx formats output
-    /// for the dims libghostty is actually rendering.
+    /// TERM-11.1 / TERM-11.6: the owning NSView received its first
+    /// nonzero frame. One-shot: sync the PTY to the current grid so zmx
+    /// formats output for the dims libghostty is actually rendering —
+    /// unless the pane is still silent with a remote client attached
+    /// (IOS-12.1 withholding). An engaged pane always syncs here: this
+    /// is where an engagement that fired pre-layout lands its deferred
+    /// flush instead of shipping the bogus pre-layout grid.
     func markLayoutSettled() {
         lock.lock()
         defer { lock.unlock() }
         guard !layoutSettled else { return }
         layoutSettled = true
-        guard case .silent = attachState, !shouldWithholdResizeLocked() else { return }
+        guard !shouldWithholdResizeLocked() else {
+            Self.trace.notice("layoutSettled \(self.spawnConfiguration.sessionName, privacy: .public) NO-SYNC remote=\(self.hasRemoteClient())")
+            return
+        }
         // Refresh deliberately dropped: setFrameSize already issued one
         // on this same frame event two statements before notifying us.
-        _ = flushSizeToPtyLocked()
+        _ = flushSizeToPtyLocked(reason: "layoutSettled")
     }
 
     /// TERM-11.4: the last remote client detached from this session. A
@@ -315,21 +364,31 @@ final class HostManagedZmxBackend {
         lock.lock()
         guard case .silent = attachState, !shouldWithholdResizeLocked() else {
             lock.unlock()
+            Self.trace.notice("remoteClientsDidDetach \(self.spawnConfiguration.sessionName, privacy: .public) NO-SYNC")
             return
         }
-        let refresh = flushSizeToPtyLocked()
+        let refresh = flushSizeToPtyLocked(reason: "remoteDetach")
         lock.unlock()
         refresh?()
     }
 
-    /// Snapshot of `programmaticInputDepth > 0` used by
-    /// `receiveBufferCallback` to decide whether the imminent `write`
-    /// should engage the gate. Lock-protected so it stays coherent with
-    /// `withProgrammaticInput`'s increment/decrement on the same lock.
-    fileprivate var isProgrammaticInputActive: Bool {
+    /// Single-lock snapshot of the engagement decision for bytes arriving
+    /// via `receiveBufferCallback` (a hot path — fires for every chunk
+    /// libghostty emits): engage iff a user key dispatch is in flight
+    /// (TERM-11.8) and no programmatic scope vetoes it (IOS-12.1).
+    fileprivate var emittedBytesClaimEngagement: Bool {
         lock.lock()
         defer { lock.unlock() }
-        return programmaticInputDepth > 0
+        return userInputDepth > 0 && programmaticInputDepth == 0
+    }
+
+    /// Runs `body` with the user-input flag raised: bytes libghostty
+    /// emits through `receiveBufferCallback` during `body` count as
+    /// IOS-12.1 user input and engage the silent gate. The view wraps
+    /// real key-event dispatch (`ghostty_surface_key` from `keyDown` /
+    /// `keyUp`) in this scope. TERM-11.8. Reentrant via a depth counter.
+    func withUserInputScope<T>(_ body: () throws -> T) rethrows -> T {
+        try withDepthScope(\.userInputDepth, body)
     }
 
     func close() {
@@ -379,21 +438,23 @@ final class HostManagedZmxBackend {
         let currentSession: HostManagedZmxSession?
 
         lock.lock()
-        if case .silent = attachState {
-            // TERM-11.2 / IOS-12.1: withhold while layout hasn't settled
-            // (pre-layout libghostty noise) or while a remote client is
-            // attached (the Mac must not steal the session width without
-            // user engagement). Otherwise forward without engaging.
-            if shouldWithholdResizeLocked() {
-                lastSilentResize = PendingResize(cols: cols, rows: rows)
-                lock.unlock()
-                return
-            }
-            // Forwarding live dims supersedes anything withheld earlier;
-            // clearing keeps the engagement flush's fallback from
-            // resurrecting a stale size when no grid provider is bound.
-            lastSilentResize = nil
+        // TERM-11.7 / TERM-11.2 / IOS-12.1: withhold while layout hasn't
+        // settled (pre-layout libghostty noise — regardless of engagement
+        // state) or while a still-silent pane has a remote client attached
+        // (the Mac must not steal the session width without user
+        // engagement). Otherwise forward without engaging.
+        if shouldWithholdResizeLocked() {
+            let settled = layoutSettled
+            let remote = hasRemoteClient()
+            lastSilentResize = PendingResize(cols: cols, rows: rows)
+            lock.unlock()
+            Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(cols)x\(rows) WITHHELD settled=\(settled) remote=\(remote)")
+            return
         }
+        // Forwarding live dims supersedes anything withheld earlier;
+        // clearing keeps the engagement flush's fallback from
+        // resurrecting a stale size when no grid provider is bound.
+        lastSilentResize = nil
         switch lifecycle {
         case .idle, .starting:
             pendingResize = PendingResize(cols: cols, rows: rows)
@@ -405,6 +466,7 @@ final class HostManagedZmxBackend {
         }
         lock.unlock()
 
+        Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(cols)x\(rows) \(currentSession != nil ? "FORWARDED" : "QUEUED", privacy: .public)")
         try? currentSession?.resize(cols: cols, rows: rows)
     }
 
@@ -424,7 +486,16 @@ final class HostManagedZmxBackend {
             return
         }
         attachState = .engaged
-        let refresh = flushSizeToPtyLocked()
+        // TERM-11.6: engagement before the first real layout must not
+        // flush — the grid still holds libghostty's pre-layout
+        // placeholder dims (the 49x17 bounce captured in the 2026-06-10
+        // resize-trace). markLayoutSettled performs the sync instead.
+        guard layoutSettled else {
+            lock.unlock()
+            Self.trace.notice("engagement \(self.spawnConfiguration.sessionName, privacy: .public) DEFERRED (layout not settled)")
+            return
+        }
+        let refresh = flushSizeToPtyLocked(reason: "engagement")
         lock.unlock()
         refresh?()
     }
@@ -444,7 +515,7 @@ final class HostManagedZmxBackend {
     /// libghostty, and issuing it lock-free keeps the backend-lock ↔
     /// libghostty-internal-lock pair acyclic even when this path runs
     /// inside a libghostty callback.
-    private func flushSizeToPtyLocked() -> (() -> Void)? {
+    private func flushSizeToPtyLocked(reason: StaticString) -> (() -> Void)? {
         // Bail before touching the closures on a closed backend: close()
         // happens-before ghostty_surface_free, so this lifecycle gate is
         // what keeps a bound `currentGridSize` surface pointer from being
@@ -452,8 +523,13 @@ final class HostManagedZmxBackend {
         if case .closed = lifecycle { return nil }
         let queued = lastSilentResize
         lastSilentResize = nil
-        let target = currentGridSize() ?? queued.map { (cols: $0.cols, rows: $0.rows) }
-        guard let target else { return nil }
+        let grid = currentGridSize()
+        let target = grid ?? queued.map { (cols: $0.cols, rows: $0.rows) }
+        guard let target else {
+            Self.trace.notice("flush(\(reason, privacy: .public)) \(self.spawnConfiguration.sessionName, privacy: .public) NO-TARGET")
+            return nil
+        }
+        Self.trace.notice("flush(\(reason, privacy: .public)) \(self.spawnConfiguration.sessionName, privacy: .public) -> \(target.cols)x\(target.rows) fromGrid=\(grid != nil) queued=\(queued.map { "\($0.cols)x\($0.rows)" } ?? "nil", privacy: .public)")
         switch lifecycle {
         case .running:
             try? session?.resize(cols: target.cols, rows: target.rows)
