@@ -22,38 +22,78 @@ struct RemoteAttachmentRegistryTests {
 
     @Test func detachBelowZeroIsClampedAndDoesNotFireObserver() {
         let registry = RemoteAttachmentRegistry()
-        var fired: [String] = []
+        let fired = LockedNames()
         registry.onLastDetach = { fired.append($0) }
 
         registry.detach(sessionName: "never-attached")
-        #expect(fired.isEmpty)
+        #expect(fired.values().isEmpty)
         #expect(!registry.isRemoteAttached(sessionName: "never-attached"))
     }
 
     @Test func onLastDetachFiresOnlyWhenCountReachesZero() {
         let registry = RemoteAttachmentRegistry()
-        var fired: [String] = []
+        let fired = LockedNames()
         registry.onLastDetach = { fired.append($0) }
 
         registry.attach(sessionName: "s1")
         registry.attach(sessionName: "s1")
         registry.detach(sessionName: "s1")
-        #expect(fired.isEmpty)
+        #expect(fired.values().isEmpty)
 
         registry.detach(sessionName: "s1")
-        #expect(fired == ["s1"])
+        #expect(fired.values() == ["s1"])
     }
 
     @Test func observerCanReenterRegistryWithoutDeadlock() {
         // Locking rule: onLastDetach is invoked outside the registry lock,
         // so an observer may query the registry synchronously.
         let registry = RemoteAttachmentRegistry()
-        var observedDuringCallback: Bool? = nil
+        let observedDuringCallback = LockedBox<Bool?>(nil)
         registry.onLastDetach = { name in
-            observedDuringCallback = registry.isRemoteAttached(sessionName: name)
+            observedDuringCallback.set(registry.isRemoteAttached(sessionName: name))
         }
         registry.attach(sessionName: "s1")
         registry.detach(sessionName: "s1")
-        #expect(observedDuringCallback == false)
+        #expect(observedDuringCallback.value() == false)
+    }
+}
+
+/// `onLastDetach` is `@Sendable`, so test observers record through these
+/// lock-protected boxes instead of capturing local mutable state.
+private final class LockedNames: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [String] = []
+
+    func append(_ value: String) {
+        lock.lock()
+        stored.append(value)
+        lock.unlock()
+    }
+
+    func values() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
+}
+
+private final class LockedBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value
+
+    init(_ value: Value) {
+        self.stored = value
+    }
+
+    func set(_ value: Value) {
+        lock.lock()
+        stored = value
+        lock.unlock()
+    }
+
+    func value() -> Value {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
     }
 }
