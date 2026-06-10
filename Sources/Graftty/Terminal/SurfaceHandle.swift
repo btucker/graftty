@@ -41,6 +41,16 @@ protocol SurfaceHandleZmxBackend: AnyObject {
     /// backend gates IOS-12.1 engagement on this flag for the duration
     /// of `body`. See `HostManagedZmxBackend.withProgrammaticInput`.
     func withProgrammaticInput(_ body: () -> Void)
+    /// Binds closures that let the backend query the live grid size and
+    /// request a repaint without linking against libghostty (TERM-11.3).
+    func bindSurfaceSync(
+        currentGridSize: @escaping () -> (cols: UInt16, rows: UInt16)?,
+        requestRefresh: @escaping () -> Void
+    )
+    /// The owning NSView received its first nonzero frame (TERM-11.1).
+    func markLayoutSettled()
+    /// The last remote client detached from this pane's session (TERM-11.4).
+    func remoteClientsDidDetach()
     func close()
     func surfaceWasFreed()
 }
@@ -100,6 +110,9 @@ final class SurfaceHandle {
     let surface: ghostty_surface_t
     let view: NSView
     let worktreePath: String
+    /// zmx session this pane is attached to, nil for direct-shell panes.
+    /// Used by TerminalManager to route last-remote-detach syncs (TERM-11.4).
+    let zmxSessionName: String?
 
     /// Retained pointer to the userdata box; released in `deinit`. libghostty
     /// keeps a copy of the pointer in its surface struct and passes it back
@@ -123,17 +136,24 @@ final class SurfaceHandle {
         extraInitialInput: String? = nil,
         terminalManager: TerminalManager? = nil,
         inputActivityObserver: PaneInputActivityObserver? = nil,
+        remoteAttachmentRegistry: RemoteAttachmentRegistry? = nil,
         surfaceFactory: SurfaceHandleGhosttySurfaceFactory = .live,
-        zmxBackendFactory: (ZmxSpawnConfiguration, (cols: UInt16, rows: UInt16)?) -> SurfaceHandleZmxBackend = { spawn, initialSize in
+        zmxBackendFactory: (
+            ZmxSpawnConfiguration,
+            (cols: UInt16, rows: UInt16)?,
+            @escaping () -> Bool
+        ) -> SurfaceHandleZmxBackend = { spawn, initialSize, hasRemoteClient in
             HostManagedZmxBackend(
                 spawnConfiguration: spawn,
-                initialSize: initialSize
+                initialSize: initialSize,
+                hasRemoteClient: hasRemoteClient
             )
         },
         initialGridSize: ghostty_surface_size_s? = nil
     ) {
         self.terminalID = terminalID
         self.worktreePath = worktreePath
+        self.zmxSessionName = zmxSpawnConfiguration?.sessionName
         self.surfaceFactory = surfaceFactory
 
         let userdataBox = SurfaceUserdataBox(
@@ -142,8 +162,14 @@ final class SurfaceHandle {
         )
         let userdataPtr = Unmanaged.passRetained(userdataBox).toOpaque()
         self.userdataPointer = userdataPtr
+        // Strong capture of the registry is fine: it's app-lifetime and
+        // holds no reference back to the backend.
         let backend = zmxSpawnConfiguration.map { spawn in
-            zmxBackendFactory(spawn, initialGridSize.map { ($0.columns, $0.rows) })
+            zmxBackendFactory(
+                spawn,
+                initialGridSize.map { ($0.columns, $0.rows) },
+                { remoteAttachmentRegistry?.isRemoteAttached(sessionName: spawn.sessionName) ?? false }
+            )
         }
         self.zmxBackend = backend
 
@@ -275,6 +301,32 @@ final class SurfaceHandle {
         // it forwards keystrokes/mouse events back into libghostty.
         surfaceView.surface = newSurface
 
+        if let backend {
+            // TERM-11.3: let the backend query the live grid and request
+            // repaints without linking libghostty. These closures run on
+            // whatever thread triggers a flush (libghostty IO, IPC, main) —
+            // see bindSurfaceSync's contract. Weak self (legal here: every
+            // stored property is initialized) avoids a handle→backend→
+            // closure→handle cycle and turns any flush racing deinit into
+            // a no-op; the backend's closed-lifecycle gate already covers
+            // the surface pointer's validity.
+            backend.bindSurfaceSync(
+                currentGridSize: { [weak self] in
+                    guard let self else { return nil }
+                    let size = self.queryGridSize()
+                    guard size.columns > 0, size.rows > 0 else { return nil }
+                    return (cols: size.columns, rows: size.rows)
+                },
+                requestRefresh: { [weak self] in
+                    self?.refresh()
+                }
+            )
+            // TERM-11.1: first nonzero frame on the view = layout settled.
+            surfaceView.hostManagedLayoutNotifier = { [weak backend] in
+                backend?.markLayoutSettled()
+            }
+        }
+
         if let initialGridSize, initialGridSize.width_px > 0, initialGridSize.height_px > 0 {
             surfaceFactory.setSize(newSurface, initialGridSize.width_px, initialGridSize.height_px)
         }
@@ -387,6 +439,12 @@ final class SurfaceHandle {
     /// Force a full repaint on libghostty's next draw cycle.
     func refresh() {
         ghostty_surface_refresh(surface)
+    }
+
+    /// TERM-11.4: forwarded by TerminalManager when the last remote client
+    /// detaches from this pane's zmx session.
+    func remoteClientsDidDetach() {
+        zmxBackend?.remoteClientsDidDetach()
     }
 
     var needsConfirmQuit: Bool {
@@ -522,6 +580,10 @@ final class SurfaceNSView: NSView {
     var hostManagedInputWriter: ((Data) -> Void)?
     private var hostManagedDirectInputKeyCodes = Set<UInt16>()
 
+    /// Fired on every accepted (nonzero, surface-bound) frame change; the
+    /// backend's one-shot makes it the TERM-11.1 layout-settled signal.
+    var hostManagedLayoutNotifier: (() -> Void)?
+
     /// Cursor to display when the mouse is over this surface. libghostty
     /// drives this via `GHOSTTY_ACTION_MOUSE_SHAPE` (e.g., pointer when
     /// over a link, text beam over normal cells). Defaults to the text
@@ -634,6 +696,7 @@ final class SurfaceNSView: NSView {
             proposed.height
         )
         ghostty_surface_refresh(surface)
+        hostManagedLayoutNotifier?()
     }
 
     @available(*, unavailable)

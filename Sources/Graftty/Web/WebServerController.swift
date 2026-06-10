@@ -46,6 +46,11 @@ final class WebServerController: ObservableObject {
     /// to respond `503 service unavailable`. Injected by `GrafttyApp`
     /// once `WebRTCHostAgent` is constructed.
     private var signalingHandler: (@Sendable (SignalingOffer) async -> WebServer.SignalingHandlerOutcome)?
+    /// TERM-11.5: counts remote clients per zmx session so Mac panes
+    /// know a remote viewer is attached. Nil before injection — the
+    /// `WebServer.Config` default disables tracking. Injected by
+    /// `GrafttyApp.startup()` alongside the other providers.
+    private var remoteAttachmentRegistry: RemoteAttachmentRegistry?
 
     /// Last `(isEnabled, port)` tuple we reconciled against. Used to suppress
     /// no-op reconciles — `objectWillChange` on `@AppStorage` fires on every
@@ -142,6 +147,14 @@ final class WebServerController: ObservableObject {
         _ handler: @escaping @Sendable (SignalingOffer) async -> WebServer.SignalingHandlerOutcome
     ) {
         signalingHandler = handler
+        rebuildIfRunning()
+    }
+
+    /// Install the registry that tracks remote attaches per zmx session
+    /// (`TERM-11.5`). Same contract as `setSessionsProvider`: rebuilds a
+    /// running server so new WebSocket bridges pick it up.
+    func setRemoteAttachmentRegistry(_ registry: RemoteAttachmentRegistry) {
+        remoteAttachmentRegistry = registry
         rebuildIfRunning()
     }
 
@@ -282,7 +295,8 @@ final class WebServerController: ObservableObject {
                 worktreeRemover: remover,
                 ghosttyConfigProvider: { GhosttyConfigReader.resolvedConfig() },
                 worktreePanesProvider: worktreePanesProvider ?? { [] },
-                signalingHandler: signalingHandler
+                signalingHandler: signalingHandler,
+                remoteAttachmentRegistry: remoteAttachmentRegistry
             ),
             auth: auth,
             bindAddresses: bindAddresses,

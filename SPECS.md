@@ -276,6 +276,18 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-10.1** When the user drops one or more file URLs onto a terminal pane, the application shall insert each file's POSIX path at the cursor position. Paths that contain shell-special characters shall be POSIX-single-quoted (internal `'` rendered as `'\''`) so the inserted text can be passed unchanged to bash/zsh; paths made entirely of shell-safe characters shall be inserted verbatim. Multiple paths shall be joined with a single space, matching how Ghostty.app, Terminal.app, and iTerm2 render multi-file drops.
 
+### TERM-11.x
+
+**TERM-11.1** When pane layout settles and no remote client is attached to the zmx session, the application shall resize the zmx PTY to the current libghostty grid size without waiting for user input.
+
+**TERM-11.2** While no remote client is attached and layout has settled, a libghostty viewport callback shall resize the zmx PTY immediately, before any user input.
+
+**TERM-11.3** When the silent gate disengages on first user input, the application shall resize the PTY to the current libghostty grid size and force a surface refresh.
+
+**TERM-11.4** When the last remote client detaches from a session whose pane has not yet been engaged, the application shall resize the PTY to the current libghostty grid size.
+
+**TERM-11.5** The application shall track the number of remote clients attached to each zmx session; a session is remote-attached while its count is positive, and an observer fires when the count returns to zero.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
@@ -1370,7 +1382,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IOS-12.x
 
-**IOS-12.1** A fresh attach with a libghostty viewport callback but no user input shall not resize the zmx PTY. This is the Mac mirror of IOS-6.5 — the PTY's existing cols/rows persist across detach/reattach until the user engages.
+**IOS-12.1** While a remote client is attached to the zmx session, a fresh attach with a libghostty viewport callback but no user input shall not resize the zmx PTY. This is the Mac mirror of IOS-6.5 — the PTY cols/rows persist until the Mac user engages or the last remote client detaches.
 
 ## IPAD — iPad Layout
 

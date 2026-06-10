@@ -193,6 +193,10 @@ public final class WebServer {
         /// existing `worktreeCreator` shape so a client can distinguish
         /// "not supported yet" from "wrong URL".
         public let signalingHandler: (@Sendable (SignalingOffer) async -> SignalingHandlerOutcome)?
+        /// TERM-11.5: when set, each WebSocket bridge's WebSession
+        /// registers its zmx attach so Mac panes know a remote client
+        /// is present. Nil (tests, early boot) disables tracking.
+        public let remoteAttachmentRegistry: RemoteAttachmentRegistry?
 
         public init(
             port: Int,
@@ -205,7 +209,8 @@ public final class WebServer {
             worktreeRemover: (@Sendable (DeleteWorktreeRequest) async -> DeleteWorktreeOutcome)? = nil,
             ghosttyConfigProvider: @escaping @Sendable () async -> String = { "" },
             worktreePanesProvider: @escaping @Sendable () async -> [WorktreePanes] = { [] },
-            signalingHandler: (@Sendable (SignalingOffer) async -> SignalingHandlerOutcome)? = nil
+            signalingHandler: (@Sendable (SignalingOffer) async -> SignalingHandlerOutcome)? = nil,
+            remoteAttachmentRegistry: RemoteAttachmentRegistry? = nil
         ) {
             self.port = port
             self.zmxExecutable = zmxExecutable
@@ -218,6 +223,7 @@ public final class WebServer {
             self.ghosttyConfigProvider = ghosttyConfigProvider
             self.worktreePanesProvider = worktreePanesProvider
             self.signalingHandler = signalingHandler
+            self.remoteAttachmentRegistry = remoteAttachmentRegistry
         }
 
         /// Accepts the range NIO's `bootstrap.bind(host:port:)` will accept
@@ -406,7 +412,8 @@ public final class WebServer {
                         sessionName: session,
                         zmxExecutable: config.zmxExecutable,
                         zmxDir: config.zmxDir,
-                        workingDirectory: worktreePath.map { URL(fileURLWithPath: $0, isDirectory: true) }
+                        workingDirectory: worktreePath.map { URL(fileURLWithPath: $0, isDirectory: true) },
+                        remoteAttachmentRegistry: config.remoteAttachmentRegistry
                     )
                     return channel.pipeline.addHandler(wsHandler)
                 }
@@ -949,14 +956,24 @@ public final class WebServer {
         let zmxExecutable: URL
         let zmxDir: URL
         let workingDirectory: URL?
+        /// TERM-11.5: handed to each WebSession before `start()` so the
+        /// session registers its zmx attach (and deregisters on close).
+        let remoteAttachmentRegistry: RemoteAttachmentRegistry?
         private var session: WebSession?
         private weak var channel: Channel?
 
-        init(sessionName: String, zmxExecutable: URL, zmxDir: URL, workingDirectory: URL?) {
+        init(
+            sessionName: String,
+            zmxExecutable: URL,
+            zmxDir: URL,
+            workingDirectory: URL?,
+            remoteAttachmentRegistry: RemoteAttachmentRegistry?
+        ) {
             self.sessionName = sessionName
             self.zmxExecutable = zmxExecutable
             self.zmxDir = zmxDir
             self.workingDirectory = workingDirectory
+            self.remoteAttachmentRegistry = remoteAttachmentRegistry
         }
 
         func handlerAdded(context: ChannelHandlerContext) {
@@ -998,6 +1015,7 @@ public final class WebServer {
                     channel.writeAndFlush(frame, promise: nil)
                 }
             }
+            sess.attachmentRegistry = remoteAttachmentRegistry
             do {
                 try sess.start()
                 session = sess
