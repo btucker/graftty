@@ -133,6 +133,10 @@ final class AppServices {
     let remoteBranchStore: RemoteBranchStore
     let prStatusStore: PRStatusStore
     let claudeSessionRegistry: ClaudeSessionRegistry
+    /// TERM-11.5: per-zmx-session remote client attach counts. Fed by the
+    /// web (/ws) and SSH-over-WebRTC attach paths; consulted by Mac pane
+    /// backends to scope the IOS-12.1 silent gate to multi-device sessions.
+    let remoteAttachmentRegistry: RemoteAttachmentRegistry
     let teamInbox: TeamInbox
     let teamEventDispatcher: TeamEventDispatcher
     var worktreeMonitorBridge: WorktreeMonitorBridge?
@@ -183,6 +187,7 @@ final class AppServices {
         self.remoteBranchStore = remoteBranchStore
         self.prStatusStore = PRStatusStore(remoteBranchStore: remoteBranchStore)
         self.claudeSessionRegistry = ClaudeSessionRegistry()
+        self.remoteAttachmentRegistry = RemoteAttachmentRegistry()
 
         // Lift the team inbox up here so the request handler
         // (`teamInboxRequestHandler()`) and the dispatcher share one
@@ -329,12 +334,13 @@ struct GrafttyApp: App {
             services.hostAgent = WebRTCHostAgent(
                 hostKey: try hostIdentityStore.loadOrGenerateAndPersist(),
                 trustedPeerStore: trustedPeerStore,
-                streamFactory: { sessionName in
+                streamFactory: { [registry = services.remoteAttachmentRegistry] sessionName in
                     try ZmxAttachStream(
                         zmxExecutable: zmxExe,
                         zmxDir: zmxDir,
                         sessionName: sessionName,
-                        workingDirectory: nil
+                        workingDirectory: nil,
+                        attachmentRegistry: registry
                     )
                 },
                 // R5 Task 11: init-time placeholder closures. The host
@@ -571,6 +577,18 @@ struct GrafttyApp: App {
         try? FileManager.default.createDirectory(at: zmxDir, withIntermediateDirectories: true)
         let zmxLauncher = ZmxLauncher(executable: zmxBinary, zmxDir: zmxDir)
         terminalManager.zmxLauncher = zmxLauncher
+
+        // TERM-11.5: pane backends consult the registry to decide whether
+        // the IOS-12.1 silent gate applies (remote client attached to the
+        // same zmx session).
+        terminalManager.remoteAttachmentRegistry = services.remoteAttachmentRegistry
+        services.remoteAttachmentRegistry.onLastDetach = { [weak terminalManager] sessionName in
+            // TERM-11.4: fires on the detaching connection's thread; hop to
+            // the main actor where TerminalManager lives.
+            Task { @MainActor in
+                terminalManager?.remoteClientsDetached(fromSession: sessionName)
+            }
+        }
 
         // Hand the scanner to TerminalManager so pane add/close flows
         // propagate registration, then wire the scanner's onChange into
@@ -1187,6 +1205,10 @@ struct GrafttyApp: App {
         // every other sidebar-adjacent surface — most notably, the main
         // checkout renders as the resolved default branch, not the
         // directory basename.
+        // TERM-11.5: WebSocket `/ws` sessions report attach/detach into the
+        // shared registry so Mac pane backends can see web-client attaches.
+        webController.setRemoteAttachmentRegistry(services.remoteAttachmentRegistry)
+
         let appStateBinding = $appState
         let panesRemoteBranchStore = services.remoteBranchStore
         webController.setSessionsProvider {
