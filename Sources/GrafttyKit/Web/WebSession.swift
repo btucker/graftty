@@ -69,6 +69,12 @@ public final class WebSession {
     /// `close()` clears the entry.
     public var inputState: ZmxInputState?
 
+    /// TERM-11.5: per-session remote attach counts. Set by the owning
+    /// WebSocket bridge before `start()`; `start()` registers this attach
+    /// and `close()` deregisters it exactly once.
+    public var attachmentRegistry: RemoteAttachmentRegistry?
+    private var didRegisterAttach = false
+
     /// Test seam: override the env `start()` reads for terminal-capability
     /// resolution. Production callers leave this nil and `start()` reads
     /// `ProcessInfo.processInfo.environment` directly. Tests inject SHELL
@@ -118,6 +124,11 @@ public final class WebSession {
         } catch {
             throw Error.spawnFailed(error)
         }
+        // TERM-11.5: only a successful spawn counts as a remote attach —
+        // a failed spawn throws above and never registers, so close()
+        // has nothing to deregister.
+        attachmentRegistry?.attach(sessionName: config.sessionName)
+        didRegisterAttach = true
         startReaderThread()
         startSizePoller()
     }
@@ -151,7 +162,18 @@ public final class WebSession {
         onPTYData = nil
         onExit = nil
         onPTYSize = nil
+        // TERM-11.5: capture-and-clear under the lock so a racing second
+        // close() can never observe `true` and double-detach.
+        let shouldDetach = didRegisterAttach
+        didRegisterAttach = false
         stateLock.unlock()
+
+        // Detach OUTSIDE stateLock: the registry's onLastDetach observer
+        // may take other locks (the host-managed backend does), and
+        // holding stateLock across it risks deadlock.
+        if shouldDetach {
+            attachmentRegistry?.detach(sessionName: config.sessionName)
+        }
 
         // TEAM-IDLE-2.2: drop our slot in the shared tracker so a future
         // session that reuses this name doesn't inherit a stale byte count.

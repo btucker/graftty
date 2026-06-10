@@ -58,6 +58,24 @@ struct WebSessionTests {
         return script
     }
 
+    /// Tiny Sendable counter for observing `@Sendable` callbacks
+    /// (`RemoteAttachmentRegistry.onLastDetach`) that can't capture
+    /// local `var`s.
+    private final class LockedCounterBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        func increment() {
+            lock.lock()
+            count += 1
+            lock.unlock()
+        }
+        func value() -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            return count
+        }
+    }
+
     private static func waitForFile(_ url: URL, timeout: TimeInterval = 2.0) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
@@ -187,6 +205,58 @@ struct WebSessionTests {
         // the configured command.
         let expectedZDOTDIR = fakeResources.appendingPathComponent("shell-integration/zsh").path
         #expect(envPairs["ZDOTDIR"] == expectedZDOTDIR)
+    }
+
+    @Test("WebSession shall register with the RemoteAttachmentRegistry on successful start and deregister exactly once on close (TERM-11.5).")
+    func registersAttachOnStartAndDetachOnClose() throws {
+        let dir = try Self.makeTempDir(prefix: "web-session-registry")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fakeZmx = try Self.makeFakeZmx(in: dir)
+        let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
+        try FileManager.default.createDirectory(at: zmxDir, withIntermediateDirectories: true)
+
+        let registry = RemoteAttachmentRegistry()
+        let session = WebSession(config: WebSession.Config(
+            zmxExecutable: fakeZmx,
+            zmxDir: zmxDir,
+            sessionName: "reg-test"
+        ))
+        session.attachmentRegistry = registry
+
+        try session.start()
+        #expect(registry.isRemoteAttached(sessionName: "reg-test"))
+
+        session.close()
+        #expect(!registry.isRemoteAttached(sessionName: "reg-test"))
+
+        // close() is re-entrant (channelInactive can follow connectionClose);
+        // a second close must not double-detach. With an extra attach
+        // standing in for another remote client, a double-detach would
+        // wrongly drop the count to zero.
+        registry.attach(sessionName: "reg-test")
+        session.close()
+        #expect(registry.isRemoteAttached(sessionName: "reg-test"))
+    }
+
+    @Test("WebSession shall not deregister on close when start never succeeded (TERM-11.5).")
+    func closeWithoutStartDoesNotDetach() {
+        let registry = RemoteAttachmentRegistry()
+        let fired = LockedCounterBox()
+        registry.onLastDetach = { _ in fired.increment() }
+        let session = WebSession(config: WebSession.Config(
+            zmxExecutable: URL(fileURLWithPath: "/nonexistent-zmx"),
+            zmxDir: URL(fileURLWithPath: "/tmp"),
+            sessionName: "never-started"
+        ))
+        session.attachmentRegistry = registry
+
+        // Another client's attach under the same name: a spurious detach
+        // from the never-started session would drop it to zero and fire
+        // the observer.
+        registry.attach(sessionName: "never-started")
+        session.close()
+        #expect(registry.isRemoteAttached(sessionName: "never-started"))
+        #expect(fired.value() == 0)
     }
 
     @Test func attachProcessStartsInConfiguredWorktreeDirectory() throws {
