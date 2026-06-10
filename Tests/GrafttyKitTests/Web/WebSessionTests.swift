@@ -254,9 +254,10 @@ struct WebSessionTests {
         // from the never-started session would drop it to zero and fire
         // the observer.
         registry.attach(sessionName: "never-started")
-        // Exercise the failed-spawn branch too: a throwing start() must
-        // not register the attach.
-        #expect(throws: (any Error).self) { try session.start() }
+        // NB: the failed-SPAWN branch can't be driven from here —
+        // PtyProcess.spawn is fork-based, so a bogus executable still
+        // yields a pid and start() succeeds (the child dies at exec).
+        // This test covers close()-without-start() only.
         session.close()
         #expect(registry.isRemoteAttached(sessionName: "never-started"))
         #expect(fired.value() == 0)
