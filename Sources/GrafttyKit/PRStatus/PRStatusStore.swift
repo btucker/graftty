@@ -24,6 +24,13 @@ public final class PRStatusStore {
     /// per-worktree consumers continue reading `infos`.
     public private(set) var prsByRepoBranch: [String: [String: PRInfo]] = [:]
 
+    /// Resolved origin per repo path, published as detection completes.
+    /// Unlike the private `hostByRepo` cache (whose nil values mean
+    /// "known no-origin"), this only ever holds successfully parsed
+    /// origins — including `.unsupported` providers, which presentation
+    /// filters out. Drives the sidebar forge link. @spec PROJECT-2.4
+    public private(set) var originByRepo: [String: HostingOrigin] = [:]
+
     @ObservationIgnored private let executor: CLIExecutor
     @ObservationIgnored private let fetcherFor: (HostingProvider) -> PRFetcher?
     @ObservationIgnored private let detectHost: @Sendable (String) async throws -> HostingOrigin?
@@ -242,6 +249,7 @@ public final class PRStatusStore {
                 let detected = try await detectHost(repoPath)
                 origin = detected
                 hostByRepo[repoPath] = detected
+                if let detected { originByRepo[repoPath] = detected }
             } catch {
                 logger.debug("host detect failed for \(repoPath): \(String(describing: error))")
                 origin = nil
@@ -490,6 +498,9 @@ extension PRStatusStore {
         }
         for repoPath in prsByRepoBranch.keys where !currentRepoPaths.contains(repoPath) {
             prsByRepoBranch.removeValue(forKey: repoPath)
+        }
+        for repoPath in originByRepo.keys where !currentRepoPaths.contains(repoPath) {
+            originByRepo.removeValue(forKey: repoPath)
         }
     }
 }
