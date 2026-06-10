@@ -164,12 +164,11 @@ final class SurfaceHandle {
         self.userdataPointer = userdataPtr
         // Strong capture of the registry is fine: it's app-lifetime and
         // holds no reference back to the backend.
-        let registry = remoteAttachmentRegistry
         let backend = zmxSpawnConfiguration.map { spawn in
             zmxBackendFactory(
                 spawn,
                 initialGridSize.map { ($0.columns, $0.rows) },
-                { registry?.isRemoteAttached(sessionName: spawn.sessionName) ?? false }
+                { remoteAttachmentRegistry?.isRemoteAttached(sessionName: spawn.sessionName) ?? false }
             )
         }
         self.zmxBackend = backend
@@ -306,18 +305,20 @@ final class SurfaceHandle {
             // TERM-11.3: let the backend query the live grid and request
             // repaints without linking libghostty. These closures run on
             // whatever thread triggers a flush (libghostty IO, IPC, main) —
-            // see bindSurfaceSync's contract. They never run after
-            // backend.close(), which deinit orders before
-            // surfaceFactory.free, so capturing newSurface is safe.
-            let factory = surfaceFactory
+            // see bindSurfaceSync's contract. Weak self (legal here: every
+            // stored property is initialized) avoids a handle→backend→
+            // closure→handle cycle and turns any flush racing deinit into
+            // a no-op; the backend's closed-lifecycle gate already covers
+            // the surface pointer's validity.
             backend.bindSurfaceSync(
-                currentGridSize: {
-                    let size = factory.size(newSurface)
+                currentGridSize: { [weak self] in
+                    guard let self else { return nil }
+                    let size = self.queryGridSize()
                     guard size.columns > 0, size.rows > 0 else { return nil }
                     return (cols: size.columns, rows: size.rows)
                 },
-                requestRefresh: {
-                    ghostty_surface_refresh(newSurface)
+                requestRefresh: { [weak self] in
+                    self?.refresh()
                 }
             )
             // TERM-11.1: first nonzero frame on the view = layout settled.

@@ -163,15 +163,14 @@ public final class WebSession {
         onPTYData = nil
         onExit = nil
         onPTYSize = nil
-        // TERM-11.5: a non-nil spawned means start() registered an attach;
-        // the isClosed guard above makes this deregistration single-entry.
-        let shouldDetach = spawned != nil
         stateLock.unlock()
 
+        // TERM-11.5: a non-nil spawned means start() registered an attach;
+        // the isClosed guard above makes this deregistration single-entry.
         // Detach OUTSIDE stateLock: the registry's onLastDetach observer
         // may take other locks (the host-managed backend does), and
         // holding stateLock across it risks deadlock.
-        if shouldDetach {
+        if spawned != nil {
             attachmentRegistry?.detach(sessionName: config.sessionName)
         }
 

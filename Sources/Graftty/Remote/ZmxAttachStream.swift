@@ -30,6 +30,11 @@ final class ZmxAttachStream: TerminalByteStream, @unchecked Sendable {
     private var closed = false
     private let attachmentRegistry: RemoteAttachmentRegistry?
     private let sessionName: String
+    /// TERM-11.5: whether init's registry attach actually ran, decided
+    /// under `lock` against `closed`. An instantly-dying child can drive
+    /// the EOF handler's `close()` before init reaches the registry call;
+    /// pairing both sides through `lock` keeps attach/detach balanced.
+    private var didRegisterAttach = false
 
     init(
         zmxExecutable: URL,
@@ -77,7 +82,16 @@ final class ZmxAttachStream: TerminalByteStream, @unchecked Sendable {
         try process.run()
         // TERM-11.5: only a successfully running attach child counts as a
         // remote client; a throwing run() leaves the registry untouched.
-        attachmentRegistry?.attach(sessionName: sessionName)
+        // Registered under `lock` and gated on `closed`: if the child died
+        // so fast that the EOF handler's close() already won, registering
+        // now would leak a count no close() will ever pair. attach() takes
+        // only the registry's own lock and fires no observer, so calling
+        // it under `lock` is safe.
+        lock.withLock {
+            guard !closed else { return }
+            attachmentRegistry?.attach(sessionName: sessionName)
+            didRegisterAttach = true
+        }
     }
 
     func send(_ bytes: Data) async throws {
@@ -106,10 +120,10 @@ final class ZmxAttachStream: TerminalByteStream, @unchecked Sendable {
     }
 
     func close() async {
-        let shouldRunCleanup: Bool = lock.withLock {
-            guard !closed else { return false }
+        let (shouldRunCleanup, shouldDetach): (Bool, Bool) = lock.withLock {
+            guard !closed else { return (false, false) }
             closed = true
-            return true
+            return (true, didRegisterAttach)
         }
         guard shouldRunCleanup else { return }
 
@@ -125,6 +139,8 @@ final class ZmxAttachStream: TerminalByteStream, @unchecked Sendable {
         // an onLastDetach observer that re-enters the stream can't deadlock.
         // (Observer-vs-registry safety is the registry's own contract: it
         // releases its lock before invoking the observer.)
-        attachmentRegistry?.detach(sessionName: sessionName)
+        if shouldDetach {
+            attachmentRegistry?.detach(sessionName: sessionName)
+        }
     }
 }

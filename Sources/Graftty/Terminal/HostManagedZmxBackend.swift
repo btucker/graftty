@@ -301,7 +301,9 @@ final class HostManagedZmxBackend {
         guard !layoutSettled else { return }
         layoutSettled = true
         guard case .silent = attachState, !shouldWithholdResizeLocked() else { return }
-        flushSizeToPtyLocked(refresh: false)
+        // Refresh deliberately dropped: setFrameSize already issued one
+        // on this same frame event two statements before notifying us.
+        _ = flushSizeToPtyLocked()
     }
 
     /// TERM-11.4: the last remote client detached from this session. A
@@ -311,9 +313,13 @@ final class HostManagedZmxBackend {
     /// another client may have re-attached by the time this runs.
     func remoteClientsDidDetach() {
         lock.lock()
-        defer { lock.unlock() }
-        guard case .silent = attachState, !shouldWithholdResizeLocked() else { return }
-        flushSizeToPtyLocked(refresh: true)
+        guard case .silent = attachState, !shouldWithholdResizeLocked() else {
+            lock.unlock()
+            return
+        }
+        let refresh = flushSizeToPtyLocked()
+        lock.unlock()
+        refresh?()
     }
 
     /// Snapshot of `programmaticInputDepth > 0` used by
@@ -413,11 +419,14 @@ final class HostManagedZmxBackend {
     /// post-flush PTY dims.
     private func markUserInput() {
         lock.lock()
-        defer { lock.unlock() }
-
-        guard case .silent = attachState else { return }
+        guard case .silent = attachState else {
+            lock.unlock()
+            return
+        }
         attachState = .engaged
-        flushSizeToPtyLocked(refresh: true)
+        let refresh = flushSizeToPtyLocked()
+        lock.unlock()
+        refresh?()
     }
 
     /// Shared sync tail for markUserInput / markLayoutSettled /
@@ -428,26 +437,32 @@ final class HostManagedZmxBackend {
     /// session's ioLock, but ioLock holders never take the backend lock,
     /// so the backend→ioLock order is acyclic; the ioctl itself is
     /// milliseconds at most, keeping the contention window bounded.
-    private func flushSizeToPtyLocked(refresh: Bool) {
+    ///
+    /// Returns the bound `requestRefresh` closure when a running-session
+    /// resize landed (captured under `lock`), nil otherwise. The caller
+    /// invokes it AFTER releasing `lock` — the refresh re-enters
+    /// libghostty, and issuing it lock-free keeps the backend-lock ↔
+    /// libghostty-internal-lock pair acyclic even when this path runs
+    /// inside a libghostty callback.
+    private func flushSizeToPtyLocked() -> (() -> Void)? {
         // Bail before touching the closures on a closed backend: close()
         // happens-before ghostty_surface_free, so this lifecycle gate is
         // what keeps a bound `currentGridSize` surface pointer from being
         // dereferenced after the surface is gone.
-        if case .closed = lifecycle { return }
+        if case .closed = lifecycle { return nil }
         let queued = lastSilentResize
         lastSilentResize = nil
         let target = currentGridSize() ?? queued.map { (cols: $0.cols, rows: $0.rows) }
-        guard let target else { return }
+        guard let target else { return nil }
         switch lifecycle {
         case .running:
             try? session?.resize(cols: target.cols, rows: target.rows)
-            if refresh {
-                requestRefresh()
-            }
+            return requestRefresh
         case .idle, .starting:
             pendingResize = PendingResize(cols: target.cols, rows: target.rows)
+            return nil
         case .closed:
-            break
+            return nil
         }
     }
 
