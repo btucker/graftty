@@ -121,8 +121,10 @@ final class ZmxAttachStream: TerminalByteStream, @unchecked Sendable {
         if process.isRunning {
             process.terminate()
         }
-        // TERM-11.5: detach outside the lock so that onLastDetach observers
-        // may safely call isRemoteAttached without deadlocking.
+        // TERM-11.5: detach outside this stream's non-reentrant NIOLock so
+        // an onLastDetach observer that re-enters the stream can't deadlock.
+        // (Observer-vs-registry safety is the registry's own contract: it
+        // releases its lock before invoking the observer.)
         attachmentRegistry?.detach(sessionName: sessionName)
     }
 }
