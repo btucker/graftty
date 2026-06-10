@@ -99,8 +99,9 @@ final class HostManagedZmxBackend {
     private var requestRefresh: () -> Void = {}
 
     /// Flips true (once) when the owning NSView first receives a nonzero
-    /// frame. Pre-settle viewport callbacks are never forwarded — they are
-    /// libghostty pre-layout noise (the original PR #201 bug).
+    /// frame. While still `.silent`, pre-settle viewport callbacks are
+    /// never forwarded — they are libghostty pre-layout noise (the
+    /// original PR #201 bug). An engaged pane bypasses this gate.
     private var layoutSettled = false
 
     init(
@@ -264,11 +265,16 @@ final class HostManagedZmxBackend {
         return try body()
     }
 
-    /// Binds the surface-sync closures. Called by SurfaceHandle after
+    /// Binds the surface-sync closures. To be called by SurfaceHandle after
     /// ghostty_surface_new succeeds and before start(surface:). The
     /// closures must be safe to call from the backend's lock (they issue
     /// a single libghostty query / refresh request — no re-entrancy into
-    /// the backend).
+    /// the backend), and they are invoked from whatever thread triggers a
+    /// flush — libghostty's IO thread (`write` via receiveBufferCallback),
+    /// IPC threads, or AppKit's main thread (`markLayoutSettled`) — NOT
+    /// only the main thread. The flush paths never run after `close()`
+    /// (lifecycle-gated), which orders before ghostty_surface_free in
+    /// SurfaceHandle.deinit, so a bound surface pointer cannot dangle.
     func bindSurfaceSync(
         currentGridSize: @escaping () -> (cols: UInt16, rows: UInt16)?,
         requestRefresh: @escaping () -> Void
@@ -409,10 +415,16 @@ final class HostManagedZmxBackend {
     /// remoteClientsDidDetach. Caller holds `lock`. Resolves the sync
     /// target — the live grid when a provider is bound, else the last
     /// withheld viewport size — and ships it to the PTY (or queues it
-    /// when the session is still starting). `resize` is a TIOCSWINSZ
-    /// ioctl — milliseconds at most, no nested locking — so holding the
-    /// lock across it keeps the contention window bounded.
+    /// when the session is still starting). `resize` does take the
+    /// session's ioLock, but ioLock holders never take the backend lock,
+    /// so the backend→ioLock order is acyclic; the ioctl itself is
+    /// milliseconds at most, keeping the contention window bounded.
     private func flushSizeToPtyLocked(refresh: Bool) {
+        // Bail before touching the closures on a closed backend: close()
+        // happens-before ghostty_surface_free, so this lifecycle gate is
+        // what keeps a bound `currentGridSize` surface pointer from being
+        // dereferenced after the surface is gone.
+        if case .closed = lifecycle { return }
         let queued = lastSilentResize
         lastSilentResize = nil
         let target = currentGridSize() ?? queued.map { (cols: $0.cols, rows: $0.rows) }
