@@ -48,8 +48,8 @@ final class WebServerController: ObservableObject {
     private var signalingHandler: (@Sendable (SignalingOffer) async -> WebServer.SignalingHandlerOutcome)?
     /// TERM-11.5: counts remote clients per zmx session so Mac panes
     /// know a remote viewer is attached. Nil before injection — the
-    /// `WebServer.Config` default disables tracking. To be injected by
-    /// `GrafttyApp` alongside the other providers.
+    /// `WebServer.Config` default disables tracking. Injected by
+    /// `GrafttyApp.startup()` alongside the other providers.
     private var remoteAttachmentRegistry: RemoteAttachmentRegistry?
 
     /// Last `(isEnabled, port)` tuple we reconciled against. Used to suppress

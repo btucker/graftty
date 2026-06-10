@@ -1198,6 +1198,10 @@ struct GrafttyApp: App {
 
         restoreRunningWorktrees()
 
+        // TERM-11.5: WebSocket `/ws` sessions report attach/detach into the
+        // shared registry so Mac pane backends can see web-client attaches.
+        webController.setRemoteAttachmentRegistry(services.remoteAttachmentRegistry)
+
         // WEB-5.4: feed the web server a snapshot of running sessions on
         // each GET /sessions request. Binding snapshot is read on the
         // main actor; worktree names are routed through
@@ -1205,10 +1209,6 @@ struct GrafttyApp: App {
         // every other sidebar-adjacent surface — most notably, the main
         // checkout renders as the resolved default branch, not the
         // directory basename.
-        // TERM-11.5: WebSocket `/ws` sessions report attach/detach into the
-        // shared registry so Mac pane backends can see web-client attaches.
-        webController.setRemoteAttachmentRegistry(services.remoteAttachmentRegistry)
-
         let appStateBinding = $appState
         let panesRemoteBranchStore = services.remoteBranchStore
         webController.setSessionsProvider {
