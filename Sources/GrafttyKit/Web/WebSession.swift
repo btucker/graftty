@@ -126,7 +126,8 @@ public final class WebSession {
         }
         // TERM-11.5: only a successful spawn counts as a remote attach —
         // a failed spawn throws above and never registers, so close()
-        // has nothing to deregister.
+        // has nothing to deregister. Safe under stateLock because attach
+        // fires no observer (unlike detach, which close() calls unlocked).
         attachmentRegistry?.attach(sessionName: config.sessionName)
         didRegisterAttach = true
         startReaderThread()
@@ -162,8 +163,8 @@ public final class WebSession {
         onPTYData = nil
         onExit = nil
         onPTYSize = nil
-        // TERM-11.5: capture-and-clear under the lock so a racing second
-        // close() can never observe `true` and double-detach.
+        // TERM-11.5: the isClosed guard above is what makes close()
+        // single-entry; clearing the flag here is defense-in-depth.
         let shouldDetach = didRegisterAttach
         didRegisterAttach = false
         stateLock.unlock()

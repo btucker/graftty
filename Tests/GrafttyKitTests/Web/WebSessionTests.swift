@@ -254,6 +254,9 @@ struct WebSessionTests {
         // from the never-started session would drop it to zero and fire
         // the observer.
         registry.attach(sessionName: "never-started")
+        // Exercise the failed-spawn branch too: a throwing start() must
+        // not register the attach.
+        #expect(throws: (any Error).self) { try session.start() }
         session.close()
         #expect(registry.isRemoteAttached(sessionName: "never-started"))
         #expect(fired.value() == 0)
