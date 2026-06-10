@@ -33,9 +33,11 @@ final class HostManagedZmxBackend {
 
     /// @spec IOS-12.1
     /// Tracks user engagement since the most recent attach. While `.silent`,
-    /// libghostty viewport callbacks do not propagate to the zmx PTY — the
-    /// PTY's existing dims persist. The first user input flips to `.engaged`
-    /// and flushes any queued resize.
+    /// libghostty viewport callbacks propagate to the zmx PTY only when
+    /// layout has settled AND no remote client is attached to the session
+    /// (TERM-11.2); otherwise they are recorded and the PTY's existing dims
+    /// persist. The first user input flips to `.engaged` and syncs the PTY
+    /// to the current grid (TERM-11.3).
     private enum AttachState {
         case silent
         case engaged
@@ -88,9 +90,23 @@ final class HostManagedZmxBackend {
     /// IOS-12.1.
     private var programmaticInputDepth: Int = 0
 
+    /// TERM-11.x gating inputs. `hasRemoteClient` is injected at init
+    /// (default false — direct-shell/test backends have no remote peers).
+    /// The surface-sync closures are bound by SurfaceHandle after
+    /// ghostty_surface_new succeeds, before start(surface:).
+    private let hasRemoteClient: () -> Bool
+    private var currentGridSize: () -> (cols: UInt16, rows: UInt16)? = { nil }
+    private var requestRefresh: () -> Void = {}
+
+    /// Flips true (once) when the owning NSView first receives a nonzero
+    /// frame. Pre-settle viewport callbacks are never forwarded — they are
+    /// libghostty pre-layout noise (the original PR #201 bug).
+    private var layoutSettled = false
+
     init(
         spawnConfiguration: ZmxSpawnConfiguration,
         initialSize: (cols: UInt16, rows: UInt16)? = nil,
+        hasRemoteClient: @escaping () -> Bool = { false },
         sessionFactory: @escaping SessionFactory = { surface, configuration, initialSize in
             NativePtySession(
                 surface: surface,
@@ -104,6 +120,7 @@ final class HostManagedZmxBackend {
     ) {
         self.spawnConfiguration = spawnConfiguration
         self.initialSize = initialSize
+        self.hasRemoteClient = hasRemoteClient
         self.sessionFactory = sessionFactory
 
         let userdata = HostManagedZmxBackendUserdata(backend: self)
@@ -247,6 +264,46 @@ final class HostManagedZmxBackend {
         return try body()
     }
 
+    /// Binds the surface-sync closures. Called by SurfaceHandle after
+    /// ghostty_surface_new succeeds and before start(surface:). The
+    /// closures must be safe to call from the backend's lock (they issue
+    /// a single libghostty query / refresh request — no re-entrancy into
+    /// the backend).
+    func bindSurfaceSync(
+        currentGridSize: @escaping () -> (cols: UInt16, rows: UInt16)?,
+        requestRefresh: @escaping () -> Void
+    ) {
+        lock.lock()
+        self.currentGridSize = currentGridSize
+        self.requestRefresh = requestRefresh
+        lock.unlock()
+    }
+
+    /// TERM-11.1: the owning NSView received its first nonzero frame.
+    /// One-shot: if the pane is still silent and no remote client is
+    /// attached, sync the PTY to the current grid so zmx formats output
+    /// for the dims libghostty is actually rendering.
+    func markLayoutSettled() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !layoutSettled else { return }
+        layoutSettled = true
+        guard case .silent = attachState, !hasRemoteClient() else { return }
+        flushSizeToPtyLocked(refresh: false)
+    }
+
+    /// TERM-11.4: the last remote client detached from this session. A
+    /// still-silent pane syncs the PTY to the current grid immediately —
+    /// there is no longer anyone whose width we must preserve. Re-checks
+    /// `hasRemoteClient` because the registry fires its observer outside
+    /// its lock: another client may have re-attached by the time this runs.
+    func remoteClientsDidDetach() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard case .silent = attachState, layoutSettled, !hasRemoteClient() else { return }
+        flushSizeToPtyLocked(refresh: true)
+    }
+
     /// Snapshot of `programmaticInputDepth > 0` used by
     /// `receiveBufferCallback` to decide whether the imminent `write`
     /// should engage the gate. Lock-protected so it stays coherent with
@@ -304,15 +361,17 @@ final class HostManagedZmxBackend {
         let currentSession: HostManagedZmxSession?
 
         lock.lock()
-        switch attachState {
-        case .silent:
-            // IOS-12.1: record but do not forward. The first user-input event
-            // will flush this to the PTY via `markUserInput()`.
-            lastSilentResize = PendingResize(cols: cols, rows: rows)
-            lock.unlock()
-            return
-        case .engaged:
-            break
+        if case .silent = attachState {
+            // TERM-11.2 / IOS-12.1: withhold while layout hasn't settled
+            // (pre-layout libghostty noise) or while a remote client is
+            // attached (the Mac must not steal the session width without
+            // user engagement). Otherwise forward without engaging.
+            if !layoutSettled || hasRemoteClient() {
+                lastSilentResize = PendingResize(cols: cols, rows: rows)
+                lock.unlock()
+                return
+            }
+            lastSilentResize = nil
         }
         switch lifecycle {
         case .idle, .starting:
@@ -329,8 +388,9 @@ final class HostManagedZmxBackend {
     }
 
     /// Marks that the user has acted on the surface since the most recent
-    /// attach. The first call flushes any queued `lastSilentResize` so the
-    /// PTY syncs to libghostty's last-reported dims. IOS-12.1.
+    /// attach. The first call syncs the PTY to the current grid (TERM-11.3)
+    /// so any dims withheld under IOS-12.1 land before post-engagement
+    /// bytes. IOS-12.1.
     ///
     /// The lock is held across the flush `resize` call so any concurrent
     /// `write` on another thread cannot ship bytes to the PTY before the
@@ -342,22 +402,29 @@ final class HostManagedZmxBackend {
 
         guard case .silent = attachState else { return }
         attachState = .engaged
-        let flushResize = lastSilentResize
+        flushSizeToPtyLocked(refresh: true)
+    }
+
+    /// Shared sync tail for markUserInput / markLayoutSettled /
+    /// remoteClientsDidDetach. Caller holds `lock`. Resolves the sync
+    /// target — the live grid when a provider is bound, else the last
+    /// withheld viewport size — and ships it to the PTY (or queues it
+    /// when the session is still starting). `resize` is a TIOCSWINSZ
+    /// ioctl — milliseconds at most, no nested locking — so holding the
+    /// lock across it keeps the contention window bounded.
+    private func flushSizeToPtyLocked(refresh: Bool) {
+        let queued = lastSilentResize
         lastSilentResize = nil
+        let target = currentGridSize() ?? queued.map { (cols: $0.cols, rows: $0.rows) }
+        guard let target else { return }
         switch lifecycle {
         case .running:
-            if let flushResize {
-                // Holding the lock across `resize` serializes us with any
-                // concurrent `write`'s `activeSession()` lookup + session
-                // call. `resize` itself just issues a TIOCSWINSZ ioctl —
-                // milliseconds at most, no nested locking — so the
-                // contention window is bounded.
-                try? session?.resize(cols: flushResize.cols, rows: flushResize.rows)
+            try? session?.resize(cols: target.cols, rows: target.rows)
+            if refresh {
+                requestRefresh()
             }
         case .idle, .starting:
-            if let flushResize {
-                pendingResize = flushResize
-            }
+            pendingResize = PendingResize(cols: target.cols, rows: target.rows)
         case .closed:
             break
         }

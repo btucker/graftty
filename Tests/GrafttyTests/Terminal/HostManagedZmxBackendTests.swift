@@ -37,7 +37,7 @@ struct HostManagedZmxBackendTests {
         #expect(session.writes() == [Data("abc".utf8)])
     }
 
-    @Test("Viewport callbacks before user input are buffered; the first user input flushes them, then later callbacks pass through (IOS-12.1).")
+    @Test("Pre-layout viewport callbacks are withheld; the first user input flushes the last one, then later callbacks pass through (IOS-12.1).")
     func receiveResizeCallbackForwardsGridSizeToStartedSessionOnlyAfterUserInputEngagement() throws {
         let session = FakeHostManagedSession()
         let backend = Self.makeBackend(session: session)
@@ -294,26 +294,23 @@ struct HostManagedZmxBackendTests {
         HostManagedZmxBackend.receiveResizeCallback(nil, 80, 24, 800, 600)
     }
 
-    @Test("@spec IOS-12.1: A fresh attach with a libghostty viewport callback but no user input shall not resize the zmx PTY. This is the Mac mirror of IOS-6.5 — the PTY's existing cols/rows persist across detach/reattach until the user engages.")
-    func reattachWithoutUserInputDoesNotResize() throws {
+    @Test("@spec IOS-12.1: While a remote client is attached to the zmx session, a fresh attach with a libghostty viewport callback but no user input shall not resize the zmx PTY. This is the Mac mirror of IOS-6.5 — the PTY cols/rows persist until the Mac user engages or the last remote client detaches.")
+    func reattachWithoutUserInputDoesNotResizeWhileRemoteAttached() throws {
         let session = FakeHostManagedSession()
-        let backend = Self.makeBackend(session: session)
+        let backend = Self.makeBackend(session: session, hasRemoteClient: { true })
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
 
-        // libghostty's pre-layout viewport callback fires with a small grid.
         HostManagedZmxBackend.receiveResizeCallback(
             backend.userdataForTesting,
-            80,
-            24,
-            960,
-            576
+            80, 24, 960, 576
         )
 
         #expect(session.resizes().isEmpty)
     }
 
-    @Test("First user-input write after a silent-gated viewport callback flushes the queued size to the PTY as a single resize (IOS-12.1).")
+    @Test("First user-input write after a withheld viewport callback flushes the queued size to the PTY as a single resize (IOS-12.1).")
     func userInputFlushesPendingResize() throws {
         let session = FakeHostManagedSession()
         let backend = Self.makeBackend(session: session)
@@ -442,9 +439,203 @@ struct HostManagedZmxBackendTests {
         #expect(session.resizes() == [Resize(cols: 80, rows: 24)])
     }
 
-    private static func makeBackend(session: FakeHostManagedSession) -> HostManagedZmxBackend {
+    // MARK: - TERM-11.x — PTY/grid size sync (conditional IOS-12.1 gate)
+
+    @Test("@spec TERM-11.1: When pane layout settles and no remote client is attached to the zmx session, the application shall resize the zmx PTY to the current libghostty grid size without waiting for user input.")
+    func layoutSettleSyncsPtyToGridWhenNoRemoteAttached() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 142, rows: 38) },
+            requestRefresh: {}
+        )
+        try backend.start(surface: Self.fakeSurface())
+
+        backend.markLayoutSettled()
+
+        #expect(session.resizes() == [Resize(cols: 142, rows: 38)])
+    }
+
+    @Test("@spec TERM-11.2: While no remote client is attached and layout has settled, a libghostty viewport callback shall resize the zmx PTY immediately, before any user input.")
+    func postLayoutViewportCallbackForwardsImmediatelyWhenNoRemoteAttached() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(currentGridSize: { nil }, requestRefresh: {})
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            132, 43, 2112, 1032
+        )
+
+        #expect(session.resizes() == [Resize(cols: 132, rows: 43)])
+    }
+
+    @Test("Forwarding a silent-state viewport callback shall not flip the engagement gate — programmatic-input policy still applies until real user input (IOS-12.1).")
+    func silentForwardingDoesNotEngageGate() throws {
+        let session = FakeHostManagedSession()
+        let remoteAttached = LockedFlag(false)
+        let backend = Self.makeBackend(
+            session: session,
+            hasRemoteClient: { remoteAttached.value() }
+        )
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(currentGridSize: { nil }, requestRefresh: {})
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            132, 43, 2112, 1032
+        )
+        #expect(session.resizes() == [Resize(cols: 132, rows: 43)])
+
+        // A remote client attaches; the still-silent gate must re-engage
+        // withholding because engagement never flipped.
+        remoteAttached.set(true)
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            100, 30, 1200, 720
+        )
+        #expect(session.resizes() == [Resize(cols: 132, rows: 43)])
+    }
+
+    @Test("@spec TERM-11.3: When the silent gate disengages on first user input, the application shall resize the PTY to the current libghostty grid size and force a surface refresh.")
+    func engagementFlushUsesCurrentGridSizeAndRefreshes() throws {
+        let session = FakeHostManagedSession()
+        let refreshes = LockedCounter()
+        let backend = Self.makeBackend(session: session, hasRemoteClient: { true })
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 142, rows: 38) },
+            requestRefresh: { _ = refreshes.increment() }
+        )
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+
+        // Remote attached: viewport callbacks are withheld.
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            132, 43, 2112, 1032
+        )
+        #expect(session.resizes().isEmpty)
+
+        // First user input flushes the CURRENT grid (142x38), not the stale
+        // recorded callback (132x43), and forces a refresh.
+        try backend.write(Data([0x68]))
+        #expect(session.resizes() == [Resize(cols: 142, rows: 38)])
+        #expect(refreshes.value() == 1)
+    }
+
+    @Test("Engagement flush shall fall back to the last withheld viewport size when no grid size provider is bound (IOS-12.1 compatibility).")
+    func engagementFlushFallsBackToLastWithheldSize() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session, hasRemoteClient: { true })
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            132, 43, 2112, 1032
+        )
+        try backend.write(Data([0x68]))
+        #expect(session.resizes() == [Resize(cols: 132, rows: 43)])
+    }
+
+    @Test("@spec TERM-11.4: When the last remote client detaches from a session whose pane has not yet been engaged, the application shall resize the PTY to the current libghostty grid size.")
+    func lastRemoteDetachSyncsStillSilentPane() throws {
+        let session = FakeHostManagedSession()
+        let remoteAttached = LockedFlag(true)
+        let backend = Self.makeBackend(
+            session: session,
+            hasRemoteClient: { remoteAttached.value() }
+        )
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 142, rows: 38) },
+            requestRefresh: {}
+        )
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+        #expect(session.resizes().isEmpty)   // gated: remote attached
+
+        remoteAttached.set(false)
+        backend.remoteClientsDidDetach()
+
+        #expect(session.resizes() == [Resize(cols: 142, rows: 38)])
+    }
+
+    @Test("remoteClientsDidDetach shall re-check remote presence — if another client re-attached before the observer ran, the PTY shall not be resized.")
+    func remoteDetachWithImmediateReattachDoesNotSync() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session, hasRemoteClient: { true })
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 142, rows: 38) },
+            requestRefresh: {}
+        )
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+
+        backend.remoteClientsDidDetach()   // hasRemoteClient still true
+        #expect(session.resizes().isEmpty)
+    }
+
+    @Test("remoteClientsDidDetach shall be a no-op once the pane is engaged — engaged panes already forward every viewport callback.")
+    func remoteDetachAfterEngagementDoesNothing() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+        try backend.write(Data([0x68]))   // engage, nothing queued
+        let countAfterEngage = session.resizes().count
+
+        backend.remoteClientsDidDetach()
+        #expect(session.resizes().count == countAfterEngage)
+    }
+
+    @Test("markLayoutSettled shall be idempotent — only the first call performs the one-shot sync.")
+    func markLayoutSettledIsIdempotent() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 142, rows: 38) },
+            requestRefresh: {}
+        )
+        try backend.start(surface: Self.fakeSurface())
+
+        backend.markLayoutSettled()
+        backend.markLayoutSettled()
+        #expect(session.resizes() == [Resize(cols: 142, rows: 38)])
+    }
+
+    @Test("While layout has not settled, a silent-state viewport callback shall be withheld even with no remote client attached — protection against the pre-layout libghostty callback that PR 201 fixed.")
+    func preLayoutCallbackIsWithheldEvenWithoutRemote() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+
+        // No markLayoutSettled() — the pre-layout phase.
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            80, 24, 960, 576
+        )
+        #expect(session.resizes().isEmpty)
+    }
+
+    private static func makeBackend(
+        session: FakeHostManagedSession,
+        hasRemoteClient: @escaping () -> Bool = { false }
+    ) -> HostManagedZmxBackend {
         HostManagedZmxBackend(
             spawnConfiguration: spawnConfiguration(),
+            hasRemoteClient: hasRemoteClient,
             sessionFactory: { _, _, _ in session }
         )
     }
@@ -604,6 +795,27 @@ private final class LockedRecorder<Value> {
         lock.lock()
         defer { lock.unlock() }
         return stored
+    }
+}
+
+private final class LockedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Bool
+
+    init(_ value: Bool) {
+        self.stored = value
+    }
+
+    func value() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
+
+    func set(_ value: Bool) {
+        lock.lock()
+        stored = value
+        lock.unlock()
     }
 }
 
