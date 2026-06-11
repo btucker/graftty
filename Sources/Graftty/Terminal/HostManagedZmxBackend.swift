@@ -120,6 +120,13 @@ final class HostManagedZmxBackend {
     private var lifecycle: Lifecycle = .idle
     private var session: HostManagedZmxSession?
     private var pendingResize: PendingResize?
+
+    /// TERM-11.12: writes arriving before the session starts (e.g.
+    /// `pane add --command` typing before the pane's first layout under
+    /// TERM-11.10's deferred attach). Delivered in order by `start()`,
+    /// after any queued resize; engagement is claimed only when a
+    /// queued write actually reaches the PTY.
+    private var pendingWrites: [(data: Data, claimEngagement: Bool)] = []
     private var attachState: AttachState = .silent
     private var lastSilentResize: PendingResize?
     private var userdataPointer: UnsafeMutableRawPointer!
@@ -292,6 +299,21 @@ final class HostManagedZmxBackend {
                     try? newSession.resize(cols: resize.cols, rows: resize.rows)
                     continue
                 }
+                // TERM-11.12: drain queued pre-start writes (after any
+                // queued resize, before flipping `.running` so a racing
+                // direct write can't jump ahead of the queue).
+                if !pendingWrites.isEmpty {
+                    let queued = pendingWrites
+                    pendingWrites = []
+                    lock.unlock()
+                    for entry in queued {
+                        try? newSession.write(entry.data)
+                        if entry.claimEngagement {
+                            markUserInput()
+                        }
+                    }
+                    continue
+                }
                 session = newSession
                 lifecycle = .running
                 lock.unlock()
@@ -316,12 +338,30 @@ final class HostManagedZmxBackend {
     func write(_ data: Data, claimEngagement: Bool = true) throws {
         guard !data.isEmpty else { return }
 
+        // TERM-11.12: queue instead of throwing while the session hasn't
+        // started — under the deferred attach (TERM-11.10), `pane add
+        // --command` types before the pane's first layout, and dropping
+        // those bytes loses the command. `start()` drains the queue.
+        lock.lock()
+        switch lifecycle {
+        case .closed:
+            lock.unlock()
+            throw Error.closed
+        case .idle, .starting:
+            pendingWrites.append((data, claimEngagement))
+            lock.unlock()
+            Self.trace.notice("write \(self.spawnConfiguration.sessionName, privacy: .public) \(data.count) bytes QUEUED (pre-start)")
+            return
+        case .running:
+            lock.unlock()
+        }
+
         let currentSession = try activeSession()
         try currentSession.write(data)
 
         // IOS-12.1: flip the gate only AFTER a successful write — a write
-        // that throws `notStarted` or fails inside the session shall not
-        // disengage the silent gate.
+        // that fails inside the session shall not disengage the silent
+        // gate.
         if claimEngagement {
             markUserInput()
         }
@@ -534,6 +574,7 @@ final class HostManagedZmxBackend {
         let currentSession = session
         session = nil
         pendingResize = nil
+        pendingWrites = []
         // TERM-11.9: cancel an in-flight quiet window; a fire that races
         // this cancel is also lifecycle-gated in coalesceWindowExpired.
         let cancelCoalesce = coalesceCancel

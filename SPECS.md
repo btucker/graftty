@@ -300,6 +300,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.11** When a rehydrated pane's attach settles with no remote client attached, the application shall bounce the PTY rows — rows-1 after a short delay (clearing the post-settle viewport echo), restored to the settled rows after a further delay — so the session's TUI performs a spaced pair of full repaints and re-anchors at the bottom of the final grid.
 
+**TERM-11.12** While the zmx session has not yet started, the application shall queue PTY writes and deliver them in order once the session starts (after any queued resize) — a `pane add --command` issued before the pane's first layout shall not be dropped.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery

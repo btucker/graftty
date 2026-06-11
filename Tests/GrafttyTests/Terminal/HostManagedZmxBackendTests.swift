@@ -417,34 +417,55 @@ struct HostManagedZmxBackendTests {
         #expect(session.resizes() == [Resize(cols: 132, rows: 43)])
     }
 
-    @Test("If `write` fails (e.g., backend is in `.idle` and `activeSession()` throws .notStarted), attachState shall remain `.silent` — the engagement gate flips only on writes that actually reached the PTY.")
-    func failedWriteDoesNotEngageGate() throws {
+    @Test("""
+    @spec TERM-11.12: While the zmx session has not yet started, the application shall queue PTY writes and deliver them in order once the session starts (after any queued resize) — a `pane add --command` issued before the pane's first layout shall not be dropped.
+    """)
+    func preStartWritesAreQueuedAndDeliveredOnStart() throws {
         let session = FakeHostManagedSession()
         let backend = Self.makeBackend(session: session)
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
-        // Note: no start() — backend is in .idle.
+        // Note: no start() — backend is in .idle, as when `graftty pane
+        // add --command` types before the pane's first layout.
 
+        try backend.write(Data("claude\r".utf8), claimEngagement: false)
+        try backend.write(Data("hello".utf8), claimEngagement: false)
+        #expect(session.writes().isEmpty)
+
+        try backend.start(surface: Self.fakeSurface())
+        #expect(session.writes() == [Data("claude\r".utf8), Data("hello".utf8)])
+    }
+
+    @Test("A queued pre-start write with claimEngagement shall engage the gate only once it actually reaches the PTY at start — and a write on a closed backend shall still throw (TERM-11.12 / IOS-12.1).")
+    func queuedWriteEngagementDefersToDeliveryAndClosedStillThrows() throws {
+        let session = FakeHostManagedSession()
+        let backend = Self.makeBackend(session: session, hasRemoteClient: { true })
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 142, rows: 38) },
+            requestRefresh: {}
+        )
+
+        // Queued user write pre-start: must not engage yet.
+        try backend.write(Data([0x68]))
+        #expect(session.resizes().isEmpty)
+
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+        // Remote attached + silent would withhold callbacks — but the
+        // queued user write was delivered at start, so the gate is
+        // engaged and the engagement flush ships the current grid once
+        // layout settles.
+        #expect(session.writes() == [Data([0x68])])
         HostManagedZmxBackend.receiveResizeCallback(
             backend.userdataForTesting,
             132, 43, 2112, 1032
         )
+        #expect(session.resizes().contains(Resize(cols: 132, rows: 43)))
 
-        #expect(throws: HostManagedZmxBackend.Error.notStarted) {
-            try backend.write(Data("h".utf8))
+        backend.close()
+        #expect(throws: HostManagedZmxBackend.Error.closed) {
+            try backend.write(Data("x".utf8))
         }
-
-        // Start the backend now and engage with a real keystroke.
-        try backend.start(surface: Self.fakeSurface())
-        backend.markLayoutSettled()
-        // The pre-start callback was wiped by start() per IOS-12.1.
-        // A fresh post-settle callback forwards immediately (TERM-11.2);
-        // the engagement write that follows has nothing further to flush.
-        HostManagedZmxBackend.receiveResizeCallback(
-            backend.userdataForTesting,
-            80, 24, 960, 576
-        )
-        try backend.write(Data([0x68]))
-        #expect(session.resizes() == [Resize(cols: 80, rows: 24)])
     }
 
     // MARK: - TERM-11.x — PTY/grid size sync (conditional IOS-12.1 gate)
@@ -988,11 +1009,15 @@ struct HostManagedZmxBackendTests {
         hasRemoteClient: @escaping () -> Bool = { false },
         coalescer: ManualResizeCoalescer? = nil
     ) -> HostManagedZmxBackend {
-        HostManagedZmxBackend(
+        // Tests that don't pump a ManualResizeCoalescer get an inert
+        // scheduler (records, never fires) — the production GCD
+        // scheduler would arm real 75ms timers that can race assertions
+        // on a loaded CI runner.
+        let effective = coalescer ?? ManualResizeCoalescer()
+        return HostManagedZmxBackend(
             spawnConfiguration: spawnConfiguration(),
             hasRemoteClient: hasRemoteClient,
-            scheduleCoalescedResize: coalescer.map { c in { delay, fire in c.schedule(delay, fire) } }
-                ?? HostManagedZmxBackend.defaultResizeCoalescingScheduler,
+            scheduleCoalescedResize: { delay, fire in effective.schedule(delay, fire) },
             sessionFactory: { _, _, _ in session }
         )
     }

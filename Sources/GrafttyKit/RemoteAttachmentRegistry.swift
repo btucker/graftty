@@ -47,8 +47,8 @@ public final class RemoteAttachmentRegistry: @unchecked Sendable {
 
     public func attach(sessionName: String) {
         lock.lock()
-        counts[sessionName, default: 0] += 1
-        let newCount = counts[sessionName] ?? 0
+        let newCount = (counts[sessionName] ?? 0) + 1
+        counts[sessionName] = newCount
         lock.unlock()
         Self.trace.notice("attach \(sessionName, privacy: .public) count=\(newCount)")
     }
