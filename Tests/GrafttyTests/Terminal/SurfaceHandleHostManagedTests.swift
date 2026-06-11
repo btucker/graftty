@@ -149,6 +149,23 @@ struct SurfaceHandleHostManagedTests {
         #expect(backend.remoteClientsDidDetachCount == 1)
     }
 
+    @Test("SurfaceHandle shall forward healZmxAnchorOnAttach to the backend so rehydrated panes arm the anchor-heal bounce (TERM-11.11 glue).")
+    func healAnchorFlagReachesBackend() throws {
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        _ = try #require(SurfaceHandle(
+            terminalID: Self.terminalID(),
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            healZmxAnchorOnAttach: true,
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _, _, _ in backend }
+        ))
+        #expect(backend.anchorHealEnabledValues == [true])
+    }
+
     @Test func typeTextUsesBackendForZmxBackedSurface() throws {
         let backend = FakeSurfaceHandleZmxBackend()
         let harness = SurfaceHandleTestHarness(surface: fakeSurface())

@@ -298,6 +298,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.10** When a zmx-backed pane's surface is created or recreated, the application shall defer spawning the `zmx attach` client until the owning view's first layout settles, so the attach replay is parsed into a grid already at its settled size rather than the pre-layout placeholder.
 
+**TERM-11.11** When a rehydrated pane's attach settles with no remote client attached, the application shall bounce the PTY rows — rows-1 immediately after the settle sync, restored to the settled rows after a delay — so the session's TUI performs a spaced pair of full repaints and re-anchors at the bottom of the final grid.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery

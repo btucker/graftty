@@ -663,6 +663,86 @@ struct HostManagedZmxBackendTests {
         #expect(recorded.first??.rows == 82)
     }
 
+    // MARK: - TERM-11.11 — anchor-heal rows bounce on rehydrated attach
+
+    @Test("@spec TERM-11.11: When a rehydrated pane's attach settles with no remote client attached, the application shall bounce the PTY rows — rows-1 immediately after the settle sync, restored to the settled rows after a delay — so the session's TUI performs a spaced pair of full repaints and re-anchors at the bottom of the final grid.")
+    func anchorHealBouncesRowsAfterRehydratedAttachSettles() throws {
+        let session = FakeHostManagedSession()
+        let coalescer = ManualResizeCoalescer()
+        let backend = Self.makeBackend(session: session, coalescer: coalescer)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 106, rows: 82) },
+            requestRefresh: {}
+        )
+        backend.setAnchorHealOnAttach(true)
+        try backend.start(surface: Self.fakeSurface())
+
+        backend.markLayoutSettled()
+        // Settle sync, then the heal's first leg (rows-1) immediately —
+        // the stranded TUI sees a real row change and repaints.
+        #expect(session.resizes() == [
+            Resize(cols: 106, rows: 82),
+            Resize(cols: 106, rows: 81),
+        ])
+
+        // The delayed restore leg returns to the settled rows.
+        coalescer.fireAll()
+        #expect(session.resizes() == [
+            Resize(cols: 106, rows: 82),
+            Resize(cols: 106, rows: 81),
+            Resize(cols: 106, rows: 82),
+        ])
+    }
+
+    @Test("The anchor-heal restore leg shall be skipped when another resize intervened — the intervening resize already repainted the TUI at fresh dims (TERM-11.11).")
+    func anchorHealRestoreSkippedWhenSuperseded() throws {
+        let session = FakeHostManagedSession()
+        let coalescer = ManualResizeCoalescer()
+        let backend = Self.makeBackend(session: session, coalescer: coalescer)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 106, rows: 82) },
+            requestRefresh: {}
+        )
+        backend.setAnchorHealOnAttach(true)
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+
+        // A real viewport change lands mid-bounce (user resized).
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            90, 80, 0, 0
+        )
+        let beforeRestore = session.resizes()
+        #expect(beforeRestore.last == Resize(cols: 90, rows: 80))
+
+        coalescer.fireAll()
+        #expect(session.resizes() == beforeRestore)
+    }
+
+    @Test("No anchor-heal bounce shall fire while a remote client is attached — the Mac must not perturb a shared session's size (TERM-11.11).")
+    func anchorHealSkippedWhileRemoteAttached() throws {
+        let session = FakeHostManagedSession()
+        let coalescer = ManualResizeCoalescer()
+        let backend = Self.makeBackend(
+            session: session,
+            hasRemoteClient: { true },
+            coalescer: coalescer
+        )
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 106, rows: 82) },
+            requestRefresh: {}
+        )
+        backend.setAnchorHealOnAttach(true)
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+        coalescer.fireAll()
+
+        #expect(session.resizes().isEmpty)
+    }
+
     // MARK: - TERM-11.9 — resize coalescing (divider-drag SIGWINCH storms)
 
     @Test("@spec TERM-11.9: While a rapid sequence of libghostty viewport callbacks arrives, the application shall forward the first resize to the zmx PTY immediately and coalesce the remainder, delivering at most one trailing resize with the latest dimensions per quiet window, so a divider drag emits a bounded SIGWINCH stream that always ends at the final size.")
