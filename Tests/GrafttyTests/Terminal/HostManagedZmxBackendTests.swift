@@ -665,7 +665,7 @@ struct HostManagedZmxBackendTests {
 
     // MARK: - TERM-11.11 — anchor-heal rows bounce on rehydrated attach
 
-    @Test("@spec TERM-11.11: When a rehydrated pane's attach settles with no remote client attached, the application shall bounce the PTY rows — rows-1 immediately after the settle sync, restored to the settled rows after a delay — so the session's TUI performs a spaced pair of full repaints and re-anchors at the bottom of the final grid.")
+    @Test("@spec TERM-11.11: When a rehydrated pane's attach settles with no remote client attached, the application shall bounce the PTY rows — rows-1 after a short delay (clearing the post-settle viewport echo), restored to the settled rows after a further delay — so the session's TUI performs a spaced pair of full repaints and re-anchors at the bottom of the final grid.")
     func anchorHealBouncesRowsAfterRehydratedAttachSettles() throws {
         let session = FakeHostManagedSession()
         let coalescer = ManualResizeCoalescer()
@@ -679,14 +679,10 @@ struct HostManagedZmxBackendTests {
         try backend.start(surface: Self.fakeSurface())
 
         backend.markLayoutSettled()
-        // Settle sync, then the heal's first leg (rows-1) immediately —
-        // the stranded TUI sees a real row change and repaints.
-        #expect(session.resizes() == [
-            Resize(cols: 106, rows: 82),
-            Resize(cols: 106, rows: 81),
-        ])
+        // Only the settle sync fires synchronously — both heal legs are
+        // delayed so they can't interleave with the settle echo.
+        #expect(session.resizes() == [Resize(cols: 106, rows: 82)])
 
-        // The delayed restore leg returns to the settled rows.
         coalescer.fireAll()
         #expect(session.resizes() == [
             Resize(cols: 106, rows: 82),
@@ -695,7 +691,34 @@ struct HostManagedZmxBackendTests {
         ])
     }
 
-    @Test("The anchor-heal restore leg shall be skipped when another resize intervened — the intervening resize already repainted the TUI at fresh dims (TERM-11.11).")
+    @Test("The anchor-heal shrink leg shall survive the post-settle viewport echo (libghostty re-reporting the settled size) and still complete the bounce — the echo is not a user resize (TERM-11.11).")
+    func anchorHealSurvivesPostSettleViewportEcho() throws {
+        let session = FakeHostManagedSession()
+        let coalescer = ManualResizeCoalescer()
+        let backend = Self.makeBackend(session: session, coalescer: coalescer)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 106, rows: 82) },
+            requestRefresh: {}
+        )
+        backend.setAnchorHealOnAttach(true)
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+
+        // The async settle echo: libghostty reports the same settled size
+        // ~25ms after the flush (observed in the 2026-06-11 trace; it
+        // defeated the v1 synchronous shrink leg).
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            106, 82, 0, 0
+        )
+
+        coalescer.fireAll()
+        let all = session.resizes()
+        #expect(all.suffix(2) == [Resize(cols: 106, rows: 81), Resize(cols: 106, rows: 82)])
+    }
+
+    @Test("The anchor-heal bounce shall be abandoned when a real resize intervened before the shrink leg — that resize already repainted the TUI at fresh dims (TERM-11.11).")
     func anchorHealRestoreSkippedWhenSuperseded() throws {
         let session = FakeHostManagedSession()
         let coalescer = ManualResizeCoalescer()
@@ -709,16 +732,16 @@ struct HostManagedZmxBackendTests {
         try backend.start(surface: Self.fakeSurface())
         backend.markLayoutSettled()
 
-        // A real viewport change lands mid-bounce (user resized).
+        // A real viewport change lands before the shrink leg fires.
         HostManagedZmxBackend.receiveResizeCallback(
             backend.userdataForTesting,
             90, 80, 0, 0
         )
-        let beforeRestore = session.resizes()
-        #expect(beforeRestore.last == Resize(cols: 90, rows: 80))
+        let beforeHeal = session.resizes()
+        #expect(beforeHeal.last == Resize(cols: 90, rows: 80))
 
         coalescer.fireAll()
-        #expect(session.resizes() == beforeRestore)
+        #expect(session.resizes() == beforeHeal)
     }
 
     @Test("No anchor-heal bounce shall fire while a remote client is attached — the Mac must not perturb a shared session's size (TERM-11.11).")

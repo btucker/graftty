@@ -138,6 +138,14 @@ final class HostManagedZmxBackend {
     /// session whose TUI may hold a stranded render anchor).
     private var healAnchorOnAttach = false
 
+    /// Delay before the heal's shrink leg: libghostty asynchronously
+    /// re-reports the settled size ~25ms after the settle flush, and a
+    /// synchronous shrink raced that echo — the PTY went rows-1 → rows
+    /// within milliseconds, a coalesced double SIGWINCH that repainted
+    /// nothing (and could itself corrupt a mid-frame TUI). Both legs
+    /// fire from quiet.
+    private static let anchorHealShrinkDelay: TimeInterval = 0.15
+
     /// Spacing between the heal's shrink and restore legs. TUIs coalesce
     /// rapid SIGWINCHes and skip repainting when the final size equals
     /// their belief — the restore must land only after the TUI observed
@@ -417,12 +425,14 @@ final class HostManagedZmxBackend {
         lock.unlock()
     }
 
-    /// TERM-11.11 shrink leg. Caller holds `lock`, after the settle
-    /// flush recorded the settled size in `lastForwardedResize`. A
-    /// reattached TUI repaints relative to a possibly-stranded anchor
-    /// and width-only changes repaint in place — only a ROW change
-    /// forces the bottom re-anchor (verified manually 2026-06-11). Ship
-    /// rows-1 now, restore rows after a settling delay.
+    /// TERM-11.11: arms the heal after the settle flush recorded the
+    /// settled size. Caller holds `lock`. A reattached TUI repaints
+    /// relative to a possibly-stranded anchor and width-only changes
+    /// repaint in place — only a ROW change forces the bottom re-anchor
+    /// (verified manually 2026-06-11). Both legs are DELAYED: the shrink
+    /// must not race libghostty's post-settle viewport echo, and the
+    /// restore must not race the shrink (signal coalescing swallows
+    /// rapid same-final-size sequences).
     private func performAnchorHealLocked() {
         guard healAnchorOnAttach else { return }
         healAnchorOnAttach = false
@@ -430,15 +440,34 @@ final class HostManagedZmxBackend {
               !hasRemoteClient(),
               let settled = lastForwardedResize,
               settled.rows >= 2 else { return }
+        // Cancel handles deliberately dropped: each leg re-checks
+        // lifecycle and supersession under the lock when it fires.
+        _ = scheduleCoalescedResize(Self.anchorHealShrinkDelay) { [weak self] in
+            self?.anchorHealShrink(from: settled)
+        }
+    }
+
+    /// TERM-11.11 shrink leg. Fires only when the last size the PTY saw
+    /// is still the settled size — the post-settle echo re-forwards that
+    /// same size (fine), while a REAL resize changes it and abandons the
+    /// heal (that resize already repainted the TUI).
+    private func anchorHealShrink(from settled: PendingResize) {
+        lock.lock()
+        guard case .running = lifecycle, lastForwardedResize == settled else {
+            lock.unlock()
+            Self.trace.notice("anchorHeal \(self.spawnConfiguration.sessionName, privacy: .public) ABANDONED (superseded before shrink)")
+            return
+        }
         let shrunk = PendingResize(cols: settled.cols, rows: settled.rows - 1)
         lastForwardedResize = shrunk
-        Self.trace.notice("anchorHeal \(self.spawnConfiguration.sessionName, privacy: .public) leg1 -> \(shrunk.cols)x\(shrunk.rows)")
-        try? session?.resize(cols: shrunk.cols, rows: shrunk.rows)
-        // Cancel handle deliberately dropped: the restore leg re-checks
-        // lifecycle and supersession under the lock when it fires.
+        let currentSession = session
         _ = scheduleCoalescedResize(Self.anchorHealRestoreDelay) { [weak self] in
             self?.anchorHealRestore(to: settled)
         }
+        lock.unlock()
+
+        Self.trace.notice("anchorHeal \(self.spawnConfiguration.sessionName, privacy: .public) leg1 -> \(shrunk.cols)x\(shrunk.rows)")
+        try? currentSession?.resize(cols: shrunk.cols, rows: shrunk.rows)
     }
 
     /// TERM-11.11 restore leg: return to the settled rows unless another
