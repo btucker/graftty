@@ -344,37 +344,57 @@ final class SurfaceHandle {
                     self?.refresh()
                 }
             )
-            // TERM-11.1: first nonzero frame on the view = layout settled.
-            surfaceView.hostManagedLayoutNotifier = { [weak backend] in
+            // TERM-11.1 / TERM-11.10: first nonzero frame on the view =
+            // layout settled. The deferred attach starts FIRST so the
+            // zmx replay parses into a grid already at its settled size
+            // (the pre-layout placeholder grid mangled the replay and
+            // stranded the TUI's render anchor mid-window); the settle
+            // signal then syncs the PTY as before.
+            surfaceView.hostManagedLayoutNotifier = { [weak self, weak backend] in
+                self?.startZmxBackendIfNeeded()
                 backend?.markLayoutSettled()
             }
+            // TERM-11.10: spawn-time injection rides along with the
+            // deferred start.
+            pendingZmxStart = PendingZmxStart(extraInitialInput: extraInitialInput)
         }
 
         if let initialGridSize, initialGridSize.width_px > 0, initialGridSize.height_px > 0 {
             surfaceFactory.setSize(newSurface, initialGridSize.width_px, initialGridSize.height_px)
         }
 
-        if let backend {
-            do {
-                try backend.start(surface: newSurface)
-                if let extraInitialInput,
-                   let data = extraInitialInput.data(using: .utf8) {
-                    // extraInitialInput is programmatic spawn-time
-                    // injection (e.g., `graftty pane split --command`).
-                    // It is NOT a user keystroke — leave the IOS-12.1
-                    // silent gate closed so libghostty's first
-                    // viewport callback can still be evaluated against
-                    // a real user input.
-                    try? backend.write(data, claimEngagement: false)
-                }
-            } catch {
-                backend.close()
-                reportZmxBackendStartFailure(error, surface: newSurface)
-            }
-        }
-
         // Free the C strings now that libghostty has copied them internally.
         freeCreateInputs()
+    }
+
+    /// TERM-11.10 deferred attach. One-shot: consumed on the first
+    /// settled layout regardless of outcome, so later frame events can't
+    /// double-start or replay the spawn-time injection.
+    private struct PendingZmxStart {
+        let extraInitialInput: String?
+    }
+
+    private var pendingZmxStart: PendingZmxStart?
+
+    private func startZmxBackendIfNeeded() {
+        guard let backend = zmxBackend, let pending = pendingZmxStart else { return }
+        pendingZmxStart = nil
+        do {
+            try backend.start(surface: surface)
+            if let extraInitialInput = pending.extraInitialInput,
+               let data = extraInitialInput.data(using: .utf8) {
+                // extraInitialInput is programmatic spawn-time
+                // injection (e.g., `graftty pane split --command`).
+                // It is NOT a user keystroke — leave the IOS-12.1
+                // silent gate closed so libghostty's first
+                // viewport callback can still be evaluated against
+                // a real user input.
+                try? backend.write(data, claimEngagement: false)
+            }
+        } catch {
+            backend.close()
+            reportZmxBackendStartFailure(error, surface: surface)
+        }
     }
 
     private func reportZmxBackendStartFailure(_ error: Error, surface: ghostty_surface_t) {

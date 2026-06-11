@@ -229,7 +229,15 @@ final class HostManagedZmxBackend {
             throw Error.closed
         }
 
-        let newSession = sessionFactory(surface, spawnConfiguration, initialSize)
+        // TERM-11.10: spawn at the live grid size when the surface-sync
+        // provider is bound (it is, before any deferred start) — the
+        // construction-time initialSize is the eviction-cache fallback
+        // and can be stale relative to the settled layout.
+        lock.lock()
+        let gridQuery = currentGridSize
+        lock.unlock()
+        let spawnSize = gridQuery() ?? initialSize
+        let newSession = sessionFactory(surface, spawnConfiguration, spawnSize)
 
         lock.lock()
         if case .closed = lifecycle {

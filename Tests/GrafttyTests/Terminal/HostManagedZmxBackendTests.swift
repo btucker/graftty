@@ -637,6 +637,32 @@ struct HostManagedZmxBackendTests {
         #expect(session.resizes().isEmpty)
     }
 
+    @Test("start(surface:) shall spawn the PTY at the live grid size when a grid provider is bound, falling back to the construction-time initialSize — so a deferred start (TERM-11.10) attaches at the settled dims, not the stale eviction cache.")
+    func startSpawnsAtLiveGridSizeWhenBound() throws {
+        let captured = LockedRecorder<(cols: UInt16, rows: UInt16)?>()
+        let session = FakeHostManagedSession()
+        let backend = HostManagedZmxBackend(
+            spawnConfiguration: Self.spawnConfiguration(),
+            initialSize: (cols: 49, rows: 17),
+            sessionFactory: { _, _, initialSize in
+                captured.append(initialSize)
+                return session
+            }
+        )
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 224, rows: 82) },
+            requestRefresh: {}
+        )
+
+        try backend.start(surface: Self.fakeSurface())
+
+        let recorded = captured.values()
+        #expect(recorded.count == 1)
+        #expect(recorded.first??.cols == 224)
+        #expect(recorded.first??.rows == 82)
+    }
+
     // MARK: - TERM-11.9 — resize coalescing (divider-drag SIGWINCH storms)
 
     @Test("@spec TERM-11.9: While a rapid sequence of libghostty viewport callbacks arrives, the application shall forward the first resize to the zmx PTY immediately and coalesce the remainder, delivering at most one trailing resize with the latest dimensions per quiet window, so a divider drag emits a bounded SIGWINCH stream that always ends at the final size.")
