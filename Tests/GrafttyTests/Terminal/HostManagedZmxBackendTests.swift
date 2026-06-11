@@ -333,10 +333,11 @@ struct HostManagedZmxBackendTests {
         #expect(session.resizes() == [Resize(cols: 80, rows: 24)])
     }
 
-    @Test("Once engaged by user input, every subsequent libghostty viewport callback propagates to the PTY as a resize (IOS-12.1).")
+    @Test("Once engaged by user input, every subsequent libghostty viewport callback propagates to the PTY as a resize — immediately on the leading edge, or as the coalesced trailing resize (IOS-12.1 / TERM-11.9).")
     func postEngagementResizesArePropagated() throws {
         let session = FakeHostManagedSession()
-        let backend = Self.makeBackend(session: session)
+        let coalescer = ManualResizeCoalescer()
+        let backend = Self.makeBackend(session: session, coalescer: coalescer)
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         try backend.start(surface: Self.fakeSurface())
         backend.markLayoutSettled()
@@ -357,6 +358,7 @@ struct HostManagedZmxBackendTests {
             1200,
             960
         )
+        coalescer.fireAll()
 
         #expect(session.resizes() == [Resize(cols: 120, rows: 40), Resize(cols: 100, rows: 40)])
     }
@@ -635,6 +637,124 @@ struct HostManagedZmxBackendTests {
         #expect(session.resizes().isEmpty)
     }
 
+    // MARK: - TERM-11.9 — resize coalescing (divider-drag SIGWINCH storms)
+
+    @Test("@spec TERM-11.9: While a rapid sequence of libghostty viewport callbacks arrives, the application shall forward the first resize to the zmx PTY immediately and coalesce the remainder, delivering at most one trailing resize with the latest dimensions per quiet window, so a divider drag emits a bounded SIGWINCH stream that always ends at the final size.")
+    func resizeBurstForwardsLeadingEdgeAndLatestTrailing() throws {
+        let session = FakeHostManagedSession()
+        let coalescer = ManualResizeCoalescer()
+        let backend = Self.makeBackend(session: session, coalescer: coalescer)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+
+        // Drag burst: 213 → 200 → 150 → 106 within one quiet window.
+        for cols in [213, 200, 150, 106] {
+            HostManagedZmxBackend.receiveResizeCallback(
+                backend.userdataForTesting,
+                UInt16(cols), 82, 0, 0
+            )
+        }
+        // Leading edge forwarded immediately; the rest held.
+        #expect(session.resizes() == [Resize(cols: 213, rows: 82)])
+
+        // Quiet window elapses: exactly one trailing resize, latest dims.
+        coalescer.fireAll()
+        #expect(session.resizes() == [Resize(cols: 213, rows: 82), Resize(cols: 106, rows: 82)])
+    }
+
+    @Test("Coalescing shall skip the trailing resize when the latest burst size equals the last forwarded size — no redundant SIGWINCH (TERM-11.9).")
+    func trailingResizeSkippedWhenSizeUnchanged() throws {
+        let session = FakeHostManagedSession()
+        let coalescer = ManualResizeCoalescer()
+        let backend = Self.makeBackend(session: session, coalescer: coalescer)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+
+        HostManagedZmxBackend.receiveResizeCallback(backend.userdataForTesting, 213, 82, 0, 0)
+        HostManagedZmxBackend.receiveResizeCallback(backend.userdataForTesting, 150, 82, 0, 0)
+        HostManagedZmxBackend.receiveResizeCallback(backend.userdataForTesting, 213, 82, 0, 0)
+
+        coalescer.fireAll()
+        #expect(session.resizes() == [Resize(cols: 213, rows: 82)])
+    }
+
+    @Test("A sustained drag shall keep throttling: each trailing forward reopens the quiet window so later burst events coalesce again (TERM-11.9).")
+    func sustainedDragKeepsThrottling() throws {
+        let session = FakeHostManagedSession()
+        let coalescer = ManualResizeCoalescer()
+        let backend = Self.makeBackend(session: session, coalescer: coalescer)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+
+        HostManagedZmxBackend.receiveResizeCallback(backend.userdataForTesting, 213, 82, 0, 0)
+        HostManagedZmxBackend.receiveResizeCallback(backend.userdataForTesting, 180, 82, 0, 0)
+        #expect(session.resizes() == [Resize(cols: 213, rows: 82)])
+        #expect(coalescer.scheduleCount == 1)
+
+        // First window elapses → trailing 180 forwarded, NEW window opens.
+        coalescer.fireNext()
+        #expect(session.resizes() == [Resize(cols: 213, rows: 82), Resize(cols: 180, rows: 82)])
+        #expect(coalescer.scheduleCount == 2)
+
+        // Events inside the reopened window coalesce instead of forwarding.
+        HostManagedZmxBackend.receiveResizeCallback(backend.userdataForTesting, 140, 82, 0, 0)
+        HostManagedZmxBackend.receiveResizeCallback(backend.userdataForTesting, 106, 82, 0, 0)
+        #expect(session.resizes().count == 2)
+        coalescer.fireAll()
+        #expect(session.resizes().last == Resize(cols: 106, rows: 82))
+    }
+
+    @Test("A sync flush (engagement / layout-settle) shall supersede any pending coalesced resize so a stale mid-drag size cannot land after the flush (TERM-11.9).")
+    func flushSupersedesPendingCoalescedResize() throws {
+        let session = FakeHostManagedSession()
+        let coalescer = ManualResizeCoalescer()
+        let backend = Self.makeBackend(session: session, coalescer: coalescer)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 106, rows: 82) },
+            requestRefresh: {}
+        )
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+        // Settle flush shipped the grid (106x82).
+        #expect(session.resizes() == [Resize(cols: 106, rows: 82)])
+
+        // Silent-state burst: leading edge forwards, 150x82 left pending.
+        HostManagedZmxBackend.receiveResizeCallback(backend.userdataForTesting, 213, 82, 0, 0)
+        HostManagedZmxBackend.receiveResizeCallback(backend.userdataForTesting, 150, 82, 0, 0)
+
+        // Engagement flush ships the current grid and clears the pending
+        // coalesced size — the stale 150x82 must never land afterwards.
+        try backend.write(Data([0x68]))
+        let afterFlush = session.resizes()
+        #expect(afterFlush.last == Resize(cols: 106, rows: 82))
+
+        coalescer.fireAll()
+        #expect(session.resizes() == afterFlush)
+    }
+
+    @Test("close() shall cancel a scheduled trailing resize; a fire that races close shall not resize a closed backend (TERM-11.9).")
+    func closeCancelsPendingTrailingResize() throws {
+        let session = FakeHostManagedSession()
+        let coalescer = ManualResizeCoalescer()
+        let backend = Self.makeBackend(session: session, coalescer: coalescer)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+
+        HostManagedZmxBackend.receiveResizeCallback(backend.userdataForTesting, 213, 82, 0, 0)
+        HostManagedZmxBackend.receiveResizeCallback(backend.userdataForTesting, 150, 82, 0, 0)
+        let beforeClose = session.resizes()
+
+        backend.close()
+        #expect(coalescer.cancelCount == 1)
+        coalescer.fireAll()
+        #expect(session.resizes() == beforeClose)
+    }
+
     // MARK: - TERM-11.6/11.7/11.8 — pre-layout engagement + opt-in engagement
 
     @Test("@spec TERM-11.6: When user input engages the silent gate before layout has settled, the application shall defer the engagement PTY sync until layout settles rather than resize the PTY to the pre-layout grid.")
@@ -736,11 +856,14 @@ struct HostManagedZmxBackendTests {
 
     private static func makeBackend(
         session: FakeHostManagedSession,
-        hasRemoteClient: @escaping () -> Bool = { false }
+        hasRemoteClient: @escaping () -> Bool = { false },
+        coalescer: ManualResizeCoalescer? = nil
     ) -> HostManagedZmxBackend {
         HostManagedZmxBackend(
             spawnConfiguration: spawnConfiguration(),
             hasRemoteClient: hasRemoteClient,
+            scheduleCoalescedResize: coalescer.map { c in { delay, fire in c.schedule(delay, fire) } }
+                ?? HostManagedZmxBackend.defaultResizeCoalescingScheduler,
             sessionFactory: { _, _, _ in session }
         )
     }
@@ -815,6 +938,65 @@ struct HostManagedZmxBackendTests {
 private struct Resize: Equatable {
     let cols: UInt16
     let rows: UInt16
+}
+
+/// Deterministic stand-in for the backend's resize-coalescing scheduler:
+/// records each scheduled trailing fire; tests pump them with `fireAll()`.
+final class ManualResizeCoalescer: @unchecked Sendable {
+    private final class Entry {
+        var fire: (() -> Void)?
+        init(_ fire: @escaping () -> Void) { self.fire = fire }
+    }
+
+    private let lock = NSLock()
+    private var queued: [Entry] = []
+    private(set) var scheduleCount = 0
+    private(set) var cancelCount = 0
+
+    func schedule(_ delay: TimeInterval, _ fire: @escaping () -> Void) -> (() -> Void) {
+        let entry = Entry(fire)
+        lock.lock()
+        queued.append(entry)
+        scheduleCount += 1
+        lock.unlock()
+        return { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            entry.fire = nil
+            self.cancelCount += 1
+            self.lock.unlock()
+        }
+    }
+
+    /// Runs exactly one queued trailing fire (the oldest), leaving any
+    /// window it reopens armed — models a single quiet-window expiry.
+    func fireNext() {
+        lock.lock()
+        guard !queued.isEmpty else {
+            lock.unlock()
+            return
+        }
+        let entry = queued.removeFirst()
+        let fire = entry.fire
+        lock.unlock()
+        fire?()
+    }
+
+    /// Runs every queued (uncancelled) trailing fire, including any that
+    /// get scheduled BY a fire (sustained-drag windows reopen).
+    func fireAll() {
+        while true {
+            lock.lock()
+            guard !queued.isEmpty else {
+                lock.unlock()
+                return
+            }
+            let entry = queued.removeFirst()
+            let fire = entry.fire
+            lock.unlock()
+            fire?()
+        }
+    }
 }
 
 private final class FakeHostManagedSession: HostManagedZmxSession {

@@ -56,10 +56,32 @@ final class HostManagedZmxBackend {
         case engaged
     }
 
-    private struct PendingResize {
+    private struct PendingResize: Equatable {
         let cols: UInt16
         let rows: UInt16
     }
+
+    /// Schedules `fire` after `delay` seconds and returns a cancel
+    /// closure. Seam for TERM-11.9's trailing-edge resize coalescing —
+    /// production uses GCD (`defaultResizeCoalescingScheduler`); tests
+    /// inject a manual recorder for deterministic window expiry.
+    typealias ResizeCoalescingScheduler = (
+        _ delay: TimeInterval,
+        _ fire: @escaping () -> Void
+    ) -> (() -> Void)
+
+    static let defaultResizeCoalescingScheduler: ResizeCoalescingScheduler = { delay, fire in
+        let item = DispatchWorkItem(block: fire)
+        DispatchQueue.global(qos: .userInteractive)
+            .asyncAfter(deadline: .now() + delay, execute: item)
+        return { item.cancel() }
+    }
+
+    /// TERM-11.9 quiet window. A divider drag emits viewport callbacks
+    /// every frame (~8ms); 75ms collapses a drag into ≲13 SIGWINCHes/s
+    /// through zmx instead of ~120, while a lone resize still lands
+    /// instantly on the leading edge.
+    private static let resizeCoalesceDelay: TimeInterval = 0.075
 
     static let receiveBufferCallback: ghostty_surface_receive_buffer_cb = { userdata, ptr, len in
         guard let userdata, let ptr, len > 0 else { return }
@@ -91,6 +113,7 @@ final class HostManagedZmxBackend {
 
     private let spawnConfiguration: ZmxSpawnConfiguration
     private let initialSize: (cols: UInt16, rows: UInt16)?
+    private let scheduleCoalescedResize: ResizeCoalescingScheduler
     private let sessionFactory: SessionFactory
     private let lock = NSLock()
 
@@ -100,6 +123,15 @@ final class HostManagedZmxBackend {
     private var attachState: AttachState = .silent
     private var lastSilentResize: PendingResize?
     private var userdataPointer: UnsafeMutableRawPointer!
+
+    /// TERM-11.9 coalescing state. `coalesceCancel != nil` means the
+    /// quiet window is open: forwarded resizes opened it, and any resize
+    /// arriving while it's open parks in `pendingCoalescedResize`
+    /// (latest wins) until the window expires. `lastForwardedResize`
+    /// suppresses redundant trailing SIGWINCHes.
+    private var coalesceCancel: (() -> Void)?
+    private var pendingCoalescedResize: PendingResize?
+    private var lastForwardedResize: PendingResize?
 
     /// Reentrant counter tracking active `withProgrammaticInput` scopes.
     /// While > 0, `receiveBufferCallback` treats the inbound bytes as
@@ -134,6 +166,7 @@ final class HostManagedZmxBackend {
         spawnConfiguration: ZmxSpawnConfiguration,
         initialSize: (cols: UInt16, rows: UInt16)? = nil,
         hasRemoteClient: @escaping () -> Bool = { false },
+        scheduleCoalescedResize: @escaping ResizeCoalescingScheduler = HostManagedZmxBackend.defaultResizeCoalescingScheduler,
         sessionFactory: @escaping SessionFactory = { surface, configuration, initialSize in
             NativePtySession(
                 surface: surface,
@@ -148,6 +181,7 @@ final class HostManagedZmxBackend {
         self.spawnConfiguration = spawnConfiguration
         self.initialSize = initialSize
         self.hasRemoteClient = hasRemoteClient
+        self.scheduleCoalescedResize = scheduleCoalescedResize
         self.sessionFactory = sessionFactory
 
         let userdata = HostManagedZmxBackendUserdata(backend: self)
@@ -401,12 +435,18 @@ final class HostManagedZmxBackend {
         let currentSession = session
         session = nil
         pendingResize = nil
+        // TERM-11.9: cancel an in-flight quiet window; a fire that races
+        // this cancel is also lifecycle-gated in coalesceWindowExpired.
+        let cancelCoalesce = coalesceCancel
+        coalesceCancel = nil
+        pendingCoalescedResize = nil
         // No `attachState` / `lastSilentResize` reset here: `.closed` is
         // terminal and `start()` rejects it (`Error.closed`), so there
         // is no "next attach" on this instance. Per-process reattach is
         // handled by constructing a fresh `HostManagedZmxBackend`.
         lock.unlock()
 
+        cancelCoalesce?()
         currentSession?.close()
     }
 
@@ -460,6 +500,17 @@ final class HostManagedZmxBackend {
             pendingResize = PendingResize(cols: cols, rows: rows)
             currentSession = nil
         case .running:
+            // TERM-11.9: while the quiet window is open (a drag in
+            // progress), park the latest size instead of forwarding —
+            // the window's trailing fire delivers it.
+            if coalesceCancel != nil {
+                pendingCoalescedResize = PendingResize(cols: cols, rows: rows)
+                lock.unlock()
+                Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(cols)x\(rows) COALESCED")
+                return
+            }
+            lastForwardedResize = PendingResize(cols: cols, rows: rows)
+            openCoalesceWindowLocked()
             currentSession = session
         case .closed:
             currentSession = nil
@@ -468,6 +519,42 @@ final class HostManagedZmxBackend {
 
         Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(cols)x\(rows) \(currentSession != nil ? "FORWARDED" : "QUEUED", privacy: .public)")
         try? currentSession?.resize(cols: cols, rows: rows)
+    }
+
+    /// Opens the TERM-11.9 quiet window. Caller holds `lock`. The
+    /// scheduler only enqueues the trailing fire (no synchronous
+    /// callback, no backend re-entry), so invoking it under the lock is
+    /// safe — same contract as `hasRemoteClient`.
+    private func openCoalesceWindowLocked() {
+        coalesceCancel = scheduleCoalescedResize(Self.resizeCoalesceDelay) { [weak self] in
+            self?.coalesceWindowExpired()
+        }
+    }
+
+    /// Trailing edge of the TERM-11.9 quiet window: forward the latest
+    /// parked size (if it still differs from what the PTY last saw) and
+    /// reopen the window so a sustained drag keeps throttling.
+    private func coalesceWindowExpired() {
+        lock.lock()
+        coalesceCancel = nil
+        guard case .running = lifecycle,
+              let pending = pendingCoalescedResize else {
+            pendingCoalescedResize = nil
+            lock.unlock()
+            return
+        }
+        pendingCoalescedResize = nil
+        if pending == lastForwardedResize {
+            lock.unlock()
+            return
+        }
+        lastForwardedResize = pending
+        openCoalesceWindowLocked()
+        let currentSession = session
+        lock.unlock()
+
+        Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(pending.cols)x\(pending.rows) TRAILING")
+        try? currentSession?.resize(cols: pending.cols, rows: pending.rows)
     }
 
     /// Marks that the user has acted on the surface since the most recent
@@ -532,6 +619,11 @@ final class HostManagedZmxBackend {
         Self.trace.notice("flush(\(reason, privacy: .public)) \(self.spawnConfiguration.sessionName, privacy: .public) -> \(target.cols)x\(target.rows) fromGrid=\(grid != nil) queued=\(queued.map { "\($0.cols)x\($0.rows)" } ?? "nil", privacy: .public)")
         switch lifecycle {
         case .running:
+            // TERM-11.9: the flush supersedes any mid-drag size parked
+            // in the quiet window — a stale coalesced resize must not
+            // land after this authoritative sync.
+            pendingCoalescedResize = nil
+            lastForwardedResize = PendingResize(cols: target.cols, rows: target.rows)
             try? session?.resize(cols: target.cols, rows: target.rows)
             return requestRefresh
         case .idle, .starting:
