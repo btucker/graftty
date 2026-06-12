@@ -510,6 +510,9 @@ final class TerminalManager: ObservableObject {
                 terminalManager: self,
                 inputActivityObserver: inputActivityObserver,
                 remoteAttachmentRegistry: remoteAttachmentRegistry,
+                // TERM-11.11: still-rehydrated after the daemon-gone
+                // check = attaching to a live pre-existing session.
+                healZmxAnchorOnAttach: wasRehydrated(terminalID),
                 initialGridSize: consumeCachedGridSize(for: terminalID)
             ) else {
                 forgetPaneSession(for: terminalID)
@@ -556,6 +559,9 @@ final class TerminalManager: ObservableObject {
             terminalManager: self,
             inputActivityObserver: inputActivityObserver,
             remoteAttachmentRegistry: remoteAttachmentRegistry,
+            // TERM-11.11: still-rehydrated after the daemon-gone
+            // check = attaching to a live pre-existing session.
+            healZmxAnchorOnAttach: wasRehydrated(terminalID),
             initialGridSize: consumeCachedGridSize(for: terminalID)
         ) else {
             forgetPaneSession(for: terminalID)

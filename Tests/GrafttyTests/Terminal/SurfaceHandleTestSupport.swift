@@ -119,6 +119,8 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
     private(set) var bindSurfaceSyncCount = 0
     private(set) var markLayoutSettledCount = 0
     private(set) var remoteClientsDidDetachCount = 0
+    private(set) var userInputScopeCount = 0
+    private(set) var anchorHealEnabledValues: [Bool] = []
 
     init(startError: Error? = nil, setSizeCountSource: @escaping () -> Int = { 0 }) {
         self.startError = startError
@@ -154,6 +156,11 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
         body()
     }
 
+    func withUserInput(_ body: () -> Void) {
+        userInputScopeCount += 1
+        body()
+    }
+
     func bindSurfaceSync(
         currentGridSize: @escaping () -> (cols: UInt16, rows: UInt16)?,
         requestRefresh: @escaping () -> Void
@@ -163,6 +170,10 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
 
     func markLayoutSettled() {
         markLayoutSettledCount += 1
+    }
+
+    func setAnchorHealOnAttach(_ enabled: Bool) {
+        anchorHealEnabledValues.append(enabled)
     }
 
     func remoteClientsDidDetach() {
