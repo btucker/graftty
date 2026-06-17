@@ -119,6 +119,8 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
     private(set) var bindSurfaceSyncCount = 0
     private(set) var markLayoutSettledCount = 0
     private(set) var remoteClientsDidDetachCount = 0
+    private(set) var resyncVisibleGridCount = 0
+    private(set) var reanchorOnShowCount = 0
     private(set) var userInputScopeCount = 0
     private(set) var anchorHealEnabledValues: [Bool] = []
 
@@ -178,6 +180,14 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
 
     func remoteClientsDidDetach() {
         remoteClientsDidDetachCount += 1
+    }
+
+    func resyncVisibleGrid() {
+        resyncVisibleGridCount += 1
+    }
+
+    func reanchorOnShow() {
+        reanchorOnShowCount += 1
     }
 
     func close() {

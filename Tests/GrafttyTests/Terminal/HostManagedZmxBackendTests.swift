@@ -787,6 +787,129 @@ struct HostManagedZmxBackendTests {
         #expect(session.resizes().isEmpty)
     }
 
+    // MARK: - TERM-11.14 — re-show re-anchor (stranded TUI render anchor with size in agreement)
+
+    @Test("@spec TERM-11.14: When a kept-alive pane is switched back to, the application shall bounce the PTY rows (rows-1 then back to rows) to force the session's TUI to repaint and re-anchor — clearing a render anchor stranded while the pane was occluded even though the grid and PTY size already agree, which a same-size refresh cannot fix.")
+    func reanchorOnShowBouncesRowsToForceFullRepaint() throws {
+        let session = FakeHostManagedSession()
+        let coalescer = ManualResizeCoalescer()
+        let backend = Self.makeBackend(session: session, coalescer: coalescer)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 108, rows: 86) },
+            requestRefresh: {}
+        )
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+        // Settle flush forwards the live grid; PTY is now in sync at 86.
+        #expect(session.resizes() == [Resize(cols: 108, rows: 86)])
+
+        // Switch back to the worktree: no size changed, but force the bounce.
+        backend.reanchorOnShow()
+        coalescer.fireAll()
+        #expect(session.resizes() == [
+            Resize(cols: 108, rows: 86),
+            Resize(cols: 108, rows: 85),
+            Resize(cols: 108, rows: 86),
+        ])
+    }
+
+    @Test("The re-show re-anchor bounce shall not fire while a remote client is attached — the Mac must not perturb a shared session (TERM-11.14 / TERM-11.11).")
+    func reanchorOnShowSkippedWhileRemoteAttached() throws {
+        let session = FakeHostManagedSession()
+        let coalescer = ManualResizeCoalescer()
+        let backend = Self.makeBackend(session: session, hasRemoteClient: { true }, coalescer: coalescer)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 108, rows: 86) },
+            requestRefresh: {}
+        )
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()   // withheld: still silent with a remote client
+
+        backend.reanchorOnShow()
+        coalescer.fireAll()
+        #expect(session.resizes().isEmpty)
+    }
+
+    @Test("The re-show re-anchor bounce shall be withheld before layout settles — a pre-layout pane has no real anchor to heal (TERM-11.14).")
+    func reanchorOnShowSkippedBeforeLayoutSettles() throws {
+        let session = FakeHostManagedSession()
+        let coalescer = ManualResizeCoalescer()
+        let backend = Self.makeBackend(session: session, coalescer: coalescer)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 108, rows: 86) },
+            requestRefresh: {}
+        )
+        try backend.start(surface: Self.fakeSurface())
+        // No markLayoutSettled() — pre-layout.
+
+        backend.reanchorOnShow()
+        coalescer.fireAll()
+        #expect(session.resizes().isEmpty)
+    }
+
+    // MARK: - TERM-11.13 — re-show resync (stale PTY size latched while occluded)
+
+    @Test("@spec TERM-11.13: When a pane re-enters the visible set and the live libghostty grid differs from the size the PTY last received — a row count latched while the surface was occluded, which libghostty never re-reported because the grid had no delta to emit — the application shall resize the PTY to the live grid and force a refresh so the session TUI re-anchors instead of rendering off by N lines; when the live grid already matches the PTY, the re-show shall not perturb the PTY.")
+    func reShowResyncsPtyToLiveGridOnlyWhenStale() throws {
+        let session = FakeHostManagedSession()
+        let refreshes = LockedCounter()
+        let drifted = LockedFlag(false)
+        let backend = Self.makeBackend(session: session)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { drifted.value() ? (cols: 108, rows: 88) : (cols: 108, rows: 90) },
+            requestRefresh: { _ = refreshes.increment() }
+        )
+        try backend.start(surface: Self.fakeSurface())
+
+        // Attach settles at 108x90 — the PTY adopts the grid libghostty is
+        // rendering. (Settle drops its refresh; setFrameSize already issued
+        // one on the same frame event.)
+        backend.markLayoutSettled()
+        #expect(session.resizes() == [Resize(cols: 108, rows: 90)])
+        #expect(refreshes.value() == 0)
+
+        // While the pane is occluded the window's row count drifts to 88, but
+        // libghostty emits no viewport callback — the occluded surface already
+        // held that grid, so there was no delta to report. The PTY keeps its
+        // stale 90 rows; nothing has reconciled it.
+        drifted.set(true)
+        #expect(session.resizes() == [Resize(cols: 108, rows: 90)])
+
+        // The pane is shown again: the re-show resync forwards the live grid
+        // (108x88) to the PTY and forces a refresh, re-anchoring the TUI.
+        backend.resyncVisibleGrid()
+        #expect(session.resizes() == [Resize(cols: 108, rows: 90), Resize(cols: 108, rows: 88)])
+        #expect(refreshes.value() == 1)
+
+        // A further show with the grid already in agreement is inert — plain
+        // focus switches must not churn SIGWINCHes through the session.
+        backend.resyncVisibleGrid()
+        #expect(session.resizes() == [Resize(cols: 108, rows: 90), Resize(cols: 108, rows: 88)])
+        #expect(refreshes.value() == 1)
+    }
+
+    @Test("The re-show resync shall be withheld while a still-silent pane has a remote client attached — the Mac must not steal a shared session's width without user engagement (TERM-11.13 / IOS-12.1).")
+    func reShowResyncWithheldWhileSilentWithRemoteClient() throws {
+        let session = FakeHostManagedSession()
+        let remoteAttached = LockedFlag(true)
+        let backend = Self.makeBackend(session: session, hasRemoteClient: { remoteAttached.value() })
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 108, rows: 88) },
+            requestRefresh: {}
+        )
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()   // gated: remote attached, still silent
+        #expect(session.resizes().isEmpty)
+
+        backend.resyncVisibleGrid()
+        #expect(session.resizes().isEmpty)
+    }
+
     // MARK: - TERM-11.9 — resize coalescing (divider-drag SIGWINCH storms)
 
     @Test("@spec TERM-11.9: While a rapid sequence of libghostty viewport callbacks arrives, the application shall forward the first resize to the zmx PTY immediately and coalesce the remainder, delivering at most one trailing resize with the latest dimensions per quiet window, so a divider drag emits a bounded SIGWINCH stream that always ends at the final size.")

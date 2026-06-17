@@ -97,9 +97,9 @@ For new features and bug fixes, follow a RED/GREEN TDD process:
 4. **Run `swift test`** to confirm it passes (and that no other tests regressed).
 5. **Run `scripts/generate-specs.py`** and commit the updated `SPECS.md` alongside your code.
 
-## Always run /simplify before opening a PR
+## Always run /code-review xhigh --fix before opening a PR
 
-Before opening a PR, run `/simplify` to review the changed code for reuse, quality, and efficiency, and apply any improvements it surfaces. This catches dead code, duplicated helpers, and over-complicated branches that are easier to clean up before review than after.
+Before opening a PR, run `/code-review xhigh --fix` to review the changed code for correctness bugs plus reuse, quality, and efficiency cleanups, and apply the findings to the working tree. This catches bugs, dead code, duplicated helpers, and over-complicated branches that are easier to clean up before review than after.
 
 ## Cutting a release
 

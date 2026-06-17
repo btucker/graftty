@@ -476,6 +476,16 @@ final class HostManagedZmxBackend {
     private func performAnchorHealLocked() {
         guard healAnchorOnAttach else { return }
         healAnchorOnAttach = false
+        scheduleAnchorHealBounceLocked()
+    }
+
+    /// Schedules the rows bounce (rows → rows-1 → rows) that forces the
+    /// session's TUI to re-anchor via a spaced pair of full repaints.
+    /// Caller holds `lock`. Shared by the reattach heal (TERM-11.11) and
+    /// the worktree re-show re-anchor (TERM-11.14). No-op unless running,
+    /// not remote-shared (the Mac must not perturb a shared session's
+    /// size), and the last forwarded size is healable (≥ 2 rows).
+    private func scheduleAnchorHealBounceLocked() {
         guard case .running = lifecycle,
               !hasRemoteClient(),
               let settled = lastForwardedResize,
@@ -485,6 +495,28 @@ final class HostManagedZmxBackend {
         _ = scheduleCoalescedResize(Self.anchorHealShrinkDelay) { [weak self] in
             self?.anchorHealShrink(from: settled)
         }
+    }
+
+    /// TERM-11.14: a kept-alive (occluded, not evicted) pane was switched
+    /// back to. Even when the grid and PTY size already agree, zmx's render
+    /// anchor can be stranded — content drawn while the surface was
+    /// occluded sits at the wrong rows, and a same-size `ghostty_surface_
+    /// refresh` cannot clear it (it just repaints libghostty's already-
+    /// wrong grid). Only a full zmx repaint re-anchors, so force one with
+    /// the same rows bounce the reattach heal uses. No-op while a divider
+    /// drag is in flight (don't fight the coalescer) or before layout
+    /// settles (a pre-layout pane has no real anchor; its attach flow heals
+    /// it); the bounce itself is further gated on running / no-remote /
+    /// healable rows.
+    func reanchorOnShow() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard layoutSettled, coalesceCancel == nil else {
+            Self.trace.notice("reanchorOnShow \(self.spawnConfiguration.sessionName, privacy: .public) SKIP settled=\(self.layoutSettled) dragging=\(self.coalesceCancel != nil)")
+            return
+        }
+        Self.trace.notice("reanchorOnShow \(self.spawnConfiguration.sessionName, privacy: .public) bounce")
+        scheduleAnchorHealBounceLocked()
     }
 
     /// TERM-11.11 shrink leg. Fires only when the last size the PTY saw
@@ -541,6 +573,39 @@ final class HostManagedZmxBackend {
             return
         }
         let refresh = flushSizeToPtyLocked(reason: "remoteDetach")
+        lock.unlock()
+        refresh?()
+    }
+
+    /// TERM-11.13: a pane re-entered the visible set (un-occluded). While it
+    /// was occluded the window's grid may have drifted to a row/col count the
+    /// PTY never received: libghostty emits a viewport callback only on a grid
+    /// *delta*, and an occluded surface re-shown at a size it already held
+    /// produces none, so the PTY keeps its stale latched dims and the
+    /// session's TUI renders off-anchor (the "off by N lines" desync) until a
+    /// real resize forces a SIGWINCH — which is exactly why a manual vertical
+    /// resize fixes it. Reconcile here by forwarding the live grid to the PTY
+    /// when it differs from what the PTY last saw, then force a refresh so the
+    /// TUI re-anchors. No-op when already in agreement (so plain focus
+    /// switches don't churn SIGWINCHes through the session) or while resize
+    /// withholding applies (pre-layout, or a still-silent pane with a remote
+    /// client whose width the Mac must not steal — IOS-12.1 / TERM-11.2).
+    func resyncVisibleGrid() {
+        lock.lock()
+        guard case .running = lifecycle,
+              !shouldWithholdResizeLocked(),
+              let grid = currentGridSize() else {
+            lock.unlock()
+            return
+        }
+        guard PendingResize(cols: grid.cols, rows: grid.rows) != lastForwardedResize else {
+            lock.unlock()
+            // .debug, not .notice: the in-sync no-op is the common case on
+            // every plain focus switch — keep it out of the persisted log.
+            Self.trace.debug("resyncVisibleGrid \(self.spawnConfiguration.sessionName, privacy: .public) IN-SYNC \(grid.cols)x\(grid.rows)")
+            return
+        }
+        let refresh = flushSizeToPtyLocked(reason: "showResync")
         lock.unlock()
         refresh?()
     }
@@ -728,12 +793,12 @@ final class HostManagedZmxBackend {
     }
 
     /// Shared sync tail for markUserInput / markLayoutSettled /
-    /// remoteClientsDidDetach. Caller holds `lock`. Resolves the sync
-    /// target — the live grid when a provider is bound, else the last
-    /// withheld viewport size — and ships it to the PTY (or queues it
-    /// when the session is still starting). `resize` does take the
-    /// session's ioLock, but ioLock holders never take the backend lock,
-    /// so the backend→ioLock order is acyclic; the ioctl itself is
+    /// remoteClientsDidDetach / resyncVisibleGrid. Caller holds `lock`.
+    /// Resolves the sync target — the live grid when a provider is bound,
+    /// else the last withheld viewport size — and ships it to the PTY (or
+    /// queues it when the session is still starting). `resize` does take
+    /// the session's ioLock, but ioLock holders never take the backend
+    /// lock, so the backend→ioLock order is acyclic; the ioctl itself is
     /// milliseconds at most, keeping the contention window bounded.
     ///
     /// Returns the bound `requestRefresh` closure when a running-session

@@ -147,6 +147,12 @@ struct SurfaceHandleHostManagedTests {
 
         handle.remoteClientsDidDetach()
         #expect(backend.remoteClientsDidDetachCount == 1)
+
+        handle.resyncVisibleGrid()
+        #expect(backend.resyncVisibleGridCount == 1)
+
+        handle.reanchorOnShow()
+        #expect(backend.reanchorOnShowCount == 1)
     }
 
     @Test("SurfaceHandle shall forward healZmxAnchorOnAttach to the backend so rehydrated panes arm the anchor-heal bounce (TERM-11.11 glue).")
