@@ -60,6 +60,12 @@ protocol SurfaceHandleZmxBackend: AnyObject {
     func setAnchorHealOnAttach(_ enabled: Bool)
     /// The last remote client detached from this pane's session (TERM-11.4).
     func remoteClientsDidDetach()
+    /// The pane re-entered the visible set; reconcile the PTY to the live
+    /// grid if a size drifted while it was occluded (TERM-11.13).
+    func resyncVisibleGrid()
+    /// A worktree was switched back to; force a zmx repaint to clear a TUI
+    /// render anchor stranded while the pane was occluded (TERM-11.14).
+    func reanchorOnShow()
     func close()
     func surfaceWasFreed()
 }
@@ -490,6 +496,22 @@ final class SurfaceHandle {
     /// Force a full repaint on libghostty's next draw cycle.
     func refresh() {
         ghostty_surface_refresh(surface)
+    }
+
+    /// TERM-11.13: the pane re-entered the visible set. Ask the host-managed
+    /// backend to reconcile the zmx PTY to the live grid when a size drifted
+    /// while the surface was occluded (no-op for non-zmx surfaces, and a
+    /// no-op in the backend when the grid and PTY already agree).
+    func resyncVisibleGrid() {
+        zmxBackend?.resyncVisibleGrid()
+    }
+
+    /// TERM-11.14: a worktree was switched back to. Ask the host-managed
+    /// backend to force a zmx repaint (rows bounce) so a render anchor
+    /// stranded while the pane was occluded re-anchors — no-op for non-zmx
+    /// surfaces and for panes the backend judges not worth perturbing.
+    func reanchorOnShow() {
+        zmxBackend?.reanchorOnShow()
     }
 
     /// TERM-11.4: forwarded by TerminalManager when the last remote client

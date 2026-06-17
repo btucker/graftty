@@ -152,12 +152,21 @@ struct MainWindow: View {
             get: { appState.sidebarWidth },
             set: { appState.sidebarWidth = $0 }
         ))
-        .onChange(of: appState.selectedWorktreePath, initial: true) { _, newPath in
+        .onChange(of: appState.selectedWorktreePath, initial: true) { oldPath, newPath in
             guard let newPath else { return }
             terminalManager.surfaceBudget.noteSelected(
                 worktreePath: newPath,
                 splitTreesByPath: appState.runningSplitTreesByPath()
             )
+            // TERM-11.14: a real worktree switch (not the initial selection)
+            // re-shows kept-alive panes whose TUI render anchor may have
+            // stranded while occluded — force them to re-anchor. The initial
+            // selection and same-path no-ops are skipped (oldPath != newPath);
+            // a freshly-attaching worktree's panes no-op in the backend and
+            // are covered by the attach heal instead.
+            if oldPath != newPath, let wt = appState.worktree(forPath: newPath), wt.state == .running {
+                terminalManager.reanchorWorktreeOnShow(terminalIDs: wt.splitTree.allLeaves)
+            }
         }
         // AGENT-3.4 resume rule runs at the model layer via
         // ClaudeSessionRegistry.onLivenessChange (wired in startup), so it

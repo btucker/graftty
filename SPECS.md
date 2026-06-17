@@ -302,6 +302,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.12** While the zmx session has not yet started, the application shall queue PTY writes and deliver them in order once the session starts (after any queued resize) — a `pane add --command` issued before the pane's first layout shall not be dropped.
 
+**TERM-11.13** When a pane re-enters the visible set and the live libghostty grid differs from the size the PTY last received — a row count latched while the surface was occluded, which libghostty never re-reported because the grid had no delta to emit — the application shall resize the PTY to the live grid and force a refresh so the session TUI re-anchors instead of rendering off by N lines; when the live grid already matches the PTY, the re-show shall not perturb the PTY.
+
+**TERM-11.14** When a kept-alive pane is switched back to, the application shall bounce the PTY rows (rows-1 then back to rows) to force the session's TUI to repaint and re-anchor — clearing a render anchor stranded while the pane was occluded even though the grid and PTY size already agree, which a same-size refresh cannot fix.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
