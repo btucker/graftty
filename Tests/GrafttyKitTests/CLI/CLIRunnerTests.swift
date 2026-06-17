@@ -36,6 +36,49 @@ struct CLIRunnerTests {
         }
     }
 
+    @Test func runWithExceededTimeoutTerminatesProcessPromptly() async throws {
+        // A wedged fetch is the production case: `git`/`gh` block on a
+        // dead socket forever. The bounded `run` must SIGTERM the child
+        // and throw `timedOut` rather than waiting out the subprocess.
+        //
+        // The child sleeps 30s — far longer than any plausible timer
+        // slip — so the assertion is robust: the only way `timedOut` is
+        // thrown is the timeout actually firing and killing the process.
+        // The 500ms target fires sub-second in normal runs; the generous
+        // 20s upper bound only guards against the process running to
+        // natural completion, and tolerates the GCD-timer starvation seen
+        // under heavy parallel CI load (the same artifact `PollingHeart`
+        // documents). A tight bound here would flake under 300+ parallel
+        // suites without indicating any production defect.
+        let start = Date()
+        do {
+            _ = try await runner.run(
+                command: "sleep",
+                args: ["30"],
+                at: NSTemporaryDirectory(),
+                timeout: .milliseconds(500)
+            )
+            Issue.record("should have thrown timedOut")
+        } catch CLIError.timedOut(let cmd, _) {
+            #expect(cmd == "sleep")
+        }
+        let elapsed = Date().timeIntervalSince(start)
+        #expect(elapsed < 20.0, "timed-out run must not wait out the full 30s sleep")
+    }
+
+    @Test func runWithGenerousTimeoutReturnsNormally() async throws {
+        // A timeout that the command finishes well within must not
+        // interfere with the normal success path.
+        let output = try await runner.run(
+            command: "echo",
+            args: ["hi"],
+            at: NSTemporaryDirectory(),
+            timeout: .seconds(10)
+        )
+        #expect(output.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "hi")
+        #expect(output.exitCode == 0)
+    }
+
     @Test func notFoundForMissingCommand() async throws {
         do {
             _ = try await runner.run(

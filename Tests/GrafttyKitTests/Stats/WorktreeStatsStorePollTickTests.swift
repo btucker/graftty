@@ -118,6 +118,41 @@ struct WorktreeStatsStorePollTickTests {
         try await waitUntil(timeout: 2.0) { compute.callCount(for: "/r/running") >= 1 }
     }
 
+    @MainActor
+    @Test("""
+@spec DIVERGE-4.11: If a per-repo `git fetch` dispatched by the divergence-stats polling tick hangs past the in-flight abandonment threshold — `git fetch` is a network subprocess with no timeout, so a socket wedged across a sleep/wake or a dead link can block indefinitely and never run the slot-releasing handler — then the application shall treat the in-flight repo slot as abandoned and let a later tick dispatch a fresh fetch, rather than latching the repo path in `inFlightRepos` for the lifetime of the session. Without this, every later poll short-circuits at the in-flight check, Gate B is skipped, and the divergence gutter freezes at its last value until the app is relaunched — the async-hang sibling of the synchronous latch closed by DIVERGE-4.10.
+""")
+    func pollTickSupersedesAbandonedRepoFetchSlot() async throws {
+        let compute = RecordingCompute()
+        let store = WorktreeStatsStore(compute: compute.function, fetch: { _ in })
+
+        // A previous `git fetch` hung and never released its slot. Seed
+        // the marker well past the abandonment threshold so this tick
+        // must treat it as abandoned.
+        store.seedInFlightRepoForTesting(
+            Date(timeIntervalSinceNow: -3600),
+            forRepo: "/r"
+        )
+        // Cooldown elapsed and default branch known, so once the stale
+        // slot is abandoned the fetch dispatches and reaches the
+        // per-worktree refresh (the injected fetch returns immediately).
+        store.seedLastRepoFetchForTesting(
+            Date(timeIntervalSinceNow: -3600),
+            forRepo: "/r"
+        )
+        store.seedDefaultBranchForTesting("main", forRepo: "/r")
+
+        let runningWt = WorktreeEntry(path: "/r/running", branch: "feature", state: .running)
+        let repo = RepoEntry(path: "/r", displayName: "r", worktrees: [runningWt])
+
+        await store.pollTickForTesting(repos: [repo])
+
+        // With the latch fixed, the abandoned fetch is superseded and the
+        // fresh one recomputes the running worktree's divergence. A bare-
+        // `Set` latch would short-circuit forever and never call compute.
+        try await waitUntil(timeout: 2.0) { compute.callCount(for: "/r/running") >= 1 }
+    }
+
     // MARK: - Helpers
 
     private func waitUntil(

@@ -22,8 +22,22 @@ public enum GitRunner {
 
     /// Runs `git <args>` and returns stdout. Throws `CLIError.nonZeroExit`
     /// on non-zero exit. Use when non-zero means "the call failed."
-    public static func run(args: [String], at directory: String) async throws -> String {
-        let out = try await executor.run(command: "git", args: args, at: directory)
+    ///
+    /// `timeout` bounds the subprocess: pass a value for network-bound,
+    /// poll-driven calls (`git fetch`) so a wedged socket is SIGTERMed and
+    /// surfaced as `CLIError.timedOut` rather than hanging. `nil` (the
+    /// default) is unbounded, preserving every existing local-git caller.
+    public static func run(
+        args: [String],
+        at directory: String,
+        timeout: Duration? = nil
+    ) async throws -> String {
+        let out = try await executor.run(
+            command: "git",
+            args: args,
+            at: directory,
+            timeout: timeout
+        )
         return out.stdout
     }
 
