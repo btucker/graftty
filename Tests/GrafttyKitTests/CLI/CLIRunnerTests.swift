@@ -41,20 +41,22 @@ struct CLIRunnerTests {
         // dead socket forever. The bounded `run` must SIGTERM the child
         // and throw `timedOut` rather than waiting out the subprocess.
         //
-        // The child sleeps 30s — far longer than any plausible timer
-        // slip — so the assertion is robust: the only way `timedOut` is
-        // thrown is the timeout actually firing and killing the process.
-        // The 500ms target fires sub-second in normal runs; the generous
-        // 20s upper bound only guards against the process running to
-        // natural completion, and tolerates the GCD-timer starvation seen
-        // under heavy parallel CI load (the same artifact `PollingHeart`
-        // documents). A tight bound here would flake under 300+ parallel
-        // suites without indicating any production defect.
+        // The real assertion is that `timedOut` is THROWN against a child
+        // that cannot finish on its own within the test's patience: the
+        // child sleeps 120s, so a `timedOut` result can only mean the
+        // timeout fired and killed it. The 500ms target normally fires
+        // sub-second, but the GCD timer rides the global queue, which is
+        // starved for *tens of seconds* under 300+ parallel CI suites (the
+        // same artifact `PollingHeart` documents — observed ~29s once). So
+        // the long sleep keeps the timer winning the race regardless of
+        // slip, and the `elapsed` check is only a loose hang-guard, not a
+        // latency assertion. In production a slipped timer is backstopped
+        // by the 30s in-flight abandonment (DIVERGE-4.11) anyway.
         let start = Date()
         do {
             _ = try await runner.run(
                 command: "sleep",
-                args: ["30"],
+                args: ["120"],
                 at: NSTemporaryDirectory(),
                 timeout: .milliseconds(500)
             )
@@ -63,7 +65,7 @@ struct CLIRunnerTests {
             #expect(cmd == "sleep")
         }
         let elapsed = Date().timeIntervalSince(start)
-        #expect(elapsed < 20.0, "timed-out run must not wait out the full 30s sleep")
+        #expect(elapsed < 90.0, "timed-out run must not wait out the full 120s sleep")
     }
 
     @Test func runWithGenerousTimeoutReturnsNormally() async throws {
