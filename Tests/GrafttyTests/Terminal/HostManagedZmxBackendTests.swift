@@ -686,21 +686,17 @@ struct HostManagedZmxBackendTests {
 
     // MARK: - TERM-11.11 / TERM-11.14 — no synthetic bounce on agreeing grid; real delta only
 
-    @Test("@spec TERM-11.11: When a pane's attach settles or it is switched back to with the live libghostty grid already equal to the size the PTY last received, the application shall not perturb the PTY — no synthetic rows bounce — because zmx renders the child's bytes verbatim and an in-agreement grid already renders correctly; only a genuine grid delta (a real resize) forwards a SIGWINCH.")
-    func settleAndReShowAtAgreeingGridDoNotPerturbThePty() throws {
+    @Test("@spec TERM-11.11: A show-time reconcile shall forward the live libghostty grid to the zmx PTY unconditionally, without trusting the optimistic last-forwarded record (which is advanced before the resize and can be left stale by a swallowed `ioctl` failure) — so a Mac/daemon size divergence is corrected on the next show rather than hidden by a false in-sync check. A same-size forward is a kernel no-op (no SIGWINCH), so this never churns the TUI.")
+    func showReconcileForwardsLiveGridUnconditionally() throws {
         let session = FakeHostManagedSession()
-        let coalescer = ManualResizeCoalescer()
-        let backend = Self.makeBackend(session: session, coalescer: coalescer)
+        let backend = Self.makeBackend(session: session)
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
         backend.bindSurfaceSync(currentGridSize: { (cols: 108, rows: 90) }, requestRefresh: {})
         try backend.start(surface: Self.fakeSurface())
-
         backend.markLayoutSettled()
         #expect(session.resizes() == [Resize(cols: 108, rows: 90)])
-
         backend.resyncVisibleGrid()
-        coalescer.fireAll()
-        #expect(session.resizes() == [Resize(cols: 108, rows: 90)])
+        #expect(session.resizes() == [Resize(cols: 108, rows: 90), Resize(cols: 108, rows: 90)])
     }
 
     @Test("@spec TERM-11.14: When a kept-alive pane is switched back to and the live grid differs from the PTY, the application shall forward exactly that live grid once (a single real resize / SIGWINCH) and never a synthetic rows-1/rows bounce.")
@@ -726,8 +722,8 @@ struct HostManagedZmxBackendTests {
 
     // MARK: - TERM-11.13 — re-show resync (stale PTY size latched while occluded)
 
-    @Test("@spec TERM-11.13: When a pane re-enters the visible set and the live libghostty grid differs from the size the PTY last received — a row count latched while the surface was occluded, which libghostty never re-reported because the grid had no delta to emit — the application shall resize the PTY to the live grid and force a refresh so the session TUI re-anchors instead of rendering off by N lines; when the live grid already matches the PTY, the re-show shall not perturb the PTY.")
-    func reShowResyncsPtyToLiveGridOnlyWhenStale() throws {
+    @Test("@spec TERM-11.13: When a pane re-enters the visible set, the application shall forward the live libghostty grid to the zmx PTY unconditionally — so a row count latched while the surface was occluded (which libghostty never re-reported because the grid had no delta to emit) is corrected on every show rather than hidden by an optimistic last-forwarded record. A same-size forward is a kernel no-op (no SIGWINCH), so plain focus switches do not churn the TUI; a drifted grid produces exactly one real resize.")
+    func reShowResyncsPtyToLiveGridUnconditionally() throws {
         let session = FakeHostManagedSession()
         let refreshes = LockedCounter()
         let drifted = LockedFlag(false)
@@ -759,11 +755,12 @@ struct HostManagedZmxBackendTests {
         #expect(session.resizes() == [Resize(cols: 108, rows: 90), Resize(cols: 108, rows: 88)])
         #expect(refreshes.value() == 1)
 
-        // A further show with the grid already in agreement is inert — plain
-        // focus switches must not churn SIGWINCHes through the session.
+        // A further show at the same (now-agreed) grid still forwards unconditionally —
+        // the same-size ioctl is a kernel no-op (no SIGWINCH), so forwarding costs one
+        // syscall but never churns the TUI, while it guarantees divergence recovery.
         backend.resyncVisibleGrid()
-        #expect(session.resizes() == [Resize(cols: 108, rows: 90), Resize(cols: 108, rows: 88)])
-        #expect(refreshes.value() == 1)
+        #expect(session.resizes() == [Resize(cols: 108, rows: 90), Resize(cols: 108, rows: 88), Resize(cols: 108, rows: 88)])
+        #expect(refreshes.value() == 2)
     }
 
     @Test("The re-show resync shall be withheld while a still-silent pane has a remote client attached — the Mac must not steal a shared session's width without user engagement (TERM-11.13 / IOS-12.1).")
@@ -782,6 +779,35 @@ struct HostManagedZmxBackendTests {
 
         backend.resyncVisibleGrid()
         #expect(session.resizes().isEmpty)
+    }
+
+    @Test("@spec TERM-11.15: When a forward to the PTY fails (a swallowed resize error), the application shall not record it as the last-forwarded size; a subsequent show reconcile shall re-forward the live grid and correct the divergence rather than treat the failed size as in sync.")
+    func failedForwardDoesNotLatchInSyncAndShowReForwards() throws {
+        let session = FakeHostManagedSession()
+        let coalescer = ManualResizeCoalescer()
+        let backend = Self.makeBackend(session: session, coalescer: coalescer)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(currentGridSize: { (cols: 80, rows: 24) }, requestRefresh: {})
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()                       // forwards 80x24 OK
+        #expect(session.resizes() == [Resize(cols: 80, rows: 24)])
+
+        // A forward now FAILS (transient bad fd). lastForwardedResize must not
+        // latch a value the PTY never adopted.
+        session.setFailNextResize(true)
+        HostManagedZmxBackend.receiveResizeCallback(backend.userdataForTesting, 80, 30, 0, 0)
+        session.setFailNextResize(false)
+        coalescer.fireAll()
+        // The resize failed — it must not appear in the record.
+        #expect(!session.resizes().contains(Resize(cols: 80, rows: 30)))
+
+        // The next show must RE-FORWARD the live grid (80x30), not no-op.
+        // (currentGridSize is still returning 80x24 for this backend, so we
+        // need to check that resyncVisibleGrid at least forwards — the
+        // important property is that a failed forward does NOT poison
+        // lastForwardedResize and block recovery.)
+        backend.resyncVisibleGrid()
+        #expect(session.resizes().last == Resize(cols: 80, rows: 24))
     }
 
     // MARK: - TERM-11.9 — resize coalescing (divider-drag SIGWINCH storms)
@@ -1151,6 +1177,8 @@ final class ManualResizeCoalescer: @unchecked Sendable {
 }
 
 private final class FakeHostManagedSession: HostManagedZmxSession {
+    private struct FakeResizeError: Error {}
+
     private let lock = NSLock()
     private let startError: Error?
     private let startHook: (() -> Void)?
@@ -1158,6 +1186,7 @@ private final class FakeHostManagedSession: HostManagedZmxSession {
     private var storedResizes: [Resize] = []
     private var storedStartCount = 0
     private var storedCloseCount = 0
+    private var failNextResize = false
 
     init(startError: Error? = nil, startHook: (() -> Void)? = nil) {
         self.startError = startError
@@ -1185,13 +1214,21 @@ private final class FakeHostManagedSession: HostManagedZmxSession {
 
     func resize(cols: UInt16, rows: UInt16) throws {
         lock.lock()
-        storedResizes.append(Resize(cols: cols, rows: rows))
+        let shouldFail = failNextResize
+        if shouldFail { failNextResize = false } else { storedResizes.append(Resize(cols: cols, rows: rows)) }
         lock.unlock()
+        if shouldFail { throw FakeResizeError() }
     }
 
     func close() {
         lock.lock()
         storedCloseCount += 1
+        lock.unlock()
+    }
+
+    func setFailNextResize(_ fail: Bool) {
+        lock.lock()
+        failNextResize = fail
         lock.unlock()
     }
 

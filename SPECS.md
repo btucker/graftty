@@ -298,13 +298,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.10** When a zmx-backed pane's surface is created or recreated, the application shall defer spawning the `zmx attach` client until the owning view's first layout settles, so the attach replay is parsed into a grid already at its settled size rather than the pre-layout placeholder.
 
-**TERM-11.11** When a rehydrated pane's attach settles with no remote client attached, the application shall bounce the PTY rows — rows-1 after a short delay (clearing the post-settle viewport echo), restored to the settled rows after a further delay — so the session's TUI performs a spaced pair of full repaints and re-anchors at the bottom of the final grid.
+**TERM-11.11** A show-time reconcile shall forward the live libghostty grid to the zmx PTY unconditionally, without trusting the optimistic last-forwarded record (which is advanced before the resize and can be left stale by a swallowed `ioctl` failure) — so a Mac/daemon size divergence is corrected on the next show rather than hidden by a false in-sync check. A same-size forward is a kernel no-op (no SIGWINCH), so this never churns the TUI.
 
 **TERM-11.12** While the zmx session has not yet started, the application shall queue PTY writes and deliver them in order once the session starts (after any queued resize) — a `pane add --command` issued before the pane's first layout shall not be dropped.
 
-**TERM-11.13** When a pane re-enters the visible set and the live libghostty grid differs from the size the PTY last received — a row count latched while the surface was occluded, which libghostty never re-reported because the grid had no delta to emit — the application shall resize the PTY to the live grid and force a refresh so the session TUI re-anchors instead of rendering off by N lines; when the live grid already matches the PTY, the re-show shall not perturb the PTY.
+**TERM-11.13** When a pane re-enters the visible set, the application shall forward the live libghostty grid to the zmx PTY unconditionally — so a row count latched while the surface was occluded (which libghostty never re-reported because the grid had no delta to emit) is corrected on every show rather than hidden by an optimistic last-forwarded record. A same-size forward is a kernel no-op (no SIGWINCH), so plain focus switches do not churn the TUI; a drifted grid produces exactly one real resize.
 
-**TERM-11.14** When a kept-alive pane is switched back to, the application shall bounce the PTY rows (rows-1 then back to rows) to force the session's TUI to repaint and re-anchor — clearing a render anchor stranded while the pane was occluded even though the grid and PTY size already agree, which a same-size refresh cannot fix.
+**TERM-11.14** When a kept-alive pane is switched back to and the live grid differs from the PTY, the application shall forward exactly that live grid once (a single real resize / SIGWINCH) and never a synthetic rows-1/rows bounce.
+
+**TERM-11.15** When a forward to the PTY fails (a swallowed resize error), the application shall not record it as the last-forwarded size; a subsequent show reconcile shall re-forward the live grid and correct the divergence rather than treat the failed size as in sync.
 
 ## GIT — Worktree Discovery & Monitoring
 

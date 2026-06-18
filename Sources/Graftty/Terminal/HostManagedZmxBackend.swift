@@ -461,27 +461,35 @@ final class HostManagedZmxBackend {
     /// produces none, so the PTY keeps its stale latched dims and the
     /// session's TUI renders off-anchor (the "off by N lines" desync) until a
     /// real resize forces a SIGWINCH — which is exactly why a manual vertical
-    /// resize fixes it. Reconcile here by forwarding the live grid to the PTY
-    /// when it differs from what the PTY last saw, then force a refresh so the
-    /// TUI re-anchors. No-op when already in agreement (so plain focus
-    /// switches don't churn SIGWINCHes through the session) or while resize
-    /// withholding applies (pre-layout, or a still-silent pane with a remote
-    /// client whose width the Mac must not steal — IOS-12.1 / TERM-11.2).
+    /// resize fixes it.
+    ///
+    /// We forward the live grid unconditionally rather than short-circuiting
+    /// when it "matches" `lastForwardedResize`. That record is an optimistic
+    /// proxy set BEFORE the resize call, with errors swallowed by `try?`, so
+    /// it can lie about what the PTY actually adopted (a failed ioctl leaves it
+    /// stale). Trusting it would hide a real Mac↔daemon size divergence until
+    /// the user manually resizes. A same-size `TIOCSWINSZ` is a kernel no-op
+    /// (no SIGWINCH emitted), so forwarding on every show costs one syscall
+    /// and never churns the TUI, while correctly recovering from any prior
+    /// failed forward. Still no-ops while resize withholding applies
+    /// (pre-layout, or a still-silent pane with a remote client whose width
+    /// the Mac must not steal — IOS-12.1 / TERM-11.2).
     func resyncVisibleGrid() {
         lock.lock()
         guard case .running = lifecycle,
               !shouldWithholdResizeLocked(),
-              let grid = currentGridSize() else {
+              currentGridSize() != nil else {
             lock.unlock()
             return
         }
-        guard PendingResize(cols: grid.cols, rows: grid.rows) != lastForwardedResize else {
-            lock.unlock()
-            // .debug, not .notice: the in-sync no-op is the common case on
-            // every plain focus switch — keep it out of the persisted log.
-            Self.trace.debug("resyncVisibleGrid \(self.spawnConfiguration.sessionName, privacy: .public) IN-SYNC \(grid.cols)x\(grid.rows)")
-            return
-        }
+        // Forward the live grid unconditionally. We deliberately do NOT
+        // short-circuit when it "matches" `lastForwardedResize`: that record is
+        // an optimistic proxy (set before the resize, with the failure swallowed
+        // by `try?`), so trusting it can hide a real Mac/daemon size divergence
+        // and leave the TUI rendering off-anchor until a manual resize. A
+        // same-size `TIOCSWINSZ` is a kernel no-op (no SIGWINCH), so forwarding on
+        // every show costs one syscall and never churns the TUI, while a forward
+        // after a previously-failed/ignored resize corrects the divergence.
         let refresh = flushSizeToPtyLocked(reason: "showResync")
         lock.unlock()
         refresh?()
@@ -600,7 +608,16 @@ final class HostManagedZmxBackend {
         lock.unlock()
 
         Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(cols)x\(rows) \(currentSession != nil ? "FORWARDED" : "QUEUED", privacy: .public)")
-        try? currentSession?.resize(cols: cols, rows: rows)
+        if let s = currentSession, (try? s.resize(cols: cols, rows: rows)) == nil {
+            // Forward failed — don't let the optimistic record lie about what the
+            // PTY adopted. Clear only if it's still ours (a newer forward may have
+            // landed between unlock and now).
+            lock.lock()
+            if lastForwardedResize == PendingResize(cols: cols, rows: rows) {
+                lastForwardedResize = nil
+            }
+            lock.unlock()
+        }
     }
 
     /// Opens the TERM-11.9 quiet window. Caller holds `lock`. The
@@ -636,7 +653,11 @@ final class HostManagedZmxBackend {
         lock.unlock()
 
         Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(pending.cols)x\(pending.rows) TRAILING")
-        try? currentSession?.resize(cols: pending.cols, rows: pending.rows)
+        if let s = currentSession, (try? s.resize(cols: pending.cols, rows: pending.rows)) == nil {
+            lock.lock()
+            if let lf = lastForwardedResize, lf == pending { lastForwardedResize = nil }
+            lock.unlock()
+        }
     }
 
     /// Marks that the user has acted on the surface since the most recent
@@ -705,8 +726,11 @@ final class HostManagedZmxBackend {
             // in the quiet window — a stale coalesced resize must not
             // land after this authoritative sync.
             pendingCoalescedResize = nil
-            lastForwardedResize = PendingResize(cols: target.cols, rows: target.rows)
-            try? session?.resize(cols: target.cols, rows: target.rows)
+            if (try? session?.resize(cols: target.cols, rows: target.rows)) != nil {
+                lastForwardedResize = PendingResize(cols: target.cols, rows: target.rows)
+            } else {
+                lastForwardedResize = nil
+            }
             return requestRefresh
         case .idle, .starting:
             pendingResize = PendingResize(cols: target.cols, rows: target.rows)
