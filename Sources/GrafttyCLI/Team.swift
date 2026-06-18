@@ -278,6 +278,9 @@ struct TeamRegister: ParsableCommand {
     @Option(name: .long, help: "Runtime: codex or claude")
     var runtime: String
 
+    @Option(name: .long, help: "PID of the long-running agent process to register")
+    var pid: Int32?
+
     func run() throws {
         guard let runtimeValue = TeamHookRuntime(rawValue: runtime) else {
             throw ValidationError("runtime must be one of: codex, claude")
@@ -292,12 +295,14 @@ struct TeamRegister: ParsableCommand {
         let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
             env: ProcessInfo.processInfo.environment
         )
+        let runtimePID = pid ?? ProcessInfo.processInfo.processIdentifier
         let record = TeamPresenceRecord(
             teamID: teamID,
             worktree: worktreeName,
             runtime: runtimeValue,
             paneSessionName: paneSessionName,
-            pid: ProcessInfo.processInfo.processIdentifier,
+            pid: runtimePID,
+            processStartTimeMicroseconds: ProcessIdentityReader.startTimeMicroseconds(ofPID: runtimePID),
             registeredAt: Date()
         )
         try storage.write(record)

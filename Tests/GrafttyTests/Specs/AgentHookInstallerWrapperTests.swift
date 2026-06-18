@@ -75,10 +75,10 @@ struct AgentHookInstallerWrapperTests {
     }
 
     @Test(
-        "@spec TEAM-PRESENCE-1.3: When the graftty wrapper launches an agent runtime, the wrapper shall asynchronously invoke `graftty team register --runtime <runtime>` (backgrounded, output redirected) before exec'ing the real binary, so the model is not required to type the registration command itself.",
+        "@spec TEAM-PRESENCE-1.3: When the graftty wrapper launches an agent runtime, the wrapper shall register the spawned long-running runtime PID, not the short-lived registration helper PID.",
         arguments: [TeamHookRuntime.claude, .codex]
     )
-    func wrapperRegistersAsynchronouslyBeforeExec(runtime: TeamHookRuntime) {
+    func wrapperRegistersSpawnedRuntimePID(runtime: TeamHookRuntime) {
         let script = AgentHookInstaller.wrapperScript(
             runtime: runtime,
             wrapperDirectory: "/Users/x/agent-hooks/bin",
@@ -86,14 +86,19 @@ struct AgentHookInstallerWrapperTests {
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
         )
-        // Async register, fully detached and silent.
+
+        #expect(script.contains("agent_pid=$!"))
         #expect(script.contains(
-            "/usr/local/bin/graftty team register --runtime \(runtime.rawValue) >/dev/null 2>&1 &"
+            #"/usr/local/bin/graftty team register --runtime \#(runtime.rawValue) --pid "$agent_pid" >/dev/null 2>&1 || true"#
         ))
-        // Register fires before exec of the real binary so it races with
-        // the agent's startup rather than serializing.
+        #expect(script.contains(#"wait "$agent_pid""#))
+        #expect(script.contains("trap cleanup EXIT"))
+        #expect(script.contains("graftty team unregister --runtime \(runtime.rawValue)"))
+
+        let agentPIDIdx = script.range(of: "agent_pid=$!")!.lowerBound
         let registerIdx = script.range(of: "team register --runtime")!.lowerBound
-        let execIdx = script.range(of: #"exec "$real_binary""#)!.lowerBound
-        #expect(registerIdx < execIdx)
+        let waitIdx = script.range(of: #"wait "$agent_pid""#)!.lowerBound
+        #expect(agentPIDIdx < registerIdx)
+        #expect(registerIdx < waitIdx)
     }
 }

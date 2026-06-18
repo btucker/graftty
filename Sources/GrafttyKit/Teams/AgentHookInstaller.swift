@@ -355,9 +355,9 @@ public struct AgentHookInstaller: Sendable {
             let escapedJSON = shellLiteral(inlineJSON)
             runtimeBlock = """
             if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
-              ( exec "$real_binary" --settings \(escapedJSON) "$@" )
+              ( exec "$real_binary" --settings \(escapedJSON) "$@" ) &
             else
-              ( exec "$real_binary" "$@" )
+              ( exec "$real_binary" "$@" ) &
             fi
             """
         case .codex:
@@ -365,9 +365,9 @@ public struct AgentHookInstaller: Sendable {
             runtimeBlock = """
             if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
               \(shellCommandToken(grafttyCLIPath)) internal sync-codex-home
-              ( exec env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@" )
+              ( exec env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@" ) &
             else
-              ( exec "$real_binary" "$@" )
+              ( exec "$real_binary" "$@" ) &
             fi
             """
         }
@@ -380,13 +380,17 @@ public struct AgentHookInstaller: Sendable {
 
         \(trapBlock)
 
-        # TEAM-PRESENCE-1.3: background `team register` so it never delays
-        # exec of the real binary. The CLI silently no-ops outside a
-        # team-tracked worktree, so the unconditional call is safe.
-        \(shellCommandToken(grafttyCLIPath)) team register --runtime \(runtime.rawValue) >/dev/null 2>&1 &
-
         \(runtimeBlock)
-        exit $?
+        agent_pid=$!
+
+        # TEAM-PRESENCE-1.3: register the long-running runtime child, not
+        # the short-lived registration helper. The CLI silently no-ops
+        # outside a team-tracked worktree, so the unconditional call is safe.
+        \(shellCommandToken(grafttyCLIPath)) team register --runtime \(runtime.rawValue) --pid "$agent_pid" >/dev/null 2>&1 || true
+
+        wait "$agent_pid"
+        agent_status=$?
+        exit "$agent_status"
         """
     }
 
