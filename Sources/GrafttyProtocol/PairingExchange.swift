@@ -111,6 +111,13 @@ public struct PairingErrorResponse: Codable, Sendable, Equatable, Error {
         /// The pairing session exists but is in a state that doesn't
         /// accept this request (e.g. introduce after confirm).
         case wrongSessionState
+        /// A pairing session already exists and a new begin request would
+        /// invalidate it.
+        case pairingBusy
+        /// The caller exceeded a route-level request limit and should back off.
+        case rateLimited
+        /// The host cannot accept a WebRTC offer right now.
+        case hostBusy
         case internalError
     }
 
