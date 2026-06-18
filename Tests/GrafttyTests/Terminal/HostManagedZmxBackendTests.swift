@@ -686,7 +686,7 @@ struct HostManagedZmxBackendTests {
 
     // MARK: - TERM-11.11 / TERM-11.14 — no synthetic bounce on agreeing grid; real delta only
 
-    @Test("@spec TERM-11.11: A show-time reconcile shall forward the live libghostty grid to the zmx PTY unconditionally, without trusting the optimistic last-forwarded record (which is advanced before the resize and can be left stale by a swallowed `ioctl` failure) — so a Mac/daemon size divergence is corrected on the next show rather than hidden by a false in-sync check. A same-size forward is a kernel no-op (no SIGWINCH), so this never churns the TUI.")
+    @Test("@spec TERM-11.11: A show-time reconcile shall forward the live libghostty grid to the zmx PTY unconditionally, not short-circuiting on an in-sync comparison against the optimistic last-forwarded record — a same-size forward is a kernel no-op (no SIGWINCH) so it never churns the TUI, while a Mac/daemon size divergence is always corrected on the next show instead of being hidden by a false in-sync check. The failure case that makes the optimistic record unsafe to trust is exercised by `TERM-11.15`.")
     func showReconcileForwardsLiveGridUnconditionally() throws {
         let session = FakeHostManagedSession()
         let backend = Self.makeBackend(session: session)
@@ -785,29 +785,34 @@ struct HostManagedZmxBackendTests {
     func failedForwardDoesNotLatchInSyncAndShowReForwards() throws {
         let session = FakeHostManagedSession()
         let coalescer = ManualResizeCoalescer()
+        let drifted = LockedFlag(false)
         let backend = Self.makeBackend(session: session, coalescer: coalescer)
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
-        backend.bindSurfaceSync(currentGridSize: { (cols: 80, rows: 24) }, requestRefresh: {})
+        backend.bindSurfaceSync(
+            currentGridSize: { drifted.value() ? (cols: 80, rows: 30) : (cols: 80, rows: 24) },
+            requestRefresh: {}
+        )
         try backend.start(surface: Self.fakeSurface())
         backend.markLayoutSettled()                       // forwards 80x24 OK
         #expect(session.resizes() == [Resize(cols: 80, rows: 24)])
 
-        // A forward now FAILS (transient bad fd). lastForwardedResize must not
-        // latch a value the PTY never adopted.
+        // The grid drifts to 80x30 and the forward FAILS (transient bad fd):
+        // the PTY never adopts 80x30, and lastForwardedResize must NOT latch
+        // a value the PTY never received.
+        drifted.set(true)
         session.setFailNextResize(true)
         HostManagedZmxBackend.receiveResizeCallback(backend.userdataForTesting, 80, 30, 0, 0)
         session.setFailNextResize(false)
         coalescer.fireAll()
-        // The resize failed — it must not appear in the record.
+        // The failed resize never reached the PTY.
         #expect(!session.resizes().contains(Resize(cols: 80, rows: 30)))
 
-        // The next show must RE-FORWARD the live grid (80x30), not no-op.
-        // (currentGridSize is still returning 80x24 for this backend, so we
-        // need to check that resyncVisibleGrid at least forwards — the
-        // important property is that a failed forward does NOT poison
-        // lastForwardedResize and block recovery.)
+        // The next show must RE-FORWARD the live grid (now 80x30) and correct
+        // the divergence — proving a failed forward did not poison the reconcile
+        // into a false in-sync state. Under the pre-fix code this no-op'd
+        // (live grid == stale lastForwardedResize) and the desync persisted.
         backend.resyncVisibleGrid()
-        #expect(session.resizes().last == Resize(cols: 80, rows: 24))
+        #expect(session.resizes().last == Resize(cols: 80, rows: 30))
     }
 
     // MARK: - TERM-11.9 — resize coalescing (divider-drag SIGWINCH storms)

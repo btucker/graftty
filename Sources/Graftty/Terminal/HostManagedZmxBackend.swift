@@ -136,6 +136,14 @@ final class HostManagedZmxBackend {
     /// arriving while it's open parks in `pendingCoalescedResize`
     /// (latest wins) until the window expires. `lastForwardedResize`
     /// suppresses redundant trailing SIGWINCHes.
+    ///
+    /// Dual-purpose, and the second role matters for TERM-11.15: it is
+    /// advanced ONLY after a confirmed-successful `resize`, and CLEARED
+    /// (set to nil) on a swallowed `resize` failure. A nil therefore means
+    /// "the PTY's adopted size is unknown / not what we last attempted" —
+    /// it is the failure sentinel that keeps the coalescer's `pending ==
+    /// lastForwardedResize` dedup from suppressing a re-forward of a size
+    /// the PTY never actually adopted.
     private var coalesceCancel: (() -> Void)?
     private var pendingCoalescedResize: PendingResize?
     private var lastForwardedResize: PendingResize?

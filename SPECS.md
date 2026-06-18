@@ -298,7 +298,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.10** When a zmx-backed pane's surface is created or recreated, the application shall defer spawning the `zmx attach` client until the owning view's first layout settles, so the attach replay is parsed into a grid already at its settled size rather than the pre-layout placeholder.
 
-**TERM-11.11** A show-time reconcile shall forward the live libghostty grid to the zmx PTY unconditionally, without trusting the optimistic last-forwarded record (which is advanced before the resize and can be left stale by a swallowed `ioctl` failure) — so a Mac/daemon size divergence is corrected on the next show rather than hidden by a false in-sync check. A same-size forward is a kernel no-op (no SIGWINCH), so this never churns the TUI.
+**TERM-11.11** A show-time reconcile shall forward the live libghostty grid to the zmx PTY unconditionally, not short-circuiting on an in-sync comparison against the optimistic last-forwarded record — a same-size forward is a kernel no-op (no SIGWINCH) so it never churns the TUI, while a Mac/daemon size divergence is always corrected on the next show instead of being hidden by a false in-sync check. The failure case that makes the optimistic record unsafe to trust is exercised by `TERM-11.15`.
 
 **TERM-11.12** While the zmx session has not yet started, the application shall queue PTY writes and deliver them in order once the session starts (after any queued resize) — a `pane add --command` issued before the pane's first layout shall not be dropped.
 
