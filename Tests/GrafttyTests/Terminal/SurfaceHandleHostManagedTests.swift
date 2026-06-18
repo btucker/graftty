@@ -9,7 +9,7 @@ import Testing
 @Suite("SurfaceHandle host-managed zmx cutover")
 struct SurfaceHandleHostManagedTests {
     @Test("""
-    @spec ZMX-4.1: When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned `zmx attach graftty-<short-id> <user-shell>` PTY client only after `ghostty_surface_new` succeeds. This avoids libghostty's automatic `wait-after-command` behavior while keeping shell exit wired to `close_surface_cb` through `ghostty_surface_process_exit`.
+    @spec ZMX-4.1: When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned `zmx attach graftty-<short-id> <user-shell>` PTY client only after `ghostty_surface_new` succeeds and the view's first layout settles (TERM-11.10). This avoids libghostty's automatic `wait-after-command` behavior while keeping shell exit wired to `close_surface_cb` through `ghostty_surface_process_exit`.
     """)
     func zmxAvailableUsesHostManagedBackendWithoutCommandOrInitialInput() throws {
         let backend = FakeSurfaceHandleZmxBackend()
@@ -34,7 +34,47 @@ struct SurfaceHandleHostManagedTests {
         #expect(captured.receiveResize != nil)
         #expect(captured.command == nil)
         #expect(captured.initialInput == nil)
+        // TERM-11.10: start defers to the first settled layout.
+        #expect(backend.startCount == 0)
+        let surfaceView = try #require(handle?.view as? SurfaceNSView)
+        surfaceView.hostManagedLayoutNotifier?()
         #expect(backend.startCount == 1)
+    }
+
+    @Test("""
+    @spec TERM-11.10: When a zmx-backed pane's surface is created or recreated, the application shall defer spawning the `zmx attach` client until the owning view's first layout settles, so the attach replay is parsed into a grid already at its settled size rather than the pre-layout placeholder.
+    """)
+    func zmxAttachSpawnDefersUntilFirstSettledLayout() throws {
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let handle = try #require(SurfaceHandle(
+            terminalID: Self.terminalID(),
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            extraInitialInput: "claude\r",
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _, _, _ in backend }
+        ))
+
+        // No layout yet: no attach client, no initial input.
+        #expect(backend.startCount == 0)
+        #expect(backend.writes.isEmpty)
+
+        let surfaceView = try #require(handle.view as? SurfaceNSView)
+        let notifier = try #require(surfaceView.hostManagedLayoutNotifier)
+        notifier()
+        // First settled layout: start, then the spawn-time injection, and
+        // the layout-settled signal still reaches the backend.
+        #expect(backend.startCount == 1)
+        #expect(backend.writes == [Data("claude\r".utf8)])
+        #expect(backend.markLayoutSettledCount == 1)
+
+        // Subsequent layout events must not re-start.
+        notifier()
+        #expect(backend.startCount == 1)
+        #expect(backend.writes.count == 1)
     }
 
     @Test func directShellFallbackPreservesExtraInitialInput() throws {
@@ -74,11 +114,13 @@ struct SurfaceHandleHostManagedTests {
         #expect(handle != nil)
         let captured = try #require(harness.capturedConfigs.first)
         #expect(captured.initialInput == nil)
+        let surfaceView = try #require(handle?.view as? SurfaceNSView)
+        surfaceView.hostManagedLayoutNotifier?()
         #expect(backend.startCount == 1)
         #expect(backend.writes == [Data("nvim Sources/main.swift\r".utf8)])
     }
 
-    @Test("SurfaceHandle.init shall bind the surface-sync closures exactly once, wire the layout-settled notifier to the backend, and forward remoteClientsDidDetach to the backend (TERM-11.1/11.3/11.4 glue).")
+    @Test("SurfaceHandle.init shall bind the surface-sync closures exactly once, wire the layout-settled notifier to the backend, and forward remoteClientsDidDetach and resyncVisibleGrid to the backend (TERM-11.1/11.3/11.4/11.13 glue).")
     func surfaceSyncAndDetachWiring() throws {
         let backend = FakeSurfaceHandleZmxBackend()
         let harness = SurfaceHandleTestHarness(surface: fakeSurface())
@@ -98,10 +140,16 @@ struct SurfaceHandleHostManagedTests {
         let surfaceView = try #require(handle.view as? SurfaceNSView)
         let notifier = try #require(surfaceView.hostManagedLayoutNotifier)
         notifier()
+        // TERM-11.10: the first settled layout both starts the deferred
+        // attach and delivers the layout-settled signal.
+        #expect(backend.startCount == 1)
         #expect(backend.markLayoutSettledCount == 1)
 
         handle.remoteClientsDidDetach()
         #expect(backend.remoteClientsDidDetachCount == 1)
+
+        handle.resyncVisibleGrid()
+        #expect(backend.resyncVisibleGridCount == 1)
     }
 
     @Test func typeTextUsesBackendForZmxBackedSurface() throws {
@@ -202,6 +250,8 @@ struct SurfaceHandleHostManagedTests {
         )
 
         #expect(handle != nil)
+        let surfaceView = try? #require(handle?.view as? SurfaceNSView)
+        surfaceView?.hostManagedLayoutNotifier?()
         #expect(backend.startCount == 1)
         #expect(backend.closeCount == 1)
         #expect(backend.releaseCount == 0)
@@ -315,6 +365,8 @@ struct SurfaceHandleHostManagedTests {
         #expect(harness.setSizeCalls == [
             SetSizeCall(surface: surface, width: 1584, height: 688)
         ])
+        let surfaceView = try? #require(handle?.view as? SurfaceNSView)
+        surfaceView?.hostManagedLayoutNotifier?()
         #expect(backend.observedSetSizeCountAtStart == 1)
     }
 

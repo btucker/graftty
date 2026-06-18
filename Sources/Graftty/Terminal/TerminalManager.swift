@@ -720,11 +720,15 @@ final class TerminalManager: ObservableObject {
     }
 
     /// Tell libghostty whether a surface is currently visible. On visible,
-    /// force a repaint so a re-shown pane presents a clean full frame.
+    /// reconcile the zmx PTY to the live grid (TERM-11.13: a size can drift
+    /// while a pane is occluded with no viewport callback to forward it,
+    /// leaving the session's TUI rendering off-anchor) and force a repaint
+    /// so a re-shown pane presents a clean full frame.
     func setVisible(_ visible: Bool, for terminalID: PaneSlotID) {
         guard let handle = surfaces[terminalID] else { return }
         handle.setVisible(visible)
         if visible {
+            handle.resyncVisibleGrid()
             handle.refresh()
         }
     }
@@ -758,8 +762,11 @@ final class TerminalManager: ObservableObject {
     func setFocus(_ terminalID: PaneSlotID) {
         for (id, handle) in surfaces {
             if id == terminalID {
-                handle.setVisible(true)
-                handle.refresh()
+                // Route through the single visibility chokepoint so the
+                // focus-change re-show resyncs the zmx PTY to the live grid
+                // (TERM-11.13) — the same reconciliation onAppear gets —
+                // rather than un-occluding + refreshing without it.
+                setVisible(true, for: id)
             }
             handle.setFocus(id == terminalID)
         }

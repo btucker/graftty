@@ -99,6 +99,60 @@ struct WorktreeStatsStoreFetchTests {
         #expect(store.repoFailureStreakForTesting("/r") == 0,
                 "streak resets on first successful fetch")
     }
+
+    // DIVERGE-4.11 ownership guard (canonical behavioral spec lives on
+    // `WorktreeStatsStorePollTickTests.pollTickSupersedesAbandonedRepoFetchSlot`):
+    // a superseded `git fetch` Task that finally returns must NOT clear
+    // the `inFlightRepos` slot now owned by the fresher dispatch. The
+    // dispatch timestamp is the ownership token, so a stale Task's
+    // timestamp no longer matches and it declines to clear — otherwise it
+    // would re-open the latch under the live fetch and drop the next
+    // tick's recompute.
+    @MainActor
+    @Test func supersededFetchDoesNotClearLiveSlot() async {
+        let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
+            WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
+        }
+        let store = WorktreeStatsStore(compute: compute, fetch: { _ in })
+        store.seedDefaultBranchForTesting("main", forRepo: "/r")
+
+        // A fresher dispatch owns the slot.
+        let liveDispatch = Date()
+        store.seedInFlightRepoForTesting(liveDispatch, forRepo: "/r")
+
+        // An older, superseded Task completes and runs its `defer`.
+        let staleDispatch = Date(timeIntervalSinceNow: -100)
+        await store.performRepoFetchForTesting(
+            repoPath: "/r",
+            dispatchedAt: staleDispatch
+        )
+
+        #expect(store.isInFlightRepoForTesting("/r"),
+                "a superseded Task must leave the live in-flight slot intact")
+    }
+
+    @MainActor
+    @Test func owningFetchClearsItsOwnSlot() async {
+        // The complement of `supersededFetchDoesNotClearLiveSlot`: a Task
+        // whose `dispatchedAt` still matches the stored timestamp owns the
+        // slot and must release it so the next tick can dispatch again.
+        let compute: WorktreeStatsStore.ComputeFunction = { _, _, _, _ in
+            WorktreeStatsStore.ComputeResult(defaultBranch: "main", stats: nil)
+        }
+        let store = WorktreeStatsStore(compute: compute, fetch: { _ in })
+        store.seedDefaultBranchForTesting("main", forRepo: "/r")
+
+        let dispatch = Date()
+        store.seedInFlightRepoForTesting(dispatch, forRepo: "/r")
+
+        await store.performRepoFetchForTesting(
+            repoPath: "/r",
+            dispatchedAt: dispatch
+        )
+
+        #expect(!store.isInFlightRepoForTesting("/r"),
+                "the owning Task must release its own in-flight slot")
+    }
 }
 
 /// Tiny mutable Int holder for closures that need shared state.

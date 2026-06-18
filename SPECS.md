@@ -288,6 +288,26 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.5** The application shall track the number of remote clients attached to each zmx session; a session is remote-attached while its count is positive, and an observer fires when the count returns to zero.
 
+**TERM-11.6** When user input engages the silent gate before layout has settled, the application shall defer the engagement PTY sync until layout settles rather than resize the PTY to the pre-layout grid.
+
+**TERM-11.7** While layout has not settled, the application shall not forward viewport callbacks to the zmx PTY regardless of engagement state.
+
+**TERM-11.8** If libghostty emits PTY-bound bytes outside a user-input scope (terminal query auto-responses, automation), then the application shall not treat them as engaging user input; bytes emitted inside the scope shall engage.
+
+**TERM-11.9** While a rapid sequence of libghostty viewport callbacks arrives, the application shall forward the first resize to the zmx PTY immediately and coalesce the remainder, delivering at most one trailing resize with the latest dimensions per quiet window, so a divider drag emits a bounded SIGWINCH stream that always ends at the final size.
+
+**TERM-11.10** When a zmx-backed pane's surface is created or recreated, the application shall defer spawning the `zmx attach` client until the owning view's first layout settles, so the attach replay is parsed into a grid already at its settled size rather than the pre-layout placeholder.
+
+**TERM-11.11** A show-time reconcile shall forward the live libghostty grid to the zmx PTY unconditionally, not short-circuiting on an in-sync comparison against the optimistic last-forwarded record — a same-size forward is a kernel no-op (no SIGWINCH) so it never churns the TUI, while a Mac/daemon size divergence is always corrected on the next show instead of being hidden by a false in-sync check. The failure case that makes the optimistic record unsafe to trust is exercised by `TERM-11.15`.
+
+**TERM-11.12** While the zmx session has not yet started, the application shall queue PTY writes and deliver them in order once the session starts (after any queued resize) — a `pane add --command` issued before the pane's first layout shall not be dropped.
+
+**TERM-11.13** When a pane re-enters the visible set, the application shall forward the live libghostty grid to the zmx PTY unconditionally — so a row count latched while the surface was occluded (which libghostty never re-reported because the grid had no delta to emit) is corrected on every show rather than hidden by an optimistic last-forwarded record. A same-size forward is a kernel no-op (no SIGWINCH), so plain focus switches do not churn the TUI; a drifted grid produces exactly one real resize.
+
+**TERM-11.14** When a kept-alive pane is switched back to and the live grid differs from the PTY, the application shall forward exactly that live grid once (a single real resize / SIGWINCH) and never a synthetic rows-1/rows bounce.
+
+**TERM-11.15** When a forward to the PTY fails (a swallowed resize error), the application shall not record it as the last-forwarded size; a subsequent show reconcile shall re-forward the live grid and correct the divergence rather than treat the failed size as in sync.
+
 ## GIT — Worktree Discovery & Monitoring
 
 ### GIT-1.x — Initial Discovery
@@ -754,6 +774,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIVERGE-4.10** When the divergence-stats polling tick visits a repository whose `git fetch` cooldown has elapsed but which currently has no running worktrees, the application shall not mark that repository as having an in-flight fetch. Without this, the empty-worktrees early-return in `maybeDispatchRepoFetch` leaves the repo's path latched in `inFlightRepos` for the lifetime of the session: every subsequent poll short-circuits at the `inFlightRepos.contains` check, Gate B is skipped, and `WorktreeStatsStore.refresh` is never re-invoked from the polling loop. The user-visible shape is a sidebar gutter whose ↓N count is frozen at whatever value the explicit `refresh` on worktree-open captured — merging `origin/<defaultBranch>` into a feature branch fails to drop the red behind-count, because nothing recomputes the stats until the app is relaunched.
 
+**DIVERGE-4.11** If a per-repo `git fetch` dispatched by the divergence-stats polling tick hangs past the in-flight abandonment threshold — `git fetch` is a network subprocess with no timeout, so a socket wedged across a sleep/wake or a dead link can block indefinitely and never run the slot-releasing handler — then the application shall treat the in-flight repo slot as abandoned and let a later tick dispatch a fresh fetch, rather than latching the repo path in `inFlightRepos` for the lifetime of the session. Without this, every later poll short-circuits at the in-flight check, Gate B is skipped, and the divergence gutter freezes at its last value until the app is relaunched — the async-hang sibling of the synchronous latch closed by DIVERGE-4.10.
+
 ## TECH — Technology Constraints
 
 ### TECH-1.x
@@ -800,7 +822,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### ZMX-4.x — Lifecycle Mapping
 
-**ZMX-4.1** When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned `zmx attach graftty-<short-id> <user-shell>` PTY client only after `ghostty_surface_new` succeeds. This avoids libghostty's automatic `wait-after-command` behavior while keeping shell exit wired to `close_surface_cb` through `ghostty_surface_process_exit`.
+**ZMX-4.1** When the application creates a zmx-backed native terminal pane, it shall create a libghostty surface with `GHOSTTY_SURFACE_IO_BACKEND_HOST_MANAGED`, leave both `command` and `initial_input` unset, and start a host-owned `zmx attach graftty-<short-id> <user-shell>` PTY client only after `ghostty_surface_new` succeeds and the view's first layout settles (TERM-11.10). This avoids libghostty's automatic `wait-after-command` behavior while keeping shell exit wired to `close_surface_cb` through `ghostty_surface_process_exit`.
 
 **ZMX-4.2** When the application restores a worktree's split tree on launch (per `PERSIST-3.x`), each restored pane's surface shall be created with the same session name derived from the persisted pane UUID, so reattach to a surviving daemon is automatic.
 

@@ -135,7 +135,12 @@ public struct GitLabPRFetcher: PRFetcher {
             "--per-page", "100",
             "-F", "json",
         ]
-        let output = try await executor.run(command: "glab", args: args, at: NSTemporaryDirectory())
+        let output = try await executor.run(
+            command: "glab",
+            args: args,
+            at: NSTemporaryDirectory(),
+            timeout: Self.fetchTimeout
+        )
         let data = Data(output.stdout.utf8)
         return try JSONDecoder().decode([RawMR].self, from: data)
     }
@@ -150,7 +155,12 @@ public struct GitLabPRFetcher: PRFetcher {
             "--repo", origin.slug,
             "-F", "json",
         ]
-        let output = try await executor.run(command: "glab", args: args, at: NSTemporaryDirectory())
+        let output = try await executor.run(
+            command: "glab",
+            args: args,
+            at: NSTemporaryDirectory(),
+            timeout: GitLabPRFetcher.fetchTimeout
+        )
         let data = Data(output.stdout.utf8)
         let detail = try JSONDecoder().decode(RawMRDetail.self, from: data)
         return detail.head_pipeline.map { mapStatus($0.status) } ?? .none

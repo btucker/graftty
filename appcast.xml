@@ -6,18 +6,49 @@
         <description>Updates for Graftty.</description>
         <language>en</language>
         <item>
+            <title>Version 0.1.14</title>
+            <sparkle:version>0.1.14</sparkle:version>
+            <sparkle:shortVersionString>0.1.14</sparkle:shortVersionString>
+            <pubDate>Thu, 18 Jun 2026 21:38:45 +0000</pubDate>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
+<ul dir="auto">
+<li>appcast: v0.1.13 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4669324332" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/219" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/219/hovercard" href="https://github.com/btucker/graftty/pull/219">#219</a></li>
+<li>fix(TERM-11.13/11.14): reconcile zmx PTY on pane re-show — kill occluded-pane render desync by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4684793636" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/220" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/220/hovercard" href="https://github.com/btucker/graftty/pull/220">#220</a></li>
+<li>fix(DIVERGE-4.11): bound polling fetches + abandon hung in-flight repo slot — kill sidebar stale-until-restart by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4687417820" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/221" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/221/hovercard" href="https://github.com/btucker/graftty/pull/221">#221</a></li>
+<li>fix(TERM-11.13): sound show-time PTY reconcile + delete fake rows-bounce re-anchor by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4692857547" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/222" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/222/hovercard" href="https://github.com/btucker/graftty/pull/222">#222</a></li>
+<li>fix(WEB-4.10): kill parallel-run flake in env-capturing fake zmx by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4603137874" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/215" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/215/hovercard" href="https://github.com/btucker/graftty/pull/215">#215</a></li>
+</ul>
+<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.1.13...v0.1.14"><tt>v0.1.13...v0.1.14</tt></a></p>]]></description>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.1.14/Graftty-0.1.14.zip" length="29283384" type="application/octet-stream" sparkle:edSignature="RFOwo7FoRPv3r7GDb78Wqbu/LxCWV8M4TihYVZysMCwLrnTLanKC+aU46S84WTKcW5il1jmtQr0cPHw4eIoHAw=="/>
+        </item>
+        <item>
+            <title>Version 0.1.13</title>
+            <sparkle:version>0.1.13</sparkle:version>
+            <sparkle:shortVersionString>0.1.13</sparkle:shortVersionString>
+            <pubDate>Mon, 15 Jun 2026 22:16:04 +0000</pubDate>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description>&lt;h2 dir="auto"&gt;What's Changed&lt;/h2&gt;
+&lt;ul dir="auto"&gt;
+&lt;li&gt;appcast: v0.1.12 by @github-actions[bot] in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4633322453" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/217" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/217/hovercard" href="https://github.com/btucker/graftty/pull/217"&gt;#217&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;fix(TERM-11.6-11.8): opt-in engagement + pre-layout flush deferral — kill the 49x17 attach bounce by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4634434269" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/218" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/218/hovercard" href="https://github.com/btucker/graftty/pull/218"&gt;#218&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.1.12...v0.1.13"&gt;&lt;tt&gt;v0.1.12...v0.1.13&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.1.13/Graftty-0.1.13.zip" length="29273222" type="application/octet-stream" sparkle:edSignature="bm28HrhrFJ6mWJvAvRXYoqrW/T1xpQEV4IZJIgqpFu0Ii5xUzd/PF8CCpFjMG5oNHgtIcnm5EEeQPrtGsMnDAA=="/>
+        </item>
+        <item>
             <title>Version 0.1.12</title>
             <sparkle:version>0.1.12</sparkle:version>
             <sparkle:shortVersionString>0.1.12</sparkle:shortVersionString>
             <pubDate>Wed, 10 Jun 2026 17:05:31 +0000</pubDate>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
-<ul dir="auto">
-<li>appcast: v0.1.11 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4588861907" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/212" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/212/hovercard" href="https://github.com/btucker/graftty/pull/212">#212</a></li>
-<li>feat(PROJECT-2.x): "Open on GitHub/GitLab" context-menu item for sidebar projects by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4590208513" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/213" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/213/hovercard" href="https://github.com/btucker/graftty/pull/213">#213</a></li>
-<li>fix(TERM-11.x): conditional IOS-12.1 silent gate — eliminate zmx render desync by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4633019362" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/216" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/216/hovercard" href="https://github.com/btucker/graftty/pull/216">#216</a></li>
-</ul>
-<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.1.11...v0.1.12"><tt>v0.1.11...v0.1.12</tt></a></p>]]></description>
+            <description>&lt;h2 dir="auto"&gt;What's Changed&lt;/h2&gt;
+&lt;ul dir="auto"&gt;
+&lt;li&gt;appcast: v0.1.11 by @github-actions[bot] in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4588861907" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/212" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/212/hovercard" href="https://github.com/btucker/graftty/pull/212"&gt;#212&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;feat(PROJECT-2.x): "Open on GitHub/GitLab" context-menu item for sidebar projects by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4590208513" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/213" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/213/hovercard" href="https://github.com/btucker/graftty/pull/213"&gt;#213&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;fix(TERM-11.x): conditional IOS-12.1 silent gate — eliminate zmx render desync by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4633019362" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/216" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/216/hovercard" href="https://github.com/btucker/graftty/pull/216"&gt;#216&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.1.11...v0.1.12"&gt;&lt;tt&gt;v0.1.11...v0.1.12&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
             <enclosure url="https://github.com/btucker/graftty/releases/download/v0.1.12/Graftty-0.1.12.zip" length="29262367" type="application/octet-stream" sparkle:edSignature="2Ge3rtiGHZJrU8CKpIT4TDZAqQxsnYdSmBFkzpcb4m3S+dxO+ReKgXxNPjitbkB7xXnu1X2/S1IoOsPSaHEjBA=="/>
         </item>
         <item>

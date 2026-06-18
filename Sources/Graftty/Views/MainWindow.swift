@@ -152,7 +152,7 @@ struct MainWindow: View {
             get: { appState.sidebarWidth },
             set: { appState.sidebarWidth = $0 }
         ))
-        .onChange(of: appState.selectedWorktreePath, initial: true) { _, newPath in
+        .onChange(of: appState.selectedWorktreePath, initial: true) { oldPath, newPath in
             guard let newPath else { return }
             terminalManager.surfaceBudget.noteSelected(
                 worktreePath: newPath,

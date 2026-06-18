@@ -94,7 +94,12 @@ public struct GitHubPRFetcher: PRFetcher {
             "--limit", "100",
             "--json", "number,title,url,state,headRefName,headRepositoryOwner,statusCheckRollup,mergeable",
         ]
-        let output = try await executor.run(command: "gh", args: args, at: NSTemporaryDirectory())
+        let output = try await executor.run(
+            command: "gh",
+            args: args,
+            at: NSTemporaryDirectory(),
+            timeout: Self.fetchTimeout
+        )
         let data = Data(output.stdout.utf8)
         return try JSONDecoder().decode([RawPR].self, from: data)
     }

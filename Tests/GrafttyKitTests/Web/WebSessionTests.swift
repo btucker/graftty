@@ -47,7 +47,13 @@ struct WebSessionTests {
         let envFile = dir.appendingPathComponent("env.txt").path
         let body = """
         #!/bin/sh
-        env > \(shellQuoted(envFile))
+        # Write-then-rename so the file only appears once its content is
+        # complete: a bare `env > file` creates the file on redirect-open,
+        # and under parallel test load the scheduler can preempt between
+        # that open and env's write — waitForFile would then admit a
+        # reader to an empty file (the WEB-4.10 TERM-nil flake).
+        env > \(shellQuoted(envFile)).tmp
+        /bin/mv \(shellQuoted(envFile)).tmp \(shellQuoted(envFile))
         while :; do sleep 0.05; done
         """
         try body.write(to: script, atomically: true, encoding: .utf8)

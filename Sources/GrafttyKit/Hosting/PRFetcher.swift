@@ -39,3 +39,12 @@ public protocol PRFetcher: Sendable {
         branchesOfInterest: Set<String>
     ) async throws -> RepoPRSnapshot
 }
+
+public extension PRFetcher {
+    /// Subprocess timeout for the poll-driven host CLI calls (`gh pr
+    /// list`, `glab mr list`/`mr view`). Kept below the PR poller's 30s
+    /// in-flight cap (PR-8.17) so a wedged `gh`/`glab` is SIGTERMed and
+    /// surfaces as a failure that feeds the backoff, instead of leaking a
+    /// hung subprocess on every supersession.
+    static var fetchTimeout: Duration { .seconds(20) }
+}
