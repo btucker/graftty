@@ -140,25 +140,6 @@ final class HostManagedZmxBackend {
     private var pendingCoalescedResize: PendingResize?
     private var lastForwardedResize: PendingResize?
 
-    /// TERM-11.11: one-shot anchor-heal bounce armed by the owning
-    /// SurfaceHandle for rehydrated panes (attaching to a pre-existing
-    /// session whose TUI may hold a stranded render anchor).
-    private var healAnchorOnAttach = false
-
-    /// Delay before the heal's shrink leg: libghostty asynchronously
-    /// re-reports the settled size ~25ms after the settle flush, and a
-    /// synchronous shrink raced that echo — the PTY went rows-1 → rows
-    /// within milliseconds, a coalesced double SIGWINCH that repainted
-    /// nothing (and could itself corrupt a mid-frame TUI). Both legs
-    /// fire from quiet.
-    private static let anchorHealShrinkDelay: TimeInterval = 0.15
-
-    /// Spacing between the heal's shrink and restore legs. TUIs coalesce
-    /// rapid SIGWINCHes and skip repainting when the final size equals
-    /// their belief — the restore must land only after the TUI observed
-    /// the shrunken size.
-    private static let anchorHealRestoreDelay: TimeInterval = 0.25
-
     /// Reentrant counter tracking active `withProgrammaticInput` scopes.
     /// While > 0, `receiveBufferCallback` treats the inbound bytes as
     /// automation and passes `claimEngagement: false` to `write`.
@@ -454,110 +435,6 @@ final class HostManagedZmxBackend {
         // Refresh deliberately dropped: setFrameSize already issued one
         // on this same frame event two statements before notifying us.
         _ = flushSizeToPtyLocked(reason: "layoutSettled")
-        performAnchorHealLocked()
-    }
-
-    /// TERM-11.11: arms the one-shot anchor-heal bounce. Set by
-    /// SurfaceHandle before the deferred start for rehydrated panes.
-    func setAnchorHealOnAttach(_ enabled: Bool) {
-        lock.lock()
-        healAnchorOnAttach = enabled
-        lock.unlock()
-    }
-
-    /// TERM-11.11: arms the heal after the settle flush recorded the
-    /// settled size. Caller holds `lock`. A reattached TUI repaints
-    /// relative to a possibly-stranded anchor and width-only changes
-    /// repaint in place — only a ROW change forces the bottom re-anchor
-    /// (verified manually 2026-06-11). Both legs are DELAYED: the shrink
-    /// must not race libghostty's post-settle viewport echo, and the
-    /// restore must not race the shrink (signal coalescing swallows
-    /// rapid same-final-size sequences).
-    private func performAnchorHealLocked() {
-        guard healAnchorOnAttach else { return }
-        healAnchorOnAttach = false
-        scheduleAnchorHealBounceLocked()
-    }
-
-    /// Schedules the rows bounce (rows → rows-1 → rows) that forces the
-    /// session's TUI to re-anchor via a spaced pair of full repaints.
-    /// Caller holds `lock`. Shared by the reattach heal (TERM-11.11) and
-    /// the worktree re-show re-anchor (TERM-11.14). No-op unless running,
-    /// not remote-shared (the Mac must not perturb a shared session's
-    /// size), and the last forwarded size is healable (≥ 2 rows).
-    private func scheduleAnchorHealBounceLocked() {
-        guard case .running = lifecycle,
-              !hasRemoteClient(),
-              let settled = lastForwardedResize,
-              settled.rows >= 2 else { return }
-        // Cancel handles deliberately dropped: each leg re-checks
-        // lifecycle and supersession under the lock when it fires.
-        _ = scheduleCoalescedResize(Self.anchorHealShrinkDelay) { [weak self] in
-            self?.anchorHealShrink(from: settled)
-        }
-    }
-
-    /// TERM-11.14: a kept-alive (occluded, not evicted) pane was switched
-    /// back to. Even when the grid and PTY size already agree, zmx's render
-    /// anchor can be stranded — content drawn while the surface was
-    /// occluded sits at the wrong rows, and a same-size `ghostty_surface_
-    /// refresh` cannot clear it (it just repaints libghostty's already-
-    /// wrong grid). Only a full zmx repaint re-anchors, so force one with
-    /// the same rows bounce the reattach heal uses. No-op while a divider
-    /// drag is in flight (don't fight the coalescer) or before layout
-    /// settles (a pre-layout pane has no real anchor; its attach flow heals
-    /// it); the bounce itself is further gated on running / no-remote /
-    /// healable rows.
-    func reanchorOnShow() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard layoutSettled, coalesceCancel == nil else {
-            Self.trace.notice("reanchorOnShow \(self.spawnConfiguration.sessionName, privacy: .public) SKIP settled=\(self.layoutSettled) dragging=\(self.coalesceCancel != nil)")
-            return
-        }
-        Self.trace.notice("reanchorOnShow \(self.spawnConfiguration.sessionName, privacy: .public) bounce")
-        scheduleAnchorHealBounceLocked()
-    }
-
-    /// TERM-11.11 shrink leg. Fires only when the last size the PTY saw
-    /// is still the settled size — the post-settle echo re-forwards that
-    /// same size (fine), while a REAL resize changes it and abandons the
-    /// heal (that resize already repainted the TUI).
-    private func anchorHealShrink(from settled: PendingResize) {
-        lock.lock()
-        guard case .running = lifecycle, lastForwardedResize == settled else {
-            lock.unlock()
-            Self.trace.notice("anchorHeal \(self.spawnConfiguration.sessionName, privacy: .public) ABANDONED (superseded before shrink)")
-            return
-        }
-        let shrunk = PendingResize(cols: settled.cols, rows: settled.rows - 1)
-        lastForwardedResize = shrunk
-        let currentSession = session
-        _ = scheduleCoalescedResize(Self.anchorHealRestoreDelay) { [weak self] in
-            self?.anchorHealRestore(to: settled)
-        }
-        lock.unlock()
-
-        Self.trace.notice("anchorHeal \(self.spawnConfiguration.sessionName, privacy: .public) leg1 -> \(shrunk.cols)x\(shrunk.rows)")
-        try? currentSession?.resize(cols: shrunk.cols, rows: shrunk.rows)
-    }
-
-    /// TERM-11.11 restore leg: return to the settled rows unless another
-    /// resize intervened (that resize already repainted the TUI).
-    private func anchorHealRestore(to settled: PendingResize) {
-        lock.lock()
-        let expected = PendingResize(cols: settled.cols, rows: settled.rows - 1)
-        guard case .running = lifecycle, lastForwardedResize == expected else {
-            lock.unlock()
-            Self.trace.notice("anchorHeal \(self.spawnConfiguration.sessionName, privacy: .public) restore SKIPPED (superseded)")
-            return
-        }
-        lastForwardedResize = settled
-        let currentSession = session
-        lock.unlock()
-
-        Self.trace.notice("anchorHeal \(self.spawnConfiguration.sessionName, privacy: .public) leg2 -> \(settled.cols)x\(settled.rows)")
-        try? currentSession?.resize(cols: settled.cols, rows: settled.rows)
     }
 
     /// TERM-11.4: the last remote client detached from this session. A
