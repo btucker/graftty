@@ -55,17 +55,11 @@ protocol SurfaceHandleZmxBackend: AnyObject {
     )
     /// The owning NSView received its first nonzero frame (TERM-11.1).
     func markLayoutSettled()
-    /// Arms the one-shot rows bounce that re-anchors a rehydrated
-    /// session's TUI after the attach settles (TERM-11.11).
-    func setAnchorHealOnAttach(_ enabled: Bool)
     /// The last remote client detached from this pane's session (TERM-11.4).
     func remoteClientsDidDetach()
     /// The pane re-entered the visible set; reconcile the PTY to the live
     /// grid if a size drifted while it was occluded (TERM-11.13).
     func resyncVisibleGrid()
-    /// A worktree was switched back to; force a zmx repaint to clear a TUI
-    /// render anchor stranded while the pane was occluded (TERM-11.14).
-    func reanchorOnShow()
     func close()
     func surfaceWasFreed()
 }
@@ -158,7 +152,6 @@ final class SurfaceHandle {
         terminalManager: TerminalManager? = nil,
         inputActivityObserver: PaneInputActivityObserver? = nil,
         remoteAttachmentRegistry: RemoteAttachmentRegistry? = nil,
-        healZmxAnchorOnAttach: Bool = false,
         surfaceFactory: SurfaceHandleGhosttySurfaceFactory = .live,
         zmxBackendFactory: (
             ZmxSpawnConfiguration,
@@ -367,10 +360,6 @@ final class SurfaceHandle {
             // TERM-11.10: spawn-time injection rides along with the
             // deferred start.
             pendingZmxStart = PendingZmxStart(extraInitialInput: extraInitialInput)
-            // TERM-11.11: rehydrated panes attach to a pre-existing
-            // session whose TUI may hold a stranded render anchor —
-            // arm the one-shot rows bounce that fires after settle.
-            backend.setAnchorHealOnAttach(healZmxAnchorOnAttach)
         }
 
         if let initialGridSize, initialGridSize.width_px > 0, initialGridSize.height_px > 0 {
@@ -504,14 +493,6 @@ final class SurfaceHandle {
     /// no-op in the backend when the grid and PTY already agree).
     func resyncVisibleGrid() {
         zmxBackend?.resyncVisibleGrid()
-    }
-
-    /// TERM-11.14: a worktree was switched back to. Ask the host-managed
-    /// backend to force a zmx repaint (rows bounce) so a render anchor
-    /// stranded while the pane was occluded re-anchors — no-op for non-zmx
-    /// surfaces and for panes the backend judges not worth perturbing.
-    func reanchorOnShow() {
-        zmxBackend?.reanchorOnShow()
     }
 
     /// TERM-11.4: forwarded by TerminalManager when the last remote client
