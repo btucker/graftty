@@ -351,7 +351,20 @@ public struct AgentHookInstaller: Sendable {
           status="$2"
           if [ -n "${agent_pid:-}" ]; then
             kill -"$sig" "$agent_pid" 2>/dev/null || true
+            fallback_pid=""
+            if [ "$sig" = "INT" ]; then
+              # Some /bin/sh implementations keep SIGINT ignored for
+              # asynchronous children even when the child subshell resets
+              # traps before exec. Keep forwarding INT first, but do not
+              # let the wrapper block forever if the child inherited ignore.
+              ( sleep 1; kill -0 "$agent_pid" 2>/dev/null && kill -TERM "$agent_pid" 2>/dev/null || true ) &
+              fallback_pid=$!
+            fi
             wait "$agent_pid" 2>/dev/null || true
+            if [ -n "${fallback_pid:-}" ]; then
+              kill "$fallback_pid" 2>/dev/null || true
+              wait "$fallback_pid" 2>/dev/null || true
+            fi
           fi
           exit "$status"
         }
@@ -368,9 +381,9 @@ public struct AgentHookInstaller: Sendable {
             let escapedJSON = shellLiteral(inlineJSON)
             runtimeBlock = """
             if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
-              ( exec "$real_binary" --settings \(escapedJSON) "$@" ) &
+              ( trap - INT TERM HUP; exec "$real_binary" --settings \(escapedJSON) "$@" ) &
             else
-              ( exec "$real_binary" "$@" ) &
+              ( trap - INT TERM HUP; exec "$real_binary" "$@" ) &
             fi
             """
         case .codex:
@@ -378,9 +391,9 @@ public struct AgentHookInstaller: Sendable {
             runtimeBlock = """
             if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
               \(shellCommandToken(grafttyCLIPath)) internal sync-codex-home
-              ( exec env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@" ) &
+              ( trap - INT TERM HUP; exec env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@" ) &
             else
-              ( exec "$real_binary" "$@" ) &
+              ( trap - INT TERM HUP; exec "$real_binary" "$@" ) &
             fi
             """
         }

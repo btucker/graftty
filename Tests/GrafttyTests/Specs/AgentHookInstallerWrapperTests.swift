@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Darwin
 @testable import GrafttyKit
 
 @Suite("AgentHookInstaller — wrapper script shapes")
@@ -123,5 +124,141 @@ struct AgentHookInstallerWrapperTests {
         #expect(script.contains("trap 'forward_signal INT 130' INT"))
         #expect(script.contains("trap 'forward_signal HUP 129' HUP"))
         #expect(script.contains("trap cleanup EXIT"))
+    }
+
+    @Test("Wrapper runtime child resets forwarded signal dispositions before exec.")
+    func wrapperResetsSignalsInRuntimeChildBeforeExec() {
+        let claude = AgentHookInstaller.wrapperScript(
+            runtime: .claude,
+            wrapperDirectory: "/Users/x/agent-hooks/bin",
+            realCommandName: "claude",
+            grafttyCLIPath: "/usr/local/bin/graftty",
+            codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
+        )
+        let codex = AgentHookInstaller.wrapperScript(
+            runtime: .codex,
+            wrapperDirectory: "/Users/x/agent-hooks/bin",
+            realCommandName: "codex",
+            grafttyCLIPath: "/usr/local/bin/graftty",
+            codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
+        )
+
+        #expect(claude.contains(#"( trap - INT TERM HUP; exec "$real_binary" --settings"#))
+        #expect(claude.contains(#"( trap - INT TERM HUP; exec "$real_binary" "$@" ) &"#))
+        #expect(codex.contains(#"( trap - INT TERM HUP; exec env CODEX_HOME="#))
+        #expect(codex.contains(#"( trap - INT TERM HUP; exec "$real_binary" "$@" ) &"#))
+    }
+
+    @Test("Generated wrapper SIGINT exits promptly and does not leave the runtime child alive.")
+    func wrapperSIGINTTerminatesRuntimeChild() throws {
+        let root = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
+        let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: wrapperDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: realDirectory, withIntermediateDirectories: true)
+
+        let childPIDFile = root.appendingPathComponent("child.pid")
+        let fakeGraftty = root.appendingPathComponent("graftty")
+        try writeExecutable(
+            """
+            #!/bin/sh
+            if [ "$1" = "team" ] && [ "$2" = "register" ]; then
+              while [ "$#" -gt 0 ]; do
+                if [ "$1" = "--pid" ]; then
+                  shift
+                  printf '%s\\n' "$1" > "$GRAFTTY_TEST_PID_FILE"
+                  exit 0
+                fi
+                shift
+              done
+            fi
+            exit 0
+            """,
+            to: fakeGraftty
+        )
+
+        let realCodex = realDirectory.appendingPathComponent("codex")
+        try FileManager.default.createSymbolicLink(
+            at: realCodex,
+            withDestinationURL: URL(fileURLWithPath: "/bin/sleep")
+        )
+
+        let wrapper = wrapperDirectory.appendingPathComponent("codex")
+        try writeExecutable(
+            AgentHookInstaller.wrapperScript(
+                runtime: .codex,
+                wrapperDirectory: wrapperDirectory.path,
+                realCommandName: "codex",
+                grafttyCLIPath: fakeGraftty.path,
+                codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
+            ),
+            to: wrapper
+        )
+
+        let process = Process()
+        process.executableURL = wrapper
+        process.arguments = ["30"]
+        process.environment = [
+            "PATH": "\(wrapperDirectory.path):\(realDirectory.path):/bin:/usr/bin",
+            "GRAFTTY_TEST_PID_FILE": childPIDFile.path,
+        ]
+        try process.run()
+        var childPID: Int32?
+        defer {
+            if process.isRunning {
+                Darwin.kill(process.processIdentifier, SIGKILL)
+                process.waitUntilExit()
+            }
+            if let childPID, TeamPresenceMonitor.kernelIsAlive(childPID) {
+                Darwin.kill(childPID, SIGKILL)
+            }
+        }
+
+        let childPIDString = try #require(waitForFileContents(childPIDFile, timeout: 2.0))
+        childPID = (childPIDString.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).intValue
+        #expect((childPID ?? 0) > 0)
+
+        Darwin.kill(process.processIdentifier, SIGINT)
+
+        #expect(waitUntil(timeout: 2.0) { !process.isRunning })
+        if !process.isRunning {
+            process.waitUntilExit()
+            #expect(process.terminationStatus == 130)
+        }
+        let pid = try #require(childPID)
+        #expect(waitUntil(timeout: 1.0) { !TeamPresenceMonitor.kernelIsAlive(pid) })
+    }
+
+    private func makeTempDirectory() throws -> URL {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("graftty-wrapper-signal-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    private func writeExecutable(_ contents: String, to url: URL) throws {
+        try Data(contents.utf8).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o755))], ofItemAtPath: url.path)
+    }
+
+    private func waitForFileContents(_ url: URL, timeout: TimeInterval) -> String? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let value = try? String(contentsOf: url, encoding: .utf8), !value.isEmpty {
+                return value
+            }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        return nil
+    }
+
+    private func waitUntil(timeout: TimeInterval, predicate: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if predicate() { return true }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        return predicate()
     }
 }

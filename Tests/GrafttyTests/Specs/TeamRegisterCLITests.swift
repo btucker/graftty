@@ -1,5 +1,6 @@
 import Foundation
 import Testing
+@testable import GrafttyCLI
 @testable import GrafttyKit
 
 @Suite("graftty team register — pane resolution")
@@ -23,6 +24,52 @@ struct TeamRegisterCLITests {
         let env = ["ZMX_SESSION": ""]
         let resolved = TeamRegisterPaneResolver.paneSessionName(env: env)
         #expect(resolved == nil)
+    }
+
+    @Test("Explicit --pid must be positive.")
+    func explicitPIDMustBePositive() {
+        #expect(throws: (any Error).self) {
+            try TeamRegisterPIDResolver.resolve(
+                explicitPID: 0,
+                processIdentifier: 99,
+                startTimeMicroseconds: { _ in 123 }
+            )
+        }
+    }
+
+    @Test("Explicit --pid must identify a readable running process.")
+    func explicitPIDMustHaveReadableStartTime() {
+        #expect(throws: (any Error).self) {
+            try TeamRegisterPIDResolver.resolve(
+                explicitPID: 42,
+                processIdentifier: 99,
+                startTimeMicroseconds: { (_: Int32) -> Int64? in nil }
+            )
+        }
+    }
+
+    @Test("Explicit --pid records the validated process identity.")
+    func explicitPIDRecordsValidatedIdentity() throws {
+        let identity = try TeamRegisterPIDResolver.resolve(
+            explicitPID: 42,
+            processIdentifier: 99,
+            startTimeMicroseconds: { pid in pid == 42 ? 1_700_000_123_456_789 : nil }
+        )
+
+        #expect(identity.pid == 42)
+        #expect(identity.processStartTimeMicroseconds == 1_700_000_123_456_789)
+    }
+
+    @Test("Direct register invocation keeps best-effort start-time behavior.")
+    func directInvocationKeepsBestEffortStartTime() throws {
+        let identity = try TeamRegisterPIDResolver.resolve(
+            explicitPID: Optional<Int32>.none,
+            processIdentifier: 99,
+            startTimeMicroseconds: { (_: Int32) -> Int64? in nil }
+        )
+
+        #expect(identity.pid == 99)
+        #expect(identity.processStartTimeMicroseconds == nil)
     }
 
     @Test("@spec TEAM-IDLE-2.13: Unregister with ZMX_SESSION set targets only that pane's record.")

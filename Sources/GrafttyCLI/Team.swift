@@ -285,6 +285,7 @@ struct TeamRegister: ParsableCommand {
         guard let runtimeValue = TeamHookRuntime(rawValue: runtime) else {
             throw ValidationError("runtime must be one of: codex, claude")
         }
+        let runtimeIdentity = try TeamRegisterPIDResolver.resolve(explicitPID: pid)
         guard let (team, worktreeName) = TeamPresenceCLI.resolveTeamAndWorktree() else {
             // No team for this cwd — silently no-op so it's safe to call
             // unconditionally from a wrapper script.
@@ -295,14 +296,13 @@ struct TeamRegister: ParsableCommand {
         let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
             env: ProcessInfo.processInfo.environment
         )
-        let runtimePID = pid ?? ProcessInfo.processInfo.processIdentifier
         let record = TeamPresenceRecord(
             teamID: teamID,
             worktree: worktreeName,
             runtime: runtimeValue,
             paneSessionName: paneSessionName,
-            pid: runtimePID,
-            processStartTimeMicroseconds: ProcessIdentityReader.startTimeMicroseconds(ofPID: runtimePID),
+            pid: runtimeIdentity.pid,
+            processStartTimeMicroseconds: runtimeIdentity.processStartTimeMicroseconds,
             registeredAt: Date()
         )
         try storage.write(record)
@@ -314,6 +314,33 @@ struct TeamRegister: ParsableCommand {
                 "pane_session_name": paneSessionName ?? "",
             ])
         )
+    }
+}
+
+enum TeamRegisterPIDResolver {
+    struct Identity: Equatable {
+        let pid: Int32
+        let processStartTimeMicroseconds: Int64?
+    }
+
+    static func resolve(
+        explicitPID: Int32?,
+        processIdentifier: Int32 = ProcessInfo.processInfo.processIdentifier,
+        startTimeMicroseconds: (Int32) -> Int64? = { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
+    ) throws -> Identity {
+        guard let explicitPID else {
+            return Identity(
+                pid: processIdentifier,
+                processStartTimeMicroseconds: startTimeMicroseconds(processIdentifier)
+            )
+        }
+        guard explicitPID > 0 else {
+            throw ValidationError("--pid must be greater than 0")
+        }
+        guard let startTime = startTimeMicroseconds(explicitPID) else {
+            throw ValidationError("--pid must identify a running process with a readable start time")
+        }
+        return Identity(pid: explicitPID, processStartTimeMicroseconds: startTime)
     }
 }
 
