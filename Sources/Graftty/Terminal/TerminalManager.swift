@@ -510,9 +510,6 @@ final class TerminalManager: ObservableObject {
                 terminalManager: self,
                 inputActivityObserver: inputActivityObserver,
                 remoteAttachmentRegistry: remoteAttachmentRegistry,
-                // TERM-11.11: still-rehydrated after the daemon-gone
-                // check = attaching to a live pre-existing session.
-                healZmxAnchorOnAttach: wasRehydrated(terminalID),
                 initialGridSize: consumeCachedGridSize(for: terminalID)
             ) else {
                 forgetPaneSession(for: terminalID)
@@ -559,9 +556,6 @@ final class TerminalManager: ObservableObject {
             terminalManager: self,
             inputActivityObserver: inputActivityObserver,
             remoteAttachmentRegistry: remoteAttachmentRegistry,
-            // TERM-11.11: still-rehydrated after the daemon-gone
-            // check = attaching to a live pre-existing session.
-            healZmxAnchorOnAttach: wasRehydrated(terminalID),
             initialGridSize: consumeCachedGridSize(for: terminalID)
         ) else {
             forgetPaneSession(for: terminalID)
@@ -762,18 +756,6 @@ final class TerminalManager: ObservableObject {
             count: len
         )
         return String(decoding: buffer, as: UTF8.self)
-    }
-
-    /// TERM-11.14: a worktree was switched back to — force each of its
-    /// kept-alive panes' sessions to re-anchor. An occluded pane's TUI can
-    /// be left rendering off-anchor with the grid and PTY size already in
-    /// agreement, which only a forced zmx repaint clears. Backend gates the
-    /// bounce (no-op for rehydrating panes — their attach heal covers it —
-    /// and for remote-shared or pre-layout panes).
-    func reanchorWorktreeOnShow(terminalIDs: [PaneSlotID]) {
-        for id in terminalIDs {
-            surfaces[id]?.reanchorOnShow()
-        }
     }
 
     /// Focus exactly one surface (by ID); unfocus the rest.

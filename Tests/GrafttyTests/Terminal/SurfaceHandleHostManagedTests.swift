@@ -120,7 +120,7 @@ struct SurfaceHandleHostManagedTests {
         #expect(backend.writes == [Data("nvim Sources/main.swift\r".utf8)])
     }
 
-    @Test("SurfaceHandle.init shall bind the surface-sync closures exactly once, wire the layout-settled notifier to the backend, and forward remoteClientsDidDetach to the backend (TERM-11.1/11.3/11.4 glue).")
+    @Test("SurfaceHandle.init shall bind the surface-sync closures exactly once, wire the layout-settled notifier to the backend, and forward remoteClientsDidDetach and resyncVisibleGrid to the backend (TERM-11.1/11.3/11.4/11.13 glue).")
     func surfaceSyncAndDetachWiring() throws {
         let backend = FakeSurfaceHandleZmxBackend()
         let harness = SurfaceHandleTestHarness(surface: fakeSurface())
@@ -150,26 +150,6 @@ struct SurfaceHandleHostManagedTests {
 
         handle.resyncVisibleGrid()
         #expect(backend.resyncVisibleGridCount == 1)
-
-        handle.reanchorOnShow()
-        #expect(backend.reanchorOnShowCount == 1)
-    }
-
-    @Test("SurfaceHandle shall forward healZmxAnchorOnAttach to the backend so rehydrated panes arm the anchor-heal bounce (TERM-11.11 glue).")
-    func healAnchorFlagReachesBackend() throws {
-        let backend = FakeSurfaceHandleZmxBackend()
-        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
-        _ = try #require(SurfaceHandle(
-            terminalID: Self.terminalID(),
-            app: fakeApp(),
-            worktreePath: "/tmp/worktree",
-            socketPath: "/tmp/graftty.sock",
-            zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
-            healZmxAnchorOnAttach: true,
-            surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
-        ))
-        #expect(backend.anchorHealEnabledValues == [true])
     }
 
     @Test func typeTextUsesBackendForZmxBackedSurface() throws {

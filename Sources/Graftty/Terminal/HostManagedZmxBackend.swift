@@ -136,28 +136,17 @@ final class HostManagedZmxBackend {
     /// arriving while it's open parks in `pendingCoalescedResize`
     /// (latest wins) until the window expires. `lastForwardedResize`
     /// suppresses redundant trailing SIGWINCHes.
+    ///
+    /// Dual-purpose, and the second role matters for TERM-11.15: it is
+    /// advanced ONLY after a confirmed-successful `resize`, and CLEARED
+    /// (set to nil) on a swallowed `resize` failure. A nil therefore means
+    /// "the PTY's adopted size is unknown / not what we last attempted" —
+    /// it is the failure sentinel that keeps the coalescer's `pending ==
+    /// lastForwardedResize` dedup from suppressing a re-forward of a size
+    /// the PTY never actually adopted.
     private var coalesceCancel: (() -> Void)?
     private var pendingCoalescedResize: PendingResize?
     private var lastForwardedResize: PendingResize?
-
-    /// TERM-11.11: one-shot anchor-heal bounce armed by the owning
-    /// SurfaceHandle for rehydrated panes (attaching to a pre-existing
-    /// session whose TUI may hold a stranded render anchor).
-    private var healAnchorOnAttach = false
-
-    /// Delay before the heal's shrink leg: libghostty asynchronously
-    /// re-reports the settled size ~25ms after the settle flush, and a
-    /// synchronous shrink raced that echo — the PTY went rows-1 → rows
-    /// within milliseconds, a coalesced double SIGWINCH that repainted
-    /// nothing (and could itself corrupt a mid-frame TUI). Both legs
-    /// fire from quiet.
-    private static let anchorHealShrinkDelay: TimeInterval = 0.15
-
-    /// Spacing between the heal's shrink and restore legs. TUIs coalesce
-    /// rapid SIGWINCHes and skip repainting when the final size equals
-    /// their belief — the restore must land only after the TUI observed
-    /// the shrunken size.
-    private static let anchorHealRestoreDelay: TimeInterval = 0.25
 
     /// Reentrant counter tracking active `withProgrammaticInput` scopes.
     /// While > 0, `receiveBufferCallback` treats the inbound bytes as
@@ -454,110 +443,6 @@ final class HostManagedZmxBackend {
         // Refresh deliberately dropped: setFrameSize already issued one
         // on this same frame event two statements before notifying us.
         _ = flushSizeToPtyLocked(reason: "layoutSettled")
-        performAnchorHealLocked()
-    }
-
-    /// TERM-11.11: arms the one-shot anchor-heal bounce. Set by
-    /// SurfaceHandle before the deferred start for rehydrated panes.
-    func setAnchorHealOnAttach(_ enabled: Bool) {
-        lock.lock()
-        healAnchorOnAttach = enabled
-        lock.unlock()
-    }
-
-    /// TERM-11.11: arms the heal after the settle flush recorded the
-    /// settled size. Caller holds `lock`. A reattached TUI repaints
-    /// relative to a possibly-stranded anchor and width-only changes
-    /// repaint in place — only a ROW change forces the bottom re-anchor
-    /// (verified manually 2026-06-11). Both legs are DELAYED: the shrink
-    /// must not race libghostty's post-settle viewport echo, and the
-    /// restore must not race the shrink (signal coalescing swallows
-    /// rapid same-final-size sequences).
-    private func performAnchorHealLocked() {
-        guard healAnchorOnAttach else { return }
-        healAnchorOnAttach = false
-        scheduleAnchorHealBounceLocked()
-    }
-
-    /// Schedules the rows bounce (rows → rows-1 → rows) that forces the
-    /// session's TUI to re-anchor via a spaced pair of full repaints.
-    /// Caller holds `lock`. Shared by the reattach heal (TERM-11.11) and
-    /// the worktree re-show re-anchor (TERM-11.14). No-op unless running,
-    /// not remote-shared (the Mac must not perturb a shared session's
-    /// size), and the last forwarded size is healable (≥ 2 rows).
-    private func scheduleAnchorHealBounceLocked() {
-        guard case .running = lifecycle,
-              !hasRemoteClient(),
-              let settled = lastForwardedResize,
-              settled.rows >= 2 else { return }
-        // Cancel handles deliberately dropped: each leg re-checks
-        // lifecycle and supersession under the lock when it fires.
-        _ = scheduleCoalescedResize(Self.anchorHealShrinkDelay) { [weak self] in
-            self?.anchorHealShrink(from: settled)
-        }
-    }
-
-    /// TERM-11.14: a kept-alive (occluded, not evicted) pane was switched
-    /// back to. Even when the grid and PTY size already agree, zmx's render
-    /// anchor can be stranded — content drawn while the surface was
-    /// occluded sits at the wrong rows, and a same-size `ghostty_surface_
-    /// refresh` cannot clear it (it just repaints libghostty's already-
-    /// wrong grid). Only a full zmx repaint re-anchors, so force one with
-    /// the same rows bounce the reattach heal uses. No-op while a divider
-    /// drag is in flight (don't fight the coalescer) or before layout
-    /// settles (a pre-layout pane has no real anchor; its attach flow heals
-    /// it); the bounce itself is further gated on running / no-remote /
-    /// healable rows.
-    func reanchorOnShow() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard layoutSettled, coalesceCancel == nil else {
-            Self.trace.notice("reanchorOnShow \(self.spawnConfiguration.sessionName, privacy: .public) SKIP settled=\(self.layoutSettled) dragging=\(self.coalesceCancel != nil)")
-            return
-        }
-        Self.trace.notice("reanchorOnShow \(self.spawnConfiguration.sessionName, privacy: .public) bounce")
-        scheduleAnchorHealBounceLocked()
-    }
-
-    /// TERM-11.11 shrink leg. Fires only when the last size the PTY saw
-    /// is still the settled size — the post-settle echo re-forwards that
-    /// same size (fine), while a REAL resize changes it and abandons the
-    /// heal (that resize already repainted the TUI).
-    private func anchorHealShrink(from settled: PendingResize) {
-        lock.lock()
-        guard case .running = lifecycle, lastForwardedResize == settled else {
-            lock.unlock()
-            Self.trace.notice("anchorHeal \(self.spawnConfiguration.sessionName, privacy: .public) ABANDONED (superseded before shrink)")
-            return
-        }
-        let shrunk = PendingResize(cols: settled.cols, rows: settled.rows - 1)
-        lastForwardedResize = shrunk
-        let currentSession = session
-        _ = scheduleCoalescedResize(Self.anchorHealRestoreDelay) { [weak self] in
-            self?.anchorHealRestore(to: settled)
-        }
-        lock.unlock()
-
-        Self.trace.notice("anchorHeal \(self.spawnConfiguration.sessionName, privacy: .public) leg1 -> \(shrunk.cols)x\(shrunk.rows)")
-        try? currentSession?.resize(cols: shrunk.cols, rows: shrunk.rows)
-    }
-
-    /// TERM-11.11 restore leg: return to the settled rows unless another
-    /// resize intervened (that resize already repainted the TUI).
-    private func anchorHealRestore(to settled: PendingResize) {
-        lock.lock()
-        let expected = PendingResize(cols: settled.cols, rows: settled.rows - 1)
-        guard case .running = lifecycle, lastForwardedResize == expected else {
-            lock.unlock()
-            Self.trace.notice("anchorHeal \(self.spawnConfiguration.sessionName, privacy: .public) restore SKIPPED (superseded)")
-            return
-        }
-        lastForwardedResize = settled
-        let currentSession = session
-        lock.unlock()
-
-        Self.trace.notice("anchorHeal \(self.spawnConfiguration.sessionName, privacy: .public) leg2 -> \(settled.cols)x\(settled.rows)")
-        try? currentSession?.resize(cols: settled.cols, rows: settled.rows)
     }
 
     /// TERM-11.4: the last remote client detached from this session. A
@@ -584,27 +469,36 @@ final class HostManagedZmxBackend {
     /// produces none, so the PTY keeps its stale latched dims and the
     /// session's TUI renders off-anchor (the "off by N lines" desync) until a
     /// real resize forces a SIGWINCH — which is exactly why a manual vertical
-    /// resize fixes it. Reconcile here by forwarding the live grid to the PTY
-    /// when it differs from what the PTY last saw, then force a refresh so the
-    /// TUI re-anchors. No-op when already in agreement (so plain focus
-    /// switches don't churn SIGWINCHes through the session) or while resize
-    /// withholding applies (pre-layout, or a still-silent pane with a remote
-    /// client whose width the Mac must not steal — IOS-12.1 / TERM-11.2).
+    /// resize fixes it.
+    ///
+    /// We forward the live grid unconditionally rather than short-circuiting
+    /// when it "matches" `lastForwardedResize`. That record is an optimistic
+    /// proxy set BEFORE the resize call, with errors swallowed by `try?`, so
+    /// it can lie about what the PTY actually adopted (a failed ioctl leaves it
+    /// stale). Trusting it would hide a real Mac↔daemon size divergence until
+    /// the user manually resizes. A same-size `TIOCSWINSZ` is a kernel no-op
+    /// (no SIGWINCH emitted), so forwarding on every show costs one syscall
+    /// and never churns the TUI, while correctly recovering from any prior
+    /// failed forward. Still no-ops while resize withholding applies
+    /// (pre-layout, or a still-silent pane with a remote client whose width
+    /// the Mac must not steal — IOS-12.1 / TERM-11.2).
     func resyncVisibleGrid() {
         lock.lock()
-        guard case .running = lifecycle,
-              !shouldWithholdResizeLocked(),
-              let grid = currentGridSize() else {
+        // No `currentGridSize() != nil` pre-check here: `flushSizeToPtyLocked`
+        // re-reads the grid and handles a nil target (NO-TARGET) itself, so a
+        // pre-check would just query libghostty twice under the lock.
+        guard case .running = lifecycle, !shouldWithholdResizeLocked() else {
             lock.unlock()
             return
         }
-        guard PendingResize(cols: grid.cols, rows: grid.rows) != lastForwardedResize else {
-            lock.unlock()
-            // .debug, not .notice: the in-sync no-op is the common case on
-            // every plain focus switch — keep it out of the persisted log.
-            Self.trace.debug("resyncVisibleGrid \(self.spawnConfiguration.sessionName, privacy: .public) IN-SYNC \(grid.cols)x\(grid.rows)")
-            return
-        }
+        // Forward the live grid unconditionally. We deliberately do NOT
+        // short-circuit when it "matches" `lastForwardedResize`: that record is
+        // an optimistic proxy (set before the resize, with the failure swallowed
+        // by `try?`), so trusting it can hide a real Mac/daemon size divergence
+        // and leave the TUI rendering off-anchor until a manual resize. A
+        // same-size `TIOCSWINSZ` is a kernel no-op (no SIGWINCH), so forwarding on
+        // every show costs one syscall and never churns the TUI, while a forward
+        // after a previously-failed/ignored resize corrects the divergence.
         let refresh = flushSizeToPtyLocked(reason: "showResync")
         lock.unlock()
         refresh?()
@@ -723,7 +617,16 @@ final class HostManagedZmxBackend {
         lock.unlock()
 
         Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(cols)x\(rows) \(currentSession != nil ? "FORWARDED" : "QUEUED", privacy: .public)")
-        try? currentSession?.resize(cols: cols, rows: rows)
+        if let s = currentSession, (try? s.resize(cols: cols, rows: rows)) == nil {
+            // Forward failed — don't let the optimistic record lie about what the
+            // PTY adopted. Clear only if it's still ours (a newer forward may have
+            // landed between unlock and now).
+            lock.lock()
+            if lastForwardedResize == PendingResize(cols: cols, rows: rows) {
+                lastForwardedResize = nil
+            }
+            lock.unlock()
+        }
     }
 
     /// Opens the TERM-11.9 quiet window. Caller holds `lock`. The
@@ -759,7 +662,11 @@ final class HostManagedZmxBackend {
         lock.unlock()
 
         Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(pending.cols)x\(pending.rows) TRAILING")
-        try? currentSession?.resize(cols: pending.cols, rows: pending.rows)
+        if let s = currentSession, (try? s.resize(cols: pending.cols, rows: pending.rows)) == nil {
+            lock.lock()
+            if let lf = lastForwardedResize, lf == pending { lastForwardedResize = nil }
+            lock.unlock()
+        }
     }
 
     /// Marks that the user has acted on the surface since the most recent
@@ -828,8 +735,11 @@ final class HostManagedZmxBackend {
             // in the quiet window — a stale coalesced resize must not
             // land after this authoritative sync.
             pendingCoalescedResize = nil
-            lastForwardedResize = PendingResize(cols: target.cols, rows: target.rows)
-            try? session?.resize(cols: target.cols, rows: target.rows)
+            if (try? session?.resize(cols: target.cols, rows: target.rows)) != nil {
+                lastForwardedResize = PendingResize(cols: target.cols, rows: target.rows)
+            } else {
+                lastForwardedResize = nil
+            }
             return requestRefresh
         case .idle, .starting:
             pendingResize = PendingResize(cols: target.cols, rows: target.rows)
