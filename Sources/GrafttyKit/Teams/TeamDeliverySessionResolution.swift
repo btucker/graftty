@@ -2,26 +2,26 @@ import Foundation
 
 public enum TeamDeliverySessionResolution {
     public static func codexSessionNames(
+        teamID: String,
         in worktree: String,
         records: [TeamPresenceRecord],
-        isLiveSession: (String) -> Bool,
-        isPIDAlive: (Int32) -> Bool = { TeamPresenceMonitor.kernelIsAlive($0) }
+        isLiveSession: @escaping (String) -> Bool,
+        processStartTimeMicroseconds: @escaping (Int32) -> Int64?
     ) -> [String] {
-        var seen: Set<String> = []
-        var sessions: [String] = []
-        for record in records {
-            guard record.worktree == worktree,
-                  record.runtime == .codex,
-                  let sessionName = record.paneSessionName,
-                  isLiveSession(sessionName),
-                  isPIDAlive(record.pid),
-                  !seen.contains(sessionName) else {
-                continue
-            }
-            seen.insert(sessionName)
-            sessions.append(sessionName)
-        }
-        return sessions
+        let key = TeamDeliveryOwnerKey(
+            teamID: teamID,
+            worktree: worktree,
+            runtime: .codex
+        )
+        let resolver = TeamDeliveryOwnershipResolver(
+            records: { records },
+            liveness: ClosureTeamDeliveryLiveness(
+                isLiveSession: isLiveSession,
+                processStartTimeMicroseconds: processStartTimeMicroseconds
+            )
+        )
+        guard let owner = resolver.owner(for: key) else { return [] }
+        return [owner.paneSessionName]
     }
 
     public static func stopSessionName(
@@ -35,5 +35,26 @@ public enum TeamDeliverySessionResolution {
             return nil
         }
         return sessionName
+    }
+}
+
+private struct ClosureTeamDeliveryLiveness: TeamDeliveryLivenessChecking, @unchecked Sendable {
+    let isLiveSession: (String) -> Bool
+    let readProcessStartTimeMicroseconds: (Int32) -> Int64?
+
+    init(
+        isLiveSession: @escaping (String) -> Bool,
+        processStartTimeMicroseconds: @escaping (Int32) -> Int64?
+    ) {
+        self.isLiveSession = isLiveSession
+        self.readProcessStartTimeMicroseconds = processStartTimeMicroseconds
+    }
+
+    func isLivePaneSession(_ sessionName: String) -> Bool {
+        isLiveSession(sessionName)
+    }
+
+    func processStartTimeMicroseconds(ofPID pid: Int32) -> Int64? {
+        readProcessStartTimeMicroseconds(pid)
     }
 }

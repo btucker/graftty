@@ -1022,10 +1022,15 @@ struct GrafttyApp: App {
         let codexSessionNamesIn: @Sendable (String) -> [String] = { [tm] worktreePath in
             MainActor.assumeIsolated {
                 refreshPresenceIndex()
+                guard let teamID = binding.wrappedValue.repos.first(where: {
+                    $0.worktrees.contains(where: { $0.path == worktreePath })
+                })?.path else { return [] }
                 return TeamDeliverySessionResolution.codexSessionNames(
+                    teamID: teamID,
                     in: worktreePath,
                     records: presenceIndex.allRecords(),
-                    isLiveSession: { tm.handle(forSessionName: $0) != nil }
+                    isLiveSession: { tm.handle(forSessionName: $0) != nil },
+                    processStartTimeMicroseconds: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
                 )
             }
         }
