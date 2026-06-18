@@ -224,6 +224,8 @@ public enum TeamPresenceMonitor {
             let reason: String?
             if !isAlive(record.pid) {
                 reason = "process_dead"
+            } else if record.processStartTimeMicroseconds == nil {
+                reason = nil
             } else if !isSameProcess(record) {
                 reason = "process_identity_mismatch"
             } else {

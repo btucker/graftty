@@ -92,6 +92,33 @@ struct PresenceMonitorTests {
         #expect(events.contains(#""reason":"process_identity_mismatch""#))
     }
 
+    @Test("Live pre-migration records without process identity are kept during cleanup.")
+    func liveRecordWithoutProcessIdentityIsKept() throws {
+        let tmpRoot = try makeTmpDir()
+        defer { try? FileManager.default.removeItem(at: tmpRoot) }
+        let storage = TeamPresenceStorage(rootDirectory: tmpRoot)
+
+        try storage.write(.init(
+            teamID: "team-abc", worktree: "legacy-live", runtime: .claude,
+            paneSessionName: nil, pid: 1, processStartTimeMicroseconds: nil,
+            registeredAt: Date()
+        ))
+
+        TeamPresenceMonitor.cleanupStale(
+            storage: storage,
+            isAlive: { $0 == 1 },
+            eventLog: TeamEventLog(rootDirectory: tmpRoot.appendingPathComponent("events", isDirectory: true))
+        )
+
+        let legacyLive = try storage.read(
+            teamID: "team-abc",
+            worktree: "legacy-live",
+            runtime: .claude,
+            paneSessionName: nil
+        )
+        #expect(legacyLive != nil)
+    }
+
     @Test("Default isAlive uses kill(pid, 0) semantics: PID 1 (init) is always alive.")
     func defaultIsAliveUsesKill() {
         // PID 1 should always be considered alive on macOS.

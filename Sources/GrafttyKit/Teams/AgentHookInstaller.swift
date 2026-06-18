@@ -344,8 +344,21 @@ public struct AgentHookInstaller: Sendable {
             realCommandName: realCommandName
         )
         let trapBlock = """
+        agent_pid=""
         cleanup() { \(shellCommandToken(grafttyCLIPath)) team unregister --runtime \(runtime.rawValue) 2>/dev/null || true; }
+        forward_signal() {
+          sig="$1"
+          status="$2"
+          if [ -n "${agent_pid:-}" ]; then
+            kill -"$sig" "$agent_pid" 2>/dev/null || true
+            wait "$agent_pid" 2>/dev/null || true
+          fi
+          exit "$status"
+        }
         trap cleanup EXIT
+        trap 'forward_signal TERM 143' TERM
+        trap 'forward_signal INT 130' INT
+        trap 'forward_signal HUP 129' HUP
         """
 
         let runtimeBlock: String

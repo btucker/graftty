@@ -39,7 +39,7 @@ struct AgentHookInstallerWrapperTests {
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
         )
         #expect(script.contains("GRAFTTY_DISABLE_AGENT_HOOKS"))
-        // Both branches must end in an exec of the real binary.
+        // Both branches spawn a subshell that execs the real binary.
         let execCount = script.components(separatedBy: "exec ").count - 1
         #expect(execCount >= 2)
     }
@@ -97,8 +97,31 @@ struct AgentHookInstallerWrapperTests {
 
         let agentPIDIdx = script.range(of: "agent_pid=$!")!.lowerBound
         let registerIdx = script.range(of: "team register --runtime")!.lowerBound
-        let waitIdx = script.range(of: #"wait "$agent_pid""#)!.lowerBound
+        let waitIdx = script.range(
+            of: #"wait "$agent_pid""#,
+            range: registerIdx..<script.endIndex
+        )!.lowerBound
         #expect(agentPIDIdx < registerIdx)
         #expect(registerIdx < waitIdx)
+    }
+
+    @Test("Wrapper forwards termination signals to the spawned runtime child.")
+    func wrapperForwardsSignalsToRuntimeChild() {
+        let script = AgentHookInstaller.wrapperScript(
+            runtime: .codex,
+            wrapperDirectory: "/Users/x/agent-hooks/bin",
+            realCommandName: "codex",
+            grafttyCLIPath: "/usr/local/bin/graftty",
+            codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
+        )
+
+        #expect(script.contains(#"agent_pid="""#))
+        #expect(script.contains("forward_signal()"))
+        #expect(script.contains(#"kill -"$sig" "$agent_pid" 2>/dev/null || true"#))
+        #expect(script.contains(#"wait "$agent_pid" 2>/dev/null || true"#))
+        #expect(script.contains("trap 'forward_signal TERM 143' TERM"))
+        #expect(script.contains("trap 'forward_signal INT 130' INT"))
+        #expect(script.contains("trap 'forward_signal HUP 129' HUP"))
+        #expect(script.contains("trap cleanup EXIT"))
     }
 }
