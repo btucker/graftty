@@ -12,7 +12,16 @@ public struct CLIRunner: CLIExecutor {
         args: [String],
         at directory: String
     ) async throws -> CLIOutput {
-        let out = try await execute(command: command, args: args, at: directory)
+        try await run(command: command, args: args, at: directory, timeout: nil)
+    }
+
+    public func run(
+        command: String,
+        args: [String],
+        at directory: String,
+        timeout: Duration?
+    ) async throws -> CLIOutput {
+        let out = try await execute(command: command, args: args, at: directory, timeout: timeout)
         guard out.exitCode == 0 else {
             throw CLIError.nonZeroExit(
                 command: command,
@@ -28,7 +37,7 @@ public struct CLIRunner: CLIExecutor {
         args: [String],
         at directory: String
     ) async throws -> CLIOutput {
-        try await execute(command: command, args: args, at: directory)
+        try await execute(command: command, args: args, at: directory, timeout: nil)
     }
 
     /// Augmented PATH that includes common install locations. Finder-launched
@@ -62,14 +71,24 @@ public struct CLIRunner: CLIExecutor {
     private func execute(
         command: String,
         args: [String],
-        at directory: String
+        at directory: String,
+        timeout: Duration?
     ) async throws -> CLIOutput {
+        let timeoutSeconds = timeout.map(Self.seconds(of:))
         let captured: (String, String, Int32) = try await withCheckedThrowingContinuation { cont in
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
             process.arguments = [command] + args
             process.currentDirectoryURL = URL(fileURLWithPath: directory)
             process.environment = Self.enrichedEnvironment()
+
+            // Allocated only when a timeout is requested — the common
+            // unbounded path (every local git call) pays nothing. Holds
+            // both the fired-flag and the pending SIGTERM timer under one
+            // lock: the timer queue writes the flag and the termination
+            // queue reads it / cancels the timer, so a `let` reference
+            // type is what makes the cross-queue access safe under Swift 6.
+            let timeoutState = timeoutSeconds.map { TimeoutState(seconds: $0) }
 
             let stdoutPipe = Pipe()
             let stderrPipe = Pipe()
@@ -117,6 +136,10 @@ public struct CLIRunner: CLIExecutor {
             }
 
             process.terminationHandler = { proc in
+                // A natural exit beat the timeout — cancel the pending
+                // SIGTERM timer so it doesn't fire against a dead (or, far
+                // worse, recycled-PID) process later.
+                timeoutState?.cancel()
                 // Wait (bounded) for both streams to reach EOF in their
                 // readabilityHandler before snapshotting the buffers. The
                 // process is already dead, so the kernel has closed the
@@ -129,6 +152,18 @@ public struct CLIRunner: CLIExecutor {
 
                 let stdoutStr = String(data: buffers.stdoutData, encoding: .utf8) ?? ""
                 let stderrStr = String(data: buffers.stderrData, encoding: .utf8) ?? ""
+
+                // The timeout fired and we SIGTERMed the child: report it
+                // as a timeout rather than as whatever exit status the
+                // signal produced, so callers feed their backoff instead
+                // of misreading it as a normal non-zero exit.
+                if let timeoutState, timeoutState.didTimeout {
+                    cont.resume(throwing: CLIError.timedOut(
+                        command: command,
+                        seconds: timeoutState.seconds
+                    ))
+                    return
+                }
 
                 // `/usr/bin/env` exits with 127 and emits "env: <cmd>: No
                 // such file or directory" on stderr when the command is
@@ -147,6 +182,37 @@ public struct CLIRunner: CLIExecutor {
 
             do {
                 try process.run()
+                // Arm the timeout only once the process is actually
+                // running. On fire, flag-then-SIGTERM: the flag is set
+                // before `terminate()` so the resulting `terminationHandler`
+                // observes it. We deliberately do NOT resume the
+                // continuation from here — letting `terminate()` drive the
+                // single resume through `terminationHandler` keeps the
+                // exactly-once contract that the launch-failure and
+                // natural-exit paths already rely on. The `isRunning`
+                // guard makes a timer that fires just after a natural exit
+                // a no-op.
+                //
+                // SIGTERM (not SIGKILL) suffices for the callers that pass
+                // a timeout — `git`/`gh`/`glab` don't trap it and a fetch
+                // wedged on a socket read is interrupted by it. A child
+                // that somehow ignored SIGTERM would still hang this
+                // continuation, but the poller's in-flight abandonment
+                // (DIVERGE-4.11, 30s) re-dispatches regardless, so the
+                // sidebar never freezes — only this one Task would leak.
+                if let timeoutState {
+                    let item = DispatchWorkItem {
+                        if process.isRunning {
+                            timeoutState.markTimedOut()
+                            process.terminate()
+                        }
+                    }
+                    timeoutState.arm(item)
+                    DispatchQueue.global().asyncAfter(
+                        deadline: .now() + timeoutState.seconds,
+                        execute: item
+                    )
+                }
             } catch {
                 stdoutPipe.fileHandleForReading.readabilityHandler = nil
                 stderrPipe.fileHandleForReading.readabilityHandler = nil
@@ -157,6 +223,52 @@ public struct CLIRunner: CLIExecutor {
             }
         }
         return CLIOutput(stdout: captured.0, stderr: captured.1, exitCode: captured.2)
+    }
+
+    /// `Duration` → seconds as a `Double`, for `DispatchQueue.asyncAfter`
+    /// and the `timedOut` error payload.
+    private static func seconds(of duration: Duration) -> Double {
+        let c = duration.components
+        return Double(c.seconds) + Double(c.attoseconds) / 1e18
+    }
+}
+
+/// Per-call timeout bookkeeping for `CLIRunner.execute`, allocated only
+/// when a timeout is requested. One `NSLock` guards both the fired-flag
+/// (written by the timer queue, read by the termination queue) and the
+/// pending `DispatchWorkItem` (so a natural exit can cancel it). A `let`
+/// reference type — not a captured `var` — is what lets both queues touch
+/// it under Swift 6's concurrent-capture rules. `seconds` is immutable, so
+/// it needs no locking and carries the value into the `timedOut` error.
+private final class TimeoutState: @unchecked Sendable {
+    let seconds: Double
+    private let lock = NSLock()
+    private var _didTimeout = false
+    private var item: DispatchWorkItem?
+
+    init(seconds: Double) {
+        self.seconds = seconds
+    }
+
+    func arm(_ newItem: DispatchWorkItem) {
+        lock.lock(); defer { lock.unlock() }
+        item = newItem
+    }
+
+    func markTimedOut() {
+        lock.lock(); defer { lock.unlock() }
+        _didTimeout = true
+    }
+
+    var didTimeout: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return _didTimeout
+    }
+
+    func cancel() {
+        lock.lock(); defer { lock.unlock() }
+        item?.cancel()
+        item = nil
     }
 }
 

@@ -49,8 +49,22 @@ public final class WorktreeStatsStore {
     @ObservationIgnored
     private var repoFailureStreak: [String: Int] = [:]
 
+    /// Per-repo timestamp of the most recently dispatched `git fetch`,
+    /// stored as a date (not a `Set` membership) for the same reason as
+    /// the per-path `inFlight` map: `git fetch` is a network subprocess
+    /// with no timeout (`CLIRunner` never terminates a hung child), so a
+    /// socket wedged across a sleep/wake or a dead VPN link can block
+    /// `performRepoFetch` indefinitely and never run its slot-releasing
+    /// `defer`. A bare `Set` would then latch the repo's path forever:
+    /// every poll short-circuits at the in-flight check, Gate B is
+    /// skipped, and the divergence gutter freezes until relaunch. The
+    /// timestamp lets `maybeDispatchRepoFetch` treat a slot older than
+    /// `inFlightAbandonmentThreshold` as abandoned and dispatch a fresh
+    /// fetch (DIVERGE-4.11 — the async-hang sibling of the synchronous
+    /// latch closed by DIVERGE-4.10). Mirrors `inFlight`'s DIVERGE-4.4
+    /// abandonment.
     @ObservationIgnored
-    private var inFlightRepos: Set<String> = []
+    private var inFlightRepos: [String: Date] = [:]
 
     @ObservationIgnored
     private var ticker: PollingTickerLike?
@@ -134,9 +148,14 @@ public final class WorktreeStatsStore {
     /// method public; tests use `@testable import`.
     func performRepoFetchForTesting(
         repoPath: String,
-        worktrees: [(path: String, branch: String)] = []
+        worktrees: [(path: String, branch: String)] = [],
+        dispatchedAt: Date? = nil
     ) async {
-        await performRepoFetch(repoPath: repoPath, worktrees: worktrees)
+        await performRepoFetch(
+            repoPath: repoPath,
+            worktrees: worktrees,
+            dispatchedAt: dispatchedAt ?? inFlightRepos[repoPath] ?? Date()
+        )
     }
 
     /// Seed the repo's cached default-branch so
@@ -148,6 +167,19 @@ public final class WorktreeStatsStore {
 
     func isInFlightForTesting(_ worktreePath: String) -> Bool {
         inFlight[worktreePath] != nil
+    }
+
+    /// Seed the per-repo in-flight `git fetch` marker so tests can
+    /// simulate a prior fetch Task that hung past
+    /// `inFlightAbandonmentThreshold` — i.e., considered abandoned. A
+    /// subsequent `pollTick` must then dispatch a fresh fetch rather
+    /// than latching forever on the stuck slot. DIVERGE-4.11.
+    func seedInFlightRepoForTesting(_ date: Date, forRepo repoPath: String) {
+        inFlightRepos[repoPath] = date
+    }
+
+    func isInFlightRepoForTesting(_ repoPath: String) -> Bool {
+        inFlightRepos[repoPath] != nil
     }
 
     /// Seed the in-flight timestamp so tests can simulate a prior
@@ -265,8 +297,23 @@ public final class WorktreeStatsStore {
     public nonisolated static let defaultFetch: FetchFunction = { repoPath in
         _ = try await GitRunner.run(
             args: ["fetch", "--no-tags", "--prune", "origin"],
-            at: repoPath
+            at: repoPath,
+            // Bound the network fetch below the in-flight abandonment
+            // threshold (30s) so a wedged socket is SIGTERMed and throws
+            // here — releasing the `inFlightRepos` slot via `defer` and
+            // feeding the backoff — rather than being silently superseded
+            // and leaking the hung subprocess (DIVERGE-4.11).
+            timeout: WorktreeStatsStore.fetchTimeout()
         )
+    }
+
+    /// Subprocess timeout for the poll-driven `git fetch`. Comfortably
+    /// above a healthy incremental fetch (sub-second to a few seconds)
+    /// yet below `inFlightAbandonmentThreshold` (30s) so a hung fetch
+    /// fails and releases its slot before the abandonment path would
+    /// otherwise have to supersede it.
+    nonisolated static func fetchTimeout() -> Duration {
+        .seconds(20)
     }
 
     /// Production `ComputeFunction` — resolves the default branch,
@@ -372,7 +419,19 @@ public final class WorktreeStatsStore {
     /// after the fetch — double-firing would waste subprocess work and
     /// bump `inFlight` churn unnecessarily.
     private func maybeDispatchRepoFetch(repo: RepoEntry, now: Date) -> Bool {
-        if inFlightRepos.contains(repo.path) { return true }
+        // Defer to an in-flight fetch only while it's plausibly still
+        // running. `git fetch` has no subprocess timeout, so a wedged
+        // socket (sleep/wake, dead VPN) can hang `performRepoFetch`
+        // forever and never run its slot-releasing `defer`. Past the
+        // abandonment threshold we treat the slot as dead and fall
+        // through to dispatch a fresh fetch — otherwise the repo latches
+        // here permanently, Gate B is skipped every tick, and the
+        // divergence gutter freezes until relaunch (DIVERGE-4.11).
+        let cap = Double(Self.inFlightAbandonmentThreshold().components.seconds)
+        if let started = inFlightRepos[repo.path],
+           now.timeIntervalSince(started) < cap {
+            return true
+        }
         let streak = repoFailureStreak[repo.path] ?? 0
         let interval = Self.repoFetchCadence(failureStreak: streak)
         if let last = lastRepoFetch[repo.path],
@@ -385,7 +444,8 @@ public final class WorktreeStatsStore {
         // short-circuits at the contains-check above and Gate B never
         // re-fires for a worktree the user later opens.
         guard repo.worktrees.contains(where: shouldPollStats) else { return false }
-        inFlightRepos.insert(repo.path)
+        inFlightRepos[repo.path] = now
+        let dispatchedAt = now
         let repoPath = repo.path
         let worktrees = repo.worktrees
             .filter(shouldPollStats)
@@ -394,7 +454,8 @@ public final class WorktreeStatsStore {
         Task { [weak self] in
             await self?.performRepoFetch(
                 repoPath: repoPath,
-                worktrees: worktrees
+                worktrees: worktrees,
+                dispatchedAt: dispatchedAt
             )
         }
         return true
@@ -406,9 +467,23 @@ public final class WorktreeStatsStore {
 
     func performRepoFetch(
         repoPath: String,
-        worktrees: [(path: String, branch: String)]
+        worktrees: [(path: String, branch: String)],
+        dispatchedAt: Date
     ) async {
-        defer { self.inFlightRepos.remove(repoPath) }
+        // Release the slot only if it's still the one this Task claimed.
+        // The dispatch timestamp doubles as the ownership token: if this
+        // fetch hung past `inFlightAbandonmentThreshold` and a later tick
+        // superseded it, that tick overwrote `inFlightRepos[repoPath]` with
+        // its own (strictly later — ticks are ≥5s apart) timestamp, so the
+        // equality fails here and the stale Task declines to clear the live
+        // slot. Same intent as `apply`'s generation guard (DIVERGE-4.5),
+        // expressed with the unique dispatch `Date` rather than an Int
+        // counter since the timestamp is already needed for the age check.
+        defer {
+            if self.inFlightRepos[repoPath] == dispatchedAt {
+                self.inFlightRepos.removeValue(forKey: repoPath)
+            }
+        }
 
         let defaultBranchResult: String?
         if let cached = defaultBranchByRepo[repoPath] ?? nil {
