@@ -772,6 +772,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIVERGE-4.10** When the divergence-stats polling tick visits a repository whose `git fetch` cooldown has elapsed but which currently has no running worktrees, the application shall not mark that repository as having an in-flight fetch. Without this, the empty-worktrees early-return in `maybeDispatchRepoFetch` leaves the repo's path latched in `inFlightRepos` for the lifetime of the session: every subsequent poll short-circuits at the `inFlightRepos.contains` check, Gate B is skipped, and `WorktreeStatsStore.refresh` is never re-invoked from the polling loop. The user-visible shape is a sidebar gutter whose ↓N count is frozen at whatever value the explicit `refresh` on worktree-open captured — merging `origin/<defaultBranch>` into a feature branch fails to drop the red behind-count, because nothing recomputes the stats until the app is relaunched.
 
+**DIVERGE-4.11** If a per-repo `git fetch` dispatched by the divergence-stats polling tick hangs past the in-flight abandonment threshold — `git fetch` is a network subprocess with no timeout, so a socket wedged across a sleep/wake or a dead link can block indefinitely and never run the slot-releasing handler — then the application shall treat the in-flight repo slot as abandoned and let a later tick dispatch a fresh fetch, rather than latching the repo path in `inFlightRepos` for the lifetime of the session. Without this, every later poll short-circuits at the in-flight check, Gate B is skipped, and the divergence gutter freezes at its last value until the app is relaunched — the async-hang sibling of the synchronous latch closed by DIVERGE-4.10.
+
 ## TECH — Technology Constraints
 
 ### TECH-1.x
