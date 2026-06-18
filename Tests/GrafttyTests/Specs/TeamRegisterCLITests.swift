@@ -81,11 +81,13 @@ struct TeamRegisterCLITests {
         let registeredAt = Date(timeIntervalSince1970: 1_700_000_000)
         try storage.write(.init(
             teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
-            paneSessionName: "graftty-aaaaaaaa", pid: 1, registeredAt: registeredAt
+            paneSessionName: "graftty-aaaaaaaa", pid: 1,
+            processStartTimeMicroseconds: nil, registeredAt: registeredAt
         ))
         try storage.write(.init(
             teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
-            paneSessionName: "graftty-bbbbbbbb", pid: 2, registeredAt: registeredAt
+            paneSessionName: "graftty-bbbbbbbb", pid: 2,
+            processStartTimeMicroseconds: nil, registeredAt: registeredAt
         ))
 
         try TeamUnregisterCore.unregister(
