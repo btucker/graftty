@@ -484,9 +484,10 @@ final class HostManagedZmxBackend {
     /// the Mac must not steal — IOS-12.1 / TERM-11.2).
     func resyncVisibleGrid() {
         lock.lock()
-        guard case .running = lifecycle,
-              !shouldWithholdResizeLocked(),
-              currentGridSize() != nil else {
+        // No `currentGridSize() != nil` pre-check here: `flushSizeToPtyLocked`
+        // re-reads the grid and handles a nil target (NO-TARGET) itself, so a
+        // pre-check would just query libghostty twice under the lock.
+        guard case .running = lifecycle, !shouldWithholdResizeLocked() else {
             lock.unlock()
             return
         }

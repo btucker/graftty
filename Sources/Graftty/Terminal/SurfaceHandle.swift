@@ -58,7 +58,11 @@ protocol SurfaceHandleZmxBackend: AnyObject {
     /// The last remote client detached from this pane's session (TERM-11.4).
     func remoteClientsDidDetach()
     /// The pane re-entered the visible set; reconcile the PTY to the live
-    /// grid if a size drifted while it was occluded (TERM-11.13).
+    /// grid by forwarding it unconditionally (TERM-11.13). NOT a
+    /// drift-gated no-op: a same-size forward is a kernel no-op (no
+    /// SIGWINCH), and forwarding regardless corrects a divergence that a
+    /// previously-failed/ignored resize left behind — which an in-sync
+    /// check against the optimistic last-forwarded record would hide.
     func resyncVisibleGrid()
     func close()
     func surfaceWasFreed()
@@ -488,9 +492,11 @@ final class SurfaceHandle {
     }
 
     /// TERM-11.13: the pane re-entered the visible set. Ask the host-managed
-    /// backend to reconcile the zmx PTY to the live grid when a size drifted
-    /// while the surface was occluded (no-op for non-zmx surfaces, and a
-    /// no-op in the backend when the grid and PTY already agree).
+    /// backend to reconcile the zmx PTY to the live grid by forwarding it
+    /// unconditionally (no-op for non-zmx surfaces). The backend does NOT
+    /// skip an apparently-in-sync grid: a same-size forward is a kernel
+    /// no-op (no SIGWINCH), and forwarding regardless corrects a divergence
+    /// a previously-failed/ignored resize left behind.
     func resyncVisibleGrid() {
         zmxBackend?.resyncVisibleGrid()
     }
