@@ -27,12 +27,15 @@ struct RemoteMacPaneEnvironment: Equatable, Sendable {
             && rhs.paneControlClient == nil
     }
 
-    static func build(remoteHost: RemoteMacPaneEnvironmentHost?) async -> RemoteMacPaneEnvironment {
+    static func build(
+        remoteHost: RemoteMacPaneEnvironmentHost?,
+        onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void = { _ in }
+    ) async -> RemoteMacPaneEnvironment {
         guard let remoteHost else { return .empty }
 
         do {
             let panesDriver = try await remoteHost.makePanesStateDriver(
-                onSnapshot: { _ in },
+                onSnapshot: onSnapshot,
                 onClosed: { _ in }
             )
             let worktreePanesStore = WorktreePanesStore(driver: panesDriver)
@@ -40,6 +43,7 @@ struct RemoteMacPaneEnvironment: Equatable, Sendable {
                 panesClient.setCallbacks(
                     onSnapshot: { [weak worktreePanesStore] snapshot in
                         await worktreePanesStore?.applySnapshot(snapshot)
+                        await onSnapshot(snapshot)
                     },
                     onClosed: { [weak worktreePanesStore] reason in
                         await worktreePanesStore?.markClosed(reason: reason)

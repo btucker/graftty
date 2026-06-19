@@ -110,8 +110,11 @@ struct RemoteMacConnectionRegistryTests {
             clientDeviceID: RemoteDeviceID(value: "client-mac"),
             signalingClient: SignalingClient(transport: signalingTransport),
             connectionFactory: connectionFactory,
-            paneEnvironmentBuilder: { remoteHost in
-                await RemoteMacPaneEnvironment.build(remoteHost: remoteHost)
+            paneEnvironmentBuilder: { remoteHost, onSnapshot in
+                await RemoteMacPaneEnvironment.build(
+                    remoteHost: remoteHost,
+                    onSnapshot: onSnapshot
+                )
             }
         )
     }

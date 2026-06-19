@@ -27,7 +27,11 @@ final class RemoteMacsModel: ObservableObject {
         connectionRegistry: RemoteMacConnectionRegistry? = nil
     ) {
         self.store = store ?? RemoteMacStore()
-        self.connectionRegistry = connectionRegistry ?? RemoteMacConnectionRegistry()
+        let registry = connectionRegistry ?? RemoteMacConnectionRegistry()
+        self.connectionRegistry = registry
+        registry.onPaneSnapshot = { [weak self] identity, snapshot in
+            self?.worktreePanesByRemote[identity] = snapshot
+        }
     }
 
     func loadSavedRemotes() async {

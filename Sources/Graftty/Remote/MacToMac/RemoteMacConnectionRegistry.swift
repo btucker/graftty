@@ -51,7 +51,11 @@ final class RemoteMacConnectionRegistry {
         Curve25519.Signing.PrivateKey,
         RemoteIdentityFingerprint
     ) -> any RemoteMacHostConnection
-    typealias PaneEnvironmentBuilder = @Sendable (RemoteMacPaneEnvironmentHost?) async -> RemoteMacPaneEnvironment
+    typealias PaneEnvironmentBuilder = @Sendable (
+        RemoteMacPaneEnvironmentHost?,
+        @escaping @Sendable ([WorktreePanes]) async -> Void
+    ) async -> RemoteMacPaneEnvironment
+    typealias PaneSnapshotHandler = @MainActor @Sendable (RemoteMacIdentity, [WorktreePanes]) -> Void
 
     enum ConnectionError: Error, Equatable, Sendable {
         case missingBaseURL(RemoteMacIdentity)
@@ -66,6 +70,7 @@ final class RemoteMacConnectionRegistry {
     private let signalingClient: SignalingClient
     private let connectionFactory: HostConnectionFactory
     private let paneEnvironmentBuilder: PaneEnvironmentBuilder
+    var onPaneSnapshot: PaneSnapshotHandler
     private let now: @Sendable () -> Date
 
     var activeConnectionCount: Int {
@@ -88,9 +93,10 @@ final class RemoteMacConnectionRegistry {
                 )
             )
         }
-        self.paneEnvironmentBuilder = { remoteHost in
-            await RemoteMacPaneEnvironment.build(remoteHost: remoteHost)
+        self.paneEnvironmentBuilder = { remoteHost, onSnapshot in
+            await RemoteMacPaneEnvironment.build(remoteHost: remoteHost, onSnapshot: onSnapshot)
         }
+        self.onPaneSnapshot = { _, _ in }
         self.now = { Date() }
     }
 
@@ -100,6 +106,7 @@ final class RemoteMacConnectionRegistry {
         signalingClient: SignalingClient,
         connectionFactory: @escaping HostConnectionFactory,
         paneEnvironmentBuilder: @escaping PaneEnvironmentBuilder,
+        onPaneSnapshot: @escaping PaneSnapshotHandler = { _, _ in },
         now: @escaping @Sendable () -> Date = { Date() }
     ) {
         self.legacyFactory = nil
@@ -108,6 +115,7 @@ final class RemoteMacConnectionRegistry {
         self.signalingClient = signalingClient
         self.connectionFactory = connectionFactory
         self.paneEnvironmentBuilder = paneEnvironmentBuilder
+        self.onPaneSnapshot = onPaneSnapshot
         self.now = now
     }
 
@@ -186,7 +194,9 @@ final class RemoteMacConnectionRegistry {
             offer: SignalingOffer(clientDeviceID: clientDeviceID.value, sdp: offerSDP)
         )
         try await connection.applyAnswerSDP(answer.sdp)
-        let paneEnvironment = await paneEnvironmentBuilder(connection)
+        let paneEnvironment = await paneEnvironmentBuilder(connection) { [onPaneSnapshot] snapshot in
+            await onPaneSnapshot(identity, snapshot)
+        }
 
         return Entry(
             id: UUID(),

@@ -164,6 +164,41 @@ struct RemoteMacsModelTests {
         #expect(registry.activeConnectionCount == 2)
     }
 
+    @Test("live panes snapshots from registry update sidebar projection")
+    func livePaneSnapshotsUpdateSidebarProjection() async throws {
+        let store = RemoteMacStore(storeURL: try tempStoreURL())
+        let registry = RemoteMacConnectionRegistry(factory: { remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                connection: RemoteMacsModelTestConnection(),
+                paneEnvironment: .empty
+            )
+        })
+        let remote = try remoteMac()
+        let model = RemoteMacsModel(store: store, connectionRegistry: registry)
+        let snapshot = [
+            WorktreePanes(
+                path: "/Users/me/project",
+                displayName: "project",
+                repoDisplayName: "project",
+                displayBranch: "main",
+                state: .running,
+                isMainCheckout: true,
+                prBadge: nil,
+                stats: nil,
+                attentionText: nil,
+                layout: nil
+            ),
+        ]
+
+        registry.onPaneSnapshot(RemoteMacIdentity(remote), snapshot)
+
+        #expect(model.worktreePanesByRemote[RemoteMacIdentity(remote)] == snapshot)
+    }
+
     @Test("pairing success inserts a saved RemoteMac from pinned host")
     func pairingSuccessSavesPinnedHost() async throws {
         let store = RemoteMacStore(storeURL: try tempStoreURL())
