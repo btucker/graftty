@@ -411,27 +411,46 @@ struct TeamWatchInbox: ParsableCommand {
             return
         }
 
-        let sessionID = (payload["session_id"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-            ?? UUID().uuidString
-
         guard let (team, worktreeName) = TeamPresenceCLI.resolveTeamAndWorktree() else {
             return
         }
         let teamID = TeamLookup.id(of: team)
+        let presenceStorage = TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
+        let records = try presenceStorage.listAll()
+        let resolver = TeamDeliveryOwnershipResolver(
+            records: { records },
+            liveness: TeamWatchInboxDeliveryLiveness()
+        )
+        let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
+            env: ProcessInfo.processInfo.environment
+        )
+        let decision = TeamWatchInboxOwnership.decision(
+            runtime: runtimeValue,
+            hookPayloadSessionID: payload["session_id"] as? String,
+            fallbackSessionID: { UUID().uuidString },
+            teamID: teamID,
+            worktree: worktreeName,
+            paneSessionName: paneSessionName,
+            resolver: resolver
+        )
 
         let inboxRoot = AppState.defaultDirectory
             .appendingPathComponent("team-inbox", isDirectory: true)
         let pidRoot = TeamPresenceStorage.defaultRoot()
 
         let outcome = WatcherOutcome()
-        let watcher = InboxWatcher(
-            sessionID: sessionID,
-            recipient: .init(member: worktreeName, runtime: runtimeValue),
-            teamID: teamID,
-            inboxRootDirectory: inboxRoot,
-            outcome: outcome,
-            pidFileRoot: pidRoot
-        )
+        guard let watcher = Self.makeWatcherIfOwner(decision: decision, makeWatcher: {
+            InboxWatcher(
+                sessionID: decision.sessionID,
+                recipient: .init(member: worktreeName, runtime: runtimeValue),
+                teamID: teamID,
+                inboxRootDirectory: inboxRoot,
+                outcome: outcome,
+                pidFileRoot: pidRoot
+            )
+        }) else {
+            return
+        }
 
         Task.detached { await watcher.runUntilSignal() }
 
@@ -459,6 +478,24 @@ struct TeamWatchInbox: ParsableCommand {
             FileHandle.standardError.write(Data(capturedStderr.utf8))
         }
         Foundation.exit(capturedExit)
+    }
+
+    static func makeWatcherIfOwner<Watcher>(
+        decision: TeamWatchInboxOwnershipDecision,
+        makeWatcher: () throws -> Watcher
+    ) rethrows -> Watcher? {
+        guard decision.shouldArmWatcher else { return nil }
+        return try makeWatcher()
+    }
+}
+
+private struct TeamWatchInboxDeliveryLiveness: TeamDeliveryLivenessChecking {
+    func isLivePaneSession(_ sessionName: String) -> Bool {
+        !sessionName.isEmpty
+    }
+
+    func processStartTimeMicroseconds(ofPID pid: Int32) -> Int64? {
+        ProcessIdentityReader.startTimeMicroseconds(ofPID: pid)
     }
 }
 
