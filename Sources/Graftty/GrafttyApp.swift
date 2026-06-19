@@ -17,6 +17,7 @@ struct TeamHookCallbacks {
 }
 
 struct CodexStopDeliveryPlan: Equatable {
+    let shouldUpdateState: Bool
     let liveSessionName: String?
     let deliverySessionNames: [String]
 }
@@ -1116,6 +1117,7 @@ struct GrafttyApp: App {
                         codexSessionNamesIn: codexSessionNamesIn
                     )
                 }
+                guard plan.shouldUpdateState else { return }
                 let paneID: UUID? = MainActor.assumeIsolated {
                     plan.liveSessionName.flatMap { tm.paneID(forSessionName: $0) }
                 }
@@ -1132,12 +1134,26 @@ struct GrafttyApp: App {
                 guard let service = idleService else { return }
                 Task { await service.onStop(team: team, worktree: worktree, sessionNames: plan.deliverySessionNames) }
             },
-            onSessionStart: { team, worktree, runtime, _ in
+            onSessionStart: { team, worktree, runtime, paneSessionName in
                 MainActor.assumeIsolated { refreshPresenceIndex() }
+                guard Self.shouldUpdateDeliveryStateForHook(
+                    team: team,
+                    worktree: worktree,
+                    runtime: runtime,
+                    paneSessionName: paneSessionName,
+                    codexSessionNamesIn: codexSessionNamesIn
+                ) else { return }
                 stateRegistry.handleSessionStart(worktree: worktree, runtime: runtime)
             },
-            onPostToolUse: { team, worktree, runtime, _ in
+            onPostToolUse: { team, worktree, runtime, paneSessionName in
                 MainActor.assumeIsolated { refreshPresenceIndex() }
+                guard Self.shouldUpdateDeliveryStateForHook(
+                    team: team,
+                    worktree: worktree,
+                    runtime: runtime,
+                    paneSessionName: paneSessionName,
+                    codexSessionNamesIn: codexSessionNamesIn
+                ) else { return }
                 stateRegistry.handlePostToolUse(worktree: worktree, runtime: runtime)
             }
         )
@@ -1592,7 +1608,7 @@ struct GrafttyApp: App {
         }
     }
 
-    static func codexStopDeliveryPlan(
+    nonisolated static func codexStopDeliveryPlan(
         team: String,
         worktree: String,
         runtime: String,
@@ -1605,13 +1621,45 @@ struct GrafttyApp: App {
             paneSessionName: paneSessionName,
             isLiveSession: isLiveSession
         )
-        guard runtime == TeamHookRuntime.codex.rawValue, liveSessionName != nil else {
-            return CodexStopDeliveryPlan(liveSessionName: liveSessionName, deliverySessionNames: [])
+        guard runtime == TeamHookRuntime.codex.rawValue else {
+            return CodexStopDeliveryPlan(
+                shouldUpdateState: true,
+                liveSessionName: liveSessionName,
+                deliverySessionNames: []
+            )
+        }
+        guard let liveSessionName else {
+            return CodexStopDeliveryPlan(
+                shouldUpdateState: false,
+                liveSessionName: nil,
+                deliverySessionNames: []
+            )
+        }
+        let deliverySessionNames = codexSessionNamesIn(team, worktree)
+        guard deliverySessionNames.contains(liveSessionName) else {
+            return CodexStopDeliveryPlan(
+                shouldUpdateState: false,
+                liveSessionName: liveSessionName,
+                deliverySessionNames: []
+            )
         }
         return CodexStopDeliveryPlan(
+            shouldUpdateState: true,
             liveSessionName: liveSessionName,
-            deliverySessionNames: codexSessionNamesIn(team, worktree)
+            deliverySessionNames: deliverySessionNames
         )
+    }
+
+    nonisolated static func shouldUpdateDeliveryStateForHook(
+        team: String,
+        worktree: String,
+        runtime: String,
+        paneSessionName: String?,
+        codexSessionNamesIn: (String, String) -> [String]
+    ) -> Bool {
+        guard runtime == TeamHookRuntime.codex.rawValue else { return true }
+        guard let paneSessionName else { return false }
+        return codexSessionNamesIn(team, worktree).contains(paneSessionName)
     }
 
     /// Pre-pass for `reconcileOnLaunch` implementing LAYOUT-4.6 (bookmark

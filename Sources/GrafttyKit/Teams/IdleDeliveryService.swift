@@ -76,7 +76,7 @@ public actor IdleDeliveryService {
             return
         }
         let watermark: String?
-        do { watermark = try inbox.zmxWatermark(teamID: team, worktree: worktree, runtime: runtime) }
+        do { watermark = try effectiveWatermark(team: team, worktree: worktree, runtime: runtime) }
         catch {
             log(team: team, worktree: worktree, runtime: runtime, outcome: "error_watermark_read")
             return
@@ -109,12 +109,43 @@ public actor IdleDeliveryService {
         do {
             try inbox.advanceZmxWatermark(teamID: team, worktree: worktree,
                                           runtime: runtime, to: lastMessage.id)
+            try inbox.writeWorktreeWatermark(
+                TeamInboxWorktreeWatermark(
+                    worktree: worktree,
+                    lastDeliveredToAnySessionID: lastMessage.id
+                ),
+                teamID: team
+            )
         } catch {
-            log(team: team, worktree: worktree, runtime: runtime, outcome: "error_watermark_write")
+            log(team: team, worktree: worktree, runtime: runtime,
+                outcome: "error_watermark_write", messageIDs: pending.map(\.id), trigger: trigger)
             return
         }
         log(team: team, worktree: worktree, runtime: runtime,
             outcome: "sent", messageIDs: pending.map(\.id), trigger: trigger)
+    }
+
+    private func effectiveWatermark(team: String, worktree: String, runtime: String) throws -> String? {
+        let zmx = try inbox.zmxWatermark(teamID: team, worktree: worktree, runtime: runtime)
+        let worktreeDelivered = try inbox.worktreeWatermark(teamID: team, worktree: worktree)?
+            .lastDeliveredToAnySessionID
+        guard zmx != worktreeDelivered else { return zmx }
+        guard let zmx else { return worktreeDelivered }
+        guard let worktreeDelivered else { return zmx }
+
+        let messages = try inbox.messages(teamID: team)
+        let zmxIndex = messages.lastIndex { $0.id == zmx }
+        let worktreeIndex = messages.lastIndex { $0.id == worktreeDelivered }
+        switch (zmxIndex, worktreeIndex) {
+        case let (zmxIndex?, worktreeIndex?):
+            return zmxIndex >= worktreeIndex ? zmx : worktreeDelivered
+        case (_?, nil):
+            return zmx
+        case (nil, _?):
+            return worktreeDelivered
+        case (nil, nil):
+            return zmx
+        }
     }
 
     private func log(
