@@ -26,9 +26,20 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
     public let supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods = .publicKey
 
     private let store: TrustedPeerStore
+    private let activePeerRegistry: ActiveRemotePeerRegistry?
+    private let closeActiveTransport: (@Sendable () async -> Void)?
+    private let onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)?
 
-    public init(store: TrustedPeerStore) {
+    public init(
+        store: TrustedPeerStore,
+        activePeerRegistry: ActiveRemotePeerRegistry? = nil,
+        closeActiveTransport: (@Sendable () async -> Void)? = nil,
+        onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)? = nil
+    ) {
         self.store = store
+        self.activePeerRegistry = activePeerRegistry
+        self.closeActiveTransport = closeActiveTransport
+        self.onActivePeerRegistered = onActivePeerRegistered
     }
 
     public func requestReceived(
@@ -42,6 +53,14 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
                 let fingerprint = try Self.fingerprint(of: publicKeyRequest.publicKey)
                 if let peer = try store.get(fingerprint: fingerprint),
                    peer.capabilities.terminalControl == .allowed {
+                    if let activePeerRegistry, let closeActiveTransport {
+                        let entryID = activePeerRegistry.register(
+                            peerID: peer.id,
+                            fingerprint: fingerprint,
+                            close: closeActiveTransport
+                        )
+                        onActivePeerRegistered?(entryID)
+                    }
                     responsePromise.succeed(.success)
                 } else {
                     // Either no matching trusted peer (unpaired / revoked) or the

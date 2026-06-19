@@ -27,6 +27,7 @@ public actor WebRTCHostAgent {
 
     private let hostKey: Curve25519.Signing.PrivateKey
     private let trustedPeerStore: TrustedPeerStore
+    public nonisolated let activeRemotePeers: ActiveRemotePeerRegistry
     private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
     private var panesStateSubscribe: PanesStateChannelHandler.Subscribe
     private var paneControlMutator: PaneControlChannelHandler.Mutator
@@ -57,6 +58,7 @@ public actor WebRTCHostAgent {
     public init(
         hostKey: Curve25519.Signing.PrivateKey,
         trustedPeerStore: TrustedPeerStore,
+        activeRemotePeers: ActiveRemotePeerRegistry = ActiveRemotePeerRegistry(),
         streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
         panesStateSubscribe: @escaping PanesStateChannelHandler.Subscribe,
         paneControlMutator: @escaping PaneControlChannelHandler.Mutator
@@ -65,6 +67,7 @@ public actor WebRTCHostAgent {
         Self.initializeWebRTC()
         self.hostKey = hostKey
         self.trustedPeerStore = trustedPeerStore
+        self.activeRemotePeers = activeRemotePeers
         self.streamFactory = streamFactory
         self.panesStateSubscribe = panesStateSubscribe
         self.paneControlMutator = paneControlMutator
@@ -246,11 +249,21 @@ public actor WebRTCHostAgent {
         let factory = streamFactory
         let panesStateSubscribe = self.panesStateSubscribe
         let paneControlMutator = self.paneControlMutator
+        let activeRemotePeers = self.activeRemotePeers
         do {
-            try await transport.eventLoop.submit { [hostKey, trustedPeerStore] in
+            try await transport.eventLoop.submit { [hostKey, trustedPeerStore, activeRemotePeers, transport] in
                 let handler = SSHServerSetup.makeHandler(
                     hostKey: hostKey,
                     trustedPeerStore: trustedPeerStore,
+                    activePeerRegistry: activeRemotePeers,
+                    closeActiveTransport: {
+                        await transport.close()
+                    },
+                    onActivePeerRegistered: { entryID in
+                        transport.channel.closeFuture.whenComplete { _ in
+                            activeRemotePeers.unregister(entryID: entryID)
+                        }
+                    },
                     allocator: transport.channel.allocator,
                     inboundChildChannelInitializer: { child, channelType in
                         guard case .session = channelType else {

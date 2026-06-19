@@ -22,6 +22,19 @@ final class SSHUserAuthCapabilityTests: XCTestCase {
         XCTAssertTrue(isSuccess(outcome), "expected .success, got \(outcome)")
     }
 
+    func testTrustedPeerWithCapRegistersActivePeer() throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let peer = makePeer(key: key, terminalControl: .allowed)
+        let store = makeStore()
+        let registry = ActiveRemotePeerRegistry()
+        try store.add(peer)
+
+        let outcome = try runUserAuth(key: key, store: store, activePeerRegistry: registry)
+
+        XCTAssertTrue(isSuccess(outcome), "expected .success, got \(outcome)")
+        XCTAssertEqual(registry.entries(peerID: peer.id).map(\.fingerprint), [peer.fingerprint])
+    }
+
     /// @spec REMOTE-7.1: When a client opens a channel with `channel_type: "pane_control"`
     /// over an authenticated `RemoteHostConnection`, the host shall accept the channel only
     /// when the requesting trusted peer holds the `terminal_control` capability.
@@ -35,6 +48,19 @@ final class SSHUserAuthCapabilityTests: XCTestCase {
         XCTAssertTrue(isFailure(outcome), "expected .failure, got \(outcome)")
     }
 
+    func testTrustedPeerWithoutCapDoesNotRegisterActivePeer() throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let peer = makePeer(key: key, terminalControl: .disabled)
+        let store = makeStore()
+        let registry = ActiveRemotePeerRegistry()
+        try store.add(peer)
+
+        let outcome = try runUserAuth(key: key, store: store, activePeerRegistry: registry)
+
+        XCTAssertTrue(isFailure(outcome), "expected .failure, got \(outcome)")
+        XCTAssertTrue(registry.entries(peerID: peer.id).isEmpty)
+    }
+
     /// An unpaired key fails userauth (existing R3 behavior, preserved).
     func testUnpairedKeyRejected() throws {
         let key = Curve25519.Signing.PrivateKey()
@@ -43,6 +69,18 @@ final class SSHUserAuthCapabilityTests: XCTestCase {
 
         let outcome = try runUserAuth(key: key, store: store)
         XCTAssertTrue(isFailure(outcome), "expected .failure, got \(outcome)")
+    }
+
+    func testUnpairedKeyDoesNotRegisterActivePeer() throws {
+        let key = Curve25519.Signing.PrivateKey()
+        let store = makeStore()
+        let registry = ActiveRemotePeerRegistry()
+
+        let outcome = try runUserAuth(key: key, store: store, activePeerRegistry: registry)
+
+        XCTAssertTrue(isFailure(outcome), "expected .failure, got \(outcome)")
+        XCTAssertTrue(registry.entries(peerID: RemoteDeviceID(value: "missing")).isEmpty)
+        XCTAssertTrue(registry.entries.isEmpty)
     }
 
     // MARK: - helpers
@@ -85,11 +123,16 @@ final class SSHUserAuthCapabilityTests: XCTestCase {
     /// without blocking any event loop thread.
     private func runUserAuth(
         key: Curve25519.Signing.PrivateKey,
-        store: TrustedPeerStore
+        store: TrustedPeerStore,
+        activePeerRegistry: ActiveRemotePeerRegistry? = nil
     ) throws -> NIOSSHUserAuthenticationOutcome {
         let loop = EmbeddedEventLoop()
         defer { try! loop.syncShutdownGracefully() }
-        let delegate = SSHUserAuthDelegate(store: store)
+        let delegate = SSHUserAuthDelegate(
+            store: store,
+            activePeerRegistry: activePeerRegistry,
+            closeActiveTransport: {}
+        )
         let publicKey = NIOSSHPrivateKey(ed25519Key: key).publicKey
         let request = NIOSSHUserAuthenticationRequest(
             username: "graftty",
