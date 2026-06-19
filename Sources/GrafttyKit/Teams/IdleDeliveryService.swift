@@ -3,7 +3,7 @@ import Foundation
 /// Pluggable target for `IdleDeliveryService` nudges. Production wires
 /// this to a zmx PTY writer; tests record invocations.
 public protocol NudgeSender: Sendable {
-    func send(sessionName: String, message: String, messageIDs: [String]) async
+    func send(sessionName: String, message: String, messageIDs: [String]) async -> Bool
 }
 
 /// @spec TEAM-IDLE-2.1
@@ -92,8 +92,19 @@ public actor IdleDeliveryService {
             return
         }
         let text = TeamHookRenderer.format(messages: pending)
+        var deliveredToAtLeastOneSession = false
         for sessionName in sessionNames {
-            await nudgeSender.send(sessionName: sessionName, message: text, messageIDs: pending.map(\.id))
+            let sent = await nudgeSender.send(
+                sessionName: sessionName,
+                message: text,
+                messageIDs: pending.map(\.id)
+            )
+            deliveredToAtLeastOneSession = deliveredToAtLeastOneSession || sent
+        }
+        guard deliveredToAtLeastOneSession else {
+            log(team: team, worktree: worktree, runtime: runtime,
+                outcome: "error_nudge_send", messageIDs: pending.map(\.id), trigger: trigger)
+            return
         }
         do {
             try inbox.advanceZmxWatermark(teamID: team, worktree: worktree,
@@ -128,8 +139,13 @@ public final class ZmxNudgeSender: NudgeSender, @unchecked Sendable {
     public init(writer: ZmxWriter) {
         self.writer = writer
     }
-    public func send(sessionName: String, message: String, messageIDs: [String]) async {
-        do { try await writer.write(sessionName: sessionName, text: message, submit: true) }
-        catch { NSLog("[Graftty] zmx send failed for %@: %@", sessionName, "\(error)") }
+    public func send(sessionName: String, message: String, messageIDs: [String]) async -> Bool {
+        do {
+            try await writer.write(sessionName: sessionName, text: message, submit: true)
+            return true
+        } catch {
+            NSLog("[Graftty] zmx send failed for %@: %@", sessionName, "\(error)")
+            return false
+        }
     }
 }

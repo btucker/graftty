@@ -16,6 +16,11 @@ struct TeamHookCallbacks {
     let onPostToolUse: @Sendable (String, String, String, String?) -> Void
 }
 
+struct CodexStopDeliveryPlan: Equatable {
+    let liveSessionName: String?
+    let deliverySessionNames: [String]
+}
+
 private struct AppTeamDeliveryLiveness: TeamDeliveryLivenessChecking {
     let liveSessionNames: Set<String>
     let processStartTimeMicroseconds: @Sendable (Int32) -> Int64?
@@ -1032,12 +1037,9 @@ struct GrafttyApp: App {
         // records carry the authoritative session names; TerminalManager
         // proves the pane session is current, and the recorded PID proves
         // the registered runtime is still running.
-        let codexSessionNamesIn: @Sendable (String) -> [String] = { [tm] worktreePath in
+        let codexSessionNamesIn: @Sendable (String, String) -> [String] = { [tm] teamID, worktreePath in
             MainActor.assumeIsolated {
                 refreshPresenceIndex()
-                guard let teamID = binding.wrappedValue.repos.first(where: {
-                    $0.worktrees.contains(where: { $0.path == worktreePath })
-                })?.path else { return [] }
                 let records = presenceIndex.allRecords()
                 let liveSessions = Set(records.compactMap { record -> String? in
                     guard let sessionName = record.paneSessionName,
@@ -1065,10 +1067,10 @@ struct GrafttyApp: App {
                 // onElapsed is @MainActor, so binding.wrappedValue is
                 // accessible directly — no MainActor.assumeIsolated dance.
                 guard let service = idleService else { return }
-                let sessionNames = codexSessionNamesIn(worktree)
                 guard let teamID = binding.wrappedValue.repos.first(where: {
                     $0.worktrees.contains(where: { $0.path == worktree })
                 })?.path else { return }
+                let sessionNames = codexSessionNamesIn(teamID, worktree)
                 Task {
                     await service.onMessageArrival(
                         team: teamID, worktree: worktree, sessionNames: sessionNames
@@ -1104,15 +1106,18 @@ struct GrafttyApp: App {
         let hookCallbacks = TeamHookCallbacks(
             onStop: { [weak idleService, tm] team, worktree, runtime, paneSessionName in
                 MainActor.assumeIsolated { refreshPresenceIndex() }
-                let liveSessionName: String? = MainActor.assumeIsolated {
-                    TeamDeliverySessionResolution.stopSessionName(
+                let plan = MainActor.assumeIsolated {
+                    Self.codexStopDeliveryPlan(
+                        team: team,
+                        worktree: worktree,
                         runtime: runtime,
                         paneSessionName: paneSessionName,
-                        isLiveSession: { tm.handle(forSessionName: $0) != nil }
+                        isLiveSession: { tm.handle(forSessionName: $0) != nil },
+                        codexSessionNamesIn: codexSessionNamesIn
                     )
                 }
                 let paneID: UUID? = MainActor.assumeIsolated {
-                    liveSessionName.flatMap { tm.paneID(forSessionName: $0) }
+                    plan.liveSessionName.flatMap { tm.paneID(forSessionName: $0) }
                 }
                 // Flip the state machine before the delivery evaluator runs.
                 // Without this, state stays `.active` from the prior
@@ -1124,8 +1129,8 @@ struct GrafttyApp: App {
                 // keystrokes (Plan-mode review screens), so it must not arm
                 // the inbox-drain pipeline.
                 guard runtime == TeamHookRuntime.codex.rawValue else { return }
-                guard let sessionName = liveSessionName, let service = idleService else { return }
-                Task { await service.onStop(team: team, worktree: worktree, sessionNames: [sessionName]) }
+                guard let service = idleService else { return }
+                Task { await service.onStop(team: team, worktree: worktree, sessionNames: plan.deliverySessionNames) }
             },
             onSessionStart: { team, worktree, runtime, _ in
                 MainActor.assumeIsolated { refreshPresenceIndex() }
@@ -1169,7 +1174,7 @@ struct GrafttyApp: App {
                 guard let service = idleService else { return }
                 for (recipientWorktree, _) in byWorktree {
                     Task { @MainActor in
-                        let sessionNames = codexSessionNamesIn(recipientWorktree)
+                        let sessionNames = codexSessionNamesIn(teamID, recipientWorktree)
                         await service.onMessageArrival(
                             team: teamID,
                             worktree: recipientWorktree,
@@ -1585,6 +1590,28 @@ struct GrafttyApp: App {
                 controller.stop()
             }
         }
+    }
+
+    static func codexStopDeliveryPlan(
+        team: String,
+        worktree: String,
+        runtime: String,
+        paneSessionName: String?,
+        isLiveSession: (String) -> Bool,
+        codexSessionNamesIn: (String, String) -> [String]
+    ) -> CodexStopDeliveryPlan {
+        let liveSessionName = TeamDeliverySessionResolution.stopSessionName(
+            runtime: runtime,
+            paneSessionName: paneSessionName,
+            isLiveSession: isLiveSession
+        )
+        guard runtime == TeamHookRuntime.codex.rawValue else {
+            return CodexStopDeliveryPlan(liveSessionName: liveSessionName, deliverySessionNames: [])
+        }
+        return CodexStopDeliveryPlan(
+            liveSessionName: liveSessionName,
+            deliverySessionNames: codexSessionNamesIn(team, worktree)
+        )
     }
 
     /// Pre-pass for `reconcileOnLaunch` implementing LAYOUT-4.6 (bookmark
