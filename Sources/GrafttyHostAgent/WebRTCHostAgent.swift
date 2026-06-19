@@ -103,6 +103,7 @@ public actor WebRTCHostAgent {
         guard state == .idle || state == .closed else {
             throw HostError.busy
         }
+        sshInstallStarted = false
         let config = Self.defaultConfig()
         let constraints = RTCMediaConstraints(
             mandatoryConstraints: nil,
@@ -206,6 +207,7 @@ public actor WebRTCHostAgent {
             Task { await transport.close() }
             sshTransport = nil
         }
+        sshInstallStarted = false
         state = .closed
         if let pc = peerConnection {
             pc.close()
@@ -227,6 +229,9 @@ public actor WebRTCHostAgent {
         dc.delegate = dataChannelDelegate
         dataChannelDelegate.onOpen = { [weak self] in
             Task { await self?.installSSHHandler() }
+        }
+        dataChannelDelegate.onClosed = { [weak self] in
+            Task { await self?.handleTransportClosed() }
         }
         dataChannelDelegate.onMessage = { [weak self] data in
             Task { await self?.recordReceivedBinary(data) }
@@ -250,6 +255,9 @@ public actor WebRTCHostAgent {
         let panesStateSubscribe = self.panesStateSubscribe
         let paneControlMutator = self.paneControlMutator
         let activeRemotePeers = self.activeRemotePeers
+        transport.channel.closeFuture.whenComplete { [weak self] _ in
+            Task { await self?.handleTransportClosed() }
+        }
         do {
             try await transport.eventLoop.submit { [hostKey, trustedPeerStore, activeRemotePeers, transport] in
                 let handler = SSHServerSetup.makeHandler(
@@ -292,10 +300,20 @@ public actor WebRTCHostAgent {
         } catch {
             await transport.close()
             self.sshTransport = nil
-            if self.state != .closed {
-                self.state = .failed(reason: "SSH install failed: \(error)")
-            }
+            self.sshInstallStarted = false
+            self.state = .closed
         }
+    }
+
+    private func handleTransportClosed() {
+        if state == .closed { return }
+        sshTransport = nil
+        sshInstallStarted = false
+        dataChannel?.close()
+        dataChannel = nil
+        peerConnection?.close()
+        peerConnection = nil
+        state = .closed
     }
 
     private enum WebRTCHostAgentError: Error {
@@ -384,11 +402,14 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate,
 
 private final class DataChannelDelegate: NSObject, RTCDataChannelDelegate, @unchecked Sendable {
     nonisolated(unsafe) var onOpen: (@Sendable () -> Void)?
+    nonisolated(unsafe) var onClosed: (@Sendable () -> Void)?
     nonisolated(unsafe) var onMessage: (@Sendable (Data) -> Void)?
 
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
         if dataChannel.readyState == .open {
             onOpen?()
+        } else if dataChannel.readyState == .closed {
+            onClosed?()
         }
     }
 

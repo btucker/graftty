@@ -540,7 +540,12 @@ final class TerminalManager: ObservableObject {
         recordPaneSession(paneSessionID, for: terminalID)
         clearRehydratedIfDaemonGone(terminalID, paneSessionID: paneSessionID, sessionSnapshot: nil)
 
-        let zmxSpawnConfiguration = hostManagedBackend == nil
+        let isDirectHostManagedSurface = hostManagedBackend != nil
+        let surfaceWorktreePath = isDirectHostManagedSurface
+            ? FileManager.default.homeDirectoryForCurrentUser.path
+            : worktreePath
+
+        let zmxSpawnConfiguration = !isDirectHostManagedSurface
             ? resolveZmxSpawnConfiguration(
                 for: terminalID,
                 paneSessionID: paneSessionID,
@@ -552,7 +557,7 @@ final class TerminalManager: ObservableObject {
         guard let handle = SurfaceHandle(
             terminalID: terminalID,
             app: app,
-            worktreePath: worktreePath,
+            worktreePath: surfaceWorktreePath,
             socketPath: socketPath,
             zmxSpawnConfiguration: zmxSpawnConfiguration,
             extraInitialInput: extraInitialInput,

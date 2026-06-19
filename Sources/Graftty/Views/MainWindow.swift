@@ -223,6 +223,9 @@ struct MainWindow: View {
                 splitTreesByPath: appState.runningSplitTreesByPath()
             )
         }
+        .onChange(of: remoteMacsModel.worktreePanesByRemote) { _, snapshots in
+            reconcileRemoteSelection(worktreePanesByRemote: snapshots)
+        }
         // AGENT-3.4 resume rule runs at the model layer via
         // ClaudeSessionRegistry.onLivenessChange (wired in startup), so it
         // applies to the iPad/web snapshot and the window-closed case too —
@@ -596,6 +599,41 @@ struct MainWindow: View {
     private struct RemoteTerminalKey: Hashable {
         var identity: RemoteMacIdentity
         var sessionName: String
+    }
+
+    private func reconcileRemoteSelection(
+        worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]]
+    ) {
+        let previousIdentity = selectedRemoteIdentity
+        let previousSessionName = selectedRemotePaneSessionName
+        var selection = RemoteMacSidebarSelectionState(
+            selectedWorktreePath: appState.selectedWorktreePath,
+            selectedRemoteIdentity: selectedRemoteIdentity,
+            selectedRemoteWorktreePath: selectedRemoteWorktreePath,
+            selectedRemotePaneSessionName: selectedRemotePaneSessionName
+        )
+        RemoteMacSidebarSelectionReducer.reconcileRemoteSelection(
+            worktreePanesByRemote: worktreePanesByRemote,
+            state: &selection
+        )
+
+        appState.selectedWorktreePath = selection.selectedWorktreePath
+        selectedRemoteIdentity = selection.selectedRemoteIdentity
+        selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
+        selectedRemotePaneSessionName = selection.selectedRemotePaneSessionName
+
+        if let previousIdentity,
+           let previousSessionName,
+           selection.selectedRemotePaneSessionName != previousSessionName,
+           let terminalID = remoteTerminalSlots.removeValue(
+            forKey: RemoteTerminalKey(
+                identity: previousIdentity,
+                sessionName: previousSessionName
+            )
+           ) {
+            terminalManager.destroySurface(terminalID: terminalID)
+            remoteTerminalSplitTree = SplitTree(root: nil)
+        }
     }
 
     private func openRemoteTerminal(

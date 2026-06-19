@@ -33,34 +33,37 @@ struct RemoteMacPaneEnvironment: Equatable, Sendable {
     ) async -> RemoteMacPaneEnvironment {
         guard let remoteHost else { return .empty }
 
+        var worktreePanesStore: WorktreePanesStore?
         do {
             let panesDriver = try await remoteHost.makePanesStateDriver(
                 onSnapshot: onSnapshot,
                 onClosed: { _ in }
             )
-            let worktreePanesStore = WorktreePanesStore(driver: panesDriver)
+            let panesStore = WorktreePanesStore(driver: panesDriver)
+            worktreePanesStore = panesStore
             if let panesClient = panesDriver as? PanesStateChannelClient {
                 panesClient.setCallbacks(
-                    onSnapshot: { [weak worktreePanesStore] snapshot in
-                        await worktreePanesStore?.applySnapshot(snapshot)
+                    onSnapshot: { [weak panesStore] snapshot in
+                        await panesStore?.applySnapshot(snapshot)
                         await onSnapshot(snapshot)
                     },
-                    onClosed: { [weak worktreePanesStore] reason in
-                        await worktreePanesStore?.markClosed(reason: reason)
+                    onClosed: { [weak panesStore] reason in
+                        await panesStore?.markClosed(reason: reason)
                     }
                 )
             }
-            try await worktreePanesStore.subscribe()
+            try await panesStore.subscribe()
 
             let controlDriver = try await remoteHost.makePaneControlDriver()
             let paneControlClient = PaneControlClient(driver: controlDriver)
             try await paneControlClient.open()
 
             return RemoteMacPaneEnvironment(
-                worktreePanesStore: worktreePanesStore,
+                worktreePanesStore: panesStore,
                 paneControlClient: paneControlClient
             )
         } catch {
+            await worktreePanesStore?.unsubscribe()
             return .empty
         }
     }

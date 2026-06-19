@@ -34,6 +34,21 @@ struct RemoteMacPaneEnvironmentTests {
 
         #expect(environment == .empty)
     }
+
+    @Test("builder closes panes-state when pane-control fails after subscribe")
+    func builderClosesPanesStateWhenPaneControlFails() async throws {
+        let panesDriver = RecordingPanesStateDriver()
+        let remoteHost = PaneEnvironmentHost(
+            panesDriver: panesDriver,
+            controlDriver: ThrowingPaneControlDriver()
+        )
+
+        let environment = await RemoteMacPaneEnvironment.build(remoteHost: remoteHost)
+
+        #expect(environment == .empty)
+        #expect(panesDriver.openCount == 1)
+        #expect(panesDriver.closeCount == 1)
+    }
 }
 
 private actor PaneEnvironmentHost: RemoteMacPaneEnvironmentHost {
@@ -67,12 +82,19 @@ private final class RecordingPanesStateDriver: PanesStateChannelDriver, @uncheck
     var openCount: Int {
         lock.withLock { _openCount }
     }
+    private var _closeCount = 0
+
+    var closeCount: Int {
+        lock.withLock { _closeCount }
+    }
 
     func open() async throws {
         lock.withLock { _openCount += 1 }
     }
 
-    func close() {}
+    func close() {
+        lock.withLock { _closeCount += 1 }
+    }
 }
 
 private final class RecordingPaneControlDriver: PaneControlChannelDriver, @unchecked Sendable {
@@ -100,4 +122,16 @@ private struct ThrowingPanesStateDriver: PanesStateChannelDriver {
     }
 
     func close() {}
+}
+
+private struct ThrowingPaneControlDriver: PaneControlChannelDriver {
+    func open() async throws {
+        throw NSError(domain: "RemoteMacPaneEnvironmentTests", code: 2)
+    }
+
+    func close() {}
+
+    func send(_ request: PaneControlRequest) async throws -> PaneControlResponse {
+        .error(code: "unopened", message: "test driver")
+    }
 }

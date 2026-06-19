@@ -60,6 +60,7 @@ final class RemoteMacConnectionRegistry {
     enum ConnectionError: Error, Equatable, Sendable {
         case missingBaseURL(RemoteMacIdentity)
         case notConnected(RemoteMacIdentity)
+        case paneEnvironmentUnavailable(RemoteMacIdentity)
     }
 
     private var entries: [RemoteMacIdentity: Entry] = [:]
@@ -196,6 +197,10 @@ final class RemoteMacConnectionRegistry {
         try await connection.applyAnswerSDP(answer.sdp)
         let paneEnvironment = await paneEnvironmentBuilder(connection) { [onPaneSnapshot] snapshot in
             await onPaneSnapshot(identity, snapshot)
+        }
+        guard paneEnvironment != .empty else {
+            await connection.close()
+            throw ConnectionError.paneEnvironmentUnavailable(identity)
         }
 
         return Entry(

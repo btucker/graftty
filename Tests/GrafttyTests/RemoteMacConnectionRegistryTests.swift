@@ -97,10 +97,36 @@ struct RemoteMacConnectionRegistryTests {
         #expect(await connection.openedTerminalSessions == ["main"])
     }
 
+    @Test("empty pane environment fails connection and closes transport")
+    func emptyPaneEnvironmentFailsConnectionAndClosesTransport() async throws {
+        let connection = FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n")
+        let remote = try makeRemoteMac()
+        let registry = makeRegistry(
+            signalingTransport: { request, _ in
+                try signalingResponse(url: request.url!, answer: SignalingAnswer(sdp: "v=0\nanswer\n"))
+            },
+            connectionFactory: { _, _ in connection },
+            paneEnvironmentBuilder: { _, _ in .empty }
+        )
+
+        await #expect(throws: RemoteMacConnectionRegistry.ConnectionError.paneEnvironmentUnavailable(RemoteMacIdentity(remote))) {
+            _ = try await registry.connect(to: remote)
+        }
+
+        #expect(await connection.closeCount == 1)
+        #expect(registry.activeConnectionCount == 0)
+    }
+
     private func makeRegistry(
         signalingTransport: @escaping SignalingClient.Transport,
         connectionFactory: @escaping RemoteMacConnectionRegistry.HostConnectionFactory = { _, _ in
             FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n")
+        },
+        paneEnvironmentBuilder: @escaping RemoteMacConnectionRegistry.PaneEnvironmentBuilder = { remoteHost, onSnapshot in
+            await RemoteMacPaneEnvironment.build(
+                remoteHost: remoteHost,
+                onSnapshot: onSnapshot
+            )
         }
     ) -> RemoteMacConnectionRegistry {
         RemoteMacConnectionRegistry(
@@ -110,12 +136,7 @@ struct RemoteMacConnectionRegistryTests {
             clientDeviceID: RemoteDeviceID(value: "client-mac"),
             signalingClient: SignalingClient(transport: signalingTransport),
             connectionFactory: connectionFactory,
-            paneEnvironmentBuilder: { remoteHost, onSnapshot in
-                await RemoteMacPaneEnvironment.build(
-                    remoteHost: remoteHost,
-                    onSnapshot: onSnapshot
-                )
-            }
+            paneEnvironmentBuilder: paneEnvironmentBuilder
         )
     }
 }
@@ -198,6 +219,7 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
     private var createOfferCalls = 0
     private var appliedAnswerStorage: [String] = []
     private var openedTerminalSessionStorage: [String] = []
+    private var closeCallCount = 0
 
     init(offerSDP: String, offerGate: OfferGate? = nil) {
         self.offerSDP = offerSDP
@@ -207,6 +229,7 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
     var createOfferCallCount: Int { createOfferCalls }
     var appliedAnswers: [String] { appliedAnswerStorage }
     var openedTerminalSessions: [String] { openedTerminalSessionStorage }
+    var closeCount: Int { closeCallCount }
 
     func createOfferSDP() async throws -> String {
         createOfferCalls += 1
@@ -234,7 +257,9 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
         return FakeWebSocketClient()
     }
 
-    func close() async {}
+    func close() async {
+        closeCallCount += 1
+    }
 }
 
 private final class FakePanesStateDriver: PanesStateChannelDriver, @unchecked Sendable {
