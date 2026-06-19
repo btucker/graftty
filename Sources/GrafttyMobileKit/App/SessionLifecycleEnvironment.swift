@@ -1,4 +1,5 @@
 import GrafttyProtocol
+import GrafttyRemoteClient
 import SwiftUI
 
 #if canImport(UIKit)

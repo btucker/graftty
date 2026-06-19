@@ -3,6 +3,7 @@ import CoreGraphics
 import Foundation
 import GhosttyTerminal
 import GrafttyProtocol
+import GrafttyRemoteClient
 import NIOConcurrencyHelpers
 import Observation
 import UIKit
