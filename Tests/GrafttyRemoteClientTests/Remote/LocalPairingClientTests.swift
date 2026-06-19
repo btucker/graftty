@@ -154,6 +154,99 @@ struct LocalPairingClientTests {
         #expect(pinnedList.contains(where: { $0.id == fx.payload.hostDeviceID }))
     }
 
+    @Test("split pairing begins, introduces, shows verification, then pins only after confirm")
+    func splitPairingFlowRequiresClientConfirmBeforeAwaitingOutcome() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fx = try makeFixtures(dir: dir)
+
+        let stub = StubTransport()
+        await stub.setResponse(for: "begin", body: try jsonData(fx.payload))
+        try await stubHappyPath(
+            on: stub,
+            hostPublicKey: fx.hostPublicKey,
+            expiry: fx.payload.expiry,
+            outcome: .confirmed
+        )
+
+        let client = LocalPairingClient(
+            session: fx.session,
+            identityStore: fx.identityStore,
+            transport: await stub.makeTransport()
+        )
+
+        let payload = try await client.beginPairing(baseURL: URL(string: "https://host.local:8800")!)
+        let code = try await client.introduce(payload: payload)
+
+        let recordedBeforeConfirm = await stub.recordedRequests
+        #expect(recordedBeforeConfirm.map { $0.url?.path } == [
+            "/v1/pairing/begin",
+            "/v1/pairing/introduce",
+        ])
+        #expect(code == RemotePairingTranscript(
+            hostPublicKey: fx.hostPublicKey,
+            clientPublicKey: fx.clientPublicKey,
+            nonce: fx.payload.nonce,
+            expiry: fx.payload.expiry
+        ).verificationCode())
+        #expect(try fx.pinnedStore.list().isEmpty)
+
+        let pinned = try await client.awaitOutcomeAndConfirm()
+
+        #expect(pinned.id == fx.payload.hostDeviceID)
+        let recordedAfterConfirm = await stub.recordedRequests
+        #expect(recordedAfterConfirm.map { $0.url?.path } == [
+            "/v1/pairing/begin",
+            "/v1/pairing/introduce",
+            "/v1/pairing/await-outcome",
+        ])
+        #expect(try fx.pinnedStore.list().contains(where: { $0.id == fx.payload.hostDeviceID }))
+    }
+
+    @Test("split pairing cancel before confirm stores no pinned host")
+    func splitPairingCancelBeforeConfirmStoresNothing() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fx = try makeFixtures(dir: dir)
+
+        let stub = StubTransport()
+        try await stubHappyPath(on: stub, hostPublicKey: fx.hostPublicKey, expiry: fx.payload.expiry, outcome: .confirmed)
+
+        let client = LocalPairingClient(
+            session: fx.session,
+            identityStore: fx.identityStore,
+            transport: await stub.makeTransport()
+        )
+
+        _ = try await client.introduce(payload: fx.payload)
+        fx.session.cancel()
+
+        #expect(try fx.pinnedStore.list().isEmpty)
+        await #expect(throws: ClientPairingSession.Error.wrongState(current: .cancelled)) {
+            _ = try await client.awaitOutcomeAndConfirm()
+        }
+    }
+
+    @Test("beginPairing accepts either remote root or pairing route base")
+    func beginPairingAcceptsRootOrPairingRouteBase() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fx = try makeFixtures(dir: dir)
+
+        let stub = StubTransport()
+        await stub.setResponse(for: "begin", body: try jsonData(fx.payload))
+        let client = LocalPairingClient(
+            session: fx.session,
+            identityStore: fx.identityStore,
+            transport: await stub.makeTransport()
+        )
+
+        _ = try await client.beginPairing(baseURL: URL(string: "https://host.local:8800/v1/pairing")!)
+
+        let recorded = await stub.recordedRequests
+        #expect(recorded.map { $0.url?.path } == ["/v1/pairing/begin"])
+    }
+
     // MARK: - Fingerprint mismatch (REMOTE-1.2 client side enforcement at the wire)
 
     @Test("runPairing throws fingerprintMismatch if host returns a key whose fingerprint differs from QR payload — and does not pin the host")

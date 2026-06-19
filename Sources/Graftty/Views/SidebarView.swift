@@ -18,8 +18,12 @@ struct SidebarView: View {
     /// busy/idle liveness (notify pings still win) into its attention pill.
     let claudeSessionRegistry: ClaudeSessionRegistry
     let remoteBranchStore: RemoteBranchStore
+    @ObservedObject var remoteMacsModel: RemoteMacsModel
+    let selectedRemoteIdentity: RemoteMacIdentity?
     let onSelect: (String) -> Void
     let onSelectPane: (String, PaneSlotID) -> Void
+    let onSelectRemoteMac: (RemoteMac) -> Void
+    let onAddRemoteMac: () -> Void
     let onAddRepo: () -> Void
     let onAddPath: (String) -> Void
     let onRemoveRepo: (RepoEntry) -> Void
@@ -63,6 +67,13 @@ struct SidebarView: View {
                 ForEach(appState.repos) { repo in
                     repoSection(repo)
                 }
+                RemoteMacsSection(
+                    model: remoteMacsModel,
+                    selectedRemoteIdentity: selectedRemoteIdentity,
+                    theme: theme,
+                    onSelectRemoteMac: onSelectRemoteMac,
+                    onAddRemoteMac: onAddRemoteMac
+                )
             }
             .listStyle(.sidebar)
 
@@ -246,7 +257,7 @@ struct SidebarView: View {
         repo: RepoEntry,
         displayName: String
     ) -> some View {
-        let isActive = appState.selectedWorktreePath == worktree.path
+        let isActive = appState.selectedWorktreePath == worktree.path && selectedRemoteIdentity == nil
         let attention = SidebarAttentionLayout.layout(for: worktree)
         let isDropTarget = dropTargetWorktreeID == worktree.id
         VStack(spacing: 0) {

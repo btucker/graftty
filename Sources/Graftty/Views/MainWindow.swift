@@ -13,6 +13,8 @@ struct MainWindow: View {
     let worktreeMonitor: WorktreeMonitor
     let teamEventDispatcher: TeamEventDispatcher
     @ObservedObject var hostPairingCoordinator: HostPairingCoordinator
+    @ObservedObject var remoteMacsModel: RemoteMacsModel
+    let makeRemoteMacPairingDriver: () -> AddRemoteMacPairingDriving
 
     @EnvironmentObject private var updaterController: UpdaterController
 
@@ -24,6 +26,8 @@ struct MainWindow: View {
     /// SwiftUI scene commands block, which can't reach view-local state)
     /// can present the Add Worktree sheet pre-scoped to the current repo.
     @State private var pendingAddWorktree: AddWorktreeRequest?
+    @State private var isShowingAddRemoteMacSheet = false
+    @State private var selectedRemoteIdentity: RemoteMacIdentity?
 
     var body: some View {
         NavigationSplitView(
@@ -38,8 +42,12 @@ struct MainWindow: View {
                 prStatusStore: prStatusStore,
                 claudeSessionRegistry: claudeSessionRegistry,
                 remoteBranchStore: remoteBranchStore,
+                remoteMacsModel: remoteMacsModel,
+                selectedRemoteIdentity: selectedRemoteIdentity,
                 onSelect: selectWorktree,
                 onSelectPane: selectPane,
+                onSelectRemoteMac: selectRemoteMac,
+                onAddRemoteMac: { isShowingAddRemoteMacSheet = true },
                 onAddRepo: addRepository,
                 onAddPath: addPath,
                 onRemoveRepo: removeRepoWithConfirmation,
@@ -74,7 +82,13 @@ struct MainWindow: View {
                     onRefreshPR: refreshPR
                 )
 
-                if let worktree = selectedWorktreeBinding {
+                if let selectedRemoteMac {
+                    ContentUnavailableView(
+                        selectedRemoteMac.label,
+                        systemImage: "laptopcomputer.and.arrow.down",
+                        description: Text(selectedRemoteMac.lastKnownBaseURL?.absoluteString ?? "Remote Mac selected.")
+                    )
+                } else if let worktree = selectedWorktreeBinding {
                     TerminalContentView(
                         terminalManager: terminalManager,
                         splitTree: Binding(
@@ -132,6 +146,14 @@ struct MainWindow: View {
                 }
             )
             .interactiveDismissDisabled(true)
+        }
+        .sheet(isPresented: $isShowingAddRemoteMacSheet) {
+            AddRemoteMacSheet(
+                model: remoteMacsModel,
+                makePairingDriver: makeRemoteMacPairingDriver,
+                onCancel: { isShowingAddRemoteMacSheet = false },
+                onPaired: { isShowingAddRemoteMacSheet = false }
+            )
         }
         // Force the SwiftUI color scheme from the theme so SwiftUI-rendered
         // chrome — the NavigationSplitView sidebar toggle in particular —
@@ -233,6 +255,13 @@ struct MainWindow: View {
         return appState.worktree(forPath: path)
     }
 
+    private var selectedRemoteMac: RemoteMac? {
+        guard let selectedRemoteIdentity else { return nil }
+        return remoteMacsModel.savedRemoteMacs.first {
+            RemoteMacIdentity($0) == selectedRemoteIdentity
+        }
+    }
+
     /// Computed command handler surfaced to `GrafttyApp.commands` via
     /// `@FocusedValue`. `nil` means no worktree is selected → menu item
     /// disabled. Captures `appState` and `terminalManager` so the scene-
@@ -319,6 +348,12 @@ struct MainWindow: View {
         if let wt = appState.worktree(forPath: path), wt.state.isInFlight {
             return
         }
+        var selection = RemoteMacSidebarSelectionState(
+            selectedWorktreePath: appState.selectedWorktreePath,
+            selectedRemoteIdentity: selectedRemoteIdentity
+        )
+        RemoteMacSidebarSelectionReducer.selectLocalWorktree(path, state: &selection)
+        selectedRemoteIdentity = selection.selectedRemoteIdentity
         let previousPath = appState.selectedWorktreePath
         appState.selectedWorktreePath = path
 
@@ -443,6 +478,25 @@ struct MainWindow: View {
         // backoff expires, and the user's only escape hatch is
         // right-click "Refresh now" on the PR button.
         refreshPR()
+    }
+
+    private func selectRemoteMac(_ remoteMac: RemoteMac) {
+        var selection = RemoteMacSidebarSelectionState(
+            selectedWorktreePath: appState.selectedWorktreePath,
+            selectedRemoteIdentity: selectedRemoteIdentity
+        )
+        let identity = RemoteMacIdentity(remoteMac)
+        RemoteMacSidebarSelectionReducer.selectRemote(identity, state: &selection)
+        appState.selectedWorktreePath = selection.selectedWorktreePath
+        selectedRemoteIdentity = selection.selectedRemoteIdentity
+
+        Task { @MainActor in
+            do {
+                _ = try await remoteMacsModel.connect(to: remoteMac)
+            } catch {
+                NSLog("[Graftty] failed to connect remote Mac %@: %@", remoteMac.label, String(describing: error))
+            }
+        }
     }
 
     private func setWorktreeSurfacesVisible(_ visible: Bool, worktreePath: String) {

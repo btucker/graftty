@@ -84,6 +84,26 @@ public actor LocalPairingClient {
     /// build transcript and show pending confirmation → POST await-outcome
     /// (long-poll) → transition session to its terminal state.
     public func runPairing(payload: PairingPayload) async throws -> PinnedHost {
+        _ = try await introduce(payload: payload)
+        return try await awaitOutcomeAndConfirm()
+    }
+
+    /// Starts host-side LAN pairing against a discovered/manual remote base URL.
+    ///
+    /// `baseURL` is the remote access root such as `http://studio.local:9443`.
+    /// The host responds with a `PairingPayload` whose `pairingURL` points at
+    /// the `/v1/pairing` route base used by `introduce` and
+    /// `awaitOutcomeAndConfirm`.
+    public func beginPairing(baseURL: URL) async throws -> PairingPayload {
+        guard let url = Self.beginPairingURL(from: baseURL) else {
+            throw Error.malformedPairingURL
+        }
+        return try await postJSON(url: url, body: EmptyBody())
+    }
+
+    /// Sends this client's identity to the host and returns the verification
+    /// code the UI must show before it awaits/stores trust.
+    public func introduce(payload: PairingPayload) async throws -> RemoteVerificationCode {
         let privateKey = try identityStore.loadOrGenerateAndPersist()
         let clientPublicKey = try RemoteIdentityPublicKey(
             rawRepresentation: privateKey.publicKey.rawRepresentation
@@ -104,11 +124,28 @@ public actor LocalPairingClient {
         )
         try session.markAwaitingConfirmation(transcript: transcript)
 
+        return transcript.verificationCode()
+    }
+
+    /// Waits for the host's terminal decision after the client user has
+    /// confirmed the displayed verification code. Pins the host only when the
+    /// host also confirms.
+    public func awaitOutcomeAndConfirm() async throws -> PinnedHost {
+        let payload: PairingPayload
+        let hostPublicKey: RemoteIdentityPublicKey
+        switch session.state {
+        case let .awaitingHostConfirmation(transcript, _, pendingPayload):
+            payload = pendingPayload
+            hostPublicKey = transcript.hostPublicKey
+        default:
+            throw ClientPairingSession.Error.wrongState(current: session.state)
+        }
+
         let outcomeResponse = try await postAwaitOutcome(payload: payload)
 
         switch outcomeResponse.outcome {
         case .confirmed:
-            return try session.confirm(hostPublicKey: introduceResponse.hostPublicKey)
+            return try session.confirm(hostPublicKey: hostPublicKey)
         case .denied:
             session.handleDenied()
             throw Error.denied
@@ -123,8 +160,18 @@ public actor LocalPairingClient {
 
     // MARK: - HTTP helpers
 
+    private struct EmptyBody: Encodable {}
+
     private static let encoder = JSONEncoder.iso8601()
     private static let decoder = JSONDecoder.iso8601()
+
+    private static func beginPairingURL(from baseURL: URL) -> URL? {
+        let path = baseURL.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if path.hasSuffix("v1/pairing") {
+            return baseURL.appendingAPIPath("begin")
+        }
+        return baseURL.appendingAPIPath("v1/pairing/begin")
+    }
 
     private func postIntroduce(
         payload: PairingPayload,
@@ -155,7 +202,13 @@ public actor LocalPairingClient {
         guard let url = pairingURL.appendingAPIPath(pathSuffix) else {
             throw Error.malformedPairingURL
         }
+        return try await postJSON(url: url, body: body)
+    }
 
+    private func postJSON<Request: Encodable, Response: Decodable>(
+        url: URL,
+        body: Request
+    ) async throws -> Response {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Accept")

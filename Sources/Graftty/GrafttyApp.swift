@@ -5,6 +5,7 @@ import UserNotifications
 import GrafttyHostAgent
 import GrafttyKit
 import GrafttyProtocol
+import GrafttyRemoteClient
 import WebRTC
 
 /// Callbacks injected into `TeamInboxRequestHandler` from the app's
@@ -184,6 +185,7 @@ final class AppServices {
     /// presented sheet and HTTP long-poll state share one session.
     let hostPairingCoordinator: HostPairingCoordinator
     let remoteMacsModel: RemoteMacsModel
+    let remoteMacPairingDriverFactory: @MainActor () -> AddRemoteMacPairingDriving
     let remoteMacAccessEnabled: Bool
     private var lanRemoteAccessServer: LANRemoteAccessServer?
     private var bonjourAdvertiser: GrafttyBonjourAdvertiser?
@@ -220,6 +222,15 @@ final class AppServices {
         self.hostPairingCoordinator = Self.makeHostPairingCoordinator()
         let remoteMacsModel = RemoteMacsModel(store: RemoteMacStore())
         self.remoteMacsModel = remoteMacsModel
+        self.remoteMacPairingDriverFactory = {
+            LocalAddRemoteMacPairingDriver(
+                identityStore: ClientIdentityStore(directory: ClientIdentityStore.defaultDirectory),
+                pinnedHostStore: PinnedHostStore(directory: PinnedHostStore.defaultDirectory),
+                clientDeviceID: Self.localRemoteDeviceID(),
+                clientKind: .mac,
+                clientDisplayName: Self.localHostDisplayName()
+            )
+        }
         self.remoteMacAccessEnabled = Self.remoteMacAccessEnabledDefault()
         do {
             let localFingerprint = try Self.localHostFingerprint()
@@ -594,7 +605,9 @@ struct GrafttyApp: App {
                 remoteBranchStore: services.remoteBranchStore,
                 worktreeMonitor: services.worktreeMonitor,
                 teamEventDispatcher: services.teamEventDispatcher,
-                hostPairingCoordinator: services.hostPairingCoordinator
+                hostPairingCoordinator: services.hostPairingCoordinator,
+                remoteMacsModel: services.remoteMacsModel,
+                makeRemoteMacPairingDriver: services.remoteMacPairingDriverFactory
             )
                 .environmentObject(webController)
                 .environmentObject(updaterController)

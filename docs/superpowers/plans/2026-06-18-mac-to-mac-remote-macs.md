@@ -727,7 +727,7 @@ git commit -m "feat(mac): wire remote Mac service model"
 - Modify: `Sources/Graftty/Views/MainWindow.swift`
 - Test: `Tests/GrafttyTests/RemoteMacsSidebarTests.swift`
 
-- [ ] **Step 1: Write failing sidebar/view-model tests**
+- [x] **Step 1: Write failing sidebar/view-model tests**
 
 Prefer pure helpers if SwiftUI inspection is unavailable:
 
@@ -740,7 +740,7 @@ Prefer pure helpers if SwiftUI inspection is unavailable:
 - Cancelling at the client-side verification step stores no `PinnedHost` and creates no `RemoteMac`.
 - Local-network permission denied/unavailable state explains recovery and keeps manual URL entry available.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -750,7 +750,7 @@ swift test --filter RemoteMacsSidebarTests
 
 Expected: compile failure or assertion failure.
 
-- [ ] **Step 3: Implement UI**
+- [x] **Step 3: Implement UI**
 
 `RemoteMacsSection` renders saved remote rows only, connection state, and an `Add Remote Mac...` button.
 
@@ -767,7 +767,7 @@ Pairing success saves a `RemoteMac`; denial, cancellation, mismatch, or client-s
 
 Keep visual style consistent with the existing sidebar: dense, quiet, native controls, no landing-page treatment.
 
-- [ ] **Step 4: Run tests and verify GREEN**
+- [x] **Step 4: Run tests and verify GREEN**
 
 Run:
 
@@ -777,7 +777,7 @@ swift test --filter RemoteMacsSidebarTests
 
 Expected: pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add Sources/Graftty/Views/RemoteMacsSection.swift Sources/Graftty/Views/AddRemoteMacSheet.swift Sources/Graftty/Views/SidebarView.swift Sources/Graftty/Views/MainWindow.swift Tests/GrafttyTests/RemoteMacsSidebarTests.swift
