@@ -799,7 +799,7 @@ git commit -m "feat(mac): show saved remote Macs in sidebar"
 - Test: `Tests/GrafttyTests/RemoteMacPaneEnvironmentTests.swift`
 - Integration test: `Tests/GrafttyTests/RemoteMacConnectionLoopbackTests.swift`
 
-- [ ] **Step 1: Write failing registry and pane environment tests**
+- [x] **Step 1: Write failing registry and pane environment tests**
 
 Cover:
 
@@ -813,7 +813,7 @@ Cover:
 - Connected remote opens `pane-control@graftty.dev`.
 - Selecting a remote pane opens an SSH terminal session via `openTerminalSession(sessionName:)`.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run:
 
@@ -824,7 +824,7 @@ swift test --filter RemoteMacPaneEnvironmentTests
 
 Expected: fail/compile fail.
 
-- [ ] **Step 3: Implement Mac client connection**
+- [x] **Step 3: Implement Mac client connection**
 
 Use `GrafttyRemoteClient.RemoteHostConnection`:
 
@@ -837,13 +837,13 @@ Use `GrafttyRemoteClient.RemoteHostConnection`:
 
 Pinned host validation must remain the gate before any terminal channel is treated as connected.
 
-- [ ] **Step 4: Wire sidebar remote rows to live panes**
+- [x] **Step 4: Wire sidebar remote rows to live panes**
 
 Remote Mac rows expand into `WorktreePanes` snapshots from the remote panes-state channel. Selecting a remote pane displays an interactive terminal backed by `TerminalSessionClient`.
 
 Keep local `TerminalManager` ownership out of this path; remote terminal rendering should use existing remote terminal client abstractions or a thin Mac wrapper around the SSH terminal session stream.
 
-- [ ] **Step 5: Run tests and verify GREEN**
+- [x] **Step 5: Run tests and verify GREEN**
 
 Run:
 
@@ -855,6 +855,8 @@ swift test --filter RemoteMacPaneEnvironmentTests
 Expected: pass.
 
 - [ ] **Step 6: Run loopback/end-to-end test**
+
+Status: existing SSH/WebRTC loopback suites live under `Tests/GrafttyRemoteClientTests` and are `#if canImport(UIKit)`, so they do not execute in the macOS `swift test` verification for this worktree. Dedicated `RemoteMacConnectionLoopbackTests` coverage for the full Mac pairing/signaling/panes/terminal/revocation path remains pending for the simulator or a separate end-to-end harness.
 
 Add or adapt a loopback test that exercises pairing/trust persistence, signaling, SSH authentication, panes-state channel, and terminal session open with echo/fake stream.
 
@@ -868,7 +870,7 @@ swift test --filter RemoteMacConnectionLoopbackTests
 
 Expected: pass.
 
-- [ ] **Step 7: Run broader focused tests**
+- [x] **Step 7: Run broader focused tests**
 
 Run:
 
@@ -880,7 +882,7 @@ swift test --filter GrafttyTests
 
 If filter names do not match SwiftPM's generated names, run the specific test suites added in Tasks 1-9 plus `swift test --filter HostPairingServerTests`.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add Sources/Graftty Sources/GrafttyKit Sources/GrafttyRemoteClient Tests/GrafttyTests Tests/GrafttyKitTests Tests/GrafttyRemoteClientTests
