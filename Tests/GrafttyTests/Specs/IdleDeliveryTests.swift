@@ -28,6 +28,27 @@ struct CodexStopDeliveryOwnershipTests {
         #expect(requestedTeam == "/repo")
         #expect(requestedWorktree == "/repo/.worktrees/alice")
     }
+
+    @Test("Stale or missing-pane Codex Stop does not resolve owner delivery sessions.")
+    func staleStopDoesNotTargetOwnerSessions() {
+        var didResolveOwnerSessions = false
+
+        let plan = GrafttyApp.codexStopDeliveryPlan(
+            team: "/repo",
+            worktree: "/repo/.worktrees/alice",
+            runtime: TeamHookRuntime.codex.rawValue,
+            paneSessionName: "graftty-stale",
+            isLiveSession: { _ in false },
+            codexSessionNamesIn: { _, _ in
+                didResolveOwnerSessions = true
+                return ["graftty-owner"]
+            }
+        )
+
+        #expect(plan.liveSessionName == nil)
+        #expect(plan.deliverySessionNames == [])
+        #expect(!didResolveOwnerSessions)
+    }
 }
 
 @Suite("IdleDeliveryService — event-driven idle delivery")

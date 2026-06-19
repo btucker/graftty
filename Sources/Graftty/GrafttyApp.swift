@@ -1605,7 +1605,7 @@ struct GrafttyApp: App {
             paneSessionName: paneSessionName,
             isLiveSession: isLiveSession
         )
-        guard runtime == TeamHookRuntime.codex.rawValue else {
+        guard runtime == TeamHookRuntime.codex.rawValue, liveSessionName != nil else {
             return CodexStopDeliveryPlan(liveSessionName: liveSessionName, deliverySessionNames: [])
         }
         return CodexStopDeliveryPlan(
