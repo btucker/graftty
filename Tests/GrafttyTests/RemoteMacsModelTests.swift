@@ -129,7 +129,16 @@ struct RemoteMacsModelTests {
 
     @Test("connection registry reuses one entry per remote identity")
     func registryReusesEntryPerIdentity() async throws {
-        let registry = RemoteMacConnectionRegistry()
+        let registry = RemoteMacConnectionRegistry(factory: { remoteMac, identity in
+            RemoteMacConnectionRegistry.Entry(
+                id: UUID(),
+                identity: identity,
+                remoteMac: remoteMac,
+                createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+                connection: RemoteMacsModelTestConnection(),
+                paneEnvironment: .empty
+            )
+        })
         let first = try remoteMac(
             id: RemoteDeviceID(value: "same-device"),
             fingerprintByte: 0x11
@@ -249,6 +258,51 @@ private final class FakeDiscoveryBrowser: RemoteMacDiscoveryBrowsing {
     func stop() {
         stopCount += 1
     }
+}
+
+private struct RemoteMacsModelTestConnection: RemoteMacHostConnection {
+    func createOfferSDP() async throws -> String {
+        "v=0\n"
+    }
+
+    func applyAnswerSDP(_ sdp: String) async throws {}
+
+    func makePanesStateDriver(
+        onSnapshot: @escaping @Sendable ([WorktreePanes]) async -> Void,
+        onClosed: @escaping @Sendable (String) async -> Void
+    ) async throws -> any PanesStateChannelDriver {
+        RemoteMacsModelTestPanesStateDriver()
+    }
+
+    func makePaneControlDriver() async throws -> any PaneControlChannelDriver {
+        RemoteMacsModelTestPaneControlDriver()
+    }
+
+    func openTerminalSession(sessionName: String) async throws -> any WebSocketClient & Sendable {
+        RemoteMacsModelTestWebSocketClient()
+    }
+
+    func close() async {}
+}
+
+private struct RemoteMacsModelTestPanesStateDriver: PanesStateChannelDriver {
+    func open() async throws {}
+    func close() {}
+}
+
+private struct RemoteMacsModelTestPaneControlDriver: PaneControlChannelDriver {
+    func open() async throws {}
+    func close() {}
+
+    func send(_ request: PaneControlRequest) async throws -> PaneControlResponse {
+        .ok
+    }
+}
+
+private final class RemoteMacsModelTestWebSocketClient: WebSocketClient, @unchecked Sendable {
+    func send(_ frame: WebSocketFrame) async throws {}
+    func receive() async throws -> WebSocketFrame { .binary(Data()) }
+    func close() {}
 }
 
 private struct HostPairingCoordinatorTestFixture {
