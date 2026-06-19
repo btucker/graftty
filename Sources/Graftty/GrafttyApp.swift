@@ -178,6 +178,11 @@ final class AppServices {
     /// in `startup()`. Retained here so it outlives the SwiftUI init cycle.
     var hostAgent: WebRTCHostAgent?
 
+    /// Host-side LAN pairing consent coordinator. Later remote-Mac startup
+    /// wiring can route `/v1/pairing/*` through this same instance so the
+    /// presented sheet and HTTP long-poll state share one session.
+    let hostPairingCoordinator: HostPairingCoordinator
+
     init(socketPath: String) {
         self.socketServer = SocketServer(socketPath: socketPath)
 
@@ -207,6 +212,7 @@ final class AppServices {
                 UserDefaults.standard.string(forKey: SettingsKeys.teamPrompt) ?? ""
             }
         )
+        self.hostPairingCoordinator = Self.makeHostPairingCoordinator()
 
         // Route PRStatusStore transitions through the inbox dispatcher.
         // `appStateProvider` is set later in startup() once @State is live;
@@ -230,6 +236,47 @@ final class AppServices {
                 NSLog("[Graftty] dispatchRoutableEvent failed: %@", String(describing: error))
             }
         }
+    }
+
+    private static func makeHostPairingCoordinator() -> HostPairingCoordinator {
+        let identityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
+        let peerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
+        do {
+            _ = try identityStore.loadOrGenerateAndPersist()
+        } catch {
+            NSLog("[Graftty] failed to prepare host pairing identity: %@", String(describing: error))
+        }
+        let session = HostPairingSession(
+            identityStore: identityStore,
+            peerStore: peerStore,
+            hostDeviceID: localRemoteDeviceID(),
+            hostKind: .mac,
+            hostDisplayName: localHostDisplayName(),
+            pairingURLProvider: { URL(string: "http://0.0.0.0/v1/pairing")! }
+        )
+        return HostPairingCoordinator(server: HostPairingServer(session: session))
+    }
+
+    private static func localRemoteDeviceID() -> RemoteDeviceID {
+        let key = "remoteMac.localDeviceID"
+        if let value = UserDefaults.standard.string(forKey: key), !value.isEmpty {
+            return RemoteDeviceID(value: value)
+        }
+        let value = UUID().uuidString
+        UserDefaults.standard.set(value, forKey: key)
+        return RemoteDeviceID(value: value)
+    }
+
+    private static func localHostDisplayName() -> String {
+        let localizedName = Host.current().localizedName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let localizedName, !localizedName.isEmpty {
+            return localizedName
+        }
+
+        let hostName = ProcessInfo.processInfo.hostName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return hostName.isEmpty ? "Mac" : hostName
     }
 }
 
@@ -392,7 +439,8 @@ struct GrafttyApp: App {
                 claudeSessionRegistry: services.claudeSessionRegistry,
                 remoteBranchStore: services.remoteBranchStore,
                 worktreeMonitor: services.worktreeMonitor,
-                teamEventDispatcher: services.teamEventDispatcher
+                teamEventDispatcher: services.teamEventDispatcher,
+                hostPairingCoordinator: services.hostPairingCoordinator
             )
                 .environmentObject(webController)
                 .environmentObject(updaterController)

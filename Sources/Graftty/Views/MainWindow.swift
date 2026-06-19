@@ -12,6 +12,7 @@ struct MainWindow: View {
     let remoteBranchStore: RemoteBranchStore
     let worktreeMonitor: WorktreeMonitor
     let teamEventDispatcher: TeamEventDispatcher
+    @ObservedObject var hostPairingCoordinator: HostPairingCoordinator
 
     @EnvironmentObject private var updaterController: UpdaterController
 
@@ -120,6 +121,18 @@ struct MainWindow: View {
         // lights, context menus, alerts) renders with correct contrast.
         .windowBackgroundTint(theme: terminalManager.theme)
         .installUpdateBadgeAccessory(controller: updaterController)
+        .sheet(item: remotePairingRequestBinding) { request in
+            RemotePairingRequestSheet(
+                request: request,
+                onAccept: {
+                    Task { await hostPairingCoordinator.confirm() }
+                },
+                onDeny: {
+                    Task { await hostPairingCoordinator.deny() }
+                }
+            )
+            .interactiveDismissDisabled(true)
+        }
         // Force the SwiftUI color scheme from the theme so SwiftUI-rendered
         // chrome — the NavigationSplitView sidebar toggle in particular —
         // picks the right icon shade. NSWindow.appearance covers AppKit
@@ -206,6 +219,13 @@ struct MainWindow: View {
     private var selectedRepo: RepoEntry? {
         guard let path = appState.selectedWorktreePath else { return nil }
         return appState.repo(forWorktreePath: path)
+    }
+
+    private var remotePairingRequestBinding: Binding<PendingRemotePairingRequest?> {
+        Binding(
+            get: { hostPairingCoordinator.pendingRequest },
+            set: { _ in }
+        )
     }
 
     private var selectedWorktree: WorktreeEntry? {

@@ -65,9 +65,14 @@ public actor HostPairingServer {
     /// User confirmed via the host UI. Wakes any awaiting clients.
     @discardableResult
     public func confirm() throws -> TrustedPeer {
-        let peer = try session.confirm()
-        broadcastIfTerminal()
-        return peer
+        do {
+            let peer = try session.confirm()
+            broadcastIfTerminal()
+            return peer
+        } catch {
+            broadcastIfTerminal()
+            throw error
+        }
     }
 
     /// User denied via the host UI. Wakes any awaiting clients.
