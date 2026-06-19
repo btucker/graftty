@@ -157,6 +157,7 @@ final class SurfaceHandle {
         inputActivityObserver: PaneInputActivityObserver? = nil,
         remoteAttachmentRegistry: RemoteAttachmentRegistry? = nil,
         surfaceFactory: SurfaceHandleGhosttySurfaceFactory = .live,
+        hostManagedBackend: SurfaceHandleZmxBackend? = nil,
         zmxBackendFactory: (
             ZmxSpawnConfiguration,
             (cols: UInt16, rows: UInt16)?,
@@ -183,7 +184,7 @@ final class SurfaceHandle {
         self.userdataPointer = userdataPtr
         // Strong capture of the registry is fine: it's app-lifetime and
         // holds no reference back to the backend.
-        let backend = zmxSpawnConfiguration.map { spawn in
+        let backend = hostManagedBackend ?? zmxSpawnConfiguration.map { spawn in
             zmxBackendFactory(
                 spawn,
                 initialGridSize.map { ($0.columns, $0.rows) },
@@ -223,7 +224,7 @@ final class SurfaceHandle {
         // Allocate C strings up front so we can free them deterministically.
         let cwdCStr = strdup(worktreePath)
 
-        let directShellInitialInput = zmxSpawnConfiguration == nil ? extraInitialInput : nil
+        let directShellInitialInput = backend == nil ? extraInitialInput : nil
         let initialInputCStr: UnsafeMutablePointer<CChar>?
         if let directShellInitialInput, !directShellInitialInput.isEmpty {
             initialInputCStr = strdup(directShellInitialInput)
@@ -232,7 +233,7 @@ final class SurfaceHandle {
         }
 
         let envPairs: [(key: String, value: String)]
-        if zmxSpawnConfiguration == nil {
+        if backend == nil {
             // PATH is overridden to dodge the case-insensitive `Graftty` /
             // `graftty` collision — libghostty's bundle-self-locating logic
             // puts `Contents/MacOS` (where the GUI binary lives) on PATH; on

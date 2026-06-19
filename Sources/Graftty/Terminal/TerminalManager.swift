@@ -528,22 +528,25 @@ final class TerminalManager: ObservableObject {
         terminalID: PaneSlotID,
         paneSessionID: PaneSessionID,
         worktreePath: String,
-        extraInitialInput: String? = nil
+        extraInitialInput: String? = nil,
+        hostManagedBackend: SurfaceHandleZmxBackend? = nil
     ) -> SurfaceHandle? {
         guard let app = ghosttyApp?.app else { return nil }
         if let existing = surfaces[terminalID] {
             return existing
         }
 
-        guard canAllocatePTY(for: terminalID) else { return nil }
+        guard hostManagedBackend != nil || canAllocatePTY(for: terminalID) else { return nil }
         recordPaneSession(paneSessionID, for: terminalID)
         clearRehydratedIfDaemonGone(terminalID, paneSessionID: paneSessionID, sessionSnapshot: nil)
 
-        let zmxSpawnConfiguration = resolveZmxSpawnConfiguration(
-            for: terminalID,
-            paneSessionID: paneSessionID,
-            worktreePath: worktreePath
-        )
+        let zmxSpawnConfiguration = hostManagedBackend == nil
+            ? resolveZmxSpawnConfiguration(
+                for: terminalID,
+                paneSessionID: paneSessionID,
+                worktreePath: worktreePath
+            )
+            : nil
         // TERM-5.5: failable init returns nil on libghostty rejection;
         // propagate that to the caller instead of crashing.
         guard let handle = SurfaceHandle(
@@ -556,6 +559,7 @@ final class TerminalManager: ObservableObject {
             terminalManager: self,
             inputActivityObserver: inputActivityObserver,
             remoteAttachmentRegistry: remoteAttachmentRegistry,
+            hostManagedBackend: hostManagedBackend,
             initialGridSize: consumeCachedGridSize(for: terminalID)
         ) else {
             forgetPaneSession(for: terminalID)
