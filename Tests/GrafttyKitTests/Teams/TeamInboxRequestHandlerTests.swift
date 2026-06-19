@@ -455,6 +455,50 @@ struct TeamInboxRequestHandlerTests {
         #expect(!output.isEmpty)
     }
 
+    @Test("Non-owner PostToolUse still fires callback before skipping automatic delivery.")
+    func nonOwnerPostToolUseFiresCallbackWithoutAdvancingDelivery() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
+        let recorder = OnStopCallRecorder()
+        let handler = Self.makeHandler(
+            inbox: inbox,
+            onPostToolUse: { team, worktree, runtime, _ in
+                recorder.append(team: team, worktree: worktree, runtime: runtime)
+            },
+            automaticDeliveryOwner: { _, _, _, paneSessionName in
+                paneSessionName == "graftty-owner"
+            }
+        )
+
+        _ = try handler.send(
+            callerWorktree: "/repo",
+            recipient: "alice",
+            text: "urgent body",
+            priority: .urgent,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        let output = try handler.hook(
+            callerWorktree: "/repo/.worktrees/alice",
+            runtime: .codex,
+            event: .postToolUse,
+            sessionID: "secondary",
+            paneSessionName: "graftty-secondary",
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        #expect(recorder.calls.count == 1)
+        #expect(recorder.calls[0].team == "/repo")
+        #expect(recorder.calls[0].worktree == "/repo/.worktrees/alice")
+        #expect(recorder.calls[0].runtime == "codex")
+        #expect(!output.contains("urgent body"))
+        #expect(try inbox.cursor(teamID: "/repo", sessionID: "secondary")?.lastSeenID == nil)
+        #expect(try inbox.worktreeWatermark(teamID: "/repo", worktree: "/repo/.worktrees/alice") == nil)
+    }
+
     @Test("@spec TEAM-IDLE-2.9: hook(...) forwards paneSessionName into the onStop callback.")
     func hookForwardsPaneSessionNameToOnStop() throws {
         final class Captured: @unchecked Sendable {
