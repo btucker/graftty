@@ -30,6 +30,8 @@ struct MainWindow: View {
     @State private var selectedRemoteIdentity: RemoteMacIdentity?
     @State private var selectedRemoteWorktreePath: String?
     @State private var selectedRemotePaneSessionName: String?
+    @State private var remoteTerminalSlots: [RemoteTerminalKey: PaneSlotID] = [:]
+    @State private var remoteTerminalSplitTree = SplitTree(root: nil)
 
     var body: some View {
         NavigationSplitView(
@@ -89,11 +91,24 @@ struct MainWindow: View {
                 )
 
                 if let selectedRemoteMac {
-                    ContentUnavailableView(
-                        selectedRemoteMac.label,
-                        systemImage: "laptopcomputer.and.arrow.down",
-                        description: Text(selectedRemoteMac.lastKnownBaseURL?.absoluteString ?? "Remote Mac selected.")
-                    )
+                    if selectedRemotePaneSessionName != nil, remoteTerminalSplitTree.root != nil {
+                        TerminalContentView(
+                            terminalManager: terminalManager,
+                            splitTree: $remoteTerminalSplitTree,
+                            focusedPaneSlotID: remoteTerminalSplitTree.allLeaves.first,
+                            theme: terminalManager.theme,
+                            onFocusTerminal: { terminalID in
+                                terminalManager.setFocus(terminalID)
+                            }
+                        )
+                        .padding(.leading, 6)
+                    } else {
+                        ContentUnavailableView(
+                            selectedRemoteMac.label,
+                            systemImage: "laptopcomputer.and.arrow.down",
+                            description: Text(selectedRemoteMac.lastKnownBaseURL?.absoluteString ?? "Remote Mac selected.")
+                        )
+                    }
                 } else if let worktree = selectedWorktreeBinding {
                     TerminalContentView(
                         terminalManager: terminalManager,
@@ -570,6 +585,64 @@ struct MainWindow: View {
         selectedRemoteIdentity = selection.selectedRemoteIdentity
         selectedRemoteWorktreePath = selection.selectedRemoteWorktreePath
         selectedRemotePaneSessionName = selection.selectedRemotePaneSessionName
+
+        openRemoteTerminal(
+            remoteMac: remoteMac,
+            worktreePath: worktreePath,
+            sessionName: sessionName
+        )
+    }
+
+    private struct RemoteTerminalKey: Hashable {
+        var identity: RemoteMacIdentity
+        var sessionName: String
+    }
+
+    private func openRemoteTerminal(
+        remoteMac: RemoteMac,
+        worktreePath: String,
+        sessionName: String
+    ) {
+        let identity = RemoteMacIdentity(remoteMac)
+        let key = RemoteTerminalKey(identity: identity, sessionName: sessionName)
+        let terminalID: PaneSlotID
+        if let existing = remoteTerminalSlots[key] {
+            terminalID = existing
+        } else {
+            terminalID = PaneSlotID()
+            remoteTerminalSlots[key] = terminalID
+        }
+        remoteTerminalSplitTree = SplitTree(root: .leaf(terminalID))
+
+        guard terminalManager.view(for: terminalID) == nil else {
+            terminalManager.setFocus(terminalID)
+            return
+        }
+
+        Task { @MainActor in
+            do {
+                _ = try await remoteMacsModel.connect(to: remoteMac)
+                let client = try await remoteMacsModel.openTerminalSession(
+                    identity: identity,
+                    sessionName: sessionName
+                )
+                let backend = RemoteTerminalSurfaceBackend(client: client)
+                _ = terminalManager.createSurface(
+                    terminalID: terminalID,
+                    paneSessionID: PaneSessionID(id: terminalID.id),
+                    worktreePath: worktreePath,
+                    hostManagedBackend: backend
+                )
+                terminalManager.setFocus(terminalID)
+            } catch {
+                NSLog(
+                    "[Graftty] failed to open remote terminal %@ on %@: %@",
+                    sessionName,
+                    remoteMac.label,
+                    String(describing: error)
+                )
+            }
+        }
     }
 
     private func setWorktreeSurfacesVisible(_ visible: Bool, worktreePath: String) {

@@ -66,6 +66,16 @@ final class RemoteMacsModel: ObservableObject {
         worktreePanesByRemote[identity] = nil
     }
 
+    func openTerminalSession(
+        identity: RemoteMacIdentity,
+        sessionName: String
+    ) async throws -> any WebSocketClient & Sendable {
+        try await connectionRegistry.openTerminalSession(
+            identity: identity,
+            sessionName: sessionName
+        )
+    }
+
     func setDiscoveryBrowser(_ discoveryBrowser: RemoteMacDiscoveryBrowsing?) {
         self.discoveryBrowser = discoveryBrowser
     }

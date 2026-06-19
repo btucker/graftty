@@ -55,6 +55,7 @@ final class RemoteMacConnectionRegistry {
 
     enum ConnectionError: Error, Equatable, Sendable {
         case missingBaseURL(RemoteMacIdentity)
+        case notConnected(RemoteMacIdentity)
     }
 
     private var entries: [RemoteMacIdentity: Entry] = [:]
@@ -160,6 +161,16 @@ final class RemoteMacConnectionRegistry {
             task.cancel()
         }
         inFlight.removeAll()
+    }
+
+    func openTerminalSession(
+        identity: RemoteMacIdentity,
+        sessionName: String
+    ) async throws -> any WebSocketClient & Sendable {
+        guard let entry = entries[identity] else {
+            throw ConnectionError.notConnected(identity)
+        }
+        return try await entry.openTerminalSession(sessionName: sessionName)
     }
 
     private func dial(remoteMac: RemoteMac, identity: RemoteMacIdentity) async throws -> Entry {
