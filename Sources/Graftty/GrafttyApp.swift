@@ -1025,11 +1025,19 @@ struct GrafttyApp: App {
                 guard let teamID = binding.wrappedValue.repos.first(where: {
                     $0.worktrees.contains(where: { $0.path == worktreePath })
                 })?.path else { return [] }
+                let records = presenceIndex.allRecords()
+                let liveSessions = Set(records.compactMap { record -> String? in
+                    guard let sessionName = record.paneSessionName,
+                          tm.handle(forSessionName: sessionName) != nil else {
+                        return nil
+                    }
+                    return sessionName
+                })
                 return TeamDeliverySessionResolution.codexSessionNames(
                     teamID: teamID,
                     in: worktreePath,
-                    records: presenceIndex.allRecords(),
-                    isLiveSession: { tm.handle(forSessionName: $0) != nil },
+                    records: records,
+                    isLiveSession: { liveSessions.contains($0) },
                     processStartTimeMicroseconds: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
                 )
             }

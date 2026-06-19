@@ -5,8 +5,8 @@ public enum TeamDeliverySessionResolution {
         teamID: String,
         in worktree: String,
         records: [TeamPresenceRecord],
-        isLiveSession: @escaping (String) -> Bool,
-        processStartTimeMicroseconds: @escaping (Int32) -> Int64?
+        isLiveSession: @escaping @Sendable (String) -> Bool,
+        processStartTimeMicroseconds: @escaping @Sendable (Int32) -> Int64?
     ) -> [String] {
         let key = TeamDeliveryOwnerKey(
             teamID: teamID,
@@ -38,13 +38,13 @@ public enum TeamDeliverySessionResolution {
     }
 }
 
-private struct ClosureTeamDeliveryLiveness: TeamDeliveryLivenessChecking, @unchecked Sendable {
-    let isLiveSession: (String) -> Bool
-    let readProcessStartTimeMicroseconds: (Int32) -> Int64?
+private struct ClosureTeamDeliveryLiveness: TeamDeliveryLivenessChecking {
+    let isLiveSession: @Sendable (String) -> Bool
+    let readProcessStartTimeMicroseconds: @Sendable (Int32) -> Int64?
 
     init(
-        isLiveSession: @escaping (String) -> Bool,
-        processStartTimeMicroseconds: @escaping (Int32) -> Int64?
+        isLiveSession: @escaping @Sendable (String) -> Bool,
+        processStartTimeMicroseconds: @escaping @Sendable (Int32) -> Int64?
     ) {
         self.isLiveSession = isLiveSession
         self.readProcessStartTimeMicroseconds = processStartTimeMicroseconds
