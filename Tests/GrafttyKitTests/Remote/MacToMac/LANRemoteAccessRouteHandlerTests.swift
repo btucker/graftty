@@ -173,6 +173,22 @@ struct LANRemoteAccessRouteHandlerTests {
         #expect(payload.pairingURL.path == "/v1/pairing")
     }
 
+    @Test("POST /v1/pairing/begin prefers request base URL over guessed host")
+    func beginUsesRequestBaseURLWhenAvailable() async throws {
+        let handler = makeHandler(lanBaseURL: URL(string: "http://wrong-host.local:9999")!)
+
+        let response = await handler.handle(
+            method: .POST,
+            path: "/v1/pairing/begin",
+            body: Data(),
+            requestBaseURL: URL(string: "http://bonjour-host.local:9443")!
+        )
+
+        #expect(response.status == 200)
+        let payload = try JSONDecoder.iso8601().decode(PairingPayload.self, from: response.body)
+        #expect(payload.pairingURL == URL(string: "http://bonjour-host.local:9443/v1/pairing")!)
+    }
+
     @Test("POST /v1/pairing/begin rejects loopback LAN base URLs")
     func beginRejectsLoopbackLANBaseURLs() async throws {
         for url in [

@@ -187,6 +187,13 @@ final class GrafttyBonjourBrowser: NSObject {
     }
 }
 
+protocol RemoteMacDiscoveryBrowsing: AnyObject {
+    func start()
+    func stop()
+}
+
+extension GrafttyBonjourBrowser: RemoteMacDiscoveryBrowsing {}
+
 extension GrafttyBonjourBrowser: NetServiceBrowserDelegate {
     func netServiceBrowser(
         _ browser: NetServiceBrowser,

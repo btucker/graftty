@@ -176,6 +176,7 @@ public final class LANRemoteAccessServer: @unchecked Sendable {
                 }
 
                 let path = head.uri.split(separator: "?", maxSplits: 1).first.map(String.init) ?? "/"
+                let requestBaseURL = Self.requestBaseURL(from: head.headers)
                 let routeHandler = self.routeHandler
                 let promise = context.eventLoop.makePromise(of: LANRemoteAccessResponse.self)
                 promise.futureResult.whenComplete { result in
@@ -188,7 +189,12 @@ public final class LANRemoteAccessServer: @unchecked Sendable {
                     }
                 }
                 routeTask = Task {
-                    let response = await routeHandler.handle(method: method, path: path, body: body)
+                    let response = await routeHandler.handle(
+                        method: method,
+                        path: path,
+                        body: body,
+                        requestBaseURL: requestBaseURL
+                    )
                     guard !Task.isCancelled else { return }
                     promise.succeed(response)
                 }
@@ -245,6 +251,13 @@ public final class LANRemoteAccessServer: @unchecked Sendable {
                 code: .internalError,
                 message: "request failed: \(error.localizedDescription)"
             )
+        }
+
+        private static func requestBaseURL(from headers: HTTPHeaders) -> URL? {
+            guard let host = headers.first(name: "Host"), !host.isEmpty else {
+                return nil
+            }
+            return URL(string: "http://\(host)")
         }
 
         private static func errorResponse(

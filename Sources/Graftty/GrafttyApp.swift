@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import CryptoKit
 import UserNotifications
 import GrafttyHostAgent
 import GrafttyKit
@@ -182,6 +183,10 @@ final class AppServices {
     /// wiring can route `/v1/pairing/*` through this same instance so the
     /// presented sheet and HTTP long-poll state share one session.
     let hostPairingCoordinator: HostPairingCoordinator
+    let remoteMacsModel: RemoteMacsModel
+    let remoteMacAccessEnabled: Bool
+    private var lanRemoteAccessServer: LANRemoteAccessServer?
+    private var bonjourAdvertiser: GrafttyBonjourAdvertiser?
 
     init(socketPath: String) {
         self.socketServer = SocketServer(socketPath: socketPath)
@@ -213,6 +218,28 @@ final class AppServices {
             }
         )
         self.hostPairingCoordinator = Self.makeHostPairingCoordinator()
+        let remoteMacsModel = RemoteMacsModel(store: RemoteMacStore())
+        self.remoteMacsModel = remoteMacsModel
+        self.remoteMacAccessEnabled = Self.remoteMacAccessEnabledDefault()
+        do {
+            let localFingerprint = try Self.localHostFingerprint()
+            let browser = GrafttyBonjourBrowser(
+                localDeviceID: Self.localRemoteDeviceID(),
+                localFingerprint: localFingerprint,
+                supportedProtocolVersions: [GrafttyBonjourService.discoveryVersion]
+            ) { [weak remoteMacsModel] candidate in
+                Task { @MainActor in
+                    do {
+                        try remoteMacsModel?.publishDiscoveryCandidate(candidate)
+                    } catch {
+                        NSLog("[Graftty] failed to record Bonjour remote Mac candidate: %@", String(describing: error))
+                    }
+                }
+            }
+            remoteMacsModel.setDiscoveryBrowser(browser)
+        } catch {
+            NSLog("[Graftty] failed to prepare remote Mac discovery identity: %@", String(describing: error))
+        }
 
         // Route PRStatusStore transitions through the inbox dispatcher.
         // `appStateProvider` is set later in startup() once @State is live;
@@ -255,6 +282,133 @@ final class AppServices {
             pairingURLProvider: { URL(string: "http://0.0.0.0/v1/pairing")! }
         )
         return HostPairingCoordinator(server: HostPairingServer(session: session))
+    }
+
+    func startRemoteMacAccessServices(hostAgent: WebRTCHostAgent?) throws {
+        guard remoteMacAccessEnabled else { return }
+        guard lanRemoteAccessServer == nil else { return }
+
+        let endpoint = RemoteAccessEndpoint(
+            host: Self.localLANHostName(),
+            port: 0
+        )
+        let routeHandler = RemoteMacAccessServices.makeLANRouteHandler(
+            lanBaseURLProvider: { endpoint.baseURL() },
+            hostPairingCoordinator: hostPairingCoordinator,
+            acceptSignalingOffer: { offer in
+                guard let hostAgent else {
+                    return .unavailable("WebRTC host agent is unavailable")
+                }
+                let rtcOffer = RTCSessionDescription(type: .offer, sdp: offer.sdp)
+                do {
+                    let answer = try await hostAgent.acceptOffer(rtcOffer)
+                    return .success(SignalingAnswer(sdp: answer.sdp))
+                } catch WebRTCHostAgent.HostError.busy {
+                    return .hostBusy("host is already handling an offer")
+                } catch {
+                    NSLog("[Graftty] LAN WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
+                    return .internalFailure("acceptOffer failed: \(error)")
+                }
+            }
+        )
+        let server = LANRemoteAccessServer(
+            config: .init(port: 0, bindHost: "0.0.0.0"),
+            routeHandler: routeHandler
+        )
+        try server.start()
+        guard let port = server.listeningPort else {
+            server.stop()
+            throw RemoteMacAccessServiceError.listenerPortUnavailable
+        }
+        endpoint.setPort(port)
+
+        let advertiser = GrafttyBonjourAdvertiser(
+            port: port,
+            label: Self.localHostDisplayName(),
+            deviceID: Self.localRemoteDeviceID(),
+            fingerprint: try Self.localHostFingerprint(),
+            protocolVersion: GrafttyBonjourService.discoveryVersion,
+            pairingStatus: .required
+        )
+        do {
+            try advertiser.start()
+        } catch {
+            server.stop()
+            throw error
+        }
+
+        lanRemoteAccessServer = server
+        bonjourAdvertiser = advertiser
+        NSLog("[Graftty] LAN remote access listening on 0.0.0.0:%d", port)
+    }
+
+    func stopRemoteMacAccessServices() {
+        remoteMacsModel.stopDiscovery()
+        bonjourAdvertiser?.stop()
+        bonjourAdvertiser = nil
+        lanRemoteAccessServer?.stop()
+        lanRemoteAccessServer = nil
+    }
+
+    private enum RemoteMacAccessServiceError: Error {
+        case listenerPortUnavailable
+    }
+
+    private final class RemoteAccessEndpoint: @unchecked Sendable {
+        private let lock = NSLock()
+        private let host: String
+        private var port: Int
+
+        init(host: String, port: Int) {
+            self.host = host
+            self.port = port
+        }
+
+        func setPort(_ port: Int) {
+            lock.withLock {
+                self.port = port
+            }
+        }
+
+        func baseURL() -> URL {
+            lock.withLock {
+                var components = URLComponents()
+                components.scheme = "http"
+                components.host = host
+                components.port = port
+                return components.url ?? URL(string: "http://\(host):\(port)")!
+            }
+        }
+    }
+
+    private static func remoteMacAccessEnabledDefault() -> Bool {
+        let key = "remoteMacAccess.enabled"
+        if let value = UserDefaults.standard.object(forKey: key) as? Bool {
+            return value
+        }
+        return true
+    }
+
+    private static func localHostFingerprint() throws -> RemoteIdentityFingerprint {
+        let identityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
+        let hostKey = try identityStore.loadOrGenerateAndPersist()
+        let publicKey = try RemoteIdentityPublicKey(
+            rawRepresentation: hostKey.publicKey.rawRepresentation
+        )
+        return RemoteIdentityFingerprint(of: publicKey)
+    }
+
+    private static func localLANHostName() -> String {
+        let hostName = ProcessInfo.processInfo.hostName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        guard !hostName.isEmpty else {
+            return "localhost.local"
+        }
+        if hostName.contains(".") {
+            return hostName
+        }
+        return "\(hostName).local"
     }
 
     private static func localRemoteDeviceID() -> RemoteDeviceID {
@@ -625,6 +779,9 @@ struct GrafttyApp: App {
         try? FileManager.default.createDirectory(at: zmxDir, withIntermediateDirectories: true)
         let zmxLauncher = ZmxLauncher(executable: zmxBinary, zmxDir: zmxDir)
         terminalManager.zmxLauncher = zmxLauncher
+        Task { @MainActor in
+            await services.remoteMacsModel.loadSavedRemotes()
+        }
 
         // TERM-11.5: pane backends consult the registry to decide whether
         // the IOS-12.1 silent gate applies (remote client attached to the
@@ -1577,11 +1734,24 @@ struct GrafttyApp: App {
                     do {
                         let answer = try await hostAgent.acceptOffer(rtcOffer)
                         return .success(SignalingAnswer(sdp: answer.sdp))
+                    } catch WebRTCHostAgent.HostError.busy {
+                        return .unavailable("host is already handling an offer")
                     } catch {
                         NSLog("[Graftty] WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
                         return .internalFailure("acceptOffer failed: \(error)")
                     }
                 }
+                do {
+                    try services.startRemoteMacAccessServices(hostAgent: hostAgent)
+                } catch {
+                    NSLog("[Graftty] failed to start LAN remote access services: %@", String(describing: error))
+                }
+            }
+        } else {
+            do {
+                try services.startRemoteMacAccessServices(hostAgent: nil)
+            } catch {
+                NSLog("[Graftty] failed to start LAN remote access services: %@", String(describing: error))
             }
         }
 
@@ -1601,6 +1771,7 @@ struct GrafttyApp: App {
             queue: .main
         ) { _ in
             MainActor.assumeIsolated {
+                appServices.stopRemoteMacAccessServices()
                 appServices.remoteBranchStore.stop()
                 appServices.prStatusStore.stop()
                 appServices.statsStore.stop()

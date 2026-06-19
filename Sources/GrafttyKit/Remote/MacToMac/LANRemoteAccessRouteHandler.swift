@@ -85,7 +85,8 @@ public actor LANRemoteAccessRouteHandler {
     public func handle(
         method: LANRemoteAccessMethod,
         path: String,
-        body: Data
+        body: Data,
+        requestBaseURL: URL? = nil
     ) async -> LANRemoteAccessResponse {
         switch path {
         case "/v1/pairing/begin":
@@ -99,7 +100,13 @@ public actor LANRemoteAccessRouteHandler {
             guard permitLimitedRequest(in: .pairingBootstrap) else {
                 return Self.rateLimitedResponse()
             }
-            let pairingRouteBase = Self.pairingRouteBase(from: lanBaseURLProvider())
+            let requestPairingRouteBase = requestBaseURL.map { Self.pairingRouteBase(from: $0) }
+            let pairingRouteBase: URL
+            if let requestPairingRouteBase, Self.isClientReachable(requestPairingRouteBase) {
+                pairingRouteBase = requestPairingRouteBase
+            } else {
+                pairingRouteBase = Self.pairingRouteBase(from: lanBaseURLProvider())
+            }
             guard Self.isClientReachable(pairingRouteBase) else {
                 return Self.errorResponse(
                     status: 500,

@@ -121,21 +121,26 @@ public actor WebRTCHostAgent {
             Task { await self?.adoptDataChannel(dc) }
         }
 
-        state = .answering
-        try await Self.setRemoteDescription(pc, offer)
+        do {
+            state = .answering
+            try await Self.setRemoteDescription(pc, offer)
 
-        let answer = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RTCSessionDescription, Error>) in
-            pc.answer(for: constraints) { sdp, error in
-                if let error { continuation.resume(throwing: error); return }
-                guard let sdp else { continuation.resume(throwing: HostError.sdpGenerationFailed); return }
-                continuation.resume(returning: sdp)
+            let answer = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RTCSessionDescription, Error>) in
+                pc.answer(for: constraints) { sdp, error in
+                    if let error { continuation.resume(throwing: error); return }
+                    guard let sdp else { continuation.resume(throwing: HostError.sdpGenerationFailed); return }
+                    continuation.resume(returning: sdp)
+                }
             }
+            try await Self.setLocalDescription(pc, answer)
+            await waitForIceGatheringComplete(pc)
+            // After gathering completes, `pc.localDescription` has the full
+            // SDP with `a=candidate:` lines included.
+            return pc.localDescription ?? answer
+        } catch {
+            close()
+            throw error
         }
-        try await Self.setLocalDescription(pc, answer)
-        await waitForIceGatheringComplete(pc)
-        // After gathering completes, `pc.localDescription` has the full
-        // SDP with `a=candidate:` lines included.
-        return pc.localDescription ?? answer
     }
 
     /// Block until the peer connection's ICE gathering reaches `.complete`.

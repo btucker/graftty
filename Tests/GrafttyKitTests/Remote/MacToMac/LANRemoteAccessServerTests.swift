@@ -56,6 +56,31 @@ struct LANRemoteAccessServerTests {
         #expect(payload.pairingURL == URL(string: "http://host.local:9999/v1/pairing")!)
     }
 
+    @Test("POST /v1/pairing/begin uses request Host header for pairing URL")
+    func postPairingBeginUsesRequestHostHeader() throws {
+        let server = Self.makeServer()
+        try server.start()
+        defer { server.stop() }
+        guard let port = server.listeningPort else {
+            Issue.record("server did not report a listening port")
+            return
+        }
+
+        let request = """
+        POST /v1/pairing/begin HTTP/1.1\r
+        Host: bonjour-host.local:\(port)\r
+        Content-Length: 0\r
+        \r
+
+        """
+        let response = try Self.sendRawHTTPRequest(request, port: port)
+        let body = try #require(response.components(separatedBy: "\r\n\r\n").last)
+        let payload = try JSONDecoder.iso8601().decode(PairingPayload.self, from: Data(body.utf8))
+
+        #expect(response.contains("200 OK"))
+        #expect(payload.pairingURL == URL(string: "http://bonjour-host.local:\(port)/v1/pairing")!)
+    }
+
     @Test("GET /repos returns 404 rather than serving legacy web routes")
     func reposReturns404() async throws {
         let server = Self.makeServer()
