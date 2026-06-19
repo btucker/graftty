@@ -229,6 +229,9 @@ struct AddRemoteMacSheet: View {
                             if pairingDriver != nil {
                                 cancelActivePairing()
                             }
+                            // Editing the target clears a stale pairing error
+                            // so the field's own live validation shows through.
+                            errorMessage = nil
                             controller.updateManualURL($0)
                         }
                     ))
@@ -303,6 +306,10 @@ struct AddRemoteMacSheet: View {
         if let errorMessage {
             return errorMessage
         }
+        // A selected discovered candidate takes precedence over the manual
+        // URL field, so stray/invalid text there is ignored — don't surface a
+        // validation error while the Pair button will actually use the candidate.
+        guard controller.selectedCandidateIdentity == nil else { return nil }
         let trimmed = controller.manualURLString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         if case .failure(let error) = AddRemoteMacFormController.validateManualURL(trimmed) {
@@ -387,6 +394,13 @@ struct AddRemoteMacSheet: View {
         } catch is CancellationError {
             driver.cancelPairing()
         } catch {
+            // `awaitOutcomeAndConfirm` has driven the session to a terminal
+            // state (denied / expired / cancelled, or confirmed-but-save-
+            // failed), so the driver is spent — re-tapping Confirm would
+            // throw `wrongState`. Drop it and fall to `.failed` so the
+            // primary button disables until the user re-selects a target.
+            pairingDriver = nil
+            controller.phase = .failed(pairingErrorMessage(error))
             errorMessage = pairingErrorMessage(error)
         }
     }

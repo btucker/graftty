@@ -232,13 +232,8 @@ public actor LANRemoteAccessRouteHandler {
         return true
     }
 
-    private static var encoder: JSONEncoder {
-        JSONEncoder.iso8601()
-    }
-
-    private static var decoder: JSONDecoder {
-        JSONDecoder.iso8601()
-    }
+    private static let encoder = JSONEncoder.iso8601()
+    private static let decoder = JSONDecoder.iso8601()
 
     private static func pairingRouteBase(from baseURL: URL) -> URL {
         guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {

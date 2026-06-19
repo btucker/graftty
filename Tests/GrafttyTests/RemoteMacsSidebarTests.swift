@@ -40,10 +40,130 @@ struct RemoteMacsSidebarTests {
 
         let row = try #require(projection.rows.first)
         #expect(projection.rows.count == 1)
-        #expect(row.id == identity)
+        #expect(row.id == .remoteMac(identity))
+        #expect(row.remoteIdentity == identity)
         #expect(row.title == "Studio Mac")
         #expect(row.isSelected)
         #expect(row.connectionState == .connected)
+    }
+
+    @Test("saved remote projection includes worktree and pane rows from snapshots")
+    func savedRemoteProjectionIncludesWorktreeAndPaneRows() throws {
+        let remote = try makeRemoteMac(label: "Studio Mac")
+        let identity = RemoteMacIdentity(remote)
+        let snapshot = [
+            makeWorktreePanes(
+                path: "/repo/.worktrees/feature",
+                displayName: "feature",
+                layout: .split(
+                    direction: .horizontal,
+                    ratio: 0.5,
+                    left: .leaf(
+                        sessionName: "graftty-left",
+                        title: "editor",
+                        attentionText: nil,
+                        isBusy: false,
+                        attentionSource: nil
+                    ),
+                    right: .leaf(
+                        sessionName: "graftty-right",
+                        title: "agent",
+                        attentionText: nil,
+                        isBusy: false,
+                        attentionSource: nil
+                    )
+                )
+            )
+        ]
+
+        let projection = RemoteMacsSidebarProjection.make(
+            savedRemoteMacs: [remote],
+            discoveryCandidates: [],
+            worktreePanesByRemote: [identity: snapshot],
+            selectedRemoteIdentity: nil,
+            selectedRemoteWorktreePath: nil,
+            selectedRemotePaneSessionName: nil,
+            connectionState: { _ in .connected }
+        )
+
+        #expect(projection.rows.map(\.id) == [
+            .remoteMac(identity),
+            .worktree(identity, "/repo/.worktrees/feature"),
+            .pane(identity, "/repo/.worktrees/feature", "graftty-left"),
+            .pane(identity, "/repo/.worktrees/feature", "graftty-right")
+        ])
+        #expect(projection.rows.map(\.title) == [
+            "Studio Mac", "feature", "editor", "agent"
+        ])
+        #expect(projection.rows.map(\.level) == [.remoteMac, .worktree, .pane, .pane])
+    }
+
+    @Test("selected remote pane row is highlighted")
+    func selectedRemotePaneRowIsHighlighted() throws {
+        let remote = try makeRemoteMac(label: "Studio Mac")
+        let identity = RemoteMacIdentity(remote)
+        let worktreePath = "/repo/.worktrees/feature"
+
+        let projection = RemoteMacsSidebarProjection.make(
+            savedRemoteMacs: [remote],
+            discoveryCandidates: [],
+            worktreePanesByRemote: [
+                identity: [
+                    makeWorktreePanes(
+                        path: worktreePath,
+                        displayName: "feature",
+                        layout: .leaf(
+                            sessionName: "graftty-agent",
+                            title: "agent",
+                            attentionText: nil,
+                            isBusy: false,
+                            attentionSource: nil
+                        )
+                    )
+                ]
+            ],
+            selectedRemoteIdentity: identity,
+            selectedRemoteWorktreePath: worktreePath,
+            selectedRemotePaneSessionName: "graftty-agent",
+            connectionState: { _ in .connected }
+        )
+
+        #expect(projection.rows.first(where: { $0.id == .remoteMac(identity) })?.isSelected == false)
+        #expect(projection.rows.first(where: { $0.id == .worktree(identity, worktreePath) })?.isSelected == false)
+        #expect(projection.rows.first(where: { $0.id == .pane(identity, worktreePath, "graftty-agent") })?.isSelected == true)
+    }
+
+    @Test("stale selected remote pane falls back to remote worktree selection")
+    func staleSelectedRemotePaneFallsBackToWorktreeSelection() throws {
+        let identity = RemoteMacIdentity(try makeRemoteMac())
+        var state = RemoteMacSidebarSelectionState(
+            selectedWorktreePath: nil,
+            selectedRemoteIdentity: identity,
+            selectedRemoteWorktreePath: "/repo/.worktrees/feature",
+            selectedRemotePaneSessionName: "stale-session"
+        )
+        let snapshot = [
+            makeWorktreePanes(
+                path: "/repo/.worktrees/feature",
+                displayName: "feature",
+                layout: .leaf(
+                    sessionName: "live-session",
+                    title: "shell",
+                    attentionText: nil,
+                    isBusy: false,
+                    attentionSource: nil
+                )
+            )
+        ]
+
+        RemoteMacSidebarSelectionReducer.reconcileRemoteSelection(
+            worktreePanesByRemote: [identity: snapshot],
+            state: &state
+        )
+
+        #expect(state.selectedRemoteIdentity == identity)
+        #expect(state.selectedRemoteWorktreePath == "/repo/.worktrees/feature")
+        #expect(state.selectedRemotePaneSessionName == nil)
     }
 
     @Test("discovered candidates do not appear in sidebar until saved")
@@ -102,7 +222,9 @@ struct RemoteMacsSidebarTests {
     func selectingRemoteClearsLocalSelection() throws {
         var state = RemoteMacSidebarSelectionState(
             selectedWorktreePath: "/repo/main",
-            selectedRemoteIdentity: nil
+            selectedRemoteIdentity: nil,
+            selectedRemoteWorktreePath: nil,
+            selectedRemotePaneSessionName: nil
         )
         let identity = RemoteMacIdentity(try makeRemoteMac())
 
@@ -110,11 +232,38 @@ struct RemoteMacsSidebarTests {
 
         #expect(state.selectedWorktreePath == nil)
         #expect(state.selectedRemoteIdentity == identity)
+        #expect(state.selectedRemoteWorktreePath == nil)
+        #expect(state.selectedRemotePaneSessionName == nil)
 
         RemoteMacSidebarSelectionReducer.selectLocalWorktree("/repo/main", state: &state)
 
         #expect(state.selectedWorktreePath == "/repo/main")
         #expect(state.selectedRemoteIdentity == nil)
+        #expect(state.selectedRemoteWorktreePath == nil)
+        #expect(state.selectedRemotePaneSessionName == nil)
+    }
+
+    @Test("selecting remote pane clears local worktree selection")
+    func selectingRemotePaneClearsLocalSelection() throws {
+        var state = RemoteMacSidebarSelectionState(
+            selectedWorktreePath: "/repo/main",
+            selectedRemoteIdentity: nil,
+            selectedRemoteWorktreePath: nil,
+            selectedRemotePaneSessionName: nil
+        )
+        let identity = RemoteMacIdentity(try makeRemoteMac())
+
+        RemoteMacSidebarSelectionReducer.selectRemotePane(
+            identity,
+            worktreePath: "/repo/.worktrees/feature",
+            sessionName: "graftty-agent",
+            state: &state
+        )
+
+        #expect(state.selectedWorktreePath == nil)
+        #expect(state.selectedRemoteIdentity == identity)
+        #expect(state.selectedRemoteWorktreePath == "/repo/.worktrees/feature")
+        #expect(state.selectedRemotePaneSessionName == "graftty-agent")
     }
 
     @Test("candidate selection in add sheet does not imply pairing success")
@@ -211,6 +360,25 @@ struct RemoteMacsSidebarTests {
             protocolVersion: GrafttyBonjourService.discoveryVersion,
             pairingStatus: .required,
             discoveredAt: Date(timeIntervalSince1970: 1_720_000_000)
+        )
+    }
+
+    private func makeWorktreePanes(
+        path: String,
+        displayName: String,
+        layout: PaneLayoutNode?
+    ) -> WorktreePanes {
+        WorktreePanes(
+            path: path,
+            displayName: displayName,
+            repoDisplayName: "graftty",
+            displayBranch: "feature",
+            state: .running,
+            isMainCheckout: false,
+            prBadge: nil,
+            stats: nil,
+            attentionText: nil,
+            layout: layout
         )
     }
 

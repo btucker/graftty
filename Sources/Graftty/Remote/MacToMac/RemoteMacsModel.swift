@@ -14,6 +14,7 @@ enum RemoteMacPairingSaveResult: Sendable {
 final class RemoteMacsModel: ObservableObject {
     @Published private(set) var savedRemoteMacs: [RemoteMac] = []
     @Published private(set) var discoveryCandidates: [GrafttyBonjourCandidate] = []
+    @Published private(set) var worktreePanesByRemote: [RemoteMacIdentity: [WorktreePanes]] = [:]
 
     private let store: RemoteMacStore
     private let connectionRegistry: RemoteMacConnectionRegistry
@@ -49,6 +50,9 @@ final class RemoteMacsModel: ObservableObject {
         do {
             let entry = try await connectionRegistry.connect(to: remoteMac)
             connectionStates[identity] = .connected
+            if let store = entry.paneEnvironment.worktreePanesStore {
+                worktreePanesByRemote[identity] = await store.current
+            }
             return entry
         } catch {
             connectionStates[identity] = .failed
@@ -59,6 +63,7 @@ final class RemoteMacsModel: ObservableObject {
     func disconnect(identity: RemoteMacIdentity) {
         connectionRegistry.disconnect(identity: identity)
         connectionStates[identity] = .offline
+        worktreePanesByRemote[identity] = nil
     }
 
     func setDiscoveryBrowser(_ discoveryBrowser: RemoteMacDiscoveryBrowsing?) {
@@ -90,7 +95,15 @@ final class RemoteMacsModel: ObservableObject {
         let refreshed = GrafttyBonjourBrowser.remoteMac(from: candidate, existing: existing)
         try store.add(refreshed)
         savedRemoteMacs = store.remoteMacs
-        connectionStates[identity] = .discovered
+        // Rediscovery (Bonjour TTL refresh) must not downgrade a live
+        // connection back to `.discovered`; only note reachability when the
+        // remote is otherwise idle.
+        switch connectionState(for: identity) {
+        case .connecting, .connected:
+            break
+        case .offline, .discovered, .failed, .needsPairing:
+            connectionStates[identity] = .discovered
+        }
     }
 
     func recordPairingResult(_ result: RemoteMacPairingSaveResult) throws {
@@ -124,6 +137,13 @@ final class RemoteMacsModel: ObservableObject {
 enum RemoteMacAccessServices {
     typealias SignalingOfferAcceptor = @Sendable (SignalingOffer) async -> LANSignalingOfferResult
 
+    /// Per-bucket cap on the unauthenticated LAN pairing/signaling endpoints.
+    /// The server is reachable pre-trust on `0.0.0.0`, and a legitimate
+    /// pairing makes ~1 request per bucket, so this is generous enough to
+    /// never affect a real user while throttling a flood from an on-network
+    /// attacker (without it the handler defaults to `.disabled`).
+    static let lanRateLimit = LANRemoteAccessRateLimit(maxRequests: 60, window: 60)
+
     @MainActor
     static func makeLANRouteHandler(
         lanBaseURLProvider: @escaping @Sendable () -> URL,
@@ -132,6 +152,7 @@ enum RemoteMacAccessServices {
     ) -> LANRemoteAccessRouteHandler {
         LANRemoteAccessRouteHandler(
             lanBaseURLProvider: lanBaseURLProvider,
+            rateLimit: lanRateLimit,
             beginPairing: { validFor, lanBaseURL in
                 await hostPairingCoordinator.beginPairing(
                     validFor: validFor,

@@ -20,9 +20,13 @@ struct SidebarView: View {
     let remoteBranchStore: RemoteBranchStore
     @ObservedObject var remoteMacsModel: RemoteMacsModel
     let selectedRemoteIdentity: RemoteMacIdentity?
+    let selectedRemoteWorktreePath: String?
+    let selectedRemotePaneSessionName: String?
     let onSelect: (String) -> Void
     let onSelectPane: (String, PaneSlotID) -> Void
     let onSelectRemoteMac: (RemoteMac) -> Void
+    let onSelectRemoteWorktree: (RemoteMac, String) -> Void
+    let onSelectRemotePane: (RemoteMac, String, String) -> Void
     let onAddRemoteMac: () -> Void
     let onAddRepo: () -> Void
     let onAddPath: (String) -> Void
@@ -69,9 +73,14 @@ struct SidebarView: View {
                 }
                 RemoteMacsSection(
                     model: remoteMacsModel,
+                    worktreePanesByRemote: remoteMacsModel.worktreePanesByRemote,
                     selectedRemoteIdentity: selectedRemoteIdentity,
+                    selectedRemoteWorktreePath: selectedRemoteWorktreePath,
+                    selectedRemotePaneSessionName: selectedRemotePaneSessionName,
                     theme: theme,
                     onSelectRemoteMac: onSelectRemoteMac,
+                    onSelectRemoteWorktree: onSelectRemoteWorktree,
+                    onSelectRemotePane: onSelectRemotePane,
                     onAddRemoteMac: onAddRemoteMac
                 )
             }
