@@ -74,6 +74,20 @@ struct HostPairingServerTests {
         }
     }
 
+    private func waitUntil(
+        timeout seconds: Double,
+        condition: @escaping @Sendable () async -> Bool
+    ) async -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if await condition() {
+                return true
+            }
+            await Task.yield()
+        }
+        return await condition()
+    }
+
     // MARK: - start
 
     @Test("start delegates to session and returns the payload")
@@ -289,6 +303,34 @@ struct HostPairingServerTests {
             return
         }
         #expect(response.outcome == .confirmed)
+    }
+
+    @Test("cancelling handleAwaitOutcome removes its pending waiter")
+    func handleAwaitOutcomeCancellationRemovesWaiter() async throws {
+        let fx = try makeFixture()
+        defer { fx.cleanup() }
+
+        let payload = try await fx.server.start()
+        _ = await fx.server.handleIntroduce(makeIntroduceRequest(nonce: payload.nonce))
+
+        let task = Task {
+            await fx.server.handleAwaitOutcome(PairingAwaitOutcomeRequest(nonce: payload.nonce))
+        }
+
+        await waitForWaiters(on: fx.server, atLeast: 1)
+        task.cancel()
+
+        let waiterRemoved = await waitUntil(timeout: 1.0) {
+            await fx.server.pendingWaiterCount == 0
+        }
+        #expect(waiterRemoved)
+
+        if waiterRemoved {
+            _ = await task.result
+        } else {
+            await fx.server.cancel()
+            _ = await task.result
+        }
     }
 
     // MARK: - handleAwaitOutcome: unknown nonce
