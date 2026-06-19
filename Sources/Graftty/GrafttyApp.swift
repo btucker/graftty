@@ -16,6 +16,19 @@ struct TeamHookCallbacks {
     let onPostToolUse: @Sendable (String, String, String, String?) -> Void
 }
 
+private struct AppTeamDeliveryLiveness: TeamDeliveryLivenessChecking {
+    let liveSessionNames: Set<String>
+    let processStartTimeMicroseconds: @Sendable (Int32) -> Int64?
+
+    func isLivePaneSession(_ sessionName: String) -> Bool {
+        liveSessionNames.contains(sessionName)
+    }
+
+    func processStartTimeMicroseconds(ofPID pid: Int32) -> Int64? {
+        processStartTimeMicroseconds(pid)
+    }
+}
+
 /// Seam for `handleShowPane` so tests can inject a canned scrollback
 /// without spawning a `zmx` subprocess.
 protocol ZmxHistoryReader: Sendable {
@@ -2167,6 +2180,7 @@ struct GrafttyApp: App {
                 appState: appState,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher,
+                terminalManager: terminalManager,
                 hookCallbacks: hookCallbacks
             )
         case .teamInbox(let callerPath, let worktree, let repo, let member, let unread, let all):
@@ -2269,13 +2283,36 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher,
+        terminalManager: TerminalManager,
         hookCallbacks: TeamHookCallbacks? = nil
     ) -> ResponseMessage {
         do {
+            let presenceRecords = (try? TeamPresenceStorage(
+                rootDirectory: TeamPresenceStorage.defaultRoot()
+            ).listAll()) ?? []
+            let liveSessionNames = Set(presenceRecords.compactMap { record -> String? in
+                guard let sessionName = record.paneSessionName,
+                      terminalManager.handle(forSessionName: sessionName) != nil else {
+                    return nil
+                }
+                return sessionName
+            })
             let output = try teamInboxRequestHandler(
                 inbox: teamInbox,
                 dispatcher: teamEventDispatcher,
-                hookCallbacks: hookCallbacks
+                hookCallbacks: hookCallbacks,
+                automaticDeliveryOwner: { teamID, worktree, runtime, paneSessionName in
+                    guard let paneSessionName else { return false }
+                    let resolver = TeamDeliveryOwnershipResolver(
+                        records: { presenceRecords },
+                        liveness: AppTeamDeliveryLiveness(
+                            liveSessionNames: liveSessionNames,
+                            processStartTimeMicroseconds: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
+                        )
+                    )
+                    let key = TeamDeliveryOwnerKey(teamID: teamID, worktree: worktree, runtime: runtime)
+                    return resolver.owner(for: key)?.paneSessionName == paneSessionName
+                }
             ).hook(
                 callerWorktree: callerPath,
                 runtime: runtime,
@@ -2439,7 +2476,13 @@ struct GrafttyApp: App {
     private static func teamInboxRequestHandler(
         inbox: TeamInbox,
         dispatcher: TeamEventDispatcher,
-        hookCallbacks: TeamHookCallbacks? = nil
+        hookCallbacks: TeamHookCallbacks? = nil,
+        automaticDeliveryOwner: (@Sendable (
+            _ teamID: String,
+            _ worktree: String,
+            _ runtime: TeamHookRuntime,
+            _ paneSessionName: String?
+        ) -> Bool)? = nil
     ) -> TeamInboxRequestHandler {
         TeamInboxRequestHandler(
             inbox: inbox,
@@ -2447,7 +2490,8 @@ struct GrafttyApp: App {
             sessionPromptRenderer: renderTeamSessionPrompt(team:viewer:),
             onStop: hookCallbacks?.onStop,
             onSessionStart: hookCallbacks?.onSessionStart,
-            onPostToolUse: hookCallbacks?.onPostToolUse
+            onPostToolUse: hookCallbacks?.onPostToolUse,
+            automaticDeliveryOwner: automaticDeliveryOwner
         )
     }
 
