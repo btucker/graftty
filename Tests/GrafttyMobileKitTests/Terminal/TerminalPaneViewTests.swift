@@ -57,102 +57,24 @@ struct TerminalPaneViewTests {
     }
 }
 
-@Suite("@spec IOS-6.11: The pinch-driven leadership claim from `IOS-6.5` shall fire only on pinch gestures whose scale departure from 1.0 exceeds a small threshold (~5%), so accidental two-finger touches (during scroll, near-tap) do not silently claim leadership.")
-struct LeadershipPinchGateTests {
-
-    @Test
-    func nonBeganStatesDoNotClaim() {
-        for state: UIGestureRecognizer.State in [.possible, .changed, .ended, .cancelled, .failed] {
-            #expect(!LeadershipPinchGate.shouldClaim(state: state, scale: 1.5))
-        }
-    }
-
-    @Test
-    func beganBelowThresholdDoesNotClaim() {
-        // Default threshold is 0.05 (~5% scale change).
-        #expect(!LeadershipPinchGate.shouldClaim(state: .began, scale: 1.0))
-        #expect(!LeadershipPinchGate.shouldClaim(state: .began, scale: 1.03))
-        #expect(!LeadershipPinchGate.shouldClaim(state: .began, scale: 0.97))
-    }
-
-    @Test
-    func beganAboveThresholdClaims() {
-        #expect(LeadershipPinchGate.shouldClaim(state: .began, scale: 1.10))
-        #expect(LeadershipPinchGate.shouldClaim(state: .began, scale: 0.90))
-        #expect(LeadershipPinchGate.shouldClaim(state: .began, scale: 2.0))
-    }
-
-    @Test
-    func zeroScaleNeverClaims() {
-        // A UIPinchGestureRecognizer with scale 0 is degenerate; treat as
-        // no-claim rather than as a maximum-zoom-out claim.
-        #expect(!LeadershipPinchGate.shouldClaim(state: .began, scale: 0))
-    }
-}
-
-@Suite("@spec IOS-6.12: while a pane is in selection mode (IOS-11.4 pan-extends a live selection), the leadership-claim pinch recognizer shall be disabled — a mid-selection pinch shall not flip the server's PTY dims out from under the selection geometry.")
+@Suite("Terminal gestures do not claim ownership")
 @MainActor
-struct LeadershipPinchSelectionModeTests {
+struct OwnershipNeutralGestureTests {
 
     @Test
-    func enterSelectionModeDisablesLeadershipPinch() {
+    func terminalInputContainerHasNoOwnershipClaimGestureHook() {
         let view = TerminalInputContainerView()
-        #expect(view.leadershipPinchRecognizerIsEnabledForTesting)
-        view.enterSelectionModeForTesting()
-        #expect(!view.leadershipPinchRecognizerIsEnabledForTesting)
+        #expect(!view.hasOwnershipClaimGestureHookForTesting)
     }
 
     @Test
-    func exitSelectionModeReenablesLeadershipPinch() {
+    func longPressAndPinchRemainOwnershipNeutral() {
         let view = TerminalInputContainerView()
-        view.enterSelectionModeForTesting()
-        view.exitSelectionModeForTesting()
-        #expect(view.leadershipPinchRecognizerIsEnabledForTesting)
-    }
-}
-
-@Suite("@spec IOS-6.14 (gesture wiring): the `onLeadershipClaimGesture` callback shall fire when the pinch recognizer transitions to `.began` with a scale departure above the gate threshold — verifies the handler→callback plumbing that the unit tests for `LeadershipPinchGate` and `SessionClient.claimLeadershipIfNeeded` do not cover.")
-@MainActor
-struct LeadershipPinchWiringTests {
-
-    @Test
-    func pinchBeganAboveThresholdInvokesCallback() {
-        let view = TerminalInputContainerView()
-        var claimCount = 0
-        view.onLeadershipClaimGesture = { claimCount += 1 }
-
-        view.simulateLeadershipPinchForTesting(state: .began, scale: 1.2)
-        #expect(claimCount == 1)
-    }
-
-    @Test
-    func pinchBeganBelowThresholdDoesNotInvokeCallback() {
-        let view = TerminalInputContainerView()
-        var claimCount = 0
-        view.onLeadershipClaimGesture = { claimCount += 1 }
-
-        view.simulateLeadershipPinchForTesting(state: .began, scale: 1.02)
-        #expect(claimCount == 0)
-    }
-
-    @Test
-    func pinchChangedDoesNotInvokeCallback() {
-        let view = TerminalInputContainerView()
-        var claimCount = 0
-        view.onLeadershipClaimGesture = { claimCount += 1 }
-
-        view.simulateLeadershipPinchForTesting(state: .changed, scale: 2.0)
-        #expect(claimCount == 0)
-    }
-
-    @Test
-    func longPressInvokesCallback() {
-        let view = TerminalInputContainerView()
-        var claimCount = 0
-        view.onLeadershipClaimGesture = { claimCount += 1 }
 
         view.simulateLongPressBeganForTesting()
-        #expect(claimCount == 1)
+        view.simulatePinchForTesting(state: .began, scale: 1.2)
+
+        #expect(!view.hasOwnershipClaimGestureHookForTesting)
     }
 }
 #endif

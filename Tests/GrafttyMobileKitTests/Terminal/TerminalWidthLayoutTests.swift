@@ -4,12 +4,12 @@ import Testing
 @testable import GrafttyMobileKit
 
 @Suite("""
-@spec IOS-5.6: While the iOS client is not the size-leader (before the first leadership-claim event per `IOS-6.5`) and the server-announced grid's column count exceeds what fits in the device's container at the configured (iOS-scaled) font size, the application shall override the terminal controller's font size so that `serverCols × cellWidth ≤ containerWidth`, render the pane at the full container width with no horizontal `ScrollView`, and never wrap a line. The override font size shall be computed as `(containerWidth / serverCols) × safetyScale / monospaceAspect`, mirroring `PanePreviewFontSizing`. When `serverCols` is not yet known, the application shall leave the base config font in place.
+@spec IOS-5.6: While the iOS client is not the display owner and the authoritative grid's column count exceeds what fits in the device's container at the configured (iOS-scaled) font size, the application shall override the terminal controller's font size so that `authoritativeCols × cellWidth ≤ containerWidth`, render the pane at the full container width with no horizontal `ScrollView`, and never wrap a line. The override font size shall be computed as `(containerWidth / authoritativeCols) × safetyScale / monospaceAspect`, mirroring `PanePreviewFontSizing`. When authoritative cols are not yet known, the application shall leave the base config font in place.
 """)
 struct TerminalWidthLayoutTests {
 
     @Test
-    func leaderUsesConfigFont() {
+    func ownerUsesConfigFont() {
         let d = TerminalWidthLayout.decide(
             containerWidth: 390,
             serverCols: 120,
@@ -61,7 +61,7 @@ struct TerminalWidthLayoutTests {
     }
 
     @Test
-    func serverColsThatAlreadyFitUseConfigFont() {
+    func authoritativeColsThatAlreadyFitUseConfigFont() {
         // 80 cols × (11pt × 0.6 aspect) = 528pt. Container is 800pt; the
         // target font computed from 800/80×0.95/0.6 ≈ 15.83pt is larger
         // than the 11pt config, so no override needed.
