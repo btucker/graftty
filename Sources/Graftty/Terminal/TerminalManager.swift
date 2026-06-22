@@ -121,6 +121,11 @@ final class TerminalManager: ObservableObject {
     /// to decide whether the IOS-12.1 silent gate withholds PTY resizes.
     var remoteAttachmentRegistry: RemoteAttachmentRegistry?
 
+    /// Process-wide display ownership state for native pane participation.
+    /// Task 3 only assembles the dependency; Task 4 wires Mac resize/input
+    /// authority through this store.
+    var displayOwnershipStore: SessionDisplayOwnershipStore?
+
     /// Set by `GrafttyApp` after construction. When non-nil, pane add /
     /// remove flows propagate registration so the scanner can poll
     /// listening sockets for each pane's process subtree.

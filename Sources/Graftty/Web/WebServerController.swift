@@ -176,6 +176,10 @@ final class WebServerController: ObservableObject {
         rebuildIfRunning()
     }
 
+    var displayOwnershipStoreForTests: SessionDisplayOwnershipStore {
+        displayOwnershipStore
+    }
+
     /// Force-rebuild the running server so a new provider closure is
     /// captured into a fresh `WebServer.Config`. No-ops when the server
     /// isn't running yet — an in-flight `reconcileTask` reads providers

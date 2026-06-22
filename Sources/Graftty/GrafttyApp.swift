@@ -341,6 +341,11 @@ struct GrafttyApp: App {
                 hostKey: try hostIdentityStore.loadOrGenerateAndPersist(),
                 trustedPeerStore: trustedPeerStore,
                 streamFactory: { [registry = appServices.remoteAttachmentRegistry] sessionName in
+                    // Task 3: SSH-over-WebRTC terminal sessions are still
+                    // raw TerminalByteStream participants. Until Task 4+
+                    // adds explicit display-owner protocol handling on this
+                    // path, the shared store is not consulted here; the
+                    // registry remains connection accounting only.
                     try ZmxAttachStream(
                         zmxExecutable: zmxExe,
                         zmxDir: zmxDir,
@@ -588,6 +593,7 @@ struct GrafttyApp: App {
         // the IOS-12.1 silent gate applies (remote client attached to the
         // same zmx session).
         terminalManager.remoteAttachmentRegistry = services.remoteAttachmentRegistry
+        terminalManager.displayOwnershipStore = services.displayOwnershipStore
         services.remoteAttachmentRegistry.onLastDetach = { [weak terminalManager] sessionName in
             // TERM-11.4: fires on the detaching connection's thread; hop to
             // the main actor where TerminalManager lives.
