@@ -212,11 +212,40 @@ function ownershipFrame(
   });
 }
 
+test('ownership confirmation after delayed terminal init publishes the fitted owner grid', async () => {
+  let resolveInit: (() => void) | undefined;
+  ghosttyMock.init.mockImplementationOnce(() => new Promise<void>((resolve) => {
+    resolveInit = resolve;
+  }));
+  hostSize = { width: 800, height: 400 };
+
+  render(<TerminalPane sessionName="demo session" />);
+  await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
+  const ws = MockWebSocket.instances[0];
+  expect(ghosttyMock.init).toHaveBeenCalledTimes(1);
+
+  await act(async () => ws.open());
+  const hello = textFrames(ws)[0];
+  expect(hello).toMatchObject({ type: 'hello', cols: 80, rows: 24 });
+
+  await act(async () => resolveInit?.());
+  await waitFor(() => {
+    expect(ghosttyMock.instances.length).toBe(1);
+    expect(ghosttyMock.instances[0].resizeHandler).toBeTruthy();
+  });
+  ws.sent.length = 0;
+
+  await act(async () => ws.receive(ownershipFrame(hello.clientID, 'web', 80, 24, 5)));
+
+  expect(textFrames(ws)).toEqual([
+    { type: 'ownerResize', clientID: hello.clientID, epoch: 5, cols: 100, rows: 25 },
+  ]);
+});
+
 // @spec WEB-5.1: The bundled client shall render a single terminal (ghostty-web, a WASM build of libghostty — the same VT parser as the native app pane) that attaches to the session indicated by the `/session/<name>` URL path. If a client arrives at the root path `/` with a `?session=<name>` query parameter, the client shall redirect to `/session/<name>` (backward compatibility). Sharing a parser with the native pane is what keeps escape-sequence behavior (cursor movement, SGR state, OSC 8 hyperlinks, scrollback) identical across clients.
 test('terminal pane constructs ghostty-web and connects to the encoded session websocket', async () => {
   const { term, ws } = await renderReady('demo session');
 
-  expect(ghosttyMock.init).toHaveBeenCalledTimes(1);
   expect(ghosttyMock.Terminal).toHaveBeenCalledWith(expect.objectContaining({
     cols: 80,
     rows: 24,

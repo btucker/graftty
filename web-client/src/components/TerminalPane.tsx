@@ -168,12 +168,6 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
       recomputeOwner();
     };
 
-    const updateOwnership = (snapshot: OwnershipSnapshot) => {
-      ownershipRef.current = snapshot;
-      recomputeOwner();
-      setOwnershipSnapshot(snapshot);
-    };
-
     const sendHello = (ws: WebSocket, clientID: string) => {
       const { cols, rows } = currentGrid();
       ws.send(JSON.stringify({
@@ -205,6 +199,21 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
       const epoch = ownershipRef.current?.epoch;
       if (isOwnerRef.current && clientID && epoch != null && currentWs && currentWs.readyState === WebSocket.OPEN) {
         currentWs.send(JSON.stringify({ type: 'ownerResize', clientID, epoch, cols, rows }));
+      }
+    };
+
+    const sendCurrentGridAsOwnerResize = () => {
+      const { cols, rows } = currentGrid();
+      sendOwnerResize(cols, rows);
+    };
+
+    const updateOwnership = (snapshot: OwnershipSnapshot) => {
+      const wasOwner = isOwnerRef.current;
+      ownershipRef.current = snapshot;
+      recomputeOwner();
+      setOwnershipSnapshot(snapshot);
+      if (!wasOwner && isOwnerRef.current && termReady) {
+        sendCurrentGridAsOwnerResize();
       }
     };
 
