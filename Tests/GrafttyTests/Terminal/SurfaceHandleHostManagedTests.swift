@@ -370,6 +370,42 @@ struct SurfaceHandleHostManagedTests {
         #expect(backend.observedSetSizeCountAtStart == 1)
     }
 
+    @Test("""
+    @spec TERM-11.16: When AppKit resizes a zmx-backed terminal view, the application shall update libghostty's surface size before marking the pane visible and reconciling zmx to the live grid, so the show-time reconcile cannot forward the previous row count during a real resize.
+    """)
+    func frameResizeSetsLibghosttySizeBeforeVisibleReconcile() throws {
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        var resyncCountsObservedDuringSetSize: [Int] = []
+        harness.onSetSize = {
+            resyncCountsObservedDuringSetSize.append(backend.resyncVisibleGridCount)
+        }
+        let terminalID = Self.terminalID()
+        let handle = try #require(SurfaceHandle(
+            terminalID: terminalID,
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _, _, _ in backend }
+        ))
+        let surfaceView = try #require(handle.view as? SurfaceNSView)
+        surfaceView.surfaceOperations = SurfaceNSViewGhosttySurfaceOperations(
+            setSize: harness.factory.setSize,
+            size: harness.factory.size,
+            refresh: { _ in }
+        )
+        surfaceView.visibleForInputNotifier = {
+            backend.resyncVisibleGrid()
+        }
+
+        surfaceView.setFrameSize(NSSize(width: 800, height: 400))
+
+        #expect(resyncCountsObservedDuringSetSize == [0])
+        #expect(backend.resyncVisibleGridCount == 1)
+    }
+
     private static func terminalID() -> PaneSlotID {
         PaneSlotID(id: UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!)
     }

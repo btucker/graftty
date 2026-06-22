@@ -607,6 +607,24 @@ final class SurfaceHandle {
     }
 }
 
+struct SurfaceNSViewGhosttySurfaceOperations {
+    var setSize: (ghostty_surface_t, UInt32, UInt32) -> Void
+    var size: (ghostty_surface_t) -> ghostty_surface_size_s
+    var refresh: (ghostty_surface_t) -> Void
+
+    static let live = SurfaceNSViewGhosttySurfaceOperations(
+        setSize: { surface, width, height in
+            ghostty_surface_set_size(surface, width, height)
+        },
+        size: { surface in
+            ghostty_surface_size(surface)
+        },
+        refresh: { surface in
+            ghostty_surface_refresh(surface)
+        }
+    )
+}
+
 /// `NSView` subclass used as the ghostty surface's host view.
 ///
 /// Forwards keyboard input to libghostty via `ghostty_surface_text`, which
@@ -622,6 +640,7 @@ final class SurfaceNSView: NSView {
     /// Set by `SurfaceHandle` after construction; cleared when the handle
     /// is freed (the surface pointer is only valid while the handle owns it).
     var surface: ghostty_surface_t?
+    var surfaceOperations: SurfaceNSViewGhosttySurfaceOperations = .live
 
     /// The terminal ID this view represents, and a weak reference to the
     /// terminal manager. Both are set by `SurfaceHandle` during init so
@@ -664,6 +683,7 @@ final class SurfaceNSView: NSView {
     /// Fired on every accepted (nonzero, surface-bound) frame change; the
     /// backend's one-shot makes it the TERM-11.1 layout-settled signal.
     var hostManagedLayoutNotifier: (() -> Void)?
+    var visibleForInputNotifier: (() -> Void)?
 
     /// Cursor to display when the mouse is over this surface. libghostty
     /// drives this via `GHOSTTY_ACTION_MOUSE_SHAPE` (e.g., pointer when
@@ -770,16 +790,16 @@ final class SurfaceNSView: NSView {
         ) else {
             return
         }
-        markVisibleForInput()
-        ghostty_surface_set_size(
+        surfaceOperations.setSize(
             surface,
             proposed.width,
             proposed.height
         )
-        let grid = ghostty_surface_size(surface)
+        let grid = surfaceOperations.size(surface)
         ResizeTrace.log.notice("setFrameSize pane=\(self.terminalIDTraceLabel, privacy: .public) \(proposed.width)x\(proposed.height)px grid=\(grid.columns)x\(grid.rows)")
-        ghostty_surface_refresh(surface)
+        surfaceOperations.refresh(surface)
         hostManagedLayoutNotifier?()
+        markVisibleForInput()
     }
 
     @available(*, unavailable)
@@ -804,6 +824,10 @@ final class SurfaceNSView: NSView {
     }
 
     private func markVisibleForInput() {
+        if let visibleForInputNotifier {
+            visibleForInputNotifier()
+            return
+        }
         guard let terminalID else { return }
         terminalManager?.setVisible(true, for: terminalID)
     }
