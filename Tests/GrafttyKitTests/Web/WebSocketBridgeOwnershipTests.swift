@@ -38,6 +38,13 @@ struct WebSocketBridgeOwnershipTests {
             defer { lock.unlock() }
             return (resizes, writes, sent)
         }
+
+        func ownershipSnapshots() -> [DisplayOwnershipSnapshot] {
+            snapshot().sent.compactMap { envelope in
+                guard case let .ownership(snapshot) = envelope else { return nil }
+                return snapshot
+            }
+        }
     }
 
     @Test
@@ -69,6 +76,64 @@ struct WebSocketBridgeOwnershipTests {
 
         #expect(owner.recorder.snapshot().resizes == [try DisplayGrid(cols: 100, rows: 30)])
         #expect(store.snapshot(sessionName: sessionName).grid == (try DisplayGrid(cols: 100, rows: 30)))
+    }
+
+    @Test
+    func ownerReceivesLocalizedOwnershipSnapshotUsingProtocolClientID() throws {
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let owner = makeCoordinator(
+            store: store,
+            broadcaster: broadcaster,
+            serverClientID: DisplayClientID("server-web-1")
+        )
+
+        owner.coordinator.handleControl(.hello(
+            clientID: DisplayClientID("browser-generated-1"),
+            kind: .web,
+            role: .interactive,
+            visible: true,
+            cols: 80,
+            rows: 24
+        ))
+
+        #expect(store.snapshot(sessionName: sessionName).ownerClientID == DisplayClientID("server-web-1"))
+        let ownership = try #require(owner.recorder.ownershipSnapshots().last)
+        #expect(ownership.ownerClientID == DisplayClientID("browser-generated-1"))
+        #expect(ownership.ownerKind == .web)
+    }
+
+    @Test
+    func requestDefaultKindWinsOverSpoofedFrameKind() throws {
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let socket = makeCoordinator(
+            store: store,
+            broadcaster: broadcaster,
+            serverClientID: DisplayClientID("server-ios-1"),
+            defaultKind: .ios
+        )
+
+        socket.coordinator.handleControl(.hello(
+            clientID: DisplayClientID("ios-protocol"),
+            kind: .web,
+            role: .interactive,
+            visible: true,
+            cols: 90,
+            rows: 25
+        ))
+        socket.coordinator.handleControl(.takeControl(
+            clientID: DisplayClientID("ios-protocol"),
+            kind: .web,
+            cols: 120,
+            rows: 40
+        ))
+
+        let snapshot = store.snapshot(sessionName: sessionName)
+        #expect(snapshot.ownerClientID == DisplayClientID("server-ios-1"))
+        #expect(snapshot.ownerKind == .ios)
+        let ownership = try #require(socket.recorder.ownershipSnapshots().last)
+        #expect(ownership.ownerKind == .ios)
     }
 
     @Test
@@ -120,11 +185,35 @@ struct WebSocketBridgeOwnershipTests {
     }
 
     @Test
+    func binaryBeforeLegacyResizeClaimsOwnerlessSocketAndWrites() {
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let legacy = makeCoordinator(
+            store: store,
+            broadcaster: broadcaster,
+            serverClientID: DisplayClientID("server-ios-1"),
+            defaultKind: .ios
+        )
+
+        legacy.coordinator.handleBinary(Data("first key".utf8))
+
+        #expect(legacy.recorder.snapshot().writes == [Data("first key".utf8)])
+        let snapshot = store.snapshot(sessionName: sessionName)
+        #expect(snapshot.ownerClientID == DisplayClientID("server-ios-1"))
+        #expect(snapshot.ownerKind == .ios)
+    }
+
+    @Test
     func takeoverImmediatelyResizesPTYToNewOwnerGrid() throws {
         let store = SessionDisplayOwnershipStore()
         let broadcaster = WebDisplayOwnershipBroadcaster()
         let owner = makeCoordinator(store: store, broadcaster: broadcaster, serverClientID: DisplayClientID("server-web-1"))
-        let takeover = makeCoordinator(store: store, broadcaster: broadcaster, serverClientID: DisplayClientID("server-ios-1"))
+        let takeover = makeCoordinator(
+            store: store,
+            broadcaster: broadcaster,
+            serverClientID: DisplayClientID("server-ios-1"),
+            defaultKind: .ios
+        )
 
         owner.coordinator.handleControl(.hello(clientID: DisplayClientID("owner-protocol"), kind: .web, role: .interactive, visible: true, cols: 80, rows: 24))
         takeover.coordinator.handleControl(.hello(clientID: DisplayClientID("ios-protocol"), kind: .ios, role: .interactive, visible: true, cols: 90, rows: 25))
@@ -201,13 +290,14 @@ struct WebSocketBridgeOwnershipTests {
     private func makeCoordinator(
         store: SessionDisplayOwnershipStore,
         broadcaster: WebDisplayOwnershipBroadcaster,
-        serverClientID: DisplayClientID
+        serverClientID: DisplayClientID,
+        defaultKind: DisplayClientKind = .web
     ) -> (coordinator: WebSocketBridgeCoordinator, recorder: Recorder) {
         let recorder = Recorder()
         let coordinator = WebSocketBridgeCoordinator(
             sessionName: sessionName,
             clientID: serverClientID,
-            defaultKind: .web,
+            defaultKind: defaultKind,
             ownershipStore: store,
             broadcaster: broadcaster,
             sendText: { recorder.send($0) },

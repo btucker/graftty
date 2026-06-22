@@ -112,8 +112,8 @@ internal final class WebSocketBridgeCoordinator: @unchecked Sendable {
         self.sendText = sendText
         self.resize = resize
         self.write = write
-        self.registration = broadcaster.register(sessionName: sessionName, clientID: clientID) { snapshot in
-            sendText(WebControlEnvelope.ownership(snapshot).encoded())
+        self.registration = broadcaster.register(sessionName: sessionName, clientID: clientID) { [weak self] snapshot in
+            self?.sendOwnershipSnapshot(snapshot)
         }
     }
 
@@ -123,8 +123,9 @@ internal final class WebSocketBridgeCoordinator: @unchecked Sendable {
 
     func handleControl(_ envelope: WebControlEnvelope) {
         switch envelope {
-        case let .hello(protocolClientID, kind, role, visible, cols, rows):
+        case let .hello(protocolClientID, _, role, visible, cols, rows):
             guard bindOrVerify(protocolClientID: protocolClientID) else { return }
+            let kind = defaultKind
             let grid = try! DisplayGrid(cols: cols, rows: rows)
             lock.lock()
             attached = true
@@ -141,8 +142,9 @@ internal final class WebSocketBridgeCoordinator: @unchecked Sendable {
             noteAcceptedOwnerGridIfCurrentOwner(snapshot: snapshot)
             broadcaster.broadcast(snapshot)
 
-        case let .takeControl(protocolClientID, kind, cols, rows):
+        case let .takeControl(protocolClientID, _, cols, rows):
             guard bindOrVerify(protocolClientID: protocolClientID) else { return }
+            let kind = currentKind() ?? defaultKind
             ensureAttached(kind: kind, grid: try! DisplayGrid(cols: cols, rows: rows))
             let grid = try! DisplayGrid(cols: cols, rows: rows)
             let result = ownershipStore.claimOwner(
@@ -182,8 +184,36 @@ internal final class WebSocketBridgeCoordinator: @unchecked Sendable {
     }
 
     func handleBinary(_ data: Data) {
-        guard isCurrentOwner() else { return }
-        write(data)
+        if isCurrentOwner() {
+            write(data)
+            return
+        }
+
+        let snapshot = ownershipStore.snapshot(sessionName: sessionName)
+        guard snapshot.isOwnerless else { return }
+        let grid = snapshot.grid
+        ensureAttached(kind: currentKind() ?? defaultKind, grid: grid)
+
+        if isCurrentOwner() {
+            acceptOwnerGrid(grid)
+            write(data)
+            return
+        }
+
+        let result = ownershipStore.claimOwner(
+            sessionName: sessionName,
+            clientID: clientID,
+            kind: currentKind() ?? defaultKind,
+            grid: grid,
+            fallbackGrid: grid
+        )
+        if result.accepted {
+            acceptOwnerGrid(result.snapshot.grid)
+            broadcaster.broadcast(result.snapshot)
+            write(data)
+        } else {
+            broadcaster.broadcast(result.snapshot)
+        }
     }
 
     func handlePTYSize(cols: UInt16, rows: UInt16) {
@@ -193,7 +223,7 @@ internal final class WebSocketBridgeCoordinator: @unchecked Sendable {
         if isCurrentOwner(), currentLastAcceptedOwnerGrid() == grid {
             broadcaster.broadcast(snapshot)
         } else {
-            sendText(WebControlEnvelope.ownership(snapshot).encoded())
+            sendOwnershipSnapshot(snapshot)
         }
     }
 
@@ -317,6 +347,37 @@ internal final class WebSocketBridgeCoordinator: @unchecked Sendable {
     private func noteAcceptedOwnerGridIfCurrentOwner(snapshot: DisplayOwnershipSnapshot) {
         guard snapshot.ownerClientID == clientID else { return }
         acceptOwnerGrid(snapshot.grid)
+    }
+
+    private func sendOwnershipSnapshot(_ snapshot: DisplayOwnershipSnapshot) {
+        sendText(WebControlEnvelope.ownership(localizedSnapshot(snapshot)).encoded())
+    }
+
+    private func localizedSnapshot(_ snapshot: DisplayOwnershipSnapshot) -> DisplayOwnershipSnapshot {
+        guard let ownerClientID = snapshot.ownerClientID else { return snapshot }
+        let protocolClientID = currentProtocolClientID()
+        let localizedOwnerID: DisplayClientID
+        if ownerClientID == clientID {
+            localizedOwnerID = protocolClientID ?? ownerClientID
+        } else if ownerClientID == protocolClientID {
+            localizedOwnerID = DisplayClientID("remote-owner:\(ownerClientID.rawValue)")
+        } else {
+            localizedOwnerID = ownerClientID
+        }
+
+        return try! DisplayOwnershipSnapshot(
+            sessionName: snapshot.sessionName,
+            ownerClientID: localizedOwnerID,
+            ownerKind: snapshot.ownerKind,
+            grid: snapshot.grid,
+            epoch: snapshot.epoch
+        )
+    }
+
+    private func currentProtocolClientID() -> DisplayClientID? {
+        lock.lock()
+        defer { lock.unlock() }
+        return boundProtocolClientID
     }
 }
 
