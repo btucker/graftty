@@ -95,10 +95,16 @@ public final class SessionClient {
     private var lastIOSViewport: (cols: UInt16, rows: UInt16)?
     @ObservationIgnored
     private var displayClientID: DisplayClientID = SessionClient.makeDisplayClientID()
+    @ObservationIgnored
+    private var ownershipTransportMode: OwnershipTransportMode = .pending
 
     public var isOwner: Bool {
         guard role != .preview else { return false }
+        if ownershipTransportMode == .legacy {
+            return true
+        }
         return ownershipSnapshot?.ownerClientID == displayClientID
+            && ownershipSnapshot?.ownerKind == .ios
     }
 
     public var isFollower: Bool {
@@ -124,6 +130,12 @@ public final class SessionClient {
 
     nonisolated private static func makeDisplayClientID() -> DisplayClientID {
         DisplayClientID(UUID().uuidString)
+    }
+
+    private enum OwnershipTransportMode: Sendable {
+        case pending
+        case webControl
+        case legacy
     }
 
     public enum ArrowDirection: Sendable {
@@ -247,8 +259,14 @@ public final class SessionClient {
             let next = CGFloat(viewport.cellWidthPixels) / displayScale
             if cellWidthPoints != next { cellWidthPoints = next }
         }
-        if isOwner, let epoch = ownershipSnapshot?.epoch {
+        switch ownershipTransportMode {
+        case .webControl where isOwner:
+            guard let epoch = ownershipSnapshot?.epoch else { return }
             sendOwnerResizeToServer(cols: cols, rows: rows, epoch: epoch)
+        case .legacy:
+            sendLegacyResizeToServer(cols: cols, rows: rows)
+        case .pending, .webControl:
+            break
         }
     }
 
@@ -337,6 +355,8 @@ public final class SessionClient {
                     return nil
                 }
                 self.displayClientID = Self.makeDisplayClientID()
+                self.ownershipSnapshot = nil
+                self.ownershipTransportMode = client.supportsWebControlTextFrames ? .webControl : .legacy
                 self.setWS(client)
                 await self.sendHelloIfSupported(on: client)
                 return client
@@ -406,7 +426,15 @@ public final class SessionClient {
     }
 
     private var acceptsPTYInput: Bool {
-        role != .preview && isOwner
+        guard role != .preview else { return false }
+        switch ownershipTransportMode {
+        case .webControl:
+            return isOwner
+        case .legacy:
+            return true
+        case .pending:
+            return false
+        }
     }
 
     @MainActor
@@ -504,6 +532,8 @@ public final class SessionClient {
         idleWatchdogTask = nil
         currentWS()?.close()
         setWS(nil)
+        ownershipTransportMode = .pending
+        ownershipSnapshot = nil
     }
 
     public func forceReconnectNow() {
@@ -512,6 +542,8 @@ public final class SessionClient {
         setWSReadyTask(nil)
         currentWS()?.close()
         setWS(nil)
+        ownershipTransportMode = .pending
+        ownershipSnapshot = nil
         receiveTask?.cancel()
         receiveTask = nil
         self.start()
@@ -547,6 +579,14 @@ public final class SessionClient {
                 cols: Int(cols),
                 rows: Int(rows)
             )
+        }
+    }
+
+    private func sendLegacyResizeToServer(cols: UInt16, rows: UInt16) {
+        Task { [weak self] in
+            guard let self else { return }
+            guard let ws = await self.awaitWS(), !ws.supportsWebControlTextFrames else { return }
+            await ws.resize(cols: Int(cols), rows: Int(rows))
         }
     }
 

@@ -63,6 +63,30 @@ struct SessionClientTests {
         }
     }
 
+    final class LegacyWS: WebSocketClient, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _sent: [WebSocketFrame] = []
+        private var _resizes: [(cols: Int, rows: Int)] = []
+        var sent: [WebSocketFrame] { lock.withLock { _sent } }
+        var resizes: [(cols: Int, rows: Int)] { lock.withLock { _resizes } }
+        var closed = false
+
+        func send(_ frame: WebSocketFrame) async throws {
+            lock.withLock { _sent.append(frame) }
+        }
+
+        func receive() async throws -> WebSocketFrame {
+            try await Task.sleep(nanoseconds: 10_000_000_000)
+            throw CancellationError()
+        }
+
+        func close() { closed = true }
+
+        func resize(cols: Int, rows: Int) async {
+            lock.withLock { _resizes.append((cols, rows)) }
+        }
+    }
+
     private func textFrames(_ ws: FakeWS) -> [String] {
         ws.sent.compactMap { frame in
             if case let .text(text) = frame { return text }
@@ -75,6 +99,13 @@ struct SessionClientTests {
     }
 
     private func binaryFrames(_ ws: FakeWS) -> [Data] {
+        ws.sent.compactMap { frame in
+            if case let .binary(data) = frame { return data }
+            return nil
+        }
+    }
+
+    private func binaryFrames(_ ws: LegacyWS) -> [Data] {
         ws.sent.compactMap { frame in
             if case let .binary(data) = frame { return data }
             return nil
@@ -567,6 +598,54 @@ struct SessionClientTests {
             return false
         }
         #expect(ownerResize == .ownerResize(clientID: clientID, epoch: 42, cols: 100, rows: 30))
+    }
+
+    @Test
+    func legacyTransportSendsInputAndWindowChangeWithoutOwnershipSnapshot() async throws {
+        let ws = LegacyWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        client.sendSoftwareKeyboardText("abc")
+        primeViewport(client, columns: 132, rows: 44)
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(client.isOwner)
+        #expect(binaryFrames(ws).contains(Data("abc".utf8)))
+        #expect(ws.resizes.contains { $0.cols == 132 && $0.rows == 44 })
+    }
+
+    @Test
+    func ownershipRequiresMatchingIOSKind() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let clientID = try #require(firstHelloClientID(ws))
+        let snapshot = try ownershipSnapshot(
+            ownerClientID: clientID,
+            ownerKind: .web,
+            cols: 80,
+            rows: 24,
+            epoch: 9
+        )
+        client.handleTextFrame(WebControlEnvelope.ownership(snapshot).encoded())
+
+        client.sendSoftwareKeyboardText("blocked")
+        primeViewport(client, columns: 100, rows: 30)
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(!client.isOwner)
+        #expect(client.isFollower)
+        #expect(binaryFrames(ws).isEmpty)
+        let ownerResizeCount = envelopes(ws).filter {
+            if case .ownerResize = $0 { return true }
+            return false
+        }.count
+        #expect(ownerResizeCount == 0)
     }
 
     @Test
