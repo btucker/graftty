@@ -2,6 +2,17 @@ import { useEffect, useRef, useState } from 'react';
 import { init, Terminal } from 'ghostty-web';
 
 type Status = 'connecting' | 'reconnecting' | 'disconnected' | 'error' | string;
+type DisplayClientKind = 'web' | 'mac' | 'ios' | 'preview';
+type OwnershipSnapshot = {
+  sessionName: string;
+  ownerClientID: string | null;
+  ownerKind: DisplayClientKind | null;
+  grid: { cols: number; rows: number };
+  epoch: number;
+  ownerless: boolean;
+};
+
+const WEB_CLIENT_KIND: DisplayClientKind = 'web';
 
 // ghostty-web's bundled FitAddon reserves 15px on the right for a native
 // vertical scrollbar (proposeDimensions subtracts a hard-coded constant).
@@ -19,6 +30,35 @@ function fitTerminal(term: Terminal, host: HTMLElement): void {
 }
 
 const textEncoder = new TextEncoder();
+
+function generateWebClientID(): string {
+  const randomID = globalThis.crypto?.randomUUID?.()
+    ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `web-${randomID}`;
+}
+
+function parseOwnershipSnapshot(value: unknown): OwnershipSnapshot | null {
+  if (!value || typeof value !== 'object') return null;
+  const snapshot = value as Record<string, unknown>;
+  const grid = snapshot.grid as Record<string, unknown> | undefined;
+  if (!grid || typeof grid !== 'object') return null;
+  if (typeof grid.cols !== 'number' || typeof grid.rows !== 'number') return null;
+  if (typeof snapshot.sessionName !== 'string') return null;
+  if (typeof snapshot.epoch !== 'number') return null;
+
+  const ownerClientID = typeof snapshot.ownerClientID === 'string' ? snapshot.ownerClientID : null;
+  const ownerKind = typeof snapshot.ownerKind === 'string' ? snapshot.ownerKind as DisplayClientKind : null;
+  if ((ownerClientID == null) !== (ownerKind == null)) return null;
+
+  return {
+    sessionName: snapshot.sessionName,
+    ownerClientID,
+    ownerKind,
+    grid: { cols: grid.cols, rows: grid.rows },
+    epoch: snapshot.epoch,
+    ownerless: typeof snapshot.ownerless === 'boolean' ? snapshot.ownerless : ownerClientID == null,
+  };
+}
 
 // ghostty-web's `init()` loads the inlined WASM once into a process-wide
 // Ghostty instance. Memoize the promise so parallel pane mounts don't race.
@@ -41,13 +81,42 @@ function nextBackoffMs(attempt: number): number {
 
 export function TerminalPane({ sessionName }: { sessionName: string }) {
   const [status, setStatus] = useState<Status>('connecting');
+  const [activeClientID, setActiveClientID] = useState<string | null>(null);
+  const [ownershipSnapshot, setOwnershipSnapshot] = useState<OwnershipSnapshot | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
+  const connectionRef = useRef<{ ws: WebSocket | null; clientID: string | null }>({ ws: null, clientID: null });
+  const ownershipRef = useRef<OwnershipSnapshot | null>(null);
+  const isOwnerRef = useRef(false);
+
+  const isOwner = ownershipSnapshot?.ownerClientID === activeClientID
+    && ownershipSnapshot?.ownerKind === WEB_CLIENT_KIND;
+  const canTakeControl = ownershipSnapshot !== null && activeClientID !== null && !isOwner;
+
+  const sendTakeControl = () => {
+    const { ws, clientID } = connectionRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !clientID) return;
+    const term = termRef.current;
+    const fallbackGrid = ownershipRef.current?.grid;
+    ws.send(JSON.stringify({
+      type: 'takeControl',
+      clientID,
+      kind: WEB_CLIENT_KIND,
+      cols: term?.cols ?? fallbackGrid?.cols ?? 80,
+      rows: term?.rows ?? fallbackGrid?.rows ?? 24,
+    }));
+  };
 
   useEffect(() => {
     let disposed = false;
     const host = hostRef.current;
     if (!host) return;
+    setStatus('connecting');
+    setActiveClientID(null);
+    setOwnershipSnapshot(null);
+    connectionRef.current = { ws: null, clientID: null };
+    ownershipRef.current = null;
+    isOwnerRef.current = false;
 
     // One AbortController cleans up every listener and observer this
     // effect registers — touch gestures, visualViewport tracking,
@@ -69,6 +138,55 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
       return `${proto}//${window.location.host}/ws?session=${encodeURIComponent(sessionName)}`;
     })();
 
+    const currentGrid = () => {
+      const term = termRef.current;
+      if (term) return { cols: term.cols, rows: term.rows };
+      return ownershipRef.current?.grid ?? { cols: 80, rows: 24 };
+    };
+
+    const recomputeOwner = () => {
+      const snapshot = ownershipRef.current;
+      const clientID = connectionRef.current.clientID;
+      isOwnerRef.current = Boolean(
+        snapshot
+          && clientID
+          && snapshot.ownerClientID === clientID
+          && snapshot.ownerKind === WEB_CLIENT_KIND,
+      );
+    };
+
+    const setActiveConnection = (ws: WebSocket, clientID: string) => {
+      connectionRef.current = { ws, clientID };
+      setActiveClientID(clientID);
+      recomputeOwner();
+    };
+
+    const clearActiveConnection = (ws: WebSocket) => {
+      if (connectionRef.current.ws !== ws) return;
+      connectionRef.current = { ws: null, clientID: null };
+      setActiveClientID(null);
+      recomputeOwner();
+    };
+
+    const updateOwnership = (snapshot: OwnershipSnapshot) => {
+      ownershipRef.current = snapshot;
+      recomputeOwner();
+      setOwnershipSnapshot(snapshot);
+    };
+
+    const sendHello = (ws: WebSocket, clientID: string) => {
+      const { cols, rows } = currentGrid();
+      ws.send(JSON.stringify({
+        type: 'hello',
+        clientID,
+        kind: WEB_CLIENT_KIND,
+        role: 'interactive',
+        visible: true,
+        cols,
+        rows,
+      }));
+    };
+
     // Send `data` through whatever WebSocket is currently open. Called
     // by the Terminal's `onData` callback — that callback is bound
     // exactly once to the Terminal, so it captures `currentWs` by
@@ -77,14 +195,16 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
     // silently; the user sees "reconnecting…" in the status strip so
     // the drop is visible.
     const sendBytes = (data: string) => {
-      if (currentWs && currentWs.readyState === WebSocket.OPEN) {
+      if (isOwnerRef.current && currentWs && currentWs.readyState === WebSocket.OPEN) {
         currentWs.send(textEncoder.encode(data));
       }
     };
 
-    const sendResize = (cols: number, rows: number) => {
-      if (currentWs && currentWs.readyState === WebSocket.OPEN) {
-        currentWs.send(JSON.stringify({ type: 'resize', cols, rows }));
+    const sendOwnerResize = (cols: number, rows: number) => {
+      const clientID = connectionRef.current.clientID;
+      const epoch = ownershipRef.current?.epoch;
+      if (isOwnerRef.current && clientID && epoch != null && currentWs && currentWs.readyState === WebSocket.OPEN) {
+        currentWs.send(JSON.stringify({ type: 'ownerResize', clientID, epoch, cols, rows }));
       }
     };
 
@@ -93,19 +213,15 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 
       const ws = new WebSocket(wsUrl);
+      const clientID = generateWebClientID();
       ws.binaryType = 'arraybuffer';
       currentWs = ws;
+      setActiveConnection(ws, clientID);
 
       ws.onopen = () => {
         attempt = 0;
         setStatus(sessionName);
-        // Resend current dimensions on every (re)connect so the
-        // fresh `zmx attach` child's PTY matches the terminal grid
-        // — without this the server-side PTY defaults to 80x24 and
-        // shell output would wrap wrong until the next resize.
-        if (termReady && termRef.current) {
-          sendResize(termRef.current.cols, termRef.current.rows);
-        }
+        sendHello(ws, clientID);
       };
 
       ws.onmessage = (ev) => {
@@ -135,7 +251,10 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
         } else {
           try {
             const msg = JSON.parse(String(ev.data));
-            if (msg?.type === 'error' || msg?.type === 'sessionEnded') {
+            if (msg?.type === 'ownership') {
+              const snapshot = parseOwnershipSnapshot(msg.snapshot);
+              if (snapshot) updateOwnership(snapshot);
+            } else if (msg?.type === 'error' || msg?.type === 'sessionEnded') {
               setStatus(msg.message || msg.type);
             }
           } catch {
@@ -153,6 +272,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
       ws.onclose = () => {
         if (disposed) return;
         currentWs = null;
+        clearActiveConnection(ws);
         setStatus('reconnecting');
         const delay = nextBackoffMs(attempt);
         attempt += 1;
@@ -285,18 +405,17 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
         host.addEventListener('touchcancel', onTouchEnd, { signal });
 
         term.onData((data) => sendBytes(data));
-        term.onResize(({ cols, rows }) => sendResize(cols, rows));
+        term.onResize(({ cols, rows }) => sendOwnerResize(cols, rows));
 
         termReady = true;
         termRef.current = term;
         term.focus();
 
-        // fitTerminal already called resize() above, so onResize fired
-        // synchronously. Push once more to cover the ws-not-yet-open
-        // case: onopen will also call sendResize with the current
-        // dimensions, but doing it here catches a ws that was already
-        // OPEN by the time wasm finished loading.
-        sendResize(term.cols, term.rows);
+        // fitTerminal already called resize() above before onResize was
+        // registered. If ownership was established while WASM loaded,
+        // push the fitted grid now; otherwise the hello/snapshot flow
+        // will establish ownership before later resizes are forwarded.
+        sendOwnerResize(term.cols, term.rows);
       })
       .catch((err) => {
         if (!disposed) setStatus(`wasm init failed: ${err?.message ?? err}`);
@@ -319,6 +438,9 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
         currentWs.close();
         currentWs = null;
       }
+      connectionRef.current = { ws: null, clientID: null };
+      setActiveClientID(null);
+      isOwnerRef.current = false;
       termRef.current?.dispose();
       termRef.current = null;
     };
@@ -327,6 +449,11 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
   return (
     <>
       <div id="status">{status}</div>
+      {canTakeControl ? (
+        <button id="take-control" type="button" onClick={sendTakeControl}>
+          Take Control
+        </button>
+      ) : null}
       <div id="term" ref={hostRef} />
     </>
   );
