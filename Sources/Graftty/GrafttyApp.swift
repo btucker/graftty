@@ -137,6 +137,9 @@ final class AppServices {
     /// web (/ws) and SSH-over-WebRTC attach paths; consulted by Mac pane
     /// backends to scope the IOS-12.1 silent gate to multi-device sessions.
     let remoteAttachmentRegistry: RemoteAttachmentRegistry
+    /// Process-wide display ownership state shared by web/iOS bridge
+    /// connections and, once wired, native Mac panes.
+    let displayOwnershipStore: SessionDisplayOwnershipStore
     let teamInbox: TeamInbox
     let teamEventDispatcher: TeamEventDispatcher
     var worktreeMonitorBridge: WorktreeMonitorBridge?
@@ -188,6 +191,7 @@ final class AppServices {
         self.prStatusStore = PRStatusStore(remoteBranchStore: remoteBranchStore)
         self.claudeSessionRegistry = ClaudeSessionRegistry()
         self.remoteAttachmentRegistry = RemoteAttachmentRegistry()
+        self.displayOwnershipStore = SessionDisplayOwnershipStore()
 
         // Lift the team inbox up here so the request handler
         // (`teamInboxRequestHandler()`) and the dispatcher share one
@@ -300,7 +304,8 @@ struct GrafttyApp: App {
 
         let socketPath = AppState.defaultDirectory.appendingPathComponent("graftty.sock").path
         _terminalManager = StateObject(wrappedValue: TerminalManager(socketPath: socketPath))
-        services = AppServices(socketPath: socketPath)
+        let appServices = AppServices(socketPath: socketPath)
+        services = appServices
 
         // Web access server — reconstruct the same zmx paths that `startup()`
         // computes so the WebServerController's child `zmx attach` invocations
@@ -319,7 +324,8 @@ struct GrafttyApp: App {
         _webController = StateObject(wrappedValue: WebServerController(
             settings: WebAccessSettings.shared,
             zmxExecutable: zmxExe,
-            zmxDir: zmxDir
+            zmxDir: zmxDir,
+            displayOwnershipStore: appServices.displayOwnershipStore
         ))
         _updaterController = StateObject(wrappedValue: UpdaterController())
 
@@ -331,10 +337,10 @@ struct GrafttyApp: App {
         let hostIdentityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
         let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
         do {
-            services.hostAgent = WebRTCHostAgent(
+            appServices.hostAgent = WebRTCHostAgent(
                 hostKey: try hostIdentityStore.loadOrGenerateAndPersist(),
                 trustedPeerStore: trustedPeerStore,
-                streamFactory: { [registry = services.remoteAttachmentRegistry] sessionName in
+                streamFactory: { [registry = appServices.remoteAttachmentRegistry] sessionName in
                     try ZmxAttachStream(
                         zmxExecutable: zmxExe,
                         zmxDir: zmxDir,

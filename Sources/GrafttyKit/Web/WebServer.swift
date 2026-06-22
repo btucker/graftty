@@ -5,6 +5,321 @@ import NIOSSL
 import NIOWebSocket
 import GrafttyProtocol
 
+internal final class WebDisplayOwnershipBroadcaster: @unchecked Sendable {
+    internal final class Registration: @unchecked Sendable {
+        private let onCancel: () -> Void
+        private let lock = NSLock()
+        private var cancelled = false
+
+        init(onCancel: @escaping () -> Void) {
+            self.onCancel = onCancel
+        }
+
+        func cancel() {
+            lock.lock()
+            if cancelled {
+                lock.unlock()
+                return
+            }
+            cancelled = true
+            lock.unlock()
+            onCancel()
+        }
+
+        deinit {
+            cancel()
+        }
+    }
+
+    private struct Subscriber {
+        let clientID: DisplayClientID
+        let send: @Sendable (DisplayOwnershipSnapshot) -> Void
+    }
+
+    private let lock = NSLock()
+    private var subscribers: [String: [UUID: Subscriber]] = [:]
+
+    func register(
+        sessionName: String,
+        clientID: DisplayClientID,
+        send: @escaping @Sendable (DisplayOwnershipSnapshot) -> Void
+    ) -> Registration {
+        let id = UUID()
+        lock.lock()
+        var sessionSubscribers = subscribers[sessionName] ?? [:]
+        sessionSubscribers[id] = Subscriber(clientID: clientID, send: send)
+        subscribers[sessionName] = sessionSubscribers
+        lock.unlock()
+
+        return Registration { [weak self] in
+            self?.unregister(sessionName: sessionName, id: id)
+        }
+    }
+
+    func broadcast(_ snapshot: DisplayOwnershipSnapshot) {
+        lock.lock()
+        let sends = subscribers[snapshot.sessionName]?.values.map(\.send) ?? []
+        lock.unlock()
+
+        for send in sends {
+            send(snapshot)
+        }
+    }
+
+    private func unregister(sessionName: String, id: UUID) {
+        lock.lock()
+        if var sessionSubscribers = subscribers[sessionName] {
+            sessionSubscribers.removeValue(forKey: id)
+            subscribers[sessionName] = sessionSubscribers.isEmpty ? nil : sessionSubscribers
+        }
+        lock.unlock()
+    }
+}
+
+internal final class WebSocketBridgeCoordinator: @unchecked Sendable {
+    private let sessionName: String
+    private let clientID: DisplayClientID
+    private let defaultKind: DisplayClientKind
+    private let ownershipStore: SessionDisplayOwnershipStore
+    private let broadcaster: WebDisplayOwnershipBroadcaster
+    private let sendText: @Sendable (String) -> Void
+    private let resize: @Sendable (UInt16, UInt16) -> Void
+    private let write: @Sendable (Data) -> Void
+    private let lock = NSLock()
+
+    private var registration: WebDisplayOwnershipBroadcaster.Registration?
+    private var boundProtocolClientID: DisplayClientID?
+    private var attachedKind: DisplayClientKind?
+    private var attached = false
+    private var detached = false
+    private var lastAcceptedOwnerGrid: DisplayGrid?
+
+    init(
+        sessionName: String,
+        clientID: DisplayClientID,
+        defaultKind: DisplayClientKind,
+        ownershipStore: SessionDisplayOwnershipStore,
+        broadcaster: WebDisplayOwnershipBroadcaster,
+        sendText: @escaping @Sendable (String) -> Void,
+        resize: @escaping @Sendable (UInt16, UInt16) -> Void,
+        write: @escaping @Sendable (Data) -> Void
+    ) {
+        self.sessionName = sessionName
+        self.clientID = clientID
+        self.defaultKind = defaultKind
+        self.ownershipStore = ownershipStore
+        self.broadcaster = broadcaster
+        self.sendText = sendText
+        self.resize = resize
+        self.write = write
+        self.registration = broadcaster.register(sessionName: sessionName, clientID: clientID) { snapshot in
+            sendText(WebControlEnvelope.ownership(snapshot).encoded())
+        }
+    }
+
+    deinit {
+        detach()
+    }
+
+    func handleControl(_ envelope: WebControlEnvelope) {
+        switch envelope {
+        case let .hello(protocolClientID, kind, role, visible, cols, rows):
+            guard bindOrVerify(protocolClientID: protocolClientID) else { return }
+            let grid = try! DisplayGrid(cols: cols, rows: rows)
+            lock.lock()
+            attached = true
+            attachedKind = kind
+            lock.unlock()
+            let snapshot = ownershipStore.attachClient(
+                sessionName: sessionName,
+                clientID: clientID,
+                kind: kind,
+                role: role,
+                visible: visible,
+                grid: grid
+            )
+            noteAcceptedOwnerGridIfCurrentOwner(snapshot: snapshot)
+            broadcaster.broadcast(snapshot)
+
+        case let .takeControl(protocolClientID, kind, cols, rows):
+            guard bindOrVerify(protocolClientID: protocolClientID) else { return }
+            ensureAttached(kind: kind, grid: try! DisplayGrid(cols: cols, rows: rows))
+            let grid = try! DisplayGrid(cols: cols, rows: rows)
+            let result = ownershipStore.claimOwner(
+                sessionName: sessionName,
+                clientID: clientID,
+                kind: kind,
+                grid: grid,
+                fallbackGrid: grid
+            )
+            if result.accepted {
+                acceptOwnerGrid(grid)
+                resize(cols, rows)
+            }
+            broadcaster.broadcast(result.snapshot)
+
+        case let .ownerResize(protocolClientID, epoch, cols, rows):
+            guard bindOrVerify(protocolClientID: protocolClientID) else { return }
+            let grid = try! DisplayGrid(cols: cols, rows: rows)
+            let result = ownershipStore.ownerResize(
+                sessionName: sessionName,
+                clientID: clientID,
+                epoch: epoch,
+                grid: grid
+            )
+            if result.accepted {
+                acceptOwnerGrid(grid)
+                resize(cols, rows)
+            }
+            broadcaster.broadcast(result.snapshot)
+
+        case let .resize(cols, rows):
+            handleLegacyResize(cols: cols, rows: rows)
+
+        case .grid, .ownership:
+            break
+        }
+    }
+
+    func handleBinary(_ data: Data) {
+        guard isCurrentOwner() else { return }
+        write(data)
+    }
+
+    func handlePTYSize(cols: UInt16, rows: UInt16) {
+        guard let grid = try? DisplayGrid(cols: cols, rows: rows) else { return }
+        sendText(WebControlEnvelope.grid(cols: cols, rows: rows).encoded())
+        let snapshot = ownershipStore.snapshot(sessionName: sessionName, fallbackGrid: grid)
+        if isCurrentOwner(), currentLastAcceptedOwnerGrid() == grid {
+            broadcaster.broadcast(snapshot)
+        } else {
+            sendText(WebControlEnvelope.ownership(snapshot).encoded())
+        }
+    }
+
+    func detach() {
+        lock.lock()
+        if detached {
+            lock.unlock()
+            return
+        }
+        detached = true
+        let wasAttached = attached
+        let fallbackGrid = lastAcceptedOwnerGrid
+        let registration = self.registration
+        self.registration = nil
+        lock.unlock()
+
+        registration?.cancel()
+        guard wasAttached else { return }
+        let snapshot = ownershipStore.detachClient(
+            sessionName: sessionName,
+            clientID: clientID,
+            fallbackGrid: fallbackGrid ?? .daemonFallback
+        )
+        broadcaster.broadcast(snapshot)
+    }
+
+    private func handleLegacyResize(cols: UInt16, rows: UInt16) {
+        let grid = try! DisplayGrid(cols: cols, rows: rows)
+        let kind = currentKind() ?? defaultKind
+        ensureAttached(kind: kind, grid: grid)
+
+        let snapshot = ownershipStore.snapshot(sessionName: sessionName, fallbackGrid: grid)
+        if snapshot.ownerClientID == clientID {
+            let result = ownershipStore.ownerResize(
+                sessionName: sessionName,
+                clientID: clientID,
+                epoch: snapshot.epoch,
+                grid: grid
+            )
+            if result.accepted {
+                acceptOwnerGrid(grid)
+                resize(cols, rows)
+            }
+            broadcaster.broadcast(result.snapshot)
+            return
+        }
+
+        guard snapshot.isOwnerless else {
+            broadcaster.broadcast(snapshot)
+            return
+        }
+
+        let result = ownershipStore.claimOwner(
+            sessionName: sessionName,
+            clientID: clientID,
+            kind: kind,
+            grid: grid,
+            fallbackGrid: grid
+        )
+        if result.accepted {
+            acceptOwnerGrid(grid)
+            resize(cols, rows)
+        }
+        broadcaster.broadcast(result.snapshot)
+    }
+
+    private func ensureAttached(kind: DisplayClientKind, grid: DisplayGrid) {
+        lock.lock()
+        if attached {
+            lock.unlock()
+            return
+        }
+        attached = true
+        attachedKind = kind
+        lock.unlock()
+        let snapshot = ownershipStore.attachClient(
+            sessionName: sessionName,
+            clientID: clientID,
+            kind: kind,
+            role: .interactive,
+            visible: true,
+            grid: grid
+        )
+        noteAcceptedOwnerGridIfCurrentOwner(snapshot: snapshot)
+        broadcaster.broadcast(snapshot)
+    }
+
+    private func bindOrVerify(protocolClientID: DisplayClientID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if protocolClientID == clientID { return true }
+        if let boundProtocolClientID {
+            return boundProtocolClientID == protocolClientID
+        }
+        boundProtocolClientID = protocolClientID
+        return true
+    }
+
+    private func currentKind() -> DisplayClientKind? {
+        lock.lock()
+        defer { lock.unlock() }
+        return attachedKind
+    }
+
+    private func isCurrentOwner() -> Bool {
+        ownershipStore.snapshot(sessionName: sessionName).ownerClientID == clientID
+    }
+
+    private func acceptOwnerGrid(_ grid: DisplayGrid) {
+        lock.lock()
+        lastAcceptedOwnerGrid = grid
+        lock.unlock()
+    }
+
+    private func currentLastAcceptedOwnerGrid() -> DisplayGrid? {
+        lock.lock()
+        defer { lock.unlock() }
+        return lastAcceptedOwnerGrid
+    }
+
+    private func noteAcceptedOwnerGridIfCurrentOwner(snapshot: DisplayOwnershipSnapshot) {
+        guard snapshot.ownerClientID == clientID else { return }
+        acceptOwnerGrid(snapshot.grid)
+    }
+}
+
 /// HTTP + WebSocket server for Phase 2 web access. Binds to each
 /// Tailscale IP (plus 127.0.0.1), serves static assets at `/`,
 /// upgrades `/ws?session=<name>` to WebSocket, and gates both
@@ -197,6 +512,11 @@ public final class WebServer {
         /// registers its zmx attach so Mac panes know a remote client
         /// is present. Nil (tests, early boot) disables tracking.
         public let remoteAttachmentRegistry: RemoteAttachmentRegistry?
+        /// Shared owner gate for web/iOS display control. Production
+        /// injects the process-wide store so WebSocket bridges do not
+        /// split ownership state from native panes once those are wired.
+        public let displayOwnershipStore: SessionDisplayOwnershipStore
+        internal let ownershipBroadcaster: WebDisplayOwnershipBroadcaster
 
         public init(
             port: Int,
@@ -210,7 +530,8 @@ public final class WebServer {
             ghosttyConfigProvider: @escaping @Sendable () async -> String = { "" },
             worktreePanesProvider: @escaping @Sendable () async -> [WorktreePanes] = { [] },
             signalingHandler: (@Sendable (SignalingOffer) async -> SignalingHandlerOutcome)? = nil,
-            remoteAttachmentRegistry: RemoteAttachmentRegistry? = nil
+            remoteAttachmentRegistry: RemoteAttachmentRegistry? = nil,
+            displayOwnershipStore: SessionDisplayOwnershipStore = SessionDisplayOwnershipStore()
         ) {
             self.port = port
             self.zmxExecutable = zmxExecutable
@@ -224,6 +545,8 @@ public final class WebServer {
             self.worktreePanesProvider = worktreePanesProvider
             self.signalingHandler = signalingHandler
             self.remoteAttachmentRegistry = remoteAttachmentRegistry
+            self.displayOwnershipStore = displayOwnershipStore
+            self.ownershipBroadcaster = WebDisplayOwnershipBroadcaster()
         }
 
         /// Accepts the range NIO's `bootstrap.bind(host:port:)` will accept
@@ -413,7 +736,10 @@ public final class WebServer {
                         zmxExecutable: config.zmxExecutable,
                         zmxDir: config.zmxDir,
                         workingDirectory: worktreePath.map { URL(fileURLWithPath: $0, isDirectory: true) },
-                        remoteAttachmentRegistry: config.remoteAttachmentRegistry
+                        remoteAttachmentRegistry: config.remoteAttachmentRegistry,
+                        ownershipStore: config.displayOwnershipStore,
+                        ownershipBroadcaster: config.ownershipBroadcaster,
+                        defaultKind: Self.declaredDisplayClientKind(from: head)
                     )
                     return channel.pipeline.addHandler(wsHandler)
                 }
@@ -430,6 +756,26 @@ public final class WebServer {
             }
         }
         return ""
+    }
+
+    private static func declaredDisplayClientKind(from head: HTTPRequestHead) -> DisplayClientKind {
+        if head.headers.first(name: "X-Graftty-Client-Kind")?.lowercased() == "ios" {
+            return .ios
+        }
+        if head.headers.first(name: "User-Agent")?.localizedCaseInsensitiveContains("GrafttyMobile") == true {
+            return .ios
+        }
+        guard let q = head.uri.split(separator: "?").dropFirst().first else { return .web }
+        for pair in q.split(separator: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard kv.count == 2 else { continue }
+            let key = String(kv[0]).removingPercentEncoding ?? String(kv[0])
+            let value = (String(kv[1]).removingPercentEncoding ?? String(kv[1])).lowercased()
+            if (key == "client" || key == "kind" || key == "clientKind"), value == "ios" {
+                return .ios
+            }
+        }
+        return .web
     }
 
     // MARK: - HTTP handler
@@ -959,25 +1305,60 @@ public final class WebServer {
         /// TERM-11.5: handed to each WebSession before `start()` so the
         /// session registers its zmx attach (and deregisters on close).
         let remoteAttachmentRegistry: RemoteAttachmentRegistry?
+        let ownershipStore: SessionDisplayOwnershipStore
+        let ownershipBroadcaster: WebDisplayOwnershipBroadcaster
+        let defaultKind: DisplayClientKind
+        let clientID: DisplayClientID
         private var session: WebSession?
         private weak var channel: Channel?
+        private var coordinator: WebSocketBridgeCoordinator?
 
         init(
             sessionName: String,
             zmxExecutable: URL,
             zmxDir: URL,
             workingDirectory: URL?,
-            remoteAttachmentRegistry: RemoteAttachmentRegistry?
+            remoteAttachmentRegistry: RemoteAttachmentRegistry?,
+            ownershipStore: SessionDisplayOwnershipStore,
+            ownershipBroadcaster: WebDisplayOwnershipBroadcaster,
+            defaultKind: DisplayClientKind
         ) {
             self.sessionName = sessionName
             self.zmxExecutable = zmxExecutable
             self.zmxDir = zmxDir
             self.workingDirectory = workingDirectory
             self.remoteAttachmentRegistry = remoteAttachmentRegistry
+            self.ownershipStore = ownershipStore
+            self.ownershipBroadcaster = ownershipBroadcaster
+            self.defaultKind = defaultKind
+            self.clientID = DisplayClientID("websocket-\(UUID().uuidString)")
         }
 
         func handlerAdded(context: ChannelHandlerContext) {
             channel = context.channel
+            let bridge = WebSocketBridgeCoordinator(
+                sessionName: sessionName,
+                clientID: clientID,
+                defaultKind: defaultKind,
+                ownershipStore: ownershipStore,
+                broadcaster: ownershipBroadcaster,
+                sendText: { [weak channel = context.channel] payload in
+                    guard let channel else { return }
+                    channel.eventLoop.execute {
+                        var buf = channel.allocator.buffer(capacity: payload.utf8.count)
+                        buf.writeString(payload)
+                        let frame = WebSocketFrame(fin: true, opcode: .text, data: buf)
+                        channel.writeAndFlush(frame, promise: nil)
+                    }
+                },
+                resize: { [weak self] cols, rows in
+                    self?.session?.resize(cols: cols, rows: rows)
+                },
+                write: { [weak self] data in
+                    self?.session?.write(data)
+                }
+            )
+            coordinator = bridge
             let sess = WebSession(config: WebSession.Config(
                 zmxExecutable: zmxExecutable,
                 zmxDir: zmxDir,
@@ -1006,14 +1387,7 @@ public final class WebServer {
                 }
             }
             sess.onPTYSize = { [weak self] cols, rows in
-                guard let self, let channel = self.channel else { return }
-                let payload = WebControlEnvelope.grid(cols: cols, rows: rows).encoded()
-                channel.eventLoop.execute {
-                    var buf = channel.allocator.buffer(capacity: payload.utf8.count)
-                    buf.writeString(payload)
-                    let frame = WebSocketFrame(fin: true, opcode: .text, data: buf)
-                    channel.writeAndFlush(frame, promise: nil)
-                }
+                self?.coordinator?.handlePTYSize(cols: cols, rows: rows)
             }
             sess.attachmentRegistry = remoteAttachmentRegistry
             do {
@@ -1035,19 +1409,18 @@ public final class WebServer {
             case .binary:
                 var buf = frame.unmaskedData
                 if let bytes = buf.readBytes(length: buf.readableBytes) {
-                    session?.write(Data(bytes))
+                    coordinator?.handleBinary(Data(bytes))
                 }
             case .text:
                 var buf = frame.unmaskedData
                 if let bytes = buf.readBytes(length: buf.readableBytes) {
                     let payload = Data(bytes)
                     if let env = try? WebControlEnvelope.parse(payload) {
-                        if case let .resize(cols, rows) = env {
-                            session?.resize(cols: cols, rows: rows)
-                        }
+                        coordinator?.handleControl(env)
                     }
                 }
             case .connectionClose:
+                coordinator?.detach()
                 session?.close()
                 context.close(promise: nil)
             case .ping:
@@ -1059,6 +1432,7 @@ public final class WebServer {
         }
 
         func channelInactive(context: ChannelHandlerContext) {
+            coordinator?.detach()
             session?.close()
         }
     }
