@@ -427,7 +427,7 @@ struct SessionClientTests {
         #expect(client.cellWidthPoints == 7.0)
     }
 
-    @Test("@spec IOS-4.18: While a `SessionClient` is operating as a worktree-detail pane preview (`IOS-4.10`, `IOS-4.12`), the application shall not claim PTY size-leadership. Bytes emitted by libghostty in the preview controller shall be discarded rather than forwarded to the server, and layout-driven resize callbacks shall not produce `WebControlEnvelope.resize` frames. Size-leadership remains a property exclusive to the focused fullscreen pane (`IOS-6.5`).")
+    @Test("@spec IOS-4.18: While a `SessionClient` is operating as a worktree-detail pane preview (`IOS-4.10`, `IOS-4.12`), it shall identify itself with `DisplayClientRole.preview`, report `visible=false`, never claim display ownership, never forward libghostty bytes to the server, and never send takeover or `ownerResize` frames. Preview sizing shall render the authoritative grid locally; only an explicit fullscreen Take Control action can change the display owner.")
     func previewRoleDoesNotForwardLibghosttyBytes() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, role: .preview)
@@ -436,6 +436,29 @@ struct SessionClientTests {
         client.session.sendInput(Data([0x68, 0x69]))
         try await Task.sleep(nanoseconds: 100_000_000)
         #expect(binaryFrames(ws).isEmpty)
+    }
+
+    @Test
+    func previewRoleSendsPreviewHelloAndInvisible() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, role: .preview)
+        client.handleViewport(InMemoryTerminalViewport(
+            columns: 100, rows: 30,
+            widthPixels: 0, heightPixels: 0,
+            cellWidthPixels: 12, cellHeightPixels: 24
+        ))
+        client.start()
+        defer { client.stop() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        guard case let .hello(_, kind, role, visible, cols, rows)? = envelopes(ws).first else {
+            Issue.record("Expected preview hello text frame")
+            return
+        }
+        #expect(kind == .ios)
+        #expect(role == .preview)
+        #expect(!visible)
+        #expect(cols == 100)
+        #expect(rows == 30)
     }
 
     @Test

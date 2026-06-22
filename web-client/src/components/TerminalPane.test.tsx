@@ -270,6 +270,7 @@ test('terminal data events are sent as encoded bytes on the open websocket', asy
   expect(Array.from(payload as Uint8Array)).toEqual([108, 115, 10]);
 });
 
+// @spec WEB-5.3: The client shall enter owner-aware WebSocket sessions by sending a `hello` control frame on open with a fresh display client ID, kind `.web`, role `.interactive`, visibility, and the current terminal grid. Terminal resize events shall be sent as `ownerResize(clientID, epoch, cols, rows)` only after an ownership snapshot confirms this client as display owner; follower resizes shall update local presentation without resizing the remote PTY.
 test('websocket open sends hello with a fresh web client id and current grid', async () => {
   hostSize = { width: 1200, height: 800 };
   const { ws } = await renderReady();

@@ -74,7 +74,7 @@ struct WebTodo {
     func web_3_4() async throws { }
 
     @Test("""
-@spec WEB-3.5: WebSocket text frames shall carry JSON control envelopes. The only Phase 2 envelope shape shall be `{"type":"resize","cols":<uint16>,"rows":<uint16>}`.
+@spec WEB-3.5: WebSocket text frames shall carry JSON control envelopes. Legacy clients may send `{"type":"resize","cols":<uint16>,"rows":<uint16>}` as a compatibility resize request, while owner-aware clients shall use `hello`, `ownership`, `grid`, `takeControl`, and `ownerResize` envelopes from `WebControlEnvelope`; only the confirmed display owner may resize the remote PTY.
 """, .disabled("not yet implemented"))
     func web_3_5() async throws { }
 

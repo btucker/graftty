@@ -696,11 +696,11 @@ struct SingleSessionView: View {
 
         let decision = TerminalWidthLayout.decide(
             containerWidth: containerWidth,
-            serverCols: client.authoritativeGrid?.cols,
+            authoritativeCols: client.authoritativeGrid?.cols,
             configFontSize: configSize,
             measuredCellWidthPoints: client.cellWidthPoints,
             measuredAtFontSize: measuredAt,
-            isLeader: false
+            isOwner: false
         )
         switch decision {
         case .useConfigFont:

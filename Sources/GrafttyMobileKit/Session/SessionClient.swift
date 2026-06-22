@@ -23,10 +23,6 @@ public final class SessionClient {
     /// older servers or before the first ownership frame arrives.
     private var legacyServerGrid: GridSize?
 
-    /// Compatibility alias for older call sites. New behavior should read
-    /// `authoritativeGrid`, which is ownership-first.
-    public var serverGrid: GridSize? { authoritativeGrid }
-
     public private(set) var ownershipSnapshot: DisplayOwnershipSnapshot?
 
     public var authoritativeGrid: GridSize? {
@@ -120,10 +116,6 @@ public final class SessionClient {
     public var canTakeControl: Bool {
         role == .fullscreen && (isFollower || isOwnerless)
     }
-
-    /// Compatibility alias for incremental call sites. Behavior is now
-    /// ownership-based; there are no implicit leadership claims.
-    public var isSizeLeader: Bool { isOwner }
 
     nonisolated private static let lf = Data([0x0A])
     nonisolated private static let cr = Data([0x0D])
@@ -547,11 +539,6 @@ public final class SessionClient {
         receiveTask?.cancel()
         receiveTask = nil
         self.start()
-    }
-
-    /// Compatibility no-op. Ownership is explicit as of Task 6; typing and
-    /// gestures must not claim control.
-    public func claimLeadershipIfNeeded() {
     }
 
     public func takeControl() {

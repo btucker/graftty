@@ -12,37 +12,37 @@ struct TerminalWidthLayoutTests {
     func ownerUsesConfigFont() {
         let d = TerminalWidthLayout.decide(
             containerWidth: 390,
-            serverCols: 120,
+            authoritativeCols: 120,
             configFontSize: 11,
             measuredCellWidthPoints: nil,
             measuredAtFontSize: nil,
-            isLeader: true
+            isOwner: true
         )
         #expect(d == .useConfigFont)
     }
 
     @Test
-    func nilServerColsUsesConfigFont() {
+    func nilAuthoritativeColsUsesConfigFont() {
         let d = TerminalWidthLayout.decide(
             containerWidth: 390,
-            serverCols: nil,
+            authoritativeCols: nil,
             configFontSize: 11,
             measuredCellWidthPoints: nil,
             measuredAtFontSize: nil,
-            isLeader: false
+            isOwner: false
         )
         #expect(d == .useConfigFont)
     }
 
     @Test
-    func zeroServerColsUsesConfigFont() {
+    func zeroAuthoritativeColsUsesConfigFont() {
         let d = TerminalWidthLayout.decide(
             containerWidth: 390,
-            serverCols: 0,
+            authoritativeCols: 0,
             configFontSize: 11,
             measuredCellWidthPoints: nil,
             measuredAtFontSize: nil,
-            isLeader: false
+            isOwner: false
         )
         #expect(d == .useConfigFont)
     }
@@ -51,11 +51,11 @@ struct TerminalWidthLayoutTests {
     func zeroContainerWidthUsesConfigFont() {
         let d = TerminalWidthLayout.decide(
             containerWidth: 0,
-            serverCols: 80,
+            authoritativeCols: 80,
             configFontSize: 11,
             measuredCellWidthPoints: nil,
             measuredAtFontSize: nil,
-            isLeader: false
+            isOwner: false
         )
         #expect(d == .useConfigFont)
     }
@@ -67,11 +67,11 @@ struct TerminalWidthLayoutTests {
         // than the 11pt config, so no override needed.
         let d = TerminalWidthLayout.decide(
             containerWidth: 800,
-            serverCols: 80,
+            authoritativeCols: 80,
             configFontSize: 11,
             measuredCellWidthPoints: nil,
             measuredAtFontSize: nil,
-            isLeader: false
+            isOwner: false
         )
         #expect(d == .useConfigFont)
     }
@@ -83,11 +83,11 @@ struct TerminalWidthLayoutTests {
         // Mirrors PanePreviewFontSizing exactly.
         let d = TerminalWidthLayout.decide(
             containerWidth: 390,
-            serverCols: 120,
+            authoritativeCols: 120,
             configFontSize: 11,
             measuredCellWidthPoints: nil,
             measuredAtFontSize: nil,
-            isLeader: false
+            isOwner: false
         )
         let expected: Float = Float((390.0 / 120.0) * 0.95 / 0.6)
         switch d {
@@ -103,11 +103,11 @@ struct TerminalWidthLayoutTests {
         // Pathological: container 30pt, 200 cols → ~0.24pt, clamps to 2.
         let d = TerminalWidthLayout.decide(
             containerWidth: 30,
-            serverCols: 200,
+            authoritativeCols: 200,
             configFontSize: 11,
             measuredCellWidthPoints: nil,
             measuredAtFontSize: nil,
-            isLeader: false
+            isOwner: false
         )
         #expect(d == .fitFont(pointSize: 2))
     }
@@ -119,11 +119,11 @@ struct TerminalWidthLayoutTests {
         // target fontSize = 3.0875 / 0.65 ≈ 4.75pt
         let d = TerminalWidthLayout.decide(
             containerWidth: 390,
-            serverCols: 120,
+            authoritativeCols: 120,
             configFontSize: 11,
             measuredCellWidthPoints: 6.5,    // measured at 10pt → aspect 0.65
             measuredAtFontSize: 10,
-            isLeader: false
+            isOwner: false
         )
         switch d {
         case .useConfigFont:
@@ -140,11 +140,11 @@ struct TerminalWidthLayoutTests {
         // 0.6-aspect math.
         let d = TerminalWidthLayout.decide(
             containerWidth: 390,
-            serverCols: 120,
+            authoritativeCols: 120,
             configFontSize: 11,
             measuredCellWidthPoints: nil,
             measuredAtFontSize: nil,
-            isLeader: false
+            isOwner: false
         )
         switch d {
         case .useConfigFont:
@@ -160,11 +160,11 @@ struct TerminalWidthLayoutTests {
         // Defensive: a measured-at-zero font size would divide-by-zero.
         let d = TerminalWidthLayout.decide(
             containerWidth: 390,
-            serverCols: 120,
+            authoritativeCols: 120,
             configFontSize: 11,
             measuredCellWidthPoints: 6.5,
             measuredAtFontSize: 0,
-            isLeader: false
+            isOwner: false
         )
         switch d {
         case .useConfigFont:
