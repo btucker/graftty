@@ -185,6 +185,10 @@ struct SingleSessionView: View {
     /// as an explicit bottom padding on the fullscreen layout
     /// (`IOS-6.9`). Populated from `keyboardWillChangeFrame`.
     @State private var keyboardBottomInset: CGFloat = 0
+    /// Measured height of the bottom terminal chrome overlay. This is
+    /// reserved from the terminal viewport without changing the overlay's
+    /// bottom-aligned visual placement.
+    @State private var measuredTerminalChromeHeight: CGFloat = 0
     /// Box that holds a weak reference to the live terminal-input
     /// container so the SwiftUI control-bar buttons can cancel an
     /// active selection per IOS-11.7.
@@ -227,7 +231,17 @@ struct SingleSessionView: View {
                 loadingPlaceholder
             case .live:
                 GeometryReader { geo in
-                    terminalContent(containerSize: geo.size)
+                    let terminalViewportSize = TerminalChromeViewport.terminalSize(
+                        container: geo.size,
+                        chromeHeight: measuredTerminalChromeHeight
+                    )
+                    terminalContent(containerSize: terminalViewportSize)
+                        .frame(
+                            width: terminalViewportSize.width,
+                            height: terminalViewportSize.height,
+                            alignment: .top
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
             case .ended:
                 endedBanner
@@ -261,7 +275,15 @@ struct SingleSessionView: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                if connection == .live { terminalChrome }
+                if connection == .live {
+                    terminalChrome
+                        .background(TerminalChromeHeightReader())
+                }
+            }
+            .onPreferenceChange(TerminalChromeHeightPreferenceKey.self) { height in
+                if measuredTerminalChromeHeight != height {
+                    measuredTerminalChromeHeight = height
+                }
             }
             .animation(.easeInOut(duration: 0.25), value: keyboardBottomInset)
             .animation(.easeInOut(duration: 0.15), value: keyboardAllowed)
@@ -478,6 +500,9 @@ struct SingleSessionView: View {
                 }
             }
             .padding(.bottom, 8)
+        } else {
+            Color.clear
+                .frame(width: 0, height: 0)
         }
     }
 
@@ -628,8 +653,8 @@ struct SingleSessionView: View {
             captureContainer: { [paneContainerBox] view in paneContainerBox.view = view }
         )
         pane
-            .task(id: FontFitKey(
-                containerWidth: containerSize.width,
+            .task(id: TerminalFontFitTaskKey(
+                containerSize: containerSize,
                 authoritativeCols: client.authoritativeGrid?.cols,
                 isOwner: client.isOwner,
                 baseConfig: baseConfigText
@@ -640,30 +665,6 @@ struct SingleSessionView: View {
                     containerWidth: containerSize.width
                 )
             }
-    }
-
-    private struct FontFitKey: Hashable {
-        /// Whole-point bucket. SwiftUI delivers containerSize.width
-        /// values that jitter by sub-points across layout passes during
-        /// rotation / keyboard show-hide animations; rounding to whole
-        /// points keeps the `.task(id: FontFitKey)` body from re-firing
-        /// on micro-resizes that produce no perceptible layout change.
-        let containerWidthPoints: Int
-        let authoritativeCols: UInt16?
-        let isOwner: Bool
-        let baseConfig: String?
-
-        init(
-            containerWidth: CGFloat,
-            authoritativeCols: UInt16?,
-            isOwner: Bool,
-            baseConfig: String?
-        ) {
-            self.containerWidthPoints = Int(containerWidth.rounded())
-            self.authoritativeCols = authoritativeCols
-            self.isOwner = isOwner
-            self.baseConfig = baseConfig
-        }
     }
 
     /// @spec IOS-6.10
@@ -781,6 +782,26 @@ struct SingleSessionView: View {
 extension PaneLayoutNode {
     func title(for sessionName: String) -> String? {
         leaves.first { $0.sessionName == sessionName }?.title
+    }
+}
+
+private struct TerminalChromeHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct TerminalChromeHeightReader: View {
+    var body: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .preference(
+                    key: TerminalChromeHeightPreferenceKey.self,
+                    value: proxy.size.height
+                )
+        }
     }
 }
 
