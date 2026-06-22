@@ -429,6 +429,89 @@ struct SessionDisplayOwnershipStoreTests {
     }
 
     @Test
+    func restoreFailedClaimRestoresPreviousOwnerOnlyWhenFailedClaimStillCurrent() throws {
+        let store = SessionDisplayOwnershipStore()
+        let previousOwner = DisplayClientID("mac-previous-owner")
+        let failedTaker = DisplayClientID("mac-failed-taker")
+        let newerOwner = DisplayClientID("mac-newer-owner")
+        let previousGrid = try DisplayGrid(cols: 100, rows: 30)
+        let failedGrid = try DisplayGrid(cols: 140, rows: 50)
+        let newerGrid = try DisplayGrid(cols: 90, rows: 24)
+
+        _ = store.attachClient(
+            sessionName: sessionName,
+            clientID: previousOwner,
+            kind: .mac,
+            role: .interactive,
+            visible: true,
+            grid: previousGrid
+        )
+        _ = store.attachClient(
+            sessionName: sessionName,
+            clientID: failedTaker,
+            kind: .mac,
+            role: .interactive,
+            visible: true,
+            grid: failedGrid
+        )
+
+        let claim = store.claimOwner(
+            sessionName: sessionName,
+            clientID: failedTaker,
+            kind: .mac,
+            grid: previousGrid
+        )
+        #expect(claim.accepted)
+
+        let restored = store.restoreOwnerAfterFailedClaim(
+            sessionName: sessionName,
+            failedClientID: failedTaker,
+            failedKind: .mac,
+            failedEpoch: claim.snapshot.epoch,
+            previousOwnerClientID: previousOwner,
+            previousOwnerKind: .mac,
+            previousGrid: previousGrid
+        )
+        #expect(restored.ownerClientID == previousOwner)
+        #expect(restored.grid == previousGrid)
+
+        let secondClaim = store.claimOwner(
+            sessionName: sessionName,
+            clientID: failedTaker,
+            kind: .mac,
+            grid: previousGrid
+        )
+        #expect(secondClaim.accepted)
+        _ = store.attachClient(
+            sessionName: sessionName,
+            clientID: newerOwner,
+            kind: .mac,
+            role: .interactive,
+            visible: true,
+            grid: newerGrid
+        )
+        let newerClaim = store.claimOwner(
+            sessionName: sessionName,
+            clientID: newerOwner,
+            kind: .mac,
+            grid: newerGrid
+        )
+        #expect(newerClaim.accepted)
+
+        let notRestored = store.restoreOwnerAfterFailedClaim(
+            sessionName: sessionName,
+            failedClientID: failedTaker,
+            failedKind: .mac,
+            failedEpoch: secondClaim.snapshot.epoch,
+            previousOwnerClientID: previousOwner,
+            previousOwnerKind: .mac,
+            previousGrid: previousGrid
+        )
+        #expect(notRestored.ownerClientID == newerOwner)
+        #expect(notRestored.grid == newerGrid)
+    }
+
+    @Test
     func neverOwnedOwnerlessSessionCanSnapshotDaemonFallbackGrid() throws {
         let store = SessionDisplayOwnershipStore()
         let previewGrid = try DisplayGrid(cols: 60, rows: 18)

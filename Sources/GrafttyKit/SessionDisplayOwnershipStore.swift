@@ -217,6 +217,45 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         return result
     }
 
+    public func restoreOwnerAfterFailedClaim(
+        sessionName: String,
+        failedClientID: DisplayClientID,
+        failedKind: DisplayClientKind,
+        failedEpoch: UInt64,
+        previousOwnerClientID: DisplayClientID?,
+        previousOwnerKind: DisplayClientKind?,
+        previousGrid: DisplayGrid,
+        fallbackGrid: DisplayGrid = .daemonFallback
+    ) -> DisplayOwnershipSnapshot {
+        lock.lock()
+        defer { lock.unlock() }
+
+        var record = records[sessionName] ?? Record()
+        if record.ownerClientID == failedClientID,
+           record.ownerKind == failedKind,
+           record.epoch == failedEpoch {
+            if let previousOwnerClientID,
+               let previousOwnerKind,
+               let attachedClient = record.attachedClients[previousOwnerClientID],
+               attachedClient.kind == previousOwnerKind,
+               attachedClient.kind != .preview,
+               attachedClient.role != .preview,
+               attachedClient.visible {
+                record.ownerClientID = previousOwnerClientID
+                record.ownerKind = previousOwnerKind
+            } else {
+                record.ownerClientID = nil
+                record.ownerKind = nil
+            }
+            record.grid = previousGrid
+            record.epoch += 1
+        }
+
+        let result = snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
+        storeOrRemove(record, for: sessionName)
+        return result
+    }
+
     public func snapshot(
         sessionName: String,
         fallbackGrid: DisplayGrid = .daemonFallback

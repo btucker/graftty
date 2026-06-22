@@ -245,7 +245,7 @@ struct HostManagedZmxBackendTests {
     }
 
     @Test("A failed Take Control resize does not leave the failed taker as display owner.")
-    func failedTakeControlResizeDoesNotLeaveFailedTakerAsOwner() throws {
+    func failedTakeControlResizePreservesPreviousOwner() throws {
         let store = SessionDisplayOwnershipStore()
         let ownerSession = FakeHostManagedSession()
         let owner = Self.makeBackend(
@@ -272,9 +272,106 @@ struct HostManagedZmxBackendTests {
 
         let snapshot = store.snapshot(sessionName: "graftty-test")
         let previousGrid = try DisplayGrid(cols: 100, rows: 30)
-        #expect(snapshot.ownerClientID != DisplayClientID("mac-failed-taker"))
+        #expect(snapshot.ownerClientID == DisplayClientID("mac-owner"))
         #expect(snapshot.grid == previousGrid)
         #expect(followerSession.resizes().isEmpty)
+
+        try owner.write(Data("still-owner".utf8))
+        try follower.write(Data("blocked".utf8))
+        #expect(ownerSession.writes() == [Data("still-owner".utf8)])
+        #expect(followerSession.writes().isEmpty)
+    }
+
+    @Test("A Take Control resize rejected after a newer owner claims repairs the PTY back to the authoritative grid.")
+    func takeControlRejectedAfterPhysicalResizeRepairsToAuthoritativeGrid() throws {
+        let store = SessionDisplayOwnershipStore()
+        let initialOwnerSession = FakeHostManagedSession()
+        let initialOwner = Self.makeBackend(
+            session: initialOwnerSession,
+            ownership: Self.ownership(store: store, clientID: "mac-initial-owner")
+        )
+        defer { initialOwner.releaseReceiveUserdataAfterSurfaceFree() }
+        initialOwner.bindSurfaceSync(currentGridSize: { (cols: 100, rows: 30) }, requestRefresh: {})
+        try initialOwner.start(surface: Self.fakeSurface())
+        initialOwner.markLayoutSettled()
+
+        let finalOwnerSession = FakeHostManagedSession()
+        let finalOwner = Self.makeBackend(
+            session: finalOwnerSession,
+            ownership: Self.ownership(store: store, clientID: "mac-final-owner")
+        )
+        defer { finalOwner.releaseReceiveUserdataAfterSurfaceFree() }
+        finalOwner.bindSurfaceSync(currentGridSize: { (cols: 90, rows: 24) }, requestRefresh: {})
+        try finalOwner.start(surface: Self.fakeSurface())
+        finalOwner.markLayoutSettled()
+
+        let didRace = LockedFlag(false)
+        let staleTakerSession = FakeHostManagedSession(
+            resizeHook: { _, _ in
+                guard !didRace.value() else { return }
+                didRace.set(true)
+                #expect(finalOwner.takeControl())
+            }
+        )
+        let staleTaker = Self.makeBackend(
+            session: staleTakerSession,
+            ownership: Self.ownership(store: store, clientID: "mac-stale-taker")
+        )
+        defer { staleTaker.releaseReceiveUserdataAfterSurfaceFree() }
+        staleTaker.bindSurfaceSync(currentGridSize: { (cols: 140, rows: 50) }, requestRefresh: {})
+        try staleTaker.start(surface: Self.fakeSurface())
+        staleTaker.markLayoutSettled()
+
+        #expect(!staleTaker.takeControl())
+
+        let snapshot = store.snapshot(sessionName: "graftty-test")
+        let finalGrid = try DisplayGrid(cols: 90, rows: 24)
+        #expect(snapshot.ownerClientID == DisplayClientID("mac-final-owner"))
+        #expect(snapshot.grid == finalGrid)
+        #expect(finalOwnerSession.resizes() == [Resize(cols: 90, rows: 24)])
+        #expect(staleTakerSession.resizes() == [
+            Resize(cols: 140, rows: 50),
+            Resize(cols: 90, rows: 24),
+        ])
+    }
+
+    @Test("A failed pending resize drained after start does not publish an unaccepted grid to the ownership store.")
+    func failedStartingPendingResizeDoesNotAdvanceOwnershipGrid() throws {
+        let store = SessionDisplayOwnershipStore()
+        let startEntered = DispatchSemaphore(value: 0)
+        let releaseStart = DispatchSemaphore(value: 0)
+        let session = FakeHostManagedSession(
+            startHook: {
+                startEntered.signal()
+                _ = releaseStart.wait(timeout: .now() + 2)
+            }
+        )
+        let backend = Self.makeBackend(
+            session: session,
+            ownership: Self.ownership(store: store, clientID: "mac-owner")
+        )
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        backend.bindSurfaceSync(currentGridSize: { (cols: 100, rows: 30) }, requestRefresh: {})
+
+        let startFinished = DispatchSemaphore(value: 0)
+        Self.runOnDedicatedThread {
+            try? backend.start(surface: Self.fakeSurface())
+            startFinished.signal()
+        }
+        #expect(startEntered.wait(timeout: .now() + 2) == .success)
+
+        backend.markLayoutSettled()
+        HostManagedZmxBackend.receiveResizeCallback(backend.userdataForTesting, 120, 30, 0, 0)
+        session.setFailNextResize(true)
+
+        releaseStart.signal()
+        #expect(startFinished.wait(timeout: .now() + 2) == .success)
+
+        let snapshot = store.snapshot(sessionName: "graftty-test")
+        let spawnedGrid = try DisplayGrid(cols: 100, rows: 30)
+        #expect(snapshot.ownerClientID == DisplayClientID("mac-owner"))
+        #expect(snapshot.grid == spawnedGrid)
+        #expect(session.resizes().isEmpty)
     }
 
     @Test func configureSetsHostManagedBackendAndReceiveCallbacks() {
@@ -1458,15 +1555,21 @@ private final class FakeHostManagedSession: HostManagedZmxSession {
     private let lock = NSLock()
     private let startError: Error?
     private let startHook: (() -> Void)?
+    private let resizeHook: ((UInt16, UInt16) -> Void)?
     private var storedWrites: [Data] = []
     private var storedResizes: [Resize] = []
     private var storedStartCount = 0
     private var storedCloseCount = 0
     private var failNextResize = false
 
-    init(startError: Error? = nil, startHook: (() -> Void)? = nil) {
+    init(
+        startError: Error? = nil,
+        startHook: (() -> Void)? = nil,
+        resizeHook: ((UInt16, UInt16) -> Void)? = nil
+    ) {
         self.startError = startError
         self.startHook = startHook
+        self.resizeHook = resizeHook
     }
 
     func start() throws {
@@ -1491,7 +1594,13 @@ private final class FakeHostManagedSession: HostManagedZmxSession {
     func resize(cols: UInt16, rows: UInt16) throws {
         lock.lock()
         let shouldFail = failNextResize
-        if shouldFail { failNextResize = false } else { storedResizes.append(Resize(cols: cols, rows: rows)) }
+        if shouldFail { failNextResize = false }
+        lock.unlock()
+
+        resizeHook?(cols, rows)
+
+        lock.lock()
+        if !shouldFail { storedResizes.append(Resize(cols: cols, rows: rows)) }
         lock.unlock()
         if shouldFail { throw FakeResizeError() }
     }

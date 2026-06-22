@@ -30,6 +30,7 @@ struct HostManagedZmxOwnership {
     private let claimImpl: (DisplayGrid) -> SessionDisplayOwnershipClaimResult
     private let ownerResizeImpl: (UInt64, DisplayGrid) -> SessionDisplayOwnershipResizeResult
     private let releaseImpl: (DisplayGrid) -> DisplayOwnershipSnapshot
+    private let restoreFailedClaimImpl: (UInt64, DisplayOwnershipSnapshot, DisplayGrid) -> DisplayOwnershipSnapshot
     private let detachImpl: (DisplayGrid) -> DisplayOwnershipSnapshot
     private let canWriteImpl: () -> Bool
 
@@ -41,6 +42,7 @@ struct HostManagedZmxOwnership {
         claim: @escaping (DisplayGrid) -> SessionDisplayOwnershipClaimResult,
         ownerResize: @escaping (UInt64, DisplayGrid) -> SessionDisplayOwnershipResizeResult,
         release: @escaping (DisplayGrid) -> DisplayOwnershipSnapshot,
+        restoreFailedClaim: @escaping (UInt64, DisplayOwnershipSnapshot, DisplayGrid) -> DisplayOwnershipSnapshot,
         detach: @escaping (DisplayGrid) -> DisplayOwnershipSnapshot,
         canWrite: @escaping () -> Bool
     ) {
@@ -51,6 +53,7 @@ struct HostManagedZmxOwnership {
         self.claimImpl = claim
         self.ownerResizeImpl = ownerResize
         self.releaseImpl = release
+        self.restoreFailedClaimImpl = restoreFailedClaim
         self.detachImpl = detach
         self.canWriteImpl = canWrite
     }
@@ -100,6 +103,18 @@ struct HostManagedZmxOwnership {
                     fallbackGrid: fallbackGrid
                 )
             },
+            restoreFailedClaim: { failedEpoch, previousSnapshot, fallbackGrid in
+                store.restoreOwnerAfterFailedClaim(
+                    sessionName: sessionName,
+                    failedClientID: clientID,
+                    failedKind: kind,
+                    failedEpoch: failedEpoch,
+                    previousOwnerClientID: previousSnapshot.ownerClientID,
+                    previousOwnerKind: previousSnapshot.ownerKind,
+                    previousGrid: previousSnapshot.grid,
+                    fallbackGrid: fallbackGrid
+                )
+            },
             detach: { fallbackGrid in
                 store.detachClient(
                     sessionName: sessionName,
@@ -132,6 +147,14 @@ struct HostManagedZmxOwnership {
 
     func release(fallbackGrid: DisplayGrid) -> DisplayOwnershipSnapshot {
         releaseImpl(fallbackGrid)
+    }
+
+    func restoreFailedClaim(
+        failedEpoch: UInt64,
+        previousSnapshot: DisplayOwnershipSnapshot,
+        fallbackGrid: DisplayGrid
+    ) -> DisplayOwnershipSnapshot {
+        restoreFailedClaimImpl(failedEpoch, previousSnapshot, fallbackGrid)
     }
 
     func detach(fallbackGrid: DisplayGrid) -> DisplayOwnershipSnapshot {
@@ -168,6 +191,11 @@ final class HostManagedZmxBackend {
     private struct PendingResize: Equatable {
         let cols: UInt16
         let rows: UInt16
+    }
+
+    private struct AuthorizedResize {
+        let resize: PendingResize
+        let epoch: UInt64
     }
 
     /// Schedules `fire` after `delay` seconds and returns a cancel
@@ -382,7 +410,7 @@ final class HostManagedZmxBackend {
             case .starting:
                 if let resize = pendingResize {
                     pendingResize = nil
-                    guard ownerResizeAcceptedLocked(resize) else {
+                    guard let authorized = authorizeOwnerResizeLocked(resize) else {
                         lock.unlock()
                         continue
                     }
@@ -391,6 +419,13 @@ final class HostManagedZmxBackend {
                         lock.lock()
                         if lastForwardedResize == resize { lastForwardedResize = nil }
                         lock.unlock()
+                    } else {
+                        lock.lock()
+                        let result = commitOwnerResizeLocked(authorized)
+                        lock.unlock()
+                        if !result.accepted, let snapshot = result.snapshot {
+                            repairSession(newSession, to: snapshot)
+                        }
                     }
                     continue
                 }
@@ -542,6 +577,10 @@ final class HostManagedZmxBackend {
             lock.unlock()
             return false
         }
+        guard case .running = lifecycle, let currentSession = session else {
+            lock.unlock()
+            return false
+        }
         let previousSnapshot = ownership.snapshot(fallbackGrid: fallbackDisplayGridLocked())
         let result = ownership.claim(grid: previousSnapshot.grid)
         ownershipSnapshot = result.snapshot
@@ -550,37 +589,35 @@ final class HostManagedZmxBackend {
             return false
         }
         let resize = PendingResize(cols: grid.cols, rows: grid.rows)
-        let currentSession: HostManagedZmxSession?
-        switch lifecycle {
-        case .idle, .starting:
-            pendingResize = resize
-            currentSession = nil
-        case .running:
-            pendingCoalescedResize = nil
-            lastForwardedResize = resize
-            currentSession = session
-        case .closed:
-            currentSession = nil
-        }
+        pendingCoalescedResize = nil
+        lastForwardedResize = resize
         let refresh = requestRefresh
         lock.unlock()
 
-        if let currentSession, (try? currentSession.resize(cols: resize.cols, rows: resize.rows)) == nil {
+        if (try? currentSession.resize(cols: resize.cols, rows: resize.rows)) == nil {
             lock.lock()
             if lastForwardedResize == resize { lastForwardedResize = nil }
-            let releaseFallback = fallbackDisplayGridLocked()
-            let releasedSnapshot = ownership.release(fallbackGrid: releaseFallback)
-            ownershipSnapshot = releasedSnapshot
+            let restoredSnapshot = ownership.restoreFailedClaim(
+                failedEpoch: result.snapshot.epoch,
+                previousSnapshot: previousSnapshot,
+                fallbackGrid: fallbackDisplayGridLocked()
+            )
+            ownershipSnapshot = restoredSnapshot
             lock.unlock()
             return false
         }
-        if currentSession != nil {
-            let resizeResult = ownership.ownerResize(epoch: result.snapshot.epoch, grid: grid)
-            lock.lock()
-            ownershipSnapshot = resizeResult.snapshot
-            lock.unlock()
-            refresh()
+        let resizeResult = ownership.ownerResize(epoch: result.snapshot.epoch, grid: grid)
+        lock.lock()
+        ownershipSnapshot = resizeResult.snapshot
+        if !resizeResult.accepted {
+            if lastForwardedResize == resize { lastForwardedResize = nil }
         }
+        lock.unlock()
+        guard resizeResult.accepted else {
+            repairSession(currentSession, to: resizeResult.snapshot)
+            return false
+        }
+        refresh()
         return true
     }
 
@@ -709,7 +746,7 @@ final class HostManagedZmxBackend {
             Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(cols)x\(rows) WITHHELD layout")
             return
         }
-        guard ownerResizeAcceptedLocked(resize) else {
+        guard let authorized = authorizeOwnerResizeLocked(resize) else {
             lock.unlock()
             Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(cols)x\(rows) BLOCKED follower-or-stale")
             return
@@ -750,6 +787,16 @@ final class HostManagedZmxBackend {
                 lastForwardedResize = nil
             }
             lock.unlock()
+        } else if currentSession != nil {
+            lock.lock()
+            let result = commitOwnerResizeLocked(authorized)
+            if !result.accepted, lastForwardedResize == resize {
+                lastForwardedResize = nil
+            }
+            lock.unlock()
+            if !result.accepted, let snapshot = result.snapshot, let currentSession {
+                repairSession(currentSession, to: snapshot)
+            }
         }
     }
 
@@ -776,7 +823,7 @@ final class HostManagedZmxBackend {
             return
         }
         pendingCoalescedResize = nil
-        guard ownerResizeAcceptedLocked(pending) else {
+        guard let authorized = authorizeOwnerResizeLocked(pending) else {
             lock.unlock()
             Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(pending.cols)x\(pending.rows) TRAILING-BLOCKED")
             return
@@ -795,6 +842,16 @@ final class HostManagedZmxBackend {
             lock.lock()
             if let lf = lastForwardedResize, lf == pending { lastForwardedResize = nil }
             lock.unlock()
+        } else if currentSession != nil {
+            lock.lock()
+            let result = commitOwnerResizeLocked(authorized)
+            if !result.accepted, lastForwardedResize == pending {
+                lastForwardedResize = nil
+            }
+            lock.unlock()
+            if !result.accepted, let snapshot = result.snapshot, let currentSession {
+                repairSession(currentSession, to: snapshot)
+            }
         }
     }
 
@@ -828,7 +885,7 @@ final class HostManagedZmxBackend {
             return nil
         }
         let pending = PendingResize(cols: target.cols, rows: target.rows)
-        guard ownerResizeAcceptedLocked(pending) else {
+        guard let authorized = authorizeOwnerResizeLocked(pending) else {
             Self.trace.notice("flush(\(reason, privacy: .public)) \(self.spawnConfiguration.sessionName, privacy: .public) BLOCKED follower-or-stale")
             return nil
         }
@@ -840,7 +897,16 @@ final class HostManagedZmxBackend {
             // land after this authoritative sync.
             pendingCoalescedResize = nil
             if (try? session?.resize(cols: target.cols, rows: target.rows)) != nil {
-                lastForwardedResize = PendingResize(cols: target.cols, rows: target.rows)
+                let result = commitOwnerResizeLocked(authorized)
+                if result.accepted {
+                    lastForwardedResize = PendingResize(cols: target.cols, rows: target.rows)
+                } else {
+                    lastForwardedResize = nil
+                    if let snapshot = result.snapshot {
+                        try? session?.resize(cols: snapshot.grid.cols, rows: snapshot.grid.rows)
+                    }
+                    return nil
+                }
             } else {
                 lastForwardedResize = nil
             }
@@ -889,19 +955,31 @@ final class HostManagedZmxBackend {
         return allowed
     }
 
-    private func ownerResizeAcceptedLocked(_ resize: PendingResize) -> Bool {
-        guard let ownership else { return true }
-        guard let grid = Self.displayGrid(from: resize) else { return false }
+    private func authorizeOwnerResizeLocked(_ resize: PendingResize) -> AuthorizedResize? {
+        guard let ownership else { return AuthorizedResize(resize: resize, epoch: 0) }
+        guard Self.displayGrid(from: resize) != nil else { return nil }
         let fallback = fallbackDisplayGridLocked()
         let snapshot = ownership.snapshot(fallbackGrid: fallback)
         ownershipSnapshot = snapshot
         guard snapshot.ownerClientID == ownership.clientID,
               snapshot.ownerKind == ownership.kind else {
-            return false
+            return nil
         }
-        let result = ownership.ownerResize(epoch: snapshot.epoch, grid: grid)
+        return AuthorizedResize(resize: resize, epoch: snapshot.epoch)
+    }
+
+    private func commitOwnerResizeLocked(
+        _ authorized: AuthorizedResize
+    ) -> (accepted: Bool, snapshot: DisplayOwnershipSnapshot?) {
+        guard let ownership else { return (true, nil) }
+        guard let grid = Self.displayGrid(from: authorized.resize) else { return (false, ownershipSnapshot) }
+        let result = ownership.ownerResize(epoch: authorized.epoch, grid: grid)
         ownershipSnapshot = result.snapshot
-        return result.accepted
+        return (result.accepted, result.snapshot)
+    }
+
+    private func repairSession(_ session: HostManagedZmxSession, to snapshot: DisplayOwnershipSnapshot) {
+        try? session.resize(cols: snapshot.grid.cols, rows: snapshot.grid.rows)
     }
 
     private func fallbackDisplayGridLocked() -> DisplayGrid {
