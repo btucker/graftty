@@ -277,6 +277,79 @@ struct SessionDisplayOwnershipStoreTests {
     }
 
     @Test
+    func implicitClaimOnlyAcceptsOwnerlessOrCurrentOwner() throws {
+        let store = SessionDisplayOwnershipStore()
+        let web = DisplayClientID("web-1")
+        let mac = DisplayClientID("mac-1")
+        let otherMac = DisplayClientID("mac-2")
+        let macInitialGrid = try DisplayGrid(cols: 90, rows: 28)
+        let webGrid = try DisplayGrid(cols: 100, rows: 30)
+        let webResizeGrid = try DisplayGrid(cols: 110, rows: 33)
+        let macGrid = try DisplayGrid(cols: 120, rows: 40)
+        let rejectedGrid = try DisplayGrid(cols: 132, rows: 43)
+
+        _ = store.attachClient(
+            sessionName: sessionName,
+            clientID: mac,
+            kind: .mac,
+            role: .interactive,
+            visible: true,
+            grid: macInitialGrid
+        )
+        _ = store.attachClient(
+            sessionName: sessionName,
+            clientID: web,
+            kind: .web,
+            role: .interactive,
+            visible: true,
+            grid: webGrid
+        )
+        _ = store.detachClient(sessionName: sessionName, clientID: mac)
+
+        let ownerlessClaim = store.claimOwnerIfOwnerlessOrCurrent(
+            sessionName: sessionName,
+            clientID: web,
+            kind: .web,
+            grid: webGrid
+        )
+        #expect(ownerlessClaim.accepted)
+        #expect(ownerlessClaim.snapshot.ownerClientID == web)
+        #expect(ownerlessClaim.snapshot.grid == webGrid)
+        let ownerlessClaimEpoch = ownerlessClaim.snapshot.epoch
+
+        let currentOwnerClaim = store.claimOwnerIfOwnerlessOrCurrent(
+            sessionName: sessionName,
+            clientID: web,
+            kind: .web,
+            grid: webResizeGrid
+        )
+        #expect(currentOwnerClaim.accepted)
+        #expect(currentOwnerClaim.snapshot.ownerClientID == web)
+        #expect(currentOwnerClaim.snapshot.grid == webResizeGrid)
+        #expect(currentOwnerClaim.snapshot.epoch == ownerlessClaimEpoch)
+
+        _ = store.attachClient(
+            sessionName: sessionName,
+            clientID: otherMac,
+            kind: .mac,
+            role: .interactive,
+            visible: true,
+            grid: macGrid
+        )
+
+        let rejectedTakeover = store.claimOwnerIfOwnerlessOrCurrent(
+            sessionName: sessionName,
+            clientID: otherMac,
+            kind: .mac,
+            grid: rejectedGrid
+        )
+        #expect(rejectedTakeover.accepted == false)
+        #expect(rejectedTakeover.snapshot.ownerClientID == web)
+        #expect(rejectedTakeover.snapshot.grid == webResizeGrid)
+        #expect(rejectedTakeover.snapshot.epoch == ownerlessClaimEpoch)
+    }
+
+    @Test
     func ownerResizeAcceptsOnlyMatchingOwnerAndEpoch() throws {
         let store = SessionDisplayOwnershipStore()
         let owner = DisplayClientID("mac-1")
