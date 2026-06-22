@@ -50,6 +50,14 @@ struct DisplayOwnershipAssemblyTests {
 
     @Test
     func webServerControllerRetainsInjectedDisplayOwnershipStoreIdentity() {
+        let previousEnabled = UserDefaults.standard.object(forKey: "WebAccessEnabled")
+        defer {
+            if let previousEnabled {
+                UserDefaults.standard.set(previousEnabled, forKey: "WebAccessEnabled")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "WebAccessEnabled")
+            }
+        }
         UserDefaults.standard.set(false, forKey: "WebAccessEnabled")
         let injected = SessionDisplayOwnershipStore()
         let replacement = SessionDisplayOwnershipStore()
