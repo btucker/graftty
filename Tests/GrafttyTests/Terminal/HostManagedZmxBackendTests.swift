@@ -197,6 +197,86 @@ struct HostManagedZmxBackendTests {
         #expect(newOwnerSession.resizes() == [Resize(cols: 90, rows: 24)])
     }
 
+    @Test("A pending resize queued while the old Mac owner is starting is revalidated and rejected after takeover.")
+    func staleStartingPendingResizeFromOldOwnerRejectedAfterTakeover() throws {
+        let store = SessionDisplayOwnershipStore()
+        let oldStartEntered = DispatchSemaphore(value: 0)
+        let releaseOldStart = DispatchSemaphore(value: 0)
+        let oldOwnerSession = FakeHostManagedSession(
+            startHook: {
+                oldStartEntered.signal()
+                _ = releaseOldStart.wait(timeout: .now() + 2)
+            }
+        )
+        let oldOwner = Self.makeBackend(
+            session: oldOwnerSession,
+            ownership: Self.ownership(store: store, clientID: "mac-old-starting-owner")
+        )
+        defer { oldOwner.releaseReceiveUserdataAfterSurfaceFree() }
+        oldOwner.bindSurfaceSync(currentGridSize: { (cols: 100, rows: 30) }, requestRefresh: {})
+
+        let oldStartFinished = DispatchSemaphore(value: 0)
+        Self.runOnDedicatedThread {
+            try? oldOwner.start(surface: Self.fakeSurface())
+            oldStartFinished.signal()
+        }
+        #expect(oldStartEntered.wait(timeout: .now() + 2) == .success)
+
+        oldOwner.markLayoutSettled()
+        HostManagedZmxBackend.receiveResizeCallback(oldOwner.userdataForTesting, 120, 30, 0, 0)
+
+        let newOwnerSession = FakeHostManagedSession()
+        let newOwner = Self.makeBackend(
+            session: newOwnerSession,
+            ownership: Self.ownership(store: store, clientID: "mac-new-owner")
+        )
+        defer { newOwner.releaseReceiveUserdataAfterSurfaceFree() }
+        newOwner.bindSurfaceSync(currentGridSize: { (cols: 90, rows: 24) }, requestRefresh: {})
+        try newOwner.start(surface: Self.fakeSurface())
+        newOwner.markLayoutSettled()
+        #expect(newOwner.takeControl())
+
+        releaseOldStart.signal()
+        #expect(oldStartFinished.wait(timeout: .now() + 2) == .success)
+
+        #expect(store.snapshot(sessionName: "graftty-test").ownerClientID == DisplayClientID("mac-new-owner"))
+        #expect(oldOwnerSession.resizes().isEmpty)
+        #expect(newOwnerSession.resizes() == [Resize(cols: 90, rows: 24)])
+    }
+
+    @Test("A failed Take Control resize does not leave the failed taker as display owner.")
+    func failedTakeControlResizeDoesNotLeaveFailedTakerAsOwner() throws {
+        let store = SessionDisplayOwnershipStore()
+        let ownerSession = FakeHostManagedSession()
+        let owner = Self.makeBackend(
+            session: ownerSession,
+            ownership: Self.ownership(store: store, clientID: "mac-owner")
+        )
+        defer { owner.releaseReceiveUserdataAfterSurfaceFree() }
+        owner.bindSurfaceSync(currentGridSize: { (cols: 100, rows: 30) }, requestRefresh: {})
+        try owner.start(surface: Self.fakeSurface())
+        owner.markLayoutSettled()
+
+        let followerSession = FakeHostManagedSession()
+        let follower = Self.makeBackend(
+            session: followerSession,
+            ownership: Self.ownership(store: store, clientID: "mac-failed-taker")
+        )
+        defer { follower.releaseReceiveUserdataAfterSurfaceFree() }
+        follower.bindSurfaceSync(currentGridSize: { (cols: 140, rows: 50) }, requestRefresh: {})
+        try follower.start(surface: Self.fakeSurface())
+        follower.markLayoutSettled()
+
+        followerSession.setFailNextResize(true)
+        #expect(!follower.takeControl())
+
+        let snapshot = store.snapshot(sessionName: "graftty-test")
+        let previousGrid = try DisplayGrid(cols: 100, rows: 30)
+        #expect(snapshot.ownerClientID != DisplayClientID("mac-failed-taker"))
+        #expect(snapshot.grid == previousGrid)
+        #expect(followerSession.resizes().isEmpty)
+    }
+
     @Test func configureSetsHostManagedBackendAndReceiveCallbacks() {
         let backend = Self.makeBackend(session: FakeHostManagedSession())
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }

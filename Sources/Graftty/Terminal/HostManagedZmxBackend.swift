@@ -29,6 +29,7 @@ struct HostManagedZmxOwnership {
     private let attachImpl: (Bool, DisplayGrid) -> DisplayOwnershipSnapshot
     private let claimImpl: (DisplayGrid) -> SessionDisplayOwnershipClaimResult
     private let ownerResizeImpl: (UInt64, DisplayGrid) -> SessionDisplayOwnershipResizeResult
+    private let releaseImpl: (DisplayGrid) -> DisplayOwnershipSnapshot
     private let detachImpl: (DisplayGrid) -> DisplayOwnershipSnapshot
     private let canWriteImpl: () -> Bool
 
@@ -39,6 +40,7 @@ struct HostManagedZmxOwnership {
         attach: @escaping (Bool, DisplayGrid) -> DisplayOwnershipSnapshot,
         claim: @escaping (DisplayGrid) -> SessionDisplayOwnershipClaimResult,
         ownerResize: @escaping (UInt64, DisplayGrid) -> SessionDisplayOwnershipResizeResult,
+        release: @escaping (DisplayGrid) -> DisplayOwnershipSnapshot,
         detach: @escaping (DisplayGrid) -> DisplayOwnershipSnapshot,
         canWrite: @escaping () -> Bool
     ) {
@@ -48,6 +50,7 @@ struct HostManagedZmxOwnership {
         self.attachImpl = attach
         self.claimImpl = claim
         self.ownerResizeImpl = ownerResize
+        self.releaseImpl = release
         self.detachImpl = detach
         self.canWriteImpl = canWrite
     }
@@ -90,6 +93,13 @@ struct HostManagedZmxOwnership {
                     grid: grid
                 )
             },
+            release: { fallbackGrid in
+                store.releaseOwner(
+                    sessionName: sessionName,
+                    clientID: clientID,
+                    fallbackGrid: fallbackGrid
+                )
+            },
             detach: { fallbackGrid in
                 store.detachClient(
                     sessionName: sessionName,
@@ -118,6 +128,10 @@ struct HostManagedZmxOwnership {
 
     func ownerResize(epoch: UInt64, grid: DisplayGrid) -> SessionDisplayOwnershipResizeResult {
         ownerResizeImpl(epoch, grid)
+    }
+
+    func release(fallbackGrid: DisplayGrid) -> DisplayOwnershipSnapshot {
+        releaseImpl(fallbackGrid)
     }
 
     func detach(fallbackGrid: DisplayGrid) -> DisplayOwnershipSnapshot {
@@ -368,8 +382,16 @@ final class HostManagedZmxBackend {
             case .starting:
                 if let resize = pendingResize {
                     pendingResize = nil
+                    guard ownerResizeAcceptedLocked(resize) else {
+                        lock.unlock()
+                        continue
+                    }
                     lock.unlock()
-                    try? newSession.resize(cols: resize.cols, rows: resize.rows)
+                    if (try? newSession.resize(cols: resize.cols, rows: resize.rows)) == nil {
+                        lock.lock()
+                        if lastForwardedResize == resize { lastForwardedResize = nil }
+                        lock.unlock()
+                    }
                     continue
                 }
                 // TERM-11.12: drain queued pre-start writes (after any
@@ -520,7 +542,8 @@ final class HostManagedZmxBackend {
             lock.unlock()
             return false
         }
-        let result = ownership.claim(grid: grid)
+        let previousSnapshot = ownership.snapshot(fallbackGrid: fallbackDisplayGridLocked())
+        let result = ownership.claim(grid: previousSnapshot.grid)
         ownershipSnapshot = result.snapshot
         guard result.accepted else {
             lock.unlock()
@@ -545,10 +568,19 @@ final class HostManagedZmxBackend {
         if let currentSession, (try? currentSession.resize(cols: resize.cols, rows: resize.rows)) == nil {
             lock.lock()
             if lastForwardedResize == resize { lastForwardedResize = nil }
+            let releaseFallback = fallbackDisplayGridLocked()
+            let releasedSnapshot = ownership.release(fallbackGrid: releaseFallback)
+            ownershipSnapshot = releasedSnapshot
             lock.unlock()
             return false
         }
-        if currentSession != nil { refresh() }
+        if currentSession != nil {
+            let resizeResult = ownership.ownerResize(epoch: result.snapshot.epoch, grid: grid)
+            lock.lock()
+            ownershipSnapshot = resizeResult.snapshot
+            lock.unlock()
+            refresh()
+        }
         return true
     }
 

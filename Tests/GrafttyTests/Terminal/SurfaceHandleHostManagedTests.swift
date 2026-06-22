@@ -152,6 +152,25 @@ struct SurfaceHandleHostManagedTests {
         #expect(backend.resyncVisibleGridCount == 1)
     }
 
+    @Test func surfaceContextMenuTakeControlCallsBackendThroughSurfaceHandle() throws {
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let handle = try #require(SurfaceHandle(
+            terminalID: Self.terminalID(),
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _, _, _, _ in backend }
+        ))
+
+        let surfaceView = try #require(handle.view as? SurfaceNSView)
+        surfaceView.takeDisplayControlFromMenu(nil)
+
+        #expect(backend.takeControlCount == 1)
+    }
+
     @Test func typeTextUsesBackendForZmxBackedSurface() throws {
         let backend = FakeSurfaceHandleZmxBackend()
         let harness = SurfaceHandleTestHarness(surface: fakeSurface())

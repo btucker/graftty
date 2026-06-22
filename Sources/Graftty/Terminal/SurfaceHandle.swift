@@ -373,6 +373,9 @@ final class SurfaceHandle {
                 self?.startZmxBackendIfNeeded()
                 backend?.markLayoutSettled()
             }
+            surfaceView.takeDisplayControlNotifier = { [weak self] in
+                self?.takeDisplayControl() ?? false
+            }
             // TERM-11.10: spawn-time injection rides along with the
             // deferred start.
             pendingZmxStart = PendingZmxStart(extraInitialInput: extraInitialInput)
@@ -690,6 +693,7 @@ final class SurfaceNSView: NSView {
     /// backend's one-shot makes it the TERM-11.1 layout-settled signal.
     var hostManagedLayoutNotifier: (() -> Void)?
     var visibleForInputNotifier: (() -> Void)?
+    var takeDisplayControlNotifier: (() -> Bool)?
 
     /// Cursor to display when the mouse is over this surface. libghostty
     /// drives this via `GHOSTTY_ACTION_MOUSE_SHAPE` (e.g., pointer when
