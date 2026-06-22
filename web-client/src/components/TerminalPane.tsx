@@ -227,13 +227,17 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
       currentWs = ws;
       setActiveConnection(ws, clientID);
 
+      const isCurrentSocket = () => currentWs === ws && connectionRef.current.ws === ws;
+
       ws.onopen = () => {
+        if (!isCurrentSocket()) return;
         attempt = 0;
         setStatus(sessionName);
         sendHello(ws, clientID);
       };
 
       ws.onmessage = (ev) => {
+        if (!isCurrentSocket()) return;
         if (ev.data instanceof ArrayBuffer) {
           const term = termRef.current;
           if (!term) return;
@@ -280,6 +284,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
 
       ws.onclose = () => {
         if (disposed) return;
+        if (!isCurrentSocket()) return;
         currentWs = null;
         clearActiveConnection(ws);
         setStatus('reconnecting');

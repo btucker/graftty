@@ -308,6 +308,37 @@ test('reconnects use a fresh browser client id per websocket connection', async 
   expect(textFrames(secondWs)[0].clientID).not.toBe(firstClientID);
 });
 
+test('superseded websocket callbacks cannot clear or overwrite the active owner connection', async () => {
+  const { term, ws } = await renderReady();
+  vi.useFakeTimers();
+
+  await act(async () => ws.open());
+  await act(async () => {
+    ws.close();
+    vi.advanceTimersByTime(10_000);
+  });
+
+  const activeWs = MockWebSocket.instances[1];
+  await act(async () => activeWs.open());
+  const activeClientID = textFrames(activeWs)[0].clientID;
+  await act(async () => activeWs.receive(ownershipFrame(activeClientID, 'web')));
+  activeWs.sent.length = 0;
+  ws.sent.length = 0;
+
+  await act(async () => {
+    ws.onopen?.();
+    ws.receive(ownershipFrame('stale-owner', 'web'));
+    ws.onclose?.();
+  });
+  term.dataHandler?.('ok');
+
+  expect(ws.sent).toEqual([]);
+  const payload = activeWs.sent.at(-1);
+  expect(ArrayBuffer.isView(payload)).toBe(true);
+  expect(Array.from(payload as Uint8Array)).toEqual([111, 107]);
+  expect(screen.queryByRole('button', { name: /take control/i })).toBeNull();
+});
+
 test('owner terminal resize sends ownerResize with the active client id and epoch', async () => {
   const { term, ws } = await renderReady();
 
