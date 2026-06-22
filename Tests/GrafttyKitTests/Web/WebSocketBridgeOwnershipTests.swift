@@ -204,6 +204,40 @@ struct WebSocketBridgeOwnershipTests {
     }
 
     @Test
+    func binaryImplicitClaimDoesNotTakeOverOwnerThatAppearsDuringRace() {
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let racing = makeCoordinator(
+            store: store,
+            broadcaster: broadcaster,
+            serverClientID: DisplayClientID("server-ios-1"),
+            defaultKind: .ios
+        )
+        let other = makeCoordinator(
+            store: store,
+            broadcaster: broadcaster,
+            serverClientID: DisplayClientID("server-web-2")
+        )
+        racing.coordinator.beforeImplicitBinaryClaimForTesting = {
+            other.coordinator.handleControl(.hello(
+                clientID: DisplayClientID("other-protocol"),
+                kind: .web,
+                role: .interactive,
+                visible: true,
+                cols: 100,
+                rows: 30
+            ))
+        }
+
+        racing.coordinator.handleBinary(Data("racing key".utf8))
+
+        #expect(racing.recorder.snapshot().writes.isEmpty)
+        let snapshot = store.snapshot(sessionName: sessionName)
+        #expect(snapshot.ownerClientID == DisplayClientID("server-web-2"))
+        #expect(snapshot.ownerKind == .web)
+    }
+
+    @Test
     func takeoverImmediatelyResizesPTYToNewOwnerGrid() throws {
         let store = SessionDisplayOwnershipStore()
         let broadcaster = WebDisplayOwnershipBroadcaster()

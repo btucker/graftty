@@ -93,6 +93,7 @@ internal final class WebSocketBridgeCoordinator: @unchecked Sendable {
     private var attached = false
     private var detached = false
     private var lastAcceptedOwnerGrid: DisplayGrid?
+    var beforeImplicitBinaryClaimForTesting: (() -> Void)?
 
     init(
         sessionName: String,
@@ -192,6 +193,7 @@ internal final class WebSocketBridgeCoordinator: @unchecked Sendable {
         let snapshot = ownershipStore.snapshot(sessionName: sessionName)
         guard snapshot.isOwnerless else { return }
         let grid = snapshot.grid
+        beforeImplicitBinaryClaimForTesting?()
         ensureAttached(kind: currentKind() ?? defaultKind, grid: grid)
 
         if isCurrentOwner() {
@@ -200,7 +202,7 @@ internal final class WebSocketBridgeCoordinator: @unchecked Sendable {
             return
         }
 
-        let result = ownershipStore.claimOwner(
+        let result = ownershipStore.claimOwnerIfOwnerlessOrCurrent(
             sessionName: sessionName,
             clientID: clientID,
             kind: currentKind() ?? defaultKind,
@@ -276,7 +278,7 @@ internal final class WebSocketBridgeCoordinator: @unchecked Sendable {
             return
         }
 
-        let result = ownershipStore.claimOwner(
+        let result = ownershipStore.claimOwnerIfOwnerlessOrCurrent(
             sessionName: sessionName,
             clientID: clientID,
             kind: kind,

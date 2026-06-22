@@ -108,6 +108,51 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         )
     }
 
+    public func claimOwnerIfOwnerlessOrCurrent(
+        sessionName: String,
+        clientID: DisplayClientID,
+        kind: DisplayClientKind,
+        grid: DisplayGrid,
+        fallbackGrid: DisplayGrid = .daemonFallback
+    ) -> SessionDisplayOwnershipClaimResult {
+        lock.lock()
+        defer { lock.unlock() }
+
+        var record = records[sessionName] ?? Record()
+        guard let attachedClient = record.attachedClients[clientID],
+              attachedClient.kind == kind,
+              attachedClient.kind != .preview,
+              attachedClient.role != .preview,
+              attachedClient.visible else {
+            return SessionDisplayOwnershipClaimResult(
+                accepted: false,
+                snapshot: snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
+            )
+        }
+
+        let alreadyCurrentOwner = record.ownerClientID == clientID && record.ownerKind == kind
+        guard record.ownerClientID == nil || alreadyCurrentOwner else {
+            return SessionDisplayOwnershipClaimResult(
+                accepted: false,
+                snapshot: snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
+            )
+        }
+
+        let ownerChanged = !alreadyCurrentOwner
+        record.ownerClientID = clientID
+        record.ownerKind = kind
+        record.grid = grid
+        if ownerChanged {
+            record.epoch += 1
+        }
+
+        records[sessionName] = record
+        return SessionDisplayOwnershipClaimResult(
+            accepted: true,
+            snapshot: snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
+        )
+    }
+
     public func ownerResize(
         sessionName: String,
         clientID: DisplayClientID,
