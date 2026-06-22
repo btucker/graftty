@@ -122,6 +122,7 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
     private(set) var markLayoutSettledCount = 0
     private(set) var remoteClientsDidDetachCount = 0
     private(set) var resyncVisibleGridCount = 0
+    private(set) var takeControlCount = 0
     private(set) var userInputScopeCount = 0
 
     init(startError: Error? = nil, setSizeCountSource: @escaping () -> Int = { 0 }) {
@@ -180,6 +181,11 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
 
     func resyncVisibleGrid() {
         resyncVisibleGridCount += 1
+    }
+
+    func takeControl() -> Bool {
+        takeControlCount += 1
+        return true
     }
 
     func close() {

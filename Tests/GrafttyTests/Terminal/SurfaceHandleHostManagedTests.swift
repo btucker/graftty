@@ -22,7 +22,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         )
 
         #expect(handle != nil)
@@ -55,7 +55,7 @@ struct SurfaceHandleHostManagedTests {
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             extraInitialInput: "claude\r",
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         ))
 
         // No layout yet: no attach client, no initial input.
@@ -108,7 +108,7 @@ struct SurfaceHandleHostManagedTests {
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             extraInitialInput: "nvim Sources/main.swift\r",
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         )
 
         #expect(handle != nil)
@@ -131,7 +131,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         ))
 
         #expect(backend.bindSurfaceSyncCount == 1)
@@ -162,7 +162,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         ))
 
         handle.typeText("abc")
@@ -222,7 +222,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         )
 
         #expect(handle == nil)
@@ -246,7 +246,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         )
 
         #expect(handle != nil)
@@ -280,7 +280,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         )
         _ = try #require(handle)
 
@@ -303,7 +303,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         ))
 
         let size = handle.queryGridSize()
@@ -328,7 +328,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, initialSize, _ in
+            zmxBackendFactory: { _, initialSize, _, _ in
                 observedInitialSize = initialSize
                 return backend
             },
@@ -357,7 +357,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend },
+            zmxBackendFactory: { _, _, _, _ in backend },
             initialGridSize: .testSize132x43
         )
 
@@ -388,7 +388,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         ))
         let surfaceView = try #require(handle.view as? SurfaceNSView)
         surfaceView.surfaceOperations = SurfaceNSViewGhosttySurfaceOperations(
