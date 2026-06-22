@@ -531,6 +531,10 @@ public final class SessionClient {
         case .resize:
             // Client never receives resize; ignore.
             break
+        case .hello, .takeControl, .ownerResize, .ownership:
+            // Ownership-aware frames are ignored until mobile ownership state
+            // lands in the Task 6 client path.
+            break
         }
     }
 }
