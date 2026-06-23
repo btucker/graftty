@@ -3,7 +3,7 @@ import Foundation
 /// Pluggable target for `IdleDeliveryService` nudges. Production wires
 /// this to a zmx PTY writer; tests record invocations.
 public protocol NudgeSender: Sendable {
-    func send(sessionName: String, message: String, messageIDs: [String]) async
+    func send(sessionName: String, message: String, messageIDs: [String]) async -> Bool
 }
 
 /// @spec TEAM-IDLE-2.1
@@ -76,7 +76,7 @@ public actor IdleDeliveryService {
             return
         }
         let watermark: String?
-        do { watermark = try inbox.zmxWatermark(teamID: team, worktree: worktree, runtime: runtime) }
+        do { watermark = try effectiveWatermark(team: team, worktree: worktree, runtime: runtime) }
         catch {
             log(team: team, worktree: worktree, runtime: runtime, outcome: "error_watermark_read")
             return
@@ -92,18 +92,60 @@ public actor IdleDeliveryService {
             return
         }
         let text = TeamHookRenderer.format(messages: pending)
+        var deliveredToAtLeastOneSession = false
         for sessionName in sessionNames {
-            await nudgeSender.send(sessionName: sessionName, message: text, messageIDs: pending.map(\.id))
+            let sent = await nudgeSender.send(
+                sessionName: sessionName,
+                message: text,
+                messageIDs: pending.map(\.id)
+            )
+            deliveredToAtLeastOneSession = deliveredToAtLeastOneSession || sent
+        }
+        guard deliveredToAtLeastOneSession else {
+            log(team: team, worktree: worktree, runtime: runtime,
+                outcome: "error_nudge_send", messageIDs: pending.map(\.id), trigger: trigger)
+            return
         }
         do {
             try inbox.advanceZmxWatermark(teamID: team, worktree: worktree,
                                           runtime: runtime, to: lastMessage.id)
+            try inbox.writeWorktreeWatermark(
+                TeamInboxWorktreeWatermark(
+                    worktree: worktree,
+                    lastDeliveredToAnySessionID: lastMessage.id
+                ),
+                teamID: team
+            )
         } catch {
-            log(team: team, worktree: worktree, runtime: runtime, outcome: "error_watermark_write")
+            log(team: team, worktree: worktree, runtime: runtime,
+                outcome: "error_watermark_write", messageIDs: pending.map(\.id), trigger: trigger)
             return
         }
         log(team: team, worktree: worktree, runtime: runtime,
             outcome: "sent", messageIDs: pending.map(\.id), trigger: trigger)
+    }
+
+    private func effectiveWatermark(team: String, worktree: String, runtime: String) throws -> String? {
+        let zmx = try inbox.zmxWatermark(teamID: team, worktree: worktree, runtime: runtime)
+        let worktreeDelivered = try inbox.worktreeWatermark(teamID: team, worktree: worktree)?
+            .lastDeliveredToAnySessionID
+        guard zmx != worktreeDelivered else { return zmx }
+        guard let zmx else { return worktreeDelivered }
+        guard let worktreeDelivered else { return zmx }
+
+        let messages = try inbox.messages(teamID: team)
+        let zmxIndex = messages.lastIndex { $0.id == zmx }
+        let worktreeIndex = messages.lastIndex { $0.id == worktreeDelivered }
+        switch (zmxIndex, worktreeIndex) {
+        case let (zmxIndex?, worktreeIndex?):
+            return zmxIndex >= worktreeIndex ? zmx : worktreeDelivered
+        case (_?, nil):
+            return zmx
+        case (nil, _?):
+            return worktreeDelivered
+        case (nil, nil):
+            return zmx
+        }
     }
 
     private func log(
@@ -128,8 +170,13 @@ public final class ZmxNudgeSender: NudgeSender, @unchecked Sendable {
     public init(writer: ZmxWriter) {
         self.writer = writer
     }
-    public func send(sessionName: String, message: String, messageIDs: [String]) async {
-        do { try await writer.write(sessionName: sessionName, text: message, submit: true) }
-        catch { NSLog("[Graftty] zmx send failed for %@: %@", sessionName, "\(error)") }
+    public func send(sessionName: String, message: String, messageIDs: [String]) async -> Bool {
+        do {
+            try await writer.write(sessionName: sessionName, text: message, submit: true)
+            return true
+        } catch {
+            NSLog("[Graftty] zmx send failed for %@: %@", sessionName, "\(error)")
+            return false
+        }
     }
 }
