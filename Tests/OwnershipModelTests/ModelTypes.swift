@@ -37,4 +37,8 @@ enum Event {
     case op(Op)
     case deliver(Delivery)
     case deferred(DeferredWork)
+    /// Lazy token: generate and apply the next web control op.
+    case nextOp
+    /// Token: pop the FIFO head of connection `connID` from `FakeNetwork` and deliver it.
+    case advanceConnection(Int)
 }
