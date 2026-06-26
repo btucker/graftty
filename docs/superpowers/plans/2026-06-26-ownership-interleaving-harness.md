@@ -313,10 +313,17 @@ struct WebSeamTests {
 **Interfaces:**
 - Produces: `struct RunResult { let seed: UInt64; let violations: [Violation]; let transcript: [String] }` and `func runScenario(seed: UInt64, opCount: Int) -> RunResult` that: generates ops over a mixed Mac+web client set, pushes them and their resulting deliveries into the `EventQueue`, drains via `popNext`, runs the oracle after each event, and collects a per-step transcript line.
 
-- [ ] **Step 1: Write the failing test** — a seed sweep that must stay clean (positive control across the whole engine):
+**Emission-sequence number (ESN) — added per the Task 4 review (a real finding).** The real store's `ownerResize` updates the grid **without** bumping `epoch`, so epoch alone does not version grids — two different grids can share one epoch, and an epoch-only S5 cannot catch a same-epoch stale-grid being applied over a newer one (the TERM-11.x "stale resize callback" class). Close this in the harness, test-only, no production change:
+- The harness stamps a monotonic `emissionSeq: UInt64` on every snapshot at the moment the store/broadcaster emits it (a harness-side counter incremented per emission, NOT a store field). Carry it alongside the snapshot through `Delivery`.
+- `WebFollowerView` (and later the Mac/iOS follower views) track `highestAppliedEmission: UInt64` in addition to `highestApplied` (epoch). `apply` guards on BOTH: ignore a delivery unless `epoch >= highestApplied && emissionSeq >= highestAppliedEmission`.
+- **S5 strengthens:** raise `.s5SupersededApplied` when a follower applies a delivery whose `emissionSeq` is lower than its `highestAppliedEmission` (epoch regression remains a trigger too).
+- **L1 strengthens:** at quiescence a follower's `highestAppliedEmission` equals the latest emission the harness produced for it, and its applied grid equals the store's current grid.
+
+- [ ] **Step 1: Write the failing tests** — a positive-control seed sweep that must stay clean, AND a teeth-proving negative control that a same-epoch reordered grid IS caught:
 
 ```swift
 import Testing
+import GrafttyProtocol
 
 @Suite("Web model-check sweep")
 struct WebModelCheckTests {
@@ -325,13 +332,31 @@ struct WebModelCheckTests {
         let result = runScenario(seed: seed, opCount: 60)
         #expect(result.violations.isEmpty, "seed \(seed): \(result.violations)\n\(result.transcript.joined(separator: "\n"))")
     }
+
+    // Teeth: two different grids at the SAME epoch (owner resize), delivered out of
+    // emission order to a follower whose epoch guard alone would accept both. With the
+    // ESN guard the stale one must be ignored; if the guard is bypassed the oracle must
+    // raise S5. This proves the ESN strengthening actually catches the resize-reorder class.
+    @Test func sameEpochReorderedGridIsCaughtByESN() throws {
+        var world = MultiTransportWorld(session: "main")
+        let web = DisplayClientID("web-1")
+        world.webHandle(.hello(clientID: web, kind: .web, role: .interactive, visible: true, cols: 80, rows: 24))
+        world.webHandle(.takeControl(clientID: web, kind: .web, cols: 80, rows: 24))
+        let g1 = world.emit()                 // emissionSeq s1, grid 80x24, epoch e
+        world.webHandle(.ownerResize(clientID: web, epoch: g1.snapshot.epoch, cols: 120, rows: 24))
+        let g2 = world.emit()                 // emissionSeq s2 > s1, grid 120x24, SAME epoch e
+        world.webFollower.bypassEpochGuard = true   // simulate the pre-fix adapter
+        world.deliverToWebFollower(g2)        // newest first
+        world.deliverToWebFollower(g1)        // stale grid, lower emissionSeq
+        #expect(world.oracle.violations.contains { if case .s5SupersededApplied = $0 { return true }; return false })
+    }
 }
 ```
 
-- [ ] **Step 2: Run → FAIL** (compile error / `runScenario` missing). Then once it compiles, if it surfaces a REAL violation, STOP and report — that is a genuine finding, not a test to force green. Capture the seed.
-- [ ] **Step 3: Implement** `runScenario`: build clients, loop `opCount` times generating a legal-or-illegal op, apply to `MultiTransportWorld`, enqueue the resulting ownership snapshot as a `.deliver` to each follower's connection, drain the queue picking events via `popNext`, calling the oracle after each. Append a transcript line per event (e.g. `"#\(n) op=\(op) → owner=\(snap.ownerKind) epoch=\(snap.epoch)"`).
-- [ ] **Step 4: Run → PASS** (clean sweep) or a reported finding.
-- [ ] **Step 5: Commit.** `git commit -am "test(ownership-model): randomized web-transport model check"`
+- [ ] **Step 2: Run → FAIL** (compile error / missing `runScenario`/`emit`/`emissionSeq`/`bypassEpochGuard`). Once it compiles, if the positive-control sweep surfaces a REAL violation, STOP and report — that is a genuine finding, not a test to force green. Capture the seed.
+- [ ] **Step 3: Implement** the ESN machinery (harness emission counter; `emissionSeq` on `Delivery`; `WebFollowerView.highestAppliedEmission` + the two-part guard; the `bypassEpochGuard` test-only flag on `WebFollowerView` defaulting to `false`; `MultiTransportWorld.emit()` returning the current snapshot tagged with the next `emissionSeq`), and `runScenario`: build clients, loop `opCount` times generating a legal-or-illegal op, apply to `MultiTransportWorld`, `emit()` and enqueue the tagged snapshot as a `.deliver` to each follower's connection, drain the queue via `popNext`, call the oracle after each event. Append a transcript line per event (e.g. `"#\(n) op=\(op) → owner=\(snap.ownerKind) epoch=\(snap.epoch) emit=\(emissionSeq)"`). Strengthen `Oracle` S5/L1 to use `emissionSeq` as described above.
+- [ ] **Step 4: Run → PASS** (clean positive sweep AND the ESN teeth test catches S5) or a reported finding.
+- [ ] **Step 5: Commit.** `git commit -am "test(ownership-model): randomized web model check + ESN resize-reorder detection"`
 
 ---
 
