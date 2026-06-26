@@ -613,15 +613,6 @@ public final class SessionClient {
             // Client never receives resize; ignore.
             break
         case let .ownership(snapshot):
-            // S5 monotonic epoch guard: ignore snapshots with a lower epoch
-            // than the highest we have applied.  The real server guarantees
-            // monotonic delivery on a single TCP connection, but iOS tests
-            // (and any future reconnect-reorder scenario) may produce
-            // out-of-order frames.  Rolling back display ownership to a stale
-            // epoch would produce a spurious S5 violation.
-            if let current = ownershipSnapshot, snapshot.epoch < current.epoch {
-                break
-            }
             ownershipSnapshot = snapshot
         case .hello, .takeControl, .ownerResize:
             break
