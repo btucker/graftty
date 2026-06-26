@@ -1042,6 +1042,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-8.6** While the cert pair fetch is in flight on "Enable web access", the application shall hold a `.provisioningCert` status, render a `ProgressView` plus "Provisioning certificate from Tailscale…" message in the Settings pane, and shall not block the MainActor for the duration of the fetch. On completion the status shall transition to `.listening` (success), `.httpsCertsNotEnabled` (tailnet-disabled), or `.certFetchFailed(<message>)` (any other error) without leaving the pane stuck on `.provisioningCert`.
 
+## OWN — Display Ownership
+
+### OWN-1.x — Follower Convergence
+
+**OWN-1.1** When a display follower receives an ownership snapshot whose emission sequence is lower than one already applied, the application shall discard the superseded delivery and preserve the current ownership and grid state.
+
 ## UPDATE — Self-Update
 
 ### UPDATE-1.x — Install flow

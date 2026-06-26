@@ -11,9 +11,8 @@ import GrafttyProtocol
 /// simulates that adapter; S5 must fire to prove the harness has teeth.
 @Suite("Historical regression re-catch")
 struct HistoricalRegressionTests {
-    /// @spec ownership-model: When a web follower with a bypassed epoch guard
-    /// receives a snapshot whose emission sequence is lower than one already
-    /// applied, the oracle shall raise s5SupersededApplied for that delivery.
+    /// Oracle "teeth" proof for OWN-1.1: with the ESN guard bypassed, the oracle
+    /// must raise s5SupersededApplied when a stale delivery is applied.
     @Test func s5CatchesStaleWebsocketCallback() {
         var world = MultiTransportWorld(session: "main")
         world.webFollower.bypassEpochGuard = true        // simulate the pre-fix adapter

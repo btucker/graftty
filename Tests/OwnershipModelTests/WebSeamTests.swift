@@ -4,7 +4,8 @@ import GrafttyProtocol
 
 @Suite("Web seam S5/L1")
 struct WebSeamTests {
-    @Test func delayedLowerEmissionSnapshotNeverAppliedOverNewer() throws {
+    @Test("@spec OWN-1.1: When a display follower receives an ownership snapshot whose emission sequence is lower than one already applied, the application shall discard the superseded delivery and preserve the current ownership and grid state.")
+    func delayedLowerEmissionSnapshotNeverAppliedOverNewer() throws {
         var world = MultiTransportWorld(session: "main")
         let web = DisplayClientID("web-1")
         world.webHandle(.hello(clientID: web, kind: .web, role: .interactive, visible: true, cols: 80, rows: 24))
