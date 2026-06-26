@@ -14,7 +14,7 @@ struct MultiTransportWorld {
     let session: String
     let store: SessionDisplayOwnershipStore
     var oracle: Oracle
-    let webFollower: WebFollowerView
+    private(set) var webFollower: WebFollowerView
     var fakeNetwork: FakeNetwork
 
     private let coordinator: WebSocketBridgeCoordinator

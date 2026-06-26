@@ -11,10 +11,17 @@ struct FakeNetwork {
     /// Value: ordered list of pending deliveries (head = next to deliver).
     private var queues: [Int: [Delivery]] = [:]
 
+    /// Monotonically increasing per-connection ordinal counters.
+    /// `connectionSeq` on each `Delivery` reflects the 0-based send order
+    /// within that connection, not the connection identifier itself.
+    private var nextSeq: [Int: Int] = [:]
+
     /// Enqueue a snapshot delivery on the given connection.
     mutating func enqueue(target: DisplayClientID, snapshot: DisplayOwnershipSnapshot, connection: Int) {
+        let seq = nextSeq[connection, default: 0]
+        nextSeq[connection] = seq + 1
         queues[connection, default: []].append(
-            Delivery(target: target, snapshot: snapshot, connectionSeq: connection)
+            Delivery(target: target, snapshot: snapshot, connectionSeq: seq)
         )
     }
 
