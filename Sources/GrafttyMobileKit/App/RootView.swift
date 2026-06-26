@@ -119,7 +119,8 @@ public struct RootView: View {
             // the connection is classified `.web`, the store stamps
             // `ownerKind=.web`, and `SessionClient.isOwner` (which requires
             // `.ios`) is never true — the phone becomes a permanent follower
-            // that silently drops its own input.
+            // that cannot confirm ownership after Take Control or input
+            // takeover.
             URLQueryItem(name: "client", value: "ios"),
         ]
         return components.url ?? base

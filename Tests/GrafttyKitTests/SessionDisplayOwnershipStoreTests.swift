@@ -29,7 +29,7 @@ struct SessionDisplayOwnershipStoreTests {
     }
 
     @Test("""
-    @spec IOS-4.25: Attaching an interactive iOS client to an ownerless session shall not implicitly make the phone the display owner. Mobile ownership changes are explicit: the client observes the ownerless snapshot, shows Take Control, and only `takeControl` may claim owner authority.
+    @spec IOS-4.25: Attaching an interactive iOS client to an ownerless session shall not implicitly make the phone the display owner. Mobile ownership changes require a `takeControl` frame, sent either by the Take Control button or by intentional terminal input; passive attach alone shall leave the session ownerless.
     """)
     func iosAttachDoesNotAutoClaimOwnerlessSession() throws {
         let store = SessionDisplayOwnershipStore()

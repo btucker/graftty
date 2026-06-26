@@ -388,16 +388,26 @@ test('follower terminal resize changes local presentation without sending ownerR
   expect(ws.sent).toEqual([]);
 });
 
-test('follower terminal data is ignored locally', async () => {
+test('follower terminal data claims ownership and flushes after confirmation', async () => {
   const { term, ws } = await renderReady();
 
   await act(async () => ws.open());
+  const clientID = textFrames(ws)[0].clientID;
   await act(async () => ws.receive(ownershipFrame('other-client', 'web')));
   ws.sent.length = 0;
 
   term.dataHandler?.('ls\n');
 
-  expect(ws.sent).toEqual([]);
+  expect(textFrames(ws)).toEqual([
+    { type: 'takeControl', clientID, kind: 'web', cols: 100, rows: 25 },
+  ]);
+  expect(ws.sent.some((payload) => ArrayBuffer.isView(payload))).toBe(false);
+
+  await act(async () => ws.receive(ownershipFrame(clientID, 'web', 100, 25, 3)));
+
+  const payload = ws.sent.at(-1);
+  expect(ArrayBuffer.isView(payload)).toBe(true);
+  expect(Array.from(payload as Uint8Array)).toEqual([108, 115, 10]);
 });
 
 test('take control button sends takeover with active client id and current grid', async () => {
@@ -427,8 +437,10 @@ test('ownership snapshots toggle take-control UI and input behavior', async () =
   await act(async () => ws.receive(ownershipFrame('other-client', 'web')));
   expect(screen.getByRole('button', { name: /take control/i })).toBeTruthy();
   ws.sent.length = 0;
-  term.dataHandler?.('blocked');
-  expect(ws.sent).toEqual([]);
+  term.dataHandler?.('claim');
+  expect(textFrames(ws)).toEqual([
+    { type: 'takeControl', clientID, kind: 'web', cols: 100, rows: 25 },
+  ]);
 
   await act(async () => ws.receive(ownershipFrame(clientID, 'web')));
   expect(screen.queryByRole('button', { name: /take control/i })).toBeNull();

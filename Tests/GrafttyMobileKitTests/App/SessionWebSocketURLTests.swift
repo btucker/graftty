@@ -11,7 +11,7 @@ struct SessionWebSocketURLTests {
     // `URLSessionWebSocketClient` connects with a bare URL (no custom header /
     // User-Agent), so the query param is the only signal the iOS app can send.
     @Test("""
-    @spec IOS-4.22: When the iOS app opens its session WebSocket, the URL shall advertise the display-client kind via a `client=ios` query parameter so the daemon classifies the connection as `.ios` and the ownership store stamps `ownerKind=.ios`. Without it the connection defaults to `.web`, and `SessionClient.isOwner` (which requires `ownerKind == .ios`) can never be true — the phone becomes a permanent follower that silently drops its own input and resize.
+    @spec IOS-4.22: When the iOS app opens its session WebSocket, the URL shall advertise the display-client kind via a `client=ios` query parameter so the daemon classifies the connection as `.ios` and the ownership store stamps `ownerKind=.ios`. Without it the connection defaults to `.web`, and `SessionClient.isOwner` (which requires `ownerKind == .ios`) can never be true — the phone cannot confirm ownership after Take Control or terminal-input takeover.
     """)
     func webSocketURLAdvertisesIOSClientKind() throws {
         let base = URL(string: "https://host.example:8443")!

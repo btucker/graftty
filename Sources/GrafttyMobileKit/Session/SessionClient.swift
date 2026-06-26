@@ -7,9 +7,10 @@ import Observation
 import UIKit
 
 /// Owns one WebSocket + one libghostty InMemoryTerminalSession. Wires
-/// terminal-input → binary WS out; binary WS in → terminal.receive;
+/// terminal-input → takeover/queued binary WS out; binary WS in → terminal.receive;
 /// server-announced ownership/grid → `authoritativeGrid` (observable, for sizing);
-/// explicit takeover → ownership request. Followers render but do not send input.
+/// explicit takeover → ownership request. Followers render passively until
+/// terminal input asks to take ownership.
 @Observable
 @MainActor
 public final class SessionClient {
@@ -99,6 +100,12 @@ public final class SessionClient {
     /// (keystroke/paste); reset on every (re)connect in `spawnOpenTask`.
     @ObservationIgnored
     private var legacyEngaged = false
+    @ObservationIgnored
+    private var pendingInputFrames: [Data] = []
+    @ObservationIgnored
+    private var pendingTakeoverBaseEpoch: UInt64?
+    @ObservationIgnored
+    private var pendingTakeoverRequested = false
 
     public var isOwner: Bool {
         guard role != .preview else { return false }
@@ -217,20 +224,17 @@ public final class SessionClient {
             write: { data in box.onBytes?(data) },
             resize: { viewport in box.onResize?(viewport) }
         )
-        // Keystroke path: owner-typed bytes go straight onto the WS
-        // from the callback's own context (ws.send is thread-safe).
-        // Followers and previews block PTY-bound input locally. IOS-6.3:
+        // Keystroke path: owner-typed bytes go straight onto the WS.
+        // Follower keystrokes request ownership and queue until confirmed;
+        // previews still block PTY-bound input locally. IOS-6.3:
         // a standalone LF is the soft-keyboard Return; translate to CR so
         // TUIs see "submit" rather than "insert newline."
         box.onBytes = { [weak self] data in
             guard let self else { return }
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                guard self.acceptsPTYInput else { return }
-                self.noteLegacyEngagement()
                 let isSoftReturn = data.count == 1 && data.first == 0x0A
-                self.recordActivity()
-                self.sendBinary(isSoftReturn ? Self.cr : data)
+                self.sendInput(isSoftReturn ? Self.cr : data)
             }
         }
         // Layout path: libghostty tells us "the iOS view is now N×M".
@@ -370,6 +374,7 @@ public final class SessionClient {
                 self.displayClientID = Self.makeDisplayClientID()
                 self.ownershipSnapshot = nil
                 self.legacyEngaged = false
+                self.clearPendingInput()
                 self.ownershipTransportMode = client.supportsWebControlTextFrames ? .webControl : .legacy
                 self.setWS(client)
                 await self.sendHelloIfSupported(on: client)
@@ -457,10 +462,20 @@ public final class SessionClient {
 
     @MainActor
     private func sendInput(_ data: Data) {
-        guard acceptsPTYInput else { return }
-        noteLegacyEngagement()
-        recordActivity()
-        sendBinary(data)
+        guard role != .preview else { return }
+        switch ownershipTransportMode {
+        case .webControl where isOwner:
+            recordActivity()
+            sendBinary(data)
+        case .webControl:
+            queueInputAndRequestTakeover(data)
+        case .legacy:
+            noteLegacyEngagement()
+            recordActivity()
+            sendBinary(data)
+        case .pending:
+            break
+        }
     }
 
     /// IOS-6.4: send literal LF, bypassing the IOS-6.3 translation.
@@ -494,13 +509,10 @@ public final class SessionClient {
     /// of the paste's meaning.
     public func sendPaste(_ text: String) {
         guard !text.isEmpty else { return }
-        guard acceptsPTYInput else { return }
-        noteLegacyEngagement()
         var payload = Data("\u{1B}[200~".utf8)
         payload.append(Data(text.utf8))
         payload.append(Data("\u{1B}[201~".utf8))
-        recordActivity()
-        sendBinary(payload)
+        sendInput(payload)
     }
 
     public func deleteBackward() {
@@ -550,6 +562,7 @@ public final class SessionClient {
         setWSReadyTask(nil)
         idleWatchdogTask?.cancel()
         idleWatchdogTask = nil
+        clearPendingInput()
         currentWS()?.close()
         setWS(nil)
         ownershipTransportMode = .pending
@@ -564,23 +577,61 @@ public final class SessionClient {
         setWS(nil)
         ownershipTransportMode = .pending
         ownershipSnapshot = nil
+        clearPendingInput()
         receiveTask?.cancel()
         receiveTask = nil
         self.start()
     }
 
     public func takeControl() {
-        guard canTakeControl, !stopped, let viewport = lastIOSViewport else { return }
+        guard canTakeControl else { return }
+        requestTakeControl()
+    }
+
+    private func queueInputAndRequestTakeover(_ data: Data) {
+        pendingInputFrames.append(data)
+        recordActivity()
+        requestTakeControlForPendingInput()
+    }
+
+    private func requestTakeControlForPendingInput() {
+        if !pendingTakeoverRequested {
+            pendingTakeoverBaseEpoch = ownershipSnapshot?.epoch
+        }
+        requestTakeControl()
+    }
+
+    private func requestTakeControl() {
+        guard !pendingTakeoverRequested, !stopped else { return }
+        let grid = helloGrid()
+        pendingTakeoverBaseEpoch = ownershipSnapshot?.epoch
+        pendingTakeoverRequested = true
         Task { [weak self] in
             guard let self else { return }
             guard let ws = await self.awaitWS(), ws.supportsWebControlTextFrames else { return }
             await ws.takeControl(
                 clientID: await MainActor.run { self.displayClientID },
                 kind: .ios,
-                cols: Int(viewport.cols),
-                rows: Int(viewport.rows)
+                cols: Int(grid.cols),
+                rows: Int(grid.rows)
             )
         }
+    }
+
+    private func clearPendingInput() {
+        pendingInputFrames.removeAll()
+        pendingTakeoverBaseEpoch = nil
+        pendingTakeoverRequested = false
+    }
+
+    private func flushPendingInput() {
+        guard !pendingInputFrames.isEmpty else {
+            clearPendingInput()
+            return
+        }
+        let frames = pendingInputFrames
+        clearPendingInput()
+        sendBinaryFrames(frames)
     }
 
     private func sendOwnerResizeToServer(cols: UInt16, rows: UInt16, epoch: UInt64) {
@@ -606,6 +657,11 @@ public final class SessionClient {
     }
 
     nonisolated private func sendBinary(_ data: Data) {
+        sendBinaryFrames([data])
+    }
+
+    nonisolated private func sendBinaryFrames(_ frames: [Data]) {
+        guard !frames.isEmpty else { return }
         // Await the in-flight WS open so writes emitted before the
         // factory resolves still land. On the synchronous URL path
         // (`URLSessionWebSocketClient`) the open Task completes
@@ -615,7 +671,9 @@ public final class SessionClient {
         // from being silently dropped.
         Task { [weak self] in
             guard let ws = await self?.awaitWS() else { return }
-            try? await ws.send(.binary(data))
+            for data in frames {
+                try? await ws.send(.binary(data))
+            }
         }
     }
 
@@ -660,6 +718,11 @@ public final class SessionClient {
                ownershipTransportMode == .webControl,
                let viewport = lastIOSViewport {
                 sendOwnerResizeToServer(cols: viewport.cols, rows: viewport.rows, epoch: snapshot.epoch)
+            }
+            if isOwner {
+                flushPendingInput()
+            } else if let baseEpoch = pendingTakeoverBaseEpoch, snapshot.epoch > baseEpoch {
+                clearPendingInput()
             }
         case .hello, .takeControl, .ownerResize:
             break

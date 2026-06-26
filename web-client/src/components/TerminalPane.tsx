@@ -93,6 +93,9 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
   const connectionRef = useRef<{ ws: WebSocket | null; clientID: string | null }>({ ws: null, clientID: null });
   const ownershipRef = useRef<OwnershipSnapshot | null>(null);
   const isOwnerRef = useRef(false);
+  const pendingInputRef = useRef<string[]>([]);
+  const pendingTakeoverBaseEpochRef = useRef<number | null>(null);
+  const pendingTakeoverRequestedRef = useRef(false);
 
   const isOwner = ownershipSnapshot?.ownerClientID === activeClientID
     && ownershipSnapshot?.ownerKind === WEB_CLIENT_KIND;
@@ -122,6 +125,9 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
     connectionRef.current = { ws: null, clientID: null };
     ownershipRef.current = null;
     isOwnerRef.current = false;
+    pendingInputRef.current = [];
+    pendingTakeoverBaseEpochRef.current = null;
+    pendingTakeoverRequestedRef.current = false;
 
     // One AbortController cleans up every listener and observer this
     // effect registers — touch gestures, visualViewport tracking,
@@ -186,6 +192,41 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
       }));
     };
 
+    const clearPendingInput = () => {
+      pendingInputRef.current = [];
+      pendingTakeoverBaseEpochRef.current = null;
+      pendingTakeoverRequestedRef.current = false;
+    };
+
+    const requestTakeControlForPendingInput = () => {
+      const { ws, clientID } = connectionRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN || !clientID) return;
+      if (pendingTakeoverRequestedRef.current) return;
+      pendingTakeoverBaseEpochRef.current = ownershipRef.current?.epoch ?? null;
+      pendingTakeoverRequestedRef.current = true;
+      const { cols, rows } = currentGrid();
+      ws.send(JSON.stringify({
+        type: 'takeControl',
+        clientID,
+        kind: WEB_CLIENT_KIND,
+        cols,
+        rows,
+      }));
+    };
+
+    const flushPendingInput = () => {
+      const { ws } = connectionRef.current;
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        clearPendingInput();
+        return;
+      }
+      const pending = pendingInputRef.current;
+      clearPendingInput();
+      for (const data of pending) {
+        ws.send(textEncoder.encode(data));
+      }
+    };
+
     // Send `data` through whatever WebSocket is currently open. Called
     // by the Terminal's `onData` callback — that callback is bound
     // exactly once to the Terminal, so it captures `currentWs` by
@@ -196,7 +237,11 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
     const sendBytes = (data: string) => {
       if (isOwnerRef.current && currentWs && currentWs.readyState === WebSocket.OPEN) {
         currentWs.send(textEncoder.encode(data));
+        return;
       }
+      if (!currentWs || currentWs.readyState !== WebSocket.OPEN) return;
+      pendingInputRef.current.push(data);
+      requestTakeControlForPendingInput();
     };
 
     const sendOwnerResize = (cols: number, rows: number) => {
@@ -229,6 +274,14 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
       setOwnershipSnapshot(snapshot);
       if (!wasOwner && isOwnerRef.current && termReady) {
         sendCurrentGridAsOwnerResize();
+      }
+      if (isOwnerRef.current) {
+        flushPendingInput();
+      } else if (
+        pendingTakeoverBaseEpochRef.current != null
+        && snapshot.epoch > pendingTakeoverBaseEpochRef.current
+      ) {
+        clearPendingInput();
       }
     };
 
@@ -302,6 +355,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
         if (!isCurrentSocket()) return;
         currentWs = null;
         clearActiveConnection(ws);
+        clearPendingInput();
         setStatus('reconnecting');
         const delay = nextBackoffMs(attempt);
         attempt += 1;
@@ -470,6 +524,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
       connectionRef.current = { ws: null, clientID: null };
       setActiveClientID(null);
       isOwnerRef.current = false;
+      clearPendingInput();
       termRef.current?.dispose();
       termRef.current = null;
     };

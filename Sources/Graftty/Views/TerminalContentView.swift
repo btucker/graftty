@@ -65,9 +65,9 @@ struct TerminalContentView: View {
                     .paneFocusDimming(fill: theme.unfocusedSplitFill, style: dimmingStyle)
                     // Mirror the iOS "Take Control" affordance: when another
                     // display client (iOS/web) owns this pane, the Mac is a
-                    // follower (input/resize gated), so offer a button to
-                    // reclaim ownership. Visibility tracks ownership changes
-                    // reactively via TerminalManager's store observer.
+                    // follower, so offer a button to reclaim ownership without
+                    // typing. Visibility tracks ownership changes reactively
+                    // via TerminalManager's store observer.
                     .overlay(alignment: .top) {
                         if tm.canTakeDisplayControl(for: terminalID) {
                             takeControlButton {

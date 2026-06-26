@@ -15,6 +15,9 @@ struct SessionClientTests {
         var sent: [WebSocketFrame] {
             lock.withLock { _sent }
         }
+        func clearSent() {
+            lock.withLock { _sent.removeAll() }
+        }
         var supportsWebControlTextFrames: Bool { true }
         var closed = false
         func send(_ frame: WebSocketFrame) async throws {
@@ -427,7 +430,7 @@ struct SessionClientTests {
         #expect(client.cellWidthPoints == 7.0)
     }
 
-    @Test("@spec IOS-4.18: While a `SessionClient` is operating as a worktree-detail pane preview (`IOS-4.10`, `IOS-4.12`), it shall identify itself with `DisplayClientRole.preview`, report `visible=false`, never claim display ownership, never forward libghostty bytes to the server, and never send takeover or `ownerResize` frames. Preview sizing shall render the authoritative grid locally; only an explicit fullscreen Take Control action can change the display owner.")
+    @Test("@spec IOS-4.18: While a `SessionClient` is operating as a worktree-detail pane preview (`IOS-4.10`, `IOS-4.12`), it shall identify itself with `DisplayClientRole.preview`, report `visible=false`, never claim display ownership, never forward libghostty bytes to the server, and never send takeover or `ownerResize` frames. Preview sizing shall render the authoritative grid locally; only fullscreen terminal input or an explicit fullscreen Take Control action can change the display owner.")
     func previewRoleDoesNotForwardLibghosttyBytes() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, role: .preview)
@@ -525,13 +528,17 @@ struct SessionClientTests {
         ))
     }
 
-    @Test("Follower input attempts are blocked locally and do not send binary frames")
-    func followerInputAttemptsDoNotSendBinaryFrames() async throws {
+    @Test("Follower input attempts request takeover but do not send binary frames before confirmation")
+    func followerInputAttemptsRequestTakeoverWithoutSendingBinaryFramesBeforeConfirmation() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
+        primeViewport(client, columns: 80, rows: 24)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        _ = try #require(firstHelloClientID(ws))
         try confirmFollower(client)
+        ws.clearSent()
 
         client.session.sendInput(Data([0x68]))
         client.sendSoftwareKeyboardText("abc")
@@ -546,6 +553,51 @@ struct SessionClientTests {
         try await Task.sleep(nanoseconds: 100_000_000)
 
         #expect(binaryFrames(ws).isEmpty)
+        let takeovers = envelopes(ws).filter {
+            if case .takeControl = $0 { return true }
+            return false
+        }
+        #expect(takeovers.count == 1)
+    }
+
+    @Test("Follower input claims ownership and flushes queued bytes after confirmation")
+    func followerInputClaimsOwnershipAndFlushesQueuedBytesAfterConfirmation() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        primeViewport(client, columns: 90, rows: 28)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let clientID = try #require(firstHelloClientID(ws))
+        try confirmFollower(client, cols: 120, rows: 40, epoch: 1)
+        ws.clearSent()
+
+        client.sendSoftwareKeyboardText("a")
+        client.deleteBackward()
+        client.sendPaste("p")
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(binaryFrames(ws).isEmpty)
+        let takeovers = envelopes(ws).filter {
+            if case .takeControl = $0 { return true }
+            return false
+        }
+        #expect(takeovers.count == 1)
+        #expect(takeovers.first == .takeControl(clientID: clientID, kind: .ios, cols: 90, rows: 28))
+
+        let owned = try ownershipSnapshot(
+            ownerClientID: clientID,
+            ownerKind: .ios,
+            cols: 120,
+            rows: 40,
+            epoch: 2
+        )
+        client.handleTextFrame(WebControlEnvelope.ownership(owned).encoded())
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(binaryFrames(ws).contains(Data("a".utf8)))
+        #expect(binaryFrames(ws).contains(Data([0x7F])))
+        #expect(binaryFrames(ws).contains(Data("\u{1B}[200~p\u{1B}[201~".utf8)))
     }
 
     @Test

@@ -486,6 +486,9 @@ final class HostManagedZmxBackend {
             lock.unlock()
         }
 
+        if !writeAllowed(), claimEngagement {
+            _ = takeControl()
+        }
         guard writeAllowed() else {
             Self.trace.notice("write \(self.spawnConfiguration.sessionName, privacy: .public) \(data.count) bytes BLOCKED (follower)")
             return
