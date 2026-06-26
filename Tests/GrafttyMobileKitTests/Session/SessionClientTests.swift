@@ -430,7 +430,9 @@ struct SessionClientTests {
         #expect(client.cellWidthPoints == 7.0)
     }
 
-    @Test("@spec IOS-4.18: While a `SessionClient` is operating as a worktree-detail pane preview (`IOS-4.10`, `IOS-4.12`), it shall identify itself with `DisplayClientRole.preview`, report `visible=false`, never claim display ownership, never forward libghostty bytes to the server, and never send takeover or `ownerResize` frames. Preview sizing shall render the authoritative grid locally; only fullscreen terminal input or an explicit fullscreen Take Control action can change the display owner.")
+    @Test("""
+    @spec IOS-4.18: While a `SessionClient` is operating as a worktree-detail pane preview (`IOS-4.10`, `IOS-4.12`), it shall identify itself with `DisplayClientRole.preview`, report `visible=false`, never claim display ownership, never forward libghostty bytes to the server, and never send takeover or `ownerResize` frames. Preview sizing shall render the authoritative grid locally; only fullscreen terminal input or an explicit fullscreen Take Control action can change the display owner.
+    """)
     func previewRoleDoesNotForwardLibghosttyBytes() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, role: .preview)

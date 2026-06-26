@@ -152,7 +152,7 @@ struct WebSocketBridgeOwnershipTests {
     }
 
     @Test("""
-    @spec IOS-4.25: On an ownerless session, an iOS WebSocket `hello` shall attach the client and return an ownerless ownership snapshot rather than implicitly claiming ownership. This is the transport-level state that lets GrafttyMobile show Take Control before sending the explicit `takeControl` frame.
+    @spec IOS-4.26: On an ownerless session, an iOS WebSocket `hello` shall attach the client and return an ownerless ownership snapshot rather than implicitly claiming ownership. This is the transport-level state that lets GrafttyMobile show Take Control before sending the explicit `takeControl` frame.
     """)
     func iosHelloReturnsOwnerlessSnapshotUntilExplicitTakeControl() throws {
         let store = SessionDisplayOwnershipStore()

@@ -544,7 +544,7 @@ struct IPadRootLayoutSelectionTests {
 
 @MainActor
 final class IPadRootLayoutTakeControlXCTests: XCTestCase {
-    /// @spec IPAD-1.14: While an iPad detail `SingleSessionView` renders with
+    /// @spec IPAD-1.18: While an iPad detail `SingleSessionView` renders with
     /// `isFullScreen == false` to preserve the split-view sidebar toggle,
     /// ownership controls shall remain independent of that visual mode. A
     /// fullscreen-role mobile client that is currently a follower or ownerless
@@ -560,7 +560,7 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
         ))
     }
 
-    /// @spec IOS-6.11: GrafttyMobile shall expose software-keyboard chrome and
+    /// @spec IOS-6.13: GrafttyMobile shall expose software-keyboard chrome and
     /// keyboard responder wiring only while the mobile client is the current
     /// display owner. Followers and ownerless clients can take control, but
     /// showing a keyboard before ownership is confirmed sends no useful input
@@ -588,7 +588,7 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
         ))
     }
 
-    /// @spec IOS-6.11: The terminal view shall install GrafttyMobile's
+    /// @spec IOS-6.14: The terminal view shall install GrafttyMobile's
     /// `UIKeyInput` proxy only for an owner. Non-owner taps should still reach
     /// libghostty gestures, but they must not summon the software keyboard.
     func testKeyboardProxyRequiresDisplayOwnership() {
