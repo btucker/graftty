@@ -17,11 +17,11 @@ struct FakeNetwork {
     private var nextSeq: [Int: Int] = [:]
 
     /// Enqueue a snapshot delivery on the given connection.
-    mutating func enqueue(target: DisplayClientID, snapshot: DisplayOwnershipSnapshot, connection: Int) {
+    mutating func enqueue(target: DisplayClientID, snapshot: DisplayOwnershipSnapshot, connection: Int, emissionSeq: UInt64) {
         let seq = nextSeq[connection, default: 0]
         nextSeq[connection] = seq + 1
         queues[connection, default: []].append(
-            Delivery(target: target, snapshot: snapshot, connectionSeq: seq)
+            Delivery(target: target, snapshot: snapshot, connectionSeq: seq, emissionSeq: emissionSeq)
         )
     }
 

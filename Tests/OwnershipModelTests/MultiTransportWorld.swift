@@ -7,9 +7,10 @@ import GrafttyProtocol
 /// harness can exercise the full web-server path, not just the bare store.
 ///
 /// The web follower (`webFollower`) is a model standing in for the TypeScript
-/// client; `deliverToWebFollower` routes a snapshot through it and runs the
-/// S5 monotonic-epoch guard check.  Call `checkL1` at quiescence to verify
-/// the follower converged to the store's authoritative epoch.
+/// client; `deliverToWebFollower` routes a tagged snapshot through it and runs
+/// the S5 monotonic-guard checks (epoch regression and ESN regression).  Call
+/// `checkL1` at quiescence to verify the follower converged to the store's
+/// authoritative epoch, emission, and grid.
 struct MultiTransportWorld {
     let session: String
     let store: SessionDisplayOwnershipStore
@@ -23,6 +24,11 @@ struct MultiTransportWorld {
     /// The browser-side protocol client ID from the most-recent `.hello` frame.
     /// Used as the `target` field in S5/L1 violations.
     private var webClientID: DisplayClientID?
+
+    /// Harness-side monotonic emission counter.  Incremented once per `emit()`
+    /// call; NOT a store field — the store's `ownerResize` updates the grid
+    /// without bumping `epoch`, so epoch alone cannot version grids.
+    private(set) var emissionSeqCounter: UInt64 = 0
 
     init(session: String) {
         let store = SessionDisplayOwnershipStore()
@@ -57,32 +63,64 @@ struct MultiTransportWorld {
         coordinator.handleControl(envelope)
     }
 
-    /// Deliver a snapshot directly to the web follower and run the S5 check.
+    /// Snapshot the store's current state and tag it with the next monotonic
+    /// emission sequence number.  Call once after each `webHandle` that may
+    /// have mutated the store.
+    mutating func emit() -> TaggedSnapshot {
+        emissionSeqCounter += 1
+        let snapshot = store.snapshot(sessionName: session)
+        return TaggedSnapshot(snapshot: snapshot, emissionSeq: emissionSeqCounter)
+    }
+
+    /// Deliver a tagged snapshot to the web follower and run the S5 checks.
     ///
-    /// S5 fires only if the follower actually applied a snapshot whose epoch
-    /// was lower than `highestApplied` (i.e. the monotonic guard was bypassed).
-    /// With the guard in effect a stale delivery is silently ignored, so S5
-    /// never fires in normal operation.
-    mutating func deliverToWebFollower(_ snapshot: DisplayOwnershipSnapshot) {
-        let highestBefore = webFollower.highestApplied
-        webFollower.apply(snapshot)
-        // S5: guard bypassed ⟺ lower-epoch snapshot was actually applied.
-        if snapshot.epoch < highestBefore, webFollower.highestApplied == snapshot.epoch {
-            let target = webClientID ?? DisplayClientID("unknown")
+    /// S5 fires when the follower actually applies a delivery that is
+    /// superseded — either by epoch regression or by ESN regression (a
+    /// same-epoch stale grid delivered out of emission order).  With the
+    /// guards in effect both cases are silently ignored, so S5 never fires in
+    /// normal (non-bypass) operation.
+    mutating func deliverToWebFollower(_ tagged: TaggedSnapshot) {
+        let highestEpochBefore = webFollower.highestApplied
+        let highestEmissionBefore = webFollower.highestAppliedEmission
+        webFollower.apply(tagged)
+        let target = webClientID ?? DisplayClientID("unknown")
+
+        // S5 by epoch regression: a lower-epoch snapshot was applied (bypass was on
+        // or the guard was absent).
+        if tagged.snapshot.epoch < highestEpochBefore,
+           webFollower.highestApplied == tagged.snapshot.epoch {
             oracle.violations.append(.s5SupersededApplied(
                 target: target,
-                applied: snapshot.epoch,
-                highest: highestBefore
+                applied: tagged.snapshot.epoch,
+                highest: highestEpochBefore
+            ))
+        }
+
+        // S5 by ESN regression: a lower-emission snapshot was applied despite a
+        // higher-emission one having been applied already.  This catches
+        // same-epoch grid reordering (e.g. ownerResize delivered out of order).
+        if tagged.emissionSeq < highestEmissionBefore,
+           webFollower.highestAppliedEmission == tagged.emissionSeq {
+            oracle.violations.append(.s5SupersededApplied(
+                target: target,
+                applied: tagged.snapshot.epoch,
+                highest: highestEpochBefore
             ))
         }
     }
 
-    /// Check L1 convergence at quiescence: the follower's highest applied epoch
-    /// must equal the store's current authoritative epoch.
+    /// Check L1 convergence at quiescence.
+    ///
+    /// The follower's `highestApplied` must equal the store's current epoch,
+    /// `highestAppliedEmission` must equal the latest emission this world
+    /// produced, and the follower's grid must match the store's grid.
     mutating func checkL1() {
-        let storeEpoch = store.snapshot(sessionName: session).epoch
-        guard let target = webClientID else { return }
-        if webFollower.highestApplied != storeEpoch {
+        guard emissionSeqCounter > 0, let target = webClientID else { return }
+        let storeSnapshot = store.snapshot(sessionName: session)
+        let epochOK = webFollower.highestApplied == storeSnapshot.epoch
+        let emissionOK = webFollower.highestAppliedEmission == emissionSeqCounter
+        let gridOK = webFollower.grid == storeSnapshot.grid
+        if !epochOK || !emissionOK || !gridOK {
             oracle.violations.append(.l1Divergence(target: target))
         }
     }

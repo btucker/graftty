@@ -16,10 +16,16 @@ enum Op {
     case hello(DisplayClientID)
 }
 
+struct TaggedSnapshot {
+    let snapshot: DisplayOwnershipSnapshot
+    let emissionSeq: UInt64
+}
+
 struct Delivery {
     let target: DisplayClientID
     let snapshot: DisplayOwnershipSnapshot
     let connectionSeq: Int
+    let emissionSeq: UInt64
 }
 
 struct DeferredWork {
