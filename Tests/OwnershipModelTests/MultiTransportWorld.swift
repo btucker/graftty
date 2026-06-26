@@ -1,5 +1,7 @@
 import Foundation
+import GhosttyKit
 import GrafttyProtocol
+@testable import Graftty
 @testable import GrafttyKit
 
 /// Extends `StoreWorld`-style ownership driving with the real
@@ -29,6 +31,22 @@ struct MultiTransportWorld {
     /// call; NOT a store field — the store's `ownerResize` updates the grid
     /// without bumping `epoch`, so epoch alone cannot version grids.
     private(set) var emissionSeqCounter: UInt64 = 0
+
+    // MARK: - Mac backend (Task 6)
+
+    /// Wrapper that calls `releaseReceiveUserdataAfterSurfaceFree()` on
+    /// dealloc, ensuring the backend's lifecycle is closed cleanly even
+    /// though `MultiTransportWorld` is a value type without a deinit.
+    private var macBackendBox: MacBackendBox?
+    private var macSession: FakeZmxSession?
+    private var macCoalescer: MacResizeCoalescer?
+    private var macViolations: PendingViolations?
+
+    /// Last (cols, rows) pair that actually reached `FakeZmxSession.resize`.
+    /// Nil when no PTY resize has been attempted (e.g. `markLayoutSettled`
+    /// fired while the Mac client was a follower and the ownership gate
+    /// blocked the flush).
+    private(set) var macPTYLastSize: (UInt16, UInt16)?
 
     init(session: String) {
         let store = SessionDisplayOwnershipStore()
@@ -122,6 +140,172 @@ struct MultiTransportWorld {
         let gridOK = webFollower.grid == storeSnapshot.grid
         if !epochOK || !emissionOK || !gridOK {
             oracle.violations.append(.l1Divergence(target: target))
+        }
+    }
+
+    // MARK: - Mac adapter
+
+    /// Wire the real `HostManagedZmxBackend` into the harness.
+    ///
+    /// Attaches a Mac client with the given `id` to the shared ownership store
+    /// and starts it (without calling `markLayoutSettled`), so the backend is
+    /// in the running state but has not yet attempted a PTY resize.
+    ///
+    /// The injected `FakeZmxSession` records every resize/write and fires
+    /// Oracle S6/S7 checks at the moment of the call.  Call `quiesce()` to
+    /// settle the layout and flush any pending violations into `oracle`.
+    mutating func attachMac(id: DisplayClientID, grid: DisplayGrid) {
+        let session = FakeZmxSession()
+        let coalescer = MacResizeCoalescer()
+        let violations = PendingViolations()
+
+        // Capture by value/reference for use inside closures; `store` is a
+        // class reference so copying the property copies the pointer, not the store.
+        let storeRef = store
+        let sessionName = self.session
+
+        session.onResize = { cols, rows in
+            let snapshot = storeRef.snapshot(sessionName: sessionName)
+            if snapshot.ownerClientID != id {
+                violations.append(.s6NonOwnerResizedPTY(id))
+            }
+        }
+        session.onWrite = { _ in
+            let snapshot = storeRef.snapshot(sessionName: sessionName)
+            if snapshot.ownerClientID != id {
+                violations.append(.s7NonOwnerInput(id))
+            }
+        }
+
+        let ownership = HostManagedZmxOwnership(
+            store: storeRef,
+            sessionName: sessionName,
+            clientID: id,
+            kind: .mac
+        )
+        let backend = HostManagedZmxBackend(
+            spawnConfiguration: ZmxSpawnConfiguration(
+                sessionName: sessionName,
+                argv: ["/tmp/zmx", "attach", sessionName],
+                env: ["ZMX_DIR": "/tmp/zmx-dir", "SHELL": "/bin/zsh"],
+                workingDirectory: URL(fileURLWithPath: "/tmp/worktree", isDirectory: true)
+            ),
+            ownership: ownership,
+            scheduleCoalescedResize: { delay, fire in coalescer.schedule(delay, fire) },
+            sessionFactory: { _, _, _ in session }
+        )
+        backend.bindSurfaceSync(
+            currentGridSize: { (grid.cols, grid.rows) },
+            requestRefresh: {}
+        )
+        // Start the backend (attaches to ownership store + spawns session)
+        // but do NOT call markLayoutSettled — that happens in quiesce() so
+        // the ownership gate is evaluated after all takeover events have run.
+        try? backend.start(surface: Self.fakeSurface())
+
+        macBackendBox = MacBackendBox(backend)
+        macSession = session
+        macCoalescer = coalescer
+        macViolations = violations
+    }
+
+    /// Settle the Mac backend layout and drain all pending S6/S7 violations
+    /// into `oracle`.
+    ///
+    /// Calling sequence:
+    ///   1. Fire any coalesced resizes already queued in the Mac backend.
+    ///   2. Call `markLayoutSettled()` — triggers the ownership-gated PTY
+    ///      flush; if the Mac client is a follower the flush is blocked and no
+    ///      resize reaches the PTY.
+    ///   3. Fire any trailing coalesced resizes the settle may have opened.
+    ///   4. Record the last PTY-attempted size (nil when all flushes were
+    ///      blocked).
+    ///   5. Merge Mac S6/S7 violations collected by the session callbacks into
+    ///      `oracle.violations`.
+    mutating func quiesce() {
+        macCoalescer?.fireAll()
+        macBackendBox?.markLayoutSettled()
+        macCoalescer?.fireAll()
+        if let last = macSession?.resizes.last {
+            macPTYLastSize = last
+        }
+        oracle.violations.append(contentsOf: macViolations?.drain() ?? [])
+    }
+
+    private static func fakeSurface() -> ghostty_surface_t {
+        UnsafeMutableRawPointer(bitPattern: 0x1234)!
+    }
+}
+
+// MARK: - Private harness helpers
+
+/// Wraps `HostManagedZmxBackend` and calls
+/// `releaseReceiveUserdataAfterSurfaceFree()` on dealloc so the backend
+/// deinit does not print the "userdata was not released" warning to stderr.
+private final class MacBackendBox {
+    private let backend: HostManagedZmxBackend
+
+    init(_ backend: HostManagedZmxBackend) {
+        self.backend = backend
+    }
+
+    func markLayoutSettled() {
+        backend.markLayoutSettled()
+    }
+
+    deinit {
+        backend.releaseReceiveUserdataAfterSurfaceFree()
+    }
+}
+
+/// Thread-safe violation mailbox: `FakeZmxSession` callbacks append to this;
+/// `quiesce()` drains it into the oracle.
+private final class PendingViolations {
+    private let lock = NSLock()
+    private var _violations: [Violation] = []
+
+    func append(_ v: Violation) {
+        lock.lock()
+        _violations.append(v)
+        lock.unlock()
+    }
+
+    func drain() -> [Violation] {
+        lock.lock()
+        defer { lock.unlock() }
+        let v = _violations
+        _violations = []
+        return v
+    }
+}
+
+/// Deterministic resize-coalescing scheduler: records each scheduled trailing
+/// fire; `quiesce()` pumps them via `fireAll()`.
+private final class MacResizeCoalescer {
+    private final class Entry {
+        var cancelled = false
+        let fire: () -> Void
+        init(_ fire: @escaping () -> Void) { self.fire = fire }
+    }
+
+    private let lock = NSLock()
+    private var pending: [Entry] = []
+
+    func schedule(_ delay: TimeInterval, _ fire: @escaping () -> Void) -> (() -> Void) {
+        let entry = Entry(fire)
+        lock.lock()
+        pending.append(entry)
+        lock.unlock()
+        return { [weak entry] in entry?.cancelled = true }
+    }
+
+    func fireAll() {
+        while true {
+            lock.lock()
+            guard !pending.isEmpty else { lock.unlock(); return }
+            let entry = pending.removeFirst()
+            lock.unlock()
+            if !entry.cancelled { entry.fire() }
         }
     }
 }
