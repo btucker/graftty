@@ -13,11 +13,16 @@ enum Violation: Equatable {
     case l2SilentPromotion(DisplayClientID)
 }
 
-/// Stateful checker for display-ownership invariants S1–S4.
+/// Stateful checker for display-ownership invariants S1–S7 and L1–L2.
 /// Call `checkAfterEvent` after every store operation; it accumulates the highest
 /// epoch seen so it can detect S2 regressions across the sequence.
+/// S5 and L1 violations for the web transport are accumulated in `violations`
+/// via `MultiTransportWorld.deliverToWebFollower` and `checkL1`.
 struct Oracle {
     private var highestEpoch: UInt64 = 0
+
+    /// Accumulated violations from S5/L1 web-transport checks.
+    var violations: [Violation] = []
 
     mutating func checkAfterEvent(
         store: SessionDisplayOwnershipStore,
