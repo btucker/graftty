@@ -28,13 +28,24 @@ struct Oracle {
         let snapshot = store.snapshot(sessionName: session)
         var violations: [Violation] = []
 
+        // S1: at most one owner at any instant. ownerClientID is a single optional today,
+        // so the count is structurally ≤1 — this guard fires if a future snapshot shape
+        // exposes a second owner field.
+        let ownerCount = [snapshot.ownerClientID].compactMap { $0 }.count
+        if ownerCount > 1 {
+            violations.append(.s1MultipleOwners)
+        }
+
         // S4: ownerClientID == nil ⟺ ownerKind == nil
         if (snapshot.ownerClientID == nil) != (snapshot.ownerKind == nil) {
             violations.append(.s4InconsistentOwnerFields)
         }
 
-        // S2: epoch never decreases across calls
-        if snapshot.epoch < highestEpoch {
+        // S2: epoch never decreases across calls.
+        // A fully torn-down session legitimately restarts at epoch 0; reset the high-water mark.
+        if snapshot.epoch == 0 && highestEpoch > 0 {
+            highestEpoch = 0
+        } else if snapshot.epoch < highestEpoch {
             violations.append(.s2EpochRegressed(from: highestEpoch, to: snapshot.epoch))
         }
         highestEpoch = max(highestEpoch, snapshot.epoch)

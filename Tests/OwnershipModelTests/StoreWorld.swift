@@ -52,7 +52,7 @@ struct StoreWorld {
             updateEpochs(from: snapshot)
 
         case .takeControl(let clientID, let grid):
-            let kind = attachedClientInfo[clientID]?.kind ?? .mac
+            let kind = attachedClientInfo[clientID]!.kind
             let claimResult = store.claimOwner(
                 sessionName: session,
                 clientID: clientID,
@@ -84,7 +84,7 @@ struct StoreWorld {
     }
 
     /// Produces a plausible op from `clients`. Ensures at least one client stays attached
-    /// so the session record's grid is always set (preventing epoch reset on record deletion).
+    /// so there is always a client ID available to target for detach/takeControl/release/ownerResize ops.
     mutating func randomLegalOp(clients: [ModelClient], using rng: inout DeterministicRNG) -> Op {
         let grid = Self.availableGrids[rng.int(in: 0..<Self.availableGrids.count)]
 
@@ -102,7 +102,7 @@ struct StoreWorld {
         case 0:
             return .attach(rng.pick(clients), visible: rng.int(in: 0..<2) == 0, grid: grid)
         case 1:
-            // Avoid detaching the last client — keeps the record's grid set, preventing epoch reset.
+            // Avoid detaching the last client — randomLegalOp needs at least one attached ID to target.
             if attachedClientInfo.count > 1 {
                 return .detach(id)
             }

@@ -22,10 +22,14 @@ struct StoreInvariantTests {
 
     @Test func staleResizeIsRejectedByStoreAndOracleAgrees() throws {
         var world = StoreWorld(session: "main")
+        var oracle = Oracle()
         let c = ModelClient(id: DisplayClientID("c0"), kind: .mac, role: .interactive)
         _ = world.apply(.attach(c, visible: true, grid: grid(80)))
         _ = world.apply(.takeControl(c.id, grid: grid(80)))   // epoch advances
         let stale = world.apply(.ownerResize(c.id, believedEpoch: 0, grid: grid(120)))  // wrong epoch
         #expect(stale.resize?.accepted == false)               // store rejects; S3 holds (no violation)
+        let violations = oracle.checkAfterEvent(store: world.store, session: "main",
+                                                lastResize: stale.resize, requestedEpoch: stale.requestedEpoch)
+        #expect(violations.isEmpty)                            // oracle agrees: no invariant broken
     }
 }
