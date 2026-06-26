@@ -355,6 +355,27 @@ test('owner terminal resize sends ownerResize with the active client id and epoc
   ]);
 });
 
+// @spec WEB-5.9: The client shall ignore an ownership snapshot whose epoch is older than the latest applied snapshot, so a reordered broadcast cannot revert the owner/grid the client already advanced past.
+test('ignores an out-of-order lower-epoch ownership snapshot', async () => {
+  const { term, ws } = await renderReady();
+
+  await act(async () => ws.open());
+  const clientID = textFrames(ws)[0].clientID;
+  // Become owner at epoch 7.
+  await act(async () => ws.receive(ownershipFrame(clientID, 'web', 150, 50, 7)));
+  ws.sent.length = 0;
+
+  // A reordered, older-epoch broadcast names a different owner.
+  await act(async () => ws.receive(ownershipFrame('other-client', 'web', 150, 50, 5)));
+
+  // The stale frame was dropped — this client is still owner, so its keystroke is forwarded.
+  term.dataHandler?.('ok');
+  const payload = ws.sent.at(-1);
+  expect(ArrayBuffer.isView(payload)).toBe(true);
+  expect(Array.from(payload as Uint8Array)).toEqual([111, 107]);
+  expect(screen.queryByRole('button', { name: /take control/i })).toBeNull();
+});
+
 test('follower terminal resize changes local presentation without sending ownerResize', async () => {
   const { term, ws } = await renderReady();
 

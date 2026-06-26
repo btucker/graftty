@@ -124,8 +124,18 @@ final class TerminalManager: ObservableObject {
 
     /// Process-wide display ownership state for native pane participation.
     /// Task 3 only assembles the dependency; Task 4 wires Mac resize/input
-    /// authority through this store.
-    var displayOwnershipStore: SessionDisplayOwnershipStore?
+    /// authority through this store. Observed so the per-pane "Take Control"
+    /// affordance appears/disappears reactively when another client (iOS/web)
+    /// takes or releases a pane — those mutations happen off the main thread,
+    /// so the notification is hopped onto the main actor.
+    var displayOwnershipStore: SessionDisplayOwnershipStore? {
+        didSet {
+            ownershipObserverToken = displayOwnershipStore?.addObserver { [weak self] _ in
+                Task { @MainActor in self?.objectWillChange.send() }
+            }
+        }
+    }
+    private var ownershipObserverToken: SessionDisplayOwnershipStore.ObserverToken?
 
     /// Set by `GrafttyApp` after construction. When non-nil, pane add /
     /// remove flows propagate registration so the scanner can poll
@@ -748,6 +758,13 @@ final class TerminalManager: ObservableObject {
     @discardableResult
     func takeDisplayControl(for terminalID: PaneSlotID) -> Bool {
         surfaces[terminalID]?.takeDisplayControl() ?? false
+    }
+
+    /// Whether to show a "Take Control" affordance on a pane: true when its
+    /// zmx session is currently owned by another display client. Recomputed
+    /// on every ownership mutation via the store observer above.
+    func canTakeDisplayControl(for terminalID: PaneSlotID) -> Bool {
+        surfaces[terminalID]?.canTakeDisplayControl() ?? false
     }
 
     /// Force a full repaint for a visible or soon-to-be-visible surface.

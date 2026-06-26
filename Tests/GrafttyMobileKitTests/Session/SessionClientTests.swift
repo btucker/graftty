@@ -640,6 +640,95 @@ struct SessionClientTests {
         #expect(ws.resizes.contains { $0.cols == 132 && $0.rows == 44 })
     }
 
+    @Test("""
+    @spec IOS-6.12: While connected to a legacy (non-owner-aware) server, the application shall not resize the remote PTY until the user first engages with the session (keystroke, paste, or control key); a mere connection or layout tick shall leave the shared PTY size untouched so an already-attached client's column width is not stolen. On first engagement it shall send the current iOS viewport as the legacy window size.
+    """)
+    func legacyTransportDefersResizeUntilUserEngages() async throws {
+        let ws = LegacyWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        // Layout tick on connect, before the user has engaged — must not resize.
+        primeViewport(client, columns: 132, rows: 44)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(ws.resizes.isEmpty)
+
+        // First engagement applies the current viewport and unlocks later ticks.
+        client.sendSoftwareKeyboardText("x")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(ws.resizes.contains { $0.cols == 132 && $0.rows == 44 })
+
+        primeViewport(client, columns: 120, rows: 40)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(ws.resizes.contains { $0.cols == 120 && $0.rows == 40 })
+    }
+
+    @Test("""
+    @spec IOS-4.23: When an ownership snapshot arrives whose epoch is older than the most recently applied snapshot, the application shall ignore it, so a reordered broadcast cannot revert the owner or grid the client already advanced past. Owner resizes keep the same epoch, so equal-epoch snapshots are still applied.
+    """)
+    func ignoresLowerEpochOwnershipSnapshot() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        try await confirmOwner(client, ws: ws, cols: 80, rows: 24, epoch: 7)
+        #expect(client.isOwner)
+
+        // A reordered, older-epoch snapshot names a different owner.
+        let stale = try ownershipSnapshot(
+            ownerClientID: DisplayClientID("other-client"),
+            ownerKind: .web,
+            cols: 80, rows: 24,
+            epoch: 5
+        )
+        client.handleTextFrame(WebControlEnvelope.ownership(stale).encoded())
+
+        // The stale frame was dropped — this client is still owner.
+        #expect(client.isOwner)
+    }
+
+    @Test("""
+    @spec IOS-4.24: When an ownership snapshot promotes this client from non-owner to display owner, the application shall immediately send an `ownerResize` carrying its current iOS viewport, so the remote PTY adopts the iOS grid at the moment of takeover rather than retaining the previous owner's grid until the next layout tick.
+    """)
+    func becomingOwnerPushesCurrentViewport() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let clientID = try #require(firstHelloClientID(ws))
+
+        // Establish an iOS viewport while a follower of another owner.
+        primeViewport(client, columns: 110, rows: 33)
+        let follower = try ownershipSnapshot(
+            ownerClientID: DisplayClientID("other-client"),
+            ownerKind: .web,
+            cols: 80, rows: 24,
+            epoch: 1
+        )
+        client.handleTextFrame(WebControlEnvelope.ownership(follower).encoded())
+        #expect(client.isFollower)
+
+        // Now this client becomes owner at a newer epoch.
+        let owned = try ownershipSnapshot(
+            ownerClientID: clientID,
+            ownerKind: .ios,
+            cols: 80, rows: 24,
+            epoch: 2
+        )
+        client.handleTextFrame(WebControlEnvelope.ownership(owned).encoded())
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(client.isOwner)
+        let ownerResize = envelopes(ws).first { envelope in
+            if case .ownerResize = envelope { return true }
+            return false
+        }
+        #expect(ownerResize == .ownerResize(clientID: clientID, epoch: 2, cols: 110, rows: 33))
+    }
+
     @Test
     func ownershipRequiresMatchingIOSKind() async throws {
         let ws = FakeWS()

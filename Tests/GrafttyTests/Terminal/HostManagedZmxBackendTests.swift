@@ -71,8 +71,8 @@ struct HostManagedZmxBackendTests {
         #expect(store.snapshot(sessionName: "graftty-test").ownerClientID == DisplayClientID("mac-owner"))
     }
 
-    @Test("First visible interactive Mac attach auto-claims only when the session is ownerless.")
-    func firstVisibleMacAttachAutoClaimsOnlyWhenOwnerless() throws {
+    @Test("First visible interactive Mac attach explicitly claims only when the session is ownerless.")
+    func firstVisibleMacAttachExplicitlyClaimsOnlyWhenOwnerless() throws {
         let store = SessionDisplayOwnershipStore()
         let firstSession = FakeHostManagedSession()
         let first = Self.makeBackend(

@@ -26,6 +26,18 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         var kind: DisplayClientKind
         var role: DisplayClientRole
         var visible: Bool
+
+        /// A client may own the display only while it is visible, interactive
+        /// (non-preview by both role and kind), and still presenting as the
+        /// kind the caller is claiming as. This is the single source of truth
+        /// for owner eligibility — every claim/restore path routes through it
+        /// so the rule can't drift between them.
+        func isOwnerEligible(claimingAs kind: DisplayClientKind) -> Bool {
+            self.kind == kind
+                && self.kind != .preview
+                && role != .preview
+                && visible
+        }
     }
 
     private struct Record {
@@ -36,10 +48,78 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         var attachedClients: [DisplayClientID: AttachedClient] = [:]
     }
 
+    /// Cancels an observer registration. Cancels automatically on
+    /// deinit, so a holder that drops its token (e.g. a `WebServer` being
+    /// torn down) is unsubscribed without an explicit call.
+    public final class ObserverToken: @unchecked Sendable {
+        private let onCancel: () -> Void
+        private let lock = NSLock()
+        private var cancelled = false
+
+        init(onCancel: @escaping () -> Void) {
+            self.onCancel = onCancel
+        }
+
+        public func cancel() {
+            lock.lock()
+            if cancelled {
+                lock.unlock()
+                return
+            }
+            cancelled = true
+            lock.unlock()
+            onCancel()
+        }
+
+        deinit {
+            cancel()
+        }
+    }
+
     private let lock = NSLock()
     private var records: [String: Record] = [:]
+    private var observers: [UUID: @Sendable (DisplayOwnershipSnapshot) -> Void] = [:]
 
     public init() {}
+
+    /// Observe every owner-changing mutation. The store is the single source
+    /// of truth shared across the Mac host, web, and iOS transports, but only
+    /// the web bridge historically broadcast its own mutations — Mac-side
+    /// claims/releases mutated the store silently, so web/iOS followers never
+    /// learned the Mac took or dropped ownership. Subscribing the web
+    /// broadcaster here closes that gap: any mutation, whoever made it, is
+    /// pushed to connected clients. The returned token unsubscribes on
+    /// `cancel()` / deinit.
+    public func addObserver(
+        _ observer: @escaping @Sendable (DisplayOwnershipSnapshot) -> Void
+    ) -> ObserverToken {
+        let id = UUID()
+        lock.lock()
+        observers[id] = observer
+        lock.unlock()
+        return ObserverToken { [weak self] in
+            self?.removeObserver(id)
+        }
+    }
+
+    private func removeObserver(_ id: UUID) {
+        lock.lock()
+        observers.removeValue(forKey: id)
+        lock.unlock()
+    }
+
+    /// Fan a post-mutation snapshot out to observers. MUST be called after the
+    /// records lock is released (observers may re-enter store reads); the
+    /// mutation methods do this via a `defer` that runs after the unlock
+    /// `defer`. Copies the observer list under the lock, then calls outside it.
+    private func notifyObservers(_ snapshot: DisplayOwnershipSnapshot) {
+        lock.lock()
+        let current = Array(observers.values)
+        lock.unlock()
+        for observe in current {
+            observe(snapshot)
+        }
+    }
 
     public func attachClient(
         sessionName: String,
@@ -53,19 +133,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         defer { lock.unlock() }
 
         var record = records[sessionName] ?? Record()
-        let isNewClient = record.attachedClients[clientID] == nil
         record.attachedClients[clientID] = AttachedClient(kind: kind, role: role, visible: visible)
-
-        if isNewClient,
-           record.ownerClientID == nil,
-           visible,
-           role == .interactive,
-           kind != .preview {
-            record.ownerClientID = clientID
-            record.ownerKind = kind
-            record.grid = grid
-            record.epoch += 1
-        }
 
         records[sessionName] = record
         return snapshot(for: sessionName, record: record, fallbackGrid: grid)
@@ -78,15 +146,14 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         grid: DisplayGrid,
         fallbackGrid: DisplayGrid = .daemonFallback
     ) -> SessionDisplayOwnershipClaimResult {
+        var changedSnapshot: DisplayOwnershipSnapshot?
+        defer { changedSnapshot.map(notifyObservers) }
         lock.lock()
         defer { lock.unlock() }
 
         var record = records[sessionName] ?? Record()
         guard let attachedClient = record.attachedClients[clientID],
-              attachedClient.kind == kind,
-              attachedClient.kind != .preview,
-              attachedClient.role != .preview,
-              attachedClient.visible else {
+              attachedClient.isOwnerEligible(claimingAs: kind) else {
             return SessionDisplayOwnershipClaimResult(
                 accepted: false,
                 snapshot: snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
@@ -102,10 +169,9 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         }
 
         records[sessionName] = record
-        return SessionDisplayOwnershipClaimResult(
-            accepted: true,
-            snapshot: snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
-        )
+        let result = snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
+        changedSnapshot = result
+        return SessionDisplayOwnershipClaimResult(accepted: true, snapshot: result)
     }
 
     public func claimOwnerIfOwnerlessOrCurrent(
@@ -115,15 +181,14 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         grid: DisplayGrid,
         fallbackGrid: DisplayGrid = .daemonFallback
     ) -> SessionDisplayOwnershipClaimResult {
+        var changedSnapshot: DisplayOwnershipSnapshot?
+        defer { changedSnapshot.map(notifyObservers) }
         lock.lock()
         defer { lock.unlock() }
 
         var record = records[sessionName] ?? Record()
         guard let attachedClient = record.attachedClients[clientID],
-              attachedClient.kind == kind,
-              attachedClient.kind != .preview,
-              attachedClient.role != .preview,
-              attachedClient.visible else {
+              attachedClient.isOwnerEligible(claimingAs: kind) else {
             return SessionDisplayOwnershipClaimResult(
                 accepted: false,
                 snapshot: snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
@@ -147,10 +212,9 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         }
 
         records[sessionName] = record
-        return SessionDisplayOwnershipClaimResult(
-            accepted: true,
-            snapshot: snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
-        )
+        let result = snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
+        changedSnapshot = result
+        return SessionDisplayOwnershipClaimResult(accepted: true, snapshot: result)
     }
 
     public func ownerResize(
@@ -159,6 +223,8 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         epoch: UInt64,
         grid: DisplayGrid
     ) -> SessionDisplayOwnershipResizeResult {
+        var changedSnapshot: DisplayOwnershipSnapshot?
+        defer { changedSnapshot.map(notifyObservers) }
         lock.lock()
         defer { lock.unlock() }
 
@@ -169,10 +235,9 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
             records[sessionName] = record
         }
 
-        return SessionDisplayOwnershipResizeResult(
-            accepted: accepted,
-            snapshot: snapshot(for: sessionName, record: record, fallbackGrid: DisplayGrid.daemonFallback)
-        )
+        let result = snapshot(for: sessionName, record: record, fallbackGrid: DisplayGrid.daemonFallback)
+        if accepted { changedSnapshot = result }
+        return SessionDisplayOwnershipResizeResult(accepted: accepted, snapshot: result)
     }
 
     public func detachClient(
@@ -180,20 +245,25 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         clientID: DisplayClientID,
         fallbackGrid: DisplayGrid = .daemonFallback
     ) -> DisplayOwnershipSnapshot {
+        var changedSnapshot: DisplayOwnershipSnapshot?
+        defer { changedSnapshot.map(notifyObservers) }
         lock.lock()
         defer { lock.unlock() }
 
         var record = records[sessionName] ?? Record()
         record.attachedClients.removeValue(forKey: clientID)
 
+        var ownerCleared = false
         if record.ownerClientID == clientID {
             record.ownerClientID = nil
             record.ownerKind = nil
             record.epoch += 1
+            ownerCleared = true
         }
 
         let result = snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
         storeOrRemove(record, for: sessionName)
+        if ownerCleared { changedSnapshot = result }
         return result
     }
 
@@ -202,18 +272,23 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         clientID: DisplayClientID,
         fallbackGrid: DisplayGrid = .daemonFallback
     ) -> DisplayOwnershipSnapshot {
+        var changedSnapshot: DisplayOwnershipSnapshot?
+        defer { changedSnapshot.map(notifyObservers) }
         lock.lock()
         defer { lock.unlock() }
 
         var record = records[sessionName] ?? Record()
+        var ownerCleared = false
         if record.ownerClientID == clientID {
             record.ownerClientID = nil
             record.ownerKind = nil
             record.epoch += 1
+            ownerCleared = true
         }
 
         let result = snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
         storeOrRemove(record, for: sessionName)
+        if ownerCleared { changedSnapshot = result }
         return result
     }
 
@@ -227,20 +302,20 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         previousGrid: DisplayGrid,
         fallbackGrid: DisplayGrid = .daemonFallback
     ) -> DisplayOwnershipSnapshot {
+        var changedSnapshot: DisplayOwnershipSnapshot?
+        defer { changedSnapshot.map(notifyObservers) }
         lock.lock()
         defer { lock.unlock() }
 
         var record = records[sessionName] ?? Record()
+        var restored = false
         if record.ownerClientID == failedClientID,
            record.ownerKind == failedKind,
            record.epoch == failedEpoch {
             if let previousOwnerClientID,
                let previousOwnerKind,
                let attachedClient = record.attachedClients[previousOwnerClientID],
-               attachedClient.kind == previousOwnerKind,
-               attachedClient.kind != .preview,
-               attachedClient.role != .preview,
-               attachedClient.visible {
+               attachedClient.isOwnerEligible(claimingAs: previousOwnerKind) {
                 record.ownerClientID = previousOwnerClientID
                 record.ownerKind = previousOwnerKind
             } else {
@@ -249,10 +324,12 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
             }
             record.grid = previousGrid
             record.epoch += 1
+            restored = true
         }
 
         let result = snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
         storeOrRemove(record, for: sessionName)
+        if restored { changedSnapshot = result }
         return result
     }
 

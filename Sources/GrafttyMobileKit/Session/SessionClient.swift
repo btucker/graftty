@@ -3,7 +3,6 @@ import CoreGraphics
 import Foundation
 import GhosttyTerminal
 import GrafttyProtocol
-import NIOConcurrencyHelpers
 import Observation
 import UIKit
 
@@ -58,13 +57,13 @@ public final class SessionClient {
     nonisolated private let webSocketFactory: @Sendable () async throws -> WebSocketClient
     nonisolated internal let clock: any Clock
     nonisolated internal let backoffSchedule: [TimeInterval]
-    /// NIOLock protects `_ws` and `_wsReadyTask` which are read from
+    /// NSLock protects `_ws` and `_wsReadyTask` which are read from
     /// nonisolated async contexts (`awaitWS`, `sendBinary`)
     /// while written on @MainActor (`spawnOpenTask`, `stop`).
     /// `nonisolated(unsafe)` is safe here because all reads and writes
     /// go through the `stateLock`-guarded accessors; the lock is the
     /// actual synchronization contract, not Swift's actor isolation.
-    nonisolated private let stateLock = NIOLock()
+    nonisolated private let stateLock = NSLock()
     @ObservationIgnored
     nonisolated(unsafe) private var _ws: WebSocketClient?
     /// Pending open of the current/next WS. `sendBinary` awaits this
@@ -93,6 +92,13 @@ public final class SessionClient {
     private var displayClientID: DisplayClientID = SessionClient.makeDisplayClientID()
     @ObservationIgnored
     private var ownershipTransportMode: OwnershipTransportMode = .pending
+    /// IOS-6.12: legacy (non-owner-aware) servers have no ownership
+    /// arbitration, so the iOS client must not resize the shared PTY merely by
+    /// connecting or laying out — that would steal the column width another
+    /// attached client already set. Stays false until the user first engages
+    /// (keystroke/paste); reset on every (re)connect in `spawnOpenTask`.
+    @ObservationIgnored
+    private var legacyEngaged = false
 
     public var isOwner: Bool {
         guard role != .preview else { return false }
@@ -221,6 +227,7 @@ public final class SessionClient {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 guard self.acceptsPTYInput else { return }
+                self.noteLegacyEngagement()
                 let isSoftReturn = data.count == 1 && data.first == 0x0A
                 self.recordActivity()
                 self.sendBinary(isSoftReturn ? Self.cr : data)
@@ -255,10 +262,24 @@ public final class SessionClient {
         case .webControl where isOwner:
             guard let epoch = ownershipSnapshot?.epoch else { return }
             sendOwnerResizeToServer(cols: cols, rows: rows, epoch: epoch)
-        case .legacy:
+        case .legacy where legacyEngaged:
             sendLegacyResizeToServer(cols: cols, rows: rows)
-        case .pending, .webControl:
+        case .pending, .webControl, .legacy:
             break
+        }
+    }
+
+    /// IOS-6.12: record the user's first interaction with a legacy session and
+    /// apply the current viewport. Before this fires, layout ticks leave the
+    /// shared PTY untouched so connecting doesn't steal another client's size.
+    /// No-op outside `.legacy` mode (`.webControl` resizes are gated on
+    /// confirmed ownership instead).
+    @MainActor
+    private func noteLegacyEngagement() {
+        guard ownershipTransportMode == .legacy, !legacyEngaged else { return }
+        legacyEngaged = true
+        if let viewport = lastIOSViewport {
+            sendLegacyResizeToServer(cols: viewport.cols, rows: viewport.rows)
         }
     }
 
@@ -348,6 +369,7 @@ public final class SessionClient {
                 }
                 self.displayClientID = Self.makeDisplayClientID()
                 self.ownershipSnapshot = nil
+                self.legacyEngaged = false
                 self.ownershipTransportMode = client.supportsWebControlTextFrames ? .webControl : .legacy
                 self.setWS(client)
                 await self.sendHelloIfSupported(on: client)
@@ -387,6 +409,10 @@ public final class SessionClient {
     @MainActor
     private func startIdleWatchdog() {
         idleWatchdogTask?.cancel()
+        guard idleThreshold.isFinite else {
+            idleWatchdogTask = nil
+            return
+        }
         idleWatchdogTask = Task { @MainActor [weak self] in
             while let self, !self.stopped, self.renderActivity == .active {
                 let elapsed = self.clock.now.timeIntervalSince(self.lastActivityAt)
@@ -432,6 +458,7 @@ public final class SessionClient {
     @MainActor
     private func sendInput(_ data: Data) {
         guard acceptsPTYInput else { return }
+        noteLegacyEngagement()
         recordActivity()
         sendBinary(data)
     }
@@ -468,6 +495,7 @@ public final class SessionClient {
     public func sendPaste(_ text: String) {
         guard !text.isEmpty else { return }
         guard acceptsPTYInput else { return }
+        noteLegacyEngagement()
         var payload = Data("\u{1B}[200~".utf8)
         payload.append(Data(text.utf8))
         payload.append(Data("\u{1B}[201~".utf8))
@@ -613,7 +641,26 @@ public final class SessionClient {
             // Client never receives resize; ignore.
             break
         case let .ownership(snapshot):
+            // IOS-4.23: ignore reordered, stale broadcasts. The server enqueues
+            // sends across threads without ordering, so an older-epoch snapshot
+            // can arrive after a newer one on the same socket; applying it would
+            // revert the owner/grid we already advanced past. Strict `<` — owner
+            // resizes keep the same epoch, so same-epoch grid updates must apply.
+            if let last = ownershipSnapshot, snapshot.epoch < last.epoch {
+                break
+            }
+            let wasOwner = isOwner
             ownershipSnapshot = snapshot
+            // IOS-4.24: when this snapshot promotes us to owner, immediately
+            // push the current iOS viewport so the PTY adopts our grid now
+            // rather than lingering at the previous owner's size until the next
+            // layout tick (mirrors the web client's owner-transition resize).
+            if !wasOwner,
+               isOwner,
+               ownershipTransportMode == .webControl,
+               let viewport = lastIOSViewport {
+                sendOwnerResizeToServer(cols: viewport.cols, rows: viewport.rows, epoch: snapshot.epoch)
+            }
         case .hello, .takeControl, .ownerResize:
             break
         }

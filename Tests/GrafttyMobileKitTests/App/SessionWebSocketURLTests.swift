@@ -1,0 +1,28 @@
+#if canImport(UIKit)
+import Foundation
+import Testing
+@testable import GrafttyMobileKit
+
+@Suite
+struct SessionWebSocketURLTests {
+    // The daemon classifies a `/ws` connection's display-client kind from the
+    // transport (`declaredDisplayClientKind`): an `X-Graftty-Client-Kind`
+    // header, a `GrafttyMobile` User-Agent, or a `client=ios` query param.
+    // `URLSessionWebSocketClient` connects with a bare URL (no custom header /
+    // User-Agent), so the query param is the only signal the iOS app can send.
+    @Test("""
+    @spec IOS-4.22: When the iOS app opens its session WebSocket, the URL shall advertise the display-client kind via a `client=ios` query parameter so the daemon classifies the connection as `.ios` and the ownership store stamps `ownerKind=.ios`. Without it the connection defaults to `.web`, and `SessionClient.isOwner` (which requires `ownerKind == .ios`) can never be true — the phone becomes a permanent follower that silently drops its own input and resize.
+    """)
+    func webSocketURLAdvertisesIOSClientKind() throws {
+        let base = URL(string: "https://host.example:8443")!
+        let url = RootView.makeWebSocketURL(base: base, session: "my session")
+
+        let components = try #require(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        #expect(components.scheme == "wss")
+        #expect(components.path == "/ws")
+        let items = components.queryItems ?? []
+        #expect(items.contains(URLQueryItem(name: "session", value: "my session")))
+        #expect(items.contains(URLQueryItem(name: "client", value: "ios")))
+    }
+}
+#endif

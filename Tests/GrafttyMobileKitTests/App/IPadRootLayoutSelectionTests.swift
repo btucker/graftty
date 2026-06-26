@@ -2,6 +2,7 @@
 import Testing
 import Foundation
 import SwiftUI
+import XCTest
 import GrafttyProtocol
 @testable import GrafttyMobileKit
 
@@ -538,6 +539,61 @@ struct IPadRootLayoutSelectionTests {
             ]
         )
         #expect(appState3.focusedPaneId == "session-a")
+    }
+}
+
+@MainActor
+final class IPadRootLayoutTakeControlXCTests: XCTestCase {
+    /// @spec IPAD-1.14: While an iPad detail `SingleSessionView` renders with
+    /// `isFullScreen == false` to preserve the split-view sidebar toggle,
+    /// ownership controls shall remain independent of that visual mode. A
+    /// fullscreen-role mobile client that is currently a follower or ownerless
+    /// shall still expose Take Control in the detail column.
+    func testTakeControlVisibilityIsNotTiedToFullscreenChrome() {
+        XCTAssertTrue(SingleSessionView.shouldShowTakeControl(
+            isFullScreen: false,
+            clientCanTakeControl: true
+        ))
+        XCTAssertFalse(SingleSessionView.shouldShowTakeControl(
+            isFullScreen: false,
+            clientCanTakeControl: false
+        ))
+    }
+
+    /// @spec IOS-6.11: GrafttyMobile shall expose software-keyboard chrome and
+    /// keyboard responder wiring only while the mobile client is the current
+    /// display owner. Followers and ownerless clients can take control, but
+    /// showing a keyboard before ownership is confirmed sends no useful input
+    /// and implies authority the client does not have.
+    func testKeyboardChromeRequiresDisplayOwnership() {
+        XCTAssertFalse(SingleSessionView.shouldExposeKeyboard(
+            clientIsOwner: false,
+            keyboardAllowed: true,
+            isKeyboardVisible: false
+        ))
+        XCTAssertFalse(SingleSessionView.shouldExposeKeyboard(
+            clientIsOwner: false,
+            keyboardAllowed: false,
+            isKeyboardVisible: false
+        ))
+        XCTAssertTrue(SingleSessionView.shouldExposeKeyboard(
+            clientIsOwner: true,
+            keyboardAllowed: false,
+            isKeyboardVisible: false
+        ))
+        XCTAssertTrue(SingleSessionView.shouldExposeKeyboard(
+            clientIsOwner: true,
+            keyboardAllowed: true,
+            isKeyboardVisible: true
+        ))
+    }
+
+    /// @spec IOS-6.11: The terminal view shall install GrafttyMobile's
+    /// `UIKeyInput` proxy only for an owner. Non-owner taps should still reach
+    /// libghostty gestures, but they must not summon the software keyboard.
+    func testKeyboardProxyRequiresDisplayOwnership() {
+        XCTAssertFalse(SingleSessionView.shouldInstallKeyboardProxy(clientIsOwner: false))
+        XCTAssertTrue(SingleSessionView.shouldInstallKeyboardProxy(clientIsOwner: true))
     }
 }
 #endif

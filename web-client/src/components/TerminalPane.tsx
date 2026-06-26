@@ -14,6 +14,11 @@ type OwnershipSnapshot = {
 
 const WEB_CLIENT_KIND: DisplayClientKind = 'web';
 
+// Mirrors the daemon's `DisplayGrid.daemonFallback` (Sources/GrafttyProtocol/
+// DisplayOwnership.swift). Used before the terminal has measured itself or an
+// ownership snapshot has arrived.
+const DEFAULT_GRID = { cols: 80, rows: 24 };
+
 // ghostty-web's bundled FitAddon reserves 15px on the right for a native
 // vertical scrollbar (proposeDimensions subtracts a hard-coded constant).
 // Ghostty renders its scrollbar as a canvas overlay (not a DOM scrollbar),
@@ -102,8 +107,8 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
       type: 'takeControl',
       clientID,
       kind: WEB_CLIENT_KIND,
-      cols: term?.cols ?? fallbackGrid?.cols ?? 80,
-      rows: term?.rows ?? fallbackGrid?.rows ?? 24,
+      cols: term?.cols ?? fallbackGrid?.cols ?? DEFAULT_GRID.cols,
+      rows: term?.rows ?? fallbackGrid?.rows ?? DEFAULT_GRID.rows,
     }));
   };
 
@@ -141,7 +146,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
     const currentGrid = () => {
       const term = termRef.current;
       if (term) return { cols: term.cols, rows: term.rows };
-      return ownershipRef.current?.grid ?? { cols: 80, rows: 24 };
+      return ownershipRef.current?.grid ?? DEFAULT_GRID;
     };
 
     const recomputeOwner = () => {
@@ -208,6 +213,16 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
     };
 
     const updateOwnership = (snapshot: OwnershipSnapshot) => {
+      // Ignore reordered, stale broadcasts. The server enqueues sends from
+      // multiple threads without ordering, so an older-epoch snapshot can
+      // arrive after a newer one on the same socket; applying it would revert
+      // the owner/grid we already advanced past. Strict `<` (not `<=`): the
+      // server bumps `epoch` only on owner-identity changes, so legitimate
+      // same-epoch grid resizes must still be applied.
+      const prev = ownershipRef.current;
+      if (prev && snapshot.epoch < prev.epoch) {
+        return;
+      }
       const wasOwner = isOwnerRef.current;
       ownershipRef.current = snapshot;
       recomputeOwner();
@@ -355,8 +370,8 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
       .then(() => {
         if (disposed) return;
         const term = new Terminal({
-          cols: 80,
-          rows: 24,
+          cols: DEFAULT_GRID.cols,
+          rows: DEFAULT_GRID.rows,
           scrollback: 10000,
           fontSize: 14,
           fontFamily: 'Menlo, Consolas, "DejaVu Sans Mono", "Courier New", monospace',

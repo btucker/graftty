@@ -40,9 +40,8 @@ public struct TerminalPaneView: UIViewRepresentable {
     public let preferredInterfaceStyle: UIUserInterfaceStyle
     /// Invoked when SwiftUI is about to remove this representable from
     /// the tree — typically because `renderActivity` flipped to `.idle`.
-    /// Passes a UIImage snapshot of the live view (best-effort; may be
-    /// nil if the Metal layer cannot be captured) so the SessionClient
-    /// can hand it to `IdleSnapshotView`. See IOS-10.4.
+    /// Passes nil rather than rendering the live Metal-backed terminal
+    /// layer during teardown.
     public let onWillUnmount: ((UIImage?) -> Void)?
     /// Invoked when the user taps **Paste** in the long-press menu.
     /// `RootView` wires this to read `UIPasteboard.general.string` and
@@ -85,6 +84,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
         view.terminalView.controller = controller
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
+        view.inputProxy.softwareKeyboardInputEnabled = softwareKeyboardInput != nil
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
         view.onPasteRequested = onPasteRequested
@@ -97,6 +97,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     public func updateUIView(_ view: TerminalInputContainerView, context: Context) {
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
+        view.inputProxy.softwareKeyboardInputEnabled = softwareKeyboardInput != nil
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
         view.onPasteRequested = onPasteRequested
@@ -109,18 +110,9 @@ public struct TerminalPaneView: UIViewRepresentable {
         }
     }
 
-    public static func dismantleUIView(_ view: TerminalInputContainerView, coordinator: Coordinator) {
+    public static func dismantleUIView(_: TerminalInputContainerView, coordinator: Coordinator) {
         guard let onWillUnmount = coordinator.onWillUnmount else { return }
-        let snapshot = Self.captureSnapshot(of: view)
-        onWillUnmount(snapshot)
-    }
-
-    private static func captureSnapshot(of view: UIView) -> UIImage? {
-        guard view.bounds.width > 0, view.bounds.height > 0 else { return nil }
-        let renderer = UIGraphicsImageRenderer(bounds: view.bounds)
-        return renderer.image { ctx in
-            view.layer.render(in: ctx.cgContext)
-        }
+        onWillUnmount(nil)
     }
 }
 
@@ -339,10 +331,11 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
 }
 
 final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTraits {
+    var softwareKeyboardInputEnabled = false
     var insertTextHandler: ((String) -> Void)?
     var deleteBackwardHandler: (() -> Void)?
 
-    override var canBecomeFirstResponder: Bool { true }
+    override var canBecomeFirstResponder: Bool { softwareKeyboardInputEnabled }
     var hasText: Bool { true }
 
     override var inputAccessoryView: UIView? {

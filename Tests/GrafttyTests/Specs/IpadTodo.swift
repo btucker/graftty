@@ -79,7 +79,7 @@ struct IpadTodo {
     func ipad_4_1() async throws { }
 
     @Test("""
-@spec IPAD-4.2: When opening a new `terminal` channel would exceed the IPAD-4.1 cap, the application shall close the least-recently-focused open `terminal` channel and render its leaf as an `IdleSnapshotView` from the last frame the channel held.
+@spec IPAD-4.2: When opening a new `terminal` channel would exceed the IPAD-4.1 cap, the application shall close the least-recently-focused open `terminal` channel and render its leaf as an `IdleSnapshotView` placeholder.
 """, .disabled("not yet implemented"))
     func ipad_4_2() async throws { }
 
