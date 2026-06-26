@@ -3,6 +3,9 @@ import GhosttyKit
 import GrafttyProtocol
 @testable import Graftty
 @testable import GrafttyKit
+#if canImport(UIKit)
+@testable import GrafttyMobileKit
+#endif
 
 /// Extends `StoreWorld`-style ownership driving with the real
 /// `WebSocketBridgeCoordinator` + `WebDisplayOwnershipBroadcaster` so the
@@ -47,6 +50,20 @@ struct MultiTransportWorld {
     /// fired while the Mac client was a follower and the ownership gate
     /// blocked the flush).
     private(set) var macPTYLastSize: (UInt16, UInt16)?
+
+    // MARK: - iOS adapter (Task 7)
+
+#if canImport(UIKit)
+    /// Wraps the `@MainActor`-isolated `SessionClient` in an unchecked-
+    /// Sendable reference so the struct (which is not actor-isolated) can
+    /// store it.  Access only from `@MainActor` contexts.
+    private var iosClientBox: IOSClientBox?
+    private var iosFakeWS: FakeWebSocketClient?
+    private var iosClientIDValue: DisplayClientID?
+    /// Highest epoch from ownership frames enqueued via `enqueueIOSIncoming`.
+    /// Used by `pumpIOS()` for the post-pump S5 check.
+    private var iosHighestEnqueuedEpoch: UInt64 = 0
+#endif
 
     init(session: String) {
         let store = SessionDisplayOwnershipStore()
@@ -259,6 +276,98 @@ struct MultiTransportWorld {
     private static func fakeSurface() -> ghostty_surface_t {
         UnsafeMutableRawPointer(bitPattern: 0x1234)!
     }
+
+    // MARK: - iOS adapter methods (Task 7)
+
+#if canImport(UIKit)
+    /// Wire the real `SessionClient` into the harness as an iOS follower.
+    ///
+    /// Constructs the client with `FakeWebSocketClient` (queue-based, no network)
+    /// and `ManualClock` (no wall-clock), starts it, then waits for the real
+    /// receive loop to park in `receive()`.  The client's receive loop is real
+    /// Swift async running on `@MainActor`; determinism comes from the fake WS's
+    /// continuation-based drain signal, not from `Task.sleep`.
+    @MainActor
+    mutating func attachIOS(id: DisplayClientID) async {
+        let fakeWS = FakeWebSocketClient()
+        let clock = ManualClock()
+        let box = IOSClientBox()
+        let client = SessionClient(
+            sessionName: session,
+            webSocketFactory: { fakeWS },
+            clock: clock
+        )
+        box.client = client
+        iosClientBox = box
+        iosFakeWS = fakeWS
+        iosClientIDValue = id
+        client.start()
+        // Wait for the receive loop to set up and park in receive() with
+        // an empty queue — this is the quiescent initial state.
+        await fakeWS.awaitDrained()
+    }
+
+    /// Build a text `WebSocketFrame` carrying an ownership snapshot where
+    /// a fixed harness-owned web client holds the display at the given epoch
+    /// and column count.  Delivering this frame to the iOS client puts it into
+    /// follower state (the ownerClientID is never the iOS client's own UUID).
+    func makeOwnershipFrame(epoch: UInt64, cols: UInt16) -> WebSocketFrame {
+        // swiftlint:disable:next force_try
+        let snapshot = try! DisplayOwnershipSnapshot(
+            sessionName: session,
+            ownerClientID: DisplayClientID("harness-web-owner"),
+            ownerKind: .web,
+            // swiftlint:disable:next force_try
+            grid: try! DisplayGrid(cols: cols, rows: 24),
+            epoch: epoch
+        )
+        return .text(WebControlEnvelope.ownership(snapshot).encoded())
+    }
+
+    /// Enqueue an incoming frame for the iOS client's receive loop.
+    ///
+    /// Tracks the highest epoch from ownership frames for the post-pump S5
+    /// check.  Frames are processed in FIFO order by the real receive loop.
+    mutating func enqueueIOSIncoming(_ frame: WebSocketFrame) {
+        if case .text(let text) = frame,
+           let envelope = try? WebControlEnvelope.parse(Data(text.utf8)),
+           case .ownership(let snapshot) = envelope {
+            iosHighestEnqueuedEpoch = max(iosHighestEnqueuedEpoch, snapshot.epoch)
+        }
+        iosFakeWS?.enqueueIncoming(frame)
+    }
+
+    /// Pump the iOS receive loop: wait until all currently-queued frames
+    /// have been processed and the loop has re-parked in `receive()`.
+    ///
+    /// After returning, runs the S5 check: if the client's applied epoch is
+    /// below the highest epoch that was enqueued, a stale snapshot was applied
+    /// and an `.s5SupersededApplied` violation is recorded in `oracle`.
+    @MainActor
+    mutating func pumpIOS() async {
+        guard let fakeWS = iosFakeWS else { return }
+        await fakeWS.awaitDrained()
+        // S5 post-pump check: convergence to the highest enqueued epoch.
+        // If the client applied a stale snapshot its current epoch is lower.
+        if let client = iosClientBox?.client {
+            let applied = client.ownershipSnapshot?.epoch ?? 0
+            if applied < iosHighestEnqueuedEpoch {
+                oracle.violations.append(.s5SupersededApplied(
+                    target: iosClientIDValue ?? DisplayClientID("unknown-ios"),
+                    applied: applied,
+                    highest: iosHighestEnqueuedEpoch
+                ))
+            }
+        }
+    }
+
+    /// The epoch of the ownership snapshot currently applied by the iOS client,
+    /// or 0 if no snapshot has been applied yet.
+    @MainActor
+    var iosAppliedEpoch: UInt64 {
+        iosClientBox?.client?.ownershipSnapshot?.epoch ?? 0
+    }
+#endif
 }
 
 // MARK: - Private harness helpers
@@ -336,3 +445,13 @@ private final class MacResizeCoalescer {
         }
     }
 }
+
+#if canImport(UIKit)
+/// Wraps a `@MainActor`-isolated `SessionClient` in an `@unchecked Sendable`
+/// reference so the non-isolated `MultiTransportWorld` struct can store it.
+/// Access only from `@MainActor` contexts (i.e. `IOSSeamTests`).
+private final class IOSClientBox: @unchecked Sendable {
+    nonisolated(unsafe) var client: SessionClient?
+    init() {}
+}
+#endif
