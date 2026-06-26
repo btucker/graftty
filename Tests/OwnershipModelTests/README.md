@@ -159,6 +159,29 @@ states and add S6/S7 assertions per-pane rather than per-backend.  The
 `MacResizeCoalescer` fake already collapses delays, so the coalescing boundary
 is covered; new work would add the per-pane multiplexing invariant.
 
+## Gate-honesty
+
+A green macOS `OwnershipModel` run exercises REAL production code for S1–S4
+(`SessionDisplayOwnershipStore` + `WebSocketBridgeCoordinator`), S5/L1
+(`WebFollowerView` guard via genuine multi-path cross-channel reordering — see
+`multiPathGuardIsNonVacuous` in `WebModelCheckTests.swift`), L2 (owner release
+leaves store ownerless — see `l2PathIsNonVacuous`), and S6/S7 (Mac
+`HostManagedZmxBackend` via `MacSeamTests`).
+
+**The modeled follower** (`WebFollowerView`) stands in for the TypeScript web
+client.  It is correct by construction — the guard is the production invariant
+encoded in Swift.
+
+**The real iOS follower** (`SessionClient`) is `#if canImport(UIKit)` and
+compiles only on the iOS SDK.  It runs under the `ios-build-and-test` job in
+`ci.yml`.  A green macOS run does **not** by itself certify the real iOS
+follower; iOS CI is the authoritative check for that seam.
+
+**Not yet exercised:** the `claimOwnerIfOwnerlessOrCurrent` rejection path
+(the binary-frame implicit-claim guard in `WebSocketBridgeCoordinator`) is not
+driven by any generated op in the current corpus.  Adding a `.binaryFrame` op
+kind to `nextWebOp` would cover it.
+
 ## Real findings
 
 The harness has already produced two actionable findings:

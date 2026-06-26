@@ -88,6 +88,16 @@ struct MultiTransportWorld {
         self.webClientID = nil
     }
 
+    /// Release the given client's ownership directly through the store.
+    ///
+    /// Bypasses the coordinator (which has no explicit "release" control frame) so
+    /// `runScenario` can drive the L2 oracle path — owner releases ownership, store
+    /// must become ownerless with no silent promotion of another client.
+    @discardableResult
+    mutating func releaseOwner(ownerID: DisplayClientID) -> DisplayOwnershipSnapshot {
+        store.releaseOwner(sessionName: session, clientID: ownerID)
+    }
+
     /// Forward a control envelope to the real coordinator.
     /// Records the browser-side client ID from `.hello` frames so violations
     /// can be attributed to the right target.

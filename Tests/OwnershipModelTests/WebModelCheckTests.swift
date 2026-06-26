@@ -26,4 +26,60 @@ struct WebModelCheckTests {
         world.deliverToWebFollower(g1)        // stale grid, lower emissionSeq
         #expect(world.oracle.violations.contains { if case .s5SupersededApplied = $0 { return true }; return false })
     }
+
+    // Non-vacuity: the multi-path delivery (two independent channels per follower) must
+    // actually produce cross-channel reorderings that the (epoch, ESN) guard rejects.
+    // If rejectCount is always zero, multi-path delivery is misconfigured and S5/L1
+    // would pass vacuously — the gate wouldn't catch a guard regression.
+    @Test func multiPathGuardIsNonVacuous() {
+        var totalRejects = 0
+        // Run seeds until the reject path is hit.  With two channels per follower and
+        // random scheduling, reordering is expected within the first handful of seeds.
+        for seed: UInt64 in 1...100 {
+            let result = runScenario(seed: seed, opCount: 60)
+            totalRejects += result.rejectCount
+            if totalRejects > 0 { break }
+        }
+        #expect(
+            totalRejects > 0,
+            "No seed exercised the cross-channel S5 reject path — multi-path delivery may be misconfigured"
+        )
+    }
+
+    // Non-vacuity: the L2 owner-release path must be exercised by at least one seed
+    // in the corpus range.  If l2CheckCount is always zero, the L2 oracle check
+    // never runs and the gate cannot catch a silent-promotion regression.
+    @Test func l2PathIsNonVacuous() {
+        var totalL2Checks = 0
+        for seed: UInt64 in 1...100 {
+            let result = runScenario(seed: seed, opCount: 60)
+            totalL2Checks += result.l2CheckCount
+            if totalL2Checks > 0 { break }
+        }
+        #expect(
+            totalL2Checks > 0,
+            "No seed exercised the L2 owner-release path — the L2 oracle check never ran"
+        )
+    }
+
+    // L2 teeth: verify the oracle fires when the store incorrectly retains an owner
+    // after a release.  Uses a stub oracle call against a world where the release is
+    // not applied, so the store still has an owner when checkAfterOwnerRelease runs.
+    @Test func l2OracleHasTeeth() {
+        var world = MultiTransportWorld(session: "main")
+        let web = DisplayClientID("web-1")
+        world.webHandle(.hello(clientID: web, kind: .web, role: .interactive, visible: true, cols: 80, rows: 24))
+        world.webHandle(.takeControl(clientID: web, kind: .web, cols: 80, rows: 24))
+        let snap = world.emit()
+
+        // Do NOT call releaseOwner — store still has an owner.
+        // checkAfterOwnerRelease should detect the silent-promotion bug.
+        world.oracle.checkAfterOwnerRelease(
+            store: world.store,
+            session: "main",
+            previousOwnerID: web,
+            epochBeforeRelease: snap.snapshot.epoch
+        )
+        #expect(world.oracle.violations.contains { if case .l2SilentPromotion = $0 { return true }; return false })
+    }
 }

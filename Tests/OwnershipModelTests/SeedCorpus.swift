@@ -12,6 +12,21 @@ import Testing
 ///
 ///     swift test --filter OwnershipModel   # CI gate (seeds 1…1000)
 ///     # Manual / nightly: generate seeds > 1000 and replay via shrink / replayWebOps
+///
+/// ## Gate-honesty note
+///
+/// A green macOS `OwnershipModel` run exercises REAL production code for:
+///   - S1–S4  (`SessionDisplayOwnershipStore` + `WebSocketBridgeCoordinator`)
+///   - S5/L1  (`WebFollowerView` guard, now via genuine multi-path cross-channel
+///             reordering — non-vacuous; see `multiPathGuardIsNonVacuous` test)
+///   - L2     (owner release → ownerless; see `l2PathIsNonVacuous` test)
+///   - S6/S7  (Mac `HostManagedZmxBackend` via `MacSeamTests`)
+///
+/// The MODELED follower (`WebFollowerView`) stands in for the TypeScript client.
+/// The only REAL follower adapter — iOS `SessionClient` — is `#if canImport(UIKit)`
+/// and runs only on the iOS CI job (`ios-build-and-test` in `ci.yml`).
+/// A green macOS `OwnershipModel` run does NOT by itself certify the real iOS
+/// follower; iOS CI is the authoritative check for that seam.
 let corpusSeeds: [UInt64] = Array(1...1000)
 
 @Suite("Ownership-model corpus sweep")
