@@ -448,18 +448,6 @@ public final class SessionClient {
         recordActivity()
     }
 
-    private var acceptsPTYInput: Bool {
-        guard role != .preview else { return false }
-        switch ownershipTransportMode {
-        case .webControl:
-            return isOwner
-        case .legacy:
-            return true
-        case .pending:
-            return false
-        }
-    }
-
     @MainActor
     private func sendInput(_ data: Data) {
         guard role != .preview else { return }
@@ -591,13 +579,6 @@ public final class SessionClient {
     private func queueInputAndRequestTakeover(_ data: Data) {
         pendingInputFrames.append(data)
         recordActivity()
-        requestTakeControlForPendingInput()
-    }
-
-    private func requestTakeControlForPendingInput() {
-        if !pendingTakeoverRequested {
-            pendingTakeoverBaseEpoch = ownershipSnapshot?.epoch
-        }
         requestTakeControl()
     }
 
@@ -608,7 +589,14 @@ public final class SessionClient {
         pendingTakeoverRequested = true
         Task { [weak self] in
             guard let self else { return }
-            guard let ws = await self.awaitWS(), ws.supportsWebControlTextFrames else { return }
+            guard let ws = await self.awaitWS(), ws.supportsWebControlTextFrames else {
+                // The takeover frame could not be sent (no live owner-aware
+                // socket). Drop the latch so a later keystroke re-requests
+                // instead of queueing input behind a request that never went
+                // out and is never cleared until a reconnect discards it.
+                await MainActor.run { self.pendingTakeoverRequested = false }
+                return
+            }
             await ws.takeControl(
                 clientID: await MainActor.run { self.displayClientID },
                 kind: .ios,
@@ -645,6 +633,27 @@ public final class SessionClient {
                 cols: Int(cols),
                 rows: Int(rows)
             )
+        }
+    }
+
+    /// IOS-4.24 + ordered flush: on owner promotion, send the owner-transition
+    /// resize and THEN the queued input on a single task, so the remote PTY
+    /// adopts the iOS grid before the queued bytes are written. Two independent
+    /// tasks (`sendOwnerResizeToServer` + `flushPendingInput`) have no ordering
+    /// guarantee, so the queued keystrokes could otherwise be processed at the
+    /// previous owner's grid. The web client (TerminalPane.tsx) sends these in
+    /// order on its single thread; this restores the same guarantee on iOS.
+    private func flushPendingInputAfterOwnerResize(cols: UInt16, rows: UInt16, epoch: UInt64) {
+        let frames = pendingInputFrames
+        clearPendingInput()
+        let clientID = displayClientID
+        Task { [weak self] in
+            guard let self else { return }
+            guard let ws = await self.awaitWS(), ws.supportsWebControlTextFrames else { return }
+            await ws.ownerResize(clientID: clientID, epoch: epoch, cols: Int(cols), rows: Int(rows))
+            for data in frames {
+                try? await ws.send(.binary(data))
+            }
         }
     }
 
@@ -709,18 +718,20 @@ public final class SessionClient {
             }
             let wasOwner = isOwner
             ownershipSnapshot = snapshot
-            // IOS-4.24: when this snapshot promotes us to owner, immediately
-            // push the current iOS viewport so the PTY adopts our grid now
-            // rather than lingering at the previous owner's size until the next
-            // layout tick (mirrors the web client's owner-transition resize).
-            if !wasOwner,
-               isOwner,
-               ownershipTransportMode == .webControl,
-               let viewport = lastIOSViewport {
-                sendOwnerResizeToServer(cols: viewport.cols, rows: viewport.rows, epoch: snapshot.epoch)
-            }
             if isOwner {
-                flushPendingInput()
+                // IOS-4.24: when this snapshot promotes us to owner, immediately
+                // push the current iOS viewport so the PTY adopts our grid now
+                // rather than lingering at the previous owner's size until the
+                // next layout tick (mirrors the web client's owner-transition
+                // resize). Send the resize and flush the queued input on one
+                // ordered task so the bytes land at the new grid, not the old.
+                if !wasOwner,
+                   ownershipTransportMode == .webControl,
+                   let viewport = lastIOSViewport {
+                    flushPendingInputAfterOwnerResize(cols: viewport.cols, rows: viewport.rows, epoch: snapshot.epoch)
+                } else {
+                    flushPendingInput()
+                }
             } else if let baseEpoch = pendingTakeoverBaseEpoch, snapshot.epoch > baseEpoch {
                 clearPendingInput()
             }

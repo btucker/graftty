@@ -486,10 +486,16 @@ final class HostManagedZmxBackend {
             lock.unlock()
         }
 
-        if !writeAllowed(), claimEngagement {
+        // One snapshot on the steady-state owner path; re-check only after an
+        // actual takeControl() flips ownership. `writeAllowed()` takes a store
+        // snapshot under lock, so calling it twice unconditionally would double
+        // that cost on every byte chunk libghostty emits.
+        var allowed = writeAllowed()
+        if !allowed, claimEngagement {
             _ = takeControl()
+            allowed = writeAllowed()
         }
-        guard writeAllowed() else {
+        guard allowed else {
             Self.trace.notice("write \(self.spawnConfiguration.sessionName, privacy: .public) \(data.count) bytes BLOCKED (follower)")
             return
         }
