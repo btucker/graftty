@@ -5,6 +5,21 @@ struct RunResult {
     let seed: UInt64
     let violations: [Violation]
     let transcript: [String]
+    /// The web-control ops generated during the run, in application order.
+    /// Populated by `runScenario`; empty for replay results.
+    let capturedOps: [WebControlEnvelope]
+
+    init(
+        seed: UInt64,
+        violations: [Violation],
+        transcript: [String],
+        capturedOps: [WebControlEnvelope] = []
+    ) {
+        self.seed = seed
+        self.violations = violations
+        self.transcript = transcript
+        self.capturedOps = capturedOps
+    }
 }
 
 /// Run one randomized model-check scenario using a real discrete-event loop.
@@ -56,6 +71,7 @@ func runScenario(seed: UInt64, opCount: Int) -> RunResult {
     var currentEpoch: UInt64 = 0
     var currentOwner: DisplayClientID? = nil
     var opsApplied = 0
+    var capturedOps: [WebControlEnvelope] = []
 
     // Seed the discrete-event queue with the first op token.
     var queue = EventQueue()
@@ -76,6 +92,7 @@ func runScenario(seed: UInt64, opCount: Int) -> RunResult {
                 using: &rng
             )
 
+            capturedOps.append(op)
             world.webHandle(op)
 
             // S1–S4 store invariants checked after every op.
@@ -166,7 +183,101 @@ func runScenario(seed: UInt64, opCount: Int) -> RunResult {
         }
     }
 
-    return RunResult(seed: seed, violations: world.oracle.violations, transcript: transcript)
+    return RunResult(seed: seed, violations: world.oracle.violations, transcript: transcript, capturedOps: capturedOps)
+}
+
+// MARK: - Explicit-op replay
+
+/// Replay an explicit list of web-control ops deterministically.
+///
+/// Unlike `runScenario`, deliveries to followers happen sequentially after each
+/// op (connection 0 then connection 1) rather than via the random event-queue
+/// interleaver.  This determinism is sufficient for the shrinker to check
+/// whether a violation still occurs in a reduced op list.
+func replayWebOps(ops: [WebControlEnvelope], session: String) -> RunResult {
+    var world = MultiTransportWorld(session: session)
+    var transcript: [String] = []
+
+    let followerConnectionIDs = [0, 1]
+    let followers: [Int: WebFollowerView] = Dictionary(
+        uniqueKeysWithValues: followerConnectionIDs.map { ($0, WebFollowerView()) }
+    )
+
+    for (index, op) in ops.enumerated() {
+        world.webHandle(op)
+
+        let storeViolations = world.oracle.checkAfterEvent(
+            store: world.store,
+            session: session,
+            lastResize: nil,
+            requestedEpoch: nil
+        )
+
+        let tagged = world.emit()
+
+        // Enqueue this snapshot on every follower connection.
+        for connID in followerConnectionIDs {
+            world.fakeNetwork.enqueue(
+                target: DisplayClientID("follower-\(connID)"),
+                snapshot: tagged.snapshot,
+                connection: connID,
+                emissionSeq: tagged.emissionSeq
+            )
+        }
+
+        // Drain each connection in FIFO order (deterministic, no interleaving).
+        for connID in followerConnectionIDs {
+            while let delivery = world.fakeNetwork.dequeue(connection: connID) {
+                guard let follower = followers[connID] else { break }
+                let deliveredTagged = TaggedSnapshot(
+                    snapshot: delivery.snapshot,
+                    emissionSeq: delivery.emissionSeq
+                )
+                let highestEpochBefore = follower.highestApplied
+                let highestEmissionBefore = follower.highestAppliedEmission
+                follower.apply(deliveredTagged)
+                let target = DisplayClientID("follower-\(connID)")
+
+                if deliveredTagged.snapshot.epoch < highestEpochBefore,
+                   follower.highestApplied == deliveredTagged.snapshot.epoch {
+                    world.oracle.violations.append(.s5SupersededApplied(
+                        target: target,
+                        applied: deliveredTagged.snapshot.epoch,
+                        highest: highestEpochBefore
+                    ))
+                }
+                if deliveredTagged.emissionSeq < highestEmissionBefore,
+                   follower.highestAppliedEmission == deliveredTagged.emissionSeq {
+                    world.oracle.violations.append(.s5SupersededApplied(
+                        target: target,
+                        applied: deliveredTagged.snapshot.epoch,
+                        highest: highestEpochBefore
+                    ))
+                }
+            }
+        }
+
+        var line = "#\(index) op=\(opLabel(op)) → owner=\(tagged.snapshot.ownerClientID?.rawValue ?? "none") epoch=\(tagged.snapshot.epoch) emit=\(tagged.emissionSeq)"
+        if !storeViolations.isEmpty { line += " VIOLATIONS=\(storeViolations)" }
+        transcript.append(line)
+    }
+
+    // Quiescence: check L1 convergence for every follower connection.
+    if world.emissionSeqCounter > 0 {
+        let storeSnapshot = world.store.snapshot(sessionName: session)
+        for connID in followerConnectionIDs {
+            guard let follower = followers[connID] else { continue }
+            let target = DisplayClientID("follower-\(connID)")
+            if follower.highestApplied != storeSnapshot.epoch ||
+               follower.highestAppliedEmission != world.emissionSeqCounter ||
+               follower.grid != storeSnapshot.grid {
+                world.oracle.violations.append(.l1Divergence(target: target))
+                transcript.append("  L1 divergence conn=\(connID): follower epoch=\(follower.highestApplied) emit=\(follower.highestAppliedEmission) vs store epoch=\(storeSnapshot.epoch) emit=\(world.emissionSeqCounter)")
+            }
+        }
+    }
+
+    return RunResult(seed: 0, violations: world.oracle.violations, transcript: transcript)
 }
 
 // MARK: - Op generation
