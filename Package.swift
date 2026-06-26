@@ -153,5 +153,10 @@ let package = Package(
             dependencies: ["Graftty", "GrafttyCLI"],
             swiftSettings: strictWarnings
         ),
+        .testTarget(
+            name: "OwnershipModelTests",
+            dependencies: ["Graftty", "GrafttyKit", "GrafttyMobileKit", "GrafttyProtocol"],
+            path: "Tests/OwnershipModelTests"
+        ),
     ]
 )
