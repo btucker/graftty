@@ -154,7 +154,7 @@ struct MultiTransportWorld {
     /// The injected `FakeZmxSession` records every resize/write and fires
     /// Oracle S6/S7 checks at the moment of the call.  Call `quiesce()` to
     /// settle the layout and flush any pending violations into `oracle`.
-    mutating func attachMac(id: DisplayClientID, grid: DisplayGrid) {
+    mutating func attachMac(id: DisplayClientID, grid: DisplayGrid) throws {
         let session = FakeZmxSession()
         let coalescer = MacResizeCoalescer()
         let violations = PendingViolations()
@@ -201,7 +201,7 @@ struct MultiTransportWorld {
         // Start the backend (attaches to ownership store + spawns session)
         // but do NOT call markLayoutSettled — that happens in quiesce() so
         // the ownership gate is evaluated after all takeover events have run.
-        try? backend.start(surface: Self.fakeSurface())
+        try backend.start(surface: Self.fakeSurface())
 
         macBackendBox = MacBackendBox(backend)
         macSession = session
@@ -229,6 +229,30 @@ struct MultiTransportWorld {
         if let last = macSession?.resizes.last {
             macPTYLastSize = last
         }
+        oracle.violations.append(contentsOf: macViolations?.drain() ?? [])
+    }
+
+    // MARK: - Fault-injection seams (teeth tests)
+
+    /// Directly invoke the Mac `FakeZmxSession.resize`, bypassing the real
+    /// backend's ownership gate.  Used to prove the S6 oracle has teeth:
+    /// the `onResize` hook checks the store and records a violation when
+    /// the Mac is not the current owner.  Violations are drained into
+    /// `oracle.violations` immediately so callers can assert right after
+    /// this call.
+    mutating func injectMacPTYResize(cols: UInt16, rows: UInt16) {
+        try? macSession?.resize(cols: cols, rows: rows)
+        oracle.violations.append(contentsOf: macViolations?.drain() ?? [])
+    }
+
+    /// Directly invoke the Mac `FakeZmxSession.write`, bypassing the real
+    /// backend's ownership gate.  Used to prove the S7 oracle has teeth:
+    /// the `onWrite` hook checks the store and records a violation when
+    /// the Mac is not the current owner.  Violations are drained into
+    /// `oracle.violations` immediately so callers can assert right after
+    /// this call.
+    mutating func injectMacPTYWrite(_ data: Data) {
+        try? macSession?.write(data)
         oracle.violations.append(contentsOf: macViolations?.drain() ?? [])
     }
 
@@ -292,6 +316,9 @@ private final class MacResizeCoalescer {
     private var pending: [Entry] = []
 
     func schedule(_ delay: TimeInterval, _ fire: @escaping () -> Void) -> (() -> Void) {
+        // delay is ignored: the test harness collapses all delays to zero for
+        // determinism; fireAll() pumps entries synchronously.
+        _ = delay
         let entry = Entry(fire)
         lock.lock()
         pending.append(entry)
