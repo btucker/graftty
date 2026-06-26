@@ -79,6 +79,14 @@ jobs:
         # in real time instead of being block-buffered by the CI log pipe.
         run: /usr/bin/script -q /dev/null swift test --skip-build
 
+      - name: Ownership model corpus gate (seeds 1–1000)
+        timeout-minutes: 5
+        # Runs the committed 1000-seed deterministic corpus and the
+        # historical-regression re-catch.  Wide random batches (seeds > 1000)
+        # are intentionally excluded — run those manually or as a nightly sweep:
+        #   swift test --filter OwnershipModel   (same filter, broader seed list)
+        run: /usr/bin/script -q /dev/null swift test --filter OwnershipModel --skip-build
+
   ios-build-and-test:
     runs-on: macos-26
     steps:
