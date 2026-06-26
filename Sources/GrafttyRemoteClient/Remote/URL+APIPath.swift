@@ -1,6 +1,6 @@
 import Foundation
 
-extension URL {
+public extension URL {
     /// Join an API suffix like `worktrees/panes` onto this URL, respecting
     /// whatever path the user's saved host already has. The trailing-slash
     /// handling matters because hosts behind reverse proxies sometimes

@@ -1,3 +1,4 @@
+import Foundation
 import GrafttyRemoteClient
 import Testing
 
@@ -11,5 +12,12 @@ struct GrafttyRemoteClientExportsTests {
         let _: LocalPairingClient.Type = LocalPairingClient.self
         let _: SignalingClient.Type = SignalingClient.self
         let _: RemoteHostConnection.Type = RemoteHostConnection.self
+    }
+
+    @Test("API path helper is exported for client modules")
+    func apiPathHelperIsExportedForClientModules() throws {
+        let baseURL = try #require(URL(string: "https://example.test/graftty/"))
+
+        #expect(baseURL.appendingAPIPath("sessions") == URL(string: "https://example.test/graftty/sessions"))
     }
 }
