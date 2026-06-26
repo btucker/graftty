@@ -13,6 +13,15 @@ type OwnershipSnapshot = {
 };
 
 const WEB_CLIENT_KIND: DisplayClientKind = 'web';
+const MAX_PENDING_INPUT_BYTES = 1024 * 1024;
+const MAX_PENDING_INPUT_FRAMES = 1024;
+
+type PendingInputState = {
+  frames: Uint8Array[];
+  bytes: number;
+  takeoverBaseEpoch: number | null;
+  takeoverRequested: boolean;
+};
 
 // Mirrors the daemon's `DisplayGrid.daemonFallback` (Sources/GrafttyProtocol/
 // DisplayOwnership.swift). Used before the terminal has measured itself or an
@@ -35,6 +44,15 @@ function fitTerminal(term: Terminal, host: HTMLElement): void {
 }
 
 const textEncoder = new TextEncoder();
+
+function emptyPendingInputState(): PendingInputState {
+  return {
+    frames: [],
+    bytes: 0,
+    takeoverBaseEpoch: null,
+    takeoverRequested: false,
+  };
+}
 
 function generateWebClientID(): string {
   const randomID = globalThis.crypto?.randomUUID?.()
@@ -93,17 +111,15 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
   const connectionRef = useRef<{ ws: WebSocket | null; clientID: string | null }>({ ws: null, clientID: null });
   const ownershipRef = useRef<OwnershipSnapshot | null>(null);
   const isOwnerRef = useRef(false);
-  const pendingInputRef = useRef<string[]>([]);
-  const pendingTakeoverBaseEpochRef = useRef<number | null>(null);
-  const pendingTakeoverRequestedRef = useRef(false);
+  const pendingInputRef = useRef<PendingInputState>(emptyPendingInputState());
 
   const isOwner = ownershipSnapshot?.ownerClientID === activeClientID
     && ownershipSnapshot?.ownerKind === WEB_CLIENT_KIND;
   const canTakeControl = ownershipSnapshot !== null && activeClientID !== null && !isOwner;
 
-  const sendTakeControl = () => {
+  const sendTakeControlFrame = () => {
     const { ws, clientID } = connectionRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN || !clientID) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !clientID) return false;
     const term = termRef.current;
     const fallbackGrid = ownershipRef.current?.grid;
     ws.send(JSON.stringify({
@@ -113,6 +129,11 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
       cols: term?.cols ?? fallbackGrid?.cols ?? DEFAULT_GRID.cols,
       rows: term?.rows ?? fallbackGrid?.rows ?? DEFAULT_GRID.rows,
     }));
+    return true;
+  };
+
+  const sendTakeControl = () => {
+    sendTakeControlFrame();
   };
 
   useEffect(() => {
@@ -125,9 +146,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
     connectionRef.current = { ws: null, clientID: null };
     ownershipRef.current = null;
     isOwnerRef.current = false;
-    pendingInputRef.current = [];
-    pendingTakeoverBaseEpochRef.current = null;
-    pendingTakeoverRequestedRef.current = false;
+    pendingInputRef.current = emptyPendingInputState();
 
     // One AbortController cleans up every listener and observer this
     // effect registers — touch gestures, visualViewport tracking,
@@ -193,25 +212,30 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
     };
 
     const clearPendingInput = () => {
-      pendingInputRef.current = [];
-      pendingTakeoverBaseEpochRef.current = null;
-      pendingTakeoverRequestedRef.current = false;
+      pendingInputRef.current = emptyPendingInputState();
+    };
+
+    const queuePendingInput = (data: Uint8Array) => {
+      if (data.byteLength > MAX_PENDING_INPUT_BYTES) {
+        clearPendingInput();
+        return false;
+      }
+      if (
+        pendingInputRef.current.frames.length >= MAX_PENDING_INPUT_FRAMES
+        || pendingInputRef.current.bytes + data.byteLength > MAX_PENDING_INPUT_BYTES
+      ) {
+        clearPendingInput();
+      }
+      pendingInputRef.current.frames.push(data);
+      pendingInputRef.current.bytes += data.byteLength;
+      return true;
     };
 
     const requestTakeControlForPendingInput = () => {
-      const { ws, clientID } = connectionRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN || !clientID) return;
-      if (pendingTakeoverRequestedRef.current) return;
-      pendingTakeoverBaseEpochRef.current = ownershipRef.current?.epoch ?? null;
-      pendingTakeoverRequestedRef.current = true;
-      const { cols, rows } = currentGrid();
-      ws.send(JSON.stringify({
-        type: 'takeControl',
-        clientID,
-        kind: WEB_CLIENT_KIND,
-        cols,
-        rows,
-      }));
+      if (pendingInputRef.current.takeoverRequested) return;
+      if (!sendTakeControlFrame()) return;
+      pendingInputRef.current.takeoverBaseEpoch = ownershipRef.current?.epoch ?? null;
+      pendingInputRef.current.takeoverRequested = true;
     };
 
     const flushPendingInput = () => {
@@ -220,10 +244,10 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
         clearPendingInput();
         return;
       }
-      const pending = pendingInputRef.current;
+      const pending = pendingInputRef.current.frames;
       clearPendingInput();
       for (const data of pending) {
-        ws.send(textEncoder.encode(data));
+        ws.send(data);
       }
     };
 
@@ -235,13 +259,13 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
     // silently; the user sees "reconnecting…" in the status strip so
     // the drop is visible.
     const sendBytes = (data: string) => {
+      const encoded = textEncoder.encode(data);
       if (isOwnerRef.current && currentWs && currentWs.readyState === WebSocket.OPEN) {
-        currentWs.send(textEncoder.encode(data));
+        currentWs.send(encoded);
         return;
       }
       if (!currentWs || currentWs.readyState !== WebSocket.OPEN) return;
-      pendingInputRef.current.push(data);
-      requestTakeControlForPendingInput();
+      if (queuePendingInput(encoded)) requestTakeControlForPendingInput();
     };
 
     const sendOwnerResize = (cols: number, rows: number) => {
@@ -278,8 +302,8 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
       if (isOwnerRef.current) {
         flushPendingInput();
       } else if (
-        pendingTakeoverBaseEpochRef.current != null
-        && snapshot.epoch > pendingTakeoverBaseEpochRef.current
+        pendingInputRef.current.takeoverBaseEpoch != null
+        && snapshot.epoch > pendingInputRef.current.takeoverBaseEpoch
       ) {
         clearPendingInput();
       }

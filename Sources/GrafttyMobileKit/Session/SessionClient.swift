@@ -101,11 +101,43 @@ public final class SessionClient {
     @ObservationIgnored
     private var legacyEngaged = false
     @ObservationIgnored
-    private var pendingInputFrames: [Data] = []
-    @ObservationIgnored
-    private var pendingTakeoverBaseEpoch: UInt64?
-    @ObservationIgnored
-    private var pendingTakeoverRequested = false
+    private var pendingInput = PendingInput()
+
+    private struct PendingInput: Sendable {
+        private static let maxBytes = 1_048_576
+        private static let maxFrames = 1_024
+
+        private(set) var frames: [Data] = []
+        private var byteCount = 0
+        var takeoverBaseEpoch: UInt64?
+        var takeoverRequested = false
+
+        mutating func queue(_ data: Data) -> Bool {
+            guard data.count <= Self.maxBytes else {
+                clear()
+                return false
+            }
+            if frames.count >= Self.maxFrames || byteCount + data.count > Self.maxBytes {
+                clear()
+            }
+            frames.append(data)
+            byteCount += data.count
+            return true
+        }
+
+        mutating func clear() {
+            frames.removeAll()
+            byteCount = 0
+            takeoverBaseEpoch = nil
+            takeoverRequested = false
+        }
+
+        mutating func drain() -> [Data] {
+            let result = frames
+            clear()
+            return result
+        }
+    }
 
     public var isOwner: Bool {
         guard role != .preview else { return false }
@@ -577,16 +609,16 @@ public final class SessionClient {
     }
 
     private func queueInputAndRequestTakeover(_ data: Data) {
-        pendingInputFrames.append(data)
         recordActivity()
+        guard pendingInput.queue(data) else { return }
         requestTakeControl()
     }
 
     private func requestTakeControl() {
-        guard !pendingTakeoverRequested, !stopped else { return }
+        guard !pendingInput.takeoverRequested, !stopped else { return }
         let grid = helloGrid()
-        pendingTakeoverBaseEpoch = ownershipSnapshot?.epoch
-        pendingTakeoverRequested = true
+        pendingInput.takeoverBaseEpoch = ownershipSnapshot?.epoch
+        pendingInput.takeoverRequested = true
         Task { [weak self] in
             guard let self else { return }
             guard let ws = await self.awaitWS(), ws.supportsWebControlTextFrames else {
@@ -594,7 +626,7 @@ public final class SessionClient {
                 // socket). Drop the latch so a later keystroke re-requests
                 // instead of queueing input behind a request that never went
                 // out and is never cleared until a reconnect discards it.
-                await MainActor.run { self.pendingTakeoverRequested = false }
+                await MainActor.run { self.pendingInput.takeoverRequested = false }
                 return
             }
             await ws.takeControl(
@@ -607,18 +639,12 @@ public final class SessionClient {
     }
 
     private func clearPendingInput() {
-        pendingInputFrames.removeAll()
-        pendingTakeoverBaseEpoch = nil
-        pendingTakeoverRequested = false
+        pendingInput.clear()
     }
 
     private func flushPendingInput() {
-        guard !pendingInputFrames.isEmpty else {
-            clearPendingInput()
-            return
-        }
-        let frames = pendingInputFrames
-        clearPendingInput()
+        let frames = pendingInput.drain()
+        guard !frames.isEmpty else { return }
         sendBinaryFrames(frames)
     }
 
@@ -644,16 +670,13 @@ public final class SessionClient {
     /// previous owner's grid. The web client (TerminalPane.tsx) sends these in
     /// order on its single thread; this restores the same guarantee on iOS.
     private func flushPendingInputAfterOwnerResize(cols: UInt16, rows: UInt16, epoch: UInt64) {
-        let frames = pendingInputFrames
-        clearPendingInput()
+        let frames = pendingInput.drain()
         let clientID = displayClientID
         Task { [weak self] in
             guard let self else { return }
             guard let ws = await self.awaitWS(), ws.supportsWebControlTextFrames else { return }
             await ws.ownerResize(clientID: clientID, epoch: epoch, cols: Int(cols), rows: Int(rows))
-            for data in frames {
-                try? await ws.send(.binary(data))
-            }
+            await Self.sendBinaryFrames(frames, on: ws)
         }
     }
 
@@ -680,9 +703,13 @@ public final class SessionClient {
         // from being silently dropped.
         Task { [weak self] in
             guard let ws = await self?.awaitWS() else { return }
-            for data in frames {
-                try? await ws.send(.binary(data))
-            }
+            await Self.sendBinaryFrames(frames, on: ws)
+        }
+    }
+
+    nonisolated private static func sendBinaryFrames(_ frames: [Data], on ws: WebSocketClient) async {
+        for data in frames {
+            try? await ws.send(.binary(data))
         }
     }
 
@@ -719,12 +746,6 @@ public final class SessionClient {
             let wasOwner = isOwner
             ownershipSnapshot = snapshot
             if isOwner {
-                // IOS-4.24: when this snapshot promotes us to owner, immediately
-                // push the current iOS viewport so the PTY adopts our grid now
-                // rather than lingering at the previous owner's size until the
-                // next layout tick (mirrors the web client's owner-transition
-                // resize). Send the resize and flush the queued input on one
-                // ordered task so the bytes land at the new grid, not the old.
                 if !wasOwner,
                    ownershipTransportMode == .webControl,
                    let viewport = lastIOSViewport {
@@ -732,7 +753,7 @@ public final class SessionClient {
                 } else {
                     flushPendingInput()
                 }
-            } else if let baseEpoch = pendingTakeoverBaseEpoch, snapshot.epoch > baseEpoch {
+            } else if let baseEpoch = pendingInput.takeoverBaseEpoch, snapshot.epoch > baseEpoch {
                 clearPendingInput()
             }
         case .hello, .takeControl, .ownerResize:
