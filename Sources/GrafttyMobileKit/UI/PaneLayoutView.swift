@@ -80,7 +80,7 @@ public struct PaneLayoutView: View {
 /// When `client == nil` (single-pane worktrees skip the preview pool per
 /// IOS-4.14), renders a static centered title with no controller, no
 /// preview client, no WebSocket. Otherwise owns its own `TerminalController`,
-/// sized so the server's grid fits the tile width without an outer
+/// sized so the authoritative grid fits the tile width without an outer
 /// scaleEffect downscale (IOS-4.12).
 ///
 /// @spec IOS-11.11: While a pane is rendered as a worktree-detail preview tile (`IOS-4.10`), the long-press selection menu shall not be installed; tapping the tile shall continue to open the fullscreen pane per `IOS-4.21`.
@@ -137,8 +137,8 @@ private struct PaneTile: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(.ultraThinMaterial)
             }
-            .task(id: SizingKey(width: width, cols: client.serverGrid?.cols, baseConfig: baseConfig)) {
-                resizeController(tileWidth: width, cols: client.serverGrid?.cols)
+            .task(id: SizingKey(width: width, cols: client.authoritativeGrid?.cols, baseConfig: baseConfig)) {
+                resizeController(tileWidth: width, authoritativeCols: client.authoritativeGrid?.cols)
             }
         }
     }
@@ -185,7 +185,7 @@ private struct PaneTile: View {
     /// is an approximation for Berkeley/SF/JetBrains-style monospace fonts;
     /// a small safety margin (×0.95) keeps us from edge-cases where the
     /// real cell width nudges over the tile width.
-    private func resizeController(tileWidth: CGFloat, cols: UInt16?) {
+    private func resizeController(tileWidth: CGFloat, authoritativeCols: UInt16?) {
         guard let baseConfig else {
             controller = nil
             controllerSourceConfig = nil
@@ -195,7 +195,7 @@ private struct PaneTile: View {
 
         let action = PanePreviewFontApplication.decide(
             tileWidth: tileWidth,
-            cols: cols,
+            authoritativeCols: authoritativeCols,
             hasController: controller != nil,
             sourceConfigMatches: controllerSourceConfig == baseConfig,
             lastAppliedFontSize: lastAppliedFontSize

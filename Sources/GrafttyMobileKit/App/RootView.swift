@@ -185,16 +185,20 @@ struct SingleSessionView: View {
     /// as an explicit bottom padding on the fullscreen layout
     /// (`IOS-6.9`). Populated from `keyboardWillChangeFrame`.
     @State private var keyboardBottomInset: CGFloat = 0
+    /// Measured height of the bottom terminal chrome overlay. This is
+    /// reserved from the terminal viewport without changing the overlay's
+    /// bottom-aligned visual placement.
+    @State private var measuredTerminalChromeHeight: CGFloat = 0
     /// Box that holds a weak reference to the live terminal-input
     /// container so the SwiftUI control-bar buttons can cancel an
     /// active selection per IOS-11.7.
     @State private var paneContainerBox = TerminalContainerBox()
     /// The iOS-scaled Mac ghostty config used to build `controller`.
-    /// Cached so the not-leader auto-fit path (IOS-5.6) can re-apply
+    /// Cached so the follower/ownerless auto-fit path (IOS-5.6) can re-apply
     /// the base config or a font-size override without re-fetching.
     @State private var baseConfigText: String?
     /// Last font-size override applied via TerminalWidthLayout.decide while
-    /// not-leader, so we can detect transitions (e.g. base ↔ override) and
+    /// not owner, so we can detect transitions (e.g. base ↔ override) and
     /// avoid pointlessly rebuilding the controller config on every layout
     /// tick. Set to nil while the base config is in effect.
     @State private var liveFontOverride: Float?
@@ -227,7 +231,17 @@ struct SingleSessionView: View {
                 loadingPlaceholder
             case .live:
                 GeometryReader { geo in
-                    terminalContent(containerSize: geo.size)
+                    let terminalViewportSize = TerminalChromeViewport.terminalSize(
+                        container: geo.size,
+                        chromeHeight: measuredTerminalChromeHeight
+                    )
+                    terminalContent(containerSize: terminalViewportSize)
+                        .frame(
+                            width: terminalViewportSize.width,
+                            height: terminalViewportSize.height,
+                            alignment: .top
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }
             case .ended:
                 endedBanner
@@ -261,7 +275,15 @@ struct SingleSessionView: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                if connection == .live { terminalChrome }
+                if connection == .live {
+                    terminalChrome
+                        .background(TerminalChromeHeightReader())
+                }
+            }
+            .onPreferenceChange(TerminalChromeHeightPreferenceKey.self) { height in
+                if measuredTerminalChromeHeight != height {
+                    measuredTerminalChromeHeight = height
+                }
             }
             .animation(.easeInOut(duration: 0.25), value: keyboardBottomInset)
             .animation(.easeInOut(duration: 0.15), value: keyboardAllowed)
@@ -459,17 +481,28 @@ struct SingleSessionView: View {
 
     @ViewBuilder
     private var terminalChrome: some View {
-        if isKeyboardVisible {
-            terminalControlBar
-                .transition(.move(edge: .bottom).combined(with: .opacity))
-        } else if !keyboardAllowed {
-            HStack {
-                Spacer()
-                keyboardButton
-                    .transition(.opacity.combined(with: .scale))
+        let shouldShowTakeControl = client.map { isFullScreen && $0.canTakeControl } ?? false
+        if shouldShowTakeControl || isKeyboardVisible || !keyboardAllowed {
+            VStack(spacing: 8) {
+                if let client, shouldShowTakeControl {
+                    takeControlButton(client: client)
+                }
+                if isKeyboardVisible {
+                    terminalControlBar
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                } else if !keyboardAllowed {
+                    HStack {
+                        Spacer()
+                        keyboardButton
+                            .transition(.opacity.combined(with: .scale))
+                    }
+                    .padding(.trailing, 12)
+                }
             }
-            .padding(.trailing, 12)
-            .padding(.bottom, 12)
+            .padding(.bottom, 8)
+        } else {
+            Color.clear
+                .frame(width: 0, height: 0)
         }
     }
 
@@ -486,6 +519,25 @@ struct SingleSessionView: View {
             }
             .accessibilityLabel("Show keyboard")
         }
+    }
+
+    private func takeControlButton(client: SessionClient) -> some View {
+        Button {
+            client.takeControl()
+        } label: {
+            Label("Take Control", systemImage: "hand.raised.fill")
+                .font(.footnote.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(
+            Capsule()
+                .strokeBorder(.separator.opacity(0.35), lineWidth: 0.5)
+        )
+        .accessibilityLabel("Take Control")
     }
 
     private var terminalControlBar: some View {
@@ -551,9 +603,9 @@ struct SingleSessionView: View {
         .padding(.bottom, 8)
     }
 
-    /// The terminal body. While not the size-leader, applies a font-size
+    /// The terminal body. While not the display owner, applies a font-size
     /// override to the controller via `reconcileFontOverride` so that
-    /// `serverCols × cellWidth ≤ containerWidth` and the pane renders at
+    /// `authoritativeCols × cellWidth ≤ containerWidth` and the pane renders at
     /// the full container width with no horizontal ScrollView (IOS-5.6).
     @ViewBuilder
     private func terminalContent(containerSize: CGSize) -> some View {
@@ -598,16 +650,13 @@ struct SingleSessionView: View {
                 }
                 client.sendPaste(text)
             },
-            onLeadershipClaimGesture: { [weak client] in
-                client?.claimLeadershipIfNeeded()
-            },
             captureContainer: { [paneContainerBox] view in paneContainerBox.view = view }
         )
         pane
-            .task(id: FontFitKey(
-                containerWidth: containerSize.width,
-                serverCols: client.serverGrid?.cols,
-                isLeader: client.isSizeLeader,
+            .task(id: TerminalFontFitTaskKey(
+                containerSize: containerSize,
+                authoritativeCols: client.authoritativeGrid?.cols,
+                isOwner: client.isOwner,
                 baseConfig: baseConfigText
             )) {
                 reconcileFontOverride(
@@ -618,48 +667,21 @@ struct SingleSessionView: View {
             }
     }
 
-    private struct FontFitKey: Hashable {
-        /// Whole-point bucket. SwiftUI delivers containerSize.width
-        /// values that jitter by sub-points across layout passes during
-        /// rotation / keyboard show-hide animations; rounding to whole
-        /// points keeps the `.task(id: FontFitKey)` body from re-firing
-        /// on micro-resizes that produce no perceptible layout change.
-        let containerWidthPoints: Int
-        let serverCols: UInt16?
-        let isLeader: Bool
-        let baseConfig: String?
-
-        init(
-            containerWidth: CGFloat,
-            serverCols: UInt16?,
-            isLeader: Bool,
-            baseConfig: String?
-        ) {
-            self.containerWidthPoints = Int(containerWidth.rounded())
-            self.serverCols = serverCols
-            self.isLeader = isLeader
-            self.baseConfig = baseConfig
-        }
-    }
-
     /// @spec IOS-6.10
-    /// Freeze-on-claim guard: once `client.isSizeLeader` is true, this
+    /// Owner guard: once `client.isOwner` is true, this
     /// reconciler stops driving the font. The currently-applied font
-    /// (override or base) remains the leader's baseline. Removing this
+    /// (override or base) remains the owner's baseline. Removing this
     /// guard would regress IOS-6.10.
     private func reconcileFontOverride(
         client: SessionClient,
         controller: TerminalController,
         containerWidth: CGFloat
     ) {
-        // Freeze-on-claim (IOS-6.10): once leader, stop driving the
-        // font. The auto-fit override applied just before claim remains
-        // in effect as the user's new baseline. The user can adjust
+        // Owner mode preserves the existing user-adjustable font behavior.
+        // The user can adjust
         // from here via libghostty's built-in pinch-to-zoom (IOS-6.8) —
-        // there is intentionally no automatic path back to base config
-        // because reverting it would invalidate the cols-the-server-saw
-        // at the moment of claim.
-        guard !client.isSizeLeader else { return }
+        // there is intentionally no automatic path back to base config.
+        guard !client.isOwner else { return }
         guard let baseConfig = baseConfigText else { return }
         let configSize = Float(
             GhosttyConfigFetcher.lastFontSize(in: baseConfig)
@@ -674,11 +696,11 @@ struct SingleSessionView: View {
 
         let decision = TerminalWidthLayout.decide(
             containerWidth: containerWidth,
-            serverCols: client.serverGrid?.cols,
+            authoritativeCols: client.authoritativeGrid?.cols,
             configFontSize: configSize,
             measuredCellWidthPoints: client.cellWidthPoints,
             measuredAtFontSize: measuredAt,
-            isLeader: false
+            isOwner: false
         )
         switch decision {
         case .useConfigFont:
@@ -695,7 +717,7 @@ struct SingleSessionView: View {
             let overridden = MobileTerminalControllerFactory.appendingFontSizeOverride(
                 to: baseConfig,
                 fontSize: pointSize,
-                comment: "GrafttyMobile auto-fit — non-leader"
+                comment: "GrafttyMobile auto-fit - non-owner"
             )
             controller.updateConfigSource(.generated(overridden))
             liveFontOverride = pointSize
@@ -760,6 +782,26 @@ struct SingleSessionView: View {
 extension PaneLayoutNode {
     func title(for sessionName: String) -> String? {
         leaves.first { $0.sessionName == sessionName }?.title
+    }
+}
+
+private struct TerminalChromeHeightPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct TerminalChromeHeightReader: View {
+    var body: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .preference(
+                    key: TerminalChromeHeightPreferenceKey.self,
+                    value: proxy.size.height
+                )
+        }
     }
 }
 

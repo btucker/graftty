@@ -1,6 +1,7 @@
 import Foundation
 import GhosttyKit
 import GrafttyKit
+import GrafttyProtocol
 import os
 
 protocol HostManagedZmxSession: AnyObject {
@@ -18,6 +19,151 @@ extension NativePtySession: HostManagedZmxSession {}
 /// category == "resize-trace"'`.
 enum ResizeTrace {
     static let log = Logger(subsystem: "com.graftty.app", category: "resize-trace")
+}
+
+struct HostManagedZmxOwnership {
+    let clientID: DisplayClientID
+    let kind: DisplayClientKind
+
+    private let snapshotImpl: (DisplayGrid) -> DisplayOwnershipSnapshot
+    private let attachImpl: (Bool, DisplayGrid) -> DisplayOwnershipSnapshot
+    private let claimImpl: (DisplayGrid) -> SessionDisplayOwnershipClaimResult
+    private let ownerResizeImpl: (UInt64, DisplayGrid) -> SessionDisplayOwnershipResizeResult
+    private let releaseImpl: (DisplayGrid) -> DisplayOwnershipSnapshot
+    private let restoreFailedClaimImpl: (UInt64, DisplayOwnershipSnapshot, DisplayGrid) -> DisplayOwnershipSnapshot
+    private let detachImpl: (DisplayGrid) -> DisplayOwnershipSnapshot
+    private let canWriteImpl: () -> Bool
+
+    init(
+        clientID: DisplayClientID,
+        kind: DisplayClientKind = .mac,
+        snapshot: @escaping (DisplayGrid) -> DisplayOwnershipSnapshot,
+        attach: @escaping (Bool, DisplayGrid) -> DisplayOwnershipSnapshot,
+        claim: @escaping (DisplayGrid) -> SessionDisplayOwnershipClaimResult,
+        ownerResize: @escaping (UInt64, DisplayGrid) -> SessionDisplayOwnershipResizeResult,
+        release: @escaping (DisplayGrid) -> DisplayOwnershipSnapshot,
+        restoreFailedClaim: @escaping (UInt64, DisplayOwnershipSnapshot, DisplayGrid) -> DisplayOwnershipSnapshot,
+        detach: @escaping (DisplayGrid) -> DisplayOwnershipSnapshot,
+        canWrite: @escaping () -> Bool
+    ) {
+        self.clientID = clientID
+        self.kind = kind
+        self.snapshotImpl = snapshot
+        self.attachImpl = attach
+        self.claimImpl = claim
+        self.ownerResizeImpl = ownerResize
+        self.releaseImpl = release
+        self.restoreFailedClaimImpl = restoreFailedClaim
+        self.detachImpl = detach
+        self.canWriteImpl = canWrite
+    }
+
+    init(
+        store: SessionDisplayOwnershipStore,
+        sessionName: String,
+        clientID: DisplayClientID,
+        kind: DisplayClientKind = .mac
+    ) {
+        self.init(
+            clientID: clientID,
+            kind: kind,
+            snapshot: { fallbackGrid in
+                store.snapshot(sessionName: sessionName, fallbackGrid: fallbackGrid)
+            },
+            attach: { visible, grid in
+                store.attachClient(
+                    sessionName: sessionName,
+                    clientID: clientID,
+                    kind: kind,
+                    role: .interactive,
+                    visible: visible,
+                    grid: grid
+                )
+            },
+            claim: { grid in
+                store.claimOwner(
+                    sessionName: sessionName,
+                    clientID: clientID,
+                    kind: kind,
+                    grid: grid
+                )
+            },
+            ownerResize: { epoch, grid in
+                store.ownerResize(
+                    sessionName: sessionName,
+                    clientID: clientID,
+                    epoch: epoch,
+                    grid: grid
+                )
+            },
+            release: { fallbackGrid in
+                store.releaseOwner(
+                    sessionName: sessionName,
+                    clientID: clientID,
+                    fallbackGrid: fallbackGrid
+                )
+            },
+            restoreFailedClaim: { failedEpoch, previousSnapshot, fallbackGrid in
+                store.restoreOwnerAfterFailedClaim(
+                    sessionName: sessionName,
+                    failedClientID: clientID,
+                    failedKind: kind,
+                    failedEpoch: failedEpoch,
+                    previousOwnerClientID: previousSnapshot.ownerClientID,
+                    previousOwnerKind: previousSnapshot.ownerKind,
+                    previousGrid: previousSnapshot.grid,
+                    fallbackGrid: fallbackGrid
+                )
+            },
+            detach: { fallbackGrid in
+                store.detachClient(
+                    sessionName: sessionName,
+                    clientID: clientID,
+                    fallbackGrid: fallbackGrid
+                )
+            },
+            canWrite: {
+                let snapshot = store.snapshot(sessionName: sessionName)
+                return snapshot.ownerClientID == clientID && snapshot.ownerKind == kind
+            }
+        )
+    }
+
+    func snapshot(fallbackGrid: DisplayGrid) -> DisplayOwnershipSnapshot {
+        snapshotImpl(fallbackGrid)
+    }
+
+    func attach(visible: Bool, grid: DisplayGrid) -> DisplayOwnershipSnapshot {
+        attachImpl(visible, grid)
+    }
+
+    func claim(grid: DisplayGrid) -> SessionDisplayOwnershipClaimResult {
+        claimImpl(grid)
+    }
+
+    func ownerResize(epoch: UInt64, grid: DisplayGrid) -> SessionDisplayOwnershipResizeResult {
+        ownerResizeImpl(epoch, grid)
+    }
+
+    func release(fallbackGrid: DisplayGrid) -> DisplayOwnershipSnapshot {
+        releaseImpl(fallbackGrid)
+    }
+
+    func restoreFailedClaim(
+        failedEpoch: UInt64,
+        previousSnapshot: DisplayOwnershipSnapshot,
+        fallbackGrid: DisplayGrid
+    ) -> DisplayOwnershipSnapshot {
+        restoreFailedClaimImpl(failedEpoch, previousSnapshot, fallbackGrid)
+    }
+
+    func detach(fallbackGrid: DisplayGrid) -> DisplayOwnershipSnapshot {
+        detachImpl(fallbackGrid)
+    }
+
+    func canWrite() -> Bool {
+        canWriteImpl()
+    }
 }
 
 final class HostManagedZmxBackend {
@@ -42,23 +188,14 @@ final class HostManagedZmxBackend {
         case closed
     }
 
-    /// @spec IOS-12.1
-    /// Tracks user engagement since the most recent attach. While `.silent`,
-    /// libghostty viewport callbacks propagate to the zmx PTY only when
-    /// layout has settled AND no remote client is attached to the session
-    /// (TERM-11.2); otherwise they are recorded and the PTY's existing dims
-    /// persist. The first user input flips to `.engaged` and syncs the PTY
-    /// to the current grid (TERM-11.3) — deferred to layout-settle when it
-    /// fires pre-layout (TERM-11.6). Only bytes emitted during a real user
-    /// key dispatch count as user input (TERM-11.8).
-    private enum AttachState {
-        case silent
-        case engaged
-    }
-
     private struct PendingResize: Equatable {
         let cols: UInt16
         let rows: UInt16
+    }
+
+    private struct AuthorizedResize {
+        let resize: PendingResize
+        let epoch: UInt64
     }
 
     /// Schedules `fire` after `delay` seconds and returns a cancel
@@ -92,15 +229,9 @@ final class HostManagedZmxBackend {
         // intentionally dropped. SurfaceHandle sends explicit extraInitialInput
         // with write(_:) after start succeeds.
         //
-        // TERM-11.8: engagement is opt-in. Only bytes emitted while a
-        // user key dispatch is in flight (`withUserInputScope`, entered
-        // by the view around `ghostty_surface_key` for real key events)
-        // count as IOS-12.1 user input. Everything else libghostty
-        // emits on its own — terminal-query auto-responses (DA/DSR),
-        // mouse reporting, focus events — reaches the PTY without
-        // engaging. The programmatic scope (`withProgrammaticInput`,
-        // e.g. the send-pane IPC's synthesized Return) still vetoes
-        // engagement even inside a user scope.
+        // The user/programmatic scope flag is preserved for callers that
+        // still annotate libghostty-emitted bytes, but display ownership
+        // alone decides whether PTY-bound bytes are forwarded.
         try? backend.write(data, claimEngagement: backend.emittedBytesClaimEngagement)
     }
 
@@ -124,11 +255,10 @@ final class HostManagedZmxBackend {
     /// TERM-11.12: writes arriving before the session starts (e.g.
     /// `pane add --command` typing before the pane's first layout under
     /// TERM-11.10's deferred attach). Delivered in order by `start()`,
-    /// after any queued resize; engagement is claimed only when a
-    /// queued write actually reaches the PTY.
+    /// after any queued resize, and only when this attachment is allowed
+    /// to write by the display ownership gate.
     private var pendingWrites: [(data: Data, claimEngagement: Bool)] = []
-    private var attachState: AttachState = .silent
-    private var lastSilentResize: PendingResize?
+    private var lastWithheldResize: PendingResize?
     private var userdataPointer: UnsafeMutableRawPointer!
 
     /// TERM-11.9 coalescing state. `coalesceCancel != nil` means the
@@ -150,37 +280,37 @@ final class HostManagedZmxBackend {
 
     /// Reentrant counter tracking active `withProgrammaticInput` scopes.
     /// While > 0, `receiveBufferCallback` treats the inbound bytes as
-    /// automation and passes `claimEngagement: false` to `write`.
-    /// IOS-12.1.
+    /// automation and passes `claimEngagement: false` to `write`. The
+    /// flag no longer grants resize/input authority; ownership does.
     private var programmaticInputDepth: Int = 0
 
     /// Reentrant counter tracking active `withUserInputScope` bodies.
-    /// TERM-11.8: engagement is opt-in — `receiveBufferCallback` claims
-    /// IOS-12.1 engagement only while a user key dispatch is in flight
-    /// (the view wraps `ghostty_surface_key` for real key events in this
-    /// scope). Bytes libghostty emits on its own — terminal-query
-    /// auto-responses (DA/DSR replies), mouse-reporting sequences,
-    /// focus events — never engage.
+    /// TERM-11.8 compatibility scope for real key dispatches. Bytes
+    /// emitted inside this scope are still tagged as user-originated for
+    /// legacy call sites, but they do not claim resize/input authority.
     private var userInputDepth: Int = 0
 
-    /// TERM-11.x gating inputs. `hasRemoteClient` is injected at init
-    /// (default false — direct-shell/test backends have no remote peers).
+    /// Task 4 ownership gate. When nil, this backend behaves like a
+    /// standalone host-managed surface and forwards local writes/resizes.
+    private let ownership: HostManagedZmxOwnership?
+    private var ownershipSnapshot: DisplayOwnershipSnapshot?
+    private var attachedToOwnership = false
+
     /// The surface-sync closures are bound by SurfaceHandle after
     /// ghostty_surface_new succeeds, before start(surface:).
-    private let hasRemoteClient: () -> Bool
     private var currentGridSize: () -> (cols: UInt16, rows: UInt16)? = { nil }
     private var requestRefresh: () -> Void = {}
 
     /// Flips true (once) when the owning NSView first receives a nonzero
-    /// frame. Pre-settle viewport callbacks are never forwarded in ANY
-    /// engagement state — they are libghostty pre-layout noise (the
-    /// original PR #201 bug; TERM-11.7).
+    /// frame. Pre-settle viewport callbacks are never forwarded; they are
+    /// libghostty pre-layout noise (the original PR #201 bug; TERM-11.7).
     private var layoutSettled = false
 
     init(
         spawnConfiguration: ZmxSpawnConfiguration,
         initialSize: (cols: UInt16, rows: UInt16)? = nil,
         hasRemoteClient: @escaping () -> Bool = { false },
+        ownership: HostManagedZmxOwnership? = nil,
         scheduleCoalescedResize: @escaping ResizeCoalescingScheduler = HostManagedZmxBackend.defaultResizeCoalescingScheduler,
         sessionFactory: @escaping SessionFactory = { surface, configuration, initialSize in
             NativePtySession(
@@ -195,7 +325,8 @@ final class HostManagedZmxBackend {
     ) {
         self.spawnConfiguration = spawnConfiguration
         self.initialSize = initialSize
-        self.hasRemoteClient = hasRemoteClient
+        _ = hasRemoteClient
+        self.ownership = ownership
         self.scheduleCoalescedResize = scheduleCoalescedResize
         self.sessionFactory = sessionFactory
 
@@ -227,13 +358,7 @@ final class HostManagedZmxBackend {
         lock.lock()
         switch lifecycle {
         case .idle:
-            // IOS-12.1: each fresh attach starts silent. Pre-layout
-            // viewport callbacks are recorded but never propagated (the
-            // post-reattach width-drift bug from libghostty's pre-layout
-            // callback); once layout settles, silent-state callbacks
-            // forward unless a remote client is attached (TERM-11.2).
-            attachState = .silent
-            lastSilentResize = nil
+            lastWithheldResize = nil
             lifecycle = .starting
             lock.unlock()
         case .starting, .running:
@@ -252,6 +377,7 @@ final class HostManagedZmxBackend {
         let gridQuery = currentGridSize
         lock.unlock()
         let spawnSize = gridQuery() ?? initialSize
+        attachToOwnershipIfNeeded(grid: Self.displayGrid(from: spawnSize) ?? .daemonFallback)
         let newSession = sessionFactory(surface, spawnConfiguration, spawnSize)
 
         lock.lock()
@@ -284,8 +410,23 @@ final class HostManagedZmxBackend {
             case .starting:
                 if let resize = pendingResize {
                     pendingResize = nil
+                    guard let authorized = authorizeOwnerResizeLocked(resize) else {
+                        lock.unlock()
+                        continue
+                    }
                     lock.unlock()
-                    try? newSession.resize(cols: resize.cols, rows: resize.rows)
+                    if (try? newSession.resize(cols: resize.cols, rows: resize.rows)) == nil {
+                        lock.lock()
+                        if lastForwardedResize == resize { lastForwardedResize = nil }
+                        lock.unlock()
+                    } else {
+                        lock.lock()
+                        let result = commitOwnerResizeLocked(authorized)
+                        lock.unlock()
+                        if !result.accepted, let snapshot = result.snapshot {
+                            repairSession(newSession, to: snapshot)
+                        }
+                    }
                     continue
                 }
                 // TERM-11.12: drain queued pre-start writes (after any
@@ -296,9 +437,8 @@ final class HostManagedZmxBackend {
                     pendingWrites = []
                     lock.unlock()
                     for entry in queued {
-                        try? newSession.write(entry.data)
-                        if entry.claimEngagement {
-                            markUserInput()
+                        if writeAllowed() {
+                            try? newSession.write(entry.data)
                         }
                     }
                     continue
@@ -317,13 +457,10 @@ final class HostManagedZmxBackend {
 
     /// Forward bytes to the zmx PTY.
     ///
-    /// - Parameter claimEngagement: When `true` (default), this write
-    ///   counts as user input under IOS-12.1: the silent gate flips to
-    ///   `.engaged` AFTER the write succeeds, flushing any queued
-    ///   viewport size to the PTY. Programmatic call sites (initial
-    ///   `extraInitialInput`, `typeText` from `splitPane`/`send-pane`,
-    ///   the idle-agent nudge writer) pass `false` so they don't
-    ///   silently claim a user-input contract they don't represent.
+    /// - Parameter claimEngagement: Legacy annotation from the previous
+    ///   silent-gate model. It is retained so existing call sites can keep
+    ///   distinguishing programmatic bytes from real key dispatches, but
+    ///   display ownership is now the only write authority.
     func write(_ data: Data, claimEngagement: Bool = true) throws {
         guard !data.isEmpty else { return }
 
@@ -345,25 +482,19 @@ final class HostManagedZmxBackend {
             lock.unlock()
         }
 
+        guard writeAllowed() else {
+            Self.trace.notice("write \(self.spawnConfiguration.sessionName, privacy: .public) \(data.count) bytes BLOCKED (follower)")
+            return
+        }
         let currentSession = try activeSession()
         try currentSession.write(data)
-
-        // IOS-12.1: flip the gate only AFTER a successful write — a write
-        // that fails inside the session shall not disengage the silent
-        // gate.
-        if claimEngagement {
-            markUserInput()
-        }
     }
 
     /// Runs `body` with the programmatic-input flag raised. Any bytes that
     /// libghostty emits through `receiveBufferCallback` during `body` are
     /// treated as automation (synthesized keys, programmatic clipboard
-    /// pastes, etc.) — they reach the PTY but do NOT flip IOS-12.1's
-    /// silent gate. Used by `SurfaceHandle.pressReturn(claimEngagement:
-    /// false)` so the Return synthesized for `graftty pane send … --enter`
-    /// matches the policy that the companion `typeText` write already
-    /// follows. Reentrant via a depth counter.
+    /// pastes, etc.). Ownership still decides whether those bytes reach
+    /// the PTY. Reentrant via a depth counter.
     ///
     /// Named `…Scope` (not `withProgrammaticInput`) so the protocol
     /// witness in `SurfaceHandle.swift` can forward to it without
@@ -409,57 +540,85 @@ final class HostManagedZmxBackend {
         lock.unlock()
     }
 
-    /// The single spelling of the resize gate — two orthogonal withhold
-    /// conditions:
-    /// 1. Layout hasn't settled: pre-layout dims are libghostty
-    ///    placeholder noise, withheld in EVERY engagement state
-    ///    (TERM-11.7).
-    /// 2. The pane is still silent with a remote client attached: the
-    ///    Mac must not steal the session width without user engagement
-    ///    (TERM-11.2 / IOS-12.1).
-    /// Caller holds `lock`.
-    private func shouldWithholdResizeLocked() -> Bool {
-        if !layoutSettled { return true }
-        if case .silent = attachState { return hasRemoteClient() }
-        return false
-    }
-
     /// TERM-11.1 / TERM-11.6: the owning NSView received its first
-    /// nonzero frame. One-shot: sync the PTY to the current grid so zmx
-    /// formats output for the dims libghostty is actually rendering —
-    /// unless the pane is still silent with a remote client attached
-    /// (IOS-12.1 withholding). An engaged pane always syncs here: this
-    /// is where an engagement that fired pre-layout lands its deferred
-    /// flush instead of shipping the bogus pre-layout grid.
+    /// nonzero frame. One-shot: owners sync the PTY to the current grid
+    /// through the ownership store; followers only settle local
+    /// presentation. Pre-settle callbacks remain withheld because
+    /// libghostty can report placeholder grids before AppKit has laid out.
     func markLayoutSettled() {
         lock.lock()
         defer { lock.unlock() }
         guard !layoutSettled else { return }
         layoutSettled = true
-        guard !shouldWithholdResizeLocked() else {
-            Self.trace.notice("layoutSettled \(self.spawnConfiguration.sessionName, privacy: .public) NO-SYNC remote=\(self.hasRemoteClient())")
-            return
-        }
         // Refresh deliberately dropped: setFrameSize already issued one
         // on this same frame event two statements before notifying us.
         _ = flushSizeToPtyLocked(reason: "layoutSettled")
     }
 
     /// TERM-11.4: the last remote client detached from this session. A
-    /// still-silent pane syncs the PTY to the current grid immediately —
-    /// there is no longer anyone whose width we must preserve. Re-checks
-    /// the gate because the registry fires its observer outside its lock:
-    /// another client may have re-attached by the time this runs.
+    /// previous native sizing gate used this as a resize authority signal.
+    /// Ownership is now explicit, so remote attachment accounting must not
+    /// resize the PTY or claim display authority.
     func remoteClientsDidDetach() {
+        Self.trace.notice("remoteClientsDidDetach \(self.spawnConfiguration.sessionName, privacy: .public) NO-SYNC ownership-gated")
+    }
+
+    @discardableResult
+    func takeControl() -> Bool {
+        guard let ownership else { return false }
+
         lock.lock()
-        guard case .silent = attachState, !shouldWithholdResizeLocked() else {
+        guard attachedToOwnership else {
             lock.unlock()
-            Self.trace.notice("remoteClientsDidDetach \(self.spawnConfiguration.sessionName, privacy: .public) NO-SYNC")
-            return
+            return false
         }
-        let refresh = flushSizeToPtyLocked(reason: "remoteDetach")
+        let target = currentGridSize() ?? lastWithheldResize.map { ($0.cols, $0.rows) }
+        guard let target, let grid = Self.displayGrid(from: target) else {
+            lock.unlock()
+            return false
+        }
+        guard case .running = lifecycle, let currentSession = session else {
+            lock.unlock()
+            return false
+        }
+        let previousSnapshot = ownership.snapshot(fallbackGrid: fallbackDisplayGridLocked())
+        let result = ownership.claim(grid: previousSnapshot.grid)
+        ownershipSnapshot = result.snapshot
+        guard result.accepted else {
+            lock.unlock()
+            return false
+        }
+        let resize = PendingResize(cols: grid.cols, rows: grid.rows)
+        pendingCoalescedResize = nil
+        lastForwardedResize = resize
+        let refresh = requestRefresh
         lock.unlock()
-        refresh?()
+
+        if (try? currentSession.resize(cols: resize.cols, rows: resize.rows)) == nil {
+            lock.lock()
+            if lastForwardedResize == resize { lastForwardedResize = nil }
+            let restoredSnapshot = ownership.restoreFailedClaim(
+                failedEpoch: result.snapshot.epoch,
+                previousSnapshot: previousSnapshot,
+                fallbackGrid: fallbackDisplayGridLocked()
+            )
+            ownershipSnapshot = restoredSnapshot
+            lock.unlock()
+            return false
+        }
+        let resizeResult = ownership.ownerResize(epoch: result.snapshot.epoch, grid: grid)
+        lock.lock()
+        ownershipSnapshot = resizeResult.snapshot
+        if !resizeResult.accepted {
+            if lastForwardedResize == resize { lastForwardedResize = nil }
+        }
+        lock.unlock()
+        guard resizeResult.accepted else {
+            repairSession(currentSession, to: resizeResult.snapshot)
+            return false
+        }
+        refresh()
+        return true
     }
 
     /// TERM-11.13: a pane re-entered the visible set (un-occluded). While it
@@ -480,14 +639,13 @@ final class HostManagedZmxBackend {
     /// (no SIGWINCH emitted), so forwarding on every show costs one syscall
     /// and never churns the TUI, while correctly recovering from any prior
     /// failed forward. Still no-ops while resize withholding applies
-    /// (pre-layout, or a still-silent pane with a remote client whose width
-    /// the Mac must not steal — IOS-12.1 / TERM-11.2).
+    /// (pre-layout, or a follower whose ownership check rejects the resize).
     func resyncVisibleGrid() {
         lock.lock()
         // No `currentGridSize() != nil` pre-check here: `flushSizeToPtyLocked`
         // re-reads the grid and handles a nil target (NO-TARGET) itself, so a
         // pre-check would just query libghostty twice under the lock.
-        guard case .running = lifecycle, !shouldWithholdResizeLocked() else {
+        guard case .running = lifecycle, layoutSettled else {
             lock.unlock()
             return
         }
@@ -504,21 +662,20 @@ final class HostManagedZmxBackend {
         refresh?()
     }
 
-    /// Single-lock snapshot of the engagement decision for bytes arriving
-    /// via `receiveBufferCallback` (a hot path — fires for every chunk
-    /// libghostty emits): engage iff a user key dispatch is in flight
-    /// (TERM-11.8) and no programmatic scope vetoes it (IOS-12.1).
+    /// Single-lock snapshot of whether bytes arriving via
+    /// `receiveBufferCallback` were emitted during a real user key
+    /// dispatch. This is a compatibility annotation; it does not decide
+    /// ownership.
     fileprivate var emittedBytesClaimEngagement: Bool {
         lock.lock()
         defer { lock.unlock() }
         return userInputDepth > 0 && programmaticInputDepth == 0
     }
 
-    /// Runs `body` with the user-input flag raised: bytes libghostty
-    /// emits through `receiveBufferCallback` during `body` count as
-    /// IOS-12.1 user input and engage the silent gate. The view wraps
-    /// real key-event dispatch (`ghostty_surface_key` from `keyDown` /
-    /// `keyUp`) in this scope. TERM-11.8. Reentrant via a depth counter.
+    /// Runs `body` with the user-input flag raised. The view wraps real
+    /// key-event dispatch (`ghostty_surface_key` from `keyDown` / `keyUp`)
+    /// in this scope. Ownership still decides whether resulting bytes
+    /// reach the PTY. TERM-11.8. Reentrant via a depth counter.
     func withUserInputScope<T>(_ body: () throws -> T) rethrows -> T {
         try withDepthScope(\.userInputDepth, body)
     }
@@ -539,12 +696,14 @@ final class HostManagedZmxBackend {
         let cancelCoalesce = coalesceCancel
         coalesceCancel = nil
         pendingCoalescedResize = nil
-        // No `attachState` / `lastSilentResize` reset here: `.closed` is
-        // terminal and `start()` rejects it (`Error.closed`), so there
-        // is no "next attach" on this instance. Per-process reattach is
-        // handled by constructing a fresh `HostManagedZmxBackend`.
+        let shouldDetach = attachedToOwnership
+        attachedToOwnership = false
+        let detachFallback = fallbackDisplayGridLocked()
         lock.unlock()
 
+        if shouldDetach, let ownership {
+            _ = ownership.detach(fallbackGrid: detachFallback)
+        }
         cancelCoalesce?()
         currentSession?.close()
     }
@@ -575,40 +734,42 @@ final class HostManagedZmxBackend {
 
     private func receiveResize(cols: UInt16, rows: UInt16) {
         let currentSession: HostManagedZmxSession?
+        let resize = PendingResize(cols: cols, rows: rows)
 
         lock.lock()
-        // TERM-11.7 / TERM-11.2 / IOS-12.1: withhold while layout hasn't
-        // settled (pre-layout libghostty noise — regardless of engagement
-        // state) or while a still-silent pane has a remote client attached
-        // (the Mac must not steal the session width without user
-        // engagement). Otherwise forward without engaging.
-        if shouldWithholdResizeLocked() {
-            let settled = layoutSettled
-            let remote = hasRemoteClient()
-            lastSilentResize = PendingResize(cols: cols, rows: rows)
+        // TERM-11.7: withhold while layout hasn't settled. These
+        // callbacks are pre-layout placeholder noise and must never reach
+        // the PTY, regardless of display ownership.
+        if !layoutSettled {
+            lastWithheldResize = resize
             lock.unlock()
-            Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(cols)x\(rows) WITHHELD settled=\(settled) remote=\(remote)")
+            Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(cols)x\(rows) WITHHELD layout")
+            return
+        }
+        guard let authorized = authorizeOwnerResizeLocked(resize) else {
+            lock.unlock()
+            Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(cols)x\(rows) BLOCKED follower-or-stale")
             return
         }
         // Forwarding live dims supersedes anything withheld earlier;
-        // clearing keeps the engagement flush's fallback from
-        // resurrecting a stale size when no grid provider is bound.
-        lastSilentResize = nil
+        // clearing keeps later flushes from resurrecting a stale
+        // pre-layout size when no grid provider is bound.
+        lastWithheldResize = nil
         switch lifecycle {
         case .idle, .starting:
-            pendingResize = PendingResize(cols: cols, rows: rows)
+            pendingResize = resize
             currentSession = nil
         case .running:
             // TERM-11.9: while the quiet window is open (a drag in
             // progress), park the latest size instead of forwarding —
             // the window's trailing fire delivers it.
             if coalesceCancel != nil {
-                pendingCoalescedResize = PendingResize(cols: cols, rows: rows)
+                pendingCoalescedResize = resize
                 lock.unlock()
                 Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(cols)x\(rows) COALESCED")
                 return
             }
-            lastForwardedResize = PendingResize(cols: cols, rows: rows)
+            lastForwardedResize = resize
             openCoalesceWindowLocked()
             currentSession = session
         case .closed:
@@ -626,13 +787,23 @@ final class HostManagedZmxBackend {
                 lastForwardedResize = nil
             }
             lock.unlock()
+        } else if currentSession != nil {
+            lock.lock()
+            let result = commitOwnerResizeLocked(authorized)
+            if !result.accepted, lastForwardedResize == resize {
+                lastForwardedResize = nil
+            }
+            lock.unlock()
+            if !result.accepted, let snapshot = result.snapshot, let currentSession {
+                repairSession(currentSession, to: snapshot)
+            }
         }
     }
 
     /// Opens the TERM-11.9 quiet window. Caller holds `lock`. The
     /// scheduler only enqueues the trailing fire (no synchronous
     /// callback, no backend re-entry), so invoking it under the lock is
-    /// safe — same contract as `hasRemoteClient`.
+    /// safe.
     private func openCoalesceWindowLocked() {
         coalesceCancel = scheduleCoalescedResize(Self.resizeCoalesceDelay) { [weak self] in
             self?.coalesceWindowExpired()
@@ -652,6 +823,11 @@ final class HostManagedZmxBackend {
             return
         }
         pendingCoalescedResize = nil
+        guard let authorized = authorizeOwnerResizeLocked(pending) else {
+            lock.unlock()
+            Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(pending.cols)x\(pending.rows) TRAILING-BLOCKED")
+            return
+        }
         if pending == lastForwardedResize {
             lock.unlock()
             return
@@ -666,41 +842,21 @@ final class HostManagedZmxBackend {
             lock.lock()
             if let lf = lastForwardedResize, lf == pending { lastForwardedResize = nil }
             lock.unlock()
+        } else if currentSession != nil {
+            lock.lock()
+            let result = commitOwnerResizeLocked(authorized)
+            if !result.accepted, lastForwardedResize == pending {
+                lastForwardedResize = nil
+            }
+            lock.unlock()
+            if !result.accepted, let snapshot = result.snapshot, let currentSession {
+                repairSession(currentSession, to: snapshot)
+            }
         }
     }
 
-    /// Marks that the user has acted on the surface since the most recent
-    /// attach. The first call syncs the PTY to the current grid (TERM-11.3)
-    /// so any dims withheld under IOS-12.1 land before post-engagement
-    /// bytes. IOS-12.1.
-    ///
-    /// The lock is held across the flush `resize` call so any concurrent
-    /// `write` on another thread cannot ship bytes to the PTY before the
-    /// flush lands — invariant: post-engagement bytes always see the
-    /// post-flush PTY dims.
-    private func markUserInput() {
-        lock.lock()
-        guard case .silent = attachState else {
-            lock.unlock()
-            return
-        }
-        attachState = .engaged
-        // TERM-11.6: engagement before the first real layout must not
-        // flush — the grid still holds libghostty's pre-layout
-        // placeholder dims (the 49x17 bounce captured in the 2026-06-10
-        // resize-trace). markLayoutSettled performs the sync instead.
-        guard layoutSettled else {
-            lock.unlock()
-            Self.trace.notice("engagement \(self.spawnConfiguration.sessionName, privacy: .public) DEFERRED (layout not settled)")
-            return
-        }
-        let refresh = flushSizeToPtyLocked(reason: "engagement")
-        lock.unlock()
-        refresh?()
-    }
-
-    /// Shared sync tail for markUserInput / markLayoutSettled /
-    /// remoteClientsDidDetach / resyncVisibleGrid. Caller holds `lock`.
+    /// Shared sync tail for markLayoutSettled / resyncVisibleGrid /
+    /// takeControl. Caller holds `lock`.
     /// Resolves the sync target — the live grid when a provider is bound,
     /// else the last withheld viewport size — and ships it to the PTY (or
     /// queues it when the session is still starting). `resize` does take
@@ -720,12 +876,17 @@ final class HostManagedZmxBackend {
         // what keeps a bound `currentGridSize` surface pointer from being
         // dereferenced after the surface is gone.
         if case .closed = lifecycle { return nil }
-        let queued = lastSilentResize
-        lastSilentResize = nil
+        let queued = lastWithheldResize
+        lastWithheldResize = nil
         let grid = currentGridSize()
         let target = grid ?? queued.map { (cols: $0.cols, rows: $0.rows) }
         guard let target else {
             Self.trace.notice("flush(\(reason, privacy: .public)) \(self.spawnConfiguration.sessionName, privacy: .public) NO-TARGET")
+            return nil
+        }
+        let pending = PendingResize(cols: target.cols, rows: target.rows)
+        guard let authorized = authorizeOwnerResizeLocked(pending) else {
+            Self.trace.notice("flush(\(reason, privacy: .public)) \(self.spawnConfiguration.sessionName, privacy: .public) BLOCKED follower-or-stale")
             return nil
         }
         Self.trace.notice("flush(\(reason, privacy: .public)) \(self.spawnConfiguration.sessionName, privacy: .public) -> \(target.cols)x\(target.rows) fromGrid=\(grid != nil) queued=\(queued.map { "\($0.cols)x\($0.rows)" } ?? "nil", privacy: .public)")
@@ -736,13 +897,22 @@ final class HostManagedZmxBackend {
             // land after this authoritative sync.
             pendingCoalescedResize = nil
             if (try? session?.resize(cols: target.cols, rows: target.rows)) != nil {
-                lastForwardedResize = PendingResize(cols: target.cols, rows: target.rows)
+                let result = commitOwnerResizeLocked(authorized)
+                if result.accepted {
+                    lastForwardedResize = PendingResize(cols: target.cols, rows: target.rows)
+                } else {
+                    lastForwardedResize = nil
+                    if let snapshot = result.snapshot {
+                        try? session?.resize(cols: snapshot.grid.cols, rows: snapshot.grid.rows)
+                    }
+                    return nil
+                }
             } else {
                 lastForwardedResize = nil
             }
             return requestRefresh
         case .idle, .starting:
-            pendingResize = PendingResize(cols: target.cols, rows: target.rows)
+            pendingResize = pending
             return nil
         case .closed:
             return nil
@@ -760,6 +930,80 @@ final class HostManagedZmxBackend {
             throw Error.notStarted
         }
         return session
+    }
+
+    private func attachToOwnershipIfNeeded(grid: DisplayGrid) {
+        guard let ownership else { return }
+        lock.lock()
+        guard !attachedToOwnership else {
+            lock.unlock()
+            return
+        }
+        attachedToOwnership = true
+        let snapshot = ownership.attach(visible: true, grid: grid)
+        ownershipSnapshot = snapshot
+        lock.unlock()
+    }
+
+    private func writeAllowed() -> Bool {
+        guard let ownership else { return true }
+        let allowed = ownership.canWrite()
+        let snapshot = ownership.snapshot(fallbackGrid: .daemonFallback)
+        lock.lock()
+        ownershipSnapshot = snapshot
+        lock.unlock()
+        return allowed
+    }
+
+    private func authorizeOwnerResizeLocked(_ resize: PendingResize) -> AuthorizedResize? {
+        guard let ownership else { return AuthorizedResize(resize: resize, epoch: 0) }
+        guard Self.displayGrid(from: resize) != nil else { return nil }
+        let fallback = fallbackDisplayGridLocked()
+        let snapshot = ownership.snapshot(fallbackGrid: fallback)
+        ownershipSnapshot = snapshot
+        guard snapshot.ownerClientID == ownership.clientID,
+              snapshot.ownerKind == ownership.kind else {
+            return nil
+        }
+        return AuthorizedResize(resize: resize, epoch: snapshot.epoch)
+    }
+
+    private func commitOwnerResizeLocked(
+        _ authorized: AuthorizedResize
+    ) -> (accepted: Bool, snapshot: DisplayOwnershipSnapshot?) {
+        guard let ownership else { return (true, nil) }
+        guard let grid = Self.displayGrid(from: authorized.resize) else { return (false, ownershipSnapshot) }
+        let result = ownership.ownerResize(epoch: authorized.epoch, grid: grid)
+        ownershipSnapshot = result.snapshot
+        return (result.accepted, result.snapshot)
+    }
+
+    private func repairSession(_ session: HostManagedZmxSession, to snapshot: DisplayOwnershipSnapshot) {
+        try? session.resize(cols: snapshot.grid.cols, rows: snapshot.grid.rows)
+    }
+
+    private func fallbackDisplayGridLocked() -> DisplayGrid {
+        if let grid = currentGridSize().flatMap(Self.displayGrid(from:)) {
+            return grid
+        }
+        if let lastWithheldResize,
+           let grid = Self.displayGrid(from: lastWithheldResize) {
+            return grid
+        }
+        if let pendingResize,
+           let grid = Self.displayGrid(from: pendingResize) {
+            return grid
+        }
+        return ownershipSnapshot?.grid ?? .daemonFallback
+    }
+
+    private static func displayGrid(from size: (cols: UInt16, rows: UInt16)?) -> DisplayGrid? {
+        guard let size else { return nil }
+        return try? DisplayGrid(cols: size.cols, rows: size.rows)
+    }
+
+    private static func displayGrid(from resize: PendingResize) -> DisplayGrid? {
+        try? DisplayGrid(cols: resize.cols, rows: resize.rows)
     }
 
     private static func backend(from userdata: UnsafeMutableRawPointer) -> HostManagedZmxBackend? {

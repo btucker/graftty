@@ -74,7 +74,7 @@ struct IosTodo {
     func ios_4_3() async throws { }
 
     @Test("""
-@spec IOS-4.4: On WebSocket open, the application shall send an initial `{"type":"resize","cols":<n>,"rows":<m>}` text frame derived from the terminal view's first-layout viewport, before forwarding any user input. This mirrors `WEB-5.3`.
+@spec IOS-4.4: On WebSocket open to an owner-aware Graftty server, the application shall send an initial `hello` control frame containing a fresh iOS display client ID, kind `.ios`, role `.interactive` for fullscreen panes or `.preview` for pane previews, visibility, and the last measured viewport grid (falling back to the authoritative grid or daemon fallback before first layout). Legacy/non-web-control transports may still use their direct resize protocol for compatibility.
 """, .disabled("not yet implemented"))
     func ios_4_4() async throws { }
 
@@ -84,7 +84,7 @@ struct IosTodo {
     func ios_4_5() async throws { }
 
     @Test("""
-@spec IOS-4.6: On subsequent terminal resizes (viewport change, keyboard appearance, rotation), the application shall send a `{"type":"resize",...}` text frame matching the new viewport, mirroring `WEB-5.3`.
+@spec IOS-4.6: On subsequent fullscreen terminal resizes (viewport change, keyboard appearance, rotation), the application shall memoize the local viewport immediately. If and only if the current ownership snapshot confirms this iOS client as display owner, it shall send `ownerResize(clientID, epoch, cols, rows)`; follower, ownerless, and preview clients shall not resize the remote PTY. Legacy/non-web-control transports may still use their direct resize protocol for compatibility.
 """, .disabled("not yet implemented"))
     func ios_4_6() async throws { }
 
@@ -139,8 +139,8 @@ struct IosTodo {
     func ios_6_6() async throws { }
 
     @Test("""
-@spec IOS-6.10: When the iOS client claims size-leadership (per `IOS-6.5`), the font size currently applied to the terminal controller shall remain in effect as the new baseline — including any active auto-fit override from `IOS-5.6` / `IPAD-2.5`. The application shall stop driving the font from `TerminalWidthLayout.decide` for that session from that point forward; libghostty's pinch-to-zoom (`IOS-6.8`) shall mutate font from this baseline.
-""", .disabled("covered structurally by RootView.reconcileFontOverride's `guard !client.isSizeLeader` gate — promote to a real test once a UI-level harness exists"))
+@spec IOS-6.10: When the iOS client becomes the explicit display owner, the font size currently applied to the terminal controller shall remain in effect as the new baseline — including any active auto-fit override from `IOS-5.6` / `IPAD-2.5`. The application shall stop driving the font from `TerminalWidthLayout.decide` while it remains owner; libghostty's pinch-to-zoom (`IOS-6.8`) shall mutate font from this baseline without implicitly changing ownership.
+""", .disabled("covered structurally by RootView.reconcileFontOverride's `guard !client.isOwner` gate — promote to a real test once a UI-level harness exists"))
     func ios_6_10() async throws { }
 
     @Test("""

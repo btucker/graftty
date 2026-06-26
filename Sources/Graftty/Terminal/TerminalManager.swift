@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import GhosttyKit
 import GrafttyKit
+import GrafttyProtocol
 @preconcurrency import UserNotifications
 
 /// Spatial direction for pane navigation (goto_split left/right/up/down).
@@ -116,10 +117,15 @@ final class TerminalManager: ObservableObject {
     /// fall back to libghostty's default $SHELL spawn.
     var zmxLauncher: ZmxLauncher?
 
-    /// TERM-11.x: per-session remote attach counts; injected by
-    /// GrafttyApp.startup() like zmxLauncher. Consulted (via SurfaceHandle)
-    /// to decide whether the IOS-12.1 silent gate withholds PTY resizes.
+    /// Per-session remote attach counts; injected by GrafttyApp.startup()
+    /// like zmxLauncher. Native display size/input authority is handled by
+    /// `displayOwnershipStore`, so this remains connection accounting only.
     var remoteAttachmentRegistry: RemoteAttachmentRegistry?
+
+    /// Process-wide display ownership state for native pane participation.
+    /// Task 3 only assembles the dependency; Task 4 wires Mac resize/input
+    /// authority through this store.
+    var displayOwnershipStore: SessionDisplayOwnershipStore?
 
     /// Set by `GrafttyApp` after construction. When non-nil, pane add /
     /// remove flows propagate registration so the scanner can poll
@@ -497,6 +503,7 @@ final class TerminalManager: ObservableObject {
                 paneSessionID: paneSessionID,
                 worktreePath: worktreePath
             )
+            let displayClientID = zmxSpawnConfiguration.map { _ in Self.makeMacDisplayClientID() }
             // TERM-5.5: SurfaceHandle.init is failable now — ghostty_surface_new
             // can return null under libghostty resource exhaustion. Skip the
             // leaf rather than crash the app; the pane renders the Color.black
@@ -510,6 +517,8 @@ final class TerminalManager: ObservableObject {
                 terminalManager: self,
                 inputActivityObserver: inputActivityObserver,
                 remoteAttachmentRegistry: remoteAttachmentRegistry,
+                displayOwnershipStore: displayOwnershipStore,
+                displayClientID: displayClientID,
                 initialGridSize: consumeCachedGridSize(for: terminalID)
             ) else {
                 forgetPaneSession(for: terminalID)
@@ -544,6 +553,7 @@ final class TerminalManager: ObservableObject {
             paneSessionID: paneSessionID,
             worktreePath: worktreePath
         )
+        let displayClientID = zmxSpawnConfiguration.map { _ in Self.makeMacDisplayClientID() }
         // TERM-5.5: failable init returns nil on libghostty rejection;
         // propagate that to the caller instead of crashing.
         guard let handle = SurfaceHandle(
@@ -556,6 +566,8 @@ final class TerminalManager: ObservableObject {
             terminalManager: self,
             inputActivityObserver: inputActivityObserver,
             remoteAttachmentRegistry: remoteAttachmentRegistry,
+            displayOwnershipStore: displayOwnershipStore,
+            displayClientID: displayClientID,
             initialGridSize: consumeCachedGridSize(for: terminalID)
         ) else {
             forgetPaneSession(for: terminalID)
@@ -731,6 +743,11 @@ final class TerminalManager: ObservableObject {
             handle.resyncVisibleGrid()
             handle.refresh()
         }
+    }
+
+    @discardableResult
+    func takeDisplayControl(for terminalID: PaneSlotID) -> Bool {
+        surfaces[terminalID]?.takeDisplayControl() ?? false
     }
 
     /// Force a full repaint for a visible or soon-to-be-visible surface.
@@ -926,6 +943,10 @@ final class TerminalManager: ObservableObject {
     private func forgetPaneSession(for terminalID: PaneSlotID) {
         guard let sessionID = paneSessionIDs.removeValue(forKey: terminalID) else { return }
         paneSlotIDsBySessionName.removeValue(forKey: ZmxLauncher.sessionName(for: sessionID))
+    }
+
+    private static func makeMacDisplayClientID() -> DisplayClientID {
+        DisplayClientID("mac-\(UUID().uuidString)")
     }
 
     /// Resolve `GHOSTTY_RESOURCES_DIR` before `ghostty_init` (CONFIG-2.x).

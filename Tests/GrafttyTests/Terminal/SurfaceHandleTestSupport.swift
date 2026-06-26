@@ -31,6 +31,7 @@ final class SurfaceHandleTestHarness {
     var setSizeCalls: [SetSizeCall] = []
     var requestCloseCalls: [ghostty_surface_t] = []
     var sizeStub: ghostty_surface_size_s = .zero
+    var onSetSize: (() -> Void)?
 
     init(surface: ghostty_surface_t?) {
         self.surface = surface
@@ -65,6 +66,7 @@ final class SurfaceHandleTestHarness {
                 self?.sizeStub ?? .zero
             },
             setSize: { [weak self] surface, w, h in
+                self?.onSetSize?()
                 self?.setSizeCalls.append(SetSizeCall(surface: surface, width: w, height: h))
             },
             requestClose: { [weak self] surface in
@@ -120,6 +122,7 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
     private(set) var markLayoutSettledCount = 0
     private(set) var remoteClientsDidDetachCount = 0
     private(set) var resyncVisibleGridCount = 0
+    private(set) var takeControlCount = 0
     private(set) var userInputScopeCount = 0
 
     init(startError: Error? = nil, setSizeCountSource: @escaping () -> Int = { 0 }) {
@@ -178,6 +181,11 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
 
     func resyncVisibleGrid() {
         resyncVisibleGridCount += 1
+    }
+
+    func takeControl() -> Bool {
+        takeControlCount += 1
+        return true
     }
 
     func close() {

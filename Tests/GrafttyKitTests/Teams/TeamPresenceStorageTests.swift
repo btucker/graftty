@@ -20,6 +20,7 @@ struct TeamPresenceStorageTests {
             runtime: .codex,
             paneSessionName: "graftty-abc12345",
             pid: 4242,
+            processStartTimeMicroseconds: nil,
             registeredAt: Date(timeIntervalSince1970: 1_700_000_000)
         )
         try storage.write(record)
@@ -47,6 +48,24 @@ struct TeamPresenceStorageTests {
         try oldJSON.data(using: .utf8)!.write(to: teamDir.appendingPathComponent(leaf))
         let loaded = try #require(storage.listAll().first)
         #expect(loaded.paneSessionName == nil)
+        #expect(loaded.processStartTimeMicroseconds == nil)
+    }
+
+    @Test("Record round-trips processStartTimeMicroseconds exactly.")
+    func roundTripsProcessStartTimeMicrosecondsExactly() throws {
+        let storage = try makeStorage()
+        let record = TeamPresenceRecord(
+            teamID: "/repo",
+            worktree: "/repo/.worktrees/alice",
+            runtime: .codex,
+            paneSessionName: nil,
+            pid: 4242,
+            processStartTimeMicroseconds: 1_700_000_123_456_789,
+            registeredAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        try storage.write(record)
+        let loaded = try #require(storage.listAll().first)
+        #expect(loaded.processStartTimeMicroseconds == 1_700_000_123_456_789)
     }
 
     @Test("@spec TEAM-IDLE-2.13: Two records with the same (worktree, runtime) but different paneSessionName coexist.")
@@ -55,11 +74,13 @@ struct TeamPresenceStorageTests {
         let registeredAt = Date(timeIntervalSince1970: 1_700_000_000)
         try storage.write(.init(
             teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
-            paneSessionName: "graftty-aaaaaaaa", pid: 1, registeredAt: registeredAt
+            paneSessionName: "graftty-aaaaaaaa", pid: 1,
+            processStartTimeMicroseconds: nil, registeredAt: registeredAt
         ))
         try storage.write(.init(
             teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
-            paneSessionName: "graftty-bbbbbbbb", pid: 2, registeredAt: registeredAt
+            paneSessionName: "graftty-bbbbbbbb", pid: 2,
+            processStartTimeMicroseconds: nil, registeredAt: registeredAt
         ))
         let all = try storage.listAll().sorted { $0.pid < $1.pid }
         #expect(all.count == 2)
@@ -72,11 +93,13 @@ struct TeamPresenceStorageTests {
         let registeredAt = Date(timeIntervalSince1970: 1_700_000_000)
         try storage.write(.init(
             teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
-            paneSessionName: "graftty-aaaaaaaa", pid: 1, registeredAt: registeredAt
+            paneSessionName: "graftty-aaaaaaaa", pid: 1,
+            processStartTimeMicroseconds: nil, registeredAt: registeredAt
         ))
         try storage.write(.init(
             teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
-            paneSessionName: "graftty-bbbbbbbb", pid: 2, registeredAt: registeredAt
+            paneSessionName: "graftty-bbbbbbbb", pid: 2,
+            processStartTimeMicroseconds: nil, registeredAt: registeredAt
         ))
         try storage.delete(
             teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
@@ -93,11 +116,13 @@ struct TeamPresenceStorageTests {
         let registeredAt = Date(timeIntervalSince1970: 1_700_000_000)
         try storage.write(.init(
             teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
-            paneSessionName: "graftty-aaaaaaaa", pid: 1, registeredAt: registeredAt
+            paneSessionName: "graftty-aaaaaaaa", pid: 1,
+            processStartTimeMicroseconds: nil, registeredAt: registeredAt
         ))
         try storage.write(.init(
             teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
-            paneSessionName: "graftty-bbbbbbbb", pid: 2, registeredAt: registeredAt
+            paneSessionName: "graftty-bbbbbbbb", pid: 2,
+            processStartTimeMicroseconds: nil, registeredAt: registeredAt
         ))
         // Mimic the GrafttyApp pane-close cleanup loop.
         let closingSessionName = "graftty-aaaaaaaa"
@@ -121,6 +146,7 @@ struct TeamPresenceStorageTests {
             runtime: .codex,
             paneSessionName: "graftty-aaaaaaaa",
             pid: 1,
+            processStartTimeMicroseconds: nil,
             registeredAt: registeredAt
         )
         let claude = TeamPresenceRecord(
@@ -129,6 +155,7 @@ struct TeamPresenceStorageTests {
             runtime: .claude,
             paneSessionName: "graftty-aaaaaaaa",
             pid: 2,
+            processStartTimeMicroseconds: nil,
             registeredAt: registeredAt
         )
         let other = TeamPresenceRecord(
@@ -137,6 +164,7 @@ struct TeamPresenceStorageTests {
             runtime: .codex,
             paneSessionName: "graftty-bbbbbbbb",
             pid: 3,
+            processStartTimeMicroseconds: nil,
             registeredAt: registeredAt
         )
         let index = TeamPresenceIndex(records: [codex, claude, other])
@@ -160,11 +188,13 @@ struct TeamPresenceStorageTests {
         let registeredAt = Date(timeIntervalSince1970: 1_700_000_000)
         try storage.write(.init(
             teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
-            paneSessionName: nil, pid: 1, registeredAt: registeredAt
+            paneSessionName: nil, pid: 1,
+            processStartTimeMicroseconds: nil, registeredAt: registeredAt
         ))
         try storage.write(.init(
             teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,
-            paneSessionName: "graftty-bbbbbbbb", pid: 2, registeredAt: registeredAt
+            paneSessionName: "graftty-bbbbbbbb", pid: 2,
+            processStartTimeMicroseconds: nil, registeredAt: registeredAt
         ))
         try storage.delete(
             teamID: "/repo", worktree: "/repo/.worktrees/alice", runtime: .codex,

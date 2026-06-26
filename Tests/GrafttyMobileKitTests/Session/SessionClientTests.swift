@@ -15,6 +15,7 @@ struct SessionClientTests {
         var sent: [WebSocketFrame] {
             lock.withLock { _sent }
         }
+        var supportsWebControlTextFrames: Bool { true }
         var closed = false
         func send(_ frame: WebSocketFrame) async throws {
             lock.withLock { _sent.append(frame) }
@@ -24,10 +25,156 @@ struct SessionClientTests {
             throw CancellationError()
         }
         func close() { closed = true }
-        func resize(cols: Int, rows: Int) async {
-            let payload = WebControlEnvelope.resize(cols: UInt16(cols), rows: UInt16(rows)).encoded()
+        func sendHello(
+            clientID: DisplayClientID,
+            kind: DisplayClientKind,
+            role: DisplayClientRole,
+            visible: Bool,
+            cols: Int,
+            rows: Int
+        ) async {
+            let payload = WebControlEnvelope.hello(
+                clientID: clientID,
+                kind: kind,
+                role: role,
+                visible: visible,
+                cols: UInt16(cols),
+                rows: UInt16(rows)
+            ).encoded()
             try? await send(.text(payload))
         }
+        func ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: Int, rows: Int) async {
+            let payload = WebControlEnvelope.ownerResize(
+                clientID: clientID,
+                epoch: epoch,
+                cols: UInt16(cols),
+                rows: UInt16(rows)
+            ).encoded()
+            try? await send(.text(payload))
+        }
+        func takeControl(clientID: DisplayClientID, kind: DisplayClientKind, cols: Int, rows: Int) async {
+            let payload = WebControlEnvelope.takeControl(
+                clientID: clientID,
+                kind: kind,
+                cols: UInt16(cols),
+                rows: UInt16(rows)
+            ).encoded()
+            try? await send(.text(payload))
+        }
+    }
+
+    final class LegacyWS: WebSocketClient, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _sent: [WebSocketFrame] = []
+        private var _resizes: [(cols: Int, rows: Int)] = []
+        var sent: [WebSocketFrame] { lock.withLock { _sent } }
+        var resizes: [(cols: Int, rows: Int)] { lock.withLock { _resizes } }
+        var closed = false
+
+        func send(_ frame: WebSocketFrame) async throws {
+            lock.withLock { _sent.append(frame) }
+        }
+
+        func receive() async throws -> WebSocketFrame {
+            try await Task.sleep(nanoseconds: 10_000_000_000)
+            throw CancellationError()
+        }
+
+        func close() { closed = true }
+
+        func resize(cols: Int, rows: Int) async {
+            lock.withLock { _resizes.append((cols, rows)) }
+        }
+    }
+
+    private func textFrames(_ ws: FakeWS) -> [String] {
+        ws.sent.compactMap { frame in
+            if case let .text(text) = frame { return text }
+            return nil
+        }
+    }
+
+    private func envelopes(_ ws: FakeWS) -> [WebControlEnvelope] {
+        textFrames(ws).compactMap { try? WebControlEnvelope.parse(Data($0.utf8)) }
+    }
+
+    private func binaryFrames(_ ws: FakeWS) -> [Data] {
+        ws.sent.compactMap { frame in
+            if case let .binary(data) = frame { return data }
+            return nil
+        }
+    }
+
+    private func binaryFrames(_ ws: LegacyWS) -> [Data] {
+        ws.sent.compactMap { frame in
+            if case let .binary(data) = frame { return data }
+            return nil
+        }
+    }
+
+    private func firstHelloClientID(_ ws: FakeWS) -> DisplayClientID? {
+        for envelope in envelopes(ws) {
+            if case let .hello(clientID, _, _, _, _, _) = envelope {
+                return clientID
+            }
+        }
+        return nil
+    }
+
+    private func ownershipSnapshot(
+        sessionName: String = "s",
+        ownerClientID: DisplayClientID?,
+        ownerKind: DisplayClientKind?,
+        cols: UInt16 = 80,
+        rows: UInt16 = 24,
+        epoch: UInt64 = 1
+    ) throws -> DisplayOwnershipSnapshot {
+        try DisplayOwnershipSnapshot(
+            sessionName: sessionName,
+            ownerClientID: ownerClientID,
+            ownerKind: ownerKind,
+            grid: DisplayGrid(cols: cols, rows: rows),
+            epoch: epoch
+        )
+    }
+
+    @discardableResult
+    private func confirmOwner(
+        _ client: SessionClient,
+        ws: FakeWS,
+        cols: UInt16 = 80,
+        rows: UInt16 = 24,
+        epoch: UInt64 = 1
+    ) async throws -> DisplayClientID {
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let clientID = try #require(firstHelloClientID(ws))
+        let snapshot = try ownershipSnapshot(
+            ownerClientID: clientID,
+            ownerKind: .ios,
+            cols: cols,
+            rows: rows,
+            epoch: epoch
+        )
+        client.handleTextFrame(WebControlEnvelope.ownership(snapshot).encoded())
+        #expect(client.isOwner)
+        return clientID
+    }
+
+    private func confirmFollower(
+        _ client: SessionClient,
+        cols: UInt16 = 100,
+        rows: UInt16 = 30,
+        epoch: UInt64 = 1
+    ) throws {
+        let snapshot = try ownershipSnapshot(
+            ownerClientID: DisplayClientID("other-client"),
+            ownerKind: .web,
+            cols: cols,
+            rows: rows,
+            epoch: epoch
+        )
+        client.handleTextFrame(WebControlEnvelope.ownership(snapshot).encoded())
+        #expect(client.isFollower)
     }
 
     @Test
@@ -36,11 +183,12 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
+        try await confirmOwner(client, ws: ws)
         // Simulate libghostty surface emitting bytes.
         client.session.sendInput(Data([0x68, 0x69]))   // "hi"
         // Allow the spawned Task to run.
         try await Task.sleep(nanoseconds: 100_000_000)
-        #expect(ws.sent.contains(.binary(Data([0x68, 0x69]))))
+        #expect(binaryFrames(ws).contains(Data([0x68, 0x69])))
     }
 
     /// The iOS soft keyboard's Return produces LF via `UIKeyInput.insertText`,
@@ -55,10 +203,11 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
+        try await confirmOwner(client, ws: ws)
         client.session.sendInput(Data([0x0A]))
         try await Task.sleep(nanoseconds: 100_000_000)
-        #expect(ws.sent.contains(.binary(Data([0x0D]))))
-        #expect(!ws.sent.contains(.binary(Data([0x0A]))))
+        #expect(binaryFrames(ws).contains(Data([0x0D])))
+        #expect(!binaryFrames(ws).contains(Data([0x0A])))
     }
 
     /// The in-app "Newline" button has to send a literal LF — it exists
@@ -72,9 +221,10 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
+        try await confirmOwner(client, ws: ws)
         client.insertNewline()
         try await Task.sleep(nanoseconds: 100_000_000)
-        #expect(ws.sent.contains(.binary(Data([0x0A]))))
+        #expect(binaryFrames(ws).contains(Data([0x0A])))
     }
 
     /// The visible return-arrow control in the terminal chrome is used as
@@ -85,9 +235,10 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
+        try await confirmOwner(client, ws: ws)
         client.submitReturn()
         try await Task.sleep(nanoseconds: 100_000_000)
-        #expect(ws.sent.contains(.binary(Data([0x0D]))))
+        #expect(binaryFrames(ws).contains(Data([0x0D])))
     }
 
     @Test
@@ -96,11 +247,12 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
+        try await confirmOwner(client, ws: ws)
         client.sendSoftwareKeyboardText("abc")
         try await Task.sleep(nanoseconds: 100_000_000)
-        #expect(ws.sent.contains(.binary(Data("abc".utf8))))
-        #expect(!ws.sent.contains(.binary(Data("\u{1B}[200~".utf8))))
-        #expect(!ws.sent.contains(.binary(Data("\u{1B}[201~".utf8))))
+        #expect(binaryFrames(ws).contains(Data("abc".utf8)))
+        #expect(!binaryFrames(ws).contains(Data("\u{1B}[200~".utf8)))
+        #expect(!binaryFrames(ws).contains(Data("\u{1B}[201~".utf8)))
     }
 
     @Test
@@ -109,10 +261,11 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
+        try await confirmOwner(client, ws: ws)
         client.sendSoftwareKeyboardText("\n")
         try await Task.sleep(nanoseconds: 100_000_000)
-        #expect(ws.sent.contains(.binary(Data([0x0D]))))
-        #expect(!ws.sent.contains(.binary(Data([0x0A]))))
+        #expect(binaryFrames(ws).contains(Data([0x0D])))
+        #expect(!binaryFrames(ws).contains(Data([0x0A])))
     }
 
     @Test
@@ -121,9 +274,10 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
+        try await confirmOwner(client, ws: ws)
         client.deleteBackward()
         try await Task.sleep(nanoseconds: 100_000_000)
-        #expect(ws.sent.contains(.binary(Data([0x7F]))))
+        #expect(binaryFrames(ws).contains(Data([0x7F])))
     }
 
     @Test
@@ -132,6 +286,7 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
+        try await confirmOwner(client, ws: ws)
         client.sendEscape()
         client.sendTab()
         client.sendArrow(.up)
@@ -139,12 +294,12 @@ struct SessionClientTests {
         client.sendArrow(.left)
         client.sendArrow(.right)
         try await Task.sleep(nanoseconds: 100_000_000)
-        #expect(ws.sent.contains(.binary(Data([0x1B]))))
-        #expect(ws.sent.contains(.binary(Data([0x09]))))
-        #expect(ws.sent.contains(.binary(Data("\u{1B}[A".utf8))))
-        #expect(ws.sent.contains(.binary(Data("\u{1B}[B".utf8))))
-        #expect(ws.sent.contains(.binary(Data("\u{1B}[D".utf8))))
-        #expect(ws.sent.contains(.binary(Data("\u{1B}[C".utf8))))
+        #expect(binaryFrames(ws).contains(Data([0x1B])))
+        #expect(binaryFrames(ws).contains(Data([0x09])))
+        #expect(binaryFrames(ws).contains(Data("\u{1B}[A".utf8)))
+        #expect(binaryFrames(ws).contains(Data("\u{1B}[B".utf8)))
+        #expect(binaryFrames(ws).contains(Data("\u{1B}[D".utf8)))
+        #expect(binaryFrames(ws).contains(Data("\u{1B}[C".utf8)))
     }
 
     @Test
@@ -153,11 +308,12 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
+        try await confirmOwner(client, ws: ws)
         client.sendControl(.c)
         client.sendControl(.d)
         try await Task.sleep(nanoseconds: 100_000_000)
-        #expect(ws.sent.contains(.binary(Data([0x03]))))
-        #expect(ws.sent.contains(.binary(Data([0x04]))))
+        #expect(binaryFrames(ws).contains(Data([0x03])))
+        #expect(binaryFrames(ws).contains(Data([0x04])))
     }
 
     /// Multi-byte paste buffers with embedded LFs must pass through
@@ -169,10 +325,11 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
+        try await confirmOwner(client, ws: ws)
         let paste = Data([0x68, 0x0A, 0x69])   // "h\ni"
         client.session.sendInput(paste)
         try await Task.sleep(nanoseconds: 100_000_000)
-        #expect(ws.sent.contains(.binary(paste)))
+        #expect(binaryFrames(ws).contains(paste))
     }
 
     @Test("""
@@ -183,11 +340,12 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
+        try await confirmOwner(client, ws: ws)
         client.sendPaste("hello")
         try await Task.sleep(nanoseconds: 100_000_000)
 
         let expected = Data("\u{1B}[200~hello\u{1B}[201~".utf8)
-        #expect(ws.sent.contains(.binary(expected)))
+        #expect(binaryFrames(ws).contains(expected))
     }
 
     @Test
@@ -196,13 +354,14 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
+        try await confirmOwner(client, ws: ws)
         client.sendPaste("a\nb")
         try await Task.sleep(nanoseconds: 100_000_000)
 
         let expected = Data("\u{1B}[200~a\nb\u{1B}[201~".utf8)
-        #expect(ws.sent.contains(.binary(expected)))
+        #expect(binaryFrames(ws).contains(expected))
         // The IOS-6.3 LF→CR translation must NOT apply here.
-        #expect(!ws.sent.contains(.binary(Data("\u{1B}[200~a\rb\u{1B}[201~".utf8))))
+        #expect(!binaryFrames(ws).contains(Data("\u{1B}[200~a\rb\u{1B}[201~".utf8)))
     }
 
     @Test
@@ -211,10 +370,11 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
-        let before = ws.sent.count
+        try await confirmOwner(client, ws: ws)
+        let before = binaryFrames(ws).count
         client.sendPaste("")
         try await Task.sleep(nanoseconds: 100_000_000)
-        #expect(ws.sent.count == before)
+        #expect(binaryFrames(ws).count == before)
     }
 
     @Test
@@ -267,7 +427,7 @@ struct SessionClientTests {
         #expect(client.cellWidthPoints == 7.0)
     }
 
-    @Test("@spec IOS-4.18: While a `SessionClient` is operating as a worktree-detail pane preview (`IOS-4.10`, `IOS-4.12`), the application shall not claim PTY size-leadership. Bytes emitted by libghostty in the preview controller shall be discarded rather than forwarded to the server, and layout-driven resize callbacks shall not produce `WebControlEnvelope.resize` frames. Size-leadership remains a property exclusive to the focused fullscreen pane (`IOS-6.5`).")
+    @Test("@spec IOS-4.18: While a `SessionClient` is operating as a worktree-detail pane preview (`IOS-4.10`, `IOS-4.12`), it shall identify itself with `DisplayClientRole.preview`, report `visible=false`, never claim display ownership, never forward libghostty bytes to the server, and never send takeover or `ownerResize` frames. Preview sizing shall render the authoritative grid locally; only an explicit fullscreen Take Control action can change the display owner.")
     func previewRoleDoesNotForwardLibghosttyBytes() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, role: .preview)
@@ -275,12 +435,34 @@ struct SessionClientTests {
         defer { client.stop() }
         client.session.sendInput(Data([0x68, 0x69]))
         try await Task.sleep(nanoseconds: 100_000_000)
-        let anyBinary = ws.sent.contains { if case .binary = $0 { return true } else { return false } }
-        #expect(!anyBinary)
+        #expect(binaryFrames(ws).isEmpty)
     }
 
     @Test
-    func previewRoleDoesNotEmitResizeOnViewportOrFirstByte() async throws {
+    func previewRoleSendsPreviewHelloAndInvisible() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, role: .preview)
+        client.handleViewport(InMemoryTerminalViewport(
+            columns: 100, rows: 30,
+            widthPixels: 0, heightPixels: 0,
+            cellWidthPixels: 12, cellHeightPixels: 24
+        ))
+        client.start()
+        defer { client.stop() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        guard case let .hello(_, kind, role, visible, cols, rows)? = envelopes(ws).first else {
+            Issue.record("Expected preview hello text frame")
+            return
+        }
+        #expect(kind == .ios)
+        #expect(role == .preview)
+        #expect(!visible)
+        #expect(cols == 100)
+        #expect(rows == 30)
+    }
+
+    @Test
+    func previewRoleDoesNotEmitResizeOrTakeoverOnViewportOrFirstByte() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, role: .preview)
         client.start()
@@ -298,33 +480,43 @@ struct SessionClientTests {
             cellWidthPixels: 12, cellHeightPixels: 24
         ))
         try await Task.sleep(nanoseconds: 100_000_000)
-        // sendText is only called from sendResizeToServer, so any text
-        // frame would be a resize envelope.
-        let anyText = ws.sent.contains { if case .text = $0 { return true } else { return false } }
-        #expect(!anyText)
+        let controlAttempts = envelopes(ws).filter { envelope in
+            switch envelope {
+            case .resize, .ownerResize, .takeControl:
+                return true
+            case .hello, .grid, .ownership:
+                return false
+            }
+        }
+        #expect(controlAttempts.isEmpty)
     }
 
     @Test
-    func fullscreenRoleStillClaimsLeadershipAndEmitsResize() async throws {
+    func sendsHelloOnOpenWithFreshInteractiveIdentity() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
-        client.start()
-        defer { client.stop() }
         client.handleViewport(InMemoryTerminalViewport(
-            columns: 80, rows: 24,
+            columns: 100, rows: 30,
             widthPixels: 0, heightPixels: 0,
             cellWidthPixels: 12, cellHeightPixels: 24
         ))
-        client.session.sendInput(Data([0x68]))
+        client.start()
+        defer { client.stop() }
         try await Task.sleep(nanoseconds: 100_000_000)
-        let expected = WebControlEnvelope.resize(cols: 80, rows: 24).encoded()
-        #expect(ws.sent.contains(.text(expected)))
+        guard case let .hello(clientID, kind, role, visible, cols, rows)? = envelopes(ws).first else {
+            Issue.record("Expected hello text frame")
+            return
+        }
+        #expect(!clientID.rawValue.isEmpty)
+        #expect(kind == .ios)
+        #expect(role == .interactive)
+        #expect(visible)
+        #expect(cols == 100)
+        #expect(rows == 30)
     }
 
-    /// Drives `client.lastIOSViewport` to a known `(cols, rows)` so a subsequent
-    /// `claimLeadershipIfNeeded()` has something to report. Uses the same
-    /// `handleViewport` seam other tests in this file use; that path also writes
-    /// `cellWidthPoints`, but the leadership-claim tests don't care about that.
+    /// Drives `client.lastIOSViewport` to a known `(cols, rows)` so ownership
+    /// controls and owner resizes have a deterministic grid to report.
     private func primeViewport(_ client: SessionClient, columns: UInt16, rows: UInt16) {
         client.handleViewport(InMemoryTerminalViewport(
             columns: columns, rows: rows,
@@ -333,64 +525,177 @@ struct SessionClientTests {
         ))
     }
 
-    @Test("@spec IOS-6.5: When the iOS client receives a leadership-claim event (the first keystroke, the first pinch-begin gesture above the IOS-6.11 scale threshold, or the first long-press-begin gesture on the terminal pane), the client shall set `isSizeLeader = true` and send a `WebControlEnvelope.resize(cols, rows)` to the server with its last-measured viewport. Subsequent libghostty-reported layout changes shall be forwarded to the server. A passive tap shall not claim leadership.")
-    func pinchGestureClaimsLeadership() async throws {
+    @Test("Follower input attempts are blocked locally and do not send binary frames")
+    func followerInputAttemptsDoNotSendBinaryFrames() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
-        // Prime the viewport so the claim has something to report.
-        primeViewport(client, columns: 80, rows: 24)
-        #expect(!client.isSizeLeader)
+        try confirmFollower(client)
 
-        client.claimLeadershipIfNeeded()
+        client.session.sendInput(Data([0x68]))
+        client.sendSoftwareKeyboardText("abc")
+        client.deleteBackward()
+        client.sendEscape()
+        client.sendTab()
+        client.sendArrow(.up)
+        client.sendControl(.c)
+        client.sendPaste("paste")
+        client.insertNewline()
+        client.submitReturn()
         try await Task.sleep(nanoseconds: 100_000_000)
 
-        #expect(client.isSizeLeader)
-        let expected = WebControlEnvelope.resize(cols: 80, rows: 24).encoded()
-        #expect(ws.sent.contains(.text(expected)))
+        #expect(binaryFrames(ws).isEmpty)
     }
 
     @Test
-    func leadershipClaimIsIdempotent() async throws {
+    func explicitTakeControlSendsTakeoverWithLastViewport() async throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
         primeViewport(client, columns: 80, rows: 24)
+        try confirmFollower(client, cols: 120, rows: 40)
 
-        client.claimLeadershipIfNeeded()
-        client.claimLeadershipIfNeeded()
-        client.claimLeadershipIfNeeded()
+        client.takeControl()
         try await Task.sleep(nanoseconds: 100_000_000)
 
-        let resizeCount = ws.sent.filter { frame in
-            if case let .text(t) = frame { return t.contains("\"type\":\"resize\"") }
+        let takeovers = envelopes(ws).compactMap { envelope -> (DisplayClientID, DisplayClientKind, UInt16, UInt16)? in
+            if case let .takeControl(clientID, kind, cols, rows) = envelope {
+                return (clientID, kind, cols, rows)
+            }
+            return nil
+        }
+        #expect(takeovers.count == 1)
+        #expect(takeovers.first?.1 == .ios)
+        #expect(takeovers.first?.2 == 80)
+        #expect(takeovers.first?.3 == 24)
+    }
+
+    @Test
+    func ownerlessSessionCanExplicitlyTakeControl() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        primeViewport(client, columns: 90, rows: 28)
+        let snapshot = try ownershipSnapshot(
+            ownerClientID: nil,
+            ownerKind: nil,
+            cols: 120,
+            rows: 40,
+            epoch: 3
+        )
+        client.handleTextFrame(WebControlEnvelope.ownership(snapshot).encoded())
+        #expect(client.isOwnerless)
+        #expect(client.canTakeControl)
+
+        client.takeControl()
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let takeover = envelopes(ws).first {
+            if case .takeControl = $0 { return true }
+            return false
+        }
+        #expect(takeover == .takeControl(
+            clientID: firstHelloClientID(ws) ?? DisplayClientID("missing"),
+            kind: .ios,
+            cols: 90,
+            rows: 28
+        ))
+    }
+
+    @Test
+    func ownerResizeSendsOwnerResizeWithCurrentEpoch() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        let clientID = try await confirmOwner(client, ws: ws, cols: 80, rows: 24, epoch: 42)
+
+        primeViewport(client, columns: 100, rows: 30)
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let ownerResize = envelopes(ws).first { envelope in
+            if case .ownerResize = envelope { return true }
+            return false
+        }
+        #expect(ownerResize == .ownerResize(clientID: clientID, epoch: 42, cols: 100, rows: 30))
+    }
+
+    @Test
+    func legacyTransportSendsInputAndWindowChangeWithoutOwnershipSnapshot() async throws {
+        let ws = LegacyWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        client.sendSoftwareKeyboardText("abc")
+        primeViewport(client, columns: 132, rows: 44)
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(client.isOwner)
+        #expect(binaryFrames(ws).contains(Data("abc".utf8)))
+        #expect(ws.resizes.contains { $0.cols == 132 && $0.rows == 44 })
+    }
+
+    @Test
+    func ownershipRequiresMatchingIOSKind() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let clientID = try #require(firstHelloClientID(ws))
+        let snapshot = try ownershipSnapshot(
+            ownerClientID: clientID,
+            ownerKind: .web,
+            cols: 80,
+            rows: 24,
+            epoch: 9
+        )
+        client.handleTextFrame(WebControlEnvelope.ownership(snapshot).encoded())
+
+        client.sendSoftwareKeyboardText("blocked")
+        primeViewport(client, columns: 100, rows: 30)
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(!client.isOwner)
+        #expect(client.isFollower)
+        #expect(binaryFrames(ws).isEmpty)
+        let ownerResizeCount = envelopes(ws).filter {
+            if case .ownerResize = $0 { return true }
             return false
         }.count
-        #expect(resizeCount == 1)
+        #expect(ownerResizeCount == 0)
     }
 
     @Test
-    func leadershipClaimNoOpsBeforeViewport() async throws {
+    func ownershipTextFramesUpdateOwnershipAndAuthoritativeGrid() throws {
         let ws = FakeWS()
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
-        client.start()
-        defer { client.stop() }
-        // No viewport call — claim should be a no-op.
-        client.claimLeadershipIfNeeded()
-        try await Task.sleep(nanoseconds: 100_000_000)
 
-        #expect(!client.isSizeLeader)
-        let resizeCount = ws.sent.filter { frame in
-            if case let .text(t) = frame { return t.contains("\"type\":\"resize\"") }
-            return false
-        }.count
-        #expect(resizeCount == 0)
+        client.handleTextFrame(WebControlEnvelope.grid(cols: 120, rows: 40).encoded())
+        #expect(client.authoritativeGrid == SessionClient.GridSize(cols: 120, rows: 40))
+
+        let ownerID = DisplayClientID("ios-owner")
+        let snapshot = try ownershipSnapshot(
+            ownerClientID: ownerID,
+            ownerKind: .ios,
+            cols: 90,
+            rows: 28,
+            epoch: 7
+        )
+        client.handleTextFrame(WebControlEnvelope.ownership(snapshot).encoded())
+
+        #expect(client.ownershipSnapshot == snapshot)
+        #expect(client.isFollower)
+        #expect(client.authoritativeGrid == SessionClient.GridSize(cols: 90, rows: 28))
     }
 
     @Test
-    func previewRoleNeverClaimsLeadership() async throws {
+    func previewRoleNeverOwnsOrShowsTakeover() async throws {
         let ws = FakeWS()
         let client = SessionClient(
             sessionName: "s",
@@ -399,35 +704,26 @@ struct SessionClientTests {
         )
         client.start()
         defer { client.stop() }
-        primeViewport(client, columns: 80, rows: 24)
-        client.claimLeadershipIfNeeded()
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let clientID = try #require(firstHelloClientID(ws))
+        let snapshot = try ownershipSnapshot(
+            ownerClientID: clientID,
+            ownerKind: .ios,
+            cols: 80,
+            rows: 24,
+            epoch: 1
+        )
+        client.handleTextFrame(WebControlEnvelope.ownership(snapshot).encoded())
+        client.takeControl()
         try await Task.sleep(nanoseconds: 100_000_000)
 
-        #expect(!client.isSizeLeader)
-    }
-
-    @Test("@spec IOS-6.13 (first-frame claim resilience): when a gesture fires `claimLeadershipIfNeeded` before any viewport callback has populated `lastIOSViewport`, the claim shall be retained and re-attempted at the next viewport so the user's intentional gesture is not silently dropped.")
-    func firstFrameClaimRetriesOnNextViewport() async throws {
-        let ws = FakeWS()
-        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
-        client.start()
-        defer { client.stop() }
-
-        // No primeViewport call — lastIOSViewport is nil.
-        client.claimLeadershipIfNeeded()
-        try await Task.sleep(nanoseconds: 100_000_000)
-        #expect(!client.isSizeLeader)
-
-        // Now the first viewport callback arrives. The pending claim should
-        // re-engage and send the resize.
-        primeViewport(client, columns: 100, rows: 30)
-        try await Task.sleep(nanoseconds: 100_000_000)
-
-        #expect(client.isSizeLeader)
-        let resizeText = ws.sent.compactMap { frame -> String? in
-            if case let .text(t) = frame { return t } else { return nil }
-        }.first(where: { $0.contains("\"type\":\"resize\"") })
-        #expect(resizeText != nil)
+        #expect(!client.isOwner)
+        #expect(!client.canTakeControl)
+        let takeoverCount = envelopes(ws).filter {
+            if case .takeControl = $0 { return true }
+            return false
+        }.count
+        #expect(takeoverCount == 0)
     }
 }
 #endif

@@ -29,7 +29,7 @@ struct IpadTodo {
     func ipad_2_4() async throws { }
 
     @Test("""
-@spec IPAD-2.5: While an iPad pane-layout leaf is not the size-leader and the server-announced grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same font-fit policy as `IOS-5.6` (per-leaf), rendering each leaf's pane at the full leaf width with no horizontal `ScrollView`.
+@spec IPAD-2.5: While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same font-fit policy as `IOS-5.6` (per-leaf), rendering each leaf's pane at the full leaf width with no horizontal `ScrollView`.
 """, .disabled("not yet implemented"))
     func ipad_2_5() async throws { }
 

@@ -37,6 +37,19 @@ struct RightClickMenuTests {
         #expect(!RightClickHitTest.shouldAcceptHit(for: nil))
     }
 
+    @Test func takeControlCommandCallsThroughFromSurfaceMenuPath() {
+        let view = SurfaceNSView()
+        var calls = 0
+        view.takeDisplayControlNotifier = {
+            calls += 1
+            return true
+        }
+
+        view.takeDisplayControlFromMenu(nil)
+
+        #expect(calls == 1)
+    }
+
     private func makeEvent(type: NSEvent.EventType, modifiers: NSEvent.ModifierFlags) -> NSEvent {
         NSEvent.mouseEvent(
             with: type,

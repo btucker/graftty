@@ -147,6 +147,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -185,11 +186,66 @@ function installVisualViewport(width: number, height: number) {
   return visualViewport;
 }
 
+function textFrames(ws: MockWebSocket) {
+  return ws.sent
+    .filter((payload): payload is string => typeof payload === 'string')
+    .map((payload) => JSON.parse(payload));
+}
+
+function ownershipFrame(
+  ownerClientID: string | null,
+  ownerKind: string | null,
+  cols = 150,
+  rows = 50,
+  epoch = 2,
+) {
+  return JSON.stringify({
+    type: 'ownership',
+    snapshot: {
+      sessionName: 'demo session',
+      ownerClientID,
+      ownerKind,
+      grid: { cols, rows },
+      epoch,
+      ownerless: ownerClientID == null,
+    },
+  });
+}
+
+test('ownership confirmation after delayed terminal init publishes the fitted owner grid', async () => {
+  let resolveInit: (() => void) | undefined;
+  ghosttyMock.init.mockImplementationOnce(() => new Promise<void>((resolve) => {
+    resolveInit = resolve;
+  }));
+  hostSize = { width: 800, height: 400 };
+
+  render(<TerminalPane sessionName="demo session" />);
+  await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
+  const ws = MockWebSocket.instances[0];
+  expect(ghosttyMock.init).toHaveBeenCalledTimes(1);
+
+  await act(async () => ws.open());
+  const hello = textFrames(ws)[0];
+  expect(hello).toMatchObject({ type: 'hello', cols: 80, rows: 24 });
+
+  await act(async () => resolveInit?.());
+  await waitFor(() => {
+    expect(ghosttyMock.instances.length).toBe(1);
+    expect(ghosttyMock.instances[0].resizeHandler).toBeTruthy();
+  });
+  ws.sent.length = 0;
+
+  await act(async () => ws.receive(ownershipFrame(hello.clientID, 'web', 80, 24, 5)));
+
+  expect(textFrames(ws)).toEqual([
+    { type: 'ownerResize', clientID: hello.clientID, epoch: 5, cols: 100, rows: 25 },
+  ]);
+});
+
 // @spec WEB-5.1: The bundled client shall render a single terminal (ghostty-web, a WASM build of libghostty — the same VT parser as the native app pane) that attaches to the session indicated by the `/session/<name>` URL path. If a client arrives at the root path `/` with a `?session=<name>` query parameter, the client shall redirect to `/session/<name>` (backward compatibility). Sharing a parser with the native pane is what keeps escape-sequence behavior (cursor movement, SGR state, OSC 8 hyperlinks, scrollback) identical across clients.
 test('terminal pane constructs ghostty-web and connects to the encoded session websocket', async () => {
   const { term, ws } = await renderReady('demo session');
 
-  expect(ghosttyMock.init).toHaveBeenCalledTimes(1);
   expect(ghosttyMock.Terminal).toHaveBeenCalledWith(expect.objectContaining({
     cols: 80,
     rows: 24,
@@ -205,6 +261,8 @@ test('terminal data events are sent as encoded bytes on the open websocket', asy
   const { term, ws } = await renderReady();
 
   await act(async () => ws.open());
+  const clientID = textFrames(ws)[0].clientID;
+  await act(async () => ws.receive(ownershipFrame(clientID, 'web')));
   term.dataHandler?.('ls\n');
 
   const payload = ws.sent.at(-1);
@@ -212,18 +270,152 @@ test('terminal data events are sent as encoded bytes on the open websocket', asy
   expect(Array.from(payload as Uint8Array)).toEqual([108, 115, 10]);
 });
 
-// @spec WEB-5.3: The client shall send resize events as JSON control envelopes in text frames, including an initial resize sent on WebSocket open so the server-side PTY is sized to the client's actual viewport rather than the `zmx attach` default.
-test('initial and later terminal sizes are sent as resize envelopes', async () => {
+// @spec WEB-5.3: The client shall enter owner-aware WebSocket sessions by sending a `hello` control frame on open with a fresh display client ID, kind `.web`, role `.interactive`, visibility, and the current terminal grid. Terminal resize events shall be sent as `ownerResize(clientID, epoch, cols, rows)` only after an ownership snapshot confirms this client as display owner; follower resizes shall update local presentation without resizing the remote PTY.
+test('websocket open sends hello with a fresh web client id and current grid', async () => {
   hostSize = { width: 1200, height: 800 };
+  const { ws } = await renderReady();
+
+  await act(async () => ws.open());
+  const hello = textFrames(ws)[0];
+
+  expect(hello).toMatchObject({
+    type: 'hello',
+    kind: 'web',
+    role: 'interactive',
+    visible: true,
+    cols: 150,
+    rows: 50,
+  });
+  expect(hello.clientID).toMatch(/^web-/);
+});
+
+test('reconnects use a fresh browser client id per websocket connection', async () => {
+  const { ws } = await renderReady();
+  vi.useFakeTimers();
+
+  await act(async () => ws.open());
+  const firstClientID = textFrames(ws)[0].clientID;
+
+  await act(async () => {
+    ws.close();
+    vi.advanceTimersByTime(10_000);
+  });
+  expect(MockWebSocket.instances.length).toBe(2);
+  const secondWs = MockWebSocket.instances[1];
+
+  await act(async () => secondWs.open());
+
+  expect(textFrames(secondWs)[0].clientID).toMatch(/^web-/);
+  expect(textFrames(secondWs)[0].clientID).not.toBe(firstClientID);
+});
+
+test('superseded websocket callbacks cannot clear or overwrite the active owner connection', async () => {
+  const { term, ws } = await renderReady();
+  vi.useFakeTimers();
+
+  await act(async () => ws.open());
+  await act(async () => {
+    ws.close();
+    vi.advanceTimersByTime(10_000);
+  });
+
+  const activeWs = MockWebSocket.instances[1];
+  await act(async () => activeWs.open());
+  const activeClientID = textFrames(activeWs)[0].clientID;
+  await act(async () => activeWs.receive(ownershipFrame(activeClientID, 'web')));
+  activeWs.sent.length = 0;
+  ws.sent.length = 0;
+
+  await act(async () => {
+    ws.onopen?.();
+    ws.receive(ownershipFrame('stale-owner', 'web'));
+    ws.onclose?.();
+  });
+  term.dataHandler?.('ok');
+
+  expect(ws.sent).toEqual([]);
+  const payload = activeWs.sent.at(-1);
+  expect(ArrayBuffer.isView(payload)).toBe(true);
+  expect(Array.from(payload as Uint8Array)).toEqual([111, 107]);
+  expect(screen.queryByRole('button', { name: /take control/i })).toBeNull();
+});
+
+test('owner terminal resize sends ownerResize with the active client id and epoch', async () => {
   const { term, ws } = await renderReady();
 
   await act(async () => ws.open());
+  const clientID = textFrames(ws)[0].clientID;
+  await act(async () => ws.receive(ownershipFrame(clientID, 'web', 150, 50, 7)));
+  ws.sent.length = 0;
+
   term.resizeHandler?.({ cols: 101, rows: 31 });
 
-  expect(ws.sent).toEqual([
-    JSON.stringify({ type: 'resize', cols: 150, rows: 50 }),
-    JSON.stringify({ type: 'resize', cols: 101, rows: 31 }),
+  expect(textFrames(ws)).toEqual([
+    { type: 'ownerResize', clientID, epoch: 7, cols: 101, rows: 31 },
   ]);
+});
+
+test('follower terminal resize changes local presentation without sending ownerResize', async () => {
+  const { term, ws } = await renderReady();
+
+  await act(async () => ws.open());
+  await act(async () => ws.receive(ownershipFrame('other-client', 'web')));
+  ws.sent.length = 0;
+
+  term.resizeHandler?.({ cols: 101, rows: 31 });
+
+  expect(ws.sent).toEqual([]);
+});
+
+test('follower terminal data is ignored locally', async () => {
+  const { term, ws } = await renderReady();
+
+  await act(async () => ws.open());
+  await act(async () => ws.receive(ownershipFrame('other-client', 'web')));
+  ws.sent.length = 0;
+
+  term.dataHandler?.('ls\n');
+
+  expect(ws.sent).toEqual([]);
+});
+
+test('take control button sends takeover with active client id and current grid', async () => {
+  const { term, ws } = await renderReady();
+
+  await act(async () => ws.open());
+  const clientID = textFrames(ws)[0].clientID;
+  await act(async () => ws.receive(ownershipFrame(null, null)));
+  term.resize(132, 44);
+  ws.sent.length = 0;
+
+  await act(async () => {
+    screen.getByRole('button', { name: /take control/i }).click();
+  });
+
+  expect(textFrames(ws)).toEqual([
+    { type: 'takeControl', clientID, kind: 'web', cols: 132, rows: 44 },
+  ]);
+});
+
+test('ownership snapshots toggle take-control UI and input behavior', async () => {
+  const { term, ws } = await renderReady();
+
+  await act(async () => ws.open());
+  const clientID = textFrames(ws)[0].clientID;
+
+  await act(async () => ws.receive(ownershipFrame('other-client', 'web')));
+  expect(screen.getByRole('button', { name: /take control/i })).toBeTruthy();
+  ws.sent.length = 0;
+  term.dataHandler?.('blocked');
+  expect(ws.sent).toEqual([]);
+
+  await act(async () => ws.receive(ownershipFrame(clientID, 'web')));
+  expect(screen.queryByRole('button', { name: /take control/i })).toBeNull();
+  term.dataHandler?.('ok');
+
+  const payload = ws.sent.at(-1);
+  expect(ArrayBuffer.isView(payload)).toBe(true);
+  expect(Array.from(payload as Uint8Array)).toEqual([111, 107]);
 });
 
 // @spec WEB-5.5: The client shall size the terminal grid to fill the host element using the renderer's font metrics (`cols = floor(host.clientWidth / metrics.width)`, `rows = floor(host.clientHeight / metrics.height)`) and shall not reserve any horizontal pixels for a native scrollbar, so the canvas occupies the full viewport width and the PTY column count matches the visible grid. Rationale: ghostty-web's bundled `FitAddon` unconditionally subtracts 15 px from available width for a DOM scrollbar (`proposeDimensions()` in `ghostty-web.js`), but Ghostty renders its scrollback scrollbar as a canvas overlay — using `FitAddon` leaves a ~15 px gap on the right edge and narrows wrapping (e.g., 148 cols instead of 150 on a 1200 px viewport with 8 px cells).

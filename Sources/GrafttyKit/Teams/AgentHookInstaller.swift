@@ -344,8 +344,34 @@ public struct AgentHookInstaller: Sendable {
             realCommandName: realCommandName
         )
         let trapBlock = """
+        agent_pid=""
         cleanup() { \(shellCommandToken(grafttyCLIPath)) team unregister --runtime \(runtime.rawValue) 2>/dev/null || true; }
+        forward_signal() {
+          sig="$1"
+          status="$2"
+          if [ -n "${agent_pid:-}" ]; then
+            kill -"$sig" "$agent_pid" 2>/dev/null || true
+            fallback_pid=""
+            if [ "$sig" = "INT" ]; then
+              # Some /bin/sh implementations keep SIGINT ignored for
+              # asynchronous children even when the child subshell resets
+              # traps before exec. Keep forwarding INT first, but do not
+              # let the wrapper block forever if the child inherited ignore.
+              ( sleep 1; kill -0 "$agent_pid" 2>/dev/null && kill -TERM "$agent_pid" 2>/dev/null || true ) &
+              fallback_pid=$!
+            fi
+            wait "$agent_pid" 2>/dev/null || true
+            if [ -n "${fallback_pid:-}" ]; then
+              kill "$fallback_pid" 2>/dev/null || true
+              wait "$fallback_pid" 2>/dev/null || true
+            fi
+          fi
+          exit "$status"
+        }
         trap cleanup EXIT
+        trap 'forward_signal TERM 143' TERM
+        trap 'forward_signal INT 130' INT
+        trap 'forward_signal HUP 129' HUP
         """
 
         let runtimeBlock: String
@@ -355,9 +381,9 @@ public struct AgentHookInstaller: Sendable {
             let escapedJSON = shellLiteral(inlineJSON)
             runtimeBlock = """
             if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
-              ( exec "$real_binary" --settings \(escapedJSON) "$@" )
+              ( trap - INT TERM HUP; exec "$real_binary" --settings \(escapedJSON) "$@" ) &
             else
-              ( exec "$real_binary" "$@" )
+              ( trap - INT TERM HUP; exec "$real_binary" "$@" ) &
             fi
             """
         case .codex:
@@ -365,9 +391,9 @@ public struct AgentHookInstaller: Sendable {
             runtimeBlock = """
             if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
               \(shellCommandToken(grafttyCLIPath)) internal sync-codex-home
-              ( exec env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@" )
+              ( trap - INT TERM HUP; exec env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@" ) &
             else
-              ( exec "$real_binary" "$@" )
+              ( trap - INT TERM HUP; exec "$real_binary" "$@" ) &
             fi
             """
         }
@@ -380,13 +406,17 @@ public struct AgentHookInstaller: Sendable {
 
         \(trapBlock)
 
-        # TEAM-PRESENCE-1.3: background `team register` so it never delays
-        # exec of the real binary. The CLI silently no-ops outside a
-        # team-tracked worktree, so the unconditional call is safe.
-        \(shellCommandToken(grafttyCLIPath)) team register --runtime \(runtime.rawValue) >/dev/null 2>&1 &
-
         \(runtimeBlock)
-        exit $?
+        agent_pid=$!
+
+        # TEAM-PRESENCE-1.3: register the long-running runtime child, not
+        # the short-lived registration helper. The CLI silently no-ops
+        # outside a team-tracked worktree, so the unconditional call is safe.
+        \(shellCommandToken(grafttyCLIPath)) team register --runtime \(runtime.rawValue) --pid "$agent_pid" >/dev/null 2>&1 || true
+
+        wait "$agent_pid"
+        agent_status=$?
+        exit "$agent_status"
         """
     }
 
