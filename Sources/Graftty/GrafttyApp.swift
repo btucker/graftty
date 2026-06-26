@@ -18,6 +18,25 @@ struct TeamHookCallbacks {
     let onPostToolUse: @Sendable (String, String, String, String?) -> Void
 }
 
+struct CodexStopDeliveryPlan: Equatable {
+    let shouldUpdateState: Bool
+    let liveSessionName: String?
+    let deliverySessionNames: [String]
+}
+
+private struct AppTeamDeliveryLiveness: TeamDeliveryLivenessChecking {
+    let liveSessionNames: Set<String>
+    let processStartTimeMicroseconds: @Sendable (Int32) -> Int64?
+
+    func isLivePaneSession(_ sessionName: String) -> Bool {
+        liveSessionNames.contains(sessionName)
+    }
+
+    func processStartTimeMicroseconds(ofPID pid: Int32) -> Int64? {
+        processStartTimeMicroseconds(pid)
+    }
+}
+
 /// Seam for `handleShowPane` so tests can inject a canned scrollback
 /// without spawning a `zmx` subprocess.
 protocol ZmxHistoryReader: Sendable {
@@ -1237,13 +1256,23 @@ struct GrafttyApp: App {
         // records carry the authoritative session names; TerminalManager
         // proves the pane session is current, and the recorded PID proves
         // the registered runtime is still running.
-        let codexSessionNamesIn: @Sendable (String) -> [String] = { [tm] worktreePath in
+        let codexSessionNamesIn: @Sendable (String, String) -> [String] = { [tm] teamID, worktreePath in
             MainActor.assumeIsolated {
                 refreshPresenceIndex()
+                let records = presenceIndex.allRecords()
+                let liveSessions = Set(records.compactMap { record -> String? in
+                    guard let sessionName = record.paneSessionName,
+                          tm.handle(forSessionName: sessionName) != nil else {
+                        return nil
+                    }
+                    return sessionName
+                })
                 return TeamDeliverySessionResolution.codexSessionNames(
+                    teamID: teamID,
                     in: worktreePath,
-                    records: presenceIndex.allRecords(),
-                    isLiveSession: { tm.handle(forSessionName: $0) != nil }
+                    records: records,
+                    isLiveSession: { liveSessions.contains($0) },
+                    processStartTimeMicroseconds: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
                 )
             }
         }
@@ -1257,10 +1286,10 @@ struct GrafttyApp: App {
                 // onElapsed is @MainActor, so binding.wrappedValue is
                 // accessible directly — no MainActor.assumeIsolated dance.
                 guard let service = idleService else { return }
-                let sessionNames = codexSessionNamesIn(worktree)
                 guard let teamID = binding.wrappedValue.repos.first(where: {
                     $0.worktrees.contains(where: { $0.path == worktree })
                 })?.path else { return }
+                let sessionNames = codexSessionNamesIn(teamID, worktree)
                 Task {
                     await service.onMessageArrival(
                         team: teamID, worktree: worktree, sessionNames: sessionNames
@@ -1296,15 +1325,19 @@ struct GrafttyApp: App {
         let hookCallbacks = TeamHookCallbacks(
             onStop: { [weak idleService, tm] team, worktree, runtime, paneSessionName in
                 MainActor.assumeIsolated { refreshPresenceIndex() }
-                let liveSessionName: String? = MainActor.assumeIsolated {
-                    TeamDeliverySessionResolution.stopSessionName(
+                let plan = MainActor.assumeIsolated {
+                    Self.codexStopDeliveryPlan(
+                        team: team,
+                        worktree: worktree,
                         runtime: runtime,
                         paneSessionName: paneSessionName,
-                        isLiveSession: { tm.handle(forSessionName: $0) != nil }
+                        isLiveSession: { tm.handle(forSessionName: $0) != nil },
+                        codexSessionNamesIn: codexSessionNamesIn
                     )
                 }
+                guard plan.shouldUpdateState else { return }
                 let paneID: UUID? = MainActor.assumeIsolated {
-                    liveSessionName.flatMap { tm.paneID(forSessionName: $0) }
+                    plan.liveSessionName.flatMap { tm.paneID(forSessionName: $0) }
                 }
                 // Flip the state machine before the delivery evaluator runs.
                 // Without this, state stays `.active` from the prior
@@ -1316,15 +1349,29 @@ struct GrafttyApp: App {
                 // keystrokes (Plan-mode review screens), so it must not arm
                 // the inbox-drain pipeline.
                 guard runtime == TeamHookRuntime.codex.rawValue else { return }
-                guard let sessionName = liveSessionName, let service = idleService else { return }
-                Task { await service.onStop(team: team, worktree: worktree, sessionNames: [sessionName]) }
+                guard let service = idleService else { return }
+                Task { await service.onStop(team: team, worktree: worktree, sessionNames: plan.deliverySessionNames) }
             },
-            onSessionStart: { team, worktree, runtime, _ in
+            onSessionStart: { team, worktree, runtime, paneSessionName in
                 MainActor.assumeIsolated { refreshPresenceIndex() }
+                guard Self.shouldUpdateDeliveryStateForHook(
+                    team: team,
+                    worktree: worktree,
+                    runtime: runtime,
+                    paneSessionName: paneSessionName,
+                    codexSessionNamesIn: codexSessionNamesIn
+                ) else { return }
                 stateRegistry.handleSessionStart(worktree: worktree, runtime: runtime)
             },
-            onPostToolUse: { team, worktree, runtime, _ in
+            onPostToolUse: { team, worktree, runtime, paneSessionName in
                 MainActor.assumeIsolated { refreshPresenceIndex() }
+                guard Self.shouldUpdateDeliveryStateForHook(
+                    team: team,
+                    worktree: worktree,
+                    runtime: runtime,
+                    paneSessionName: paneSessionName,
+                    codexSessionNamesIn: codexSessionNamesIn
+                ) else { return }
                 stateRegistry.handlePostToolUse(worktree: worktree, runtime: runtime)
             }
         )
@@ -1361,7 +1408,7 @@ struct GrafttyApp: App {
                 guard let service = idleService else { return }
                 for (recipientWorktree, _) in byWorktree {
                     Task { @MainActor in
-                        let sessionNames = codexSessionNamesIn(recipientWorktree)
+                        let sessionNames = codexSessionNamesIn(teamID, recipientWorktree)
                         await service.onMessageArrival(
                             team: teamID,
                             worktree: recipientWorktree,
@@ -1791,6 +1838,60 @@ struct GrafttyApp: App {
                 controller.stop()
             }
         }
+    }
+
+    nonisolated static func codexStopDeliveryPlan(
+        team: String,
+        worktree: String,
+        runtime: String,
+        paneSessionName: String?,
+        isLiveSession: (String) -> Bool,
+        codexSessionNamesIn: (String, String) -> [String]
+    ) -> CodexStopDeliveryPlan {
+        let liveSessionName = TeamDeliverySessionResolution.stopSessionName(
+            runtime: runtime,
+            paneSessionName: paneSessionName,
+            isLiveSession: isLiveSession
+        )
+        guard runtime == TeamHookRuntime.codex.rawValue else {
+            return CodexStopDeliveryPlan(
+                shouldUpdateState: true,
+                liveSessionName: liveSessionName,
+                deliverySessionNames: []
+            )
+        }
+        guard let liveSessionName else {
+            return CodexStopDeliveryPlan(
+                shouldUpdateState: false,
+                liveSessionName: nil,
+                deliverySessionNames: []
+            )
+        }
+        let deliverySessionNames = codexSessionNamesIn(team, worktree)
+        guard deliverySessionNames.contains(liveSessionName) else {
+            return CodexStopDeliveryPlan(
+                shouldUpdateState: false,
+                liveSessionName: liveSessionName,
+                deliverySessionNames: []
+            )
+        }
+        return CodexStopDeliveryPlan(
+            shouldUpdateState: true,
+            liveSessionName: liveSessionName,
+            deliverySessionNames: deliverySessionNames
+        )
+    }
+
+    nonisolated static func shouldUpdateDeliveryStateForHook(
+        team: String,
+        worktree: String,
+        runtime: String,
+        paneSessionName: String?,
+        codexSessionNamesIn: (String, String) -> [String]
+    ) -> Bool {
+        guard runtime == TeamHookRuntime.codex.rawValue else { return true }
+        guard let paneSessionName else { return false }
+        return codexSessionNamesIn(team, worktree).contains(paneSessionName)
     }
 
     /// Pre-pass for `reconcileOnLaunch` implementing LAYOUT-4.6 (bookmark
@@ -2386,6 +2487,7 @@ struct GrafttyApp: App {
                 appState: appState,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher,
+                terminalManager: terminalManager,
                 hookCallbacks: hookCallbacks
             )
         case .teamInbox(let callerPath, let worktree, let repo, let member, let unread, let all):
@@ -2488,13 +2590,36 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher,
+        terminalManager: TerminalManager,
         hookCallbacks: TeamHookCallbacks? = nil
     ) -> ResponseMessage {
         do {
+            let presenceRecords = (try? TeamPresenceStorage(
+                rootDirectory: TeamPresenceStorage.defaultRoot()
+            ).listAll()) ?? []
+            let liveSessionNames = Set(presenceRecords.compactMap { record -> String? in
+                guard let sessionName = record.paneSessionName,
+                      terminalManager.handle(forSessionName: sessionName) != nil else {
+                    return nil
+                }
+                return sessionName
+            })
             let output = try teamInboxRequestHandler(
                 inbox: teamInbox,
                 dispatcher: teamEventDispatcher,
-                hookCallbacks: hookCallbacks
+                hookCallbacks: hookCallbacks,
+                automaticDeliveryOwner: { teamID, worktree, runtime, paneSessionName in
+                    guard let paneSessionName else { return false }
+                    let resolver = TeamDeliveryOwnershipResolver(
+                        records: { presenceRecords },
+                        liveness: AppTeamDeliveryLiveness(
+                            liveSessionNames: liveSessionNames,
+                            processStartTimeMicroseconds: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
+                        )
+                    )
+                    let key = TeamDeliveryOwnerKey(teamID: teamID, worktree: worktree, runtime: runtime)
+                    return resolver.owner(for: key)?.paneSessionName == paneSessionName
+                }
             ).hook(
                 callerWorktree: callerPath,
                 runtime: runtime,
@@ -2658,7 +2783,13 @@ struct GrafttyApp: App {
     private static func teamInboxRequestHandler(
         inbox: TeamInbox,
         dispatcher: TeamEventDispatcher,
-        hookCallbacks: TeamHookCallbacks? = nil
+        hookCallbacks: TeamHookCallbacks? = nil,
+        automaticDeliveryOwner: (@Sendable (
+            _ teamID: String,
+            _ worktree: String,
+            _ runtime: TeamHookRuntime,
+            _ paneSessionName: String?
+        ) -> Bool)? = nil
     ) -> TeamInboxRequestHandler {
         TeamInboxRequestHandler(
             inbox: inbox,
@@ -2666,7 +2797,8 @@ struct GrafttyApp: App {
             sessionPromptRenderer: renderTeamSessionPrompt(team:viewer:),
             onStop: hookCallbacks?.onStop,
             onSessionStart: hookCallbacks?.onSessionStart,
-            onPostToolUse: hookCallbacks?.onPostToolUse
+            onPostToolUse: hookCallbacks?.onPostToolUse,
+            automaticDeliveryOwner: automaticDeliveryOwner
         )
     }
 

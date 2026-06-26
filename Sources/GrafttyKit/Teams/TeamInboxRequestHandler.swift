@@ -41,6 +41,12 @@ public final class TeamInboxRequestHandler {
     private let onStop: (@Sendable (_ team: String, _ worktree: String, _ runtime: String, _ paneSessionName: String?) -> Void)?
     private let onSessionStart: (@Sendable (_ team: String, _ worktree: String, _ runtime: String, _ paneSessionName: String?) -> Void)?
     private let onPostToolUse: (@Sendable (_ team: String, _ worktree: String, _ runtime: String, _ paneSessionName: String?) -> Void)?
+    private let automaticDeliveryOwner: (@Sendable (
+        _ teamID: String,
+        _ worktree: String,
+        _ runtime: TeamHookRuntime,
+        _ paneSessionName: String?
+    ) -> Bool)?
 
     public init(
         inbox: TeamInbox,
@@ -48,7 +54,13 @@ public final class TeamInboxRequestHandler {
         sessionPromptRenderer: ((TeamView, TeamMember) -> String?)? = nil,
         onStop: (@Sendable (String, String, String, String?) -> Void)? = nil,
         onSessionStart: (@Sendable (String, String, String, String?) -> Void)? = nil,
-        onPostToolUse: (@Sendable (String, String, String, String?) -> Void)? = nil
+        onPostToolUse: (@Sendable (String, String, String, String?) -> Void)? = nil,
+        automaticDeliveryOwner: (@Sendable (
+            _ teamID: String,
+            _ worktree: String,
+            _ runtime: TeamHookRuntime,
+            _ paneSessionName: String?
+        ) -> Bool)? = nil
     ) {
         self.inbox = inbox
         self.dispatcher = dispatcher
@@ -56,6 +68,7 @@ public final class TeamInboxRequestHandler {
         self.onStop = onStop
         self.onSessionStart = onSessionStart
         self.onPostToolUse = onPostToolUse
+        self.automaticDeliveryOwner = automaticDeliveryOwner
     }
 
     @discardableResult
@@ -196,6 +209,14 @@ public final class TeamInboxRequestHandler {
             return try TeamHookRenderer.sessionStart(runtime: runtime, teamContext: text)
         case .postToolUse:
             onPostToolUse?(teamID, context.sender.worktreePath, runtime.rawValue, paneSessionName)
+            guard canConsumeAutomaticInbox(
+                teamID: teamID,
+                worktree: context.sender.worktreePath,
+                runtime: runtime,
+                paneSessionName: paneSessionName
+            ) else {
+                return try TeamHookRenderer.postToolUse(runtime: runtime, messages: [])
+            }
             let allUnread = try inbox.unreadMessages(
                 teamID: teamID,
                 recipientWorktree: context.sender.worktreePath,
@@ -235,6 +256,15 @@ public final class TeamInboxRequestHandler {
     private struct ScopedContext {
         let team: TeamView
         let viewer: TeamMember
+    }
+
+    private func canConsumeAutomaticInbox(
+        teamID: String,
+        worktree: String,
+        runtime: TeamHookRuntime,
+        paneSessionName: String?
+    ) -> Bool {
+        automaticDeliveryOwner?(teamID, worktree, runtime, paneSessionName) ?? true
     }
 
     private func teamContext(

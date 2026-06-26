@@ -14,6 +14,7 @@ public struct TeamPresenceRecord: Codable, Equatable, Sendable {
     public let runtime: TeamHookRuntime
     public let paneSessionName: String?
     public let pid: Int32
+    public let processStartTimeMicroseconds: Int64?
     public let registeredAt: Date
 
     public init(
@@ -22,6 +23,7 @@ public struct TeamPresenceRecord: Codable, Equatable, Sendable {
         runtime: TeamHookRuntime,
         paneSessionName: String?,
         pid: Int32,
+        processStartTimeMicroseconds: Int64? = nil,
         registeredAt: Date
     ) {
         self.teamID = teamID
@@ -29,6 +31,7 @@ public struct TeamPresenceRecord: Codable, Equatable, Sendable {
         self.runtime = runtime
         self.paneSessionName = paneSessionName
         self.pid = pid
+        self.processStartTimeMicroseconds = processStartTimeMicroseconds
         self.registeredAt = registeredAt
     }
 }
@@ -208,10 +211,27 @@ public enum TeamPresenceMonitor {
     public static func cleanupStale(
         storage: TeamPresenceStorage,
         isAlive: (Int32) -> Bool = { TeamPresenceMonitor.kernelIsAlive($0) },
+        isSameProcess: (TeamPresenceRecord) -> Bool = { record in
+            guard let recordedStart = record.processStartTimeMicroseconds,
+                  let currentStart = ProcessIdentityReader.startTimeMicroseconds(ofPID: record.pid)
+            else { return false }
+            return recordedStart == currentStart
+        },
         eventLog: TeamEventLog? = TeamEventLog.defaultLog()
     ) {
         let records = (try? storage.listAll()) ?? []
-        for record in records where !isAlive(record.pid) {
+        for record in records {
+            let reason: String?
+            if !isAlive(record.pid) {
+                reason = "process_dead"
+            } else if record.processStartTimeMicroseconds == nil {
+                reason = nil
+            } else if !isSameProcess(record) {
+                reason = "process_identity_mismatch"
+            } else {
+                reason = nil
+            }
+            guard let reason else { continue }
             do {
                 try storage.delete(
                     teamID: record.teamID,
@@ -224,7 +244,7 @@ public enum TeamPresenceMonitor {
                         "worktree": record.worktree,
                         "runtime": record.runtime.rawValue,
                         "pid": String(record.pid),
-                        "reason": "process_dead",
+                        "reason": reason,
                     ])
                 )
             } catch {
