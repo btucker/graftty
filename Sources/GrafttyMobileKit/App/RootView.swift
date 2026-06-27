@@ -110,7 +110,19 @@ public struct RootView: View {
         var components = URLComponents(url: base, resolvingAgainstBaseURL: false) ?? URLComponents()
         components.scheme = (base.scheme?.lowercased() == "https") ? "wss" : "ws"
         components.path = "/ws"
-        components.queryItems = [URLQueryItem(name: "session", value: session)]
+        components.queryItems = [
+            URLQueryItem(name: "session", value: session),
+            // Advertise the iOS client kind through the transport the daemon
+            // trusts (`declaredDisplayClientKind`). `URLSessionWebSocketClient`
+            // connects with a bare URL (no custom header / User-Agent), so this
+            // query param is the only kind signal the server sees. Without it
+            // the connection is classified `.web`, the store stamps
+            // `ownerKind=.web`, and `SessionClient.isOwner` (which requires
+            // `.ios`) is never true — the phone becomes a permanent follower
+            // that cannot confirm ownership after Take Control or input
+            // takeover.
+            URLQueryItem(name: "client", value: "ios"),
+        ]
         return components.url ?? base
     }
 }
@@ -185,10 +197,6 @@ struct SingleSessionView: View {
     /// as an explicit bottom padding on the fullscreen layout
     /// (`IOS-6.9`). Populated from `keyboardWillChangeFrame`.
     @State private var keyboardBottomInset: CGFloat = 0
-    /// Measured height of the bottom terminal chrome overlay. This is
-    /// reserved from the terminal viewport without changing the overlay's
-    /// bottom-aligned visual placement.
-    @State private var measuredTerminalChromeHeight: CGFloat = 0
     /// Box that holds a weak reference to the live terminal-input
     /// container so the SwiftUI control-bar buttons can cancel an
     /// active selection per IOS-11.7.
@@ -204,6 +212,36 @@ struct SingleSessionView: View {
     @State private var liveFontOverride: Float?
 
     private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
+
+    static func shouldShowTakeControl(
+        isFullScreen: Bool,
+        clientCanTakeControl: Bool
+    ) -> Bool {
+        // Fullscreen controls navigation chrome, not display ownership.
+        clientCanTakeControl
+    }
+
+    static func shouldExposeKeyboard(
+        clientIsOwner: Bool,
+        keyboardAllowed: Bool,
+        isKeyboardVisible: Bool
+    ) -> Bool {
+        clientIsOwner
+    }
+
+    static func shouldInstallKeyboardProxy(clientIsOwner: Bool) -> Bool {
+        clientIsOwner
+    }
+
+    /// Terminal theme background, parsed from the Mac-resolved ghostty config.
+    /// Painted behind the whole session so the control-bar row and the strip
+    /// revealed during keyboard transitions match the terminal's background
+    /// instead of showing system chrome. The Mac resolves themes / named /
+    /// palette colors to hex before sending the config, so this matches what
+    /// libghostty actually renders. Falls back to the shared default.
+    private var themeBackgroundColor: Color {
+        (baseConfigText.map(GhosttyThemeColors.init(parsingConfigText:)) ?? .fallback).background
+    }
 
     enum ConnectionState: Equatable {
         case connecting
@@ -225,23 +263,39 @@ struct SingleSessionView: View {
     }
 
     var body: some View {
+        ZStack {
+            // Terminal theme background behind everything — including under the
+            // keyboard, so its rounded corners (and the control-bar row) show
+            // the terminal's color instead of system chrome. Ignores all
+            // safe-area regions (incl. `.keyboard`) so it bleeds the full
+            // screen; the keyboard-padded content sits on top of it.
+            themeBackgroundColor.ignoresSafeArea()
+            sessionView
+        }
+    }
+
+    private var sessionView: some View {
         Group {
             switch connection {
             case .connecting, .suspended:
                 loadingPlaceholder
             case .live:
-                GeometryReader { geo in
-                    let terminalViewportSize = TerminalChromeViewport.terminalSize(
-                        container: geo.size,
-                        chromeHeight: measuredTerminalChromeHeight
-                    )
-                    terminalContent(containerSize: terminalViewportSize)
-                        .frame(
-                            width: terminalViewportSize.width,
-                            height: terminalViewportSize.height,
-                            alignment: .top
-                        )
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                GeometryReader { _ in
+                    VStack(spacing: 0) {
+                        GeometryReader { termGeo in
+                            terminalContent(containerSize: termGeo.size)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        }
+                        // While the keyboard is up, the control bar is laid out
+                        // in-flow directly below the terminal. Because this VStack
+                        // already lives inside the keyboard-reduced area, the bar
+                        // lands at the keyboard top and the terminal inherently
+                        // reserves its height — no PreferenceKey measurement, no
+                        // overlay/keyboard-avoidance mismatch.
+                        if isKeyboardVisible {
+                            terminalChrome
+                        }
+                    }
                 }
             case .ended:
                 endedBanner
@@ -275,14 +329,12 @@ struct SingleSessionView: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                if connection == .live {
+                // Keyboard-hidden affordances (Take Control / show-keyboard)
+                // float over the edge-to-edge terminal. When the keyboard is up
+                // the bar is laid out in-flow instead (see the `.live` VStack),
+                // so the terminal reserves its height.
+                if connection == .live, !isKeyboardVisible {
                     terminalChrome
-                        .background(TerminalChromeHeightReader())
-                }
-            }
-            .onPreferenceChange(TerminalChromeHeightPreferenceKey.self) { height in
-                if measuredTerminalChromeHeight != height {
-                    measuredTerminalChromeHeight = height
                 }
             }
             .animation(.easeInOut(duration: 0.25), value: keyboardBottomInset)
@@ -440,6 +492,7 @@ struct SingleSessionView: View {
         Button(action: popToParent) {
             keyboardGlyph("chevron.left")
         }
+        .buttonStyle(.plain)
         .accessibilityLabel("Back")
     }
 
@@ -481,16 +534,28 @@ struct SingleSessionView: View {
 
     @ViewBuilder
     private var terminalChrome: some View {
-        let shouldShowTakeControl = client.map { isFullScreen && $0.canTakeControl } ?? false
-        if shouldShowTakeControl || isKeyboardVisible || !keyboardAllowed {
+        let shouldShowTakeControl = client.map {
+            Self.shouldShowTakeControl(
+                isFullScreen: isFullScreen,
+                clientCanTakeControl: $0.canTakeControl
+            )
+        } ?? false
+        let shouldExposeKeyboard = client.map {
+            Self.shouldExposeKeyboard(
+                clientIsOwner: $0.isOwner,
+                keyboardAllowed: keyboardAllowed,
+                isKeyboardVisible: isKeyboardVisible
+            )
+        } ?? false
+        if shouldShowTakeControl || shouldExposeKeyboard {
             VStack(spacing: 8) {
                 if let client, shouldShowTakeControl {
                     takeControlButton(client: client)
                 }
-                if isKeyboardVisible {
+                if shouldExposeKeyboard && isKeyboardVisible {
                     terminalControlBar
                         .transition(.move(edge: .bottom).combined(with: .opacity))
-                } else if !keyboardAllowed {
+                } else if shouldExposeKeyboard && !keyboardAllowed {
                     HStack {
                         Spacer()
                         keyboardButton
@@ -499,7 +564,11 @@ struct SingleSessionView: View {
                     .padding(.trailing, 12)
                 }
             }
-            .padding(.bottom, 8)
+            // No gap below the bar while the keyboard is up — it should sit
+            // flush against the keyboard. The 8pt breathing room is only for
+            // the keyboard-hidden affordances (compact button / take-control),
+            // which float above the home indicator.
+            .padding(.bottom, isKeyboardVisible ? 0 : 8)
         } else {
             Color.clear
                 .frame(width: 0, height: 0)
@@ -634,10 +703,10 @@ struct SingleSessionView: View {
             session: client.session,
             controller: controller,
             focusRequestCount: focusRequestCount,
-            softwareKeyboardInput: .init(
+            softwareKeyboardInput: Self.shouldInstallKeyboardProxy(clientIsOwner: client.isOwner) ? .init(
                 insertText: { text in client.sendSoftwareKeyboardText(text) },
                 deleteBackward: { client.deleteBackward() }
-            ),
+            ) : nil,
             preferredInterfaceStyle: preferredStyle,
             onWillUnmount: { snapshot in client.setIdleSnapshot(snapshot) },
             // @spec IOS-11.8: When the user taps **Paste** in the long-press menu,
@@ -782,26 +851,6 @@ struct SingleSessionView: View {
 extension PaneLayoutNode {
     func title(for sessionName: String) -> String? {
         leaves.first { $0.sessionName == sessionName }?.title
-    }
-}
-
-private struct TerminalChromeHeightPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
-private struct TerminalChromeHeightReader: View {
-    var body: some View {
-        GeometryReader { proxy in
-            Color.clear
-                .preference(
-                    key: TerminalChromeHeightPreferenceKey.self,
-                    value: proxy.size.height
-                )
-        }
     }
 }
 

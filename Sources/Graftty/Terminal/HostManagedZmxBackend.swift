@@ -28,11 +28,11 @@ struct HostManagedZmxOwnership {
     private let snapshotImpl: (DisplayGrid) -> DisplayOwnershipSnapshot
     private let attachImpl: (Bool, DisplayGrid) -> DisplayOwnershipSnapshot
     private let claimImpl: (DisplayGrid) -> SessionDisplayOwnershipClaimResult
+    private let claimIfOwnerlessOrCurrentImpl: (DisplayGrid) -> SessionDisplayOwnershipClaimResult
     private let ownerResizeImpl: (UInt64, DisplayGrid) -> SessionDisplayOwnershipResizeResult
     private let releaseImpl: (DisplayGrid) -> DisplayOwnershipSnapshot
     private let restoreFailedClaimImpl: (UInt64, DisplayOwnershipSnapshot, DisplayGrid) -> DisplayOwnershipSnapshot
     private let detachImpl: (DisplayGrid) -> DisplayOwnershipSnapshot
-    private let canWriteImpl: () -> Bool
 
     init(
         clientID: DisplayClientID,
@@ -40,22 +40,22 @@ struct HostManagedZmxOwnership {
         snapshot: @escaping (DisplayGrid) -> DisplayOwnershipSnapshot,
         attach: @escaping (Bool, DisplayGrid) -> DisplayOwnershipSnapshot,
         claim: @escaping (DisplayGrid) -> SessionDisplayOwnershipClaimResult,
+        claimIfOwnerlessOrCurrent: @escaping (DisplayGrid) -> SessionDisplayOwnershipClaimResult,
         ownerResize: @escaping (UInt64, DisplayGrid) -> SessionDisplayOwnershipResizeResult,
         release: @escaping (DisplayGrid) -> DisplayOwnershipSnapshot,
         restoreFailedClaim: @escaping (UInt64, DisplayOwnershipSnapshot, DisplayGrid) -> DisplayOwnershipSnapshot,
-        detach: @escaping (DisplayGrid) -> DisplayOwnershipSnapshot,
-        canWrite: @escaping () -> Bool
+        detach: @escaping (DisplayGrid) -> DisplayOwnershipSnapshot
     ) {
         self.clientID = clientID
         self.kind = kind
         self.snapshotImpl = snapshot
         self.attachImpl = attach
         self.claimImpl = claim
+        self.claimIfOwnerlessOrCurrentImpl = claimIfOwnerlessOrCurrent
         self.ownerResizeImpl = ownerResize
         self.releaseImpl = release
         self.restoreFailedClaimImpl = restoreFailedClaim
         self.detachImpl = detach
-        self.canWriteImpl = canWrite
     }
 
     init(
@@ -82,6 +82,14 @@ struct HostManagedZmxOwnership {
             },
             claim: { grid in
                 store.claimOwner(
+                    sessionName: sessionName,
+                    clientID: clientID,
+                    kind: kind,
+                    grid: grid
+                )
+            },
+            claimIfOwnerlessOrCurrent: { grid in
+                store.claimOwnerIfOwnerlessOrCurrent(
                     sessionName: sessionName,
                     clientID: clientID,
                     kind: kind,
@@ -121,10 +129,6 @@ struct HostManagedZmxOwnership {
                     clientID: clientID,
                     fallbackGrid: fallbackGrid
                 )
-            },
-            canWrite: {
-                let snapshot = store.snapshot(sessionName: sessionName)
-                return snapshot.ownerClientID == clientID && snapshot.ownerKind == kind
             }
         )
     }
@@ -139,6 +143,10 @@ struct HostManagedZmxOwnership {
 
     func claim(grid: DisplayGrid) -> SessionDisplayOwnershipClaimResult {
         claimImpl(grid)
+    }
+
+    func claimIfOwnerlessOrCurrent(grid: DisplayGrid) -> SessionDisplayOwnershipClaimResult {
+        claimIfOwnerlessOrCurrentImpl(grid)
     }
 
     func ownerResize(epoch: UInt64, grid: DisplayGrid) -> SessionDisplayOwnershipResizeResult {
@@ -159,10 +167,6 @@ struct HostManagedZmxOwnership {
 
     func detach(fallbackGrid: DisplayGrid) -> DisplayOwnershipSnapshot {
         detachImpl(fallbackGrid)
-    }
-
-    func canWrite() -> Bool {
-        canWriteImpl()
     }
 }
 
@@ -482,7 +486,16 @@ final class HostManagedZmxBackend {
             lock.unlock()
         }
 
-        guard writeAllowed() else {
+        // One snapshot on the steady-state owner path; re-check only after an
+        // actual takeControl() flips ownership. `writeAllowed()` takes a store
+        // snapshot under lock, so calling it twice unconditionally would double
+        // that cost on every byte chunk libghostty emits.
+        var allowed = writeAllowed()
+        if !allowed, claimEngagement {
+            _ = takeControl()
+            allowed = writeAllowed()
+        }
+        guard allowed else {
             Self.trace.notice("write \(self.spawnConfiguration.sessionName, privacy: .public) \(data.count) bytes BLOCKED (follower)")
             return
         }
@@ -940,15 +953,22 @@ final class HostManagedZmxBackend {
             return
         }
         attachedToOwnership = true
-        let snapshot = ownership.attach(visible: true, grid: grid)
-        ownershipSnapshot = snapshot
+        _ = ownership.attach(visible: true, grid: grid)
+        let claim = ownership.claimIfOwnerlessOrCurrent(grid: grid)
+        ownershipSnapshot = claim.snapshot
         lock.unlock()
     }
 
     private func writeAllowed() -> Bool {
         guard let ownership else { return true }
-        let allowed = ownership.canWrite()
+        // One store snapshot, not two: derive the write gate from the same
+        // snapshot we cache. This runs on every PTY byte chunk libghostty
+        // emits, so taking a second snapshot just to recompute ownership was
+        // pure waste (an extra lock acquisition + allocation) on the hottest
+        // input path.
         let snapshot = ownership.snapshot(fallbackGrid: .daemonFallback)
+        let allowed = snapshot.ownerClientID == ownership.clientID
+            && snapshot.ownerKind == ownership.kind
         lock.lock()
         ownershipSnapshot = snapshot
         lock.unlock()

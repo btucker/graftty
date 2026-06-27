@@ -26,6 +26,8 @@ struct DisplayOwnershipAssemblyTests {
         firstManager.displayOwnershipStore = firstStore
         secondManager.displayOwnershipStore = secondStore
 
+        // Attach no longer implicitly claims ownership; claim explicitly so each
+        // store holds an independent owner for the isolation assertions below.
         _ = firstManager.displayOwnershipStore?.attachClient(
             sessionName: "shared-session-name",
             clientID: DisplayClientID("mac-client"),
@@ -34,12 +36,24 @@ struct DisplayOwnershipAssemblyTests {
             visible: true,
             grid: try DisplayGrid(cols: 80, rows: 24)
         )
+        _ = firstManager.displayOwnershipStore?.claimOwner(
+            sessionName: "shared-session-name",
+            clientID: DisplayClientID("mac-client"),
+            kind: .mac,
+            grid: try DisplayGrid(cols: 80, rows: 24)
+        )
         _ = secondManager.displayOwnershipStore?.attachClient(
             sessionName: "shared-session-name",
             clientID: DisplayClientID("web-client"),
             kind: .web,
             role: .interactive,
             visible: true,
+            grid: try DisplayGrid(cols: 100, rows: 30)
+        )
+        _ = secondManager.displayOwnershipStore?.claimOwner(
+            sessionName: "shared-session-name",
+            clientID: DisplayClientID("web-client"),
+            kind: .web,
             grid: try DisplayGrid(cols: 100, rows: 30)
         )
 

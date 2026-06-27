@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import Foundation
 import Testing
+import XCTest
 @testable import GrafttyMobileKit
 
 @Suite
@@ -102,6 +103,42 @@ struct SessionIdleRendererTests {
         clock.advance(by: 100)
         await quiesce()
         #expect(clock.pendingSleepCount <= pending)
+    }
+}
+
+@MainActor
+final class SessionIdleRendererXCTests: XCTestCase {
+    final class IdleWS: WebSocketClient, @unchecked Sendable {
+        func send(_ frame: WebSocketFrame) async throws {}
+        func receive() async throws -> WebSocketFrame {
+            try await Task.sleep(nanoseconds: 60_000_000_000)
+            throw CancellationError()
+        }
+        func close() {}
+    }
+
+    func quiesce() async {
+        try? await Task.sleep(nanoseconds: 50_000_000)
+    }
+
+    /// @spec IOS-10.7: Fullscreen mobile terminals shall not enter
+    /// snapshot-idle mode by default. The snapshot optimization is safe for
+    /// pane previews, but in fullscreen it unmounts `TerminalPaneView` while
+    /// UIKit may still own the keyboard responder, collapsing the keyboard and
+    /// risking libghostty teardown against an active view.
+    func testFullscreenDefaultDoesNotIdleUnmountAfterThirtySeconds() async throws {
+        let clock = VirtualClock()
+        let client = SessionClient(
+            sessionName: "s",
+            webSocketFactory: { IdleWS() },
+            clock: clock
+        )
+        defer { client.stop() }
+        client.start()
+        await quiesce()
+        clock.advance(by: 31)
+        await quiesce()
+        XCTAssertEqual(client.renderActivity, .active)
     }
 }
 #endif

@@ -50,10 +50,29 @@ struct TerminalPaneViewTests {
         let hitView = container.hitTest(CGPoint(x: 160, y: 120), with: nil)
 
         #expect(hitView !== container.inputProxy)
-        // The proxy must still be eligible to be the keyboard's first
-        // responder — touch transparency is about hit-testing, not the
-        // responder chain.
+        // Without owner-installed software-keyboard handlers, a tap shall not
+        // summon the keyboard. Enabling those handlers restores responder
+        // eligibility without changing hit-test transparency.
+        #expect(!container.inputProxy.canBecomeFirstResponder)
+        container.inputProxy.softwareKeyboardInputEnabled = true
         #expect(container.inputProxy.canBecomeFirstResponder)
+    }
+
+    @Test
+    func dismantleUIViewDoesNotCaptureLayerSnapshotDuringTeardown() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let coordinator = TerminalPaneView.Coordinator()
+        var didNotifyUnmount = false
+        var receivedSnapshot: UIImage?
+        coordinator.onWillUnmount = { snapshot in
+            didNotifyUnmount = true
+            receivedSnapshot = snapshot
+        }
+
+        TerminalPaneView.dismantleUIView(container, coordinator: coordinator)
+
+        #expect(didNotifyUnmount)
+        #expect(receivedSnapshot == nil)
     }
 }
 

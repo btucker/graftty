@@ -34,8 +34,8 @@ struct HostManagedZmxBackendTests {
         #expect(session.writes() == [Data("x".utf8)])
     }
 
-    @Test("Mac follower suppresses PTY resizes and PTY-bound input.")
-    func macFollowerSuppressesResizeAndInput() throws {
+    @Test("Mac follower suppresses PTY resizes and programmatic PTY-bound input.")
+    func macFollowerSuppressesResizeAndProgrammaticInput() throws {
         let store = SessionDisplayOwnershipStore()
         let owner = FakeHostManagedSession()
         let ownerBackend = Self.makeBackend(
@@ -64,15 +64,46 @@ struct HostManagedZmxBackendTests {
             1680,
             1200
         )
-        try followerBackend.write(Data("blocked".utf8))
+        try followerBackend.write(Data("blocked".utf8), claimEngagement: false)
 
         #expect(follower.resizes().isEmpty)
         #expect(follower.writes().isEmpty)
         #expect(store.snapshot(sessionName: "graftty-test").ownerClientID == DisplayClientID("mac-owner"))
     }
 
-    @Test("First visible interactive Mac attach auto-claims only when the session is ownerless.")
-    func firstVisibleMacAttachAutoClaimsOnlyWhenOwnerless() throws {
+    @Test("Mac follower user input takes ownership before forwarding bytes.")
+    func macFollowerUserInputTakesOwnershipBeforeForwardingBytes() throws {
+        let store = SessionDisplayOwnershipStore()
+        let ownerSession = FakeHostManagedSession()
+        let owner = Self.makeBackend(
+            session: ownerSession,
+            ownership: Self.ownership(store: store, clientID: "mac-owner")
+        )
+        defer { owner.releaseReceiveUserdataAfterSurfaceFree() }
+        owner.bindSurfaceSync(currentGridSize: { (cols: 100, rows: 30) }, requestRefresh: {})
+        try owner.start(surface: Self.fakeSurface())
+        owner.markLayoutSettled()
+
+        let followerSession = FakeHostManagedSession()
+        let follower = Self.makeBackend(
+            session: followerSession,
+            ownership: Self.ownership(store: store, clientID: "mac-follower")
+        )
+        defer { follower.releaseReceiveUserdataAfterSurfaceFree() }
+        follower.bindSurfaceSync(currentGridSize: { (cols: 140, rows: 50) }, requestRefresh: {})
+        try follower.start(surface: Self.fakeSurface())
+        follower.markLayoutSettled()
+
+        try follower.write(Data("x".utf8), claimEngagement: true)
+
+        let snapshot = store.snapshot(sessionName: "graftty-test")
+        #expect(snapshot.ownerClientID == DisplayClientID("mac-follower"))
+        #expect(followerSession.resizes() == [Resize(cols: 140, rows: 50)])
+        #expect(followerSession.writes() == [Data("x".utf8)])
+    }
+
+    @Test("First visible interactive Mac attach explicitly claims only when the session is ownerless.")
+    func firstVisibleMacAttachExplicitlyClaimsOnlyWhenOwnerless() throws {
         let store = SessionDisplayOwnershipStore()
         let firstSession = FakeHostManagedSession()
         let first = Self.makeBackend(
@@ -277,8 +308,39 @@ struct HostManagedZmxBackendTests {
         #expect(followerSession.resizes().isEmpty)
 
         try owner.write(Data("still-owner".utf8))
-        try follower.write(Data("blocked".utf8))
+        try follower.write(Data("blocked".utf8), claimEngagement: false)
         #expect(ownerSession.writes() == [Data("still-owner".utf8)])
+        #expect(followerSession.writes().isEmpty)
+    }
+
+    @Test("Mac follower user input is dropped when the takeover resize fails.")
+    func macFollowerUserInputIsDroppedWhenTakeoverResizeFails() throws {
+        let store = SessionDisplayOwnershipStore()
+        let ownerSession = FakeHostManagedSession()
+        let owner = Self.makeBackend(
+            session: ownerSession,
+            ownership: Self.ownership(store: store, clientID: "mac-owner")
+        )
+        defer { owner.releaseReceiveUserdataAfterSurfaceFree() }
+        owner.bindSurfaceSync(currentGridSize: { (cols: 100, rows: 30) }, requestRefresh: {})
+        try owner.start(surface: Self.fakeSurface())
+        owner.markLayoutSettled()
+
+        let followerSession = FakeHostManagedSession()
+        let follower = Self.makeBackend(
+            session: followerSession,
+            ownership: Self.ownership(store: store, clientID: "mac-failed-input")
+        )
+        defer { follower.releaseReceiveUserdataAfterSurfaceFree() }
+        follower.bindSurfaceSync(currentGridSize: { (cols: 140, rows: 50) }, requestRefresh: {})
+        try follower.start(surface: Self.fakeSurface())
+        follower.markLayoutSettled()
+
+        followerSession.setFailNextResize(true)
+        try follower.write(Data("x".utf8), claimEngagement: true)
+
+        let snapshot = store.snapshot(sessionName: "graftty-test")
+        #expect(snapshot.ownerClientID == DisplayClientID("mac-owner"))
         #expect(followerSession.writes().isEmpty)
     }
 

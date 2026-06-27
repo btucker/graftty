@@ -133,6 +133,12 @@ final class SurfaceHandle {
     /// Used by TerminalManager to route last-remote-detach syncs (TERM-11.4).
     let zmxSessionName: String?
 
+    /// Shared display-ownership store + this pane's Mac display client ID,
+    /// retained so `canTakeDisplayControl()` can report whether another
+    /// client currently owns the pane. Both nil for direct-shell panes.
+    private let displayOwnershipStore: SessionDisplayOwnershipStore?
+    private let displayClientID: DisplayClientID?
+
     /// Retained pointer to the userdata box; released in `deinit`. libghostty
     /// keeps a copy of the pointer in its surface struct and passes it back
     /// through callbacks that want per-surface identity.
@@ -177,6 +183,8 @@ final class SurfaceHandle {
         self.terminalID = terminalID
         self.worktreePath = worktreePath
         self.zmxSessionName = zmxSpawnConfiguration?.sessionName
+        self.displayOwnershipStore = displayOwnershipStore
+        self.displayClientID = displayClientID
         self.surfaceFactory = surfaceFactory
 
         let userdataBox = SurfaceUserdataBox(
@@ -523,6 +531,20 @@ final class SurfaceHandle {
     @discardableResult
     func takeDisplayControl() -> Bool {
         zmxBackend?.takeControl() ?? false
+    }
+
+    /// True when this pane's zmx session is currently owned by a *different*
+    /// display client (e.g. iOS or web took control), so the Mac should offer
+    /// a "Take Control" affordance to reclaim it. False for direct-shell panes,
+    /// while this Mac pane already owns the session, or while it is ownerless.
+    /// Mac startup performs an explicit ownerless/current claim before this UI
+    /// path is relevant.
+    func canTakeDisplayControl() -> Bool {
+        guard let displayOwnershipStore,
+              let displayClientID,
+              let zmxSessionName else { return false }
+        let snapshot = displayOwnershipStore.snapshot(sessionName: zmxSessionName)
+        return snapshot.ownerClientID != nil && snapshot.ownerClientID != displayClientID
     }
 
     var needsConfirmQuit: Bool {

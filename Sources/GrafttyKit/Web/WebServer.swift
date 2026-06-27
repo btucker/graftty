@@ -38,6 +38,24 @@ internal final class WebDisplayOwnershipBroadcaster: @unchecked Sendable {
 
     private let lock = NSLock()
     private var subscribers: [String: [UUID: Subscriber]] = [:]
+    /// Held for the broadcaster's lifetime so it stays subscribed to the
+    /// shared ownership store; cancels (unsubscribes) when this broadcaster
+    /// is torn down.
+    private var storeObserverToken: SessionDisplayOwnershipStore.ObserverToken?
+
+    /// When `store` is provided, the broadcaster subscribes to every owner
+    /// mutation on it and re-broadcasts the snapshot to connected clients.
+    /// This is what propagates *Mac-host* ownership changes — those mutate the
+    /// shared store directly (via `HostManagedZmxOwnership`) and never pass
+    /// through this bridge's own broadcast calls, so without this subscription
+    /// web/iOS followers never learn the Mac took or released the display.
+    init(store: SessionDisplayOwnershipStore? = nil) {
+        if let store {
+            storeObserverToken = store.addObserver { [weak self] snapshot in
+                self?.broadcast(snapshot)
+            }
+        }
+    }
 
     func register(
         sessionName: String,
@@ -93,7 +111,6 @@ internal final class WebSocketBridgeCoordinator: @unchecked Sendable {
     private var attached = false
     private var detached = false
     private var lastAcceptedOwnerGrid: DisplayGrid?
-    var beforeImplicitBinaryClaimForTesting: (() -> Void)?
 
     init(
         sessionName: String,
@@ -191,31 +208,7 @@ internal final class WebSocketBridgeCoordinator: @unchecked Sendable {
         }
 
         let snapshot = ownershipStore.snapshot(sessionName: sessionName)
-        guard snapshot.isOwnerless else { return }
-        let grid = snapshot.grid
-        beforeImplicitBinaryClaimForTesting?()
-        ensureAttached(kind: currentKind() ?? defaultKind, grid: grid)
-
-        if isCurrentOwner() {
-            acceptOwnerGrid(grid)
-            write(data)
-            return
-        }
-
-        let result = ownershipStore.claimOwnerIfOwnerlessOrCurrent(
-            sessionName: sessionName,
-            clientID: clientID,
-            kind: currentKind() ?? defaultKind,
-            grid: grid,
-            fallbackGrid: grid
-        )
-        if result.accepted {
-            acceptOwnerGrid(result.snapshot.grid)
-            broadcaster.broadcast(result.snapshot)
-            write(data)
-        } else {
-            broadcaster.broadcast(result.snapshot)
-        }
+        broadcaster.broadcast(snapshot)
     }
 
     func handlePTYSize(cols: UInt16, rows: UInt16) {
@@ -273,23 +266,7 @@ internal final class WebSocketBridgeCoordinator: @unchecked Sendable {
             return
         }
 
-        guard snapshot.isOwnerless else {
-            broadcaster.broadcast(snapshot)
-            return
-        }
-
-        let result = ownershipStore.claimOwnerIfOwnerlessOrCurrent(
-            sessionName: sessionName,
-            clientID: clientID,
-            kind: kind,
-            grid: grid,
-            fallbackGrid: grid
-        )
-        if result.accepted {
-            acceptOwnerGrid(grid)
-            resize(cols, rows)
-        }
-        broadcaster.broadcast(result.snapshot)
+        broadcaster.broadcast(snapshot)
     }
 
     private func ensureAttached(kind: DisplayClientKind, grid: DisplayGrid) {
@@ -609,7 +586,7 @@ public final class WebServer {
             self.signalingHandler = signalingHandler
             self.remoteAttachmentRegistry = remoteAttachmentRegistry
             self.displayOwnershipStore = displayOwnershipStore
-            self.ownershipBroadcaster = WebDisplayOwnershipBroadcaster()
+            self.ownershipBroadcaster = WebDisplayOwnershipBroadcaster(store: displayOwnershipStore)
         }
 
         /// Accepts the range NIO's `bootstrap.bind(host:port:)` will accept
