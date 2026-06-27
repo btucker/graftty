@@ -51,16 +51,26 @@ final class WebServerController: ObservableObject {
     /// `WebServer.Config` default disables tracking. Injected by
     /// `GrafttyApp.startup()` alongside the other providers.
     private var remoteAttachmentRegistry: RemoteAttachmentRegistry?
+    /// Shared display-ownership gate for web/iOS sockets. Production
+    /// injects the process-wide store from `GrafttyApp`; tests and
+    /// early construction fall back to a controller-owned store.
+    private var displayOwnershipStore: SessionDisplayOwnershipStore
 
     /// Last `(isEnabled, port)` tuple we reconciled against. Used to suppress
     /// no-op reconciles — `objectWillChange` on `@AppStorage` fires on every
     /// property write, including ones that don't affect our server.
     private var lastApplied: (enabled: Bool, port: Int)?
 
-    init(settings: WebAccessSettings, zmxExecutable: URL, zmxDir: URL) {
+    init(
+        settings: WebAccessSettings,
+        zmxExecutable: URL,
+        zmxDir: URL,
+        displayOwnershipStore: SessionDisplayOwnershipStore = SessionDisplayOwnershipStore()
+    ) {
         self.settings = settings
         self.zmxExecutable = zmxExecutable
         self.zmxDir = zmxDir
+        self.displayOwnershipStore = displayOwnershipStore
         reconcile()
         settings.objectWillChange
             .sink { [weak self] _ in
@@ -156,6 +166,18 @@ final class WebServerController: ObservableObject {
     func setRemoteAttachmentRegistry(_ registry: RemoteAttachmentRegistry) {
         remoteAttachmentRegistry = registry
         rebuildIfRunning()
+    }
+
+    /// Install the process-wide display ownership store. Rebuilds a
+    /// running server so new WebSocket bridges share ownership state
+    /// with any other ownership-aware surfaces.
+    func setDisplayOwnershipStore(_ store: SessionDisplayOwnershipStore) {
+        displayOwnershipStore = store
+        rebuildIfRunning()
+    }
+
+    var displayOwnershipStoreForTests: SessionDisplayOwnershipStore {
+        displayOwnershipStore
     }
 
     /// Force-rebuild the running server so a new provider closure is
@@ -296,7 +318,8 @@ final class WebServerController: ObservableObject {
                 ghosttyConfigProvider: { GhosttyConfigReader.resolvedConfig() },
                 worktreePanesProvider: worktreePanesProvider ?? { [] },
                 signalingHandler: signalingHandler,
-                remoteAttachmentRegistry: remoteAttachmentRegistry
+                remoteAttachmentRegistry: remoteAttachmentRegistry,
+                displayOwnershipStore: displayOwnershipStore
             ),
             auth: auth,
             bindAddresses: bindAddresses,

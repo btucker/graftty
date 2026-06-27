@@ -282,17 +282,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TERM-11.2** While no remote client is attached and layout has settled, a libghostty viewport callback shall resize the zmx PTY immediately, before any user input.
 
-**TERM-11.3** When the silent gate disengages on first user input, the application shall resize the PTY to the current libghostty grid size and force a surface refresh.
-
-**TERM-11.4** When the last remote client detaches from a session whose pane has not yet been engaged, the application shall resize the PTY to the current libghostty grid size.
-
 **TERM-11.5** The application shall track the number of remote clients attached to each zmx session; a session is remote-attached while its count is positive, and an observer fires when the count returns to zero.
 
-**TERM-11.6** When user input engages the silent gate before layout has settled, the application shall defer the engagement PTY sync until layout settles rather than resize the PTY to the pre-layout grid.
+**TERM-11.6** When input arrives before layout has settled, the application shall still defer PTY sync until layout settles rather than resize the PTY to the pre-layout grid.
 
-**TERM-11.7** While layout has not settled, the application shall not forward viewport callbacks to the zmx PTY regardless of engagement state.
+**TERM-11.7** While layout has not settled, the application shall not forward viewport callbacks to the zmx PTY even after input.
 
-**TERM-11.8** If libghostty emits PTY-bound bytes outside a user-input scope (terminal query auto-responses, automation), then the application shall not treat them as engaging user input; bytes emitted inside the scope shall engage.
+**TERM-11.8** User-input scopes annotate libghostty callback bytes for input routing only; they no longer claim resize ownership.
 
 **TERM-11.9** While a rapid sequence of libghostty viewport callbacks arrives, the application shall forward the first resize to the zmx PTY immediately and coalesce the remainder, delivering at most one trailing resize with the latest dimensions per quiet window, so a divider drag emits a bounded SIGWINCH stream that always ends at the final size.
 
@@ -307,6 +303,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TERM-11.14** When a kept-alive pane is switched back to and the live grid differs from the PTY, the application shall forward exactly that live grid once (a single real resize / SIGWINCH) and never a synthetic rows-1/rows bounce.
 
 **TERM-11.15** When a forward to the PTY fails (a swallowed resize error), the application shall not record it as the last-forwarded size; a subsequent show reconcile shall re-forward the live grid and correct the divergence rather than treat the failed size as in sync.
+
+**TERM-11.16** When AppKit resizes a zmx-backed terminal view, the application shall update libghostty's surface size before marking the pane visible and reconciling zmx to the live grid, so the show-time reconcile cannot forward the previous row count during a real resize.
 
 ## GIT — Worktree Discovery & Monitoring
 
@@ -960,9 +958,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-3.4** WebSocket binary frames shall carry raw PTY bytes in both directions.
 
-**WEB-3.5** WebSocket text frames shall carry JSON control envelopes. The only Phase 2 envelope shape shall be `{"type":"resize","cols":<uint16>,"rows":<uint16>}`.
+**WEB-3.5** WebSocket text frames shall carry JSON control envelopes. Legacy `{"type":"resize","cols":<uint16>,"rows":<uint16>}` frames may update the PTY only for a socket that is already the confirmed display owner; ownership-aware clients shall use `hello`, `ownership`, `grid`, `takeControl`, and `ownerResize` envelopes from `WebControlEnvelope`, and only a `takeControl` frame may change web display ownership. Clients may send `takeControl` from an explicit Take Control button or from an intentional terminal-input event, but passive attach, focus, and resize events shall not claim ownership.
 
 **WEB-3.6** When the application responds to an HTTP request with `Connection: close`, it shall transmit exactly the number of body bytes declared in its `Content-Length` header to the client before closing the TCP connection, so clients never observe a truncated response (`ERR_CONTENT_LENGTH_MISMATCH`). This requirement applies even on links (e.g., Tailscale `utun`, MTU ~1280) whose kernel TCP send buffer cannot absorb the full response in a single non-blocking write.
+
+**WEB-3.7** The web/iOS bridge shall propagate ownership mutations that originate from any transport — including the Mac host mutating the shared SessionDisplayOwnershipStore directly — to every connected WebSocket client, so a follower learns when the Mac takes or releases the display.
 
 ### WEB-4.x — Lifecycle
 
@@ -988,17 +988,19 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-5.2** The client shall send terminal data events as binary WebSocket frames.
 
-**WEB-5.3** The client shall send resize events as JSON control envelopes in text frames, including an initial resize sent on WebSocket open so the server-side PTY is sized to the client's actual viewport rather than the `zmx attach` default.
+**WEB-5.3** The client shall enter owner-aware WebSocket sessions by sending a `hello` control frame on open with a fresh display client ID, kind `.web`, role `.interactive`, visibility, and the current terminal grid. Terminal resize events shall be sent as `ownerResize(clientID, epoch, cols, rows)` only after an ownership snapshot confirms this client as display owner; follower resizes shall update local presentation without resizing the remote PTY.
 
 **WEB-5.4** When a client requests `GET /sessions`, the application shall respond with a JSON array of the currently-running sessions, one entry per live pane across all running worktrees, with fields `name` (the zmx session name derived per `ZMX-2.1`), `worktreePath`, `repoDisplayName`, and `worktreeDisplayName`. The bundled client's root page (`/`) shall fetch this endpoint and render a clickable picker grouped by `repoDisplayName`, so a user who visits the server's root URL without a session query gets a functional entry point rather than a bare "no session" placeholder. Access to `/sessions` shall be gated by the same Tailscale-whois authorization as every other path (`WEB-2.1` / `WEB-2.2`).
 
 **WEB-5.5** The client shall size the terminal grid to fill the host element using the renderer's font metrics (`cols = floor(host.clientWidth / metrics.width)`, `rows = floor(host.clientHeight / metrics.height)`) and shall not reserve any horizontal pixels for a native scrollbar, so the canvas occupies the full viewport width and the PTY column count matches the visible grid. Rationale: ghostty-web's bundled `FitAddon` unconditionally subtracts 15 px from available width for a DOM scrollbar (`proposeDimensions()` in `ghostty-web.js`), but Ghostty renders its scrollback scrollbar as a canvas overlay — using `FitAddon` leaves a ~15 px gap on the right edge and narrows wrapping (e.g., 148 cols instead of 150 on a 1200 px viewport with 8 px cells).
 
-**WEB-5.6** When the client's WebSocket closes for any reason other than a deliberate page unmount (mobile tab suspension, laptop sleep, transient network wobble, Tailscale peer rotation), the client shall automatically attempt to reconnect to the same `/ws?session=<name>` URL with exponential backoff starting at 500 ms and capped at 8 s, with ±25 % jitter per attempt, keeping the `Terminal` instance and its scrollback alive across reconnects; on `visibilitychange` to `visible`, if the socket is not `OPEN` the client shall reset backoff and reconnect immediately rather than wait out any pending timeout. On each successful `open`, the client shall resend the current `(cols, rows)` as a resize envelope so the freshly-spawned `zmx attach` child's PTY matches the terminal grid. Rationale: without this, every transient drop required a full page refresh — a refresh loses the URL-bound session-picker state and visually blanks the terminal for the ~300 ms of wasm re-init. The daemon session surviving per `WEB-4.5` makes reconnection a safe retry rather than a "recreate from scratch" cost.
+**WEB-5.6** When the client's WebSocket closes for any reason other than a deliberate page unmount (mobile tab suspension, laptop sleep, transient network wobble, Tailscale peer rotation), the client shall automatically attempt to reconnect to the same `/ws?session=<name>` URL with exponential backoff starting at 500 ms and capped at 8 s, with ±25 % jitter per attempt, keeping the `Terminal` instance and its scrollback alive across reconnects; on `visibilitychange` to `visible`, if the socket is not `OPEN` the client shall reset backoff and reconnect immediately rather than wait out any pending timeout. On each successful `open`, the client shall send a fresh `hello` control frame with its current grid. If the ownership snapshot confirms that client as display owner after reconnect, it shall then publish the current grid with `ownerResize`; reconnecting as a follower shall not resize the remote PTY. Rationale: without this, every transient drop required a full page refresh — a refresh loses the URL-bound session-picker state and visually blanks the terminal for the ~300 ms of wasm re-init. The daemon session surviving per `WEB-4.5` makes reconnection a safe retry rather than a "recreate from scratch" cost.
 
 **WEB-5.7** On mobile browsers the client shall (a) translate a single-finger vertical drag on the terminal host into `term.scrollLines(-deltaLines)` so scrollback is reachable without a hardware wheel (ghostty-web's built-in scrolling is wheel-only and mobile browsers do not synthesize wheel events from single-finger drag); and (b) size the terminal host to `window.visualViewport.{width,height}` (fallback `window.innerWidth/Height`), updating on `visualViewport` `resize` and `scroll` events, so when the software keyboard opens the host shrinks to the remaining visible area and the existing ResizeObserver refits `(cols, rows)` — keeping the cursor row above the keyboard rather than occluded beneath it. Taps shorter than one character-cell of movement shall still reach the terminal's own focus handler (which shows the mobile keyboard); multi-touch gestures (pinch, two-finger pan) shall pass through untouched. The terminal host shall declare `touch-action: none` and `overscroll-behavior: none` so the browser doesn't interpret the drag as page-scroll/pan/zoom or rubber-band the viewport before our handler sees the event.
 
 **WEB-5.8** While the user is viewing scrollback on the normal screen (i.e., `term.viewportY > 0`), incoming PTY output shall not move the viewport: the client shall capture `viewportY` and scrollback length immediately before each `term.write()` call and, after the write, re-apply `viewportY` shifted by the number of lines that scrolled into scrollback so the viewport stays pinned to the same absolute content rather than the same offset-from-bottom. While the alternate screen is active on either side of the write, the viewport shall be left at the library-default bottom position. Rationale: ghostty-web's `Terminal.writeInternal` unconditionally calls `scrollToBottom()` whenever `viewportY !== 0` at write time, so without this wrapper the viewport snaps to the newest output on every WebSocket data frame — making wheel/touch scrollback unusable on any session that is actively producing output. Pinning to absolute content (not offset) is what lets the user read older lines while the shell continues to print.
+
+**WEB-5.9** The client shall ignore an ownership snapshot whose epoch is older than the latest applied snapshot, so a reordered broadcast cannot revert the owner/grid the client already advanced past.
 
 ### WEB-6.x — Security and non-goals
 
@@ -1250,11 +1252,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.3** When the user selects a session, the application shall open a `URLSessionWebSocketTask` at `<ws-or-wss>://<host>:<port>/ws?session=<urlEncoded name>` and attach it to an `InMemoryTerminalSession` from `libghostty-spm` rendered by `GhosttyTerminal.TerminalView`.
 
-**IOS-4.4** On WebSocket open, the application shall send an initial `{"type":"resize","cols":<n>,"rows":<m>}` text frame derived from the terminal view's first-layout viewport, before forwarding any user input. This mirrors `WEB-5.3`.
+**IOS-4.4** On WebSocket open to an owner-aware Graftty server, the application shall send an initial `hello` control frame containing a fresh iOS display client ID, kind `.ios`, role `.interactive` for fullscreen panes or `.preview` for pane previews, visibility, and the last measured viewport grid (falling back to the authoritative grid or daemon fallback before first layout). Legacy/non-web-control transports may still use their direct resize protocol for compatibility.
 
 **IOS-4.5** Server-sent binary WebSocket frames shall be forwarded to `InMemoryTerminalSession.receive(_:)` unmodified. User input emitted by libghostty via the `writeHandler` callback shall be sent as a binary WebSocket frame, mirroring `WEB-3.4` and `WEB-5.2`.
 
-**IOS-4.6** On subsequent terminal resizes (viewport change, keyboard appearance, rotation), the application shall send a `{"type":"resize",...}` text frame matching the new viewport, mirroring `WEB-5.3`.
+**IOS-4.6** On subsequent fullscreen terminal resizes (viewport change, keyboard appearance, rotation), the application shall memoize the local viewport immediately. If and only if the current ownership snapshot confirms this iOS client as display owner, it shall send `ownerResize(clientID, epoch, cols, rows)`; follower, ownerless, and preview clients shall not resize the remote PTY. Legacy/non-web-control transports may still use their direct resize protocol for compatibility.
 
 **IOS-4.7** When the user selects a saved host, the application shall issue `GET <baseURL>/ghostty-config` and, if the response is a non-empty 2xx body, pass it to `TerminalController.shared.updateConfigSource(.generated(text))` before mounting any `TerminalPaneView`. A missing or empty response is a non-fatal condition — the client shall fall back to `libghostty-spm`'s default configuration. The endpoint is a concatenation of the user's on-disk Ghostty configs (`$XDG_CONFIG_HOME/ghostty/config`, then `~/Library/Application Support/com.mitchellh.ghostty/config`) in the same priority order the Mac app applies them at launch, so terminals render with the same fonts, theme, and colors as the desktop.
 
@@ -1266,7 +1268,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.11** When the user taps a pane tile, the application shall open a fullscreen terminal view for that session — a single `TerminalPaneView` with the navigation bar hidden and the terminal extending beneath the top safe area (`IOS-4.8`). The WebSocket is opened on view appear and closed on view disappear; system edge-swipe-back returns to the worktree detail.
 
-**IOS-4.12** While the worktree-detail screen is rendering live pane previews (`IOS-4.10`), each `PaneTile` shall own its own `TerminalController` whose font-size is computed dynamically from the tile's geometry (`tileWidth / serverCols × monospaceAspect`) so the server's grid renders at scale 1 within the tile. The font is updated via `setTerminalConfiguration().fontSize(_)` whenever the tile width or the server's column count changes — including device rotation, since landscape gives each tile a different width. The preview shall not apply a runtime `scaleEffect` driven by libghostty's reported `cellWidthPoints`: that value is shared with the fullscreen view (`IOS-4.11`), which renders at a much larger font, so a feedback-loop safety-net would oscillate or progressively shrink the preview when the user navigates between the tile and fullscreen. Preview legibility is sacrificed for fit: previews communicate pane shape and live activity, not readable text. The fullscreen view (`IOS-4.11`) keeps the iOS-scaled font as it remains the primary read surface.
+**IOS-4.12** While the worktree-detail screen is rendering live pane previews (`IOS-4.10`), each `PaneTile` shall own its own `TerminalController` whose font-size is computed dynamically from the tile's geometry (`tileWidth / authoritativeCols × monospaceAspect`) so the authoritative grid renders at scale 1 within the tile. The font is updated via `setTerminalConfiguration().fontSize(_)` whenever the tile width or authoritative column count changes — including device rotation, since landscape gives each tile a different width. The preview shall not apply a runtime `scaleEffect` driven by libghostty's reported `cellWidthPoints`: that value is shared with the fullscreen view (`IOS-4.11`), which renders at a much larger font, so a feedback-loop safety-net would oscillate or progressively shrink the preview when the user navigates between the tile and fullscreen. Preview legibility is sacrificed for fit: previews communicate pane shape and live activity, not readable text. The fullscreen view (`IOS-4.11`) keeps the iOS-scaled font as it remains the primary read surface.
 
 **IOS-4.13** When GrafttyMobile constructs a `TerminalController` from the Mac-provided Ghostty config (`IOS-4.7`), it shall not install libghostty-spm's built-in light/dark `TerminalTheme` overlay. UIKit trait changes may still report the phone's `.light` or `.dark` color scheme to libghostty, but the rendered config shall continue to use the Mac config's background, foreground, palette, and theme-derived colors rather than switching to GhosttyTerminal's default Alabaster/Afterglow themes.
 
@@ -1278,13 +1280,23 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.17** When the user selects a worktree from the picker (`IOS-4.1`) and that worktree's pane layout is a single leaf, the application shall push the fullscreen terminal for that pane directly onto the navigation stack, bypassing the worktree-detail screen (`IOS-4.10`). The system edge-swipe-back gesture and the in-app back button (`IOS-5.5`) shall return the user to the worktree picker.
 
-**IOS-4.18** While a `SessionClient` is operating as a worktree-detail pane preview (`IOS-4.10`, `IOS-4.12`), the application shall not claim PTY size-leadership. Bytes emitted by libghostty in the preview controller shall be discarded rather than forwarded to the server, and layout-driven resize callbacks shall not produce `WebControlEnvelope.resize` frames. Size-leadership remains a property exclusive to the focused fullscreen pane (`IOS-6.5`).
+**IOS-4.18** While a `SessionClient` is operating as a worktree-detail pane preview (`IOS-4.10`, `IOS-4.12`), it shall identify itself with `DisplayClientRole.preview`, report `visible=false`, never claim display ownership, never forward libghostty bytes to the server, and never send takeover or `ownerResize` frames. Preview sizing shall render the authoritative grid locally; only fullscreen terminal input or an explicit fullscreen Take Control action can change the display owner.
 
-**IOS-4.19** While a `PaneTile` already has a `TerminalController` whose font was last sized from a real `serverGrid.cols`, the application shall not re-apply a font computed from the `PanePreviewFontSizing.defaultColumns` fallback when the underlying `SessionClient` is replaced and its new `serverGrid` is briefly nil (background↔foreground, navigate-away-and-back, or any pool rebuild). The previously-applied font shall be preserved until the new client's first `grid` envelope arrives, so the preview does not visibly grow on every refresh before the server's size-poller (`WebSession.startSizePoller`) emits the first `grid`.
+**IOS-4.19** While a `PaneTile` already has a `TerminalController` whose font was last sized from real authoritative grid columns, the application shall not re-apply a font computed from the `PanePreviewFontSizing.defaultColumns` fallback when the underlying `SessionClient` is replaced and its new authoritative grid is briefly nil (background↔foreground, navigate-away-and-back, or any pool rebuild). The previously-applied font shall be preserved until the next authoritative grid arrives, so the preview does not visibly grow on every refresh before the server publishes the first ownership/grid snapshot.
 
 **IOS-4.20** While the user pull-to-refreshes the worktree picker (`IOS-4.1`), the application shall not blank the already-loaded list to a loading placeholder; the refresh shall re-fetch in place so the SwiftUI `.refreshable` host view remains mounted and the gesture completes without error.
 
 **IOS-4.21** When the user taps a pane child row beneath a multi-leaf worktree in the worktree picker (`IOS-4.1`), the application shall push the fullscreen terminal for that pane directly onto the navigation stack, bypassing the worktree-detail screen (`IOS-4.10`). The system edge-swipe-back gesture returns the user to the worktree picker.
+
+**IOS-4.22** When the iOS app opens its session WebSocket, the URL shall advertise the display-client kind via a `client=ios` query parameter so the daemon classifies the connection as `.ios` and the ownership store stamps `ownerKind=.ios`. Without it the connection defaults to `.web`, and `SessionClient.isOwner` (which requires `ownerKind == .ios`) can never be true — the phone cannot confirm ownership after Take Control or terminal-input takeover.
+
+**IOS-4.23** When an ownership snapshot arrives whose epoch is older than the most recently applied snapshot, the application shall ignore it, so a reordered broadcast cannot revert the owner or grid the client already advanced past. Owner resizes keep the same epoch, so equal-epoch snapshots are still applied.
+
+**IOS-4.24** When an ownership snapshot promotes this client from non-owner to display owner, the application shall immediately send an `ownerResize` carrying its current iOS viewport, so the remote PTY adopts the iOS grid at the moment of takeover rather than retaining the previous owner's grid until the next layout tick.
+
+**IOS-4.25** Attaching an interactive iOS client to an ownerless session shall not implicitly make the phone the display owner. Mobile ownership changes require a `takeControl` frame, sent either by the Take Control button or by intentional terminal input; passive attach alone shall leave the session ownerless.
+
+**IOS-4.26** On an ownerless session, an iOS WebSocket `hello` shall attach the client and return an ownerless ownership snapshot rather than implicitly claiming ownership. This is the transport-level state that lets GrafttyMobile show Take Control before sending the explicit `takeControl` frame.
 
 ### IOS-5.x — Multi-pane layout
 
@@ -1292,7 +1304,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-5.5** While a session's terminal is rendered full-screen (navigation bar hidden per the fullscreen layout), the application shall overlay a translucent back-button in the top-left that pops the current session off the `NavigationPath`, returning the user to the worktree detail they drilled in from. The button shall be rendered as a chevron inside an `.ultraThinMaterial` circle at a fixed 44×44pt tap target, padded 12pt from the top and leading edges so it floats above the terminal content without being clipped by the device's notch / rounded corners. The system edge-swipe gesture remains available but is not discoverable, so this overlay is the primary affordance.
 
-**IOS-5.6** While the iOS client is not the size-leader (before the first leadership-claim event per `IOS-6.5`) and the server-announced grid's column count exceeds what fits in the device's container at the configured (iOS-scaled) font size, the application shall override the terminal controller's font size so that `serverCols × cellWidth ≤ containerWidth`, render the pane at the full container width with no horizontal `ScrollView`, and never wrap a line. The override font size shall be computed as `(containerWidth / serverCols) × safetyScale / monospaceAspect`, mirroring `PanePreviewFontSizing`. When `serverCols` is not yet known, the application shall leave the base config font in place.
+**IOS-5.6** While the iOS client is not the display owner and the authoritative grid's column count exceeds what fits in the device's container at the configured (iOS-scaled) font size, the application shall override the terminal controller's font size so that `authoritativeCols × cellWidth ≤ containerWidth`, render the pane at the full container width with no horizontal `ScrollView`, and never wrap a line. The override font size shall be computed as `(containerWidth / authoritativeCols) × safetyScale / monospaceAspect`, mirroring `PanePreviewFontSizing`. When authoritative cols are not yet known, the application shall leave the base config font in place.
 
 ### IOS-6.x — Input
 
@@ -1304,8 +1316,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.4** When the user taps the terminal control bar's "Insert newline" control, the application shall send a single literal LF byte (`0x0A`) to the remote session, bypassing the `IOS-6.3` LF→CR rule via `SessionClient.insertNewline()`. This is the only way to insert a multi-line boundary into a TUI prompt from the iOS soft keyboard after Return has been reserved for submission.
 
-**IOS-6.5** When the iOS client receives a leadership-claim event (the first keystroke, the first pinch-begin gesture above the IOS-6.11 scale threshold, or the first long-press-begin gesture on the terminal pane), the client shall set `isSizeLeader = true` and send a `WebControlEnvelope.resize(cols, rows)` to the server with its last-measured viewport. Subsequent libghostty-reported layout changes shall be forwarded to the server. A passive tap shall not claim leadership.
-
 **IOS-6.6** While a terminal pane is focused on iOS, ordinary software-keyboard text shall be captured by GrafttyMobile's own `UIKeyInput` responder and forwarded to the remote PTY as raw UTF-8 bytes via `SessionClient.sendSoftwareKeyboardText(_:)`, rather than through libghostty's `TerminalSurface.sendText(_:)` path. A single software-keyboard newline shall be translated to CR (`0x0D`) per `IOS-6.3`, and software-keyboard delete shall send DEL (`0x7F`). This prevents normal typing from being wrapped in bracketed-paste delimiters (`ESC [ 200 ~` / `ESC [ 201 ~`) that prompt-driven TUIs can display as stray `[200~` text.
 
 **IOS-6.7** While a terminal pane is rendered in the iOS app, GrafttyMobile shall prevent libghostty-spm's built-in `TerminalInputAccessoryView` from appearing by suppressing both `UITerminalView.inputAccessoryView` and `UITerminalView.canBecomeFirstResponder` at the UIKit ObjC dispatch path. With `canBecomeFirstResponder` returning false, libghostty's `touchesBegan`-driven `becomeFirstResponder()` is a no-op, so GrafttyMobile's `UIKeyInput` proxy wins the keyboard responder race and the GhosttyKit accessory bar never mounts. The only visible software-keyboard accessory row shall be GrafttyMobile's terminal control bar (`IOS-6.1`).
@@ -1314,15 +1324,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.9** While the iOS software keyboard is visible, the application shall raise the fullscreen terminal layout so its bottom edge sits at or above the keyboard's top edge rather than under it. SwiftUI's automatic `.keyboard` safe-area avoidance does not engage reliably while the first responder is the `UIViewRepresentable`-wrapped `UIKeyInput` proxy from `IOS-6.6` — SwiftUI's focus system is unaware of the proxy, so the avoidance machinery skips the layout. The application shall instead observe `UIResponder.keyboardWillChangeFrameNotification`, compute the keyboard end-frame's vertical intersection with the screen, and apply that height as an explicit `.padding(.bottom, …)` on the fullscreen layout so the terminal — and the `IOS-6.1` control bar overlaid at the bottom — both ride above the keyboard's top edge.
 
-**IOS-6.10** When the iOS client claims size-leadership (per `IOS-6.5`), the font size currently applied to the terminal controller shall remain in effect as the new baseline — including any active auto-fit override from `IOS-5.6` / `IPAD-2.5`. The application shall stop driving the font from `TerminalWidthLayout.decide` for that session from that point forward; libghostty's pinch-to-zoom (`IOS-6.8`) shall mutate font from this baseline.
+**IOS-6.10** When the iOS client becomes the explicit display owner, the font size currently applied to the terminal controller shall remain in effect as the new baseline — including any active auto-fit override from `IOS-5.6` / `IPAD-2.5`. The application shall stop driving the font from `TerminalWidthLayout.decide` while it remains owner; libghostty's pinch-to-zoom (`IOS-6.8`) shall mutate font from this baseline without implicitly changing ownership.
 
-**IOS-6.11** The pinch-driven leadership claim from `IOS-6.5` shall fire only on pinch gestures whose scale departure from 1.0 exceeds a small threshold (~5%), so accidental two-finger touches (during scroll, near-tap) do not silently claim leadership.
+**IOS-6.11** While mobile terminal chrome is overlaid at the bottom of a fullscreen session, the terminal viewport used for rendering and font-fit decisions shall reserve that measured chrome height. The visual overlay placement remains bottom-aligned; only the terminal content size is reduced.
 
-**IOS-6.12** while a pane is in selection mode (IOS-11.4 pan-extends a live selection), the leadership-claim pinch recognizer shall be disabled — a mid-selection pinch shall not flip the server's PTY dims out from under the selection geometry.
+**IOS-6.12** While connected to a legacy (non-owner-aware) server, the application shall not resize the remote PTY until the user first engages with the session (keystroke, paste, or control key); a mere connection or layout tick shall leave the shared PTY size untouched so an already-attached client's column width is not stolen. On first engagement it shall send the current iOS viewport as the legacy window size.
 
-**IOS-6.13** (first-frame claim resilience): when a gesture fires `claimLeadershipIfNeeded` before any viewport callback has populated `lastIOSViewport`, the claim shall be retained and re-attempted at the next viewport so the user's intentional gesture is not silently dropped.
+**IOS-6.13** GrafttyMobile shall expose software-keyboard chrome and keyboard responder wiring only while the mobile client is the current display owner. Followers and ownerless clients can take control, but showing a keyboard before ownership is confirmed sends no useful input and implies authority the client does not have.
 
-**IOS-6.14** (gesture wiring): the `onLeadershipClaimGesture` callback shall fire when the pinch recognizer transitions to `.began` with a scale departure above the gate threshold — verifies the handler→callback plumbing that the unit tests for `LeadershipPinchGate` and `SessionClient.claimLeadershipIfNeeded` do not cover.
+**IOS-6.14** The terminal view shall install GrafttyMobile's `UIKeyInput` proxy only for an owner. Non-owner taps should still reach libghostty gestures, but they must not summon the software keyboard.
 
 ### IOS-7.x — Lifecycle
 
@@ -1378,6 +1388,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-10.6** When `SessionClient.live` is constructed with role `.preview`, the application shall set the client's `idleThreshold` shorter than the fullscreen default so off-input preview panes flip to the static-snapshot state and free libghostty's display link, while still letting fresh PTY bytes wake the live renderer per IOS-10.5.
 
+**IOS-10.7** Fullscreen mobile terminals shall not enter snapshot-idle mode by default. The snapshot optimization is safe for pane previews, but in fullscreen it unmounts `TerminalPaneView` while UIKit may still own the keyboard responder, collapsing the keyboard and risking libghostty teardown against an active view.
+
 ### IOS-11.x
 
 **IOS-11.1** When the user long-presses a focused terminal pane, the application shall present a `UIEditMenuInteraction` menu at the touch point containing **Select**, **Select All**, and (when `UIPasteboard.general.hasStrings` is true at menu-build time) **Paste**.
@@ -1401,10 +1413,6 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-11.10** Selection mode shall be per-pane state owned by the focused pane's `TerminalSelectionController`. Selection in one pane shall not affect the selection state of any other pane.
 
 **IOS-11.11** While a pane is rendered as a worktree-detail preview tile (`IOS-4.10`), the long-press selection menu shall not be installed; tapping the tile shall continue to open the fullscreen pane per `IOS-4.21`. Guaranteed by `.allowsHitTesting(false)` applied to the inner `TerminalPaneView` in `paneContent` — `TerminalInputContainerView`'s long-press gesture recogniser never receives touches. The `onPasteRequested` closure is also left `nil` at the `TerminalPaneView` call site.
-
-### IOS-12.x
-
-**IOS-12.1** While a remote client is attached to the zmx session, a fresh attach with a libghostty viewport callback but no user input shall not resize the zmx PTY. This is the Mac mirror of IOS-6.5 — the PTY cols/rows persist until the Mac user engages or the last remote client detaches.
 
 ## IPAD — iPad Layout
 
@@ -1444,6 +1452,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.17** When a `GET /worktrees/panes` snapshot still contains the selected worktree but its layout no longer includes `IPadAppState.focusedPaneId`'s session name, the application shall reset `focusedPaneId` to the first leaf of the worktree's current layout (or nil if the worktree has no panes).
 
+**IPAD-1.18** While an iPad detail `SingleSessionView` renders with `isFullScreen == false` to preserve the split-view sidebar toggle, ownership controls shall remain independent of that visual mode. A fullscreen-role mobile client that is currently a follower or ownerless shall still expose Take Control in the detail column.
+
 ### IPAD-2.x — Multi-Pane Detail View
 
 **IPAD-2.1** While a worktree is selected and the iPad layout is regular-width, the detail column shall render `MultiPaneDetailView` over the worktree's `PaneLayoutNode`.
@@ -1454,7 +1464,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.4** When `MultiPaneDetailView` renders a `.leaf(sessionName, …)`, the application shall render a `PaneLeafView` that owns its own `terminal` channel via `TerminalChannelPool`.
 
-**IPAD-2.5** While an iPad pane-layout leaf is not the size-leader and the server-announced grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same font-fit policy as `IOS-5.6` (per-leaf), rendering each leaf's pane at the full leaf width with no horizontal `ScrollView`.
+**IPAD-2.5** While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same font-fit policy as `IOS-5.6` (per-leaf), rendering each leaf's pane at the full leaf width with no horizontal `ScrollView`.
 
 **IPAD-2.6** When `IPadAppState.focusedPaneId == leaf.sessionName`, the application shall render a 2pt focus ring around the corresponding `PaneLeafView`.
 
@@ -1478,7 +1488,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-4.1** While the iPad layout is presented, the application shall cap concurrent open `terminal` channels at 8 leaves across all visible panes.
 
-**IPAD-4.2** When opening a new `terminal` channel would exceed the IPAD-4.1 cap, the application shall close the least-recently-focused open `terminal` channel and render its leaf as an `IdleSnapshotView` from the last frame the channel held.
+**IPAD-4.2** When opening a new `terminal` channel would exceed the IPAD-4.1 cap, the application shall close the least-recently-focused open `terminal` channel and render its leaf as an `IdleSnapshotView` placeholder.
 
 **IPAD-4.3** When the user taps an `IdleSnapshotView` placeholder leaf, the application shall open a fresh `terminal` channel for that leaf, potentially evicting a different least-recently-focused leaf per IPAD-4.2.
 

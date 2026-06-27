@@ -35,6 +35,24 @@ html, body, #root, #app {
   z-index: 1;
 }
 
+#take-control {
+  position: fixed;
+  top: 24px;
+  right: 8px;
+  z-index: 2;
+  padding: 6px 10px;
+  border: 1px solid rgba(120, 170, 255, 0.7);
+  border-radius: 6px;
+  background: rgba(18, 31, 48, 0.92);
+  color: var(--term-foreground);
+  font: 600 12px -apple-system, system-ui, sans-serif;
+  cursor: pointer;
+}
+
+#take-control:hover {
+  background: rgba(31, 52, 78, 0.96);
+}
+
 .picker-status {
   padding: 24px;
   color: #888;

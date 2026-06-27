@@ -3,14 +3,14 @@ import CoreGraphics
 import Foundation
 import GhosttyTerminal
 import GrafttyProtocol
-import NIOConcurrencyHelpers
 import Observation
 import UIKit
 
 /// Owns one WebSocket + one libghostty InMemoryTerminalSession. Wires
-/// terminal-input → binary WS out; binary WS in → terminal.receive;
-/// server-announced grid → `serverGrid` (observable, for sizing);
-/// first user keystroke → resize (iOS takes over leadership).
+/// terminal-input → takeover/queued binary WS out; binary WS in → terminal.receive;
+/// server-announced ownership/grid → `authoritativeGrid` (observable, for sizing);
+/// explicit takeover → ownership request. Followers render passively until
+/// terminal input asks to take ownership.
 @Observable
 @MainActor
 public final class SessionClient {
@@ -18,12 +18,19 @@ public final class SessionClient {
     public let sessionName: String
     public let session: InMemoryTerminalSession
 
-    /// The PTY's current dimensions, as reported by the server's
-    /// `grid` control envelope. Nil before the first announcement
-    /// arrives (WebSocket still connecting). Observers use this to
-    /// size their rendering surface to match — wider than screen →
-    /// horizontal scroll.
-    public private(set) var serverGrid: GridSize?
+    /// Legacy server grid fallback. Ownership snapshots are authoritative
+    /// once received; `.grid` remains a soft fallback while connecting to
+    /// older servers or before the first ownership frame arrives.
+    private var legacyServerGrid: GridSize?
+
+    public private(set) var ownershipSnapshot: DisplayOwnershipSnapshot?
+
+    public var authoritativeGrid: GridSize? {
+        if let grid = ownershipSnapshot?.grid {
+            return GridSize(cols: grid.cols, rows: grid.rows)
+        }
+        return legacyServerGrid
+    }
 
     /// libghostty's current cell width in SwiftUI points, derived from
     /// the viewport-resize callback's `cellWidthPixels ÷ displayScale`.
@@ -51,13 +58,13 @@ public final class SessionClient {
     nonisolated private let webSocketFactory: @Sendable () async throws -> WebSocketClient
     nonisolated internal let clock: any Clock
     nonisolated internal let backoffSchedule: [TimeInterval]
-    /// NIOLock protects `_ws` and `_wsReadyTask` which are read from
+    /// NSLock protects `_ws` and `_wsReadyTask` which are read from
     /// nonisolated async contexts (`awaitWS`, `sendBinary`)
     /// while written on @MainActor (`spawnOpenTask`, `stop`).
     /// `nonisolated(unsafe)` is safe here because all reads and writes
     /// go through the `stateLock`-guarded accessors; the lock is the
     /// actual synchronization contract, not Swift's actor isolation.
-    nonisolated private let stateLock = NIOLock()
+    nonisolated private let stateLock = NSLock()
     @ObservationIgnored
     nonisolated(unsafe) private var _ws: WebSocketClient?
     /// Pending open of the current/next WS. `sendBinary` awaits this
@@ -77,29 +84,96 @@ public final class SessionClient {
     private var receiveTask: Task<Void, Never>?
     private var stopped = false
     /// Last (cols, rows) libghostty reported for the iOS-side view.
-    /// Resent to the server on first keystroke to claim leadership.
+    /// Sent with hello/takeover and, while owner, owner resize.
     /// `@ObservationIgnored` — hot-path bookkeeping written on every
     /// layout tick; no view reads it, so don't churn observers.
     @ObservationIgnored
     private var lastIOSViewport: (cols: UInt16, rows: UInt16)?
-    /// Set to `true` when a gesture or keystroke called
-    /// `claimLeadershipIfNeeded()` before `lastIOSViewport` was populated
-    /// by libghostty's first `onResize`. The next successful
-    /// `handleViewport` flushes this and re-attempts the claim so the
-    /// gesture is not silently lost. IOS-6.13 (refinement of IOS-6.5).
     @ObservationIgnored
-    private var pendingLeadershipClaim: Bool = false
-    /// True once we've sent the first leadership-claim event for this
-    /// session (keystroke / pinch / long-press). From then on,
-    /// libghostty's layout-driven resize events are forwarded to the
-    /// server. Before the first claim, layout-driven resize callbacks
-    /// drive only the non-leader auto-fit path (IOS-5.6), which shrinks
-    /// the iOS font to fit `serverCols`; iOS does not send resize
-    /// frames to the server while still non-leader.
-    public private(set) var isSizeLeader: Bool = false
+    private var displayClientID: DisplayClientID = SessionClient.makeDisplayClientID()
+    @ObservationIgnored
+    private var ownershipTransportMode: OwnershipTransportMode = .pending
+    /// IOS-6.12: legacy (non-owner-aware) servers have no ownership
+    /// arbitration, so the iOS client must not resize the shared PTY merely by
+    /// connecting or laying out — that would steal the column width another
+    /// attached client already set. Stays false until the user first engages
+    /// (keystroke/paste); reset on every (re)connect in `spawnOpenTask`.
+    @ObservationIgnored
+    private var legacyEngaged = false
+    @ObservationIgnored
+    private var pendingInput = PendingInput()
+
+    private struct PendingInput: Sendable {
+        private static let maxBytes = 1_048_576
+        private static let maxFrames = 1_024
+
+        private(set) var frames: [Data] = []
+        private var byteCount = 0
+        var takeoverBaseEpoch: UInt64?
+        var takeoverRequested = false
+
+        mutating func queue(_ data: Data) -> Bool {
+            guard data.count <= Self.maxBytes else {
+                clear()
+                return false
+            }
+            if frames.count >= Self.maxFrames || byteCount + data.count > Self.maxBytes {
+                clear()
+            }
+            frames.append(data)
+            byteCount += data.count
+            return true
+        }
+
+        mutating func clear() {
+            frames.removeAll()
+            byteCount = 0
+            takeoverBaseEpoch = nil
+            takeoverRequested = false
+        }
+
+        mutating func drain() -> [Data] {
+            let result = frames
+            clear()
+            return result
+        }
+    }
+
+    public var isOwner: Bool {
+        guard role != .preview else { return false }
+        if ownershipTransportMode == .legacy {
+            return true
+        }
+        return ownershipSnapshot?.ownerClientID == displayClientID
+            && ownershipSnapshot?.ownerKind == .ios
+    }
+
+    public var isFollower: Bool {
+        guard role != .preview, let snapshot = ownershipSnapshot else { return false }
+        return !snapshot.isOwnerless && !isOwner
+    }
+
+    public var isOwnerless: Bool {
+        guard role != .preview else { return false }
+        return ownershipSnapshot?.isOwnerless == true
+    }
+
+    public var canTakeControl: Bool {
+        role == .fullscreen && (isFollower || isOwnerless)
+    }
 
     nonisolated private static let lf = Data([0x0A])
     nonisolated private static let cr = Data([0x0D])
+
+    nonisolated private static func makeDisplayClientID() -> DisplayClientID {
+        DisplayClientID(UUID().uuidString)
+    }
+
+    private enum OwnershipTransportMode: Sendable {
+        case pending
+        case webControl
+        case legacy
+    }
 
     public enum ArrowDirection: Sendable {
         case up
@@ -114,10 +188,8 @@ public final class SessionClient {
     }
 
     /// IOS-4.18: pane previews on the worktree-detail screen are
-    /// read-only thumbnails. They must never claim PTY size-leadership,
-    /// because doing so converts every libghostty viewport tick into a
-    /// `WebControlEnvelope.resize` frame and creates a font-size
-    /// feedback loop with the server's reported `serverGrid.cols`.
+    /// read-only thumbnails. They must never own a display, send input,
+    /// resize, or show takeover controls.
     public enum Role: Sendable {
         case fullscreen
         case preview
@@ -184,27 +256,23 @@ public final class SessionClient {
             write: { data in box.onBytes?(data) },
             resize: { viewport in box.onResize?(viewport) }
         )
-        // Keystroke path: user-typed bytes go straight onto the WS
-        // from the callback's own context (ws.send is thread-safe).
-        // First keystroke also claims leadership. IOS-6.3: a standalone
-        // LF is the soft-keyboard Return; translate to CR so TUIs see
-        // "submit" rather than "insert newline."
+        // Keystroke path: owner-typed bytes go straight onto the WS.
+        // Follower keystrokes request ownership and queue until confirmed;
+        // previews still block PTY-bound input locally. IOS-6.3:
+        // a standalone LF is the soft-keyboard Return; translate to CR so
+        // TUIs see "submit" rather than "insert newline."
         box.onBytes = { [weak self] data in
             guard let self else { return }
-            if self.role == .preview { return }
-            let isSoftReturn = data.count == 1 && data.first == 0x0A
-            self.sendBinary(isSoftReturn ? Self.cr : data)
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.recordActivity()
-                self.claimLeadershipIfNeeded()
+                let isSoftReturn = data.count == 1 && data.first == 0x0A
+                self.sendInput(isSoftReturn ? Self.cr : data)
             }
         }
         // Layout path: libghostty tells us "the iOS view is now N×M".
-        // We memoize, but we do NOT send to the server unless we're
-        // already the leader. Before the first keystroke, the Mac
-        // pane's width dictates the PTY's width and we render into a
-        // scroll view sized to match.
+        // We memoize, but send owner resize only while this display is
+        // the confirmed owner. Followers use the authoritative grid for
+        // local font fitting without resizing the PTY.
         box.onResize = { [weak self] viewport in
             Task { @MainActor [weak self] in
                 self?.handleViewport(viewport)
@@ -226,12 +294,28 @@ public final class SessionClient {
             let next = CGFloat(viewport.cellWidthPixels) / displayScale
             if cellWidthPoints != next { cellWidthPoints = next }
         }
-        if isSizeLeader {
-            sendResizeToServer(cols: cols, rows: rows)
-        } else if pendingLeadershipClaim {
-            // Replay the early claim that fell through because
-            // lastIOSViewport was nil at the time. IOS-6.13.
-            claimLeadershipIfNeeded()
+        switch ownershipTransportMode {
+        case .webControl where isOwner:
+            guard let epoch = ownershipSnapshot?.epoch else { return }
+            sendOwnerResizeToServer(cols: cols, rows: rows, epoch: epoch)
+        case .legacy where legacyEngaged:
+            sendLegacyResizeToServer(cols: cols, rows: rows)
+        case .pending, .webControl, .legacy:
+            break
+        }
+    }
+
+    /// IOS-6.12: record the user's first interaction with a legacy session and
+    /// apply the current viewport. Before this fires, layout ticks leave the
+    /// shared PTY untouched so connecting doesn't steal another client's size.
+    /// No-op outside `.legacy` mode (`.webControl` resizes are gated on
+    /// confirmed ownership instead).
+    @MainActor
+    private func noteLegacyEngagement() {
+        guard ownershipTransportMode == .legacy, !legacyEngaged else { return }
+        legacyEngaged = true
+        if let viewport = lastIOSViewport {
+            sendLegacyResizeToServer(cols: viewport.cols, rows: viewport.rows)
         }
     }
 
@@ -319,7 +403,13 @@ public final class SessionClient {
                     client.close()
                     return nil
                 }
+                self.displayClientID = Self.makeDisplayClientID()
+                self.ownershipSnapshot = nil
+                self.legacyEngaged = false
+                self.clearPendingInput()
+                self.ownershipTransportMode = client.supportsWebControlTextFrames ? .webControl : .legacy
                 self.setWS(client)
+                await self.sendHelloIfSupported(on: client)
                 return client
             } catch {
                 self.setWS(nil)
@@ -330,9 +420,36 @@ public final class SessionClient {
         return task
     }
 
+    private func helloGrid() -> (cols: UInt16, rows: UInt16) {
+        if let viewport = lastIOSViewport {
+            return viewport
+        }
+        if let grid = authoritativeGrid {
+            return (grid.cols, grid.rows)
+        }
+        return (DisplayGrid.daemonFallback.cols, DisplayGrid.daemonFallback.rows)
+    }
+
+    private func sendHelloIfSupported(on client: WebSocketClient) async {
+        guard client.supportsWebControlTextFrames else { return }
+        let grid = helloGrid()
+        await client.sendHello(
+            clientID: displayClientID,
+            kind: .ios,
+            role: role == .preview ? .preview : .interactive,
+            visible: role != .preview,
+            cols: Int(grid.cols),
+            rows: Int(grid.rows)
+        )
+    }
+
     @MainActor
     private func startIdleWatchdog() {
         idleWatchdogTask?.cancel()
+        guard idleThreshold.isFinite else {
+            idleWatchdogTask = nil
+            return
+        }
         idleWatchdogTask = Task { @MainActor [weak self] in
             while let self, !self.stopped, self.renderActivity == .active {
                 let elapsed = self.clock.now.timeIntervalSince(self.lastActivityAt)
@@ -365,9 +482,20 @@ public final class SessionClient {
 
     @MainActor
     private func sendInput(_ data: Data) {
-        recordActivity()
-        sendBinary(data)
-        claimLeadershipIfNeeded()
+        guard role != .preview else { return }
+        switch ownershipTransportMode {
+        case .webControl where isOwner:
+            recordActivity()
+            sendBinary(data)
+        case .webControl:
+            queueInputAndRequestTakeover(data)
+        case .legacy:
+            noteLegacyEngagement()
+            recordActivity()
+            sendBinary(data)
+        case .pending:
+            break
+        }
     }
 
     /// IOS-6.4: send literal LF, bypassing the IOS-6.3 translation.
@@ -404,9 +532,7 @@ public final class SessionClient {
         var payload = Data("\u{1B}[200~".utf8)
         payload.append(Data(text.utf8))
         payload.append(Data("\u{1B}[201~".utf8))
-        recordActivity()
-        sendBinary(payload)
-        claimLeadershipIfNeeded()
+        sendInput(payload)
     }
 
     public func deleteBackward() {
@@ -456,8 +582,11 @@ public final class SessionClient {
         setWSReadyTask(nil)
         idleWatchdogTask?.cancel()
         idleWatchdogTask = nil
+        clearPendingInput()
         currentWS()?.close()
         setWS(nil)
+        ownershipTransportMode = .pending
+        ownershipSnapshot = nil
     }
 
     public func forceReconnectNow() {
@@ -466,39 +595,105 @@ public final class SessionClient {
         setWSReadyTask(nil)
         currentWS()?.close()
         setWS(nil)
+        ownershipTransportMode = .pending
+        ownershipSnapshot = nil
+        clearPendingInput()
         receiveTask?.cancel()
         receiveTask = nil
         self.start()
     }
 
-    /// Idempotent leadership claim. Called by:
-    /// - the keystroke path (`box.onBytes`) — IOS-6.5
-    /// - the pinch and long-press gestures on `TerminalInputContainerView` — IOS-6.5
-    /// No-op when `isSizeLeader`, when the role is `.preview`, when stopped,
-    /// or before libghostty has reported any viewport size (in which case the
-    /// claim intent is recorded and retried at the next viewport — IOS-6.13).
-    public func claimLeadershipIfNeeded() {
-        guard !isSizeLeader, !stopped, role != .preview else { return }
-        guard let v = lastIOSViewport else {
-            // No viewport yet — record the claim intent. The first
-            // `handleViewport` will replay it. IOS-6.13.
-            pendingLeadershipClaim = true
-            return
-        }
-        pendingLeadershipClaim = false
-        isSizeLeader = true
-        sendResizeToServer(cols: v.cols, rows: v.rows)
+    public func takeControl() {
+        guard canTakeControl else { return }
+        requestTakeControl()
     }
 
-    private func sendResizeToServer(cols: UInt16, rows: UInt16) {
+    private func queueInputAndRequestTakeover(_ data: Data) {
+        recordActivity()
+        guard pendingInput.queue(data) else { return }
+        requestTakeControl()
+    }
+
+    private func requestTakeControl() {
+        guard !pendingInput.takeoverRequested, !stopped else { return }
+        let grid = helloGrid()
+        pendingInput.takeoverBaseEpoch = ownershipSnapshot?.epoch
+        pendingInput.takeoverRequested = true
         Task { [weak self] in
             guard let self else { return }
-            guard let ws = await self.awaitWS() else { return }
+            guard let ws = await self.awaitWS(), ws.supportsWebControlTextFrames else {
+                // The takeover frame could not be sent (no live owner-aware
+                // socket). Drop the latch so a later keystroke re-requests
+                // instead of queueing input behind a request that never went
+                // out and is never cleared until a reconnect discards it.
+                await MainActor.run { self.pendingInput.takeoverRequested = false }
+                return
+            }
+            await ws.takeControl(
+                clientID: await MainActor.run { self.displayClientID },
+                kind: .ios,
+                cols: Int(grid.cols),
+                rows: Int(grid.rows)
+            )
+        }
+    }
+
+    private func clearPendingInput() {
+        pendingInput.clear()
+    }
+
+    private func flushPendingInput() {
+        let frames = pendingInput.drain()
+        guard !frames.isEmpty else { return }
+        sendBinaryFrames(frames)
+    }
+
+    private func sendOwnerResizeToServer(cols: UInt16, rows: UInt16, epoch: UInt64) {
+        Task { [weak self] in
+            guard let self else { return }
+            let clientID = await MainActor.run { self.displayClientID }
+            guard let ws = await self.awaitWS(), ws.supportsWebControlTextFrames else { return }
+            await ws.ownerResize(
+                clientID: clientID,
+                epoch: epoch,
+                cols: Int(cols),
+                rows: Int(rows)
+            )
+        }
+    }
+
+    /// IOS-4.24 + ordered flush: on owner promotion, send the owner-transition
+    /// resize and THEN the queued input on a single task, so the remote PTY
+    /// adopts the iOS grid before the queued bytes are written. Two independent
+    /// tasks (`sendOwnerResizeToServer` + `flushPendingInput`) have no ordering
+    /// guarantee, so the queued keystrokes could otherwise be processed at the
+    /// previous owner's grid. The web client (TerminalPane.tsx) sends these in
+    /// order on its single thread; this restores the same guarantee on iOS.
+    private func flushPendingInputAfterOwnerResize(cols: UInt16, rows: UInt16, epoch: UInt64) {
+        let frames = pendingInput.drain()
+        let clientID = displayClientID
+        Task { [weak self] in
+            guard let self else { return }
+            guard let ws = await self.awaitWS(), ws.supportsWebControlTextFrames else { return }
+            await ws.ownerResize(clientID: clientID, epoch: epoch, cols: Int(cols), rows: Int(rows))
+            await Self.sendBinaryFrames(frames, on: ws)
+        }
+    }
+
+    private func sendLegacyResizeToServer(cols: UInt16, rows: UInt16) {
+        Task { [weak self] in
+            guard let self else { return }
+            guard let ws = await self.awaitWS(), !ws.supportsWebControlTextFrames else { return }
             await ws.resize(cols: Int(cols), rows: Int(rows))
         }
     }
 
     nonisolated private func sendBinary(_ data: Data) {
+        sendBinaryFrames([data])
+    }
+
+    nonisolated private func sendBinaryFrames(_ frames: [Data]) {
+        guard !frames.isEmpty else { return }
         // Await the in-flight WS open so writes emitted before the
         // factory resolves still land. On the synchronous URL path
         // (`URLSessionWebSocketClient`) the open Task completes
@@ -508,6 +703,12 @@ public final class SessionClient {
         // from being silently dropped.
         Task { [weak self] in
             guard let ws = await self?.awaitWS() else { return }
+            await Self.sendBinaryFrames(frames, on: ws)
+        }
+    }
+
+    nonisolated private static func sendBinaryFrames(_ frames: [Data], on ws: WebSocketClient) async {
+        for data in frames {
             try? await ws.send(.binary(data))
         }
     }
@@ -523,13 +724,39 @@ public final class SessionClient {
         return currentWS()
     }
 
-    private func handleTextFrame(_ text: String) {
+    internal func handleTextFrame(_ text: String) {
         guard let envelope = try? WebControlEnvelope.parse(Data(text.utf8)) else { return }
         switch envelope {
         case let .grid(cols, rows):
-            serverGrid = GridSize(cols: cols, rows: rows)
+            if ownershipSnapshot == nil {
+                legacyServerGrid = GridSize(cols: cols, rows: rows)
+            }
         case .resize:
             // Client never receives resize; ignore.
+            break
+        case let .ownership(snapshot):
+            // IOS-4.23: ignore reordered, stale broadcasts. The server enqueues
+            // sends across threads without ordering, so an older-epoch snapshot
+            // can arrive after a newer one on the same socket; applying it would
+            // revert the owner/grid we already advanced past. Strict `<` — owner
+            // resizes keep the same epoch, so same-epoch grid updates must apply.
+            if let last = ownershipSnapshot, snapshot.epoch < last.epoch {
+                break
+            }
+            let wasOwner = isOwner
+            ownershipSnapshot = snapshot
+            if isOwner {
+                if !wasOwner,
+                   ownershipTransportMode == .webControl,
+                   let viewport = lastIOSViewport {
+                    flushPendingInputAfterOwnerResize(cols: viewport.cols, rows: viewport.rows, epoch: snapshot.epoch)
+                } else {
+                    flushPendingInput()
+                }
+            } else if let baseEpoch = pendingInput.takeoverBaseEpoch, snapshot.epoch > baseEpoch {
+                clearPendingInput()
+            }
+        case .hello, .takeControl, .ownerResize:
             break
         }
     }
