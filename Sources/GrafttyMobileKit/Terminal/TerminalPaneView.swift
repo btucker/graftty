@@ -4,23 +4,6 @@ import ObjectiveC
 import SwiftUI
 import UIKit
 
-/// Pure decision function: should a UIPinchGestureRecognizer's
-/// `.began` event claim PTY size-leadership? Factored out of
-/// `TerminalInputContainerView.handleLeadershipPinch` so it can be
-/// tested without instantiating a UIView. A small threshold prevents
-/// near-tap two-finger touches (UIKit's pinch recogniser fires
-/// `.began` even for trivial scale changes) from silently flipping
-/// leadership.
-enum LeadershipPinchGate {
-    static let minScaleDelta: CGFloat = 0.05
-
-    static func shouldClaim(state: UIGestureRecognizer.State, scale: CGFloat) -> Bool {
-        guard state == .began else { return false }
-        guard scale > 0 else { return false }
-        return abs(scale - 1.0) >= minScaleDelta
-    }
-}
-
 /// A SwiftUI wrapper around `UITerminalView` backed by an
 /// `InMemoryTerminalSession` (no PTY — safe inside App Sandbox).
 ///
@@ -57,18 +40,13 @@ public struct TerminalPaneView: UIViewRepresentable {
     public let preferredInterfaceStyle: UIUserInterfaceStyle
     /// Invoked when SwiftUI is about to remove this representable from
     /// the tree — typically because `renderActivity` flipped to `.idle`.
-    /// Passes a UIImage snapshot of the live view (best-effort; may be
-    /// nil if the Metal layer cannot be captured) so the SessionClient
-    /// can hand it to `IdleSnapshotView`. See IOS-10.4.
+    /// Passes nil rather than rendering the live Metal-backed terminal
+    /// layer during teardown.
     public let onWillUnmount: ((UIImage?) -> Void)?
     /// Invoked when the user taps **Paste** in the long-press menu.
     /// `RootView` wires this to read `UIPasteboard.general.string` and
     /// forward to `SessionClient.sendPaste(_:)`. (IOS-11.8)
     public let onPasteRequested: (() -> Void)?
-    /// Invoked when the user performs a gesture that, per IOS-6.5, should
-    /// claim PTY size-leadership for this session: pinch begin or
-    /// long-press begin. Tap is intentionally excluded.
-    public let onLeadershipClaimGesture: (() -> Void)?
     /// Captures the live `TerminalInputContainerView` so the SwiftUI
     /// layer can call `cancelActiveSelectionIfAny()` from elsewhere
     /// (e.g., terminal control-bar buttons) per IOS-11.7.
@@ -82,7 +60,6 @@ public struct TerminalPaneView: UIViewRepresentable {
         preferredInterfaceStyle: UIUserInterfaceStyle = .unspecified,
         onWillUnmount: ((UIImage?) -> Void)? = nil,
         onPasteRequested: (() -> Void)? = nil,
-        onLeadershipClaimGesture: (() -> Void)? = nil,
         captureContainer: ((TerminalInputContainerView) -> Void)? = nil
     ) {
         self.session = session
@@ -92,7 +69,6 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.preferredInterfaceStyle = preferredInterfaceStyle
         self.onWillUnmount = onWillUnmount
         self.onPasteRequested = onPasteRequested
-        self.onLeadershipClaimGesture = onLeadershipClaimGesture
         self.captureContainer = captureContainer
     }
 
@@ -108,10 +84,10 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
         view.terminalView.controller = controller
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
+        view.inputProxy.softwareKeyboardInputEnabled = softwareKeyboardInput != nil
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
         view.onPasteRequested = onPasteRequested
-        view.onLeadershipClaimGesture = onLeadershipClaimGesture
         context.coordinator.lastFocusRequest = focusRequestCount
         context.coordinator.onWillUnmount = onWillUnmount
         captureContainer?(view)
@@ -121,10 +97,10 @@ public struct TerminalPaneView: UIViewRepresentable {
     public func updateUIView(_ view: TerminalInputContainerView, context: Context) {
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
+        view.inputProxy.softwareKeyboardInputEnabled = softwareKeyboardInput != nil
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
         view.onPasteRequested = onPasteRequested
-        view.onLeadershipClaimGesture = onLeadershipClaimGesture
         context.coordinator.onWillUnmount = onWillUnmount
         if context.coordinator.lastFocusRequest != focusRequestCount {
             context.coordinator.lastFocusRequest = focusRequestCount
@@ -134,18 +110,9 @@ public struct TerminalPaneView: UIViewRepresentable {
         }
     }
 
-    public static func dismantleUIView(_ view: TerminalInputContainerView, coordinator: Coordinator) {
+    public static func dismantleUIView(_: TerminalInputContainerView, coordinator: Coordinator) {
         guard let onWillUnmount = coordinator.onWillUnmount else { return }
-        let snapshot = Self.captureSnapshot(of: view)
-        onWillUnmount(snapshot)
-    }
-
-    private static func captureSnapshot(of view: UIView) -> UIImage? {
-        guard view.bounds.width > 0, view.bounds.height > 0 else { return nil }
-        let renderer = UIGraphicsImageRenderer(bounds: view.bounds)
-        return renderer.image { ctx in
-            view.layer.render(in: ctx.cgContext)
-        }
+        onWillUnmount(nil)
     }
 }
 
@@ -160,10 +127,6 @@ public final class TerminalInputContainerView: UIView {
     /// menu — the SwiftUI layer wires this to `SessionClient.sendPaste`.
     public var onPasteRequested: (() -> Void)?
 
-    /// Fires when a leadership-claim gesture (pinch begin / long-press
-    /// begin) is recognized on this pane.
-    public var onLeadershipClaimGesture: (() -> Void)?
-
     private lazy var longPressMenu = UIEditMenuInteraction(delegate: self)
     private lazy var selectionMenu = UIEditMenuInteraction(delegate: self)
 
@@ -176,12 +139,6 @@ public final class TerminalInputContainerView: UIView {
     private lazy var selectionPanRecognizer: UIPanGestureRecognizer = {
         let r = UIPanGestureRecognizer(target: self, action: #selector(handleSelectionPan(_:)))
         r.isEnabled = false
-        return r
-    }()
-
-    private lazy var leadershipPinchRecognizer: UIPinchGestureRecognizer = {
-        let r = UIPinchGestureRecognizer(target: self, action: #selector(handleLeadershipPinch(_:)))
-        r.delegate = self
         return r
     }()
 
@@ -232,7 +189,6 @@ public final class TerminalInputContainerView: UIView {
         addInteraction(selectionMenu)
         addGestureRecognizer(longPressRecognizer)
         addGestureRecognizer(selectionPanRecognizer)
-        addGestureRecognizer(leadershipPinchRecognizer)
     }
 
     @objc func focusKeyboardInput() {
@@ -242,16 +198,10 @@ public final class TerminalInputContainerView: UIView {
     /// @spec IOS-11.1: When the user long-presses a focused terminal pane, the application shall present a `UIEditMenuInteraction` menu at the touch point containing **Select**, **Select All**, and (when `UIPasteboard.general.hasStrings` is true at menu-build time) **Paste**.
     @objc private func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
         guard recognizer.state == .began else { return }
-        onLeadershipClaimGesture?()
         let point = recognizer.location(in: self)
         lastLongPressPoint = point
         let config = UIEditMenuConfiguration(identifier: nil, sourcePoint: point)
         longPressMenu.presentEditMenu(with: config)
-    }
-
-    @objc private func handleLeadershipPinch(_ recognizer: UIPinchGestureRecognizer) {
-        guard LeadershipPinchGate.shouldClaim(state: recognizer.state, scale: recognizer.scale) else { return }
-        onLeadershipClaimGesture?()
     }
 
     @objc private func handleSelectionPan(_ recognizer: UIPanGestureRecognizer) {
@@ -270,17 +220,11 @@ public final class TerminalInputContainerView: UIView {
     private func enterSelectionMode() {
         selectionPanRecognizer.isEnabled = true
         terminalView.gestureRecognizers?.forEach { $0.isEnabled = false }
-        // IOS-6.12: while the user is in selection mode, the server's
-        // grid must stay fixed — a leadership-claim pinch would reflow
-        // the grid mid-drag and dislocate the selection from the cells
-        // it was anchored on. Disable for the duration of selection.
-        leadershipPinchRecognizer.isEnabled = false
     }
 
     private func exitSelectionMode() {
         selectionPanRecognizer.isEnabled = false
         terminalView.gestureRecognizers?.forEach { $0.isEnabled = true }
-        leadershipPinchRecognizer.isEnabled = true
     }
 
     fileprivate func performSelectAtLongPressPoint() {
@@ -325,10 +269,11 @@ public final class TerminalInputContainerView: UIView {
 
     // MARK: - Test seams
 
-    /// Internal-visibility access for unit tests: returns the leadership
-    /// pinch recognizer's enabled flag without exposing the recognizer.
-    var leadershipPinchRecognizerIsEnabledForTesting: Bool {
-        leadershipPinchRecognizer.isEnabled
+    /// Internal-visibility access for unit tests: Task 6 removed terminal
+    /// gesture-driven ownership claims. Long-press presents edit menus and
+    /// pinch belongs to libghostty's local zoom handling, not takeover.
+    var hasOwnershipClaimGestureHookForTesting: Bool {
+        false
     }
 
     /// Internal-visibility access for unit tests: invokes `enterSelectionMode`.
@@ -341,30 +286,14 @@ public final class TerminalInputContainerView: UIView {
         exitSelectionMode()
     }
 
-    /// Internal-visibility access for unit tests: drives the leadership
-    /// pinch handler with a synthesized recognizer state + scale,
-    /// bypassing UIKit's gesture machinery so unit tests don't need a
-    /// real touch sequence. Same gate as `handleLeadershipPinch`.
-    func simulateLeadershipPinchForTesting(state: UIGestureRecognizer.State, scale: CGFloat) {
-        guard LeadershipPinchGate.shouldClaim(state: state, scale: scale) else { return }
-        onLeadershipClaimGesture?()
+    /// Internal-visibility access for unit tests: synthesized pinch gestures
+    /// are ownership-neutral.
+    func simulatePinchForTesting(state: UIGestureRecognizer.State, scale: CGFloat) {
     }
 
     /// Internal-visibility access for unit tests: simulates the
-    /// long-press handler's `.began` branch firing the leadership
-    /// claim (which it does alongside presenting the edit menu —
-    /// IOS-6.5).
+    /// long-press handler's `.began` branch without presenting UIKit UI.
     func simulateLongPressBeganForTesting() {
-        onLeadershipClaimGesture?()
-    }
-}
-
-extension TerminalInputContainerView: UIGestureRecognizerDelegate {
-    public func gestureRecognizer(
-        _ gestureRecognizer: UIGestureRecognizer,
-        shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
-    ) -> Bool {
-        return gestureRecognizer === leadershipPinchRecognizer
     }
 }
 
@@ -402,10 +331,11 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
 }
 
 final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTraits {
+    var softwareKeyboardInputEnabled = false
     var insertTextHandler: ((String) -> Void)?
     var deleteBackwardHandler: (() -> Void)?
 
-    override var canBecomeFirstResponder: Bool { true }
+    override var canBecomeFirstResponder: Bool { softwareKeyboardInputEnabled }
     var hasText: Bool { true }
 
     override var inputAccessoryView: UIView? {

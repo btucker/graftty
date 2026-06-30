@@ -1,11 +1,11 @@
 #if canImport(UIKit)
 import CoreGraphics
 
-/// Pure decision: given the iOS container's width, the server-announced
+/// Pure decision: given the iOS container's width, the authoritative
 /// grid width, the configured (iOS-scaled) font size, and (optionally) a
 /// real font-aspect measurement from libghostty's resize callback,
 /// should the terminal pane render at the configured font or under a
-/// font-size override sized so `serverCols × cellWidth ≤ containerWidth`?
+/// font-size override sized so `authoritativeCols × cellWidth ≤ containerWidth`?
 ///
 /// The aspect-ratio assumption matters: if it's wrong, libghostty's VT
 /// parser may wrap lines internally. When `measuredCellWidthPoints` and
@@ -26,14 +26,14 @@ public enum TerminalWidthLayout {
 
     public static func decide(
         containerWidth: CGFloat,
-        serverCols: UInt16?,
+        authoritativeCols: UInt16?,
         configFontSize: Float,
         measuredCellWidthPoints: CGFloat?,
         measuredAtFontSize: Float?,
-        isLeader: Bool
+        isOwner: Bool
     ) -> Decision {
-        if isLeader { return .useConfigFont }
-        guard let serverCols, serverCols > 0, containerWidth > 0 else {
+        if isOwner { return .useConfigFont }
+        guard let authoritativeCols, authoritativeCols > 0, containerWidth > 0 else {
             return .useConfigFont
         }
 
@@ -47,7 +47,7 @@ public enum TerminalWidthLayout {
             aspect = Self.fallbackAspect
         }
 
-        let targetCellWidth = (containerWidth / CGFloat(serverCols)) * Self.safetyScale
+        let targetCellWidth = (containerWidth / CGFloat(authoritativeCols)) * Self.safetyScale
         let targetFontSize = Float(targetCellWidth / aspect)
         if targetFontSize >= configFontSize {
             return .useConfigFont

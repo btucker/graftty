@@ -22,7 +22,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         )
 
         #expect(handle != nil)
@@ -55,7 +55,7 @@ struct SurfaceHandleHostManagedTests {
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             extraInitialInput: "claude\r",
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         ))
 
         // No layout yet: no attach client, no initial input.
@@ -135,7 +135,7 @@ struct SurfaceHandleHostManagedTests {
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             extraInitialInput: "nvim Sources/main.swift\r",
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         )
 
         #expect(handle != nil)
@@ -158,7 +158,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         ))
 
         #expect(backend.bindSurfaceSyncCount == 1)
@@ -179,6 +179,25 @@ struct SurfaceHandleHostManagedTests {
         #expect(backend.resyncVisibleGridCount == 1)
     }
 
+    @Test func surfaceContextMenuTakeControlCallsBackendThroughSurfaceHandle() throws {
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        let handle = try #require(SurfaceHandle(
+            terminalID: Self.terminalID(),
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _, _, _, _ in backend }
+        ))
+
+        let surfaceView = try #require(handle.view as? SurfaceNSView)
+        surfaceView.takeDisplayControlFromMenu(nil)
+
+        #expect(backend.takeControlCount == 1)
+    }
+
     @Test func typeTextUsesBackendForZmxBackedSurface() throws {
         let backend = FakeSurfaceHandleZmxBackend()
         let harness = SurfaceHandleTestHarness(surface: fakeSurface())
@@ -189,7 +208,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         ))
 
         handle.typeText("abc")
@@ -249,7 +268,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         )
 
         #expect(handle == nil)
@@ -273,7 +292,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         )
 
         #expect(handle != nil)
@@ -307,7 +326,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         )
         _ = try #require(handle)
 
@@ -330,7 +349,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         ))
 
         let size = handle.queryGridSize()
@@ -355,7 +374,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, initialSize, _ in
+            zmxBackendFactory: { _, initialSize, _, _ in
                 observedInitialSize = initialSize
                 return backend
             },
@@ -384,7 +403,7 @@ struct SurfaceHandleHostManagedTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend },
+            zmxBackendFactory: { _, _, _, _ in backend },
             initialGridSize: .testSize132x43
         )
 
@@ -395,6 +414,42 @@ struct SurfaceHandleHostManagedTests {
         let surfaceView = try? #require(handle?.view as? SurfaceNSView)
         surfaceView?.hostManagedLayoutNotifier?()
         #expect(backend.observedSetSizeCountAtStart == 1)
+    }
+
+    @Test("""
+    @spec TERM-11.16: When AppKit resizes a zmx-backed terminal view, the application shall update libghostty's surface size before marking the pane visible and reconciling zmx to the live grid, so the show-time reconcile cannot forward the previous row count during a real resize.
+    """)
+    func frameResizeSetsLibghosttySizeBeforeVisibleReconcile() throws {
+        let backend = FakeSurfaceHandleZmxBackend()
+        let harness = SurfaceHandleTestHarness(surface: fakeSurface())
+        var resyncCountsObservedDuringSetSize: [Int] = []
+        harness.onSetSize = {
+            resyncCountsObservedDuringSetSize.append(backend.resyncVisibleGridCount)
+        }
+        let terminalID = Self.terminalID()
+        let handle = try #require(SurfaceHandle(
+            terminalID: terminalID,
+            app: fakeApp(),
+            worktreePath: "/tmp/worktree",
+            socketPath: "/tmp/graftty.sock",
+            zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
+            surfaceFactory: harness.factory,
+            zmxBackendFactory: { _, _, _, _ in backend }
+        ))
+        let surfaceView = try #require(handle.view as? SurfaceNSView)
+        surfaceView.surfaceOperations = SurfaceNSViewGhosttySurfaceOperations(
+            setSize: harness.factory.setSize,
+            size: harness.factory.size,
+            refresh: { _ in }
+        )
+        surfaceView.visibleForInputNotifier = {
+            backend.resyncVisibleGrid()
+        }
+
+        surfaceView.setFrameSize(NSSize(width: 800, height: 400))
+
+        #expect(resyncCountsObservedDuringSetSize == [0])
+        #expect(backend.resyncVisibleGridCount == 1)
     }
 
     private static func terminalID() -> PaneSlotID {

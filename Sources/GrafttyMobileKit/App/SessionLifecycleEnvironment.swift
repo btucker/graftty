@@ -32,7 +32,7 @@ extension SessionClient {
     /// log tailers ticking every few seconds) enough hysteresis to
     /// stay live without churning surface tear-down + recreation.
     public nonisolated static let previewIdleThreshold: TimeInterval = 10
-    public nonisolated static let fullscreenIdleThreshold: TimeInterval = 30
+    public nonisolated static let fullscreenIdleThreshold: TimeInterval = .infinity
 
     /// One-stop factory for the WebSocket transport + `SessionClient`
     /// pair. Both `SingleSessionView` (initial / re-dial) and

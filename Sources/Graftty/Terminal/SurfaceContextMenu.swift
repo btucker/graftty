@@ -72,6 +72,7 @@ extension SurfaceNSView {
             add("Copy", #selector(copyFromTerminal(_:)), "document.on.document")
         }
         add("Paste", #selector(pasteToTerminal(_:)), "document.on.clipboard")
+        add("Take Control", #selector(takeDisplayControlFromMenu(_:)), "cursorarrow.click")
 
         menu.addItem(.separator())
         add("Split Right", #selector(splitRight(_:)), "rectangle.righthalf.inset.filled")
@@ -116,6 +117,15 @@ extension SurfaceNSView {
 
     @objc func pasteToTerminal(_ sender: Any?) {
         bindingAction("paste_from_clipboard")
+    }
+
+    @objc func takeDisplayControlFromMenu(_ sender: Any?) {
+        if let takeDisplayControlNotifier {
+            _ = takeDisplayControlNotifier()
+            return
+        }
+        guard let terminalID else { return }
+        _ = terminalManager?.takeDisplayControl(for: terminalID)
     }
 
     // MARK: - Splits

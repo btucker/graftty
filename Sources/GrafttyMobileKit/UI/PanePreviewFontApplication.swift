@@ -2,10 +2,10 @@ import CoreGraphics
 
 /// @spec IOS-4.19
 /// While a `PaneTile` already has a `TerminalController` whose font was
-/// last sized from a real `serverGrid.cols`, the application shall not
+/// last sized from real authoritative grid columns, the application shall not
 /// re-apply a font computed from the `PanePreviewFontSizing.defaultColumns`
 /// fallback when the underlying `SessionClient` is replaced and its new
-/// `serverGrid` is briefly nil.
+/// authoritative grid is briefly nil.
 public enum PanePreviewFontApplication {
     public enum Decision: Equatable {
         case nothing
@@ -15,20 +15,20 @@ public enum PanePreviewFontApplication {
 
     public static func decide(
         tileWidth: CGFloat,
-        cols: UInt16?,
+        authoritativeCols: UInt16?,
         hasController: Bool,
         sourceConfigMatches: Bool,
         lastAppliedFontSize: Float?
     ) -> Decision {
         let fontSize = PanePreviewFontSizing.fontSize(
             tileWidth: Double(tileWidth),
-            serverCols: cols
+            authoritativeCols: authoritativeCols
         )
         let canUpdateInPlace = hasController && sourceConfigMatches
         if !canUpdateInPlace {
             return .recreateController(fontSize: fontSize)
         }
-        if cols == nil, lastAppliedFontSize != nil {
+        if authoritativeCols == nil, lastAppliedFontSize != nil {
             return .nothing
         }
         if lastAppliedFontSize == fontSize {

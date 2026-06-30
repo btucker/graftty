@@ -80,7 +80,7 @@ struct TerminalManagerEvictionTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         ))
         manager.insertSurfaceForTesting(handle, for: terminalID)
 
@@ -109,7 +109,7 @@ struct TerminalManagerEvictionTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         ))
         manager.insertSurfaceForTesting(handle, for: terminalID)
 
@@ -139,7 +139,7 @@ struct TerminalManagerEvictionTests {
             socketPath: "/tmp/graftty.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         ))
         manager.insertSurfaceForTesting(handle, for: terminalID)
 

@@ -256,6 +256,11 @@ extension RemoteTerminalSurfaceBackend: SurfaceHandleZmxBackend {
     func markLayoutSettled() {}
     func remoteClientsDidDetach() {}
     func resyncVisibleGrid() {}
+
+    /// This backend proxies to a remote host that owns its own display
+    /// ownership; it never participates in the local
+    /// `SessionDisplayOwnershipStore`, so there is no local control to claim.
+    func takeControl() -> Bool { false }
 }
 
 private final class RemoteTerminalSurfaceBackendUserdata {
