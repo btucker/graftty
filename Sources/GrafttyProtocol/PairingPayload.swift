@@ -41,6 +41,15 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
     /// `"https://hostname.local:8800/v1/pairing"`).
     public let pairingURL: URL
 
+    /// The host's durable web base URL (wss/https over Tailscale),
+    /// carried in the QR so the mobile side can create a usable `Host`
+    /// record after pairing. Optional: `nil` when the host has no web
+    /// server running, and absent from payload JSON generated before
+    /// this field existed (synthesized Codable decodes it with
+    /// `decodeIfPresent` and omits the key when encoding `nil`, so the
+    /// wire shape stays version-1 compatible in both directions).
+    public let webBaseURL: URL?
+
     // MARK: Init
 
     public init(
@@ -51,7 +60,8 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
         hostPublicKeyFingerprint: RemoteIdentityFingerprint,
         nonce: RemotePairingNonce,
         expiry: Date,
-        pairingURL: URL
+        pairingURL: URL,
+        webBaseURL: URL? = nil
     ) {
         self.version = version
         self.hostDeviceID = hostDeviceID
@@ -61,6 +71,7 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
         self.nonce = nonce
         self.expiry = expiry
         self.pairingURL = pairingURL
+        self.webBaseURL = webBaseURL
     }
 
     // MARK: - QR encoding / decoding

@@ -1686,6 +1686,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-1.2** When a client pairs with a host, the application shall require a matching verification code and host-side confirmation before storing the client as a trusted peer.
 
+**REMOTE-1.3** When the host user confirms an introduced pairing, the application shall persist the introduced peer in the trusted peer store.
+
 **REMOTE-1.4** While no pairing session is active, the host shall not accept connections on the pairing endpoint; the pairing listener runs only for the lifetime of an active pairing session.
 
 ### REMOTE-2.x — Authenticated Attach

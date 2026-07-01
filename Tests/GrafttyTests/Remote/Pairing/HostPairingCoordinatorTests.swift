@@ -1,0 +1,180 @@
+import Testing
+import Foundation
+import GrafttyKit
+import GrafttyProtocol
+@testable import Graftty
+
+@MainActor
+@Suite("HostPairingCoordinator Tests")
+struct HostPairingCoordinatorTests {
+
+    // MARK: Helpers
+
+    private nonisolated static let webBaseURL = URL(string: "wss://mac.tail1234.ts.net:8799")!
+    private static let encoder = JSONEncoder.iso8601()
+
+    private struct Fixture {
+        let dir: URL
+        let coordinator: HostPairingCoordinator
+        let peerStore: TrustedPeerStore
+
+        @MainActor
+        func cleanup() async {
+            await coordinator.endPairing()
+            try? FileManager.default.removeItem(at: dir)
+        }
+    }
+
+    private func makeFixture() throws -> Fixture {
+        let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let peerStore = TrustedPeerStore(directory: dir)
+        let coordinator = HostPairingCoordinator(
+            identityStore: HostIdentityStore(directory: dir),
+            trustedPeerStore: peerStore,
+            deviceIDStore: HostDeviceIDStore(directory: dir),
+            hostDisplayName: "Test Mac",
+            webBaseURLProvider: { Self.webBaseURL }
+        )
+        return Fixture(dir: dir, coordinator: coordinator, peerStore: peerStore)
+    }
+
+    /// Runs `body` against a fresh fixture, guaranteeing `cleanup()`
+    /// (which ends any pairing and stops the listener) runs even when
+    /// `body` throws partway through.
+    private func withFixture(_ body: (Fixture) async throws -> Void) async throws {
+        let fx = try makeFixture()
+        do {
+            try await body(fx)
+        } catch {
+            await fx.cleanup()
+            throw error
+        }
+        await fx.cleanup()
+    }
+
+    private func makeIntroduceRequest(nonce: RemotePairingNonce) -> PairingIntroduceRequest {
+        PairingIntroduceRequest(
+            nonce: nonce,
+            clientPublicKey: try! RemoteIdentityPublicKey(rawRepresentation: Data(repeating: 0xCC, count: 32)),
+            clientDeviceID: RemoteDeviceID(value: "client-123"),
+            clientKind: .iphone,
+            clientDisplayName: "Client iPhone"
+        )
+    }
+
+    /// POSTs the introduce request to the coordinator's live listener on
+    /// loopback (the listener binds 0.0.0.0, so the LAN-IP payload URL's
+    /// port is reachable via 127.0.0.1).
+    private func postIntroduce(nonce: RemotePairingNonce, port: Int) async throws -> Int {
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/pairing/introduce")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try Self.encoder.encode(makeIntroduceRequest(nonce: nonce))
+        let (_, response) = try await URLSession.shared.data(for: request)
+        return (response as? HTTPURLResponse)?.statusCode ?? 0
+    }
+
+    /// Polls `condition` until true or the deadline passes. The
+    /// coordinator's published state advances on its 1s tick, so tests
+    /// wait for the tick rather than assuming immediacy.
+    private func waitUntil(
+        timeout: Duration = .seconds(5),
+        _ condition: () -> Bool
+    ) async throws {
+        let deadline = ContinuousClock.now + timeout
+        while !condition() {
+            if ContinuousClock.now > deadline {
+                Issue.record("Timed out waiting for condition")
+                return
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    // MARK: - beginPairing
+
+    @Test("beginPairing publishes a payload whose pairingURL points at the bound listener's /v1/pairing route and whose webBaseURL comes from the provider")
+    func beginPairingPublishesPayload() async throws {
+        try await withFixture { fx in
+            await fx.coordinator.beginPairing()
+
+            #expect(fx.coordinator.lastError == nil)
+            let payload = try #require(fx.coordinator.payload)
+            #expect(payload.pairingURL.scheme == "http")
+            #expect(payload.pairingURL.path == "/v1/pairing")
+            #expect(payload.webBaseURL == Self.webBaseURL)
+            guard case .awaitingClient = fx.coordinator.state else {
+                Issue.record("Expected .awaitingClient after beginPairing, got \(fx.coordinator.state)")
+                return
+            }
+
+            // The advertised port is the actually-bound listener: an
+            // introduce POST against it succeeds.
+            let port = try #require(payload.pairingURL.port)
+            let status = try await self.postIntroduce(nonce: payload.nonce, port: port)
+            #expect(status == 200)
+        }
+    }
+
+    // MARK: - REMOTE-1.3
+
+    @Test("@spec REMOTE-1.3: When the host user confirms an introduced pairing, the application shall persist the introduced peer in the trusted peer store.")
+    func confirmPersistsIntroducedPeer() async throws {
+        try await withFixture { fx in
+            await fx.coordinator.beginPairing()
+            let payload = try #require(fx.coordinator.payload)
+            let port = try #require(payload.pairingURL.port)
+
+            let status = try await self.postIntroduce(nonce: payload.nonce, port: port)
+            #expect(status == 200)
+
+            // The coordinator's tick task surfaces the introduce as
+            // .pendingConfirmation on its next 1s tick.
+            try await self.waitUntil {
+                if case .pendingConfirmation = fx.coordinator.state { return true }
+                return false
+            }
+
+            await fx.coordinator.confirm()
+
+            guard case .confirmed(let trustedPeer) = fx.coordinator.state else {
+                Issue.record("Expected .confirmed after confirm(), got \(fx.coordinator.state)")
+                return
+            }
+            #expect(trustedPeer.id == RemoteDeviceID(value: "client-123"))
+
+            let persisted = try fx.peerStore.get(id: RemoteDeviceID(value: "client-123"))
+            #expect(persisted != nil)
+            #expect(persisted?.displayName == "Client iPhone")
+        }
+    }
+
+    // MARK: - endPairing
+
+    @Test("endPairing stops the listener (connection refused) and returns the coordinator to a terminal state with no payload")
+    func endPairingStopsListener() async throws {
+        try await withFixture { fx in
+            await fx.coordinator.beginPairing()
+            let payload = try #require(fx.coordinator.payload)
+            let port = try #require(payload.pairingURL.port)
+
+            await fx.coordinator.endPairing()
+
+            #expect(fx.coordinator.payload == nil)
+            switch fx.coordinator.state {
+            case .cancelled, .idle:
+                break
+            default:
+                Issue.record("Expected a terminal/idle state after endPairing, got \(fx.coordinator.state)")
+            }
+
+            do {
+                _ = try await self.postIntroduce(nonce: payload.nonce, port: port)
+                Issue.record("Expected the connection to be refused after endPairing")
+            } catch is URLError {
+                // Expected: the pairing listener is gone (REMOTE-1.4).
+            }
+        }
+    }
+}

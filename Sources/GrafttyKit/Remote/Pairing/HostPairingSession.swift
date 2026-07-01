@@ -77,6 +77,7 @@ public final class HostPairingSession: @unchecked Sendable {
     private let hostDeviceID: RemoteDeviceID
     private let hostKind: RemoteDeviceKind
     private let hostDisplayName: String
+    private let webBaseURL: URL?
     private let pairingURLProvider: () -> URL
 
     // MARK: State
@@ -100,6 +101,7 @@ public final class HostPairingSession: @unchecked Sendable {
         hostDeviceID: RemoteDeviceID,
         hostKind: RemoteDeviceKind,
         hostDisplayName: String,
+        webBaseURL: URL? = nil,
         pairingURLProvider: @escaping () -> URL
     ) {
         self.identityStore = identityStore
@@ -109,6 +111,7 @@ public final class HostPairingSession: @unchecked Sendable {
         self.hostDeviceID = hostDeviceID
         self.hostKind = hostKind
         self.hostDisplayName = hostDisplayName
+        self.webBaseURL = webBaseURL
         self.pairingURLProvider = pairingURLProvider
     }
 
@@ -143,7 +146,8 @@ public final class HostPairingSession: @unchecked Sendable {
             hostPublicKeyFingerprint: fingerprint,
             nonce: nonce,
             expiry: expiry,
-            pairingURL: pairingURLProvider()
+            pairingURL: pairingURLProvider(),
+            webBaseURL: webBaseURL
         )
         _state = .awaitingClient(payload: payload, expiry: expiry)
         return payload

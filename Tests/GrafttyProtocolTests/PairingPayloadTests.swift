@@ -14,7 +14,8 @@ struct PairingPayloadTests {
 
     private func makePayload(
         version: Int = 1,
-        expiry: Date = Date(timeIntervalSince1970: 1_800_000_300)  // fixed whole-second date for deterministic round-trips
+        expiry: Date = Date(timeIntervalSince1970: 1_800_000_300),  // fixed whole-second date for deterministic round-trips
+        webBaseURL: URL? = nil
     ) -> PairingPayload {
         let pubKey = makePublicKey()
         let fingerprint = RemoteIdentityFingerprint(of: pubKey)
@@ -26,7 +27,8 @@ struct PairingPayloadTests {
             hostPublicKeyFingerprint: fingerprint,
             nonce: RemotePairingNonce(bytes: Data(repeating: 0xAB, count: 16)),
             expiry: expiry,
-            pairingURL: URL(string: "https://hostname.local:8800/v1/pairing")!
+            pairingURL: URL(string: "https://hostname.local:8800/v1/pairing")!,
+            webBaseURL: webBaseURL
         )
     }
 
@@ -139,6 +141,37 @@ struct PairingPayloadTests {
         let qr = try payload.qrEncoded()
         let decoded = try PairingPayload.decodeQR(qr)
         #expect(decoded == payload)
+    }
+
+    // MARK: - webBaseURL
+
+    @Test("QR encode → decodeQR preserves webBaseURL")
+    func roundTripPreservesWebBaseURL() throws {
+        let webBaseURL = URL(string: "wss://mac.tail1234.ts.net:8799")!
+        let original = makePayload(webBaseURL: webBaseURL)
+        let qr = try original.qrEncoded()
+        let decoded = try PairingPayload.decodeQR(qr)
+        #expect(decoded == original)
+        #expect(decoded.webBaseURL == webBaseURL)
+    }
+
+    @Test("legacy payload JSON without a webBaseURL key decodes with webBaseURL == nil")
+    func legacyPayloadWithoutWebBaseURLDecodes() throws {
+        // A payload encoded with webBaseURL == nil omits the key entirely,
+        // producing byte-identical JSON to a payload generated before the
+        // field existed — so this exercises the true legacy shape.
+        let qr = try makePayload().qrEncoded()
+        let b64url = String(qr.dropFirst("GRAFTTY1:".count))
+        var b64 = b64url
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        b64 += String(repeating: "=", count: (4 - b64.count % 4) % 4)
+        let json = String(data: Data(base64Encoded: b64)!, encoding: .utf8)!
+        #expect(!json.contains("webBaseURL"), "nil webBaseURL must be omitted so old payload JSON stays representable")
+
+        let decoded = try PairingPayload.decodeQR(qr)
+        #expect(decoded.webBaseURL == nil)
+        #expect(decoded == makePayload())
     }
 
     // MARK: - Codable (JSON)
