@@ -102,7 +102,14 @@ function nextBackoffMs(attempt: number): number {
   return Math.max(250, Math.round(base + jitter));
 }
 
-export function TerminalPane({ sessionName }: { sessionName: string }) {
+interface TerminalPaneProps {
+  sessionName: string;
+  role?: 'interactive' | 'preview';
+  fit?: 'viewport' | 'container';
+  autoFocus?: boolean;
+}
+
+export function TerminalPane({ sessionName, role = 'interactive', fit = 'viewport', autoFocus = true }: TerminalPaneProps) {
   const [status, setStatus] = useState<Status>('connecting');
   const [activeClientID, setActiveClientID] = useState<string | null>(null);
   const [ownershipSnapshot, setOwnershipSnapshot] = useState<OwnershipSnapshot | null>(null);
@@ -115,7 +122,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
 
   const isOwner = ownershipSnapshot?.ownerClientID === activeClientID
     && ownershipSnapshot?.ownerKind === WEB_CLIENT_KIND;
-  const canTakeControl = ownershipSnapshot !== null && activeClientID !== null && !isOwner;
+  const canTakeControl = ownershipSnapshot !== null && activeClientID !== null && !isOwner && role === 'interactive';
 
   const sendTakeControlFrame = () => {
     const { ws, clientID } = connectionRef.current;
@@ -140,6 +147,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
     let disposed = false;
     const host = hostRef.current;
     if (!host) return;
+    const readOnly = role === 'preview';
     setStatus('connecting');
     setActiveClientID(null);
     setOwnershipSnapshot(null);
@@ -204,7 +212,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
         type: 'hello',
         clientID,
         kind: WEB_CLIENT_KIND,
-        role: 'interactive',
+        role,
         visible: true,
         cols,
         rows,
@@ -259,6 +267,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
     // silently; the user sees "reconnecting…" in the status strip so
     // the drop is visible.
     const sendBytes = (data: string) => {
+      if (readOnly) return;
       const encoded = textEncoder.encode(data);
       if (isOwnerRef.current && currentWs && currentWs.readyState === WebSocket.OPEN) {
         currentWs.send(encoded);
@@ -269,6 +278,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
     };
 
     const sendOwnerResize = (cols: number, rows: number) => {
+      if (readOnly) return;
       const clientID = connectionRef.current.clientID;
       const epoch = ownershipRef.current?.epoch;
       if (isOwnerRef.current && clientID && epoch != null && currentWs && currentWs.readyState === WebSocket.OPEN) {
@@ -419,30 +429,37 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
     // refit the PTY rows so the cursor stays above the keyboard.
     // Width is tracked too: Android sometimes changes visual width
     // when the IME opens.
-    const vv = window.visualViewport;
-    let lastAppliedW = -1;
-    let lastAppliedH = -1;
-    const applyViewportSize = () => {
-      if (disposed) return;
-      const w = vv ? vv.width : window.innerWidth;
-      const h = vv ? vv.height : window.innerHeight;
-      // iOS fires `visualViewport.scroll` continuously during
-      // momentum/IME animation — gate so we don't write the same px
-      // into inline style dozens of times per second.
-      if (w === lastAppliedW && h === lastAppliedH) return;
-      lastAppliedW = w;
-      lastAppliedH = h;
-      host.style.width = `${w}px`;
-      host.style.height = `${h}px`;
-    };
-    applyViewportSize();
-    if (vv) {
-      // `scroll` on visualViewport fires when iOS pans the viewport
-      // around the keyboard without resizing — cover both.
-      vv.addEventListener('resize', applyViewportSize, { signal: abort.signal });
-      vv.addEventListener('scroll', applyViewportSize, { signal: abort.signal });
+    // When fit='container', skip this wiring — the host fills its parent
+    // via CSS (width:100%;height:100%) and the ResizeObserver drives sizing.
+    if (fit === 'viewport') {
+      const vv = window.visualViewport;
+      let lastAppliedW = -1;
+      let lastAppliedH = -1;
+      const applyViewportSize = () => {
+        if (disposed) return;
+        const w = vv ? vv.width : window.innerWidth;
+        const h = vv ? vv.height : window.innerHeight;
+        // iOS fires `visualViewport.scroll` continuously during
+        // momentum/IME animation — gate so we don't write the same px
+        // into inline style dozens of times per second.
+        if (w === lastAppliedW && h === lastAppliedH) return;
+        lastAppliedW = w;
+        lastAppliedH = h;
+        host.style.width = `${w}px`;
+        host.style.height = `${h}px`;
+      };
+      applyViewportSize();
+      if (vv) {
+        // `scroll` on visualViewport fires when iOS pans the viewport
+        // around the keyboard without resizing — cover both.
+        vv.addEventListener('resize', applyViewportSize, { signal: abort.signal });
+        vv.addEventListener('scroll', applyViewportSize, { signal: abort.signal });
+      }
+      window.addEventListener('resize', applyViewportSize, { signal: abort.signal });
+    } else {
+      host.style.width = '100%';
+      host.style.height = '100%';
     }
-    window.addEventListener('resize', applyViewportSize, { signal: abort.signal });
 
     ensureGhostty()
       .then(() => {
@@ -516,7 +533,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
 
         termReady = true;
         termRef.current = term;
-        term.focus();
+        if (autoFocus) term.focus();
 
         // fitTerminal already called resize() above before onResize was
         // registered. If ownership was established while WASM loaded,
@@ -556,13 +573,13 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
 
   return (
     <>
-      <div id="status">{status}</div>
+      <div className="term-status">{status}</div>
       {canTakeControl ? (
-        <button id="take-control" type="button" onClick={sendTakeControl}>
+        <button className="term-take-control" type="button" onClick={sendTakeControl}>
           Take Control
         </button>
       ) : null}
-      <div id="term" ref={hostRef} />
+      <div className="term-host" ref={hostRef} />
     </>
   );
 }

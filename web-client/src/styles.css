@@ -13,7 +13,7 @@ html, body, #root, #app {
   overflow: hidden;
 }
 
-#term {
+.term-host {
   width: 100vw;
   height: 100vh;
   /* Mobile: don't let the browser interpret single-finger drag as
@@ -25,7 +25,7 @@ html, body, #root, #app {
   overscroll-behavior: none;
 }
 
-#status {
+.term-status {
   position: fixed;
   top: 4px;
   right: 8px;
@@ -35,7 +35,7 @@ html, body, #root, #app {
   z-index: 1;
 }
 
-#take-control {
+.term-take-control {
   position: fixed;
   top: 24px;
   right: 8px;
@@ -49,7 +49,7 @@ html, body, #root, #app {
   cursor: pointer;
 }
 
-#take-control:hover {
+.term-take-control:hover {
   background: rgba(31, 52, 78, 0.96);
 }
 

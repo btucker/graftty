@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { TerminalPane } from './TerminalPane';
 
 const ghosttyMock = vi.hoisted(() => {
@@ -161,7 +161,7 @@ async function renderReady(sessionName = 'demo session') {
   return {
     term: ghosttyMock.instances[0],
     ws: MockWebSocket.instances[0],
-    host: document.getElementById('term') as HTMLDivElement,
+    host: document.querySelector('.term-host') as HTMLDivElement,
   };
 }
 
@@ -251,7 +251,7 @@ test('terminal pane constructs ghostty-web and connects to the encoded session w
     rows: 24,
     scrollback: 10000,
   }));
-  expect(term.open).toHaveBeenCalledWith(document.getElementById('term'));
+  expect(term.open).toHaveBeenCalledWith(document.querySelector('.term-host'));
   expect(ws.url).toBe('ws://localhost:3000/ws?session=demo%20session');
   expect(ws.binaryType).toBe('arraybuffer');
 });
@@ -488,8 +488,8 @@ test('terminal host follows visual viewport and maps touch drag to scrollback', 
 test('terminal host CSS disables browser touch panning and overscroll', async () => {
   const css = readFileSync('src/styles.css', 'utf8');
 
-  expect(css).toMatch(/#term\s*{[^}]*touch-action:\s*none;/s);
-  expect(css).toMatch(/#term\s*{[^}]*overscroll-behavior:\s*none;/s);
+  expect(css).toMatch(/\.term-host\s*{[^}]*touch-action:\s*none;/s);
+  expect(css).toMatch(/\.term-host\s*{[^}]*overscroll-behavior:\s*none;/s);
 });
 
 // @spec WEB-5.8: While the user is viewing scrollback on the normal screen (i.e., `term.viewportY > 0`), incoming PTY output shall not move the viewport: the client shall capture `viewportY` and scrollback length immediately before each `term.write()` call and, after the write, re-apply `viewportY` shifted by the number of lines that scrolled into scrollback so the viewport stays pinned to the same absolute content rather than the same offset-from-bottom. While the alternate screen is active on either side of the write, the viewport shall be left at the library-default bottom position. Rationale: ghostty-web's `Terminal.writeInternal` unconditionally calls `scrollToBottom()` whenever `viewportY !== 0` at write time, so without this wrapper the viewport snaps to the newest output on every WebSocket data frame — making wheel/touch scrollback unusable on any session that is actively producing output. Pinning to absolute content (not offset) is what lets the user read older lines while the shell continues to print.
@@ -522,4 +522,33 @@ test('server text status frames are rendered without writing terminal bytes', as
 
   expect(await screen.findByText('done')).toBeTruthy();
   expect(term.write).not.toHaveBeenCalled();
+});
+
+// @spec WEB-9.5: When role is preview, the client shall send hello with role:preview and shall not send takeControl or ownerResize frames, even after receiving an ownership snapshot naming another owner.
+describe('@spec WEB-9.5 preview role', () => {
+  test('sends a preview-role hello and never a takeControl or ownerResize frame', async () => {
+    render(<TerminalPane sessionName="s1" role="preview" fit="container" autoFocus={false} />);
+    await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
+    const ws = MockWebSocket.instances[0];
+    await act(async () => ws.open());
+
+    const hello = textFrames(ws).find((m) => m.type === 'hello');
+    expect(hello).toBeDefined();
+    expect(hello!.role).toBe('preview');
+
+    // Even after a simulated ownership snapshot naming another (mac) owner, no claim is sent.
+    await act(async () => ws.receive(JSON.stringify({
+      type: 'ownership',
+      snapshot: {
+        sessionName: 's1',
+        ownerClientID: 'mac-1',
+        ownerKind: 'mac',
+        grid: { cols: 80, rows: 24 },
+        epoch: 1,
+        ownerless: false,
+      },
+    })));
+
+    expect(textFrames(ws).some((m) => m.type === 'takeControl' || m.type === 'ownerResize')).toBe(false);
+  });
 });
