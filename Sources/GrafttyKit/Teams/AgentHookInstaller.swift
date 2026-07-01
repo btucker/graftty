@@ -343,9 +343,29 @@ public struct AgentHookInstaller: Sendable {
             wrapperDirectory: wrapperDirectory,
             realCommandName: realCommandName
         )
-        let trapBlock = """
-        cleanup() { \(shellCommandToken(grafttyCLIPath)) team unregister --runtime \(runtime.rawValue) 2>/dev/null || true; }
-        trap cleanup EXIT
+        let registerBlock = """
+        # Register this wrapper PID before launching the runtime. The runtime
+        # remains a foreground child in the same process group so TUIs keep
+        # normal terminal semantics, while the wrapper gets a short teardown
+        # phase after the runtime exits.
+        \(shellCommandToken(grafttyCLIPath)) team register --runtime \(runtime.rawValue) --pid "$$" >/dev/null 2>&1 || true
+        """
+
+        let cleanupBlock = """
+        cleanup_after_runtime() {
+          # Some TUIs issue terminal capability queries during startup/shutdown.
+          # A late reply can otherwise land in the parent shell after the TUI
+          # exits (for example Kitty keyboard protocol replies like CSI ? ... u).
+          # Drain only a tiny, immediately-pending window and restore tty state.
+          if [ -t 0 ] && command -v stty >/dev/null 2>&1 && command -v dd >/dev/null 2>&1; then
+            _graftty_stty="$(stty -g 2>/dev/null)" || _graftty_stty=""
+            if [ -n "$_graftty_stty" ] && stty -icanon -echo min 0 time 1 2>/dev/null; then
+              dd bs=1024 count=1 of=/dev/null 2>/dev/null || true
+              stty "$_graftty_stty" 2>/dev/null || true
+            fi
+          fi
+          \(shellCommandToken(grafttyCLIPath)) team unregister --runtime \(runtime.rawValue) 2>/dev/null || true
+        }
         """
 
         let runtimeBlock: String
@@ -355,9 +375,9 @@ public struct AgentHookInstaller: Sendable {
             let escapedJSON = shellLiteral(inlineJSON)
             runtimeBlock = """
             if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
-              ( exec "$real_binary" --settings \(escapedJSON) "$@" )
+              "$real_binary" --settings \(escapedJSON) "$@"
             else
-              ( exec "$real_binary" "$@" )
+              "$real_binary" "$@"
             fi
             """
         case .codex:
@@ -365,9 +385,9 @@ public struct AgentHookInstaller: Sendable {
             runtimeBlock = """
             if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
               \(shellCommandToken(grafttyCLIPath)) internal sync-codex-home
-              ( exec env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@" )
+              env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@"
             else
-              ( exec "$real_binary" "$@" )
+              "$real_binary" "$@"
             fi
             """
         }
@@ -378,15 +398,14 @@ public struct AgentHookInstaller: Sendable {
         # Hooks run: \(grafttyCLIPath) team hook \(runtime.rawValue)
         \(resolveBlock)
 
-        \(trapBlock)
+        \(registerBlock)
 
-        # TEAM-PRESENCE-1.3: background `team register` so it never delays
-        # exec of the real binary. The CLI silently no-ops outside a
-        # team-tracked worktree, so the unconditional call is safe.
-        \(shellCommandToken(grafttyCLIPath)) team register --runtime \(runtime.rawValue) >/dev/null 2>&1 &
+        \(cleanupBlock)
 
         \(runtimeBlock)
-        exit $?
+        runtime_status=$?
+        cleanup_after_runtime
+        exit "$runtime_status"
         """
     }
 

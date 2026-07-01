@@ -8,7 +8,8 @@ struct ZmxNudgeSenderTests {
     func writesToProvidedSession() async {
         let stubWriter = StubZmxWriter()
         let sender = ZmxNudgeSender(writer: stubWriter)
-        await sender.send(sessionName: "graftty-explicit", message: "hello", messageIDs: ["m-1"])
+        let sent = await sender.send(sessionName: "graftty-explicit", message: "hello", messageIDs: ["m-1"])
+        #expect(sent)
         #expect(stubWriter.writes.count == 1)
         #expect(stubWriter.writes[0].sessionName == "graftty-explicit")
         #expect(stubWriter.writes[0].text == "hello")
@@ -20,11 +21,33 @@ struct ZmxNudgeSenderTests {
         #expect(stubWriter.writes[0].submit == true)
     }
 
+    @Test("send returns false when the writer throws.")
+    func returnsFalseWhenWriterThrows() async {
+        let stubWriter = StubZmxWriter(error: StubError())
+        let sender = ZmxNudgeSender(writer: stubWriter)
+
+        let sent = await sender.send(sessionName: "graftty-explicit", message: "hello", messageIDs: ["m-1"])
+
+        #expect(!sent)
+        #expect(stubWriter.writes.count == 1)
+    }
+
+    struct StubError: Error {}
+
     final class StubZmxWriter: ZmxWriter, @unchecked Sendable {
         struct Call { let sessionName: String; let text: String; let submit: Bool }
         var writes: [Call] = []
+        let error: (any Error)?
+
+        init(error: (any Error)? = nil) {
+            self.error = error
+        }
+
         func write(sessionName: String, text: String, submit: Bool) async throws {
             writes.append(.init(sessionName: sessionName, text: text, submit: submit))
+            if let error {
+                throw error
+            }
         }
     }
 }

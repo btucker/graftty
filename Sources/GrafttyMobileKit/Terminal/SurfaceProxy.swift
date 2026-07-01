@@ -16,7 +16,7 @@ public protocol SurfaceProxy {
 
 /// Real adapter used in production. The surface is looked up lazily
 /// per-call because a `UITerminalView`'s surface may be rebuilt during
-/// a pane's lifetime (e.g., size-leader changes), so capturing a
+/// a pane's lifetime (e.g., display-owner/font transitions), so capturing a
 /// reference at init time would dangle.
 @MainActor
 public final class RealSurfaceProxy: SurfaceProxy {

@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Darwin
 @testable import GrafttyKit
 
 @Suite("AgentHookInstaller — wrapper script shapes")
@@ -21,8 +22,8 @@ struct AgentHookInstallerWrapperTests {
         #expect(script.contains("\"Stop\""))
         #expect(script.contains("graftty team hook claude session-start"))
 
-        // Trap-based unregister.
-        #expect(script.contains("trap"))
+        // Foreground child: the wrapper keeps a post-runtime cleanup phase.
+        #expect(!script.contains("trap"))
         #expect(script.contains("graftty team unregister --runtime claude"))
 
         // No on-disk settings file path is referenced.
@@ -39,9 +40,12 @@ struct AgentHookInstallerWrapperTests {
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
         )
         #expect(script.contains("GRAFTTY_DISABLE_AGENT_HOOKS"))
-        // Both branches must end in an exec of the real binary.
-        let execCount = script.components(separatedBy: "exec ").count - 1
-        #expect(execCount >= 2)
+        // Both branches run the real binary in the foreground, not as a
+        // background child and not via exec.
+        #expect(script.contains(#""$real_binary" --settings"#))
+        #expect(script.contains(#""$real_binary" "$@""#))
+        #expect(!script.contains(" ) &"))
+        #expect(!script.contains("exec "))
     }
 
     @Test("@spec TEAM-IDLE-1.3: Claude wrapper Stop hook spawns the asyncRewake watcher.")
@@ -58,7 +62,7 @@ struct AgentHookInstallerWrapperTests {
         #expect(script.contains("\"asyncRewake\":true"))
     }
 
-    @Test("Codex wrapper sets CODEX_HOME and runs sync-codex-home before exec.")
+    @Test("Codex wrapper sets CODEX_HOME and runs sync-codex-home before launch.")
     func codexWrapperSetsCodexHome() {
         let script = AgentHookInstaller.wrapperScript(
             runtime: .codex,
@@ -70,15 +74,15 @@ struct AgentHookInstallerWrapperTests {
         #expect(script.contains("internal sync-codex-home"))
         #expect(script.contains("CODEX_HOME="))
         #expect(script.contains("/Users/x/agent-hooks/codex-home"))
-        #expect(script.contains("trap"))
+        #expect(!script.contains("trap"))
         #expect(script.contains("graftty team unregister --runtime codex"))
     }
 
     @Test(
-        "@spec TEAM-PRESENCE-1.3: When the graftty wrapper launches an agent runtime, the wrapper shall asynchronously invoke `graftty team register --runtime <runtime>` (backgrounded, output redirected) before exec'ing the real binary, so the model is not required to type the registration command itself.",
+        "@spec TEAM-PRESENCE-1.3: When the graftty wrapper launches an agent runtime, the wrapper shall register a PID whose lifetime covers the foreground runtime process, not the short-lived registration helper PID.",
         arguments: [TeamHookRuntime.claude, .codex]
     )
-    func wrapperRegistersAsynchronouslyBeforeExec(runtime: TeamHookRuntime) {
+    func wrapperRegistersRuntimeLifetimePIDBeforeLaunch(runtime: TeamHookRuntime) {
         let script = AgentHookInstaller.wrapperScript(
             runtime: runtime,
             wrapperDirectory: "/Users/x/agent-hooks/bin",
@@ -86,14 +90,290 @@ struct AgentHookInstallerWrapperTests {
             grafttyCLIPath: "/usr/local/bin/graftty",
             codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
         )
-        // Async register, fully detached and silent.
+
         #expect(script.contains(
-            "/usr/local/bin/graftty team register --runtime \(runtime.rawValue) >/dev/null 2>&1 &"
+            #"/usr/local/bin/graftty team register --runtime \#(runtime.rawValue) --pid "$$" >/dev/null 2>&1 || true"#
         ))
-        // Register fires before exec of the real binary so it races with
-        // the agent's startup rather than serializing.
+        #expect(script.contains("cleanup_after_runtime"))
+
         let registerIdx = script.range(of: "team register --runtime")!.lowerBound
-        let execIdx = script.range(of: #"exec "$real_binary""#)!.lowerBound
-        #expect(registerIdx < execIdx)
+        let runtimeIdx = script.range(
+            of: #""$real_binary""#,
+            range: registerIdx..<script.endIndex
+        )!.lowerBound
+        #expect(registerIdx < runtimeIdx)
+    }
+
+    @Test("Wrapper launches the runtime in the foreground.")
+    func wrapperLaunchesRuntimeInForeground() {
+        let script = AgentHookInstaller.wrapperScript(
+            runtime: .codex,
+            wrapperDirectory: "/Users/x/agent-hooks/bin",
+            realCommandName: "codex",
+            grafttyCLIPath: "/usr/local/bin/graftty",
+            codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
+        )
+
+        #expect(!script.contains("agent_pid=$!"))
+        #expect(!script.contains(#"wait "$agent_pid""#))
+        #expect(!script.contains("forward_signal()"))
+        #expect(!script.contains(" ) &"))
+        #expect(!script.contains(#"exec env CODEX_HOME="#))
+        #expect(script.contains(#"env CODEX_HOME="#))
+        #expect(script.contains(#""$real_binary" "$@""#))
+    }
+
+    @Test("Wrapper runtime launch shape includes hooks arguments.")
+    func wrapperRuntimeLaunchShapeIncludesHookArguments() {
+        let claude = AgentHookInstaller.wrapperScript(
+            runtime: .claude,
+            wrapperDirectory: "/Users/x/agent-hooks/bin",
+            realCommandName: "claude",
+            grafttyCLIPath: "/usr/local/bin/graftty",
+            codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
+        )
+        let codex = AgentHookInstaller.wrapperScript(
+            runtime: .codex,
+            wrapperDirectory: "/Users/x/agent-hooks/bin",
+            realCommandName: "codex",
+            grafttyCLIPath: "/usr/local/bin/graftty",
+            codexHomeDirectory: "/Users/x/agent-hooks/codex-home"
+        )
+
+        #expect(claude.contains(#""$real_binary" --settings"#))
+        #expect(claude.contains(#""$real_binary" "$@""#))
+        #expect(codex.contains(#"env CODEX_HOME="#))
+        #expect(codex.contains(#""$real_binary" "$@""#))
+    }
+
+    @Test("Generated wrapper registers its own PID while the runtime is running.")
+    func wrapperRegistersOwnPIDWhileRuntimeIsRunning() throws {
+        let root = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
+        let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: wrapperDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: realDirectory, withIntermediateDirectories: true)
+
+        let childPIDFile = root.appendingPathComponent("child.pid")
+        let fakeGraftty = root.appendingPathComponent("graftty")
+        try writeExecutable(
+            """
+            #!/bin/sh
+            if [ "$1" = "team" ] && [ "$2" = "register" ]; then
+              while [ "$#" -gt 0 ]; do
+                if [ "$1" = "--pid" ]; then
+                  shift
+                  printf '%s\\n' "$1" > "$GRAFTTY_TEST_PID_FILE"
+                  exit 0
+                fi
+                shift
+              done
+            fi
+            exit 0
+            """,
+            to: fakeGraftty
+        )
+
+        let realCodex = realDirectory.appendingPathComponent("codex")
+        try FileManager.default.createSymbolicLink(
+            at: realCodex,
+            withDestinationURL: URL(fileURLWithPath: "/bin/sleep")
+        )
+
+        let wrapper = wrapperDirectory.appendingPathComponent("codex")
+        try writeExecutable(
+            AgentHookInstaller.wrapperScript(
+                runtime: .codex,
+                wrapperDirectory: wrapperDirectory.path,
+                realCommandName: "codex",
+                grafttyCLIPath: fakeGraftty.path,
+                codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
+            ),
+            to: wrapper
+        )
+
+        let process = Process()
+        process.executableURL = wrapper
+        process.arguments = ["30"]
+        process.environment = [
+            "PATH": "\(wrapperDirectory.path):\(realDirectory.path):/bin:/usr/bin",
+            "GRAFTTY_TEST_PID_FILE": childPIDFile.path,
+        ]
+        try process.run()
+        defer {
+            if process.isRunning {
+                Darwin.kill(process.processIdentifier, SIGKILL)
+                process.waitUntilExit()
+            }
+        }
+
+        let registeredPIDString = try #require(waitForFileContents(childPIDFile, timeout: 2.0))
+        let registeredPID = (registeredPIDString.trimmingCharacters(in: .whitespacesAndNewlines) as NSString).intValue
+        #expect(registeredPID == process.processIdentifier)
+        #expect(process.isRunning)
+    }
+
+    @Test("Generated Codex wrapper preserves terminal stdin for the runtime child.")
+    func codexWrapperRuntimeChildKeepsTerminalStdin() throws {
+        let root = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
+        let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: wrapperDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: realDirectory, withIntermediateDirectories: true)
+
+        let fakeGraftty = root.appendingPathComponent("graftty")
+        try writeExecutable(
+            """
+            #!/bin/sh
+            exit 0
+            """,
+            to: fakeGraftty
+        )
+
+        let realCodex = realDirectory.appendingPathComponent("codex")
+        try writeExecutable(
+            """
+            #!/bin/sh
+            if [ -t 0 ]; then
+              printf 'GRAFTTY_STDIN_TTY:yes\\n'
+            else
+              printf 'GRAFTTY_STDIN_TTY:no\\n'
+            fi
+            """,
+            to: realCodex
+        )
+
+        let wrapper = wrapperDirectory.appendingPathComponent("codex")
+        try writeExecutable(
+            AgentHookInstaller.wrapperScript(
+                runtime: .codex,
+                wrapperDirectory: wrapperDirectory.path,
+                realCommandName: "codex",
+                grafttyCLIPath: fakeGraftty.path,
+                codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
+            ),
+            to: wrapper
+        )
+
+        let spawned = try PtyProcess.spawn(
+            argv: [wrapper.path],
+            env: [
+                "PATH": "\(wrapperDirectory.path):\(realDirectory.path):/bin:/usr/bin",
+                "TERM": "xterm-256color",
+            ],
+            initialSize: (cols: 80, rows: 24)
+        )
+        defer {
+            Darwin.kill(spawned.pid, SIGKILL)
+            Darwin.close(spawned.masterFD)
+        }
+
+        let output = readFromPTY(spawned.masterFD, until: "GRAFTTY_STDIN_TTY:", timeout: 2.0)
+        #expect(output.contains("GRAFTTY_STDIN_TTY:yes"), "runtime child lost terminal stdin; output: \(output)")
+    }
+
+    @Test("Generated wrapper preserves runtime exit status after cleanup.")
+    func wrapperPreservesRuntimeExitStatusAfterCleanup() throws {
+        let root = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
+        let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: wrapperDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: realDirectory, withIntermediateDirectories: true)
+
+        let fakeGraftty = root.appendingPathComponent("graftty")
+        try writeExecutable(
+            """
+            #!/bin/sh
+            exit 0
+            """,
+            to: fakeGraftty
+        )
+
+        let realCodex = realDirectory.appendingPathComponent("codex")
+        try writeExecutable(
+            """
+            #!/bin/sh
+            exit 37
+            """,
+            to: realCodex
+        )
+
+        let wrapper = wrapperDirectory.appendingPathComponent("codex")
+        try writeExecutable(
+            AgentHookInstaller.wrapperScript(
+                runtime: .codex,
+                wrapperDirectory: wrapperDirectory.path,
+                realCommandName: "codex",
+                grafttyCLIPath: fakeGraftty.path,
+                codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
+            ),
+            to: wrapper
+        )
+
+        let process = Process()
+        process.executableURL = wrapper
+        process.environment = [
+            "PATH": "\(wrapperDirectory.path):\(realDirectory.path):/bin:/usr/bin",
+            "TERM": "xterm-256color",
+        ]
+        try process.run()
+        process.waitUntilExit()
+        #expect(process.terminationStatus == 37)
+    }
+
+    private func makeTempDirectory() throws -> URL {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("graftty-wrapper-signal-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    private func writeExecutable(_ contents: String, to url: URL) throws {
+        try Data(contents.utf8).write(to: url, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o755))], ofItemAtPath: url.path)
+    }
+
+    private func waitForFileContents(_ url: URL, timeout: TimeInterval) -> String? {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if let value = try? String(contentsOf: url, encoding: .utf8), !value.isEmpty {
+                return value
+            }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        return nil
+    }
+
+    private func waitUntil(timeout: TimeInterval, predicate: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if predicate() { return true }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        return predicate()
+    }
+
+    private func readFromPTY(_ fd: Int32, until marker: String, timeout: TimeInterval) -> String {
+        let flags = fcntl(fd, F_GETFL)
+        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
+
+        var output = ""
+        var buffer = [UInt8](repeating: 0, count: 1024)
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let count = buffer.withUnsafeMutableBufferPointer {
+                Darwin.read(fd, $0.baseAddress, $0.count)
+            }
+            if count > 0 {
+                output += String(bytes: buffer.prefix(count), encoding: .utf8) ?? ""
+                if output.contains(marker) { return output }
+            } else {
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+        }
+        return output
     }
 }

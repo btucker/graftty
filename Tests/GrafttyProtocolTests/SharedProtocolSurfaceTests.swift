@@ -19,8 +19,23 @@ struct SharedProtocolSurfaceTests {
         #expect(try JSONDecoder().decode(SessionInfo.self, from: sessionData) == session)
 
         let envelope = try WebControlEnvelope.parse(
-            Data(#"{"type":"resize","cols":80,"rows":24}"#.utf8)
+            Data(#"{"type":"ownerResize","clientID":"web-1","epoch":1,"cols":80,"rows":24}"#.utf8)
         )
-        #expect(envelope == .resize(cols: 80, rows: 24))
+        #expect(envelope == .ownerResize(
+            clientID: DisplayClientID("web-1"),
+            epoch: 1,
+            cols: 80,
+            rows: 24
+        ))
+
+        let snapshot = try DisplayOwnershipSnapshot(
+            sessionName: "graftty-abcd1234",
+            ownerClientID: DisplayClientID("web-1"),
+            ownerKind: .web,
+            grid: try DisplayGrid(cols: 80, rows: 24),
+            epoch: 1
+        )
+        let snapshotData = try JSONEncoder().encode(snapshot)
+        #expect(try JSONDecoder().decode(DisplayOwnershipSnapshot.self, from: snapshotData) == snapshot)
     }
 }

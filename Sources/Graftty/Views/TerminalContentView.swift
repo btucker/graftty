@@ -28,6 +28,23 @@ struct TerminalContentView: View {
         }
     }
 
+    /// Floating capsule shown over a follower pane to reclaim display
+    /// ownership — the Mac analogue of the iOS fullscreen Take Control button.
+    private func takeControlButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label("Take Control", systemImage: "hand.raised.fill")
+                .font(.callout.weight(.semibold))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.primary)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(.separator.opacity(0.4), lineWidth: 0.5))
+        .padding(.top, 12)
+        .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
     private func nodeView(_ node: SplitTree.Node) -> AnyView {
         switch node {
         case .leaf(let terminalID):
@@ -46,6 +63,18 @@ struct TerminalContentView: View {
             return AnyView(
                 SurfaceViewWrapper(nsView: nsView)
                     .paneFocusDimming(fill: theme.unfocusedSplitFill, style: dimmingStyle)
+                    // Mirror the iOS "Take Control" affordance: when another
+                    // display client (iOS/web) owns this pane, the Mac is a
+                    // follower, so offer a button to reclaim ownership without
+                    // typing. Visibility tracks ownership changes reactively
+                    // via TerminalManager's store observer.
+                    .overlay(alignment: .top) {
+                        if tm.canTakeDisplayControl(for: terminalID) {
+                            takeControlButton {
+                                _ = tm.takeDisplayControl(for: terminalID)
+                            }
+                        }
+                    }
                     // Force a distinct SwiftUI identity per terminal. Without
                     // this, when the split tree swaps one terminalID for
                     // another at the same structural position (e.g., the user

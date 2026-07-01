@@ -8,6 +8,7 @@ public enum WebSocketFrame: Equatable {
 }
 
 public protocol WebSocketClient: AnyObject {
+    var supportsWebControlTextFrames: Bool { get }
     func send(_ frame: WebSocketFrame) async throws
     /// Receives the next frame. Errors surface as thrown errors.
     func receive() async throws -> WebSocketFrame
@@ -17,15 +18,37 @@ public protocol WebSocketClient: AnyObject {
     /// TerminalSessionClient issues an SSH window-change channel request.
     /// Default: no-op so non-PTY consumers don't have to implement.
     func resize(cols: Int, rows: Int) async
+    func sendHello(
+        clientID: DisplayClientID,
+        kind: DisplayClientKind,
+        role: DisplayClientRole,
+        visible: Bool,
+        cols: Int,
+        rows: Int
+    ) async
+    func takeControl(clientID: DisplayClientID, kind: DisplayClientKind, cols: Int, rows: Int) async
+    func ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: Int, rows: Int) async
 }
 
 public extension WebSocketClient {
+    var supportsWebControlTextFrames: Bool { false }
     func resize(cols: Int, rows: Int) async {}
+    func sendHello(
+        clientID: DisplayClientID,
+        kind: DisplayClientKind,
+        role: DisplayClientRole,
+        visible: Bool,
+        cols: Int,
+        rows: Int
+    ) async {}
+    func takeControl(clientID: DisplayClientID, kind: DisplayClientKind, cols: Int, rows: Int) async {}
+    func ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: Int, rows: Int) async {}
 }
 
 public final class URLSessionWebSocketClient: WebSocketClient {
 
     private let task: URLSessionWebSocketTask
+    public var supportsWebControlTextFrames: Bool { true }
 
     public init(url: URL, urlSession: URLSession = .shared) {
         self.task = urlSession.webSocketTask(with: url)
@@ -57,6 +80,45 @@ public final class URLSessionWebSocketClient: WebSocketClient {
 
     public func resize(cols: Int, rows: Int) async {
         let payload = WebControlEnvelope.resize(cols: UInt16(cols), rows: UInt16(rows)).encoded()
+        try? await send(.text(payload))
+    }
+
+    public func sendHello(
+        clientID: DisplayClientID,
+        kind: DisplayClientKind,
+        role: DisplayClientRole,
+        visible: Bool,
+        cols: Int,
+        rows: Int
+    ) async {
+        let payload = WebControlEnvelope.hello(
+            clientID: clientID,
+            kind: kind,
+            role: role,
+            visible: visible,
+            cols: UInt16(cols),
+            rows: UInt16(rows)
+        ).encoded()
+        try? await send(.text(payload))
+    }
+
+    public func takeControl(clientID: DisplayClientID, kind: DisplayClientKind, cols: Int, rows: Int) async {
+        let payload = WebControlEnvelope.takeControl(
+            clientID: clientID,
+            kind: kind,
+            cols: UInt16(cols),
+            rows: UInt16(rows)
+        ).encoded()
+        try? await send(.text(payload))
+    }
+
+    public func ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: Int, rows: Int) async {
+        let payload = WebControlEnvelope.ownerResize(
+            clientID: clientID,
+            epoch: epoch,
+            cols: UInt16(cols),
+            rows: UInt16(rows)
+        ).encoded()
         try? await send(.text(payload))
     }
 }

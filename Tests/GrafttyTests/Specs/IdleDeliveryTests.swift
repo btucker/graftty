@@ -1,6 +1,86 @@
 import Foundation
 import Testing
+@testable import Graftty
 @testable import GrafttyKit
+
+@Suite("GrafttyApp — Codex Stop delivery ownership")
+struct CodexStopDeliveryOwnershipTests {
+    @Test("Owner Codex Stop updates from the stopping pane and delivers to owner sessions.")
+    func ownerStopTargetsOwnerSessions() {
+        var requestedTeam: String?
+        var requestedWorktree: String?
+
+        let plan = GrafttyApp.codexStopDeliveryPlan(
+            team: "/repo",
+            worktree: "/repo/.worktrees/alice",
+            runtime: TeamHookRuntime.codex.rawValue,
+            paneSessionName: "graftty-owner",
+            isLiveSession: { $0 == "graftty-owner" || $0 == "graftty-secondary" },
+            codexSessionNamesIn: { team, worktree in
+                requestedTeam = team
+                requestedWorktree = worktree
+                return ["graftty-owner"]
+            }
+        )
+
+        #expect(plan.shouldUpdateState)
+        #expect(plan.liveSessionName == "graftty-owner")
+        #expect(plan.deliverySessionNames == ["graftty-owner"])
+        #expect(requestedTeam == "/repo")
+        #expect(requestedWorktree == "/repo/.worktrees/alice")
+    }
+
+    @Test("Non-owner Codex Stop does not update owner delivery state or target owner sessions.")
+    func nonOwnerStopDoesNotTargetOwnerSessions() {
+        let plan = GrafttyApp.codexStopDeliveryPlan(
+            team: "/repo",
+            worktree: "/repo/.worktrees/alice",
+            runtime: TeamHookRuntime.codex.rawValue,
+            paneSessionName: "graftty-secondary",
+            isLiveSession: { $0 == "graftty-owner" || $0 == "graftty-secondary" },
+            codexSessionNamesIn: { _, _ in ["graftty-owner"] }
+        )
+
+        #expect(!plan.shouldUpdateState)
+        #expect(plan.liveSessionName == "graftty-secondary")
+        #expect(plan.deliverySessionNames == [])
+    }
+
+    @Test("Stale or missing-pane Codex Stop does not resolve owner delivery sessions.")
+    func staleStopDoesNotTargetOwnerSessions() {
+        var didResolveOwnerSessions = false
+
+        let plan = GrafttyApp.codexStopDeliveryPlan(
+            team: "/repo",
+            worktree: "/repo/.worktrees/alice",
+            runtime: TeamHookRuntime.codex.rawValue,
+            paneSessionName: "graftty-stale",
+            isLiveSession: { _ in false },
+            codexSessionNamesIn: { _, _ in
+                didResolveOwnerSessions = true
+                return ["graftty-owner"]
+            }
+        )
+
+        #expect(!plan.shouldUpdateState)
+        #expect(plan.liveSessionName == nil)
+        #expect(plan.deliverySessionNames == [])
+        #expect(!didResolveOwnerSessions)
+    }
+
+    @Test("Non-owner Codex lifecycle hooks do not update shared owner delivery state.")
+    func nonOwnerLifecycleDoesNotUpdateDeliveryState() {
+        let shouldUpdate = GrafttyApp.shouldUpdateDeliveryStateForHook(
+            team: "/repo",
+            worktree: "/repo/.worktrees/alice",
+            runtime: TeamHookRuntime.codex.rawValue,
+            paneSessionName: "graftty-secondary",
+            codexSessionNamesIn: { _, _ in ["graftty-owner"] }
+        )
+
+        #expect(!shouldUpdate)
+    }
+}
 
 @Suite("IdleDeliveryService — event-driven idle delivery")
 struct IdleDeliveryServiceTests {
@@ -18,6 +98,64 @@ struct IdleDeliveryServiceTests {
         #expect(f.sender.calls.count == 2)
         #expect(Set(f.sender.calls.map(\.sessionName)) == Set([sessionA, sessionB]))
         #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "codex") == id)
+    }
+
+    @Test("When every nudge send fails, attempts are recorded but the zmx watermark is not advanced.")
+    func failedNudgesDoNotAdvanceWatermark() async throws {
+        let f = try Fixture(sendResults: [false, false])
+        _ = try f.appendUnread(body: "hello")
+        f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
+        f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
+
+        await f.service.onStop(
+            team: f.teamID,
+            worktree: f.worktree,
+            sessionNames: ["graftty-sessiona", "graftty-sessionb"]
+        )
+
+        #expect(f.sender.calls.count == 2)
+        #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "codex") == nil)
+    }
+
+    @Test("When at least one nudge send succeeds, the zmx watermark advances.")
+    func successfulNudgeAdvancesWatermark() async throws {
+        let f = try Fixture(sendResults: [false, true])
+        let id = try f.appendUnread(body: "hello")
+        f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
+        f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
+
+        await f.service.onStop(
+            team: f.teamID,
+            worktree: f.worktree,
+            sessionNames: ["graftty-sessiona", "graftty-sessionb"]
+        )
+
+        #expect(f.sender.calls.count == 2)
+        #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "codex") == id)
+        #expect(try f.inbox.worktreeWatermark(
+            teamID: f.teamID,
+            worktree: f.worktree
+        )?.lastDeliveredToAnySessionID == id)
+    }
+
+    @Test("Messages already delivered through hook worktree watermark are not sent again by zmx idle delivery.")
+    func worktreeWatermarkSuppressesDuplicateZmxDelivery() async throws {
+        let f = try Fixture()
+        let id = try f.appendUnread(body: "hello")
+        try f.inbox.writeWorktreeWatermark(
+            TeamInboxWorktreeWatermark(
+                worktree: f.worktree,
+                lastDeliveredToAnySessionID: id
+            ),
+            teamID: f.teamID
+        )
+        f.state.handleSessionStart(worktree: f.worktree, runtime: "codex")
+        f.state.handleStop(worktree: f.worktree, runtime: "codex", lastInputAt: nil)
+
+        await f.service.onStop(team: f.teamID, worktree: f.worktree, sessionNames: [f.sessionName])
+
+        #expect(f.sender.calls.isEmpty)
+        #expect(try f.inbox.zmxWatermark(teamID: f.teamID, worktree: f.worktree, runtime: "codex") == nil)
     }
 
     @Test("@spec TEAM-IDLE-2.12: sessionNames is empty → no nudge, no watermark advance.")
@@ -119,8 +257,16 @@ struct IdleDeliveryServiceTests {
     final class StubSender: NudgeSender, @unchecked Sendable {
         struct Call { let sessionName: String; let text: String; let messageIDs: [String] }
         var calls: [Call] = []
-        func send(sessionName: String, message: String, messageIDs: [String]) async {
+        var sendResults: [Bool]
+
+        init(sendResults: [Bool] = []) {
+            self.sendResults = sendResults
+        }
+
+        func send(sessionName: String, message: String, messageIDs: [String]) async -> Bool {
             calls.append(.init(sessionName: sessionName, text: message, messageIDs: messageIDs))
+            if sendResults.isEmpty { return true }
+            return sendResults.removeFirst()
         }
     }
 
@@ -128,13 +274,14 @@ struct IdleDeliveryServiceTests {
         let teamID = "/repo"
         let worktree = "/repo/.worktrees/alice"
         let sessionName = "graftty-session"
-        let sender = StubSender()
+        let sender: StubSender
         let state: WorktreeAgentStateRegistry
         let inbox: TeamInbox
         let service: IdleDeliveryService
         let frozen: Date
 
-        init() throws {
+        init(sendResults: [Bool] = []) throws {
+            self.sender = StubSender(sendResults: sendResults)
             let dir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("graftty-idle-\(UUID().uuidString)")
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

@@ -1,6 +1,7 @@
 import AppKit
 import GhosttyKit
 import GrafttyKit
+import GrafttyProtocol
 import os
 
 /// Wraps a single `ghostty_surface_t` and its backing `NSView`.
@@ -38,14 +39,12 @@ protocol SurfaceHandleZmxBackend: AnyObject {
     func write(_ data: Data) throws
     func write(_ data: Data, claimEngagement: Bool) throws
     /// Runs `body` while flagging that any bytes libghostty pushes back
-    /// through the receive callback are automation, not user input. The
-    /// backend gates IOS-12.1 engagement on this flag for the duration
-    /// of `body`. See `HostManagedZmxBackend.withProgrammaticInput`.
+    /// through the receive callback are automation, not user input.
+    /// Display ownership still decides whether those bytes reach the PTY.
     func withProgrammaticInput(_ body: () -> Void)
     /// Runs `body` while flagging that a real user key dispatch is in
-    /// flight: bytes libghostty emits during `body` engage the IOS-12.1
-    /// silent gate (TERM-11.8). The view wraps `ghostty_surface_key`
-    /// for `keyDown`/`keyUp` events in this scope.
+    /// flight. The view wraps `ghostty_surface_key` for `keyDown`/`keyUp`
+    /// events in this scope; display ownership still decides PTY writes.
     func withUserInput(_ body: () -> Void)
     /// Binds closures that let the backend query the live grid size and
     /// request a repaint without linking against libghostty (TERM-11.3).
@@ -64,6 +63,7 @@ protocol SurfaceHandleZmxBackend: AnyObject {
     /// previously-failed/ignored resize left behind — which an in-sync
     /// check against the optimistic last-forwarded record would hide.
     func resyncVisibleGrid()
+    func takeControl() -> Bool
     func close()
     func surfaceWasFreed()
 }
@@ -73,8 +73,8 @@ extension HostManagedZmxBackend: SurfaceHandleZmxBackend {
     // takes a defaulted `claimEngagement` parameter, but Swift doesn't
     // synthesize protocol conformance from defaulted-argument
     // overloads — this thin shim forwards with the default
-    // (`claimEngagement: true`) so SurfaceHandle keystroke writes still
-    // engage the IOS-12.1 silent gate.
+    // (`claimEngagement: true`) so legacy input classification remains
+    // intact while ownership decides whether the write reaches the PTY.
     func write(_ data: Data) throws {
         try write(data, claimEngagement: true)
     }
@@ -133,6 +133,12 @@ final class SurfaceHandle {
     /// Used by TerminalManager to route last-remote-detach syncs (TERM-11.4).
     let zmxSessionName: String?
 
+    /// Shared display-ownership store + this pane's Mac display client ID,
+    /// retained so `canTakeDisplayControl()` can report whether another
+    /// client currently owns the pane. Both nil for direct-shell panes.
+    private let displayOwnershipStore: SessionDisplayOwnershipStore?
+    private let displayClientID: DisplayClientID?
+
     /// Retained pointer to the userdata box; released in `deinit`. libghostty
     /// keeps a copy of the pointer in its surface struct and passes it back
     /// through callbacks that want per-surface identity.
@@ -156,16 +162,20 @@ final class SurfaceHandle {
         terminalManager: TerminalManager? = nil,
         inputActivityObserver: PaneInputActivityObserver? = nil,
         remoteAttachmentRegistry: RemoteAttachmentRegistry? = nil,
+        displayOwnershipStore: SessionDisplayOwnershipStore? = nil,
+        displayClientID: DisplayClientID? = nil,
         surfaceFactory: SurfaceHandleGhosttySurfaceFactory = .live,
         zmxBackendFactory: (
             ZmxSpawnConfiguration,
             (cols: UInt16, rows: UInt16)?,
-            @escaping () -> Bool
-        ) -> SurfaceHandleZmxBackend = { spawn, initialSize, hasRemoteClient in
+            @escaping () -> Bool,
+            HostManagedZmxOwnership?
+        ) -> SurfaceHandleZmxBackend = { spawn, initialSize, hasRemoteClient, ownership in
             HostManagedZmxBackend(
                 spawnConfiguration: spawn,
                 initialSize: initialSize,
-                hasRemoteClient: hasRemoteClient
+                hasRemoteClient: hasRemoteClient,
+                ownership: ownership
             )
         },
         initialGridSize: ghostty_surface_size_s? = nil
@@ -173,6 +183,8 @@ final class SurfaceHandle {
         self.terminalID = terminalID
         self.worktreePath = worktreePath
         self.zmxSessionName = zmxSpawnConfiguration?.sessionName
+        self.displayOwnershipStore = displayOwnershipStore
+        self.displayClientID = displayClientID
         self.surfaceFactory = surfaceFactory
 
         let userdataBox = SurfaceUserdataBox(
@@ -181,13 +193,22 @@ final class SurfaceHandle {
         )
         let userdataPtr = Unmanaged.passRetained(userdataBox).toOpaque()
         self.userdataPointer = userdataPtr
-        // Strong capture of the registry is fine: it's app-lifetime and
-        // holds no reference back to the backend.
+        _ = remoteAttachmentRegistry
+        let zmxOwnership = zmxSpawnConfiguration.flatMap { spawn -> HostManagedZmxOwnership? in
+            guard let displayOwnershipStore, let displayClientID else { return nil }
+            return HostManagedZmxOwnership(
+                store: displayOwnershipStore,
+                sessionName: spawn.sessionName,
+                clientID: displayClientID,
+                kind: .mac
+            )
+        }
         let backend = zmxSpawnConfiguration.map { spawn in
             zmxBackendFactory(
                 spawn,
                 initialGridSize.map { ($0.columns, $0.rows) },
-                { remoteAttachmentRegistry?.isRemoteAttached(sessionName: spawn.sessionName) ?? false }
+                { false },
+                zmxOwnership
             )
         }
         self.zmxBackend = backend
@@ -203,8 +224,7 @@ final class SurfaceHandle {
             }
             // TERM-11.8: real key events run inside the backend's
             // user-input scope so the bytes libghostty emits for them
-            // engage the IOS-12.1 silent gate; auto-emitted bytes
-            // (query responses, mouse reporting) do not.
+            // remain distinguishable from auto-emitted bytes.
             surfaceView.hostManagedUserInputScope = { [weak backend] body in
                 if let backend {
                     backend.withUserInput(body)
@@ -361,6 +381,9 @@ final class SurfaceHandle {
                 self?.startZmxBackendIfNeeded()
                 backend?.markLayoutSettled()
             }
+            surfaceView.takeDisplayControlNotifier = { [weak self] in
+                self?.takeDisplayControl() ?? false
+            }
             // TERM-11.10: spawn-time injection rides along with the
             // deferred start.
             pendingZmxStart = PendingZmxStart(extraInitialInput: extraInitialInput)
@@ -392,10 +415,8 @@ final class SurfaceHandle {
                let data = extraInitialInput.data(using: .utf8) {
                 // extraInitialInput is programmatic spawn-time
                 // injection (e.g., `graftty pane split --command`).
-                // It is NOT a user keystroke — leave the IOS-12.1
-                // silent gate closed so libghostty's first
-                // viewport callback can still be evaluated against
-                // a real user input.
+                // It is NOT a user keystroke; ownership decides whether
+                // the injected bytes are allowed to reach the PTY.
                 try? backend.write(data, claimEngagement: false)
             }
         } catch {
@@ -507,6 +528,25 @@ final class SurfaceHandle {
         zmxBackend?.remoteClientsDidDetach()
     }
 
+    @discardableResult
+    func takeDisplayControl() -> Bool {
+        zmxBackend?.takeControl() ?? false
+    }
+
+    /// True when this pane's zmx session is currently owned by a *different*
+    /// display client (e.g. iOS or web took control), so the Mac should offer
+    /// a "Take Control" affordance to reclaim it. False for direct-shell panes,
+    /// while this Mac pane already owns the session, or while it is ownerless.
+    /// Mac startup performs an explicit ownerless/current claim before this UI
+    /// path is relevant.
+    func canTakeDisplayControl() -> Bool {
+        guard let displayOwnershipStore,
+              let displayClientID,
+              let zmxSessionName else { return false }
+        let snapshot = displayOwnershipStore.snapshot(sessionName: zmxSessionName)
+        return snapshot.ownerClientID != nil && snapshot.ownerClientID != displayClientID
+    }
+
     var needsConfirmQuit: Bool {
         ghostty_surface_needs_confirm_quit(surface)
     }
@@ -521,14 +561,10 @@ final class SurfaceHandle {
     /// `sendKeyEvent` instead; `ghostty_surface_text` is the text-input
     /// sibling used for non-key-event writes.)
     ///
-    /// - Parameter claimEngagement: When `true` (default), the inject
-    ///   counts as user input under IOS-12.1 — flips the host-managed
-    ///   silent gate. Callers that synthesize bytes on behalf of an
-    ///   automation flow (split-with-command, send-pane IPC, idle agent
-    ///   nudges) pass `false` so they don't masquerade as a user
-    ///   keystroke. The non-zmx libghostty `ghostty_surface_text` path
-    ///   has no per-pane engagement state, so the flag only matters for
-    ///   `zmxBackend.write`.
+    /// - Parameter claimEngagement: Legacy classification flag for
+    ///   distinguishing user-originated writes from automation. The
+    ///   zmx backend's display ownership gate decides whether the bytes
+    ///   reach the PTY.
     func typeText(_ text: String, claimEngagement: Bool = true) {
         guard let data = text.data(using: .utf8) else { return }
         if let zmxBackend {
@@ -551,14 +587,10 @@ final class SurfaceHandle {
     /// Claude in raw mode) don't treat as a submit trigger.
     ///
     /// - Parameter claimEngagement: When `true` (default), the bytes
-    ///   libghostty emits for the synthesized key engage IOS-12.1's
-    ///   silent gate as if a human pressed Return. Automation paths
-    ///   (split-with-command, send-pane IPC, agent nudges) pass
-    ///   `false` so they don't masquerade as a user keystroke — the
-    ///   zmx backend's `receiveBufferCallback` sees the
-    ///   programmatic-input flag and forwards bytes without
-    ///   engagement. The non-zmx libghostty surface has no per-pane
-    ///   engagement state, so the flag is a no-op there.
+    ///   libghostty emits for the synthesized key are classified like a
+    ///   human Return keypress. Automation paths (split-with-command,
+    ///   send-pane IPC, agent nudges) pass `false`; display ownership
+    ///   still decides whether zmx receives the bytes.
     func pressReturn(claimEngagement: Bool = true) {
         guard let zmxBackend else {
             performPressReturn()
@@ -566,9 +598,8 @@ final class SurfaceHandle {
         }
         // The blocks run synchronously and return before the scope
         // call does, so a strong self capture is safe — self outlives
-        // the call site. TERM-11.8: engagement is opt-in, so a
-        // user-equivalent Return must enter the user-input scope for
-        // its synthesized-key bytes to engage the gate.
+        // the call site. TERM-11.8: a user-equivalent Return enters the
+        // user-input scope so callback bytes are classified correctly.
         if claimEngagement {
             zmxBackend.withUserInput {
                 self.performPressReturn()
@@ -607,6 +638,24 @@ final class SurfaceHandle {
     }
 }
 
+struct SurfaceNSViewGhosttySurfaceOperations {
+    var setSize: (ghostty_surface_t, UInt32, UInt32) -> Void
+    var size: (ghostty_surface_t) -> ghostty_surface_size_s
+    var refresh: (ghostty_surface_t) -> Void
+
+    static let live = SurfaceNSViewGhosttySurfaceOperations(
+        setSize: { surface, width, height in
+            ghostty_surface_set_size(surface, width, height)
+        },
+        size: { surface in
+            ghostty_surface_size(surface)
+        },
+        refresh: { surface in
+            ghostty_surface_refresh(surface)
+        }
+    )
+}
+
 /// `NSView` subclass used as the ghostty surface's host view.
 ///
 /// Forwards keyboard input to libghostty via `ghostty_surface_text`, which
@@ -622,6 +671,7 @@ final class SurfaceNSView: NSView {
     /// Set by `SurfaceHandle` after construction; cleared when the handle
     /// is freed (the surface pointer is only valid while the handle owns it).
     var surface: ghostty_surface_t?
+    var surfaceOperations: SurfaceNSViewGhosttySurfaceOperations = .live
 
     /// The terminal ID this view represents, and a weak reference to the
     /// terminal manager. Both are set by `SurfaceHandle` during init so
@@ -664,6 +714,8 @@ final class SurfaceNSView: NSView {
     /// Fired on every accepted (nonzero, surface-bound) frame change; the
     /// backend's one-shot makes it the TERM-11.1 layout-settled signal.
     var hostManagedLayoutNotifier: (() -> Void)?
+    var visibleForInputNotifier: (() -> Void)?
+    var takeDisplayControlNotifier: (() -> Bool)?
 
     /// Cursor to display when the mouse is over this surface. libghostty
     /// drives this via `GHOSTTY_ACTION_MOUSE_SHAPE` (e.g., pointer when
@@ -770,16 +822,16 @@ final class SurfaceNSView: NSView {
         ) else {
             return
         }
-        markVisibleForInput()
-        ghostty_surface_set_size(
+        surfaceOperations.setSize(
             surface,
             proposed.width,
             proposed.height
         )
-        let grid = ghostty_surface_size(surface)
+        let grid = surfaceOperations.size(surface)
         ResizeTrace.log.notice("setFrameSize pane=\(self.terminalIDTraceLabel, privacy: .public) \(proposed.width)x\(proposed.height)px grid=\(grid.columns)x\(grid.rows)")
-        ghostty_surface_refresh(surface)
+        surfaceOperations.refresh(surface)
         hostManagedLayoutNotifier?()
+        markVisibleForInput()
     }
 
     @available(*, unavailable)
@@ -804,6 +856,10 @@ final class SurfaceNSView: NSView {
     }
 
     private func markVisibleForInput() {
+        if let visibleForInputNotifier {
+            visibleForInputNotifier()
+            return
+        }
         guard let terminalID else { return }
         terminalManager?.setVisible(true, for: terminalID)
     }
@@ -1004,8 +1060,8 @@ final class SurfaceNSView: NSView {
         keyEvent.composing = false
 
         // TERM-11.8: dispatch inside the backend's user-input scope so
-        // the bytes libghostty emits for this key engage the IOS-12.1
-        // silent gate. Synchronous: libghostty encodes and emits via the
+        // the bytes libghostty emits for this key are classified as real
+        // user input. Synchronous: libghostty encodes and emits via the
         // receive-buffer callback within ghostty_surface_key.
         var handled = false
         let textForPTY = Self.ghosttyTextField(for: event)
