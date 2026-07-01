@@ -19,11 +19,11 @@ final class SubsystemDispatcherTests: XCTestCase {
     /// follow up with `pty-req` + `shell` and confirm the streamFactory
     /// is called with the env value. Only the R4 handler implements that
     /// behaviour, so this is a sufficient witness.
-    func testEnvironmentRequestRoutesToTerminalSession() throws {
+    func testEnvironmentRequestRoutesToTerminalSession() async throws {
         let factory = RecordingStreamFactory()
         let dispatcher = makeDispatcher(streamFactory: factory.callable)
-        let channel = EmbeddedChannel()
-        try channel.pipeline.syncOperations.addHandler(dispatcher)
+        let channel = NIOAsyncTestingChannel()
+        try await channel.pipeline.addHandler(dispatcher).get()
 
         // Send env → pty-req → shell. The dispatcher hands off to
         // TerminalSessionHandler on the first event; that handler
@@ -50,14 +50,14 @@ final class SubsystemDispatcherTests: XCTestCase {
             SSHChannelRequestEvent.ShellRequest(wantReply: true)
         )
 
-        drainAsync(channel: channel, until: { factory.received.count > 0 })
+        try await waitFor(channel: channel) { factory.received.count > 0 }
 
         XCTAssertEqual(
             factory.received,
             ["alpha"],
             "TerminalSessionHandler should have received the env value via its attach call"
         )
-        _ = try? channel.finish()
+        _ = try? await channel.finish()
     }
 
     // MARK: - panes-state subsystem routing
@@ -70,12 +70,12 @@ final class SubsystemDispatcherTests: XCTestCase {
     /// propagate to the post-install handler, which NIO doesn't do for
     /// handlers added after activation — that path is exercised by
     /// PanesStateChannelHandlerTests directly.)
-    func testPanesStateSubsystemRoutesToPanesStateChannelHandler() throws {
+    func testPanesStateSubsystemRoutesToPanesStateChannelHandler() async throws {
         let factory = RecordingStreamFactory()
         let dispatcher = makeDispatcher(streamFactory: factory.callable)
-        let channel = EmbeddedChannel()
-        try channel.pipeline.syncOperations.addHandler(dispatcher)
-        try channel.connect(to: .init(unixDomainSocketPath: "/tmp/test")).wait()
+        let channel = NIOAsyncTestingChannel()
+        try await channel.pipeline.addHandler(dispatcher).get()
+        try await channel.connect(to: .init(unixDomainSocketPath: "/tmp/test")).get()
 
         channel.pipeline.fireUserInboundEventTriggered(
             SSHChannelRequestEvent.SubsystemRequest(
@@ -83,29 +83,30 @@ final class SubsystemDispatcherTests: XCTestCase {
                 wantReply: false
             )
         )
-        drainAsync(channel: channel, until: {
-            (try? channel.pipeline.syncOperations.context(handler: dispatcher)) == nil
-        })
+        try await waitFor(channel: channel) {
+            try await Self.dispatcherRemoved(from: channel, dispatcher: dispatcher)
+        }
 
-        XCTAssertNil(
-            try? channel.pipeline.syncOperations.context(handler: dispatcher),
+        let removed = try await Self.dispatcherRemoved(from: channel, dispatcher: dispatcher)
+        XCTAssertTrue(
+            removed,
             "dispatcher should have removed itself after routing to panes-state"
         )
-        _ = try? channel.finish()
+        _ = try? await channel.finish()
     }
 
     /// Subsystem request with `wantReply: true` for `pane-control@graftty.dev`
     /// triggers a `ChannelSuccessEvent` ack AND installs the handler.
-    func testPaneControlSubsystemRoutesAndAcknowledgesWantReply() throws {
+    func testPaneControlSubsystemRoutesAndAcknowledgesWantReply() async throws {
         let factory = RecordingStreamFactory()
         let dispatcher = makeDispatcher(
             streamFactory: factory.callable,
             paneControlMutator: { _ in .ok }
         )
-        let channel = EmbeddedChannel()
+        let channel = NIOAsyncTestingChannel()
         let capture = OutboundEventCapture()
-        try channel.pipeline.syncOperations.addHandler(capture)
-        try channel.pipeline.syncOperations.addHandler(dispatcher)
+        try await channel.pipeline.addHandler(capture).get()
+        try await channel.pipeline.addHandler(dispatcher).get()
 
         channel.pipeline.fireUserInboundEventTriggered(
             SSHChannelRequestEvent.SubsystemRequest(
@@ -114,25 +115,28 @@ final class SubsystemDispatcherTests: XCTestCase {
             )
         )
 
+        try await waitFor(channel: channel) { capture.sawSuccess }
+
         XCTAssertTrue(capture.sawSuccess, "expected ChannelSuccessEvent ack for wantReply subsystem")
         XCTAssertFalse(capture.sawFailure, "should not have failed for known subsystem")
-        XCTAssertNil(
-            try? channel.pipeline.syncOperations.context(handler: dispatcher),
+        let removed = try await Self.dispatcherRemoved(from: channel, dispatcher: dispatcher)
+        XCTAssertTrue(
+            removed,
             "dispatcher should have removed itself after routing to pane-control"
         )
-        _ = try? channel.finish()
+        _ = try? await channel.finish()
     }
 
     /// Unknown subsystem name: dispatcher must reply with ChannelFailureEvent
     /// (when `wantReply: true`) and close the channel.
-    func testUnknownSubsystemFailsAndCloses() throws {
+    func testUnknownSubsystemFailsAndCloses() async throws {
         let factory = RecordingStreamFactory()
         let dispatcher = makeDispatcher(streamFactory: factory.callable)
-        let channel = EmbeddedChannel()
+        let channel = NIOAsyncTestingChannel()
         let capture = OutboundEventCapture()
-        try channel.pipeline.syncOperations.addHandler(capture)
-        try channel.pipeline.syncOperations.addHandler(dispatcher)
-        try channel.connect(to: .init(unixDomainSocketPath: "/tmp/test")).wait()
+        try await channel.pipeline.addHandler(capture).get()
+        try await channel.pipeline.addHandler(dispatcher).get()
+        try await channel.connect(to: .init(unixDomainSocketPath: "/tmp/test")).get()
 
         channel.pipeline.fireUserInboundEventTriggered(
             SSHChannelRequestEvent.SubsystemRequest(
@@ -141,7 +145,7 @@ final class SubsystemDispatcherTests: XCTestCase {
             )
         )
         // Drain so the close lands.
-        channel.embeddedEventLoop.run()
+        try await waitFor(channel: channel) { !channel.isActive }
 
         XCTAssertTrue(capture.sawFailure, "expected ChannelFailureEvent for unknown subsystem")
         XCTAssertFalse(capture.sawSuccess, "should not have acknowledged unknown subsystem")
@@ -164,16 +168,38 @@ final class SubsystemDispatcherTests: XCTestCase {
         )
     }
 
-    /// Drain helper from PanesStateChannelHandlerTests / TerminalSessionHandlerTests.
-    private func drainAsync(
-        channel: EmbeddedChannel,
-        until condition: () -> Bool,
-        timeout: TimeInterval = 2.0
-    ) {
+    /// Drives the `NIOAsyncTestingChannel`'s (thread-safe) testing loop in
+    /// short bursts, polling `condition` until it holds or the timeout
+    /// elapses. `testingEventLoop.run()` flushes work the dispatcher and its
+    /// installed handlers enqueue (handler installs, `loop.execute`-marshaled
+    /// writes, channel closes); the inter-burst sleep yields to the
+    /// Swift-concurrency Tasks those handlers spawn. Unlike the old
+    /// `EmbeddedEventLoop`-driven busy-poll, this never races the background
+    /// Tasks — the testing loop is thread-safe.
+    private func waitFor(
+        channel: NIOAsyncTestingChannel,
+        timeout: TimeInterval = 2.0,
+        _ condition: () async throws -> Bool
+    ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
-        while !condition() && Date() < deadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-            channel.embeddedEventLoop.run()
+        while Date() < deadline {
+            await channel.testingEventLoop.run()
+            if try await condition() { return }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        await channel.testingEventLoop.run()
+    }
+
+    /// Whether `dispatcher` has removed itself from `channel`'s pipeline.
+    /// `syncOperations.context(handler:)` must run on the event loop, so the
+    /// probe is hopped onto the (thread-safe) testing loop via
+    /// `executeInContext`, which returns the `Sendable` `Bool` result.
+    private static func dispatcherRemoved(
+        from channel: NIOAsyncTestingChannel,
+        dispatcher: SubsystemDispatcher
+    ) async throws -> Bool {
+        try await channel.testingEventLoop.executeInContext {
+            (try? channel.pipeline.syncOperations.context(handler: dispatcher)) == nil
         }
     }
 }
