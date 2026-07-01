@@ -121,8 +121,9 @@ navigation including `goto_split`):
 - **KBD-5.5** — When zero or one on-disk worktree is selectable, `next_tab` /
   `previous_tab` shall be a no-op.
 - **KBD-5.6** — When no worktree is selected, `next_tab` shall select the first
-  attention worktree (else the first on-disk worktree) and `previous_tab` the
-  last.
+  attention worktree (else the first on-disk worktree), and `previous_tab` the
+  first attention worktree scanning backward from the end (else the last
+  on-disk worktree) — attention-first applies uniformly in both directions.
 
 Each gets a real `@Test` in a dedicated `KbdWorktreeNavTests.swift` after
 being promoted from a `.disabled` entry in `KbdTodo.swift`. `GhosttyAction`
