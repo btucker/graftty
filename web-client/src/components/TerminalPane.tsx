@@ -569,7 +569,7 @@ export function TerminalPane({ sessionName, role = 'interactive', fit = 'viewpor
       termRef.current?.dispose();
       termRef.current = null;
     };
-  }, [sessionName]);
+  }, [sessionName, role, fit]);
 
   return (
     <>
@@ -579,7 +579,7 @@ export function TerminalPane({ sessionName, role = 'interactive', fit = 'viewpor
           Take Control
         </button>
       ) : null}
-      <div className="term-host" ref={hostRef} />
+      <div className={fit === 'container' ? 'term-host term-host-container' : 'term-host'} ref={hostRef} />
     </>
   );
 }

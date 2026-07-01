@@ -536,6 +536,13 @@ describe('@spec WEB-9.5 preview role', () => {
     expect(hello).toBeDefined();
     expect(hello!.role).toBe('preview');
 
+    // Wait for the terminal to finish initializing so dataHandler is wired up.
+    await waitFor(() => {
+      expect(ghosttyMock.instances.length).toBe(1);
+      expect(ghosttyMock.instances[0].dataHandler).toBeTruthy();
+    });
+    const term = ghosttyMock.instances[0];
+
     // Even after a simulated ownership snapshot naming another (mac) owner, no claim is sent.
     await act(async () => ws.receive(JSON.stringify({
       type: 'ownership',
@@ -550,5 +557,10 @@ describe('@spec WEB-9.5 preview role', () => {
     })));
 
     expect(textFrames(ws).some((m) => m.type === 'takeControl' || m.type === 'ownerResize')).toBe(false);
+
+    // Keystroke input on a preview pane must be a no-op — no binary frame sent.
+    ws.sent.length = 0;
+    term.dataHandler?.('k');
+    expect(ws.sent.some((payload) => ArrayBuffer.isView(payload))).toBe(false);
   });
 });
