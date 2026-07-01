@@ -16,17 +16,22 @@ import Testing
 /// ## Gate-honesty note
 ///
 /// A green macOS `OwnershipModel` run exercises REAL production code for:
-///   - S1–S4  (`SessionDisplayOwnershipStore` + `WebSocketBridgeCoordinator`)
-///   - S5/L1  (`WebFollowerView` guard, now via genuine multi-path cross-channel
-///             reordering — non-vacuous; see `multiPathGuardIsNonVacuous` test)
+///   - S1–S4  (`SessionDisplayOwnershipStore` + real `WebSocketBridgeCoordinator`,
+///             genuinely multi-client — one coordinator per web client; S3 driven
+///             with real `ownerResize` acceptance results, see `S3Tests`)
+///   - S5/L1  (`WebFollowerView` (epoch,revision) guard, deliveries round-tripped
+///             through the real codec, non-vacuous via `multiPathGuardIsNonVacuous`)
 ///   - L2     (owner release → ownerless; see `l2PathIsNonVacuous` test)
-///   - S6/S7  (Mac `HostManagedZmxBackend` via `MacSeamTests`)
+///   - S6/S7  (real `HostManagedZmxBackend` gate via `MacSeamTests` +
+///             randomized `MacModelCheckTests`)
 ///
-/// The MODELED follower (`WebFollowerView`) stands in for the TypeScript client.
-/// The only REAL follower adapter — iOS `SessionClient` — is `#if canImport(UIKit)`
-/// and runs only on the iOS CI job (`ios-build-and-test` in `ci.yml`).
-/// A green macOS `OwnershipModel` run does NOT by itself certify the real iOS
-/// follower; iOS CI is the authoritative check for that seam.
+/// The MODELED follower (`WebFollowerView`) mirrors the production followers'
+/// (epoch,revision) guard.  The REAL followers are verified in their own suites,
+/// NOT this target: the web guard by `web-client`'s `TerminalPane.test.tsx`
+/// (WEB-5.10), the iOS guard by `GrafttyMobileKitTests/SessionClientTests`
+/// (IOS-4.27, iOS CI job).  This target's `IOSSeamTests` is `#if canImport(UIKit)`
+/// and runs in NO CI job (compiled out on macOS; `OwnershipModelTests` is not in
+/// the iOS xcode scheme) — a local iOS-SDK convenience only.
 let corpusSeeds: [UInt64] = Array(1...1000)
 
 @Suite("Ownership-model corpus sweep")

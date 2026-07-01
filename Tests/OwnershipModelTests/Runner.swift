@@ -1,3 +1,4 @@
+import Foundation
 import GrafttyProtocol
 @testable import GrafttyKit
 
@@ -14,6 +15,15 @@ struct RunResult {
     let rejectCount: Int
     /// How many times the L2 owner-release path was exercised during `runScenario`.
     let l2CheckCount: Int
+    /// How many times ownership handed off from one non-nil client to a DIFFERENT
+    /// non-nil client during `runScenario`.  Non-zero proves the corpus genuinely
+    /// exercises multi-client contention (distinct coordinators / store IDs) rather
+    /// than collapsing to a single owner identity.
+    let ownerHandoffCount: Int
+    /// How many accepted owner resizes were fed to the S3 invariant check during
+    /// `runScenario`.  Non-zero proves S3 is non-vacuously exercised (the corpus
+    /// drives accepted resizes through the oracle, not `lastResize: nil`).
+    let s3CheckCount: Int
 
     init(
         seed: UInt64,
@@ -21,7 +31,9 @@ struct RunResult {
         transcript: [String],
         capturedOps: [WebControlEnvelope] = [],
         rejectCount: Int = 0,
-        l2CheckCount: Int = 0
+        l2CheckCount: Int = 0,
+        ownerHandoffCount: Int = 0,
+        s3CheckCount: Int = 0
     ) {
         self.seed = seed
         self.violations = violations
@@ -29,6 +41,8 @@ struct RunResult {
         self.capturedOps = capturedOps
         self.rejectCount = rejectCount
         self.l2CheckCount = l2CheckCount
+        self.ownerHandoffCount = ownerHandoffCount
+        self.s3CheckCount = s3CheckCount
     }
 }
 
@@ -36,42 +50,48 @@ struct RunResult {
 
 /// Apply a tagged snapshot to a follower and run the S5 monotonic-guard checks.
 ///
+/// The snapshot was already round-tripped through the REAL `WebControlEnvelope`
+/// wire codec by `MultiTransportWorld.emit()`, so it reflects exactly what the
+/// wire carries.  `emissionSeq` mirrors the snapshot's `revision` — the ordering
+/// signal production followers guard on.
+///
 /// Returns `true` when the delivery was stale before `apply` was called — i.e.,
 /// the guard would correctly reject it.  In multi-path mode, a `true` return
 /// increments the reject counter that proves S5 is non-vacuously exercised.
-private func applyToFollower(
+func applyToFollower(
     _ follower: WebFollowerView,
     tagged: TaggedSnapshot,
     target: DisplayClientID,
     oracle: inout Oracle
 ) -> Bool {
+    let delivered = tagged
     let highestEpochBefore = follower.highestApplied
     let highestEmissionBefore = follower.highestAppliedEmission
 
     // Measure staleness BEFORE applying so the guard's decision is captured
     // regardless of whether the guard is bypassed.
-    let isStale = tagged.emissionSeq < highestEmissionBefore
-        || tagged.snapshot.epoch < highestEpochBefore
+    let isStale = delivered.emissionSeq < highestEmissionBefore
+        || delivered.snapshot.epoch < highestEpochBefore
 
-    follower.apply(tagged)
+    follower.apply(delivered)
 
     // S5 by epoch regression: a lower-epoch snapshot was applied.
-    if tagged.snapshot.epoch < highestEpochBefore,
-       follower.highestApplied == tagged.snapshot.epoch {
+    if delivered.snapshot.epoch < highestEpochBefore,
+       follower.highestApplied == delivered.snapshot.epoch {
         oracle.violations.append(.s5SupersededApplied(
             target: target,
-            applied: tagged.snapshot.epoch,
+            applied: delivered.snapshot.epoch,
             highest: highestEpochBefore
         ))
     }
 
     // S5 by ESN regression: a lower-emission snapshot was applied despite a
     // higher-emission one already having been applied (same-epoch grid reorder).
-    if tagged.emissionSeq < highestEmissionBefore,
-       follower.highestAppliedEmission == tagged.emissionSeq {
+    if delivered.emissionSeq < highestEmissionBefore,
+       follower.highestAppliedEmission == delivered.emissionSeq {
         oracle.violations.append(.s5SupersededApplied(
             target: target,
-            applied: tagged.snapshot.epoch,
+            applied: delivered.snapshot.epoch,
             highest: highestEpochBefore
         ))
     }
@@ -79,11 +99,24 @@ private func applyToFollower(
     return isStale
 }
 
+/// Round-trip a snapshot through the real `WebControlEnvelope` ownership codec.
+/// Falls back to the original on a codec failure so a parse regression degrades
+/// to "no round-trip" rather than crashing the sweep; a *corrupting* codec bug
+/// still surfaces as a follower/store divergence (L1) downstream.
+func wireRoundTrip(_ snapshot: DisplayOwnershipSnapshot) -> DisplayOwnershipSnapshot {
+    let wire = WebControlEnvelope.ownership(snapshot).encoded()
+    guard let parsed = try? WebControlEnvelope.parse(Data(wire.utf8)),
+          case let .ownership(decoded) = parsed else {
+        return snapshot
+    }
+    return decoded
+}
+
 /// Check L1 convergence for one follower at quiescence.
 ///
 /// Appends `.l1Divergence` to `oracle.violations` and a diagnostic line to
 /// `transcript` when the follower's state does not match the store's.
-private func checkL1(
+func checkFollowerL1(
     follower: WebFollowerView,
     storeSnapshot: DisplayOwnershipSnapshot,
     emissionSeq: UInt64,
@@ -181,6 +214,8 @@ func runScenario(seed: UInt64, opCount: Int) -> RunResult {
     var capturedOps: [WebControlEnvelope] = []
     var rejectCount = 0   // stale cross-channel deliveries correctly rejected
     var l2CheckCount = 0  // times the L2 owner-release path was exercised
+    var ownerHandoffCount = 0  // times ownership moved between distinct non-nil clients
+    var s3CheckCount = 0  // accepted owner resizes fed to the S3 check
 
     // Seed the discrete-event queue with the first op token.
     var queue = EventQueue()
@@ -202,7 +237,7 @@ func runScenario(seed: UInt64, opCount: Int) -> RunResult {
                 // L2 path: owner voluntarily releases ownership.  Not added to
                 // capturedOps because the shrinker emits .disabled for L2 violations.
                 let epochBefore = currentEpoch
-                world.releaseOwner(ownerID: ownerID)
+                world.releaseOwner(ownerProtocolID: ownerID)
                 storeViolations += world.oracle.checkAfterOwnerRelease(
                     store: world.store,
                     session: "run-\(seed)",
@@ -228,19 +263,42 @@ func runScenario(seed: UInt64, opCount: Int) -> RunResult {
                     using: &rng
                 )
                 capturedOps.append(op)
+                let resizeCountBefore = world.acceptedResizeCount
                 world.webHandle(op)
+
+                // For ownerResize ops, observe whether the store ACCEPTED the
+                // resize (via the real coordinator's resize seam) and feed the
+                // result to the S3 invariant check.  Other ops carry no resize.
+                var lastResize: SessionDisplayOwnershipResizeResult?
+                var requestedEpoch: UInt64?
+                if case let .ownerResize(_, reqEpoch, _, _) = op {
+                    let accepted = world.acceptedResizeCount > resizeCountBefore
+                    lastResize = SessionDisplayOwnershipResizeResult(
+                        accepted: accepted,
+                        snapshot: world.store.snapshot(sessionName: "run-\(seed)")
+                    )
+                    requestedEpoch = reqEpoch
+                    if accepted { s3CheckCount += 1 }
+                }
                 storeViolations += world.oracle.checkAfterEvent(
                     store: world.store,
                     session: "run-\(seed)",
-                    lastResize: nil,
-                    requestedEpoch: nil
+                    lastResize: lastResize,
+                    requestedEpoch: requestedEpoch
                 )
                 opDesc = opLabel(op)
             }
 
             let tagged = world.emit()
             currentEpoch = tagged.snapshot.epoch
-            currentOwner = tagged.snapshot.ownerClientID
+            // Track ownership in PROTOCOL space (web-a/b/c), mapping back from the
+            // store's internal owner ID, so generated ownerResize/release ops route
+            // to the right per-client coordinator.
+            let newOwner = world.currentOwnerProtocolID()
+            if let newOwner, let prev = currentOwner, newOwner != prev {
+                ownerHandoffCount += 1
+            }
+            currentOwner = newOwner
             opsApplied += 1
 
             // Enqueue the tagged snapshot on BOTH channels for EACH follower and push
@@ -299,10 +357,10 @@ func runScenario(seed: UInt64, opCount: Int) -> RunResult {
         for fc in followerChannels {
             guard let follower = followers[fc.id] else { continue }
             let target = DisplayClientID("follower-\(fc.id)")
-            checkL1(
+            checkFollowerL1(
                 follower: follower,
                 storeSnapshot: storeSnapshot,
-                emissionSeq: world.emissionSeqCounter,
+                emissionSeq: storeSnapshot.revision,
                 target: target,
                 oracle: &world.oracle,
                 transcript: &transcript
@@ -316,7 +374,9 @@ func runScenario(seed: UInt64, opCount: Int) -> RunResult {
         transcript: transcript,
         capturedOps: capturedOps,
         rejectCount: rejectCount,
-        l2CheckCount: l2CheckCount
+        l2CheckCount: l2CheckCount,
+        ownerHandoffCount: ownerHandoffCount,
+        s3CheckCount: s3CheckCount
     )
 }
 
@@ -339,13 +399,25 @@ func replayWebOps(ops: [WebControlEnvelope], session: String) -> RunResult {
     )
 
     for (index, op) in ops.enumerated() {
+        let resizeCountBefore = world.acceptedResizeCount
         world.webHandle(op)
 
+        // Feed accepted owner resizes to the S3 check so shrunk traces reproduce
+        // S3 violations through the same path runScenario uses.
+        var lastResize: SessionDisplayOwnershipResizeResult?
+        var requestedEpoch: UInt64?
+        if case let .ownerResize(_, reqEpoch, _, _) = op {
+            lastResize = SessionDisplayOwnershipResizeResult(
+                accepted: world.acceptedResizeCount > resizeCountBefore,
+                snapshot: world.store.snapshot(sessionName: session)
+            )
+            requestedEpoch = reqEpoch
+        }
         let storeViolations = world.oracle.checkAfterEvent(
             store: world.store,
             session: session,
-            lastResize: nil,
-            requestedEpoch: nil
+            lastResize: lastResize,
+            requestedEpoch: requestedEpoch
         )
 
         let tagged = world.emit()
@@ -386,10 +458,10 @@ func replayWebOps(ops: [WebControlEnvelope], session: String) -> RunResult {
         for connID in followerConnectionIDs {
             guard let follower = followers[connID] else { continue }
             let target = DisplayClientID("follower-\(connID)")
-            checkL1(
+            checkFollowerL1(
                 follower: follower,
                 storeSnapshot: storeSnapshot,
-                emissionSeq: world.emissionSeqCounter,
+                emissionSeq: storeSnapshot.revision,
                 target: target,
                 oracle: &world.oracle,
                 transcript: &transcript

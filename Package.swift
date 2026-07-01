@@ -156,7 +156,9 @@ let package = Package(
         .testTarget(
             name: "OwnershipModelTests",
             dependencies: ["Graftty", "GrafttyKit", "GrafttyMobileKit", "GrafttyProtocol"],
-            path: "Tests/OwnershipModelTests"
+            path: "Tests/OwnershipModelTests",
+            exclude: ["README.md"],
+            swiftSettings: strictWarnings
         ),
     ]
 )

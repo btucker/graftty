@@ -3,11 +3,9 @@ import GrafttyProtocol
 
 @Suite("Web model-check sweep")
 struct WebModelCheckTests {
-    @Test(arguments: Array<UInt64>(1...500))
-    func noInvariantViolationsAcrossSeeds(seed: UInt64) {
-        let result = runScenario(seed: seed, opCount: 60)
-        #expect(result.violations.isEmpty, "seed \(seed): \(result.violations)\n\(result.transcript.joined(separator: "\n"))")
-    }
+    // NOTE: the broad "no violations across seeds" sweep lives in `SeedCorpus`
+    // (seeds 1…1000).  This suite holds only the teeth / non-vacuity tests that
+    // the corpus sweep does not, to avoid re-running the same scenarios twice.
 
     // Teeth: two different grids at the SAME epoch (owner resize), delivered out of
     // emission order to a follower whose epoch guard alone would accept both. With the

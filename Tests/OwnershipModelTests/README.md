@@ -80,17 +80,21 @@ converge.
 | S2 | Epoch monotonic | The store epoch never decreases within a session; resets legitimately to 0 only after full teardown. |
 | S3 | Stale resize rejected | An accepted `ownerResize` result always carries an epoch that matches the store's current epoch. |
 | S4 | Owner-field consistency | `ownerClientID == nil` if and only if `ownerKind == nil`. |
-| S5 | No superseded snapshot applied | A display follower never updates its ownership or grid state from a snapshot whose emission sequence (ESN) or epoch is lower than one already applied. |
+| S5 | No superseded snapshot applied | A display follower never updates its ownership or grid state from a snapshot whose `revision` or epoch is lower than one already applied. |
 | S6 | Non-owner never resizes PTY | A Mac backend in follower state never issues a PTY resize to its underlying zmx session. |
 | S7 | Non-owner never writes input | A Mac backend in follower state never writes input bytes to its underlying zmx session. |
 | L1 | Follower convergence | At quiescence every follower's applied epoch, applied emission sequence, and grid match the store's authoritative values. |
 | L2 | Owner detach leaves ownerless | When the current owner detaches, the store transitions to ownerless without silently promoting another client. |
 
-**Why ESN?** The store's `ownerResize` updates the grid without bumping the
-ownership epoch, so epoch alone cannot version grids within a single ownership
-tenure.  The harness stamps a monotonic emission sequence (`emissionSeqCounter`
-in `MultiTransportWorld`) so S5 and L1 can detect same-epoch grid reordering
-that an epoch-only guard would miss.
+**Why `revision`?** The store's `ownerResize` updates the grid without bumping
+the ownership epoch, so epoch alone cannot version grids within a single
+ownership tenure.  `DisplayOwnershipSnapshot.revision` is a monotonic per-session
+counter the store bumps on *every* mutation (including same-epoch resizes); it
+rides the wire on the ownership frame, and both production followers
+(`SessionClient` — IOS-4.27, `TerminalPane.tsx` — WEB-5.10) reject any snapshot
+whose `revision` regressed.  The harness reads this real field via
+`MultiTransportWorld.emit()` (tagging each delivery with `snapshot.revision`), so
+S5 and L1 verify the shipped guard rather than a harness-only concept.
 
 ## Fault model
 
@@ -161,21 +165,40 @@ is covered; new work would add the per-pane multiplexing invariant.
 
 ## Gate-honesty
 
-A green macOS `OwnershipModel` run exercises REAL production code for S1–S4
-(`SessionDisplayOwnershipStore` + `WebSocketBridgeCoordinator`), S5/L1
-(`WebFollowerView` guard via genuine multi-path cross-channel reordering — see
-`multiPathGuardIsNonVacuous` in `WebModelCheckTests.swift`), L2 (owner release
-leaves store ownerless — see `l2PathIsNonVacuous`), and S6/S7 (Mac
-`HostManagedZmxBackend` via `MacSeamTests`).
+A green macOS `OwnershipModel` run exercises REAL production code for:
 
-**The modeled follower** (`WebFollowerView`) stands in for the TypeScript web
-client.  It is correct by construction — the guard is the production invariant
-encoded in Swift.
+- **S1–S4** — `SessionDisplayOwnershipStore` driven through the real
+  `WebSocketBridgeCoordinator`.  The corpus is genuinely **multi-client**: each
+  web client (`web-a/b/c`) gets its own coordinator with a distinct store client
+  ID — exactly as production spins up one coordinator per WebSocket connection —
+  so ownership genuinely hands off between clients (`ownerHandoffCount`,
+  `corpusExercisesOwnerHandoffBetweenClients`).  **S3** is driven with real
+  `ownerResize` acceptance results observed through the coordinator's resize seam
+  (`s3CheckIsNonVacuousAcrossCorpus`), not a placeholder `lastResize: nil`.
+- **S5/L1** — each delivery round-trips through the real `WebControlEnvelope`
+  ownership codec before reaching `WebFollowerView`, which enforces the SAME
+  two-part (epoch, `revision`) guard the production followers now ship.
+  Non-vacuity: `multiPathGuardIsNonVacuous` proves the reject path fires.
+- **L2** — owner release leaves the store ownerless (`l2PathIsNonVacuous`).
+- **S6/S7** — the real `HostManagedZmxBackend` ownership gate, driven through the
+  production `receiveResize`/`write` seams both in a fixed teeth test
+  (`macFollowerGateBlocksRealSurfaceResizeAndWrite`) and a randomized interleaving
+  sweep (`MacModelCheckTests`, non-vacuously via `macFollowerDriveIsNonVacuous`).
 
-**The real iOS follower** (`SessionClient`) is `#if canImport(UIKit)` and
-compiles only on the iOS SDK.  It runs under the `ios-build-and-test` job in
-`ci.yml`.  A green macOS run does **not** by itself certify the real iOS
-follower; iOS CI is the authoritative check for that seam.
+**The modeled follower** (`WebFollowerView`) stands in for the production
+web/iOS followers.  It is faithful by construction — its (epoch, `revision`)
+guard is the exact production invariant (`SessionClient` IOS-4.27,
+`TerminalPane.tsx` WEB-5.10) encoded in Swift.
+
+**The real followers run in their own suites, not this target.** The web guard is
+covered by `web-client`'s `TerminalPane.test.tsx` (WEB-5.10, vitest); the iOS
+guard by `GrafttyMobileKitTests/SessionClientTests` (IOS-4.27), which runs under
+the `ios-build-and-test` job in `ci.yml`.  Note that this target's own
+`IOSSeamTests` is `#if canImport(UIKit)` and therefore does **not** run in CI —
+the macOS gate compiles it out, and `OwnershipModelTests` is not part of the iOS
+xcode scheme (it depends on macOS-only `Graftty`/`GrafttyKit`).  It is a
+convenience harness for local iOS-SDK runs only; `SessionClientTests` is the
+authoritative iOS check.
 
 **Not yet exercised:** the `claimOwnerIfOwnerlessOrCurrent` rejection path
 (the binary-frame implicit-claim guard in `WebSocketBridgeCoordinator`) is not
@@ -184,18 +207,20 @@ kind to `nextWebOp` would cover it.
 
 ## Real findings
 
-The harness has already produced two actionable findings:
+The harness produced two actionable findings, both now fixed in production:
 
-1. **iOS epoch guard absent** (`IOSSeamTests.iosFollowerIgnoresSupersededOwnershipFrame`,
-   `.disabled`): `SessionClient.handleTextFrame` applies `.ownership(snapshot)`
-   unconditionally — no monotonic epoch guard.  A stale frame rolls the iOS
-   client's view back to an older epoch; the iOS owner then emits `ownerResize`
-   with that stale epoch, which the store rejects, so the iOS owner silently
-   loses resize capability.  The one-line fix lives in `Sources/` and was
-   escalated to a separate reviewed change.
+1. **iOS epoch guard absent** (fixed): `SessionClient.handleTextFrame` applied
+   `.ownership(snapshot)` unconditionally.  A stale frame rolled the iOS client's
+   view back to an older epoch; the iOS owner then emitted `ownerResize` with that
+   stale epoch, which the store rejected, so the owner silently lost resize
+   capability.  Fixed by the epoch guard (IOS-4.23) and re-caught by
+   `IOSSeamTests`.
 
-2. **Epoch does not version grids**: `ownerResize` updates the grid without
-   bumping the epoch, so an epoch-only guard on followers does not prevent
-   same-epoch grid reordering.  The ESN strengthening (S5 by `emissionSeq`)
-   was added to the harness to catch this class; the production fix lives in
-   `WebFollowerView`'s two-part monotonic guard.
+2. **Epoch does not version grids** (fixed): `ownerResize` updates the grid
+   without bumping the epoch, so an epoch-only follower guard cannot reject a
+   reordered same-epoch grid.  Fixed by adding a monotonic `revision` to
+   `DisplayOwnershipSnapshot` — bumped by the store on every mutation, carried on
+   the wire, and guarded by both production followers (`SessionClient` IOS-4.27,
+   `TerminalPane.tsx` WEB-5.10).  `WebFollowerView` models the same guard, and
+   `MultiTransportWorld.emit()` tags deliveries with the real `snapshot.revision`
+   so S5/L1 verify the shipped behavior.

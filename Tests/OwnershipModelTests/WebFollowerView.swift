@@ -1,14 +1,15 @@
 import GrafttyProtocol
 
-/// A minimal Swift model standing in for the TypeScript web client follower.
-/// Records the highest epoch applied, the last applied emission sequence, and
-/// the last applied grid/owner.
+/// A minimal Swift model standing in for the production web/iOS followers
+/// (`TerminalPane.tsx`, `SessionClient`).  Records the highest epoch applied, the
+/// last applied revision, and the last applied grid/owner.
 ///
-/// By default enforces a two-part monotonic guard: `apply` updates state only
-/// when BOTH `tagged.snapshot.epoch >= highestApplied` AND
-/// `tagged.emissionSeq >= highestAppliedEmission`.  Set `bypassEpochGuard =
-/// true` to simulate a pre-fix adapter that applies every delivery
-/// unconditionally — the oracle then catches ESN regressions via S5.
+/// By default enforces the SAME two-part monotonic guard the production followers
+/// now ship: `apply` updates state only when BOTH `tagged.snapshot.epoch >=
+/// highestApplied` AND `tagged.emissionSeq >= highestAppliedEmission`, where
+/// `emissionSeq` is the store's real `revision` (see `MultiTransportWorld.emit`).
+/// Set `bypassEpochGuard = true` to simulate a pre-fix adapter that applies every
+/// delivery unconditionally — the oracle then catches revision regressions via S5.
 final class WebFollowerView {
     private(set) var highestApplied: UInt64 = 0
     private(set) var highestAppliedEmission: UInt64 = 0
