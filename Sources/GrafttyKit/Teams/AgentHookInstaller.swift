@@ -343,35 +343,29 @@ public struct AgentHookInstaller: Sendable {
             wrapperDirectory: wrapperDirectory,
             realCommandName: realCommandName
         )
-        let trapBlock = """
-        agent_pid=""
-        cleanup() { \(shellCommandToken(grafttyCLIPath)) team unregister --runtime \(runtime.rawValue) 2>/dev/null || true; }
-        forward_signal() {
-          sig="$1"
-          status="$2"
-          if [ -n "${agent_pid:-}" ]; then
-            kill -"$sig" "$agent_pid" 2>/dev/null || true
-            fallback_pid=""
-            if [ "$sig" = "INT" ]; then
-              # Some /bin/sh implementations keep SIGINT ignored for
-              # asynchronous children even when the child subshell resets
-              # traps before exec. Keep forwarding INT first, but do not
-              # let the wrapper block forever if the child inherited ignore.
-              ( sleep 1; kill -0 "$agent_pid" 2>/dev/null && kill -TERM "$agent_pid" 2>/dev/null || true ) &
-              fallback_pid=$!
-            fi
-            wait "$agent_pid" 2>/dev/null || true
-            if [ -n "${fallback_pid:-}" ]; then
-              kill "$fallback_pid" 2>/dev/null || true
-              wait "$fallback_pid" 2>/dev/null || true
+        let registerBlock = """
+        # Register this wrapper PID before launching the runtime. The runtime
+        # remains a foreground child in the same process group so TUIs keep
+        # normal terminal semantics, while the wrapper gets a short teardown
+        # phase after the runtime exits.
+        \(shellCommandToken(grafttyCLIPath)) team register --runtime \(runtime.rawValue) --pid "$$" >/dev/null 2>&1 || true
+        """
+
+        let cleanupBlock = """
+        cleanup_after_runtime() {
+          # Some TUIs issue terminal capability queries during startup/shutdown.
+          # A late reply can otherwise land in the parent shell after the TUI
+          # exits (for example Kitty keyboard protocol replies like CSI ? ... u).
+          # Drain only a tiny, immediately-pending window and restore tty state.
+          if [ -t 0 ] && command -v stty >/dev/null 2>&1 && command -v dd >/dev/null 2>&1; then
+            _graftty_stty="$(stty -g 2>/dev/null)" || _graftty_stty=""
+            if [ -n "$_graftty_stty" ] && stty -icanon -echo min 0 time 1 2>/dev/null; then
+              dd bs=1024 count=1 of=/dev/null 2>/dev/null || true
+              stty "$_graftty_stty" 2>/dev/null || true
             fi
           fi
-          exit "$status"
+          \(shellCommandToken(grafttyCLIPath)) team unregister --runtime \(runtime.rawValue) 2>/dev/null || true
         }
-        trap cleanup EXIT
-        trap 'forward_signal TERM 143' TERM
-        trap 'forward_signal INT 130' INT
-        trap 'forward_signal HUP 129' HUP
         """
 
         let runtimeBlock: String
@@ -381,9 +375,9 @@ public struct AgentHookInstaller: Sendable {
             let escapedJSON = shellLiteral(inlineJSON)
             runtimeBlock = """
             if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
-              ( trap - INT TERM HUP; exec "$real_binary" --settings \(escapedJSON) "$@" ) &
+              "$real_binary" --settings \(escapedJSON) "$@"
             else
-              ( trap - INT TERM HUP; exec "$real_binary" "$@" ) &
+              "$real_binary" "$@"
             fi
             """
         case .codex:
@@ -391,9 +385,9 @@ public struct AgentHookInstaller: Sendable {
             runtimeBlock = """
             if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
               \(shellCommandToken(grafttyCLIPath)) internal sync-codex-home
-              ( trap - INT TERM HUP; exec env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@" ) &
+              env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@"
             else
-              ( trap - INT TERM HUP; exec "$real_binary" "$@" ) &
+              "$real_binary" "$@"
             fi
             """
         }
@@ -404,19 +398,14 @@ public struct AgentHookInstaller: Sendable {
         # Hooks run: \(grafttyCLIPath) team hook \(runtime.rawValue)
         \(resolveBlock)
 
-        \(trapBlock)
+        \(registerBlock)
+
+        \(cleanupBlock)
 
         \(runtimeBlock)
-        agent_pid=$!
-
-        # TEAM-PRESENCE-1.3: register the long-running runtime child, not
-        # the short-lived registration helper. The CLI silently no-ops
-        # outside a team-tracked worktree, so the unconditional call is safe.
-        \(shellCommandToken(grafttyCLIPath)) team register --runtime \(runtime.rawValue) --pid "$agent_pid" >/dev/null 2>&1 || true
-
-        wait "$agent_pid"
-        agent_status=$?
-        exit "$agent_status"
+        runtime_status=$?
+        cleanup_after_runtime
+        exit "$runtime_status"
         """
     }
 
