@@ -333,4 +333,69 @@ struct PairingHTTPServerTests {
 
         try? FileManager.default.removeItem(at: dir)
     }
+
+    /// `start()` suspends at `bind`; a `stop()` that interleaves there
+    /// observes `.starting` but nil channel/group, so its teardown is a
+    /// no-op and it resets the lifecycle to `.idle`. If the resuming
+    /// `start()` then unconditionally records the bound channel and goes
+    /// `.running`, the caller is left with a live listener it believes
+    /// is stopped — violating REMOTE-1.4's guarantee. The interleaving
+    /// is driven deterministically via the test-only start-resume gate,
+    /// which widens the exact same suspension window.
+    @Test("stop() interleaved during start()'s bind suspension leaves no live listener: start() throws stoppedDuringStart and the bound port refuses connections")
+    func stopDuringStartLeavesNoLiveListener() async throws {
+        let (dir, httpServer) = try makeUnstartedServer()
+
+        let (portStream, portCont) = AsyncStream.makeStream(of: Int.self)
+        let (releaseStream, releaseCont) = AsyncStream.makeStream(of: Void.self)
+        await httpServer.setStartResumeGateForTesting { boundPort in
+            portCont.yield(boundPort)
+            var release = releaseStream.makeAsyncIterator()
+            _ = await release.next()
+        }
+
+        async let startResult: Swift.Result<Int, Error> = {
+            do {
+                return .success(try await httpServer.start(host: "127.0.0.1", port: 0))
+            } catch {
+                return .failure(error)
+            }
+        }()
+
+        // start() has bound the socket and is parked inside the gate.
+        var ports = portStream.makeAsyncIterator()
+        let boundPort = try #require(await ports.next())
+
+        // stop() interleaves: sees `.starting`, finds nothing recorded to
+        // tear down, and resets the lifecycle to `.idle`.
+        await httpServer.stop()
+
+        // Release start(); it must NOT resume into `.running`.
+        releaseCont.yield(())
+
+        switch await startResult {
+        case .success(let port):
+            Issue.record("Expected start() to fail after an interleaved stop(); got a live listener on port \(port)")
+        case .failure(let error):
+            #expect(error as? PairingHTTPServer.LifecycleError == .stoppedDuringStart)
+        }
+
+        do {
+            _ = try await self.get("/nope", port: boundPort)
+            Issue.record("Expected the connection to fail: the caller believes the server is stopped")
+        } catch is URLError {
+            // Expected: the just-bound channel was closed before start()
+            // returned, so nothing is listening on the bound port.
+        }
+
+        // The lifecycle must be back at .idle with no orphaned resources:
+        // a fresh start()/stop() cycle works (gate removed so the fresh
+        // start doesn't park in it).
+        await httpServer.setStartResumeGateForTesting(nil)
+        let freshPort = try await httpServer.start(host: "127.0.0.1", port: 0)
+        #expect(freshPort > 0)
+        await httpServer.stop()
+
+        try? FileManager.default.removeItem(at: dir)
+    }
 }

@@ -26,6 +26,18 @@ public actor PairingHTTPServer {
     private var channel: Channel?
     private var lifecycle: Lifecycle = .idle
 
+    /// Test-only hook, awaited by `start()` between the bind resolving
+    /// and the lifecycle re-check. In production the bind itself is the
+    /// suspension a concurrent `stop()` can interleave into; the hook
+    /// widens that same window so tests can park `start()` there
+    /// deterministically (receive the bound port, run `stop()` to
+    /// completion, then release). `nil` (the default) is a no-op.
+    private var startResumeGateForTesting: (@Sendable (Int) async -> Void)?
+
+    func setStartResumeGateForTesting(_ gate: (@Sendable (Int) async -> Void)?) {
+        startResumeGateForTesting = gate
+    }
+
     /// Actors only interleave at suspension points: `start()` and `stop()`
     /// both suspend mid-method (binding the socket / closing the channel
     /// and shutting down the event-loop group). A state check made purely
@@ -48,6 +60,11 @@ public actor PairingHTTPServer {
     /// second, orphaned listener.
     public enum LifecycleError: Swift.Error, Equatable {
         case alreadyStarted
+        /// A `stop()` ran while `start()` was suspended binding the
+        /// socket. The just-bound channel has been closed and its group
+        /// shut down; the server honors the stop and reports it here
+        /// instead of resuming into `.running` behind the caller's back.
+        case stoppedDuringStart
     }
 
     // MARK: Init
@@ -86,13 +103,33 @@ public actor PairingHTTPServer {
 
         do {
             let boundChannel = try await bootstrap.bind(host: host, port: port).get()
+            if let gate = startResumeGateForTesting {
+                await gate(boundChannel.localAddress?.port ?? port)
+            }
+            // A `stop()` that interleaved while we were suspended at
+            // `bind` found nothing recorded to tear down and reset the
+            // lifecycle to `.idle`. Honor it: close the just-bound
+            // channel and its group instead of resuming into `.running`
+            // behind the caller's back. Only the local channel/group are
+            // touched — a subsequent `start()` may already own the
+            // shared state by the time these awaits complete.
+            guard lifecycle == .starting else {
+                try? await boundChannel.close().get()
+                try? await Self.shutdown(group)
+                throw LifecycleError.stoppedDuringStart
+            }
             self.group = group
             self.channel = boundChannel
             lifecycle = .running
             return boundChannel.localAddress?.port ?? port
-        } catch {
+        } catch let error where !(error is LifecycleError) {
             try? await Self.shutdown(group)
-            lifecycle = .idle
+            // Guarded for the same interleaving: if a stop() already
+            // reset the lifecycle (and a newer start() may have since
+            // claimed `.starting`), don't clobber it.
+            if lifecycle == .starting {
+                lifecycle = .idle
+            }
             throw error
         }
     }
