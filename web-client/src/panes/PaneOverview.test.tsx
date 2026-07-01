@@ -14,7 +14,8 @@ afterEach(() => { cleanup(); navigate.mockReset(); });
 
 const leaf = (s: string): PaneLayoutNode => ({ kind: 'leaf', sessionName: s, title: s, attentionText: null, isBusy: false, attentionSource: null });
 
-describe('@spec WEB-9.4 PaneOverview', () => {
+// @spec WEB-9.4: When a worktree has exactly one pane, the application shall open that pane fullscreen instead of showing an overview.
+describe('PaneOverview', () => {
   it('renders a preview per leaf for a multi-pane worktree', () => {
     const tree: PaneLayoutNode = { kind: 'split', direction: 'horizontal', ratio: 0.5, left: leaf('a'), right: leaf('b') };
     render(<PaneOverview layout={tree} />);

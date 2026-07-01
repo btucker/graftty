@@ -37,7 +37,8 @@ import { DesktopShell } from './DesktopShell';
 
 afterEach(() => { cleanup(); delete search.path; });
 
-describe('@spec WEB-9.7 DesktopShell', () => {
+// @spec WEB-9.7: While at desktop width, the application shall render the selected worktree panes as fully interactive terminals with click-to-focus keyboard routing.
+describe('DesktopShell', () => {
   it('auto-selects the first worktree and renders its interactive panes', () => {
     render(<DesktopShell />);
     const tps = screen.getAllByTestId('tp');

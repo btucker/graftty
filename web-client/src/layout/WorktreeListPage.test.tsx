@@ -20,7 +20,8 @@ import { WorktreeListPage } from './WorktreeListPage';
 
 afterEach(() => { cleanup(); navigate.mockReset(); });
 
-describe('@spec WEB-9.8 WorktreeListPage', () => {
+// @spec WEB-9.8: While at compact width, the application shall navigate worktree list to overview to fullscreen as a push flow.
+describe('WorktreeListPage', () => {
   it('routes a single-pane worktree straight to its session', () => {
     render(<WorktreeListPage />);
     fireEvent.click(screen.getByText('/wt/single'));

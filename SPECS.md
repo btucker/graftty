@@ -1046,6 +1046,24 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-8.6** While the cert pair fetch is in flight on "Enable web access", the application shall hold a `.provisioningCert` status, render a `ProgressView` plus "Provisioning certificate from Tailscale…" message in the Settings pane, and shall not block the MainActor for the duration of the fetch. On completion the status shall transition to `.listening` (success), `.httpsCertsNotEnabled` (tailnet-disabled), or `.certFetchFailed(<message>)` (any other error) without leaving the pane stuck on `.provisioningCert`.
 
+### WEB-9.x
+
+**WEB-9.1** While the web viewport is at desktop width, the application shall present a persistent worktree sidebar alongside the pane content.
+
+**WEB-9.2** When rendering a worktree pane tree, the application shall lay panes out in nested proportional splits mirroring the host split ratios.
+
+**WEB-9.3** While showing a pane overview, the application shall render each pane as a live read-only terminal preview.
+
+**WEB-9.4** When a worktree has exactly one pane, the application shall open that pane fullscreen instead of showing an overview.
+
+**WEB-9.5** When role is preview, the client shall send hello with role:preview and shall not send takeControl or ownerResize frames, even after receiving an ownership snapshot naming another owner.
+
+**WEB-9.6** When listing worktrees, the application shall group panes under their worktree rather than listing each pane separately.
+
+**WEB-9.7** While at desktop width, the application shall render the selected worktree panes as fully interactive terminals with click-to-focus keyboard routing.
+
+**WEB-9.8** While at compact width, the application shall navigate worktree list to overview to fullscreen as a push flow.
+
 ## UPDATE — Self-Update
 
 ### UPDATE-1.x — Install flow

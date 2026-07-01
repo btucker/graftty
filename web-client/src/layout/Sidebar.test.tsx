@@ -16,7 +16,8 @@ const wt: WorktreePanes = {
 };
 const groups: RepoGroup[] = [{ repoDisplayName: 'graftty', worktrees: [wt] }];
 
-describe('@spec WEB-9.6 Sidebar', () => {
+// @spec WEB-9.6: When listing worktrees, the application shall group panes under their worktree rather than listing each pane separately.
+describe('Sidebar', () => {
   it('groups worktrees under a repo heading and shows divergence', () => {
     render(<Sidebar groups={groups} selectedPath={null} focusedSessionName={null} onSelectWorktree={() => {}} onSelectPane={() => {}} />);
     expect(screen.getByRole('heading', { name: 'graftty' })).toBeTruthy();

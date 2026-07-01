@@ -525,7 +525,7 @@ test('server text status frames are rendered without writing terminal bytes', as
 });
 
 // @spec WEB-9.5: When role is preview, the client shall send hello with role:preview and shall not send takeControl or ownerResize frames, even after receiving an ownership snapshot naming another owner.
-describe('@spec WEB-9.5 preview role', () => {
+describe('preview role', () => {
   test('sends a preview-role hello and never a takeControl or ownerResize frame', async () => {
     render(<TerminalPane sessionName="s1" role="preview" fit="container" autoFocus={false} />);
     await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));

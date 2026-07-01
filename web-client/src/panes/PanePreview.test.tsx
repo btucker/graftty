@@ -16,7 +16,8 @@ afterEach(() => { cleanup(); navigate.mockReset(); });
 
 const leaf: PaneLeaf = { kind: 'leaf', sessionName: 's1', title: 'bash', attentionText: null, isBusy: false, attentionSource: null };
 
-describe('@spec WEB-9.3 PanePreview', () => {
+// @spec WEB-9.3: While showing a pane overview, the application shall render each pane as a live read-only terminal preview.
+describe('PanePreview', () => {
   it('mounts a preview-role terminal and shows the title', () => {
     render(<PanePreview leaf={leaf} />);
     const terminal = screen.getByTestId('terminal-pane');

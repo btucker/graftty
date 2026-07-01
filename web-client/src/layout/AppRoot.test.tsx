@@ -9,7 +9,8 @@ import { AppRoot } from './AppRoot';
 
 afterEach(cleanup);
 
-describe('@spec WEB-9.1 AppRoot width branch', () => {
+// @spec WEB-9.1: While the web viewport is at desktop width, the application shall present a persistent worktree sidebar alongside the pane content.
+describe('AppRoot width branch', () => {
   it('renders the compact Outlet below the breakpoint', () => {
     isDesktop.value = false;
     render(<AppRoot><div data-testid="compact-child" /></AppRoot>);

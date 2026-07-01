@@ -8,7 +8,8 @@ afterEach(cleanup);
 
 const leaf = (s: string): PaneLeaf => ({ kind: 'leaf', sessionName: s, title: s, attentionText: null, isBusy: false, attentionSource: null });
 
-describe('@spec WEB-9.2 SplitLayout', () => {
+// @spec WEB-9.2: When rendering a worktree pane tree, the application shall lay panes out in nested proportional splits mirroring the host split ratios.
+describe('SplitLayout', () => {
   it('renders one pane slot per leaf in order', () => {
     const tree: PaneLayoutNode = { kind: 'split', direction: 'horizontal', ratio: 0.6, left: leaf('a'), right: leaf('b') };
     render(<SplitLayout node={tree} renderLeaf={(l) => <span>{l.sessionName}</span>} />);
