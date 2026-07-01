@@ -91,9 +91,9 @@ public final class PanesStateChannelHandler: ChannelInboundHandler, @unchecked S
                     let body = try? JSONEncoder().encode(PanesStateMessage.snapshot(snapshot))
                 else { return }
                 let buf = allocator.buffer(bytes: body)
-                // Marshal back to the event loop thread before writing —
-                // mirrors the TerminalSessionHandler pattern so EmbeddedChannel
-                // tests stay thread-safe.
+                // Marshal back to the event loop before writing — NIO requires
+                // channel writes on the event loop, and this closure runs on the
+                // Swift-concurrency executor.
                 loop.execute {
                     channel.writeAndFlush(buf, promise: nil)
                 }

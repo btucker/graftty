@@ -64,9 +64,11 @@ final class TerminalSessionHandlerTests: XCTestCase {
         try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
         try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
         try await sendShellRequest(channel)
-        // Wait until attach installs the stream (signalled by the shell's
-        // success reply) so the inbound bytes aren't dropped pre-attach.
-        try await waitUntil { capture.sawSuccess }
+        // Wait until attach installs the stream. env + pty acks fire before
+        // attach; the shell ack (3rd success) fires from the same loop.execute
+        // that sets `stream`, so `successCount >= 3` means the stream is
+        // installed and inbound bytes won't be dropped by `guard stream != nil`.
+        try await waitUntil { capture.successCount >= 3 }
 
         let bytes = ByteBuffer(string: "hello\n")
         try await channel.writeInbound(SSHChannelData(type: .channel, data: .byteBuffer(bytes)))
@@ -96,8 +98,9 @@ final class TerminalSessionHandlerTests: XCTestCase {
         try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
         try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
         try await sendShellRequest(channel)
-        // Wait until attach installs the stream so window-change is forwarded.
-        try await waitUntil { capture.sawSuccess }
+        // Wait until attach installs the stream (shell ack = 3rd success) so
+        // window-change is forwarded rather than dropped pre-attach.
+        try await waitUntil { capture.successCount >= 3 }
 
         let event = SSHChannelRequestEvent.WindowChangeRequest(
             terminalCharacterWidth: 120,
@@ -127,9 +130,9 @@ final class TerminalSessionHandlerTests: XCTestCase {
         try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
         try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
         try await sendShellRequest(channel)
-        // Wait until attach installs the stream so channelInactive has a
-        // stream to close.
-        try await waitUntil { capture.sawSuccess }
+        // Wait until attach installs the stream (shell ack = 3rd success) so
+        // channelInactive has a stream to close.
+        try await waitUntil { capture.successCount >= 3 }
 
         _ = try? await channel.finish()
         // close() is called from a Task in channelInactive; poll until done.
@@ -249,10 +252,20 @@ final class TerminalSessionHandlerTests: XCTestCase {
         _ condition: () -> Bool
     ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
-        while !condition() && Date() < deadline {
+        while !condition() {
+            // Fail fast on timeout rather than returning silently — otherwise a
+            // missed barrier falls through to `waitForOutboundWrite`, which has
+            // no internal timeout and would hang the whole run.
+            if Date() >= deadline {
+                throw WaitTimedOut()
+            }
             try await Task.sleep(for: .milliseconds(2))
         }
     }
+}
+
+private struct WaitTimedOut: Error, CustomStringConvertible {
+    var description: String { "waitUntil timed out" }
 }
 
 // MARK: - Outbound event capture handler
@@ -266,17 +279,21 @@ private final class OutboundEventCapture: ChannelOutboundHandler, @unchecked Sen
 
     private let lock = NIOLock()
     private var _sawExitStatus1 = false
-    private var _sawSuccess = false
+    private var _successCount = 0
 
     var sawExitStatus1: Bool {
         lock.withLock { _sawExitStatus1 }
     }
 
-    /// True once the handler has emitted a `ChannelSuccessEvent`, which it does
-    /// from the same `loop.execute` block that installs the stream — so this is
-    /// a reliable "attach complete" signal.
-    var sawSuccess: Bool {
-        lock.withLock { _sawSuccess }
+    /// Count of `ChannelSuccessEvent`s the handler has emitted. The env-req and
+    /// pty-req acks fire *synchronously* (before attach), while the shell-req
+    /// ack fires from the same `loop.execute` block that installs the stream —
+    /// so it is the LAST of the three and reaching that count is the reliable
+    /// "attach complete" signal. A prior `sawSuccess` bool tripped on the env
+    /// ack, letting bytes/window-change race ahead of stream install (dropped
+    /// by the handler's `guard stream != nil`).
+    var successCount: Int {
+        lock.withLock { _successCount }
     }
 
     func triggerUserOutboundEvent(context: ChannelHandlerContext, event: Any, promise: EventLoopPromise<Void>?) {
@@ -284,7 +301,7 @@ private final class OutboundEventCapture: ChannelOutboundHandler, @unchecked Sen
             lock.withLock { _sawExitStatus1 = true }
         }
         if event is ChannelSuccessEvent {
-            lock.withLock { _sawSuccess = true }
+            lock.withLock { _successCount += 1 }
         }
         context.triggerUserOutboundEvent(event, promise: promise)
     }

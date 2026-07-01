@@ -58,11 +58,11 @@ public final class PaneControlChannelHandler: ChannelInboundHandler, @unchecked 
             if Task.isCancelled { return }
             guard let body = try? JSONEncoder().encode(response) else { return }
             let buf = allocator.buffer(bytes: body)
-            // Marshal back to the event loop thread before writing —
-            // mirrors the TerminalSessionHandler / PanesStateChannelHandler
-            // pattern so EmbeddedChannel tests stay thread-safe. The channel
-            // may be closed by the time this fires — writeAndFlush(..., promise: nil)
-            // drops silently in that case, which is correct for RPC responses.
+            // Marshal back to the event loop before writing — NIO requires
+            // channel writes on the event loop, and this closure runs on the
+            // Swift-concurrency executor. The channel may be closed by the time
+            // this fires — writeAndFlush(..., promise: nil) drops silently in
+            // that case, which is correct for RPC responses.
             loop.execute {
                 channel.writeAndFlush(buf, promise: nil)
             }
