@@ -46,7 +46,7 @@ struct WorktreeNavigationTests {
         #expect(wrap.nextWorktreePath(forward: true) == "/a")
     }
 
-    @Test("@spec KBD-5.3: previous_tab shall apply attention-first selection in reverse cyclic order, and select the immediate previous on-disk worktree (wrapping) when no worktree has attention.")
+    @Test("@spec KBD-5.3: When the user presses previous_tab, the application shall apply attention-first selection in reverse cyclic order, and select the immediate previous on-disk worktree (wrapping) when no worktree has attention.")
     func reverseAttentionAndPlainWrap() {
         // A(attention) B(no) C(no) D(selected) — reverse to A.
         let attn = state([wt("/a", attention: true), wt("/b"), wt("/c"), wt("/d")], selected: "/d")
@@ -57,7 +57,7 @@ struct WorktreeNavigationTests {
         #expect(plain.nextWorktreePath(forward: false) == "/c")
     }
 
-    @Test("@spec KBD-5.4: Attention for navigation shall count any source (agent-stop, user notify, command-finished) at worktree or pane scope, and shall exclude the currently-selected worktree from the attention subset so its own attention does not trap navigation on itself.")
+    @Test("@spec KBD-5.4: When a worktree carries attention from any source (agent-stop, user notify, command-finished) at worktree or pane scope, the application shall count it as a navigation target, while excluding the currently-selected worktree from the attention subset so its own attention does not trap navigation on itself.")
     func attentionScopeAndCurrentExcluded() {
         // Pane-scoped attention counts the same as worktree-scoped.
         var b = wt("/b")
@@ -69,11 +69,14 @@ struct WorktreeNavigationTests {
         let current = state([wt("/a", attention: true), wt("/b", attention: true), wt("/c")], selected: "/a")
         #expect(current.nextWorktreePath(forward: true) == "/b")
 
-        // A userNotify source counts the same as agentStop.
-        var c = wt("/c")
-        c.attention = Attention(text: "ping", timestamp: Date(timeIntervalSince1970: 2), source: .userNotify)
-        let notify = state([wt("/a"), wt("/b"), c], selected: "/a")
-        #expect(notify.nextWorktreePath(forward: true) == "/c")
+        // Each non-agentStop source counts the same as agentStop.
+        func withSource(_ source: AttentionSource) -> AppState {
+            var c = wt("/c")
+            c.attention = Attention(text: "ping", timestamp: Date(timeIntervalSince1970: 2), source: source)
+            return state([wt("/a"), wt("/b"), c], selected: "/a")
+        }
+        #expect(withSource(.userNotify).nextWorktreePath(forward: true) == "/c")
+        #expect(withSource(.commandFinished).nextWorktreePath(forward: true) == "/c")
     }
 
     @Test("@spec KBD-5.5: When zero or one on-disk worktree is selectable, next_tab and previous_tab shall be a no-op (return nil); non-on-disk worktrees (.stale/.creating/.deleting) shall never be navigation targets even when they carry attention.")

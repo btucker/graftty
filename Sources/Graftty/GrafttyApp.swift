@@ -3414,7 +3414,9 @@ struct GrafttyApp: App {
 
     /// Resolve a `GhosttyAction`'s configured chord to a SwiftUI shortcut,
     /// or nil if unbound — shared by `bridgedButton` and command views that
-    /// need the shortcut value directly.
+    /// need the shortcut value directly. `@MainActor` to match its access of
+    /// the main-actor-isolated `terminalManager.keybindBridge`.
+    @MainActor
     private func shortcut(for action: GhosttyAction) -> KeyboardShortcut? {
         guard let chord = terminalManager.keybindBridge[action] else { return nil }
         return KeyboardShortcutFromChord.shortcut(from: chord)

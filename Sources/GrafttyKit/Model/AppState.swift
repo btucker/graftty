@@ -218,24 +218,20 @@ public struct AppState: Codable, Sendable, Equatable {
     /// (repo order, then worktree order). Returns `nil` when there is
     /// nothing to move to (0 or 1 selectable worktrees).
     public func nextWorktreePath(forward: Bool) -> String? {
-        let ordered: [String] = repos.flatMap { repo in
-            repo.worktrees
-                .filter { $0.state.hasOnDiskWorktree }
-                .map { $0.path }
+        // Selectable worktrees in sidebar order, carried as entries so the
+        // attention check below is a direct property read rather than a
+        // repeated `worktree(forPath:)` scan.
+        let ordered: [WorktreeEntry] = repos.flatMap { repo in
+            repo.worktrees.filter { $0.state.hasOnDiskWorktree }
         }
         let n = ordered.count
         guard n > 1 else { return nil }
-
-        func hasAttention(_ path: String) -> Bool {
-            guard let wt = worktree(forPath: path) else { return false }
-            return wt.attention != nil || !wt.paneAttention.isEmpty
-        }
 
         // Indices to visit, in priority order, starting just after (forward)
         // or before (reverse) the current selection. When nothing selectable
         // is selected, walk the whole list from an edge.
         let searchOrder: [Int]
-        if let ci = selectedWorktreePath.flatMap({ ordered.firstIndex(of: $0) }) {
+        if let ci = selectedWorktreePath.flatMap({ path in ordered.firstIndex { $0.path == path } }) {
             searchOrder = (1...(n - 1)).map { step in
                 forward ? (ci + step) % n : (ci - step + n) % n
             }
@@ -245,10 +241,10 @@ public struct AppState: Codable, Sendable, Equatable {
 
         // Attention worktree wins; the current selection is never in
         // `searchOrder` (steps 1..<n), so it is excluded automatically.
-        if let hit = searchOrder.first(where: { hasAttention(ordered[$0]) }) {
-            return ordered[hit]
+        if let hit = searchOrder.first(where: { ordered[$0].hasAttention }) {
+            return ordered[hit].path
         }
-        return ordered[searchOrder[0]]
+        return ordered[searchOrder[0]].path
     }
 
     private static let fileName = "state.json"

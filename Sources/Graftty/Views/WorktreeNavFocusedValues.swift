@@ -29,9 +29,18 @@ struct WorktreeNavCommandButtons: View {
         }
     }
 
+    // `.disabled` is applied OUTERMOST (after `.keyboardShortcut`), matching
+    // `AddWorktreeCommandButton`, so a nil action both greys the menu item
+    // and releases its key equivalent rather than leaving a live no-op chord.
     @ViewBuilder
     private func button(_ label: LocalizedStringKey, forward: Bool, shortcut: KeyboardShortcut?) -> some View {
-        let b = Button(label) { action?(forward) }.disabled(action == nil)
-        if let shortcut { b.keyboardShortcut(shortcut) } else { b }
+        Group {
+            if let shortcut {
+                Button(label) { action?(forward) }.keyboardShortcut(shortcut)
+            } else {
+                Button(label) { action?(forward) }
+            }
+        }
+        .disabled(action == nil)
     }
 }

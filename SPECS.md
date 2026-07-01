@@ -1108,9 +1108,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **KBD-5.2** When no other worktree has attention, next_tab shall select the immediate next on-disk worktree in cyclic sidebar order, wrapping from the last back to the first.
 
-**KBD-5.3** previous_tab shall apply attention-first selection in reverse cyclic order, and select the immediate previous on-disk worktree (wrapping) when no worktree has attention.
+**KBD-5.3** When the user presses previous_tab, the application shall apply attention-first selection in reverse cyclic order, and select the immediate previous on-disk worktree (wrapping) when no worktree has attention.
 
-**KBD-5.4** Attention for navigation shall count any source (agent-stop, user notify, command-finished) at worktree or pane scope, and shall exclude the currently-selected worktree from the attention subset so its own attention does not trap navigation on itself.
+**KBD-5.4** When a worktree carries attention from any source (agent-stop, user notify, command-finished) at worktree or pane scope, the application shall count it as a navigation target, while excluding the currently-selected worktree from the attention subset so its own attention does not trap navigation on itself.
 
 **KBD-5.5** When zero or one on-disk worktree is selectable, next_tab and previous_tab shall be a no-op (return nil); non-on-disk worktrees (.stale/.creating/.deleting) shall never be navigation targets even when they carry attention.
 

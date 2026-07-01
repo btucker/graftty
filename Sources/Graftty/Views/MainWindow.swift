@@ -241,6 +241,9 @@ struct MainWindow: View {
     /// `selectWorktree` sidebar clicks use, so surface show/hide and
     /// `acknowledgeAttention()` all fire identically.
     private var worktreeNavAction: ((Bool) -> Void)? {
+        // Enablement is direction-agnostic: `nextWorktreePath` returns nil in
+        // exactly one case — 0/1 selectable worktrees — for both directions,
+        // so probing `forward: true` correctly gates Next and Previous alike.
         guard appState.nextWorktreePath(forward: true) != nil else { return nil }
         return { forward in
             if let target = appState.nextWorktreePath(forward: forward) {
