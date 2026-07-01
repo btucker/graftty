@@ -1692,6 +1692,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-1.5** When a pairing completes with host confirmation, the client shall pin the host identity and record the host device identifier on the saved host entry.
 
+**REMOTE-1.6** When the user cancels a pairing ceremony while it is parked in .awaitingConfirmation, the client shall tear down the in-flight await-outcome request and pin nothing, even if a host confirmation for that ceremony arrives afterward.
+
 ### REMOTE-2.x — Authenticated Attach
 
 **REMOTE-2.1** When a remote transport reconnects, the host shall require a fresh authenticated attach handshake before writing any bytes to the PTY.

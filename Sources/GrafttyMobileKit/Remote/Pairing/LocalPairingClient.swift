@@ -167,6 +167,17 @@ public actor LocalPairingClient {
         let http: HTTPURLResponse
         do {
             (data, http) = try await transport(request)
+        } catch is CancellationError {
+            // Swift Task cancellation (from `PairDeviceFlowModel.cancel()`)
+            // surfaces here as `CancellationError` from stubbed transports
+            // and as `URLError(.cancelled)` from `URLSession.data(for:)`
+            // (below) — neither should read to the user as a network
+            // failure. Map both to the same case the host-initiated
+            // "outcome=cancelled" path already produces, so a cancelled
+            // ceremony always lands on `.cancelled`, never `.failed`.
+            throw Error.cancelled
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw Error.cancelled
         } catch {
             throw Error.transport("\(error)")
         }

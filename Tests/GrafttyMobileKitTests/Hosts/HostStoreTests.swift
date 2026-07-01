@@ -109,5 +109,38 @@ struct HostStoreTests {
         try store.delete(a.id)
         #expect(store.hosts.map(\.id) == [b.id])
     }
+
+    /// Regression coverage for the `remoteDeviceID` field REMOTE-1.5 added
+    /// to `Host`: a `hosts.json` written before that field existed (or by
+    /// manual URL entry, which never sets it) must still decode cleanly,
+    /// with `remoteDeviceID` reading back as `nil` rather than failing to
+    /// decode. Hand-written JSON (rather than round-tripping through
+    /// `Host`/`HostStore.write`) so the test can't silently start passing
+    /// just because both sides happen to omit the same field — it mirrors
+    /// `HostStore.readSync`'s plain, unconfigured `JSONDecoder()` /
+    /// `[Host]` decode exactly, including its default `.deferredToDate`
+    /// date strategy.
+    @Test
+    func legacyJSONWithoutRemoteDeviceIDDecodesToNilRemoteDeviceID() throws {
+        let id = UUID()
+        let legacyJSON = """
+        [
+          {
+            "id": "\(id.uuidString)",
+            "label": "mac",
+            "baseURL": "http://mac.local:8799/",
+            "addedAt": 700000000.0
+          }
+        ]
+        """
+        let data = Data(legacyJSON.utf8)
+
+        let decoded = try JSONDecoder().decode([Host].self, from: data)
+
+        #expect(decoded.count == 1)
+        #expect(decoded.first?.id == id)
+        #expect(decoded.first?.label == "mac")
+        #expect(decoded.first?.remoteDeviceID == nil)
+    }
 }
 #endif

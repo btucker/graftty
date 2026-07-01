@@ -49,6 +49,15 @@ public final class PairDeviceFlowModel {
     private let session: ClientPairingSession
     private let client: LocalPairingClient
 
+    /// The unstructured task backing the in-flight `runPairing` call.
+    /// Tracked so `cancel()` can tear it down — SwiftUI's `.task` modifier
+    /// only cancels the *outer* task running `run()`; it has no visibility
+    /// into this inner `Task { ... }`, so without this reference a
+    /// dismissed view would leak the long-poll for up to 320s (REMOTE-1.5
+    /// regression: a late host confirmation would silently pin a host
+    /// after the user believed they'd cancelled).
+    private var pairingTask: Task<Result<PinnedHost, Swift.Error>, Never>?
+
     // MARK: Init
 
     public init(payload: PairingPayload, session: ClientPairingSession, client: LocalPairingClient) {
@@ -73,6 +82,7 @@ public final class PairDeviceFlowModel {
                 return .failure(error)
             }
         }
+        self.pairingTask = pairingTask
 
         let pollTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -82,6 +92,7 @@ public final class PairDeviceFlowModel {
         }
 
         let result = await pairingTask.value
+        self.pairingTask = nil
         pollTask.cancel()
 
         switch result {
@@ -96,6 +107,14 @@ public final class PairDeviceFlowModel {
             state = .expired
         case .failure(LocalPairingClient.Error.cancelled):
             state = .cancelled
+        // `LocalPairingClient.postJSON` maps a cancelled `Task` (and the
+        // `URLError(.cancelled)` the production transport throws for one)
+        // to `.cancelled` above, but guard here too in case a future
+        // throwing point in the chain lets a raw `CancellationError`
+        // through unwrapped — it must land on `.cancelled`, never
+        // `.failed`, or `cancel()` would flash a spurious error message.
+        case .failure(let error) where error is CancellationError:
+            state = .cancelled
         case .failure(let error):
             state = .failed(message: "\(error)")
         }
@@ -105,6 +124,23 @@ public final class PairDeviceFlowModel {
         guard case .connecting = state else { return }
         guard case .awaitingHostConfirmation(_, let code, let payload) = session.state else { return }
         state = .awaitingConfirmation(code: code.display, hostDisplayName: payload.hostDisplayName)
+    }
+
+    /// Cancels an in-flight pairing ceremony.
+    ///
+    /// Cancels the unstructured `pairingTask` (so the host's `/await-outcome`
+    /// long-poll actually tears down instead of running for up to 320s after
+    /// the user has dismissed the view) and tells `session` the ceremony was
+    /// cancelled, so a `confirm()` racing in from a delayed host response
+    /// finds a terminal state and pins nothing.
+    ///
+    /// Safe to call repeatedly and after the ceremony has already reached a
+    /// terminal state: `Task.cancel()` on a finished task is a no-op, and
+    /// `ClientPairingSession.cancel()` no-ops from `.confirmed` and other
+    /// terminal states.
+    public func cancel() {
+        pairingTask?.cancel()
+        session.cancel()
     }
 
     // MARK: - Host construction
@@ -159,7 +195,10 @@ public struct PairDeviceFlowView: View {
         content
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button("Cancel") {
+                        model?.cancel()
+                        dismiss()
+                    }
                 }
             }
             .task {
@@ -167,6 +206,13 @@ public struct PairDeviceFlowView: View {
                 let built = Self.buildModel(payload: payload)
                 model = built
                 await built?.run()
+            }
+            // Covers swipe-to-dismiss and any other disappearance path that
+            // doesn't go through the toolbar button — without this, the
+            // host's long-poll keeps running and a late confirmation would
+            // silently pin the host after the user believed they'd left.
+            .onDisappear {
+                model?.cancel()
             }
     }
 
