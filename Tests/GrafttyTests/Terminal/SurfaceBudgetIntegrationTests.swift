@@ -154,7 +154,7 @@ struct SurfaceBudgetIntegrationTests {
             socketPath: "/tmp/graftty-cache-rt-test.sock",
             zmxSpawnConfiguration: testSurfaceHandleSpawnConfiguration(),
             surfaceFactory: harness.factory,
-            zmxBackendFactory: { _, _, _ in backend }
+            zmxBackendFactory: { _, _, _, _ in backend }
         ))
         manager.insertSurfaceForTesting(handle, for: leafA)
 
