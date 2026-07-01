@@ -25,6 +25,7 @@ export function groupByRepo(worktrees: WorktreePanes[]): RepoGroup[] {
 export function useWorktreePanes(pollMs = 2000): WorktreePanesState {
   const [state, setState] = useState<WorktreePanesState>({ kind: 'loading' });
   const haveDataRef = useRef(false);
+  const lastRawRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -32,9 +33,13 @@ export function useWorktreePanes(pollMs = 2000): WorktreePanesState {
       try {
         const res = await fetch('/worktrees/panes', { credentials: 'same-origin' });
         if (!res.ok) throw new Error(`/worktrees/panes → ${res.status}`);
-        const worktrees = parseWorktreePanes(await res.json());
+        const json = await res.json();
         if (cancelled) return;
+        const raw = JSON.stringify(json);
         haveDataRef.current = true;
+        if (raw === lastRawRef.current) return;      // unchanged — skip re-render
+        lastRawRef.current = raw;
+        const worktrees = parseWorktreePanes(json);
         setState({ kind: 'ready', groups: groupByRepo(worktrees), worktrees });
       } catch (err) {
         if (cancelled || haveDataRef.current) return; // keep last-good data

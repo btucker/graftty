@@ -1,6 +1,6 @@
 // web-client/src/layout/DesktopShell.tsx
 import { useEffect, useMemo, useState } from 'react';
-import { useSearch } from '@tanstack/react-router';
+import { useSearch, useNavigate } from '@tanstack/react-router';
 import { Sidebar } from './Sidebar';
 import { SplitLayout } from '../panes/SplitLayout';
 import { TerminalPane } from '../components/TerminalPane';
@@ -23,6 +23,7 @@ function InteractivePaneTile({ leaf, focused }: { leaf: PaneLeaf; focused: boole
 
 export function DesktopShell() {
   const { path: rawPath } = useSearch({ strict: false }) as { path?: string };
+  const navigate = useNavigate();
   const state = useWorktreePanes();
   const groups = state.kind === 'ready' ? state.groups : [];
   const [selectedPath, setSelectedPath] = useState<string | null>(() =>
@@ -53,13 +54,16 @@ export function DesktopShell() {
 
   return (
     <div className="desktop-shell">
-      <Sidebar
-        groups={groups}
-        selectedPath={selected?.path ?? null}
-        focusedSessionName={focusedSessionName}
-        onSelectWorktree={setSelectedPath}
-        onSelectPane={(path, session) => { setSelectedPath(path); setFocusedSessionName(session); }}
-      />
+      <div className="sidebar-column">
+        <button type="button" className="sidebar-add-worktree" onClick={() => void navigate({ to: '/new' })}>+ Add worktree</button>
+        <Sidebar
+          groups={groups}
+          selectedPath={selected?.path ?? null}
+          focusedSessionName={focusedSessionName}
+          onSelectWorktree={setSelectedPath}
+          onSelectPane={(path, session) => { setSelectedPath(path); setFocusedSessionName(session); }}
+        />
+      </div>
       <main className="desktop-content" onMouseDown={handleMainMouseDown}>
         {selected?.layout
           ? <SplitLayout

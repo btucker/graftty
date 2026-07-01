@@ -85,9 +85,12 @@ function parseOwnershipSnapshot(value: unknown): OwnershipSnapshot | null {
 
 // ghostty-web's `init()` loads the inlined WASM once into a process-wide
 // Ghostty instance. Memoize the promise so parallel pane mounts don't race.
+// Reset on rejection so a transient failure doesn't poison future mounts.
 let ghosttyReady: Promise<void> | null = null;
 function ensureGhostty() {
-  if (!ghosttyReady) ghosttyReady = init();
+  if (!ghosttyReady) {
+    ghosttyReady = init().catch((err) => { ghosttyReady = null; throw err; });
+  }
   return ghosttyReady;
 }
 
@@ -570,6 +573,10 @@ export function TerminalPane({ sessionName, role = 'interactive', fit = 'viewpor
       termRef.current = null;
     };
   }, [sessionName, role, fit]);
+
+  useEffect(() => {
+    if (autoFocus) termRef.current?.focus();
+  }, [autoFocus]);
 
   return (
     <>

@@ -3,7 +3,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup, screen, fireEvent } from '@testing-library/react';
 
 const search: { path?: string } = {};
-vi.mock('@tanstack/react-router', () => ({ useNavigate: () => vi.fn(), useSearch: () => search }));
+const mockNavigate = vi.fn();
+vi.mock('@tanstack/react-router', () => ({ useNavigate: () => mockNavigate, useSearch: () => search }));
 vi.mock('../components/TerminalPane', () => ({
   TerminalPane: (p: { sessionName: string; autoFocus?: boolean }) =>
     <div data-testid="tp" data-session={p.sessionName} data-autofocus={String(p.autoFocus)} />,
@@ -35,7 +36,7 @@ vi.mock('../hooks/useWorktreePanes', async () => {
 
 import { DesktopShell } from './DesktopShell';
 
-afterEach(() => { cleanup(); delete search.path; });
+afterEach(() => { cleanup(); delete search.path; mockNavigate.mockClear(); });
 
 // @spec WEB-9.7: While at desktop width, the application shall render the selected worktree panes as fully interactive terminals with click-to-focus keyboard routing.
 describe('DesktopShell', () => {
@@ -57,5 +58,11 @@ describe('DesktopShell', () => {
     render(<DesktopShell />);
     const tps = screen.getAllByTestId('tp');
     expect(tps.map((t) => t.getAttribute('data-session')).sort()).toEqual(['s3', 's4']);
+  });
+
+  it('clicking the add-worktree button navigates to /new', () => {
+    render(<DesktopShell />);
+    fireEvent.click(screen.getByText('+ Add worktree'));
+    expect(mockNavigate).toHaveBeenCalledWith({ to: '/new' });
   });
 });

@@ -33,7 +33,7 @@ html, body, #root, #app {
 }
 
 .term-status {
-  position: fixed;
+  position: absolute;
   top: 4px;
   right: 8px;
   color: #888;
@@ -43,7 +43,7 @@ html, body, #root, #app {
 }
 
 .term-take-control {
-  position: fixed;
+  position: absolute;
   top: 24px;
   right: 8px;
   z-index: 2;
@@ -239,13 +239,38 @@ html, body, #root, #app {
   overflow: hidden;
 }
 
-.sidebar {
+.sidebar-column {
+  display: flex;
+  flex-direction: column;
   min-width: 260px;
   width: 260px;
-  background: #111;
   border-right: 1px solid rgba(255, 255, 255, 0.08);
-  overflow-y: auto;
   flex-shrink: 0;
+}
+
+.sidebar-add-worktree {
+  display: block;
+  width: 100%;
+  padding: 8px 14px;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  color: #aaa;
+  text-align: left;
+  cursor: pointer;
+  font: 500 12px -apple-system, system-ui, sans-serif;
+  flex-shrink: 0;
+}
+
+.sidebar-add-worktree:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--term-foreground);
+}
+
+.sidebar {
+  flex: 1;
+  background: #111;
+  overflow-y: auto;
 }
 
 .desktop-content {
@@ -339,11 +364,6 @@ html, body, #root, #app {
   color: var(--term-foreground);
 }
 
-.pane-row[data-active="true"] {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--term-foreground);
-}
-
 .pane-row[data-focused="true"] {
   color: var(--term-foreground);
   font-style: italic;
@@ -352,6 +372,30 @@ html, body, #root, #app {
 .pane-row[data-busy="true"] {
   color: #555;
   font-style: italic;
+}
+
+.wt-name {
+  font-weight: normal;
+  display: block;
+}
+
+.pane-glyph {
+  color: #666;
+  margin-right: 4px;
+}
+
+.pane-title {
+  color: inherit;
+}
+
+.pane-attention {
+  display: inline-block;
+  font: 10px -apple-system, system-ui, sans-serif;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 200, 100, 0.25);
+  color: #c8a;
+  margin-top: 2px;
 }
 
 /* ── Split layout ────────────────────────────────────────────────── */

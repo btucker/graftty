@@ -20,7 +20,7 @@ export function SplitLayout({ node, renderLeaf }: SplitLayoutProps) {
   const basis = flexBasisForRatio(node.ratio);
   const direction = flexDirectionFor(node.direction);
   return (
-    <div className="split-container" data-testid="split-container"
+    <div className="split-container" data-testid="split-container" data-direction={node.direction}
          style={{ display: 'flex', flexDirection: direction, width: '100%', height: '100%' }}>
       <div className="split-child" data-testid="split-child"
            style={{ flexGrow: basis.left, flexBasis: 0, minWidth: 0, minHeight: 0, overflow: 'hidden' }}>
