@@ -117,8 +117,7 @@ public struct CLIRunner: CLIExecutor {
             let buffers = PipeBuffers()
 
             stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-                let chunk = handle.availableData
-                if chunk.isEmpty {
+                guard let chunk = Self.drainChunk(from: handle) else {
                     handle.readabilityHandler = nil
                     buffers.markStdoutEOF()
                     return
@@ -126,8 +125,7 @@ public struct CLIRunner: CLIExecutor {
                 buffers.appendStdout(chunk)
             }
             stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-                let chunk = handle.availableData
-                if chunk.isEmpty {
+                guard let chunk = Self.drainChunk(from: handle) else {
                     handle.readabilityHandler = nil
                     buffers.markStderrEOF()
                     return
@@ -223,6 +221,26 @@ public struct CLIRunner: CLIExecutor {
             }
         }
         return CLIOutput(stdout: captured.0, stderr: captured.1, exitCode: captured.2)
+    }
+
+    /// Crash-safe single-chunk drain of a pipe read handle. Returns the bytes
+    /// read, or `nil` at EOF / when the fd has been closed out from under the
+    /// readability handler during process+pipe teardown.
+    ///
+    /// `NSFileHandle.availableData` (and `readData(ofLength:)`) raise an
+    /// *uncatchable* `NSFileHandleOperationException` ("Bad file descriptor")
+    /// when the fd is already closed — under concurrent load the per-stream EOF
+    /// wait in `terminationHandler` can lapse (the global queue that runs the
+    /// readability handlers is starved for tens of seconds), the continuation
+    /// resumes, the `Pipe` deallocates and closes the fd, and the still-queued
+    /// readability handler then fires `availableData` against the freed fd —
+    /// SIGABRT-ing the whole process. `read(upToCount:)` surfaces the same
+    /// EBADF as a *catchable* Swift error, so a closed fd reads as EOF. CLI-1.1.
+    static func drainChunk(from handle: FileHandle) -> Data? {
+        guard let chunk = try? handle.read(upToCount: 64 * 1024), !chunk.isEmpty else {
+            return nil
+        }
+        return chunk
     }
 
     /// `Duration` → seconds as a `Double`, for `DispatchQueue.asyncAfter`

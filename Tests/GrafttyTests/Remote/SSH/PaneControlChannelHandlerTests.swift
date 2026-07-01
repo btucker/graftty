@@ -6,62 +6,47 @@ import NIOCore
 import NIOEmbedded
 import XCTest
 
+/// `PaneControlChannelHandler.channelRead` spawns a `Task` that runs the
+/// mutator on the Swift-concurrency global executor and then marshals the
+/// response write back via `loop.execute`. `EmbeddedChannel`/`EmbeddedEventLoop`
+/// are single-thread-only, so polling `embeddedEventLoop.run()` from the test
+/// thread while that background `Task` calls `loop.execute` is a data race
+/// (NIO logs "EmbeddedEventLoop is not thread-safe" and the process
+/// intermittently crashes). These tests use `NIOAsyncTestingChannel`, whose
+/// loop *is* thread-safe and whose `waitForOutboundWrite` drives the loop
+/// until the handler's deferred write lands — no busy-poll, no race.
 final class PaneControlChannelHandlerTests: XCTestCase {
 
     /// @spec REMOTE-7.2: When the host receives a `pane_control` request `{"type":"split","target":<sessionName>,"direction":<axis>}`, the host shall replace the leaf whose `sessionName == target` with a new split node of the requested `direction` whose left/top child is the original leaf and whose right/bottom child is a freshly-spawned leaf, applied on the main actor, and reply `{"ok":true}` on success.
-    func testDecodesAndDispatchesSplitRequest() throws {
+    func testDecodesAndDispatchesSplitRequest() async throws {
         let recorder = MutatorRecorder()
         let handler = PaneControlChannelHandler(mutator: { [recorder] req in
             await recorder.handle(req)
         })
 
-        let channel = EmbeddedChannel()
-        try channel.pipeline.syncOperations.addHandler(handler)
+        let channel = try await Self.channel(with: handler)
 
         let request: PaneControlRequest = .split(target: "session-a", direction: .vertical)
-        let body = try JSONEncoder().encode(request)
-        var buf = channel.allocator.buffer(capacity: body.count)
-        buf.writeBytes(body)
-        try channel.writeInbound(buf)
+        try await channel.writeInbound(Self.frame(request))
 
-        var outboundBuf: ByteBuffer?
-        runLoopUntil(channel: channel) {
-            outboundBuf = try? channel.readOutbound(as: ByteBuffer.self)
-            return outboundBuf != nil
-        }
-
-        guard let responseBuf = outboundBuf else {
-            return XCTFail("expected one outbound frame after split request")
-        }
+        let responseBuf = try await channel.waitForOutboundWrite(as: ByteBuffer.self)
         let resp = try JSONDecoder().decode(
             PaneControlResponse.self,
             from: Data(responseBuf.readableBytesView)
         )
         XCTAssertEqual(resp, .ok)
-        let lastRequest = recorder.lastRequest
-        XCTAssertEqual(lastRequest, request)
+        XCTAssertEqual(recorder.lastRequest, request)
     }
 
-    func testMalformedRequestRepliesError() throws {
+    func testMalformedRequestRepliesError() async throws {
         let handler = PaneControlChannelHandler(mutator: { _ in .ok })
+        let channel = try await Self.channel(with: handler)
 
-        let channel = EmbeddedChannel()
-        try channel.pipeline.syncOperations.addHandler(handler)
+        var garbage = channel.allocator.buffer(capacity: 2)
+        garbage.writeBytes(Data("{}".utf8))
+        try await channel.writeInbound(garbage)
 
-        let garbage = Data("{}".utf8)
-        var buf = channel.allocator.buffer(capacity: garbage.count)
-        buf.writeBytes(garbage)
-        try channel.writeInbound(buf)
-
-        var outboundBuf: ByteBuffer?
-        runLoopUntil(channel: channel) {
-            outboundBuf = try? channel.readOutbound(as: ByteBuffer.self)
-            return outboundBuf != nil
-        }
-
-        guard let responseBuf = outboundBuf else {
-            return XCTFail("expected one outbound frame after malformed request")
-        }
+        let responseBuf = try await channel.waitForOutboundWrite(as: ByteBuffer.self)
         let resp = try JSONDecoder().decode(
             PaneControlResponse.self,
             from: Data(responseBuf.readableBytesView)
@@ -73,41 +58,28 @@ final class PaneControlChannelHandlerTests: XCTestCase {
     }
 
     /// @spec REMOTE-7.3: When the host receives a `pane_control` request `{"type":"close","target":<sessionName>}`, the host shall destroy the surface for the leaf whose `sessionName == target` and reply `{"ok":true}` on success.
-    func testDecodesAndDispatchesCloseRequest() throws {
+    func testDecodesAndDispatchesCloseRequest() async throws {
         let recorder = MutatorRecorder()
         let handler = PaneControlChannelHandler(mutator: { [recorder] req in
             await recorder.handle(req)
         })
 
-        let channel = EmbeddedChannel()
-        try channel.pipeline.syncOperations.addHandler(handler)
+        let channel = try await Self.channel(with: handler)
 
         let request: PaneControlRequest = .close(target: "session-bravo")
-        let body = try JSONEncoder().encode(request)
-        var buf = channel.allocator.buffer(capacity: body.count)
-        buf.writeBytes(body)
-        try channel.writeInbound(buf)
+        try await channel.writeInbound(Self.frame(request))
 
-        var outboundBuf: ByteBuffer?
-        runLoopUntil(channel: channel) {
-            outboundBuf = try? channel.readOutbound(as: ByteBuffer.self)
-            return outboundBuf != nil
-        }
-
-        guard let responseBuf = outboundBuf else {
-            return XCTFail("expected one outbound frame after close request")
-        }
+        let responseBuf = try await channel.waitForOutboundWrite(as: ByteBuffer.self)
         let resp = try JSONDecoder().decode(
             PaneControlResponse.self,
             from: Data(responseBuf.readableBytesView)
         )
         XCTAssertEqual(resp, .ok)
-        let lastRequest = recorder.lastRequest
-        XCTAssertEqual(lastRequest, request)
+        XCTAssertEqual(recorder.lastRequest, request)
     }
 
     /// @spec REMOTE-7.4: When two `pane_control` requests target the same leaf concurrently, the host shall immediately reply to the second request with `{"ok":false,"code":"conflict","message":<human-readable>}` and continue processing only the first request. The conflict window for a target leaf ends once the first request's resulting `panes_state` snapshot has been emitted.
-    func testConflictResponseShape() throws {
+    func testConflictResponseShape() async throws {
         // The handler delegates per-leaf serialization to the injected
         // mutator (which production wires to AppState). What this test
         // pins is the wire contract: a mutator-returned conflict serializes
@@ -116,25 +88,13 @@ final class PaneControlChannelHandlerTests: XCTestCase {
             .error(code: "conflict", message: "target already busy")
         })
 
-        let channel = EmbeddedChannel()
-        try channel.pipeline.syncOperations.addHandler(handler)
+        let channel = try await Self.channel(with: handler)
 
-        let body = try JSONEncoder().encode(
-            PaneControlRequest.split(target: "session-x", direction: .horizontal)
+        try await channel.writeInbound(
+            Self.frame(.split(target: "session-x", direction: .horizontal))
         )
-        var buf = channel.allocator.buffer(capacity: body.count)
-        buf.writeBytes(body)
-        try channel.writeInbound(buf)
 
-        var outboundBuf: ByteBuffer?
-        runLoopUntil(channel: channel) {
-            outboundBuf = try? channel.readOutbound(as: ByteBuffer.self)
-            return outboundBuf != nil
-        }
-
-        guard let responseBuf = outboundBuf else {
-            return XCTFail("expected one outbound frame after conflict-returning mutator")
-        }
+        let responseBuf = try await channel.waitForOutboundWrite(as: ByteBuffer.self)
 
         // Assert the JSON shape directly, not just the decoded form —
         // the spec text pins specific key names.
@@ -149,7 +109,7 @@ final class PaneControlChannelHandlerTests: XCTestCase {
     }
 
     /// @spec REMOTE-7.5: While the host services `pane_control` requests, the application shall route mutations through an injected mutator callback without giving `PaneControlHandler` a reference to `AppState`, enforcing per-client focus sovereignty by construction.
-    func testHandlerHasNoAppStateReference() throws {
+    func testHandlerHasNoAppStateReference() async throws {
         // Structural assertion: PaneControlChannelHandler.init takes only a
         // `Mutator` closure. Constructing it here with just that closure
         // demonstrates by construction that no AppState (or any other
@@ -158,23 +118,11 @@ final class PaneControlChannelHandlerTests: XCTestCase {
         let mutator: PaneControlChannelHandler.Mutator = { _ in .ok }
         let handler = PaneControlChannelHandler(mutator: mutator)
 
-        let channel = EmbeddedChannel()
-        try channel.pipeline.syncOperations.addHandler(handler)
+        let channel = try await Self.channel(with: handler)
 
-        let body = try JSONEncoder().encode(PaneControlRequest.close(target: "session-iso"))
-        var buf = channel.allocator.buffer(capacity: body.count)
-        buf.writeBytes(body)
-        try channel.writeInbound(buf)
+        try await channel.writeInbound(Self.frame(.close(target: "session-iso")))
 
-        var outboundBuf: ByteBuffer?
-        runLoopUntil(channel: channel) {
-            outboundBuf = try? channel.readOutbound(as: ByteBuffer.self)
-            return outboundBuf != nil
-        }
-
-        guard let responseBuf = outboundBuf else {
-            return XCTFail("expected one outbound frame")
-        }
+        let responseBuf = try await channel.waitForOutboundWrite(as: ByteBuffer.self)
         let resp = try JSONDecoder().decode(
             PaneControlResponse.self,
             from: Data(responseBuf.readableBytesView)
@@ -184,16 +132,24 @@ final class PaneControlChannelHandlerTests: XCTestCase {
 
     // MARK: - helpers
 
-    /// EmbeddedChannel polling helper. Tasks spawned by the handler run
-    /// on the global executor and schedule writes back via
-    /// `loop.execute`. Spinning `RunLoop.main` lets those Tasks complete,
-    /// then `embeddedEventLoop.run()` drains the pending writes.
-    private func runLoopUntil(channel: EmbeddedChannel, condition: () -> Bool) {
-        let deadline = Date().addingTimeInterval(2.0)
-        while !condition() && Date() < deadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-            channel.embeddedEventLoop.run()
-        }
+    /// A `NIOAsyncTestingChannel` with `handler` installed on its (thread-safe)
+    /// loop — the safe substitute for `EmbeddedChannel` when the handler bounces
+    /// through Swift concurrency.
+    private static func channel(
+        with handler: PaneControlChannelHandler
+    ) async throws -> NIOAsyncTestingChannel {
+        let channel = NIOAsyncTestingChannel()
+        try await channel.pipeline.addHandler(handler).get()
+        return channel
+    }
+
+    /// Encode `request` as the one-`ByteBuffer`-per-envelope frame the handler
+    /// expects downstream of `LengthPrefixedFraming`.
+    private static func frame(_ request: PaneControlRequest) -> ByteBuffer {
+        let body = try! JSONEncoder().encode(request)
+        var buf = ByteBufferAllocator().buffer(capacity: body.count)
+        buf.writeBytes(body)
+        return buf
     }
 }
 
