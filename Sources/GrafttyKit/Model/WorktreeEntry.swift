@@ -165,6 +165,14 @@ public struct WorktreeEntry: Codable, Sendable, Identifiable, Equatable {
         self.offeredDeleteForResolvedPR = resolved ?? legacyMerged
     }
 
+    /// True when this worktree is requesting attention at either scope — a
+    /// worktree-level ping (`graftty notify`) or any per-pane badge — from
+    /// any `AttentionSource`. Single home for the predicate so worktree
+    /// navigation (KBD-5) and any other consumer can't drift on scope.
+    public var hasAttention: Bool {
+        attention != nil || !paneAttention.isEmpty
+    }
+
     /// Single setter for attention: pane-scoped when `pane` is non-nil,
     /// worktree-scoped otherwise. All three sources (agent-stop, user
     /// notify, command-finished) route through here so the scoping rule

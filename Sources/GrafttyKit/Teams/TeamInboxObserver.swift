@@ -31,17 +31,47 @@ public final class TeamInboxObserver: @unchecked Sendable {
     private let inbox: TeamInbox
     private let teamID: String
     private let queue: DispatchQueue
+    /// Backstop poll cadence. kqueue `NOTE_WRITE` events can be dropped under
+    /// system load, and the observer's queue can be starved past any fixed
+    /// deadline; a periodic change-gated re-read guarantees the observer
+    /// converges on the on-disk state even when a vnode event never arrives.
+    private let pollInterval: DispatchTimeInterval
+    /// Test seam: when false, `attach` skips the kqueue sources so a test can
+    /// verify the polling backstop alone detects a late-created file. Always
+    /// true in production.
+    private let installEventSources: Bool
 
     // Mutated only on `queue`.
     private var fileSource: DispatchSourceFileSystemObject?
     private var dirSource: DispatchSourceFileSystemObject?
+    private var pollTimer: DispatchSourceTimer?
     private var fileFD: Int32 = -1
     private var dirFD: Int32 = -1
+    /// Size signature of the file at the last emit, or `.absent` when the file
+    /// did not exist. The poll re-emits only when this changes, so a healthy
+    /// vnode-driven run produces no redundant emits.
+    private var lastSignature: FileSignature = .absent
 
-    public init(rootDirectory: URL, teamID: String) {
+    private enum FileSignature: Equatable {
+        case absent
+        case present(size: Int64)
+    }
+
+    public convenience init(rootDirectory: URL, teamID: String) {
+        self.init(rootDirectory: rootDirectory, teamID: teamID, pollInterval: .seconds(1))
+    }
+
+    init(
+        rootDirectory: URL,
+        teamID: String,
+        pollInterval: DispatchTimeInterval,
+        installEventSources: Bool = true
+    ) {
         self.inbox = TeamInbox(rootDirectory: rootDirectory)
         self.teamID = teamID
         self.queue = DispatchQueue(label: "com.btucker.graftty.TeamInboxObserver", qos: .utility)
+        self.pollInterval = pollInterval
+        self.installEventSources = installEventSources
     }
 
     /// Starts watching the inbox file. The callback is invoked on the
@@ -57,7 +87,7 @@ public final class TeamInboxObserver: @unchecked Sendable {
             guard let self else { return }
             self.attach(callback: callback)
             // Initial emit reflects the current on-disk state.
-            self.emit(callback: callback)
+            self.maybeEmit(callback: callback, force: true)
         }
         return Cancellable { [weak self] in self?.tearDown() }
     }
@@ -65,8 +95,10 @@ public final class TeamInboxObserver: @unchecked Sendable {
     private func attach(callback: @escaping ([TeamInboxMessage]) -> Void) {
         // Idempotent guard: if a previous `start` is still active, leave
         // its sources in place rather than orphaning their file
-        // descriptors.
-        guard dirSource == nil else { return }
+        // descriptors. `pollTimer` is always installed, so it's the reliable
+        // "already attached" sentinel (dirSource may be nil when event
+        // sources are disabled for tests).
+        guard pollTimer == nil else { return }
 
         let messagesURL = TeamInbox.messagesURLFor(
             rootDirectory: inbox.rootDirectory,
@@ -81,32 +113,47 @@ public final class TeamInboxObserver: @unchecked Sendable {
             withIntermediateDirectories: true
         )
 
-        // Watch parent directory: a new entry (the messages.jsonl file
-        // appearing for the first time) fires `.write`, at which point
-        // we reattach the per-file source.
-        dirFD = open(parentURL.path, O_EVTONLY)
-        if dirFD >= 0 {
-            let src = DispatchSource.makeFileSystemObjectSource(
-                fileDescriptor: dirFD,
-                eventMask: [.write],
-                queue: queue
-            )
-            src.setEventHandler { [weak self] in
-                guard let self else { return }
-                self.attachFileSource(callback: callback)
-                self.emit(callback: callback)
+        if installEventSources {
+            // Watch parent directory: a new entry (the messages.jsonl file
+            // appearing for the first time) fires `.write`, at which point
+            // we reattach the per-file source.
+            dirFD = open(parentURL.path, O_EVTONLY)
+            if dirFD >= 0 {
+                let src = DispatchSource.makeFileSystemObjectSource(
+                    fileDescriptor: dirFD,
+                    eventMask: [.write],
+                    queue: queue
+                )
+                src.setEventHandler { [weak self] in
+                    guard let self else { return }
+                    self.attachFileSource(callback: callback)
+                    self.maybeEmit(callback: callback, force: true)
+                }
+                // Explicitly close the dir fd in the cancel handler; the
+                // dispatch source does not own the fd by default.
+                let dirFDCopy = dirFD
+                src.setCancelHandler {
+                    close(dirFDCopy)
+                }
+                src.resume()
+                dirSource = src
             }
-            // Explicitly close the dir fd in the cancel handler; the
-            // dispatch source does not own the fd by default.
-            let dirFDCopy = dirFD
-            src.setCancelHandler {
-                close(dirFDCopy)
-            }
-            src.resume()
-            dirSource = src
+
+            attachFileSource(callback: callback)
         }
 
-        attachFileSource(callback: callback)
+        // Polling backstop: a change-gated re-read on a repeating timer so a
+        // dropped kqueue `NOTE_WRITE` (which the kernel may coalesce/drop under
+        // load) or a starved queue can't leave the observer permanently stale.
+        // A healthy vnode-driven run records the signature first, so the poll
+        // emits nothing redundant.
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + pollInterval, repeating: pollInterval)
+        timer.setEventHandler { [weak self] in
+            self?.maybeEmit(callback: callback, force: false)
+        }
+        timer.resume()
+        pollTimer = timer
     }
 
     private func attachFileSource(callback: @escaping ([TeamInboxMessage]) -> Void) {
@@ -143,7 +190,7 @@ public final class TeamInboxObserver: @unchecked Sendable {
                 self.attachFileSource(callback: callback)
                 return
             }
-            self.emit(callback: callback)
+            self.maybeEmit(callback: callback, force: true)
         }
         let fileFDCopy = fileFD
         src.setCancelHandler {
@@ -151,6 +198,41 @@ public final class TeamInboxObserver: @unchecked Sendable {
         }
         src.resume()
         fileSource = src
+    }
+
+    /// Emit when `force` (a vnode/initial event, preserving per-event
+    /// semantics) or when the file's signature changed since the last emit
+    /// (the polling backstop). Runs only on `queue`.
+    private func maybeEmit(callback: @escaping ([TeamInboxMessage]) -> Void, force: Bool) {
+        let signature = currentSignature()
+        let previous = lastSignature
+        lastSignature = signature
+        guard force || signature != previous else { return }
+        // The polling backstop must NOT emit on a present→absent transition
+        // (file deleted out from under us): the vnode `.delete` branch never
+        // emitted on delete, and an empty-list emit here would reset a
+        // delta-tracking consumer's watermark and re-deliver every message as
+        // new on the next append. A later absent→present recreate re-emits
+        // normally (signature changes again). `lastSignature` is still updated
+        // above so the recreate is detected.
+        if !force, case .absent = signature, case .present = previous {
+            return
+        }
+        emit(callback: callback)
+    }
+
+    /// Size-based change signature. `messages.jsonl` is append-only (writes go
+    /// through `open(O_APPEND)`), so its size is monotonic and a size delta is
+    /// a sufficient "content changed" signal; `.absent` covers the
+    /// not-yet-created case.
+    private func currentSignature() -> FileSignature {
+        let path = TeamInbox.messagesURLFor(
+            rootDirectory: inbox.rootDirectory,
+            teamID: teamID
+        ).path
+        var info = stat()
+        guard stat(path, &info) == 0 else { return .absent }
+        return .present(size: Int64(info.st_size))
     }
 
     private func emit(callback: @escaping ([TeamInboxMessage]) -> Void) {
@@ -165,6 +247,8 @@ public final class TeamInboxObserver: @unchecked Sendable {
     private func tearDown() {
         queue.async { [weak self] in
             guard let self else { return }
+            self.pollTimer?.cancel()
+            self.pollTimer = nil
             self.fileSource?.cancel()
             self.fileSource = nil
             self.fileFD = -1
@@ -178,6 +262,7 @@ public final class TeamInboxObserver: @unchecked Sendable {
         // Tear down synchronously: by deinit, no Cancellable is alive to
         // call cancel(), but the dispatch sources still hold the fds.
         // Cancel inline (no `queue.async`) since `self` is going away.
+        pollTimer?.cancel()
         fileSource?.cancel()
         dirSource?.cancel()
     }

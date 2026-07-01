@@ -94,6 +94,36 @@ struct CLIRunnerTests {
         }
     }
 
+    /// @spec CLI-1.1: When a subprocess pipe's read fd is closed out from
+    /// under the in-flight readability handler (process/pipe teardown after a
+    /// timeout SIGTERM, where the per-stream EOF wait lapsed under load), the
+    /// application shall treat the read as EOF rather than crash. The legacy
+    /// `NSFileHandle.availableData` raises an *uncatchable*
+    /// `NSFileHandleOperationException` ("Bad file descriptor") on a closed fd,
+    /// SIGABRT-ing the whole process; the crash-safe drain returns `nil`.
+    @Test func drainChunkReturnsNilOnClosedFDInsteadOfCrashing() throws {
+        let pipe = Pipe()
+        let reader = pipe.fileHandleForReading
+        // Close the fd out from under the handle, mimicking the pipe being
+        // torn down while a readability handler is still scheduled to fire.
+        try reader.close()
+        // `availableData` would raise NSFileHandleOperationException here and
+        // abort the process; the crash-safe drain reports EOF.
+        #expect(CLIRunner.drainChunk(from: reader) == nil)
+    }
+
+    @Test func drainChunkReturnsBytesThenNilAtEOF() throws {
+        let pipe = Pipe()
+        pipe.fileHandleForWriting.write(Data("hello".utf8))
+        try pipe.fileHandleForWriting.close() // signal EOF after the payload
+        let reader = pipe.fileHandleForReading
+
+        let first = CLIRunner.drainChunk(from: reader)
+        #expect(first.map { String(decoding: $0, as: UTF8.self) } == "hello")
+        // Write end closed + payload consumed → next drain is EOF (nil).
+        #expect(CLIRunner.drainChunk(from: reader) == nil)
+    }
+
     @Test func pathEnrichmentIncludesHomebrewAndLocal() {
         let env = CLIRunner.enrichedEnvironment(base: ["PATH": "/usr/bin"])
         let path = env["PATH"] ?? ""

@@ -1,3 +1,4 @@
+import Foundation
 import GrafttyHostAgent
 import GrafttyKit
 import NIOConcurrencyHelpers
@@ -6,90 +7,100 @@ import NIOEmbedded
 import NIOSSH
 import XCTest
 
+/// `TerminalSessionHandler` spawns Swift-concurrency `Task`s (to await the
+/// injected `streamFactory`, forward inbound bytes, resize, and close the
+/// stream) and marshals their results back onto the channel via
+/// `loop.execute`. `EmbeddedChannel`/`EmbeddedEventLoop` are single-thread-only,
+/// so polling `embeddedEventLoop.run()` from the test thread while those
+/// background `Task`s call `loop.execute` is a data race (NIO logs
+/// "EmbeddedEventLoop is not thread-safe" and the process intermittently
+/// crashes). These tests use `NIOAsyncTestingChannel`, whose loop *is*
+/// thread-safe: `waitForOutboundWrite` drives the loop until a deferred write
+/// lands, and the side-effect assertions poll thread-safe fakes — no busy-poll
+/// of the embedded loop, no race.
 final class TerminalSessionHandlerTests: XCTestCase {
 
     // MARK: - env + pty + shell -> attach
 
-    func testShellCallsStreamFactoryWithEnvSessionName() throws {
+    func testShellCallsStreamFactoryWithEnvSessionName() async throws {
         let factory = RecordingStreamFactory(returning: .success(EchoStream()))
-        let channel = EmbeddedChannel()
         let handler = TerminalSessionHandler(streamFactory: factory.callable)
-        try channel.pipeline.syncOperations.addHandler(handler)
+        let channel = try await Self.channel(handler)
 
-        sendEnvRequest(channel: channel, name: "GRAFTTY_SESSION", value: "alpha")
-        sendPtyRequest(channel: channel, term: "xterm-256color", cols: 80, rows: 24)
-        sendShellRequest(channel: channel)
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm-256color", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
 
-        // Drain: let the Task spawned by attach() run and call loop.execute.
-        drainAsync(channel: channel, until: { factory.received.count > 0 })
+        // Let the Task spawned by attach() run and call the factory.
+        try await waitUntil { factory.received.count > 0 }
 
         XCTAssertEqual(factory.received, ["alpha"])
-        _ = try? channel.finish()
+        _ = try? await channel.finish()
     }
 
-    func testShellWithoutEnvSessionNameRejected() throws {
+    func testShellWithoutEnvSessionNameRejected() async throws {
         let factory = RecordingStreamFactory(returning: .success(EchoStream()))
-        let channel = EmbeddedChannel()
         let handler = TerminalSessionHandler(streamFactory: factory.callable)
-        try channel.pipeline.syncOperations.addHandler(handler)
+        let channel = try await Self.channel(handler)
 
-        sendPtyRequest(channel: channel, term: "xterm", cols: 80, rows: 24)
-        sendShellRequest(channel: channel)
-        channel.embeddedEventLoop.run()
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        // The handler closes the channel synchronously (no async involved).
+        await channel.testingEventLoop.run()
 
         XCTAssertTrue(factory.received.isEmpty)
-        // Handler closed the channel synchronously (no async involved for this case).
         XCTAssertFalse(channel.isActive)
     }
 
     // MARK: - bytes round-trip
 
-    func testBytesRoundTripThroughStream() throws {
+    func testBytesRoundTripThroughStream() async throws {
         let stream = EchoStream()
         let factory = RecordingStreamFactory(returning: .success(stream))
-        let channel = EmbeddedChannel()
+        let capture = OutboundEventCapture()
         let handler = TerminalSessionHandler(streamFactory: factory.callable)
-        try channel.pipeline.syncOperations.addHandler(handler)
+        let channel = try await Self.channel(capture, handler)
 
-        sendEnvRequest(channel: channel, name: "GRAFTTY_SESSION", value: "alpha")
-        sendPtyRequest(channel: channel, term: "xterm", cols: 80, rows: 24)
-        sendShellRequest(channel: channel)
-        // Drain until attach completes and stream is installed.
-        drainAsync(channel: channel, until: { factory.received.count > 0 })
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        // Wait until attach installs the stream. env + pty acks fire before
+        // attach; the shell ack (3rd success) fires from the same loop.execute
+        // that sets `stream`, so `successCount >= 3` means the stream is
+        // installed and inbound bytes won't be dropped by `guard stream != nil`.
+        try await waitUntil { capture.successCount >= 3 }
 
         let bytes = ByteBuffer(string: "hello\n")
-        try channel.writeInbound(SSHChannelData(type: .channel, data: .byteBuffer(bytes)))
+        try await channel.writeInbound(SSHChannelData(type: .channel, data: .byteBuffer(bytes)))
 
         // EchoStream.send() yields the bytes back via inboundBytes;
         // startInboundForwarding's Task calls loop.execute to writeAndFlush.
+        // waitForOutboundWrite drives the loop until that write lands.
+        let outbound = try await channel.waitForOutboundWrite(as: SSHChannelData.self)
         var echoed: String?
-        drainAsync(channel: channel, until: {
-            if let outbound: SSHChannelData = try? channel.readOutbound() {
-                if case let .byteBuffer(buf) = outbound.data {
-                    echoed = buf.getString(at: 0, length: buf.readableBytes)
-                }
-            }
-            return echoed != nil
-        })
+        if case let .byteBuffer(buf) = outbound.data {
+            echoed = buf.getString(at: 0, length: buf.readableBytes)
+        }
 
         XCTAssertEqual(echoed, "hello\n")
-        _ = try? channel.finish()
+        _ = try? await channel.finish()
     }
 
     // MARK: - window-change
 
-    func testWindowChangeForwardsToStream() throws {
+    func testWindowChangeForwardsToStream() async throws {
         let stream = RecordingResizeStream()
         let factory = RecordingStreamFactory(returning: .success(stream))
-        let channel = EmbeddedChannel()
+        let capture = OutboundEventCapture()
         let handler = TerminalSessionHandler(streamFactory: factory.callable)
-        try channel.pipeline.syncOperations.addHandler(handler)
+        let channel = try await Self.channel(capture, handler)
 
-        sendEnvRequest(channel: channel, name: "GRAFTTY_SESSION", value: "alpha")
-        sendPtyRequest(channel: channel, term: "xterm", cols: 80, rows: 24)
-        sendShellRequest(channel: channel)
-        // Drain until attach completes and stream is installed.
-        drainAsync(channel: channel, until: { factory.received.count > 0 })
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        // Wait until attach installs the stream (shell ack = 3rd success) so
+        // window-change is forwarded rather than dropped pre-attach.
+        try await waitUntil { capture.successCount >= 3 }
 
         let event = SSHChannelRequestEvent.WindowChangeRequest(
             terminalCharacterWidth: 120,
@@ -97,34 +108,35 @@ final class TerminalSessionHandlerTests: XCTestCase {
             terminalPixelWidth: 0,
             terminalPixelHeight: 0
         )
-        channel.pipeline.fireUserInboundEventTriggered(event)
+        try await fireUserInboundEvent(channel, event)
 
-        // resize is called from a Task; drain until it completes.
-        drainAsync(channel: channel, until: { stream.lastResize != nil })
+        // resize is called from a Task; poll until it completes.
+        try await waitUntil { stream.lastResize != nil }
 
         XCTAssertEqual(stream.lastResize?.cols, 120)
         XCTAssertEqual(stream.lastResize?.rows, 40)
-        _ = try? channel.finish()
+        _ = try? await channel.finish()
     }
 
     // MARK: - close
 
-    func testChannelCloseClosesStream() throws {
+    func testChannelCloseClosesStream() async throws {
         let stream = ClosableStream()
         let factory = RecordingStreamFactory(returning: .success(stream))
-        let channel = EmbeddedChannel()
+        let capture = OutboundEventCapture()
         let handler = TerminalSessionHandler(streamFactory: factory.callable)
-        try channel.pipeline.syncOperations.addHandler(handler)
+        let channel = try await Self.channel(capture, handler)
 
-        sendEnvRequest(channel: channel, name: "GRAFTTY_SESSION", value: "alpha")
-        sendPtyRequest(channel: channel, term: "xterm", cols: 80, rows: 24)
-        sendShellRequest(channel: channel)
-        // Drain until attach completes and stream is installed.
-        drainAsync(channel: channel, until: { factory.received.count > 0 })
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        // Wait until attach installs the stream (shell ack = 3rd success) so
+        // channelInactive has a stream to close.
+        try await waitUntil { capture.successCount >= 3 }
 
-        _ = try? channel.finish()
-        // close() is called from a Task in channelInactive; drain until done.
-        drainAsync(channel: channel, until: { stream.didClose })
+        _ = try? await channel.finish()
+        // close() is called from a Task in channelInactive; poll until done.
+        try await waitUntil { stream.didClose }
 
         XCTAssertTrue(stream.didClose)
     }
@@ -134,64 +146,75 @@ final class TerminalSessionHandlerTests: XCTestCase {
     /// Channel that closes while streamFactory is awaiting must not leak
     /// the freshly-obtained stream — channelInactive racing the factory
     /// completion previously left stream un-closed.
-    func testChannelInactiveDuringFactoryAwaitClosesStream() throws {
+    func testChannelInactiveDuringFactoryAwaitClosesStream() async throws {
         let stream = ClosableStream()
         // Slow factory so we can fire channelInactive before it returns.
         let delayedFactory: @Sendable (String) async throws -> any TerminalByteStream = { _ in
             try await Task.sleep(for: .milliseconds(100))
             return stream
         }
-        let channel = EmbeddedChannel()
         let handler = TerminalSessionHandler(streamFactory: delayedFactory)
-        try channel.pipeline.syncOperations.addHandler(handler)
+        let channel = try await Self.channel(handler)
 
-        sendEnvRequest(channel: channel, name: "GRAFTTY_SESSION", value: "alpha")
-        sendPtyRequest(channel: channel, term: "xterm", cols: 80, rows: 24)
-        sendShellRequest(channel: channel)
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
         // Fire channelInactive while the factory is still sleeping.
-        _ = try? channel.finish()
+        _ = try? await channel.finish()
 
-        // Drain until the factory completes, loop.execute fires, and stream.close() is called.
-        drainAsync(channel: channel, until: { stream.didClose }, timeout: 3.0)
+        // Poll until the factory completes, loop.execute fires, and stream.close() is called.
+        try await waitUntil(timeout: 3.0) { stream.didClose }
 
         XCTAssertTrue(stream.didClose, "stream from factory must be closed when channel is already inactive")
     }
 
     // MARK: - streamFactory throws
 
-    func testStreamFactoryThrowsSendsExitStatusAndCloses() throws {
+    func testStreamFactoryThrowsSendsExitStatusAndCloses() async throws {
         let factory = RecordingStreamFactory(returning: .failure(FactoryError.notFound))
-        let channel = EmbeddedChannel()
         // Install a capture handler head-ward of TerminalSessionHandler so it
         // can record user outbound events (triggerUserOutboundEvent goes
         // head-ward through the pipeline).
         let capture = OutboundEventCapture()
-        try channel.pipeline.syncOperations.addHandler(capture)
         let handler = TerminalSessionHandler(streamFactory: factory.callable)
-        try channel.pipeline.syncOperations.addHandler(handler)
+        let channel = try await Self.channel(capture, handler)
 
-        sendEnvRequest(channel: channel, name: "GRAFTTY_SESSION", value: "missing")
-        sendPtyRequest(channel: channel, term: "xterm", cols: 80, rows: 24)
-        sendShellRequest(channel: channel)
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "missing")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
 
         // The factory throws, then loop.execute fires exit-status + close.
-        drainAsync(channel: channel, until: { capture.sawExitStatus1 })
+        try await waitUntil { capture.sawExitStatus1 }
 
         XCTAssertTrue(capture.sawExitStatus1, "expected exit-status: 1 after factory throw")
     }
 
     // MARK: - helpers
 
-    private func sendEnvRequest(channel: EmbeddedChannel, name: String, value: String) {
+    /// A `NIOAsyncTestingChannel` with `handlers` installed (in order, head-ward
+    /// first) on its thread-safe loop, then connected so it is active — the safe
+    /// substitute for `EmbeddedChannel` when the handler bounces through Swift
+    /// concurrency. Connecting makes the channel active so `channelInactive`
+    /// fires on close.
+    private static func channel(_ handlers: NIOCore.ChannelHandler...) async throws -> NIOAsyncTestingChannel {
+        let channel = NIOAsyncTestingChannel()
+        for handler in handlers {
+            try await channel.pipeline.addHandler(handler).get()
+        }
+        try await channel.connect(to: SocketAddress(unixDomainSocketPath: "graftty-test")).get()
+        return channel
+    }
+
+    private func sendEnvRequest(_ channel: NIOAsyncTestingChannel, name: String, value: String) async throws {
         let event = SSHChannelRequestEvent.EnvironmentRequest(
             wantReply: true,
             name: name,
             value: value
         )
-        channel.pipeline.fireUserInboundEventTriggered(event)
+        try await fireUserInboundEvent(channel, event)
     }
 
-    private func sendPtyRequest(channel: EmbeddedChannel, term: String, cols: Int, rows: Int) {
+    private func sendPtyRequest(_ channel: NIOAsyncTestingChannel, term: String, cols: Int, rows: Int) async throws {
         let event = SSHChannelRequestEvent.PseudoTerminalRequest(
             wantReply: true,
             term: term,
@@ -201,31 +224,48 @@ final class TerminalSessionHandlerTests: XCTestCase {
             terminalPixelHeight: 0,
             terminalModes: SSHTerminalModes([:])
         )
-        channel.pipeline.fireUserInboundEventTriggered(event)
+        try await fireUserInboundEvent(channel, event)
     }
 
-    private func sendShellRequest(channel: EmbeddedChannel) {
+    private func sendShellRequest(_ channel: NIOAsyncTestingChannel) async throws {
         let event = SSHChannelRequestEvent.ShellRequest(wantReply: true)
-        channel.pipeline.fireUserInboundEventTriggered(event)
+        try await fireUserInboundEvent(channel, event)
     }
 
-    /// Spins the main RunLoop in short bursts while calling
-    /// `embeddedEventLoop.run()` after each burst, until `condition()`
-    /// returns true or the deadline is reached. The short RunLoop burst
-    /// lets Swift concurrency tasks (spawned by the handler) make
-    /// progress; the `embeddedEventLoop.run()` call delivers any work
-    /// those tasks scheduled back onto the embedded loop.
-    private func drainAsync(
-        channel: EmbeddedChannel,
-        until condition: () -> Bool,
-        timeout: TimeInterval = 2.0
-    ) {
-        let deadline = Date().addingTimeInterval(timeout)
-        while !condition() && Date() < deadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-            channel.embeddedEventLoop.run()
+    /// Fires a user inbound event through the pipeline on the channel's loop.
+    /// (`NIOAsyncTestingChannel` requires pipeline operations to run on the
+    /// event loop; `executeInContext` provides that.)
+    private func fireUserInboundEvent(_ channel: NIOAsyncTestingChannel, _ event: some Sendable) async throws {
+        try await channel.testingEventLoop.executeInContext {
+            channel.pipeline.fireUserInboundEventTriggered(event)
         }
     }
+
+    /// Polls `condition` until it returns true or the deadline is reached,
+    /// suspending briefly between checks so the background `Task`s spawned by
+    /// the handler (and their `loop.execute` callbacks, which self-run on the
+    /// thread-safe testing loop) can make progress. Unlike the old embedded-loop
+    /// busy-poll, this never touches the loop from off-thread, so there is no
+    /// data race.
+    private func waitUntil(
+        timeout: TimeInterval = 2.0,
+        _ condition: () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            // Fail fast on timeout rather than returning silently — otherwise a
+            // missed barrier falls through to `waitForOutboundWrite`, which has
+            // no internal timeout and would hang the whole run.
+            if Date() >= deadline {
+                throw WaitTimedOut()
+            }
+            try await Task.sleep(for: .milliseconds(2))
+        }
+    }
+}
+
+private struct WaitTimedOut: Error, CustomStringConvertible {
+    var description: String { "waitUntil timed out" }
 }
 
 // MARK: - Outbound event capture handler
@@ -239,14 +279,29 @@ private final class OutboundEventCapture: ChannelOutboundHandler, @unchecked Sen
 
     private let lock = NIOLock()
     private var _sawExitStatus1 = false
+    private var _successCount = 0
 
     var sawExitStatus1: Bool {
         lock.withLock { _sawExitStatus1 }
     }
 
+    /// Count of `ChannelSuccessEvent`s the handler has emitted. The env-req and
+    /// pty-req acks fire *synchronously* (before attach), while the shell-req
+    /// ack fires from the same `loop.execute` block that installs the stream —
+    /// so it is the LAST of the three and reaching that count is the reliable
+    /// "attach complete" signal. A prior `sawSuccess` bool tripped on the env
+    /// ack, letting bytes/window-change race ahead of stream install (dropped
+    /// by the handler's `guard stream != nil`).
+    var successCount: Int {
+        lock.withLock { _successCount }
+    }
+
     func triggerUserOutboundEvent(context: ChannelHandlerContext, event: Any, promise: EventLoopPromise<Void>?) {
         if let exitStatus = event as? SSHChannelRequestEvent.ExitStatus, exitStatus.exitStatus == 1 {
             lock.withLock { _sawExitStatus1 = true }
+        }
+        if event is ChannelSuccessEvent {
+            lock.withLock { _successCount += 1 }
         }
         context.triggerUserOutboundEvent(event, promise: promise)
     }
