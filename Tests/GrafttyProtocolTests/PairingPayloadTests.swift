@@ -113,13 +113,13 @@ struct PairingPayloadTests {
         }
     }
 
-    // MARK: - Fix 2: decodeQR must reject non-https URLs
+    // MARK: - Fix 2: decodeQR must accept http(s), reject others
 
-    @Test("decodeQR rejects http:// pairingURL with insecureURL error")
-    func decodeQRRejectsHttpURL() throws {
+    @Test("decodeQR accepts http:// pairingURL (plaintext LAN pairing is authenticated by QR-pinned fingerprint + verification code)")
+    func decodeQRAcceptsHttpURL() throws {
         let pubKey = makePublicKey()
         let fingerprint = RemoteIdentityFingerprint(of: pubKey)
-        let insecurePayload = PairingPayload(
+        let plainTextPayload = PairingPayload(
             version: 1,
             hostDeviceID: RemoteDeviceID(value: "test-host-id"),
             hostKind: .mac,
@@ -127,20 +127,39 @@ struct PairingPayloadTests {
             hostPublicKeyFingerprint: fingerprint,
             nonce: RemotePairingNonce(bytes: Data(repeating: 0xAB, count: 16)),
             expiry: Date(timeIntervalSince1970: 1_800_000_300),
-            pairingURL: URL(string: "http://attacker.local:8800/v1/pairing")!
+            pairingURL: URL(string: "http://hostname.local:8800/v1/pairing")!
         )
-        let qr = try insecurePayload.qrEncoded()
-        #expect(throws: PairingPayload.DecodeError.insecureURL) {
-            try PairingPayload.decodeQR(qr)
-        }
+        let qr = try plainTextPayload.qrEncoded()
+        let decoded = try PairingPayload.decodeQR(qr)
+        #expect(decoded == plainTextPayload)
     }
 
-    @Test("decodeQR accepts https:// pairingURL (regression: scheme check must not break happy path)")
+    @Test("decodeQR accepts https:// pairingURL")
     func decodeQRAcceptsHttpsURL() throws {
         let payload = makePayload()  // makePayload already uses https://
         let qr = try payload.qrEncoded()
         let decoded = try PairingPayload.decodeQR(qr)
         #expect(decoded == payload)
+    }
+
+    @Test("decodeQR rejects non-http(s) schemes like ftp:// with insecureURL error")
+    func decodeQRRejectsNonHttpScheme() throws {
+        let pubKey = makePublicKey()
+        let fingerprint = RemoteIdentityFingerprint(of: pubKey)
+        let ftpPayload = PairingPayload(
+            version: 1,
+            hostDeviceID: RemoteDeviceID(value: "test-host-id"),
+            hostKind: .mac,
+            hostDisplayName: "Test Mac",
+            hostPublicKeyFingerprint: fingerprint,
+            nonce: RemotePairingNonce(bytes: Data(repeating: 0xAB, count: 16)),
+            expiry: Date(timeIntervalSince1970: 1_800_000_300),
+            pairingURL: URL(string: "ftp://attacker.local:21/v1/pairing")!
+        )
+        let qr = try ftpPayload.qrEncoded()
+        #expect(throws: PairingPayload.DecodeError.insecureURL) {
+            try PairingPayload.decodeQR(qr)
+        }
     }
 
     // MARK: - webBaseURL

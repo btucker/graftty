@@ -132,7 +132,12 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
             throw DecodeError.unsupportedVersion(payload.version)
         }
 
-        guard payload.pairingURL.scheme == "https" else {
+        // Accept http or https. Plaintext HTTP is safe because the pairing
+        // exchange is authenticated by the QR-pinned fingerprint, single-use
+        // nonce, and verification code. Any other scheme (file:, javascript:,
+        // ftp:, nil, etc.) is rejected.
+        let scheme = payload.pairingURL.scheme?.lowercased()
+        guard scheme == "http" || scheme == "https" else {
             throw DecodeError.insecureURL
         }
 
@@ -146,8 +151,9 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
         case malformedBase64
         case malformedJSON
         case unsupportedVersion(Int)
-        /// The `pairingURL` in the QR payload uses a non-https scheme. Only
-        /// `https://` endpoints are accepted to prevent plaintext interception.
+        /// The `pairingURL` in the QR payload uses a scheme other than http or https.
+        /// Only `http://` and `https://` endpoints are accepted; other schemes (file:,
+        /// javascript:, ftp:, nil, etc.) are rejected.
         case insecureURL
     }
 }
