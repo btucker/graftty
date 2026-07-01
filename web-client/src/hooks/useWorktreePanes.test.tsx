@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { waitFor, renderHook } from '@testing-library/react';
 import { groupByRepo, useWorktreePanes } from './useWorktreePanes';
 import type { WorktreePanes } from '../paneTypes';
@@ -17,16 +17,33 @@ describe('groupByRepo', () => {
 });
 
 describe('useWorktreePanes', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it('fetches and exposes grouped worktrees', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({
+    const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => [wt('/a', 'r1')],
-    })) as unknown as typeof fetch);
+    }));
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
     const { result } = renderHook(() => useWorktreePanes(10_000));
     await waitFor(() => expect(result.current.kind).toBe('ready'));
     if (result.current.kind === 'ready') {
       expect(result.current.groups[0].repoDisplayName).toBe('r1');
     }
-    vi.unstubAllGlobals();
+    expect(fetchMock).toHaveBeenCalledWith('/worktrees/panes', { credentials: 'same-origin' });
+  });
+
+  it('keeps last-good state when a later poll fails', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => [wt('/a', 'r1')] })
+      .mockRejectedValue(new Error('network error'));
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+    const { result } = renderHook(() => useWorktreePanes(10));
+    // First poll succeeds — state becomes ready
+    await waitFor(() => expect(result.current.kind).toBe('ready'));
+    // Wait for at least one failing poll to have fired
+    await waitFor(() => expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(2));
+    // State must remain ready; last-good data is preserved on error
+    expect(result.current.kind).toBe('ready');
   });
 });
