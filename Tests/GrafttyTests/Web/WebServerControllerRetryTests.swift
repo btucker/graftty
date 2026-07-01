@@ -30,18 +30,18 @@ struct WebServerControllerRetryTests {
     }
 
     @Test func backoffIsExponentialThenCapped() {
-        #expect(WebServerController.retryDelaySeconds(afterTransientFailure: .tailscaleUnavailable, attempt: 1) == 2)
-        #expect(WebServerController.retryDelaySeconds(afterTransientFailure: .tailscaleUnavailable, attempt: 2) == 4)
-        #expect(WebServerController.retryDelaySeconds(afterTransientFailure: .tailscaleUnavailable, attempt: 3) == 8)
-        #expect(WebServerController.retryDelaySeconds(afterTransientFailure: .tailscaleUnavailable, attempt: 4) == 16)
+        #expect(WebServerController.retryDelay(afterTransientFailure: .tailscaleUnavailable, attempt: 1) == .seconds(2))
+        #expect(WebServerController.retryDelay(afterTransientFailure: .tailscaleUnavailable, attempt: 2) == .seconds(4))
+        #expect(WebServerController.retryDelay(afterTransientFailure: .tailscaleUnavailable, attempt: 3) == .seconds(8))
+        #expect(WebServerController.retryDelay(afterTransientFailure: .tailscaleUnavailable, attempt: 4) == .seconds(16))
         // Capped so a tailnet that never recovers re-probes every 30s rather
         // than backing off to hours.
-        #expect(WebServerController.retryDelaySeconds(afterTransientFailure: .tailscaleUnavailable, attempt: 10) == 30)
+        #expect(WebServerController.retryDelay(afterTransientFailure: .tailscaleUnavailable, attempt: 10) == .seconds(30))
     }
 
     @Test func terminalStatusYieldsNoRetryDelay() {
-        #expect(WebServerController.retryDelaySeconds(afterTransientFailure: .portUnavailable, attempt: 1) == nil)
-        #expect(WebServerController.retryDelaySeconds(afterTransientFailure: .error("boom"), attempt: 1) == nil)
-        #expect(WebServerController.retryDelaySeconds(afterTransientFailure: .httpsCertsNotEnabled, attempt: 1) == nil)
+        #expect(WebServerController.retryDelay(afterTransientFailure: .portUnavailable, attempt: 1) == nil)
+        #expect(WebServerController.retryDelay(afterTransientFailure: .error("boom"), attempt: 1) == nil)
+        #expect(WebServerController.retryDelay(afterTransientFailure: .httpsCertsNotEnabled, attempt: 1) == nil)
     }
 }

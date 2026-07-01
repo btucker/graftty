@@ -216,17 +216,17 @@ final class WebServerController: ObservableObject {
 
     /// Delay before the next automatic reconcile retry, or `nil` when `status`
     /// is a success/terminal status that retrying can't advance. `attempt` is
-    /// 1-based. Capped exponential: 2, 4, 8, 16, 30, 30… seconds — so a tailnet
-    /// that never recovers re-probes every 30s rather than backing off to
-    /// hours. WEB-1.14.
-    nonisolated static func retryDelaySeconds(
+    /// 1-based. Capped exponential via the shared `ExponentialBackoff`: 2, 4, 8,
+    /// 16, 30, 30… seconds — so a tailnet that never recovers re-probes every
+    /// 30s rather than backing off to hours. WEB-1.14.
+    nonisolated static func retryDelay(
         afterTransientFailure status: WebServer.Status,
         attempt: Int
-    ) -> Double? {
+    ) -> Duration? {
         guard isTransientStartupFailure(status) else { return nil }
-        let n = max(1, attempt)
-        let uncapped = 2.0 * pow(2.0, Double(n - 1))
-        return min(uncapped, 30.0)
+        return ExponentialBackoff.scale(
+            base: .seconds(2), streak: max(1, attempt) - 1, cap: .seconds(30)
+        )
     }
 
     /// Schedule an automatic reconcile retry when `status` is a transient
@@ -236,7 +236,7 @@ final class WebServerController: ObservableObject {
         retryTask?.cancel()
         retryTask = nil
         guard settings.isEnabled,
-              let delay = Self.retryDelaySeconds(
+              let delay = Self.retryDelay(
                 afterTransientFailure: status, attempt: retryAttempt + 1
               )
         else {
@@ -245,11 +245,18 @@ final class WebServerController: ObservableObject {
         }
         retryAttempt += 1
         retryTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(delay))
+            try? await Task.sleep(for: delay)
             guard let self, !Task.isCancelled else { return }
+            // Detach our own handle BEFORE reconcile(): its top-of-function
+            // `retryTask?.cancel()` would otherwise cancel *this* running Task,
+            // and that self-cancel poisons `Task.isCancelled` for the rest of
+            // the synchronous reconcile — so a `failReconcile(.magicDNSDisabled)`
+            // would hit its `guard !Task.isCancelled` and no-op, silently killing
+            // the magicDNS retry chain and wedging `lastApplied`. WEB-1.14.
+            self.retryTask = nil
             // The desired (enabled, port) tuple is unchanged from the failed
-            // attempt, so clear `lastApplied` first or reconcile()'s no-op
-            // guard would early-return and the retry would do nothing.
+            // attempt, so clear `lastApplied` too or reconcile()'s no-op guard
+            // would early-return and the retry would do nothing.
             self.lastApplied = nil
             self.reconcile()
         }
@@ -295,11 +302,12 @@ final class WebServerController: ObservableObject {
             api = try TailscaleLocalAPI.autoDetected()
             tailscaleStatus = try runBlocking { try await api.status() }
         } catch TailscaleLocalAPI.Error.socketUnreachable {
-            // Cold-boot race: `tailscaled` hasn't published its LocalAPI
-            // socket yet. Retry on a backoff rather than wait for the user to
-            // toggle Web Access. WEB-1.14.
-            status = .tailscaleUnavailable
-            scheduleRetry(after: .tailscaleUnavailable)
+            // Cold-boot race: `tailscaled` hasn't published its LocalAPI socket
+            // yet. failReconcile clears lastApplied + arms a backoff retry so we
+            // self-heal without waiting for the user to toggle Web Access —
+            // routed through the same helper as the MagicDNS branch below so both
+            // transient failures recover identically. WEB-1.14.
+            failReconcile(.tailscaleUnavailable)
             return
         } catch {
             status = .error("\(error)")
