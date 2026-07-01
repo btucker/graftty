@@ -210,6 +210,47 @@ public struct AppState: Codable, Sendable, Equatable {
         return nil
     }
 
+    /// Target worktree path for `ctrl+tab` (forward) / `ctrl+shift+tab`
+    /// (reverse) — KBD-5. Worktrees requesting attention (any
+    /// `AttentionSource`, worktree- or pane-scoped), excluding the current
+    /// selection, take priority; otherwise the immediate next/previous
+    /// selectable worktree. Cyclic over on-disk worktrees in sidebar order
+    /// (repo order, then worktree order). Returns `nil` when there is
+    /// nothing to move to (0 or 1 selectable worktrees).
+    public func nextWorktreePath(forward: Bool) -> String? {
+        let ordered: [String] = repos.flatMap { repo in
+            repo.worktrees
+                .filter { $0.state.hasOnDiskWorktree }
+                .map { $0.path }
+        }
+        let n = ordered.count
+        guard n > 1 else { return nil }
+
+        func hasAttention(_ path: String) -> Bool {
+            guard let wt = worktree(forPath: path) else { return false }
+            return wt.attention != nil || !wt.paneAttention.isEmpty
+        }
+
+        // Indices to visit, in priority order, starting just after (forward)
+        // or before (reverse) the current selection. When nothing selectable
+        // is selected, walk the whole list from an edge.
+        let searchOrder: [Int]
+        if let ci = selectedWorktreePath.flatMap({ ordered.firstIndex(of: $0) }) {
+            searchOrder = (1...(n - 1)).map { step in
+                forward ? (ci + step) % n : (ci - step + n) % n
+            }
+        } else {
+            searchOrder = forward ? Array(0..<n) : Array((0..<n).reversed())
+        }
+
+        // Attention worktree wins; the current selection is never in
+        // `searchOrder` (steps 1..<n), so it is excluded automatically.
+        if let hit = searchOrder.first(where: { hasAttention(ordered[$0]) }) {
+            return ordered[hit]
+        }
+        return ordered[searchOrder[0]]
+    }
+
     private static let fileName = "state.json"
 
     public func save(to directory: URL) throws {
