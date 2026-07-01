@@ -38,7 +38,12 @@ public final class HostPairingCoordinator: ObservableObject {
     private let trustedPeerStore: TrustedPeerStore
     private let deviceIDStore: HostDeviceIDStore
     private let hostDisplayName: String
-    private let webBaseURLProvider: @Sendable () -> URL?
+    // `@MainActor`-isolated (not merely `@Sendable`) so the Mac settings UI
+    // can capture `WebServerController` — a `@MainActor`-isolated,
+    // non-`Sendable` class — directly. `beginPairing()` runs on this same
+    // actor, so invoking the provider there is a same-actor call, not a
+    // hop.
+    private let webBaseURLProvider: @MainActor @Sendable () -> URL?
 
     // MARK: Session plumbing
 
@@ -72,7 +77,7 @@ public final class HostPairingCoordinator: ObservableObject {
         trustedPeerStore: TrustedPeerStore,
         deviceIDStore: HostDeviceIDStore,
         hostDisplayName: String,
-        webBaseURLProvider: @escaping @Sendable () -> URL?
+        webBaseURLProvider: @escaping @MainActor @Sendable () -> URL?
     ) {
         self.identityStore = identityStore
         self.trustedPeerStore = trustedPeerStore
