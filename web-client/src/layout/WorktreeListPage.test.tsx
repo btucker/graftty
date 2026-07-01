@@ -29,6 +29,6 @@ describe('@spec WEB-9.8 WorktreeListPage', () => {
   it('routes a multi-pane worktree to its overview', () => {
     render(<WorktreeListPage />);
     fireEvent.click(screen.getByText('/wt/multi'));
-    expect(navigate).toHaveBeenCalledWith(expect.objectContaining({ to: '/worktree/$path' }));
+    expect(navigate).toHaveBeenCalledWith(expect.objectContaining({ to: '/worktree/$path', params: { path: encodeURIComponent('/wt/multi') } }));
   });
 });
