@@ -182,12 +182,15 @@ final class SubsystemDispatcherTests: XCTestCase {
         _ condition: () async throws -> Bool
     ) async throws {
         let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
+        while true {
             await channel.testingEventLoop.run()
             if try await condition() { return }
+            // Fail fast on timeout rather than returning silently — a silent
+            // return lets a genuine regression slip past into a later assertion
+            // (or a timeout-less wait) instead of failing here.
+            if Date() >= deadline { throw WaitTimedOut() }
             try await Task.sleep(nanoseconds: 5_000_000)
         }
-        await channel.testingEventLoop.run()
     }
 
     /// Whether `dispatcher` has removed itself from `channel`'s pipeline.
@@ -265,3 +268,7 @@ private final class EchoStream: TerminalByteStream, @unchecked Sendable {
     func close() async { continuation.finish() }
 }
 
+
+private struct WaitTimedOut: Error, CustomStringConvertible {
+    var description: String { "waitFor timed out" }
+}

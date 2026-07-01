@@ -316,6 +316,7 @@ final class WebServerController: ObservableObject {
         // in the status row — opaque to the user. `WEB-1.5`.
         guard WebServer.Config.isValidListenablePort(desired.port) else {
             status = .error("Port must be 0–65535 (got \(desired.port))")
+            retryAttempt = 0  // terminal status ends the retry campaign. WEB-1.14
             return
         }
         let api: TailscaleLocalAPI
@@ -333,6 +334,7 @@ final class WebServerController: ObservableObject {
             return
         } catch {
             status = .error("\(error)")
+            retryAttempt = 0  // terminal status ends the retry campaign. WEB-1.14
             return
         }
         guard let fqdn = tailscaleStatus.dnsName else {

@@ -1608,7 +1608,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-7.3** While the Team Activity Log window is open for a team, the application shall display every `TeamInboxMessage` for that team in chronological order, refreshing live as new rows land in the inbox.
 
-**TEAM-7.4** When the messages.jsonl file appended-to is the team's inbox, the application shall emit the parsed message list to the registered observer callback within one second of the append, including when the file is created after the observer started watching.
+**TEAM-7.4** When the messages.jsonl file appended-to is the team's inbox, the application shall emit the parsed message list to the registered observer callback within one second of the append, including when the file is created after the observer started watching. The observer shall stay correct even if the kqueue file-system event is dropped or its queue is briefly starved, by re-reading on a periodic change-gated poll. When the watched file is deleted (a present→absent transition), the observer shall not emit an empty list — so delta-tracking consumers keep their watermark — and shall resume emitting when the file is recreated.
 
 **TEAM-7.6** While the Team Activity Log window is open, the application shall expose a "Reveal in Finder" affordance whose target is the team's `messages.jsonl` file.
 

@@ -47,8 +47,8 @@ public final class TeamInboxObserver: @unchecked Sendable {
     private var pollTimer: DispatchSourceTimer?
     private var fileFD: Int32 = -1
     private var dirFD: Int32 = -1
-    /// Signature (size, mtime) of the file at the last emit, or `nil` when the
-    /// file was absent. The poll re-emits only when this changes, so a healthy
+    /// Size signature of the file at the last emit, or `.absent` when the file
+    /// did not exist. The poll re-emits only when this changes, so a healthy
     /// vnode-driven run produces no redundant emits.
     private var lastSignature: FileSignature = .absent
 
@@ -205,8 +205,19 @@ public final class TeamInboxObserver: @unchecked Sendable {
     /// (the polling backstop). Runs only on `queue`.
     private func maybeEmit(callback: @escaping ([TeamInboxMessage]) -> Void, force: Bool) {
         let signature = currentSignature()
-        guard force || signature != lastSignature else { return }
+        let previous = lastSignature
         lastSignature = signature
+        guard force || signature != previous else { return }
+        // The polling backstop must NOT emit on a present→absent transition
+        // (file deleted out from under us): the vnode `.delete` branch never
+        // emitted on delete, and an empty-list emit here would reset a
+        // delta-tracking consumer's watermark and re-deliver every message as
+        // new on the next append. A later absent→present recreate re-emits
+        // normally (signature changes again). `lastSignature` is still updated
+        // above so the recreate is detected.
+        if !force, case .absent = signature, case .present = previous {
+            return
+        }
         emit(callback: callback)
     }
 

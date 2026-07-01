@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import GrafttyKit
 
-@Suite("@spec TEAM-7.4: When the messages.jsonl file appended-to is the team's inbox, the application shall emit the parsed message list to the registered observer callback within one second of the append, including when the file is created after the observer started watching.")
+@Suite("@spec TEAM-7.4: When the messages.jsonl file appended-to is the team's inbox, the application shall emit the parsed message list to the registered observer callback within one second of the append, including when the file is created after the observer started watching. The observer shall stay correct even if the kqueue file-system event is dropped or its queue is briefly starved, by re-reading on a periodic change-gated poll. When the watched file is deleted (a present→absent transition), the observer shall not emit an empty list — so delta-tracking consumers keep their watermark — and shall resume emitting when the file is recreated.")
 struct TeamInboxObserverTests {
     static func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
@@ -98,6 +98,44 @@ struct TeamInboxObserverTests {
         // With no vnode source, only the poll can find the file.
         try await waitForAppend(capture: capture)
         #expect(capture.last()?.count == 1)
+    }
+
+    /// The polling backstop must not emit an empty batch when the file is
+    /// deleted out from under it — that would reset a delta-tracking consumer's
+    /// watermark and re-deliver every message on the next append. The vnode
+    /// `.delete` path never emitted; the poll must match.
+    @Test func pollDoesNotEmitEmptyBatchOnFileDeletion() async throws {
+        let root = try Self.temporaryDirectory()
+        let teamID = "team-del"
+        let observer = TeamInboxObserver(
+            rootDirectory: root,
+            teamID: teamID,
+            pollInterval: .milliseconds(20),
+            installEventSources: false
+        )
+        let capture = LockedMessageBatches()
+        let cancellable = observer.start { messages in
+            capture.append(messages)
+        }
+        defer { cancellable.cancel() }
+
+        let inbox = TeamInbox(rootDirectory: root)
+        try inbox.appendMessage(
+            teamID: teamID, teamName: "t", repoPath: "/r",
+            from: TeamInboxEndpoint(member: "a", worktree: "/r", runtime: nil),
+            to: TeamInboxEndpoint(member: "b", worktree: "/r/x", runtime: nil),
+            priority: .normal, body: "one"
+        )
+        try await waitForAppend(capture: capture)
+        #expect(capture.last()?.count == 1)
+
+        // Delete the file; the poll sees present→absent.
+        try FileManager.default.removeItem(
+            atPath: TeamInbox.messagesURLFor(rootDirectory: root, teamID: teamID).path
+        )
+        // Several poll ticks — none may emit an empty batch.
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(capture.last()?.count == 1, "delete must not emit an empty batch")
     }
 
     private func waitForAppend(capture: LockedMessageBatches) async throws {
