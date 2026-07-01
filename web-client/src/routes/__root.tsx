@@ -1,9 +1,12 @@
 import { Outlet } from '@tanstack/react-router';
+import { AppRoot } from '../layout/AppRoot';
 
 export function RootLayout() {
   return (
     <div id="app">
-      <Outlet />
+      <AppRoot>
+        <Outlet />
+      </AppRoot>
     </div>
   );
 }

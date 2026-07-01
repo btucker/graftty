@@ -3,6 +3,7 @@ import { RootLayout } from './routes/__root';
 import { IndexPage } from './routes/index';
 import { SessionPage } from './routes/session.$name';
 import { NewWorktreePage } from './routes/new';
+import { WorktreeDetailPage } from './routes/worktree.$path';
 
 const rootRoute = createRootRoute({ component: RootLayout });
 
@@ -24,6 +25,12 @@ const newWorktreeRoute = createRoute({
   component: NewWorktreePage,
 });
 
-const routeTree = rootRoute.addChildren([indexRoute, sessionRoute, newWorktreeRoute]);
+const worktreeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/worktree/$path',
+  component: WorktreeDetailPage,
+});
+
+const routeTree = rootRoute.addChildren([indexRoute, sessionRoute, newWorktreeRoute, worktreeRoute]);
 
 export const router = createRouter({ routeTree });
