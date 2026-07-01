@@ -9,6 +9,10 @@ type OwnershipSnapshot = {
   ownerKind: DisplayClientKind | null;
   grid: { cols: number; rows: number };
   epoch: number;
+  // Monotonic per-session revision; advances on every store mutation (including
+  // same-epoch owner resizes). Followers reject a lower-revision snapshot so a
+  // reordered delivery cannot roll the grid back to a stale size.
+  revision: number;
   ownerless: boolean;
 };
 
@@ -79,6 +83,8 @@ function parseOwnershipSnapshot(value: unknown): OwnershipSnapshot | null {
     ownerKind,
     grid: { cols: grid.cols, rows: grid.rows },
     epoch: snapshot.epoch,
+    // Backward compatible with servers predating the revision field.
+    revision: typeof snapshot.revision === 'number' ? snapshot.revision : 0,
     ownerless: typeof snapshot.ownerless === 'boolean' ? snapshot.ownerless : ownerClientID == null,
   };
 }
@@ -283,14 +289,17 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
 
     const updateOwnership = (snapshot: OwnershipSnapshot) => {
       // Ignore reordered, stale broadcasts. The server enqueues sends from
-      // multiple threads without ordering, so an older-epoch snapshot can
-      // arrive after a newer one on the same socket; applying it would revert
-      // the owner/grid we already advanced past. Strict `<` (not `<=`): the
-      // server bumps `epoch` only on owner-identity changes, so legitimate
-      // same-epoch grid resizes must still be applied.
+      // multiple threads without ordering, so a superseded snapshot can arrive
+      // after a newer one on the same socket; applying it would revert the
+      // owner/grid we already advanced past. Reject on epoch regression, and —
+      // within one ownership tenure, where owner resizes keep the epoch fixed —
+      // on `revision` regression (a reordered same-epoch grid). `revision`
+      // advances on every store mutation, ordering same-epoch resizes that epoch
+      // alone cannot (WEB-5.10).
       const prev = ownershipRef.current;
-      if (prev && snapshot.epoch < prev.epoch) {
-        return;
+      if (prev) {
+        if (snapshot.epoch < prev.epoch) return;
+        if (snapshot.epoch === prev.epoch && snapshot.revision < prev.revision) return;
       }
       const wasOwner = isOwnerRef.current;
       ownershipRef.current = snapshot;

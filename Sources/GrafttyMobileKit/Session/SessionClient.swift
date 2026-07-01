@@ -735,13 +735,17 @@ public final class SessionClient {
             // Client never receives resize; ignore.
             break
         case let .ownership(snapshot):
-            // IOS-4.23: ignore reordered, stale broadcasts. The server enqueues
-            // sends across threads without ordering, so an older-epoch snapshot
-            // can arrive after a newer one on the same socket; applying it would
-            // revert the owner/grid we already advanced past. Strict `<` — owner
-            // resizes keep the same epoch, so same-epoch grid updates must apply.
-            if let last = ownershipSnapshot, snapshot.epoch < last.epoch {
-                break
+            // IOS-4.23 / IOS-4.27: ignore reordered, stale broadcasts. The server
+            // enqueues sends across threads without ordering, so a superseded
+            // snapshot can arrive after a newer one on the same socket; applying it
+            // would revert the owner/grid we already advanced past. Reject when the
+            // epoch regressed, or — within the same ownership tenure, where owner
+            // resizes keep the epoch fixed — when the monotonic `revision` regressed
+            // (a reordered same-epoch grid). revision advances on every store
+            // mutation, so it orders same-epoch resizes that epoch alone cannot.
+            if let last = ownershipSnapshot {
+                if snapshot.epoch < last.epoch { break }
+                if snapshot.epoch == last.epoch, snapshot.revision < last.revision { break }
             }
             let wasOwner = isOwner
             ownershipSnapshot = snapshot

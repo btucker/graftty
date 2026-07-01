@@ -1002,6 +1002,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-5.9** The client shall ignore an ownership snapshot whose epoch is older than the latest applied snapshot, so a reordered broadcast cannot revert the owner/grid the client already advanced past.
 
+**WEB-5.10** The client shall ignore a same-epoch ownership snapshot whose revision is lower than the latest applied, so a reordered same-epoch owner resize cannot roll the owner/grid back to a stale state. A same-epoch snapshot with an equal or higher revision is still applied.
+
 ### WEB-6.x — Security and non-goals
 
 **WEB-6.1** The web server shall bind HTTPS only, using a cert+key pair fetched from Tailscale LocalAPI for the machine's MagicDNS name (WEB-8.2). The application shall not bind any HTTP listener; clients with old `http://` bookmarks will fail to connect until they update the URL.
@@ -1045,6 +1047,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **WEB-8.5** While reading a `/localapi/v0/cert/<fqdn>` response, the application shall use a recv timeout sized for first-time Let's Encrypt minting (≥60s), distinct from the 2s timeout used for `whois`/`status`, so a slow ACME exchange does not surface as `.certFetchFailed("malformedResponse")`.
 
 **WEB-8.6** While the cert pair fetch is in flight on "Enable web access", the application shall hold a `.provisioningCert` status, render a `ProgressView` plus "Provisioning certificate from Tailscale…" message in the Settings pane, and shall not block the MainActor for the duration of the fetch. On completion the status shall transition to `.listening` (success), `.httpsCertsNotEnabled` (tailnet-disabled), or `.certFetchFailed(<message>)` (any other error) without leaving the pane stuck on `.provisioningCert`.
+
+## OWN — Display Ownership
+
+### OWN-1.x — Follower Convergence
+
+**OWN-1.1** When a display follower receives an ownership snapshot whose revision is lower than one already applied, the application shall discard the superseded delivery and preserve the current ownership and grid state.
 
 ## UPDATE — Self-Update
 
@@ -1304,13 +1312,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.22** When the iOS app opens its session WebSocket, the URL shall advertise the display-client kind via a `client=ios` query parameter so the daemon classifies the connection as `.ios` and the ownership store stamps `ownerKind=.ios`. Without it the connection defaults to `.web`, and `SessionClient.isOwner` (which requires `ownerKind == .ios`) can never be true — the phone cannot confirm ownership after Take Control or terminal-input takeover.
 
-**IOS-4.23** When an ownership snapshot arrives whose epoch is older than the most recently applied snapshot, the application shall ignore it, so a reordered broadcast cannot revert the owner or grid the client already advanced past. Owner resizes keep the same epoch, so equal-epoch snapshots are still applied.
+**IOS-4.23** When an ownership snapshot arrives whose epoch is older than the most recently applied snapshot, the application shall ignore it, so a reordered broadcast cannot revert the owner or grid the client already advanced past. Owner resizes keep the same epoch; an equal-epoch snapshot is applied only when its revision is not lower than the last applied (see IOS-4.27).
 
 **IOS-4.24** When an ownership snapshot promotes this client from non-owner to display owner, the application shall immediately send an `ownerResize` carrying its current iOS viewport, so the remote PTY adopts the iOS grid at the moment of takeover rather than retaining the previous owner's grid until the next layout tick.
 
 **IOS-4.25** Attaching an interactive iOS client to an ownerless session shall not implicitly make the phone the display owner. Mobile ownership changes require a `takeControl` frame, sent either by the Take Control button or by intentional terminal input; passive attach alone shall leave the session ownerless.
 
 **IOS-4.26** On an ownerless session, an iOS WebSocket `hello` shall attach the client and return an ownerless ownership snapshot rather than implicitly claiming ownership. This is the transport-level state that lets GrafttyMobile show Take Control before sending the explicit `takeControl` frame.
+
+**IOS-4.27** When an ownership snapshot arrives with the same epoch as the last applied snapshot but a lower revision, the application shall ignore it, so a reordered same-epoch owner resize cannot roll the grid back to a stale size. A same-epoch snapshot with an equal or higher revision is still applied.
 
 ### IOS-5.x — Multi-pane layout
 

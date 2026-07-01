@@ -73,6 +73,13 @@ public struct DisplayOwnershipSnapshot: Sendable, Hashable, Codable {
     public let ownerKind: DisplayClientKind?
     public let grid: DisplayGrid
     public let epoch: UInt64
+    /// Monotonic per-session revision that advances on EVERY store mutation,
+    /// including same-epoch owner resizes (which change the grid without bumping
+    /// `epoch`).  Followers reject any snapshot whose `revision` is lower than the
+    /// last one they applied, so a reordered/superseded delivery cannot roll the
+    /// display back to a stale grid — the ordering signal `epoch` alone cannot
+    /// provide within a single ownership tenure.
+    public let revision: UInt64
 
     public var ownerless: Bool { ownerClientID == nil }
     public var isOwnerless: Bool { ownerless }
@@ -82,7 +89,8 @@ public struct DisplayOwnershipSnapshot: Sendable, Hashable, Codable {
         ownerClientID: DisplayClientID?,
         ownerKind: DisplayClientKind?,
         grid: DisplayGrid,
-        epoch: UInt64
+        epoch: UInt64,
+        revision: UInt64 = 0
     ) throws {
         guard (ownerClientID == nil) == (ownerKind == nil) else {
             throw ValidationError.inconsistentOwnerFields
@@ -92,6 +100,7 @@ public struct DisplayOwnershipSnapshot: Sendable, Hashable, Codable {
         self.ownerKind = ownerKind
         self.grid = grid
         self.epoch = epoch
+        self.revision = revision
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -100,6 +109,7 @@ public struct DisplayOwnershipSnapshot: Sendable, Hashable, Codable {
         case ownerKind
         case grid
         case epoch
+        case revision
         case ownerless
     }
 
@@ -110,7 +120,9 @@ public struct DisplayOwnershipSnapshot: Sendable, Hashable, Codable {
             ownerClientID: try container.decodeIfPresent(DisplayClientID.self, forKey: .ownerClientID),
             ownerKind: try container.decodeIfPresent(DisplayClientKind.self, forKey: .ownerKind),
             grid: try container.decode(DisplayGrid.self, forKey: .grid),
-            epoch: try container.decode(UInt64.self, forKey: .epoch)
+            epoch: try container.decode(UInt64.self, forKey: .epoch),
+            // Backward compatible with wire messages predating the revision field.
+            revision: try container.decodeIfPresent(UInt64.self, forKey: .revision) ?? 0
         )
     }
 
@@ -121,6 +133,7 @@ public struct DisplayOwnershipSnapshot: Sendable, Hashable, Codable {
         try container.encodeIfPresent(ownerKind, forKey: .ownerKind)
         try container.encode(grid, forKey: .grid)
         try container.encode(epoch, forKey: .epoch)
+        try container.encode(revision, forKey: .revision)
         try container.encode(ownerless, forKey: .ownerless)
     }
 }
