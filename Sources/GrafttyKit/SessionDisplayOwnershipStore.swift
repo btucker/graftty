@@ -45,6 +45,10 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         var ownerKind: DisplayClientKind?
         var grid: DisplayGrid?
         var epoch: UInt64 = 0
+        /// Monotonic mutation counter. Advances on every accepted mutation —
+        /// including same-epoch owner resizes — so followers can reject a
+        /// reordered/superseded delivery that `epoch` alone cannot distinguish.
+        var revision: UInt64 = 0
         var attachedClients: [DisplayClientID: AttachedClient] = [:]
     }
 
@@ -134,6 +138,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
 
         var record = records[sessionName] ?? Record()
         record.attachedClients[clientID] = AttachedClient(kind: kind, role: role, visible: visible)
+        record.revision += 1
 
         records[sessionName] = record
         return snapshot(for: sessionName, record: record, fallbackGrid: grid)
@@ -167,6 +172,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         if ownerChanged {
             record.epoch += 1
         }
+        record.revision += 1
 
         records[sessionName] = record
         let result = snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
@@ -210,6 +216,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         if ownerChanged {
             record.epoch += 1
         }
+        record.revision += 1
 
         records[sessionName] = record
         let result = snapshot(for: sessionName, record: record, fallbackGrid: fallbackGrid)
@@ -232,6 +239,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
         let accepted = record.ownerClientID == clientID && record.epoch == epoch
         if accepted {
             record.grid = grid
+            record.revision += 1
             records[sessionName] = record
         }
 
@@ -258,6 +266,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
             record.ownerClientID = nil
             record.ownerKind = nil
             record.epoch += 1
+            record.revision += 1
             ownerCleared = true
         }
 
@@ -283,6 +292,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
             record.ownerClientID = nil
             record.ownerKind = nil
             record.epoch += 1
+            record.revision += 1
             ownerCleared = true
         }
 
@@ -324,6 +334,7 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
             }
             record.grid = previousGrid
             record.epoch += 1
+            record.revision += 1
             restored = true
         }
 
@@ -354,7 +365,8 @@ public final class SessionDisplayOwnershipStore: @unchecked Sendable {
             ownerClientID: record.ownerClientID,
             ownerKind: record.ownerKind,
             grid: record.grid ?? fallbackGrid,
-            epoch: record.epoch
+            epoch: record.epoch,
+            revision: record.revision
         )
     }
 
