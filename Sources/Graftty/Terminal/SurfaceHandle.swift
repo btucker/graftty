@@ -2,6 +2,7 @@ import AppKit
 import GhosttyKit
 import GrafttyKit
 import GrafttyProtocol
+import IOKit.hidsystem
 import os
 
 /// Wraps a single `ghostty_surface_t` and its backing `NSView`.
@@ -762,6 +763,7 @@ final class SurfaceNSView: NSView {
         }
         let options: NSTrackingArea.Options = [
             .activeInKeyWindow,
+            .mouseEnteredAndExited,
             .mouseMoved,
             .inVisibleRect,
             .cursorUpdate,
@@ -888,6 +890,31 @@ final class SurfaceNSView: NSView {
         sendMousePos(event, to: surface)
     }
 
+    /// Reset libghostty's cached cursor position on re-entry — mouseExited
+    /// set it to the (-1,-1) out-of-viewport sentinel, and mouse-report /
+    /// link logic needs an in-viewport position again (upstream parity).
+    override func mouseEntered(with event: NSEvent) {
+        guard let surface else { return }
+        sendMousePos(event, to: surface)
+    }
+
+    /// Report an out-of-viewport position so libghostty clears link hover
+    /// state (ported from Ghostty upstream). Without this, a modifier
+    /// press (`flagsChanged`, KEY-1.4) refreshes hover at the stale last
+    /// in-pane position while the pointer is actually elsewhere.
+    override func mouseExited(with event: NSEvent) {
+        guard let surface else { return }
+        // Mid-drag we still receive mouseDragged outside the viewport, so
+        // don't clear the position while a button is held (upstream parity).
+        if NSEvent.pressedMouseButtons != 0 { return }
+        ghostty_surface_mouse_pos(
+            surface,
+            -1,
+            -1,
+            Self.ghosttyMods(from: event.modifierFlags)
+        )
+    }
+
     override func otherMouseDown(with event: NSEvent) {
         guard let surface else { return }
         _ = ghostty_surface_mouse_button(
@@ -1010,6 +1037,74 @@ final class SurfaceNSView: NSView {
         _ = sendKeyEvent(event, action: GHOSTTY_ACTION_RELEASE)
     }
 
+    /// KEY-1.4: forward modifier-only key transitions to libghostty.
+    ///
+    /// libghostty recomputes link hover state (`mouse.over_link`) only on
+    /// mouse movement or a modifier change delivered via
+    /// `ghostty_surface_key` — and its click handler opens a link only if
+    /// `over_link` is already true. Without this override, pressing ⌘ over
+    /// an already-hovered file path is invisible to libghostty (the click's
+    /// own mouse-pos event is deduped by cell), so cmd+click silently does
+    /// nothing unless the mouse crosses a cell boundary with ⌘ held.
+    /// Ported from Ghostty upstream `SurfaceView_AppKit.flagsChanged`.
+    override func flagsChanged(with event: NSEvent) {
+        guard surface != nil,
+              let action = Self.modifierKeyAction(
+                  keyCode: event.keyCode,
+                  modifierFlags: event.modifierFlags
+              )
+        else {
+            super.flagsChanged(with: event)
+            return
+        }
+        // claimEngagement: false — a bare modifier press is often the
+        // prelude to an app-level shortcut (⌘W, ⌘Tab) and must not steal
+        // zmx display ownership from a remote owner. Under kitty
+        // report-all-keys the emitted modifier-report bytes still reach
+        // owner panes; follower panes drop them until a real keystroke
+        // or click claims engagement.
+        _ = sendKeyEvent(event, action: action, claimEngagement: false)
+    }
+
+    /// Classify a `flagsChanged` event as a modifier press or release.
+    /// Returns nil for non-modifier keycodes.
+    ///
+    /// A set modifier bit alone doesn't mean "press": releasing right-⌘
+    /// while left-⌘ is still held keeps `.command` set. For right-side
+    /// keycodes, the device-side bits in `modifierFlags.rawValue` (IOKit
+    /// `NX_DEVICER*KEYMASK`) disambiguate which physical key changed;
+    /// left-side keycodes default to press, matching Ghostty upstream
+    /// (synthetic events from remapping/accessibility tools often lack
+    /// device-side bits, and press is the safe default for them).
+    static func modifierKeyAction(
+        keyCode: UInt16,
+        modifierFlags flags: NSEvent.ModifierFlags
+    ) -> ghostty_input_action_e? {
+        // Each modifier keycode's facts in one row: the flag reporting it
+        // active, plus — for right-side keys — the device bit separating
+        // "this side pressed" from "other side still held".
+        let mod: NSEvent.ModifierFlags
+        let rightSideMask: UInt?
+        switch keyCode {
+        case 0x39: (mod, rightSideMask) = (.capsLock, nil)
+        case 0x38: (mod, rightSideMask) = (.shift, nil)
+        case 0x3C: (mod, rightSideMask) = (.shift, UInt(NX_DEVICERSHIFTKEYMASK))
+        case 0x3B: (mod, rightSideMask) = (.control, nil)
+        case 0x3E: (mod, rightSideMask) = (.control, UInt(NX_DEVICERCTLKEYMASK))
+        case 0x3A: (mod, rightSideMask) = (.option, nil)
+        case 0x3D: (mod, rightSideMask) = (.option, UInt(NX_DEVICERALTKEYMASK))
+        case 0x37: (mod, rightSideMask) = (.command, nil)
+        case 0x36: (mod, rightSideMask) = (.command, UInt(NX_DEVICERCMDKEYMASK))
+        default: return nil
+        }
+
+        guard flags.contains(mod) else { return GHOSTTY_ACTION_RELEASE }
+        guard let rightSideMask else { return GHOSTTY_ACTION_PRESS }
+        return flags.rawValue & rightSideMask != 0
+            ? GHOSTTY_ACTION_PRESS
+            : GHOSTTY_ACTION_RELEASE
+    }
+
     /// Build a `ghostty_input_key_s` from an NSEvent and dispatch it.
     ///
     /// Text-field rules (ported from Ghostty's upstream macOS frontend —
@@ -1029,8 +1124,17 @@ final class SurfaceNSView: NSView {
     ///
     /// `consumed_mods` heuristic: control and command never contribute
     /// to text translation; everything else (shift, option, capsLock) did.
+    ///
+    /// `claimEngagement`: when false, the dispatch skips the zmx backend's
+    /// user-input scope so any bytes libghostty emits cannot claim display
+    /// ownership (KEY-1.4 modifier-only transitions). Real keystrokes keep
+    /// the default `true` (TERM-11.8 classification).
     @discardableResult
-    private func sendKeyEvent(_ event: NSEvent, action: ghostty_input_action_e) -> Bool {
+    private func sendKeyEvent(
+        _ event: NSEvent,
+        action: ghostty_input_action_e,
+        claimEngagement: Bool = true
+    ) -> Bool {
         guard let surface else { return false }
 
         let flags = event.modifierFlags
@@ -1077,7 +1181,7 @@ final class SurfaceNSView: NSView {
             keyEvent.text = nil
             dispatch = { handled = ghostty_surface_key(surface, keyEvent) }
         }
-        if let hostManagedUserInputScope {
+        if claimEngagement, let hostManagedUserInputScope {
             hostManagedUserInputScope(dispatch)
         } else {
             dispatch()
@@ -1090,6 +1194,10 @@ final class SurfaceNSView: NSView {
     /// events that should be encoded from keycode alone (control chars,
     /// arrow/function PUA range).
     private static func ghosttyTextField(for event: NSEvent) -> String? {
+        // `NSEvent.characters` throws an ObjC exception for non-key events
+        // (e.g. the flagsChanged events KEY-1.4 routes through here);
+        // modifier transitions carry no text anyway.
+        guard event.type == .keyDown || event.type == .keyUp else { return nil }
         guard let chars = event.characters, !chars.isEmpty else { return nil }
         if chars.count == 1, let scalar = chars.unicodeScalars.first {
             let v = scalar.value
