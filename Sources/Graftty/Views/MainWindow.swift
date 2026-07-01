@@ -148,6 +148,7 @@ struct MainWindow: View {
             }
         }
         .focusedSceneValue(\.addWorktreeAction, addWorktreeAction)
+        .focusedSceneValue(\.worktreeNavAction, worktreeNavAction)
         .persistSidebarWidth(to: Binding(
             get: { appState.sidebarWidth },
             set: { appState.sidebarWidth = $0 }
@@ -231,6 +232,20 @@ struct MainWindow: View {
             remoteBranchStore.pulse()
             prStatusStore.pulse()
             pendingAddWorktree = AddWorktreeRequest(repo: repo, prefill: prefill)
+        }
+    }
+
+    /// Command handler surfaced to `GrafttyApp.commands` via `@FocusedValue`
+    /// for `next_tab` / `previous_tab` (KBD-5). `nil` when there is nothing
+    /// to move to, so the menu items disable. Routes through the same
+    /// `selectWorktree` sidebar clicks use, so surface show/hide and
+    /// `acknowledgeAttention()` all fire identically.
+    private var worktreeNavAction: ((Bool) -> Void)? {
+        guard appState.nextWorktreePath(forward: true) != nil else { return nil }
+        return { forward in
+            if let target = appState.nextWorktreePath(forward: forward) {
+                selectWorktree(target)
+            }
         }
     }
 

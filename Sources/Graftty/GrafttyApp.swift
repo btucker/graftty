@@ -461,6 +461,13 @@ struct GrafttyApp: App {
 
                 Divider()
 
+                WorktreeNavCommandButtons(
+                    nextShortcut: shortcut(for: .nextTab),
+                    previousShortcut: shortcut(for: .previousTab)
+                )
+
+                Divider()
+
                 bridgedButton("Zoom Split",      action: .toggleSplitZoom) { handleToggleZoom() }
                 bridgedButton("Equalize Splits", action: .equalizeSplits)  { handleEqualizeSplits() }
 
@@ -3261,6 +3268,14 @@ struct GrafttyApp: App {
 
     // MARK: - View builder for bridge-shortcutted menu buttons
 
+    /// Resolve a `GhosttyAction`'s configured chord to a SwiftUI shortcut,
+    /// or nil if unbound — shared by `bridgedButton` and command views that
+    /// need the shortcut value directly.
+    private func shortcut(for action: GhosttyAction) -> KeyboardShortcut? {
+        guard let chord = terminalManager.keybindBridge[action] else { return nil }
+        return KeyboardShortcutFromChord.shortcut(from: chord)
+    }
+
     /// Wraps a menu button so its keyboard shortcut is derived from the
     /// keybind bridge at runtime, not hardcoded. If the action has no
     /// configured binding (or the key can't be translated to a
@@ -3272,11 +3287,12 @@ struct GrafttyApp: App {
         action: GhosttyAction,
         onTap: @escaping () -> Void
     ) -> some View {
-        if let chord = terminalManager.keybindBridge[action],
-           let shortcut = KeyboardShortcutFromChord.shortcut(from: chord) {
-            Button(label, action: onTap).keyboardShortcut(shortcut)
-        } else {
-            Button(label, action: onTap)
+        Group {
+            if let shortcut = shortcut(for: action) {
+                Button(label, action: onTap).keyboardShortcut(shortcut)
+            } else {
+                Button(label, action: onTap)
+            }
         }
     }
 
