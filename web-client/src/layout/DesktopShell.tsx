@@ -1,5 +1,6 @@
 // web-client/src/layout/DesktopShell.tsx
 import { useEffect, useMemo, useState } from 'react';
+import { useSearch } from '@tanstack/react-router';
 import { Sidebar } from './Sidebar';
 import { SplitLayout } from '../panes/SplitLayout';
 import { TerminalPane } from '../components/TerminalPane';
@@ -11,9 +12,9 @@ function firstWorktree(groups: { worktrees: WorktreePanes[] }[]): WorktreePanes 
   return null;
 }
 
-function InteractivePaneTile({ leaf, focused, onFocus }: { leaf: PaneLeaf; focused: boolean; onFocus: () => void }) {
+function InteractivePaneTile({ leaf, focused }: { leaf: PaneLeaf; focused: boolean }) {
   return (
-    <div className="pane-tile" data-focused={focused} onMouseDown={onFocus}
+    <div className="pane-tile" data-focused={focused}
          style={{ width: '100%', height: '100%' }}>
       <TerminalPane sessionName={leaf.sessionName} role="interactive" fit="container" autoFocus={focused} />
     </div>
@@ -21,9 +22,12 @@ function InteractivePaneTile({ leaf, focused, onFocus }: { leaf: PaneLeaf; focus
 }
 
 export function DesktopShell() {
+  const { path: rawPath } = useSearch({ strict: false }) as { path?: string };
   const state = useWorktreePanes();
   const groups = state.kind === 'ready' ? state.groups : [];
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [selectedPath, setSelectedPath] = useState<string | null>(() =>
+    rawPath ? decodeURIComponent(rawPath) : null
+  );
   const [focusedSessionName, setFocusedSessionName] = useState<string | null>(null);
 
   const selected = useMemo<WorktreePanes | null>(() => {
@@ -64,7 +68,6 @@ export function DesktopShell() {
                 <InteractivePaneTile
                   leaf={leaf}
                   focused={focusedSessionName === leaf.sessionName}
-                  onFocus={() => setFocusedSessionName(leaf.sessionName)}
                 />
               )}
             />

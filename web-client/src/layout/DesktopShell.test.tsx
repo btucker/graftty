@@ -2,7 +2,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, cleanup, screen, fireEvent } from '@testing-library/react';
 
-vi.mock('@tanstack/react-router', () => ({ useNavigate: () => vi.fn(), useSearch: () => ({}) }));
+const search: { path?: string } = {};
+vi.mock('@tanstack/react-router', () => ({ useNavigate: () => vi.fn(), useSearch: () => search }));
 vi.mock('../components/TerminalPane', () => ({
   TerminalPane: (p: { sessionName: string; autoFocus?: boolean }) =>
     <div data-testid="tp" data-session={p.sessionName} data-autofocus={String(p.autoFocus)} />,
@@ -10,13 +11,22 @@ vi.mock('../components/TerminalPane', () => ({
 const state = {
   kind: 'ready' as const,
   worktrees: [] as unknown[],
-  groups: [{ repoDisplayName: 'graftty', worktrees: [{
-    path: '/wt/a', displayName: 'a', repoDisplayName: 'graftty', displayBranch: 'a', state: 'running',
-    isMainCheckout: false, prBadge: null, stats: null, attentionText: null,
-    layout: { kind: 'split', direction: 'horizontal', ratio: 0.5,
-      left: { kind: 'leaf', sessionName: 's1', title: 'bash', attentionText: null, isBusy: false, attentionSource: null },
-      right: { kind: 'leaf', sessionName: 's2', title: 'claude', attentionText: null, isBusy: false, attentionSource: null } },
-  }] }],
+  groups: [{ repoDisplayName: 'graftty', worktrees: [
+    {
+      path: '/wt/a', displayName: 'a', repoDisplayName: 'graftty', displayBranch: 'a', state: 'running',
+      isMainCheckout: false, prBadge: null, stats: null, attentionText: null,
+      layout: { kind: 'split', direction: 'horizontal', ratio: 0.5,
+        left: { kind: 'leaf', sessionName: 's1', title: 'bash', attentionText: null, isBusy: false, attentionSource: null },
+        right: { kind: 'leaf', sessionName: 's2', title: 'claude', attentionText: null, isBusy: false, attentionSource: null } },
+    },
+    {
+      path: '/wt/b', displayName: 'b', repoDisplayName: 'graftty', displayBranch: 'b', state: 'running',
+      isMainCheckout: false, prBadge: null, stats: null, attentionText: null,
+      layout: { kind: 'split', direction: 'horizontal', ratio: 0.5,
+        left: { kind: 'leaf', sessionName: 's3', title: 'bash', attentionText: null, isBusy: false, attentionSource: null },
+        right: { kind: 'leaf', sessionName: 's4', title: 'claude', attentionText: null, isBusy: false, attentionSource: null } },
+    },
+  ] }],
 };
 vi.mock('../hooks/useWorktreePanes', async () => {
   const actual = await vi.importActual<typeof import('../hooks/useWorktreePanes')>('../hooks/useWorktreePanes');
@@ -25,7 +35,7 @@ vi.mock('../hooks/useWorktreePanes', async () => {
 
 import { DesktopShell } from './DesktopShell';
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); delete search.path; });
 
 describe('@spec WEB-9.7 DesktopShell', () => {
   it('auto-selects the first worktree and renders its interactive panes', () => {
@@ -39,5 +49,12 @@ describe('@spec WEB-9.7 DesktopShell', () => {
     fireEvent.mouseDown(screen.getAllByTestId('pane-slot')[1]);
     const s2 = screen.getAllByTestId('tp').find((t) => t.getAttribute('data-session') === 's2');
     expect(s2?.getAttribute('data-autofocus')).toBe('true');
+  });
+
+  it('honors ?path= deep-link, selecting the named worktree instead of the first', () => {
+    search.path = encodeURIComponent('/wt/b');
+    render(<DesktopShell />);
+    const tps = screen.getAllByTestId('tp');
+    expect(tps.map((t) => t.getAttribute('data-session')).sort()).toEqual(['s3', 's4']);
   });
 });
