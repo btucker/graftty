@@ -24,6 +24,31 @@ public actor PairingHTTPServer {
     private let pairingServer: HostPairingServer
     private var group: MultiThreadedEventLoopGroup?
     private var channel: Channel?
+    private var lifecycle: Lifecycle = .idle
+
+    /// Actors only interleave at suspension points: `start()` and `stop()`
+    /// both suspend mid-method (binding the socket / closing the channel
+    /// and shutting down the event-loop group). A state check made purely
+    /// from `group`/`channel` optionality — checked before that suspension
+    /// but assigned only after it resumes — lets two concurrent callers
+    /// both observe the pre-transition state and both proceed. `lifecycle`
+    /// is claimed synchronously, before the first `await` in either
+    /// method, so the second concurrent caller always observes the first
+    /// caller's claim.
+    private enum Lifecycle {
+        case idle
+        case starting
+        case running
+        case stopping
+    }
+
+    /// Thrown by `start()` when the server is already starting, running,
+    /// or stopping. A second concurrent (or sequential) `start()` call
+    /// fails deterministically rather than racing the first to bind a
+    /// second, orphaned listener.
+    public enum LifecycleError: Swift.Error, Equatable {
+        case alreadyStarted
+    }
 
     // MARK: Init
 
@@ -37,9 +62,15 @@ public actor PairingHTTPServer {
     /// port 0 for ephemeral). Serves ONLY `POST /v1/pairing/introduce`
     /// and `POST /v1/pairing/await-outcome`; every other request gets a
     /// 404 (unknown path) or 405 (wrong method on a pairing route).
+    ///
+    /// Throws `LifecycleError.alreadyStarted` if the server is already
+    /// starting, running, or stopping.
     @discardableResult
     public func start(host: String = "0.0.0.0", port: Int = 0) async throws -> Int {
-        precondition(group == nil, "PairingHTTPServer already started")
+        guard lifecycle == .idle else {
+            throw LifecycleError.alreadyStarted
+        }
+        lifecycle = .starting
 
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let pairingServer = self.pairingServer
@@ -57,17 +88,26 @@ public actor PairingHTTPServer {
             let boundChannel = try await bootstrap.bind(host: host, port: port).get()
             self.group = group
             self.channel = boundChannel
+            lifecycle = .running
             return boundChannel.localAddress?.port ?? port
         } catch {
             try? await Self.shutdown(group)
+            lifecycle = .idle
             throw error
         }
     }
 
     /// Closes the listening channel and shuts down the owned event loop
-    /// group. Idempotent — safe to call when never started or already
-    /// stopped.
+    /// group. Idempotent — safe to call when never started, already
+    /// stopped, or concurrently with another in-flight `stop()`: only the
+    /// first caller to observe `.running`/`.starting` performs the
+    /// teardown, every other concurrent or subsequent call is a no-op.
     public func stop() async {
+        guard lifecycle == .running || lifecycle == .starting else {
+            return
+        }
+        lifecycle = .stopping
+
         if let channel {
             try? await channel.close().get()
         }
@@ -76,6 +116,7 @@ public actor PairingHTTPServer {
             try? await Self.shutdown(group)
         }
         group = nil
+        lifecycle = .idle
     }
 
     private static func shutdown(_ group: MultiThreadedEventLoopGroup) async throws {

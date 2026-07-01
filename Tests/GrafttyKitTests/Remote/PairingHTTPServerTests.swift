@@ -89,6 +89,30 @@ struct PairingHTTPServerTests {
         )
     }
 
+    /// Builds the same fixture pieces as `makeFixture` but does NOT call
+    /// `start()` — used by lifecycle-race tests that need to drive
+    /// `start()`/`stop()` themselves (including concurrently).
+    private func makeUnstartedServer() throws -> (dir: URL, httpServer: PairingHTTPServer) {
+        let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let identityStore = HostIdentityStore(directory: dir)
+        _ = try identityStore.generateAndPersist()
+        let peerStore = TrustedPeerStore(directory: dir)
+        let session = HostPairingSession(
+            identityStore: identityStore,
+            peerStore: peerStore,
+            now: { Date() },
+            hostDeviceID: .generate(),
+            hostKind: .mac,
+            hostDisplayName: "Test Mac",
+            pairingURLProvider: { URL(string: "https://host.local:8800/v1/pairing")! }
+        )
+        let pairingServer = HostPairingServer(session: session)
+        let httpServer = PairingHTTPServer(pairingServer: pairingServer)
+        return (dir, httpServer)
+    }
+
     /// Yield until at least `count` long-poll waiters are registered.
     /// Mirrors `HostPairingServerTests.waitForWaiters` so the await-outcome
     /// test doesn't race the actor's scheduling under load.
@@ -244,5 +268,69 @@ struct PairingHTTPServerTests {
                 _ = error
             }
         }
+    }
+
+    // MARK: - lifecycle races
+
+    /// Actors only interleave at suspension points. `start()` suspends at
+    /// `bootstrap.bind(...).get()`, so a naive `precondition(group == nil)`
+    /// check made before that suspension lets two concurrent `start()`
+    /// calls both pass the check, both bind a live listener, and orphan
+    /// the loser's event-loop-group thread + socket with no way to stop
+    /// them. The fix must claim the lifecycle transition synchronously,
+    /// before the first `await`, so exactly one of two concurrent callers
+    /// wins.
+    @Test("Concurrent start() calls are serialized across the actor's suspension point: exactly one binds the listener and the other fails deterministically")
+    func concurrentStartsAreSerializedAcrossSuspension() async throws {
+        let (dir, httpServer) = try makeUnstartedServer()
+
+        @Sendable func attemptStart() async -> Swift.Result<Int, Error> {
+            do {
+                return .success(try await httpServer.start(host: "127.0.0.1", port: 0))
+            } catch {
+                return .failure(error)
+            }
+        }
+
+        async let first = attemptStart()
+        async let second = attemptStart()
+        let results = await [first, second]
+
+        let successes = results.compactMap { try? $0.get() }
+        let failures = results.compactMap { result -> Error? in
+            if case .failure(let error) = result { return error }
+            return nil
+        }
+
+        #expect(successes.count == 1, "expected exactly one start() to bind the listener, got \(successes)")
+        #expect(failures.count == 1, "expected exactly one start() to fail, got \(failures)")
+
+        await httpServer.stop()
+        try? FileManager.default.removeItem(at: dir)
+    }
+
+    /// Same suspension-interleaving hazard as `start()`, but for `stop()`:
+    /// two concurrent `stop()` calls must not both attempt to close the
+    /// channel / shut down the group — the second must observe the
+    /// in-progress teardown and become a safe no-op rather than racing
+    /// the first.
+    @Test("Concurrent stop() calls after a successful start() are safe: both complete without hanging or throwing, and the listener stops accepting connections")
+    func concurrentStopsAreSafe() async throws {
+        let (dir, httpServer) = try makeUnstartedServer()
+        let port = try await httpServer.start(host: "127.0.0.1", port: 0)
+
+        async let firstStop: Void = httpServer.stop()
+        async let secondStop: Void = httpServer.stop()
+        _ = await (firstStop, secondStop)
+
+        do {
+            _ = try await self.get("/nope", port: port)
+            Issue.record("Expected the connection to fail after concurrent stop()")
+        } catch is URLError {
+            // Expected: connection refused once the listener has been
+            // torn down.
+        }
+
+        try? FileManager.default.removeItem(at: dir)
     }
 }
