@@ -1670,6 +1670,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-1.2** When a client pairs with a host, the application shall require a matching verification code and host-side confirmation before storing the client as a trusted peer.
 
+**REMOTE-1.4** While no pairing session is active, the host shall not accept connections on the pairing endpoint; the pairing listener runs only for the lifetime of an active pairing session.
+
 ### REMOTE-2.x — Authenticated Attach
 
 **REMOTE-2.1** When a remote transport reconnects, the host shall require a fresh authenticated attach handshake before writing any bytes to the PTY.

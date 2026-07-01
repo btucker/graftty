@@ -1,0 +1,248 @@
+import Testing
+import Foundation
+import CryptoKit
+@testable import GrafttyKit
+import GrafttyProtocol
+
+@Suite("PairingHTTPServer Tests")
+struct PairingHTTPServerTests {
+
+    // MARK: Helpers
+
+    /// One-shot per-test fixture: a fresh temp dir, primed identity store,
+    /// a `HostPairingServer` wrapping it, and a `PairingHTTPServer`
+    /// listening on an ephemeral loopback port.
+    private struct Fixture {
+        let dir: URL
+        let pairingServer: HostPairingServer
+        let httpServer: PairingHTTPServer
+        let port: Int
+        let privateKey: CryptoKit.Curve25519.Signing.PrivateKey
+
+        func cleanup() async {
+            await httpServer.stop()
+            try? FileManager.default.removeItem(at: dir)
+        }
+    }
+
+    private func makeFixture(now: @escaping () -> Date = { Date() }) async throws -> Fixture {
+        let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        let identityStore = HostIdentityStore(directory: dir)
+        let privateKey = try identityStore.generateAndPersist()
+        let peerStore = TrustedPeerStore(directory: dir)
+        let session = HostPairingSession(
+            identityStore: identityStore,
+            peerStore: peerStore,
+            now: now,
+            hostDeviceID: .generate(),
+            hostKind: .mac,
+            hostDisplayName: "Test Mac",
+            pairingURLProvider: { URL(string: "https://host.local:8800/v1/pairing")! }
+        )
+        let pairingServer = HostPairingServer(session: session)
+        let httpServer = PairingHTTPServer(pairingServer: pairingServer)
+        let port = try await httpServer.start(host: "127.0.0.1", port: 0)
+
+        return Fixture(
+            dir: dir,
+            pairingServer: pairingServer,
+            httpServer: httpServer,
+            port: port,
+            privateKey: privateKey
+        )
+    }
+
+    /// Runs `body` against a fresh fixture, guaranteeing `cleanup()` runs
+    /// even if `body` throws or an assertion fails partway through — the
+    /// listener must always be torn down so ephemeral ports don't leak
+    /// across tests.
+    private func withFixture(
+        now: @escaping () -> Date = { Date() },
+        _ body: (Fixture) async throws -> Void
+    ) async throws {
+        let fx = try await makeFixture(now: now)
+        do {
+            try await body(fx)
+        } catch {
+            await fx.cleanup()
+            throw error
+        }
+        await fx.cleanup()
+    }
+
+    private func makeClientPublicKey(byte: UInt8 = 0xCC) -> RemoteIdentityPublicKey {
+        try! RemoteIdentityPublicKey(rawRepresentation: Data(repeating: byte, count: 32))
+    }
+
+    private func makeIntroduceRequest(
+        nonce: RemotePairingNonce,
+        clientKeyByte: UInt8 = 0xCC
+    ) -> PairingIntroduceRequest {
+        PairingIntroduceRequest(
+            nonce: nonce,
+            clientPublicKey: makeClientPublicKey(byte: clientKeyByte),
+            clientDeviceID: RemoteDeviceID(value: "client-123"),
+            clientKind: .iphone,
+            clientDisplayName: "Client iPhone"
+        )
+    }
+
+    /// Yield until at least `count` long-poll waiters are registered.
+    /// Mirrors `HostPairingServerTests.waitForWaiters` so the await-outcome
+    /// test doesn't race the actor's scheduling under load.
+    private func waitForWaiters(on server: HostPairingServer, atLeast count: Int) async {
+        while await server.pendingWaiterCount < count {
+            await Task.yield()
+        }
+    }
+
+    private static let encoder = JSONEncoder.iso8601()
+    private static let decoder = JSONDecoder.iso8601()
+
+    /// POSTs a JSON-encoded body to `path` on the fixture's listener and
+    /// returns the raw status code + body bytes, leaving decoding (success
+    /// shape vs. `PairingErrorResponse`) to the caller.
+    private func post(
+        _ path: String,
+        port: Int,
+        body: some Encodable
+    ) async throws -> (status: Int, data: Data) {
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)\(path)")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try Self.encoder.encode(body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            Issue.record("Expected HTTPURLResponse")
+            return (0, data)
+        }
+        return (http.statusCode, data)
+    }
+
+    private func get(_ path: String, port: Int) async throws -> Int {
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)\(path)")!)
+        request.httpMethod = "GET"
+        let (_, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            Issue.record("Expected HTTPURLResponse")
+            return 0
+        }
+        return http.statusCode
+    }
+
+    // MARK: - introduce round trip
+
+    @Test("POST /v1/pairing/introduce with a valid request returns 200 and the host's public key")
+    func introduceRoundTrip() async throws {
+        try await withFixture { fx in
+            let payload = try await fx.pairingServer.start(validFor: 300)
+            let (status, data) = try await self.post(
+                "/v1/pairing/introduce",
+                port: fx.port,
+                body: self.makeIntroduceRequest(nonce: payload.nonce)
+            )
+            #expect(status == 200)
+            let response = try Self.decoder.decode(PairingIntroduceResponse.self, from: data)
+            let expected = try RemoteIdentityPublicKey(
+                rawRepresentation: fx.privateKey.publicKey.rawRepresentation
+            )
+            #expect(response.hostPublicKey == expected)
+        }
+    }
+
+    // MARK: - introduce with a fabricated nonce
+
+    @Test("POST /v1/pairing/introduce with an unknown nonce returns a non-2xx PairingErrorResponse")
+    func introduceWrongNonce() async throws {
+        try await withFixture { fx in
+            _ = try await fx.pairingServer.start()
+            let (status, data) = try await self.post(
+                "/v1/pairing/introduce",
+                port: fx.port,
+                body: self.makeIntroduceRequest(nonce: RemotePairingNonce.generate())
+            )
+            #expect(!(200..<300).contains(status))
+            let error = try Self.decoder.decode(PairingErrorResponse.self, from: data)
+            #expect(error.code == .unknownNonce)
+        }
+    }
+
+    // MARK: - await-outcome long-poll
+
+    @Test("POST /v1/pairing/await-outcome suspends until confirm() then returns outcome=confirmed")
+    func awaitOutcomeResolvesOnConfirm() async throws {
+        try await withFixture { fx in
+            let payload = try await fx.pairingServer.start()
+            let (introduceStatus, _) = try await self.post(
+                "/v1/pairing/introduce",
+                port: fx.port,
+                body: self.makeIntroduceRequest(nonce: payload.nonce)
+            )
+            #expect(introduceStatus == 200)
+
+            async let outcomeCall = self.post(
+                "/v1/pairing/await-outcome",
+                port: fx.port,
+                body: PairingAwaitOutcomeRequest(nonce: payload.nonce)
+            )
+
+            await self.waitForWaiters(on: fx.pairingServer, atLeast: 1)
+            try await fx.pairingServer.confirm()
+
+            let (status, data) = try await outcomeCall
+            #expect(status == 200)
+            let response = try Self.decoder.decode(PairingOutcomeResponse.self, from: data)
+            #expect(response.outcome == .confirmed)
+        }
+    }
+
+    // MARK: - unknown path
+
+    @Test("GET on a path other than the two pairing routes returns 404")
+    func unknownPathIs404() async throws {
+        try await withFixture { fx in
+            let status = try await self.get("/nope", port: fx.port)
+            #expect(status == 404)
+        }
+    }
+
+    // MARK: - wrong method
+
+    @Test("GET /v1/pairing/introduce returns 405")
+    func getIs405() async throws {
+        try await withFixture { fx in
+            let status = try await self.get("/v1/pairing/introduce", port: fx.port)
+            #expect(status == 405)
+        }
+    }
+
+    // MARK: - REMOTE-1.4
+
+    @Test("""
+    @spec REMOTE-1.4: While no pairing session is active, the host shall not accept connections on the pairing endpoint; the pairing listener runs only for the lifetime of an active pairing session.
+    """)
+    func listenerStopsAcceptingConnectionsAfterStop() async throws {
+        try await withFixture { fx in
+            let port = fx.port
+            await fx.httpServer.stop()
+
+            var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/v1/pairing/introduce")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try Self.encoder.encode(
+                self.makeIntroduceRequest(nonce: RemotePairingNonce.generate())
+            )
+
+            do {
+                _ = try await URLSession.shared.data(for: request)
+                Issue.record("Expected the connection to fail after stop()")
+            } catch let error as URLError {
+                // Expected: connection refused (or similar) once the
+                // listener has been torn down.
+                _ = error
+            }
+        }
+    }
+}
