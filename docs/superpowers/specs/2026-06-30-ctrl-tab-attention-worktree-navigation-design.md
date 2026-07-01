@@ -17,10 +17,10 @@ On `ctrl+tab` (forward) / `ctrl+shift+tab` (reverse):
 
 1. Build the ordered list of **selectable** worktrees in sidebar order — the
    flattening of `AppState.repos[]` × `repo.worktrees[]`, restricted to
-   worktrees with an on-disk checkout (`state.hasOnDiskWorktree`). Rows that
-   are `.creating` / `.missing` are skipped: they can't be focused (the
-   existing `selectWorktree` refuses `.creating`) and can't carry agent
-   attention.
+   worktrees with an on-disk checkout (`state.hasOnDiskWorktree` — i.e.
+   `.closed` / `.running`). Rows that are `.stale` / `.creating` / `.deleting`
+   are skipped: they have no focusable directory (the existing
+   `selectWorktree` refuses `.creating`) and can't carry agent attention.
 2. Compute the **attention subset**: worktrees where
    `attention != nil || !paneAttention.isEmpty` — any `AttentionSource`
    (`agentStop`, `userNotify`, `commandFinished`), worktree-level or per-pane —
