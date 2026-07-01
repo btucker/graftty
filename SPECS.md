@@ -1100,6 +1100,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **KBD-4.1** When `reload_config` fires, the application shall rebuild
 
+### KBD-5.x
+
+**KBD-5.1** When another on-disk worktree has attention, next_tab shall select the next attention-carrying worktree in cyclic sidebar order (skipping non-attention worktrees between), flattening worktrees across repos in sidebar order.
+
+**KBD-5.2** When no other worktree has attention, next_tab shall select the immediate next on-disk worktree in cyclic sidebar order, wrapping from the last back to the first.
+
+**KBD-5.3** previous_tab shall apply attention-first selection in reverse cyclic order, and select the immediate previous on-disk worktree (wrapping) when no worktree has attention.
+
+**KBD-5.4** Attention for navigation shall count any source (agent-stop, user notify, command-finished) at worktree or pane scope, and shall exclude the currently-selected worktree from the attention subset so its own attention does not trap navigation on itself.
+
+**KBD-5.5** When zero or one on-disk worktree is selectable, next_tab and previous_tab shall be a no-op (return nil); non-on-disk worktrees (.stale/.creating/.deleting) shall never be navigation targets even when they carry attention.
+
+**KBD-5.6** When no worktree is selected, next_tab shall select the first attention worktree else the first on-disk worktree, and previous_tab shall select the first attention worktree scanning backward from the end else the last on-disk worktree.
+
 ## PR — PR/MR Status Display
 
 ### PR-1.x — Branch-to-PR Association
