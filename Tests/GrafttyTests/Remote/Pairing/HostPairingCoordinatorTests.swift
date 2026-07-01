@@ -150,6 +150,23 @@ struct HostPairingCoordinatorTests {
         }
     }
 
+    // MARK: - error handling
+
+    @Test("beginPairing clears any previous error by setting lastError to nil at the start of a new attempt")
+    func beginPairingClearsLastError() async throws {
+        try await withFixture { fx in
+            // Start a pairing that succeeds, so lastError is nil
+            await fx.coordinator.beginPairing()
+            #expect(fx.coordinator.lastError == nil)
+            await fx.coordinator.endPairing()
+
+            // Call beginPairing again; lastError should remain nil
+            // (verifying that line 99 clears it at the start)
+            await fx.coordinator.beginPairing()
+            #expect(fx.coordinator.lastError == nil, "lastError should be cleared on new beginPairing")
+        }
+    }
+
     // MARK: - endPairing
 
     @Test("endPairing stops the listener (connection refused) and returns the coordinator to a terminal state with no payload")

@@ -148,6 +148,9 @@ struct PairedDevicesSection: View {
     @ViewBuilder private var idleContent: some View {
         Button("Pair a Device…") { startPairing() }
             .disabled(isStartingPairing)
+        if let coordinatorError = coordinator.lastError {
+            Text(coordinatorError).foregroundStyle(.red).font(.caption)
+        }
         if let listError {
             Text(listError).foregroundStyle(.red).font(.caption)
         }
@@ -234,6 +237,11 @@ struct PairedDevicesSection: View {
             Text("Confirm this code matches the one shown on the device.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if let coordinatorError = coordinator.lastError {
+                Text(coordinatorError)
+                    .foregroundStyle(.red)
+                    .font(.caption)
+            }
             HStack {
                 Button("Deny", role: .destructive) {
                     Task { await coordinator.deny() }
