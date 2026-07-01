@@ -130,14 +130,16 @@ struct SessionClientTests {
         ownerKind: DisplayClientKind?,
         cols: UInt16 = 80,
         rows: UInt16 = 24,
-        epoch: UInt64 = 1
+        epoch: UInt64 = 1,
+        revision: UInt64 = 0
     ) throws -> DisplayOwnershipSnapshot {
         try DisplayOwnershipSnapshot(
             sessionName: sessionName,
             ownerClientID: ownerClientID,
             ownerKind: ownerKind,
             grid: DisplayGrid(cols: cols, rows: rows),
-            epoch: epoch
+            epoch: epoch,
+            revision: revision
         )
     }
 
@@ -720,7 +722,7 @@ struct SessionClientTests {
     }
 
     @Test("""
-    @spec IOS-4.23: When an ownership snapshot arrives whose epoch is older than the most recently applied snapshot, the application shall ignore it, so a reordered broadcast cannot revert the owner or grid the client already advanced past. Owner resizes keep the same epoch, so equal-epoch snapshots are still applied.
+    @spec IOS-4.23: When an ownership snapshot arrives whose epoch is older than the most recently applied snapshot, the application shall ignore it, so a reordered broadcast cannot revert the owner or grid the client already advanced past. Owner resizes keep the same epoch; an equal-epoch snapshot is applied only when its revision is not lower than the last applied (see IOS-4.27).
     """)
     func ignoresLowerEpochOwnershipSnapshot() async throws {
         let ws = FakeWS()
@@ -741,6 +743,44 @@ struct SessionClientTests {
 
         // The stale frame was dropped — this client is still owner.
         #expect(client.isOwner)
+    }
+
+    @Test("""
+    @spec IOS-4.27: When an ownership snapshot arrives with the same epoch as the last applied snapshot but a lower revision, the application shall ignore it, so a reordered same-epoch owner resize cannot roll the grid back to a stale size. A same-epoch snapshot with an equal or higher revision is still applied.
+    """)
+    func ignoresSameEpochLowerRevisionSnapshot() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
+        client.start()
+        defer { client.stop() }
+        try await confirmOwner(client, ws: ws, cols: 80, rows: 24, epoch: 3)
+
+        let other = DisplayClientID("other-client")
+        // Follower of another owner; establish a newer same-epoch grid at revision 5.
+        let newer = try ownershipSnapshot(
+            ownerClientID: other, ownerKind: .web,
+            cols: 120, rows: 30, epoch: 4, revision: 5
+        )
+        client.handleTextFrame(WebControlEnvelope.ownership(newer).encoded())
+        #expect(client.ownershipSnapshot?.grid == (try DisplayGrid(cols: 120, rows: 30)))
+
+        // A reordered SAME-epoch snapshot with a LOWER revision (stale 80x24 grid).
+        let stale = try ownershipSnapshot(
+            ownerClientID: other, ownerKind: .web,
+            cols: 80, rows: 24, epoch: 4, revision: 4
+        )
+        client.handleTextFrame(WebControlEnvelope.ownership(stale).encoded())
+        #expect(client.ownershipSnapshot?.grid == (try DisplayGrid(cols: 120, rows: 30)),
+                "a lower-revision same-epoch snapshot must not roll the grid back")
+
+        // A same-epoch snapshot with a HIGHER revision is still applied.
+        let fresh = try ownershipSnapshot(
+            ownerClientID: other, ownerKind: .web,
+            cols: 160, rows: 40, epoch: 4, revision: 6
+        )
+        client.handleTextFrame(WebControlEnvelope.ownership(fresh).encoded())
+        #expect(client.ownershipSnapshot?.grid == (try DisplayGrid(cols: 160, rows: 40)),
+                "a higher-revision same-epoch snapshot must apply")
     }
 
     @Test("""

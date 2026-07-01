@@ -198,6 +198,7 @@ function ownershipFrame(
   cols = 150,
   rows = 50,
   epoch = 2,
+  revision = 0,
 ) {
   return JSON.stringify({
     type: 'ownership',
@@ -207,6 +208,7 @@ function ownershipFrame(
       ownerKind,
       grid: { cols, rows },
       epoch,
+      revision,
       ownerless: ownerClientID == null,
     },
   });
@@ -367,6 +369,27 @@ test('ignores an out-of-order lower-epoch ownership snapshot', async () => {
 
   // A reordered, older-epoch broadcast names a different owner.
   await act(async () => ws.receive(ownershipFrame('other-client', 'web', 150, 50, 5)));
+
+  // The stale frame was dropped — this client is still owner, so its keystroke is forwarded.
+  term.dataHandler?.('ok');
+  const payload = ws.sent.at(-1);
+  expect(ArrayBuffer.isView(payload)).toBe(true);
+  expect(Array.from(payload as Uint8Array)).toEqual([111, 107]);
+  expect(screen.queryByRole('button', { name: /take control/i })).toBeNull();
+});
+
+// @spec WEB-5.10: The client shall ignore a same-epoch ownership snapshot whose revision is lower than the latest applied, so a reordered same-epoch owner resize cannot roll the owner/grid back to a stale state. A same-epoch snapshot with an equal or higher revision is still applied.
+test('ignores a same-epoch lower-revision ownership snapshot', async () => {
+  const { term, ws } = await renderReady();
+
+  await act(async () => ws.open());
+  const clientID = textFrames(ws)[0].clientID;
+  // Become owner at epoch 7, revision 10.
+  await act(async () => ws.receive(ownershipFrame(clientID, 'web', 150, 50, 7, 10)));
+  ws.sent.length = 0;
+
+  // A reordered SAME-epoch broadcast with a LOWER revision names a different owner.
+  await act(async () => ws.receive(ownershipFrame('other-client', 'web', 150, 50, 7, 8)));
 
   // The stale frame was dropped — this client is still owner, so its keystroke is forwarded.
   term.dataHandler?.('ok');
