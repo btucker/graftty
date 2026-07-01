@@ -63,6 +63,43 @@ struct TeamInboxObserverTests {
         #expect(capture.last()?.count == 1)
     }
 
+    /// TEAM-7.4 backstop: the polling fallback shall detect a late-created inbox
+    /// file even when the kqueue vnode event is never delivered — the failure
+    /// mode behind the CI flake, where under load the `NOTE_WRITE` for the
+    /// parent dir is dropped or the observer queue is starved past the deadline.
+    /// Disabling the event sources isolates the backstop so the test is
+    /// deterministic (no reliance on vnode timing).
+    @Test func pollingBackstopDetectsLateFileWhenEventSourceMissed() async throws {
+        let root = try Self.temporaryDirectory()
+        let teamID = "team-poll"
+        let observer = TeamInboxObserver(
+            rootDirectory: root,
+            teamID: teamID,
+            pollInterval: .milliseconds(20),
+            installEventSources: false
+        )
+        let capture = LockedMessageBatches()
+        let cancellable = observer.start { messages in
+            capture.append(messages)
+        }
+        defer { cancellable.cancel() }
+
+        // Let start() arm the poll timer and deliver the initial empty snapshot.
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let inbox = TeamInbox(rootDirectory: root)
+        try inbox.appendMessage(
+            teamID: teamID, teamName: "t", repoPath: "/r",
+            from: TeamInboxEndpoint(member: "a", worktree: "/r", runtime: nil),
+            to: TeamInboxEndpoint(member: "b", worktree: "/r/x", runtime: nil),
+            priority: .normal, body: "late"
+        )
+
+        // With no vnode source, only the poll can find the file.
+        try await waitForAppend(capture: capture)
+        #expect(capture.last()?.count == 1)
+    }
+
     private func waitForAppend(capture: LockedMessageBatches) async throws {
         // 30s deadline (was 5s): under macos-26 CI parallelism, FSEvents
         // callback delivery for `messages.jsonl` append can take several
