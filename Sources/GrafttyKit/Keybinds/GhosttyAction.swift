@@ -18,6 +18,8 @@ public enum GhosttyAction: String, CaseIterable, Sendable {
     case gotoSplitDown = "goto_split:down"
     case gotoSplitPrevious = "goto_split:previous"
     case gotoSplitNext     = "goto_split:next"
+    case nextTab     = "next_tab"
+    case previousTab = "previous_tab"
     case toggleSplitZoom = "toggle_split_zoom"
     case equalizeSplits  = "equalize_splits"
     case reloadConfig    = "reload_config"
