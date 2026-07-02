@@ -41,7 +41,7 @@ enum LANAddress {
             defer { cursor = entry.pointee.ifa_next }
             guard let addr = entry.pointee.ifa_addr,
                   addr.pointee.sa_family == sa_family_t(AF_INET),
-                  (Int32(entry.pointee.ifa_flags) & IFF_UP) != 0
+                  (Int32(entry.pointee.ifa_flags) & (IFF_UP | IFF_RUNNING)) == (IFF_UP | IFF_RUNNING)
             else { continue }
             var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
             guard getnameinfo(

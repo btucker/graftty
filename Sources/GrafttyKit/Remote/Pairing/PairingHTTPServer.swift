@@ -47,10 +47,21 @@ public actor PairingHTTPServer {
     /// is claimed synchronously, before the first `await` in either
     /// method, so the second concurrent caller always observes the first
     /// caller's claim.
-    private enum Lifecycle {
+    ///
+    /// `.starting`/`.running` carry a call-identity `UUID` so a *stale*
+    /// resume can be told apart from a *newer* claim: without it, a
+    /// three-way `start() A` / `stop()` / `start() B` interleaving lets
+    /// A's post-bind check see bare `.starting` and mistake B's claim for
+    /// its own, recording A's already-orphaned channel as `.running`
+    /// behind B's back. Each `start()` call captures its own `UUID`
+    /// synchronously (before its first `await`) and only proceeds past
+    /// the post-bind guard if `lifecycle` still holds that exact ID.
+    /// `stop()` doesn't need identity — it tears down whatever is
+    /// current regardless of which generation claimed it.
+    private enum Lifecycle: Equatable {
         case idle
-        case starting
-        case running
+        case starting(id: UUID)
+        case running(id: UUID)
         case stopping
     }
 
@@ -87,7 +98,8 @@ public actor PairingHTTPServer {
         guard lifecycle == .idle else {
             throw LifecycleError.alreadyStarted
         }
-        lifecycle = .starting
+        let myID = UUID()
+        lifecycle = .starting(id: myID)
 
         let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let pairingServer = self.pairingServer
@@ -110,24 +122,27 @@ public actor PairingHTTPServer {
             // `bind` found nothing recorded to tear down and reset the
             // lifecycle to `.idle`. Honor it: close the just-bound
             // channel and its group instead of resuming into `.running`
-            // behind the caller's back. Only the local channel/group are
-            // touched — a subsequent `start()` may already own the
-            // shared state by the time these awaits complete.
-            guard lifecycle == .starting else {
+            // behind the caller's back. The identity check (rather than
+            // a bare `.starting` check) also catches the three-way case
+            // where a *newer* `start()` has since claimed `.starting` or
+            // `.running` — this resume is stale either way, and only
+            // the local channel/group (this call's own) are touched.
+            guard lifecycle == .starting(id: myID) else {
                 try? await boundChannel.close().get()
                 try? await Self.shutdown(group)
                 throw LifecycleError.stoppedDuringStart
             }
             self.group = group
             self.channel = boundChannel
-            lifecycle = .running
+            lifecycle = .running(id: myID)
             return boundChannel.localAddress?.port ?? port
         } catch let error where !(error is LifecycleError) {
             try? await Self.shutdown(group)
-            // Guarded for the same interleaving: if a stop() already
-            // reset the lifecycle (and a newer start() may have since
-            // claimed `.starting`), don't clobber it.
-            if lifecycle == .starting {
+            // Guarded for the same interleaving: only reset to `.idle`
+            // if `lifecycle` still holds *this* call's claim — a stop()
+            // may have already reset it, or a newer start() may have
+            // since claimed `.starting`, and neither should be clobbered.
+            if lifecycle == .starting(id: myID) {
                 lifecycle = .idle
             }
             throw error
@@ -140,7 +155,10 @@ public actor PairingHTTPServer {
     /// first caller to observe `.running`/`.starting` performs the
     /// teardown, every other concurrent or subsequent call is a no-op.
     public func stop() async {
-        guard lifecycle == .running || lifecycle == .starting else {
+        switch lifecycle {
+        case .running, .starting:
+            break
+        case .idle, .stopping:
             return
         }
         lifecycle = .stopping
@@ -236,13 +254,13 @@ public actor PairingHTTPServer {
         private func route(context: ChannelHandlerContext, head: HTTPRequestHead, body: Data) {
             let path = head.uri.split(separator: "?").first.map(String.init) ?? "/"
             switch path {
-            case "/v1/pairing/introduce":
+            case "\(PairingRoutes.basePath)/\(PairingRoutes.introduce)":
                 guard head.method == .POST else {
                     Self.respondPlainText(context: context, status: .methodNotAllowed, message: "only POST is supported")
                     return
                 }
                 handleIntroduce(context: context, body: body)
-            case "/v1/pairing/await-outcome":
+            case "\(PairingRoutes.basePath)/\(PairingRoutes.awaitOutcome)":
                 guard head.method == .POST else {
                     Self.respondPlainText(context: context, status: .methodNotAllowed, message: "only POST is supported")
                     return
@@ -351,21 +369,7 @@ public actor PairingHTTPServer {
         }
 
         private static func respond(context: ChannelHandlerContext, status: HTTPResponseStatus, body: Data, contentType: String) {
-            var headers = HTTPHeaders()
-            headers.add(name: "Content-Type", value: contentType)
-            headers.add(name: "Content-Length", value: "\(body.count)")
-            headers.add(name: "Connection", value: "close")
-            let head = HTTPResponseHead(version: .init(major: 1, minor: 1), status: status, headers: headers)
-            context.write(NIOAny(HTTPServerResponsePart.head(head)), promise: nil)
-            var buf = context.channel.allocator.buffer(capacity: body.count)
-            buf.writeBytes(body)
-            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buf))), promise: nil)
-            let loopBoundContext = context.loopBound
-            let donePromise = context.eventLoop.makePromise(of: Void.self)
-            context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil)), promise: donePromise)
-            donePromise.futureResult.whenComplete { _ in
-                loopBoundContext.value.close(promise: nil)
-            }
+            writeHTTPResponse(context: context, status: status, body: body, contentType: contentType)
         }
     }
 }

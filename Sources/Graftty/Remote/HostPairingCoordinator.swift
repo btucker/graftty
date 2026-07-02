@@ -25,9 +25,16 @@ public final class HostPairingCoordinator: ObservableObject {
     /// after every UI action.
     @Published public private(set) var state: HostPairingSessionState = .idle
 
-    /// The QR payload to display; set while `.awaitingClient`, cleared
-    /// once the client has introduced itself or the session ends.
-    @Published public private(set) var payload: PairingPayload?
+    /// The QR payload to display while `.awaitingClient`, `nil`
+    /// otherwise. Derived from `state` rather than stored separately —
+    /// the two could never disagree in practice, since every write site
+    /// updated both together.
+    public var payload: PairingPayload? {
+        if case .awaitingClient(let payload, _) = state {
+            return payload
+        }
+        return nil
+    }
 
     /// Human-readable description of the most recent failure, or `nil`.
     @Published public private(set) var lastError: String?
@@ -51,23 +58,30 @@ public final class HostPairingCoordinator: ObservableObject {
     private var httpServer: PairingHTTPServer?
     private var tickTask: Task<Void, Never>?
 
+    /// Bumped synchronously at the entry of both `beginPairing()` and
+    /// `endPairing()`. `beginPairing()` captures its own generation
+    /// before its first `await` and re-checks it after each one — if a
+    /// concurrent `endPairing()` (or a newer `beginPairing()`) has since
+    /// bumped the generation, this call's listener/session are stale:
+    /// tear down the just-created `http`/`server` locally and return
+    /// without ever assigning `self.httpServer`/`self.pairingServer`.
+    /// Without this, `endPairing()` during the bind window sees nil
+    /// fields, no-ops, and the listener that resumes afterward orphans
+    /// for up to the session's ~300s validity.
+    private var sessionGeneration = 0
+
+    /// Test-only hook, awaited right after `http.start()` resolves and
+    /// before the post-bind generation check. Mirrors
+    /// `PairingHTTPServer.startResumeGateForTesting`: production's only
+    /// real suspension in this window is the listener bind itself; this
+    /// hook widens that same window so tests can park `beginPairing()`
+    /// there deterministically to drive the same category of
+    /// begin/end interleaving `sessionGeneration` guards against. `nil`
+    /// (the default) is a no-op.
+    var beginPairingResumeGateForTesting: (() async -> Void)?
+
     enum CoordinatorError: Swift.Error {
         case pairingURLConstructionFailed(host: String, port: Int)
-    }
-
-    /// The session's `pairingURLProvider` must exist before the listener
-    /// (session → server → listener construction order), but the URL is
-    /// only known after the listener binds. This locked box breaks the
-    /// cycle: `beginPairing` fills it after `start()` returns the bound
-    /// port and before `server.start()` first invokes the provider, so
-    /// the placeholder never reaches a payload.
-    private final class PairingURLBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var _url = URL(string: "http://127.0.0.1/v1/pairing")!
-        var url: URL {
-            get { lock.lock(); defer { lock.unlock() }; return _url }
-            set { lock.lock(); defer { lock.unlock() }; _url = newValue }
-        }
     }
 
     // MARK: Init
@@ -95,7 +109,12 @@ public final class HostPairingCoordinator: ObservableObject {
     /// terminal-state cleanup. Any previously active pairing is ended
     /// first. Failures land in `lastError`.
     public func beginPairing() async {
+        // Bumped before `endPairing()` runs its own (synchronous) bump,
+        // so this call's claim is current the moment `endPairing()`
+        // returns — see `sessionGeneration`'s doc comment.
+        sessionGeneration += 1
         await endPairing()
+        let myGeneration = sessionGeneration
         lastError = nil
         do {
             let hostDeviceID = try deviceIDStore.loadOrGenerateAndPersist()
@@ -103,7 +122,16 @@ public final class HostPairingCoordinator: ObservableObject {
             // will accept pairing requests; create it on first use.
             _ = try identityStore.loadOrGenerateAndPersist()
 
-            let urlBox = PairingURLBox()
+            // The session's `pairingURLProvider` must exist before the
+            // listener (session → server → listener construction order),
+            // but the URL is only known after the listener binds. This
+            // plain local `var` breaks the cycle: it's captured by
+            // reference (standard Swift closure semantics), written once
+            // below after `http.start()` returns the bound port, and
+            // read exactly once when `server.start()` first invokes the
+            // provider — both strictly sequential on this actor, so no
+            // lock is needed.
+            var pairingURL = URL(string: "http://127.0.0.1\(PairingRoutes.basePath)")!
             let session = HostPairingSession(
                 identityStore: identityStore,
                 peerStore: trustedPeerStore,
@@ -111,11 +139,23 @@ public final class HostPairingCoordinator: ObservableObject {
                 hostKind: .mac,
                 hostDisplayName: hostDisplayName,
                 webBaseURL: webBaseURLProvider(),
-                pairingURLProvider: { urlBox.url }
+                pairingURLProvider: { pairingURL }
             )
             let server = HostPairingServer(session: session)
             let http = PairingHTTPServer(pairingServer: server)
             let boundPort = try await http.start()
+            await beginPairingResumeGateForTesting?()
+            // A concurrent `endPairing()` (or a newer `beginPairing()`)
+            // that ran while we were suspended binding the listener has
+            // bumped `sessionGeneration` — our fields are stale before
+            // we ever publish them. Tear down this call's own `http`
+            // locally and bail without touching `self.httpServer`/
+            // `self.pairingServer`, rather than resuming into a live
+            // listener the caller believes was stopped.
+            guard sessionGeneration == myGeneration else {
+                await http.stop()
+                return
+            }
             do {
                 // Fall back to loopback when no LAN interface is up so
                 // same-machine flows (and tests) still work; a phone
@@ -125,16 +165,19 @@ public final class HostPairingCoordinator: ObservableObject {
                 components.scheme = "http"
                 components.host = lanHost
                 components.port = boundPort
-                components.path = "/v1/pairing"
-                guard let pairingURL = components.url else {
+                components.path = PairingRoutes.basePath
+                guard let resolvedURL = components.url else {
                     throw CoordinatorError.pairingURLConstructionFailed(host: lanHost, port: boundPort)
                 }
-                urlBox.url = pairingURL
+                pairingURL = resolvedURL
 
-                let payload = try await server.start(validFor: 300)
+                _ = try await server.start(validFor: PairingProtocolDefaults.sessionValidity)
+                guard sessionGeneration == myGeneration else {
+                    await http.stop()
+                    return
+                }
                 self.pairingServer = server
                 self.httpServer = http
-                self.payload = payload
                 applyState(await server.currentState())
                 startTicking(server: server)
             } catch {
@@ -173,6 +216,7 @@ public final class HostPairingCoordinator: ObservableObject {
     /// that the pairing endpoint is only reachable while a session is
     /// active. Safe to call when nothing is in progress.
     public func endPairing() async {
+        sessionGeneration += 1
         tickTask?.cancel()
         tickTask = nil
         if let server = pairingServer {
@@ -186,7 +230,6 @@ public final class HostPairingCoordinator: ObservableObject {
         }
         pairingServer = nil
         httpServer = nil
-        payload = nil
     }
 
     // MARK: - Tick task
@@ -204,7 +247,7 @@ public final class HostPairingCoordinator: ObservableObject {
                 let current = await server.currentState()
                 guard let self else { return }
                 self.applyState(current)
-                if Self.isTerminal(current) {
+                if current.isTerminal {
                     // endPairing cancels this task; teardown still runs
                     // to completion because none of its awaits are
                     // cancellation points that abort actor calls.
@@ -219,19 +262,6 @@ public final class HostPairingCoordinator: ObservableObject {
 
     private func applyState(_ newState: HostPairingSessionState) {
         state = newState
-        if case .awaitingClient = newState {
-            // QR stays visible while waiting for the client.
-        } else if payload != nil {
-            payload = nil
-        }
     }
 
-    private static func isTerminal(_ state: HostPairingSessionState) -> Bool {
-        switch state {
-        case .confirmed, .denied, .cancelled, .expired, .failed:
-            return true
-        case .idle, .awaitingClient, .pendingConfirmation:
-            return false
-        }
-    }
 }

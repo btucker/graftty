@@ -323,11 +323,12 @@ public struct PairDeviceFlowView: View {
     /// which would make the transport function value unusable as the
     /// non-isolated `@Sendable` closure `LocalPairingClient` expects.
     /// `timeoutIntervalForRequest` must exceed the host's `await-outcome`
-    /// long-poll window (~300s) or the client will time out while the host
-    /// is still legitimately waiting on the user to tap Confirm/Deny.
+    /// long-poll window (`PairingProtocolDefaults.sessionValidity`, 300s)
+    /// or the client will time out while the host is still legitimately
+    /// waiting on the user to tap Confirm/Deny.
     nonisolated private static let productionSession: URLSession = {
         let config = URLSessionConfiguration.ephemeral
-        config.timeoutIntervalForRequest = 320
+        config.timeoutIntervalForRequest = PairingProtocolDefaults.clientRequestTimeout
         return URLSession(configuration: config)
     }()
 

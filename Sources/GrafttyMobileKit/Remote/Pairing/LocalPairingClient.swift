@@ -138,14 +138,14 @@ public actor LocalPairingClient {
             clientKind: session.clientKind,
             clientDisplayName: session.clientDisplayName
         )
-        return try await postJSON(pathSuffix: "introduce", pairingURL: payload.pairingURL, body: body)
+        return try await postJSON(pathSuffix: PairingRoutes.introduce, pairingURL: payload.pairingURL, body: body)
     }
 
     private func postAwaitOutcome(
         payload: PairingPayload
     ) async throws -> PairingOutcomeResponse {
         let body = PairingAwaitOutcomeRequest(nonce: payload.nonce)
-        return try await postJSON(pathSuffix: "await-outcome", pairingURL: payload.pairingURL, body: body)
+        return try await postJSON(pathSuffix: PairingRoutes.awaitOutcome, pairingURL: payload.pairingURL, body: body)
     }
 
     private func postJSON<Request: Encodable, Response: Decodable>(

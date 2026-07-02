@@ -166,12 +166,45 @@ struct PairingPayloadTests {
 
     @Test("QR encode → decodeQR preserves webBaseURL")
     func roundTripPreservesWebBaseURL() throws {
-        let webBaseURL = URL(string: "wss://mac.tail1234.ts.net:8799")!
+        // https, not wss: decodeQR now validates webBaseURL's scheme the
+        // same way it validates pairingURL's, and production
+        // (`WebURLComposer.baseURL`) only ever emits https.
+        let webBaseURL = URL(string: "https://mac.tail1234.ts.net:8799")!
         let original = makePayload(webBaseURL: webBaseURL)
         let qr = try original.qrEncoded()
         let decoded = try PairingPayload.decodeQR(qr)
         #expect(decoded == original)
         #expect(decoded.webBaseURL == webBaseURL)
+    }
+
+    @Test("decodeQR rejects a wss:// webBaseURL with insecureURL error")
+    func decodeQRRejectsWssWebBaseURL() throws {
+        let webBaseURL = URL(string: "wss://mac.tail1234.ts.net:8799")!
+        let payload = makePayload(webBaseURL: webBaseURL)
+        let qr = try payload.qrEncoded()
+        #expect(throws: PairingPayload.DecodeError.insecureURL) {
+            try PairingPayload.decodeQR(qr)
+        }
+    }
+
+    @Test("decodeQR rejects a file:// webBaseURL with insecureURL error")
+    func decodeQRRejectsFileWebBaseURL() throws {
+        let webBaseURL = URL(string: "file:///etc/passwd")!
+        let payload = makePayload(webBaseURL: webBaseURL)
+        let qr = try payload.qrEncoded()
+        #expect(throws: PairingPayload.DecodeError.insecureURL) {
+            try PairingPayload.decodeQR(qr)
+        }
+    }
+
+    @Test("decodeQR rejects a javascript:// webBaseURL with insecureURL error")
+    func decodeQRRejectsJavascriptWebBaseURL() throws {
+        let webBaseURL = URL(string: "javascript://alert(1)")!
+        let payload = makePayload(webBaseURL: webBaseURL)
+        let qr = try payload.qrEncoded()
+        #expect(throws: PairingPayload.DecodeError.insecureURL) {
+            try PairingPayload.decodeQR(qr)
+        }
     }
 
     @Test("legacy payload JSON without a webBaseURL key decodes with webBaseURL == nil")

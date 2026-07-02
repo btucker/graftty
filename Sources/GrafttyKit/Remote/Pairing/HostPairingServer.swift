@@ -54,7 +54,7 @@ public actor HostPairingServer {
     /// call. Today, host UI must call `tick()` periodically — otherwise
     /// the long-poll only resolves when the HTTP client times out.
     @discardableResult
-    public func start(validFor: TimeInterval = 300) throws -> PairingPayload {
+    public func start(validFor: TimeInterval = PairingProtocolDefaults.sessionValidity) throws -> PairingPayload {
         resumeWaiters(with: .cancelled)
         let payload = try session.startPairing(validFor: validFor)
         activeNonce = payload.nonce
@@ -223,6 +223,7 @@ public actor HostPairingServer {
     }
 
     private func terminalOutcome(of state: HostPairingSessionState) -> PairingOutcome? {
+        guard state.isTerminal else { return nil }
         switch state {
         case .confirmed: return .confirmed
         case .denied: return .denied
@@ -232,7 +233,8 @@ public actor HostPairingServer {
         // to the client so it stops waiting; the host UI is responsible
         // for surfacing the underlying message to the user.
         case .failed: return .cancelled
-        case .idle, .awaitingClient, .pendingConfirmation: return nil
+        case .idle, .awaitingClient, .pendingConfirmation:
+            preconditionFailure("state.isTerminal guarantees a terminal case here")
         }
     }
 

@@ -141,6 +141,16 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
             throw DecodeError.insecureURL
         }
 
+        // `webBaseURL` gets the same scheme check as `pairingURL` when
+        // present: production only ever populates it via `WebURLComposer`
+        // (always https), so a non-http(s) value here can only come from a
+        // malicious or malformed QR payload.
+        if let webBaseURLScheme = payload.webBaseURL?.scheme?.lowercased() {
+            guard webBaseURLScheme == "http" || webBaseURLScheme == "https" else {
+                throw DecodeError.insecureURL
+            }
+        }
+
         return payload
     }
 

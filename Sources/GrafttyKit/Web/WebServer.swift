@@ -1307,28 +1307,7 @@ public final class WebServer {
         }
 
         static func respond(context: ChannelHandlerContext, status: HTTPResponseStatus, body: Data, contentType: String) {
-            var headers = HTTPHeaders()
-            headers.add(name: "Content-Type", value: contentType)
-            headers.add(name: "Content-Length", value: "\(body.count)")
-            headers.add(name: "Connection", value: "close")
-            let head = HTTPResponseHead(version: .init(major: 1, minor: 1), status: status, headers: headers)
-            context.write(NIOAny(HTTPServerResponsePart.head(head)), promise: nil)
-            var buf = context.channel.allocator.buffer(capacity: body.count)
-            buf.writeBytes(body)
-            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buf))), promise: nil)
-            // Chain `close` off the end-of-response flush promise. NIO's
-            // `close0(mode: .all)` cancels any writes still pending in
-            // `PendingWritesManager` *after* closing the socket fd, so
-            // closing synchronously after `writeAndFlush(..., promise: nil)`
-            // truncates the body whenever the kernel's TCP send buffer
-            // can't absorb the whole response in one pass — which is the
-            // normal case on Tailscale's `utun` (MTU ~1280) and the root
-            // cause of `ERR_CONTENT_LENGTH_MISMATCH` on `/app.js`.
-            let donePromise = context.eventLoop.makePromise(of: Void.self)
-            context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil)), promise: donePromise)
-            donePromise.futureResult.whenComplete { _ in
-                context.close(promise: nil)
-            }
+            writeHTTPResponse(context: context, status: status, body: body, contentType: contentType)
         }
     }
 

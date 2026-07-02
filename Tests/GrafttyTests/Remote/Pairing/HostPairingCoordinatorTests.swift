@@ -194,4 +194,87 @@ struct HostPairingCoordinatorTests {
             }
         }
     }
+
+    /// A2: `beginPairing()` had no synchronous claim on `pairingServer`/
+    /// `httpServer`, and `endPairing()` during the bind window saw nil
+    /// fields and no-op'd — so a `beginPairing()` immediately followed by
+    /// `endPairing()` (before the listener finishes binding) orphaned the
+    /// listener for up to the session's ~300s validity: `endPairing()`
+    /// returned having stopped nothing, and the in-flight `beginPairing()`
+    /// resumed afterward and published a listener nobody would ever stop.
+    ///
+    /// `sessionGeneration` closes the race: `beginPairing()` checks it
+    /// after every suspension point and tears down its own (by-then-
+    /// stale) listener locally rather than publishing it. The
+    /// interleaving is driven deterministically via the test-only
+    /// begin-resume gate (mirrors `PairingHTTPServerTests`'
+    /// `stopDuringStartLeavesNoLiveListener`, which widens the same
+    /// category of bind-suspension window in `PairingHTTPServer`).
+    @Test("beginPairing racing an immediate endPairing leaves no orphaned listener: endPairing tears down the in-flight listener and a later beginPairing has exactly one active listener")
+    func beginPairingRacingImmediateEndPairingLeavesNoOrphan() async throws {
+        try await withFixture { fx in
+            var didPark = false
+            let (releaseStream, releaseCont) = AsyncStream.makeStream(of: Void.self)
+            fx.coordinator.beginPairingResumeGateForTesting = {
+                didPark = true
+                var iterator = releaseStream.makeAsyncIterator()
+                _ = await iterator.next()
+            }
+
+            async let begin: Void = fx.coordinator.beginPairing()
+
+            // Wait for beginPairing() to have bound its listener and
+            // parked at the gate, still before publishing anything.
+            while !didPark {
+                await Task.yield()
+            }
+            #expect(fx.coordinator.payload == nil, "beginPairing must not have published yet")
+
+            // endPairing() interleaves here: `pairingServer`/`httpServer`
+            // are still nil (beginPairing hasn't assigned them), so
+            // without the generation guard this would no-op and orphan
+            // the listener beginPairing is about to resume into.
+            await fx.coordinator.endPairing()
+
+            // Release beginPairing(); it must recognize its generation is
+            // stale and tear down its own already-bound listener rather
+            // than publish it.
+            releaseCont.yield(())
+            await begin
+
+            #expect(fx.coordinator.payload == nil, "beginPairing must not have published a stale listener")
+            switch fx.coordinator.state {
+            case .cancelled, .idle:
+                break
+            default:
+                Issue.record("Expected endPairing to leave state idle/cancelled, got \(fx.coordinator.state)")
+            }
+
+            // A fresh beginPairing() (gate removed so it doesn't park)
+            // has exactly one active listener — the introduce POST
+            // against its payload's port succeeds.
+            fx.coordinator.beginPairingResumeGateForTesting = nil
+            await fx.coordinator.beginPairing()
+            let payload = try #require(fx.coordinator.payload)
+            let port = try #require(payload.pairingURL.port)
+            let status = try await self.postIntroduce(nonce: payload.nonce, port: port)
+            #expect(status == 200)
+
+            await fx.coordinator.endPairing()
+            #expect(fx.coordinator.payload == nil)
+            switch fx.coordinator.state {
+            case .cancelled, .idle:
+                break
+            default:
+                Issue.record("Expected endPairing to clean state to idle/cancelled, got \(fx.coordinator.state)")
+            }
+
+            do {
+                _ = try await self.postIntroduce(nonce: payload.nonce, port: port)
+                Issue.record("Expected the connection to be refused after the final endPairing")
+            } catch is URLError {
+                // Expected: the pairing listener is gone (REMOTE-1.4).
+            }
+        }
+    }
 }

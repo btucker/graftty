@@ -148,12 +148,8 @@ struct PairedDevicesSection: View {
     @ViewBuilder private var idleContent: some View {
         Button("Pair a Device…") { startPairing() }
             .disabled(isStartingPairing)
-        if let coordinatorError = coordinator.lastError {
-            Text(coordinatorError).foregroundStyle(.red).font(.caption)
-        }
-        if let listError {
-            Text(listError).foregroundStyle(.red).font(.caption)
-        }
+        errorText(coordinator.lastError)
+        errorText(listError)
         if peers.isEmpty {
             Text("No paired devices yet.")
                 .foregroundStyle(.secondary)
@@ -162,6 +158,14 @@ struct PairedDevicesSection: View {
             ForEach(peers) { peer in
                 peerRow(peer)
             }
+        }
+    }
+
+    /// Shared rendering for the section's inline error rows (coordinator
+    /// failures, peer-list load/remove failures). `nil` renders nothing.
+    @ViewBuilder private func errorText(_ message: String?) -> some View {
+        if let message {
+            Text(message).foregroundStyle(.red).font(.caption)
         }
     }
 
@@ -237,11 +241,7 @@ struct PairedDevicesSection: View {
             Text("Confirm this code matches the one shown on the device.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            if let coordinatorError = coordinator.lastError {
-                Text(coordinatorError)
-                    .foregroundStyle(.red)
-                    .font(.caption)
-            }
+            errorText(coordinator.lastError)
             HStack {
                 Button("Deny", role: .destructive) {
                     Task { await coordinator.deny() }
