@@ -175,4 +175,64 @@ struct TerminalWidthLayoutTests {
         }
     }
 }
+
+@Suite("""
+@spec IOS-6.10: When the iOS client becomes the explicit display owner while a non-owner auto-fit font override (`IOS-5.6` / `IPAD-2.5`) is active, the application shall restore the base config font so the pane re-lays out at the configured iOS font size and the resulting owner resize adopts an iOS-natural grid — rather than keeping the follower-fitted font (and therefore the previous owner's width) until the next incidental layout tick. libghostty's pinch-to-zoom (`IOS-6.8`) shall adjust font from that restored baseline without implicitly changing ownership.
+""")
+struct OwnerFontOverrideRestorationTests {
+    @Test
+    func ownerWithActiveFitOverrideRestoresConfigFont() {
+        // Follower fit shrank the font to ~2.4pt to match a desktop-width
+        // grid. On promotion, the owner decision is .useConfigFont and an
+        // active override must be cleared back to the base config font.
+        let decision = TerminalWidthLayout.decide(
+            containerWidth: 390,
+            authoritativeCols: 250,
+            configFontSize: 10.4,
+            measuredCellWidthPoints: nil,
+            measuredAtFontSize: nil,
+            isOwner: true
+        )
+        #expect(decision == .useConfigFont)
+        let action = TerminalWidthLayout.overrideAction(
+            decision: decision,
+            liveFontOverride: 2.4
+        )
+        #expect(action == .restoreConfigFont)
+    }
+
+    @Test
+    func ownerWithoutOverrideKeepsCurrentFont() {
+        // No override active (e.g. the owner pinch-zoomed after promotion):
+        // nothing to restore, the applied font is left untouched.
+        let action = TerminalWidthLayout.overrideAction(
+            decision: .useConfigFont,
+            liveFontOverride: nil
+        )
+        #expect(action == .keep)
+    }
+
+    @Test
+    func followerFitWithinEpsilonKeepsExistingOverride() {
+        // Sub-pixel container drift recomputes an override that differs
+        // only in low Float bits; don't churn updateConfigSource.
+        let action = TerminalWidthLayout.overrideAction(
+            decision: .fitFont(pointSize: 3.0),
+            liveFontOverride: 3.02
+        )
+        #expect(action == .keep)
+    }
+
+    @Test
+    func followerFitAppliesChangedOverride() {
+        #expect(TerminalWidthLayout.overrideAction(
+            decision: .fitFont(pointSize: 3.0),
+            liveFontOverride: nil
+        ) == .applyOverride(pointSize: 3.0))
+        #expect(TerminalWidthLayout.overrideAction(
+            decision: .fitFont(pointSize: 3.0),
+            liveFontOverride: 8
+        ) == .applyOverride(pointSize: 3.0))
+    }
+}
 #endif

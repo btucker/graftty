@@ -72,7 +72,12 @@ extension SurfaceNSView {
             add("Copy", #selector(copyFromTerminal(_:)), "document.on.document")
         }
         add("Paste", #selector(pasteToTerminal(_:)), "document.on.clipboard")
-        add("Take Control", #selector(takeDisplayControlFromMenu(_:)), "cursorarrow.click")
+        // OWN-2.1: offered only while the pane can actually reclaim the
+        // display (another client owns it, or ownerless after a takeover);
+        // hidden for owned and direct-shell panes.
+        if canTakeDisplayControlNotifier?() == true {
+            add("Take Control", #selector(takeDisplayControlFromMenu(_:)), "cursorarrow.click")
+        }
 
         menu.addItem(.separator())
         add("Split Right", #selector(splitRight(_:)), "rectangle.righthalf.inset.filled")

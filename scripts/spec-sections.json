@@ -123,6 +123,7 @@
     "WEB.7": "Adding worktrees from the web client",
     "WEB.8": "Web TLS (HTTPS)",
     "OWN.1": "Follower Convergence",
+    "OWN.2": "Mac Take-Control Affordance and Reclaim",
     "UPDATE.1": "Install flow",
     "UPDATE.2": "Release pipeline",
     "PR.1": "Branch-to-PR Association",
