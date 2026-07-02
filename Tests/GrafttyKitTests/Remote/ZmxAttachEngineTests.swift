@@ -181,6 +181,46 @@ struct ZmxAttachEngineTests {
                 "expected 'stty size' to report the resized dimensions; got \(collected.count) bytes: \(String(data: collected, encoding: .utf8) ?? "<non-utf8>")")
     }
 
+    // MARK: - Delivery-surface selection (C1 fix): the unselected surface
+    // must not buffer.
+
+    @Test("""
+    @spec REMOTE-10.1: When an engine's callback surface (`onPTYData`) is \
+    installed before `start()`, the application shall not yield PTY output \
+    chunks into `inboundBytes` — the unselected delivery surface must not \
+    retain bytes nobody will ever drain.
+    """)
+    func callbackModeDoesNotBufferIntoInboundBytes() throws {
+        let dir = try Self.makeTempDir(prefix: "zmx-attach-engine-callback-mode")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let fakeZmx = try Self.makeEchoZmx(in: dir)
+        let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
+        try FileManager.default.createDirectory(at: zmxDir, withIntermediateDirectories: true)
+
+        let engine = Self.makeEngine(zmxExecutable: fakeZmx, zmxDir: zmxDir, sessionName: "callback-mode-test")
+        let received = DispatchSemaphore(value: 0)
+        var collected = Data()
+        let collectedLock = NSLock()
+        // Mirrors WebSession/WebServer: onPTYData installed BEFORE start(),
+        // never touching inboundBytes — this is the "callback surface
+        // selected" precondition the C1 fix keys off of.
+        engine.onPTYData = { chunk in
+            collectedLock.lock()
+            collected.append(chunk)
+            let done = String(data: collected, encoding: .utf8)?.contains("hi") == true
+            collectedLock.unlock()
+            if done { received.signal() }
+        }
+        try engine.start()
+        defer { engine.close() }
+
+        engine.write(Data("hi\n".utf8))
+        #expect(received.wait(timeout: .now() + 3) == .success, "expected onPTYData to observe echoed 'hi'")
+
+        #expect(engine.streamYieldCountForTesting == 0,
+                "callback-mode engine must not yield PTY chunks into inboundBytes")
+    }
+
     // MARK: - Registry attach/detach balance (TERM-11.5), ported from the
     // deleted ZmxAttachStreamRegistryTests.
 

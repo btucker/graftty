@@ -22,14 +22,23 @@ import Darwin
 /// Both surfaces observe the same underlying PTY; `dispatchPTYData` and
 /// `dispatchExit` feed both the callbacks and the `AsyncStream`.
 ///
-/// **Pick exactly one delivery surface per instance.** `dispatchPTYData`
-/// feeds `onPTYData` AND yields to `inboundBytes` unconditionally — a
-/// caller that both sets `onPTYData` and consumes `inboundBytes` on the
-/// same engine gets every chunk delivered twice, once on each surface.
-/// `WebSession` uses callbacks only; `TerminalSessionHandler` (the SSH
-/// path) uses `inboundBytes` only and must leave `onPTYData` unset.
-/// `onPTYSize`/`onExit` are not part of this either/or split — they're
-/// safe to set regardless of which byte-delivery surface a caller uses.
+/// **Pick exactly one delivery surface per instance.** `start()` locks in
+/// which surface `dispatchPTYData` feeds by checking whether `onPTYData`
+/// is already installed at that moment: if so, PTY output is delivered to
+/// `onPTYData` only and `inboundBytes` receives nothing and buffers
+/// nothing; otherwise PTY output goes to `inboundBytes` only. `WebSession`
+/// sets `onPTYData` before calling `start()`, so its engine is
+/// callback-mode; `TerminalSessionHandler` (the SSH path) never sets
+/// `onPTYData`, so its engine is stream-mode. The unselected surface
+/// isn't merely idle — `inboundBytes` is an `AsyncStream` with the
+/// default `.unbounded` buffering policy, so an engine that yielded into
+/// it regardless of whether anything ever iterates it would retain every
+/// PTY output chunk for the session's lifetime (unbounded memory growth
+/// on the callback surface, which nothing drains). Setting `onPTYData`
+/// AFTER `start()` on a stream-mode engine does not switch surfaces —
+/// the choice is made once, at `start()`. `onPTYSize`/`onExit` are not
+/// part of this either/or split — they're safe to set regardless of
+/// which byte-delivery surface a caller uses.
 ///
 /// On `close()`, sends SIGTERM to the child and closes the master fd.
 /// SIGTERM (not SIGKILL) per WEB-4.5 so the client exits gracefully
@@ -121,6 +130,32 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, @
     private let stateLock = NSLock()
     private var isClosed = false
 
+    /// Which delivery surface `dispatchPTYData` feeds bytes to, locked in
+    /// exactly once by `start()` before the reader thread that would call
+    /// `dispatchPTYData` even exists. Determined by whether `onPTYData` is
+    /// already installed at that moment: `WebSession`/`WebServer` always
+    /// assign `onPTYData` before calling `start()`, and the SSH path
+    /// (`TerminalSessionHandler`) never assigns it at all — so this read
+    /// is a deterministic snapshot, not a race against whichever surface
+    /// a caller installs later.
+    private enum DeliverySurface {
+        case callback
+        case stream
+    }
+    private var deliverySurface: DeliverySurface = .stream
+
+    /// Test seam: count of PTY chunks yielded into `inboundBytes`. Exists
+    /// so tests can assert the unselected delivery surface buffers
+    /// nothing without reaching into `AsyncStream` internals (which don't
+    /// expose buffer contents). Incremented only inside `dispatchPTYData`,
+    /// guarded by `stateLock` like the rest of the dispatch state.
+    var streamYieldCountForTesting: Int {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        return _streamYieldCountForTesting
+    }
+    private var _streamYieldCountForTesting = 0
+
     /// Per-session typed-but-uncommitted-byte tracker (TEAM-IDLE-2.2). Optional
     /// because not all callers need it (tests, future non-Codex uses); set by
     /// the caller that owns the shared instance. When non-nil, each
@@ -153,6 +188,12 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, @
         stateLock.lock()
         defer { stateLock.unlock() }
         guard spawned == nil else { throw Error.alreadyStarted }
+
+        // Lock in the delivery surface before any thread that could call
+        // dispatchPTYData exists (startReaderThread(), below, is the
+        // first). See `deliverySurface`'s doc for why this snapshot is
+        // deterministic rather than racy.
+        deliverySurface = (onPTYData == nil) ? .stream : .callback
 
         let launcher = ZmxLauncher(executable: config.zmxExecutable, zmxDir: config.zmxDir)
         let processEnv = processEnvForTesting ?? ProcessInfo.processInfo.environment
@@ -317,9 +358,19 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, @
     private func dispatchPTYData(_ data: Data) {
         stateLock.lock()
         let cb = onPTYData
+        let surface = deliverySurface
+        if surface == .stream { _streamYieldCountForTesting += 1 }
         stateLock.unlock()
         cb?(data)
-        continuation.yield(data)
+        // Only the surface selected at start() ever receives bytes — the
+        // other one is not just unused, it must not buffer (see the class
+        // doc). Without this guard, an AsyncStream's default .unbounded
+        // policy retains every chunk nobody will ever drain for the
+        // engine's whole lifetime: unbounded per-session memory growth on
+        // the callback (`/ws`) surface.
+        if surface == .stream {
+            continuation.yield(data)
+        }
     }
 
     private func dispatchExit() {

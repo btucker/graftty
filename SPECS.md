@@ -1776,6 +1776,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.7** If an SSH client that is not the current display owner sends ownerResize, then the application shall reject it and leave the broadcast grid unchanged; while the current owner's ownerResize at the current epoch shall update the broadcast grid without bumping the epoch.
 
+### REMOTE-10.x
+
+**REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x
