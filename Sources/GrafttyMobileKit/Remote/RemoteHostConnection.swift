@@ -32,9 +32,34 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         case connected
         case failed(reason: String)
         case closed
+
+        /// `true` for the two terminal values. `RemoteHostConnection.setState`
+        /// refuses any further transition once this is true — see its doc
+        /// comment. `internal` (the type's default access level, not
+        /// `private`) rather than re-derived elsewhere: the loopback test's
+        /// own terminal-transition assertions read this directly via
+        /// `@testable import` instead of duplicating the switch, which
+        /// would risk silently drifting out of sync with this one if a
+        /// case is ever added.
+        var isTerminal: Bool {
+            switch self {
+            case .failed, .closed: return true
+            case .idle, .connecting, .connected: return false
+            }
+        }
     }
 
     public private(set) var state: State = .idle
+
+    /// Fires on every transition into `.connected`, `.failed`, or
+    /// `.closed` — the three states Task 2's coordinator (eviction) and
+    /// Task 4's reconnect logic need to observe. Set via
+    /// `setOnStateChange(_:)` (an async actor call) BEFORE
+    /// `createOffer()` so no transition can slip by before a caller
+    /// wires up its observer — there is no synchronous/nonisolated
+    /// setter, which would otherwise leave a window between
+    /// construction and observer registration.
+    private var onStateChange: (@Sendable (State) -> Void)?
 
     private let factory: RTCPeerConnectionFactory
     private var peerConnection: RTCPeerConnection?
@@ -115,11 +140,55 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         self.delegate.onIceCandidate = { [weak self] candidate in
             Task { await self?.routeLocalIceCandidate(candidate) }
         }
+        // ICE-failed is a terminal signal — see `handleIceStateChange`
+        // for why `.disconnected` is deliberately NOT treated the same
+        // way. Installed up-front (like `onIceCandidate` above) so a
+        // failure that lands before `createOffer` completes is still
+        // observed.
+        self.delegate.onIceStateChange = { [weak self] iceState in
+            Task { await self?.handleIceStateChange(iceState) }
+        }
+        // The data channel can die (peer closed it, transport reset)
+        // without ICE ever reporting `.failed` — this is the other
+        // terminal signal. Installed on the shared delegate object
+        // up-front; it stays wired across whichever concrete
+        // `RTCDataChannel` `createOffer`/`applyAnswer` later attaches
+        // it to.
+        self.dataChannelDelegate.onClosed = { [weak self] in
+            Task { await self?.handleDataChannelClosed() }
+        }
+    }
+
+    /// Registers the observer fired on every transition into
+    /// `.connected`, `.failed`, or `.closed`. An async actor call (not a
+    /// plain settable property) so callers reliably sequence it before
+    /// `createOffer()` — see the `onStateChange` doc comment for the
+    /// race this avoids.
+    public func setOnStateChange(_ handler: (@Sendable (State) -> Void)?) {
+        onStateChange = handler
     }
 
     /// Build the local peer connection and create the data channel.
     /// Returns the local SDP offer for signaling-side hand-off.
+    ///
+    /// Wraps `performCreateOffer` so ANY failure along the way (peer
+    /// connection / data channel init, SDP generation, `setLocalDescription`)
+    /// routes through `setState(.failed(reason:))` before rethrowing —
+    /// without this, a setup-time failure would leave `state` stuck at
+    /// `.idle`/`.connecting` forever with no `onStateChange` firing and
+    /// the half-built `RTCPeerConnection` never torn down, silently
+    /// violating the "fires on every terminal transition" contract this
+    /// task adds.
     public func createOffer() async throws -> RTCSessionDescription {
+        do {
+            return try await performCreateOffer()
+        } catch {
+            setState(.failed(reason: "offer creation failed: \(error)"))
+            throw error
+        }
+    }
+
+    private func performCreateOffer() async throws -> RTCSessionDescription {
         let config = Self.defaultConfig()
         let constraints = RTCMediaConstraints(
             mandatoryConstraints: nil,
@@ -158,7 +227,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             Task { await self?.recordReceivedBinary(data) }
         }
 
-        state = .connecting
+        setState(.connecting)
 
         let offer = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RTCSessionDescription, Error>) in
             pc.offer(for: constraints) { sdp, error in
@@ -210,10 +279,22 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
 
     /// Apply the answer received from the remote host and return when
     /// the data channel is open (or throw on failure / timeout).
+    ///
+    /// Failures already routed through `setState(.failed(reason:))`
+    /// deeper in `waitForDataChannelOpen` (handshake failure, open
+    /// timeout) hit the `isTerminal` guard here and no-op, so this outer
+    /// catch only actually fires the observer for a failure that happens
+    /// BEFORE that point — `setRemoteDescription` throwing, or this being
+    /// called with no peer connection configured.
     public func applyAnswer(_ answer: RTCSessionDescription) async throws {
-        guard let pc = peerConnection else { throw ConnectionError.notConfigured }
-        try await Self.setRemoteDescription(pc, answer)
-        try await waitForDataChannelOpen()
+        do {
+            guard let pc = peerConnection else { throw ConnectionError.notConfigured }
+            try await Self.setRemoteDescription(pc, answer)
+            try await waitForDataChannelOpen()
+        } catch {
+            setState(.failed(reason: "apply answer failed: \(error)"))
+            throw error
+        }
     }
 
     /// Send a binary frame over the open data channel. Throws if the
@@ -361,7 +442,48 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     }
 
     public func close() {
+        setState(.closed)
+    }
+
+    /// Routes every `state` mutation through one place so `onStateChange`
+    /// fires exactly once per notify-worthy transition. `.idle` /
+    /// `.connecting` update `state` silently — nothing downstream needs
+    /// those. `.connected` / `.failed` / `.closed` notify; the latter two
+    /// also tear down every live resource first, and — critically — are
+    /// refused entirely once `state` is already terminal. That refusal is
+    /// what keeps an ICE `.failed` and a DataChannel close (which can
+    /// both fire for the same dead peer connection, in either order) from
+    /// double-notifying the observer, and what makes `close()` idempotent.
+    private func setState(_ newState: State) {
+        guard !isTerminal else { return }
+        state = newState
+        switch newState {
+        case .idle, .connecting:
+            break
+        case .connected:
+            onStateChange?(newState)
+        case .failed, .closed:
+            performTeardown()
+            onStateChange?(newState)
+        }
+    }
+
+    /// `true` once `state` has reached a terminal value. See `setState`.
+    private var isTerminal: Bool { state.isTerminal }
+
+    /// Tears down every live resource: the SSH transport, any in-flight
+    /// continuations, timeout tasks, and the WebRTC peer/data channel.
+    /// Called exactly once, from `setState`, on the first `.failed` or
+    /// `.closed` transition.
+    private func performTeardown() {
         if let transport = sshTransport {
+            // Detach `onClose` first: `setState` already guards against a
+            // second terminal transition, but without this every teardown
+            // that reached SSH install would still pay for a pointless
+            // extra `Task { await handleDataChannelClosed() }` hop back
+            // into this (already terminal) actor once `transport.close()`
+            // fires its own `onClose`.
+            transport.onClose = nil
             Task { await transport.close() }
             sshTransport = nil
             sshHandlerBox = nil
@@ -383,7 +505,39 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         peerConnection = nil
         iceCandidateTarget = nil
         pendingLocalCandidates.removeAll()
-        state = .closed
+    }
+
+    /// `RTCIceConnectionState.failed` means ICE has exhausted every
+    /// candidate pair and given up — the connection cannot recover on
+    /// its own, so this is terminal.
+    ///
+    /// `.disconnected` is deliberately NOT terminal: WebRTC enters it on
+    /// routine, often-transient network blips (a dropped packet burst, a
+    /// brief Wi-Fi/cellular handoff) and frequently recovers back to
+    /// `.connected` without any application intervention. Treating it as
+    /// terminal would evict/reconnect far more eagerly than the
+    /// connection quality actually warrants. A bounded grace timer that
+    /// escalates a stuck `.disconnected` to terminal is deferred rather
+    /// than added here: no consumer needs it yet (Task 2's coordinator
+    /// only needs eviction-on-terminal; Task 4's reconnect owns its own
+    /// retry timing), and a timer here would need its own
+    /// cancel-on-recovery bookkeeping that's easy to get racy against a
+    /// later `.connected`/`.failed` report. Revisit if Task 4 needs
+    /// bounded disconnected-time semantics.
+    private func handleIceStateChange(_ iceState: RTCIceConnectionState) {
+        switch iceState {
+        case .failed:
+            setState(.failed(reason: "ICE connection failed"))
+        default:
+            break
+        }
+    }
+
+    /// The data channel can close (peer hung up, transport reset)
+    /// without ICE ever reporting `.failed` first — this is the other
+    /// terminal signal `setState`'s dedup guard exists for.
+    private func handleDataChannelClosed() {
+        setState(.failed(reason: "data channel closed"))
     }
 
     /// Bound on how long the data channel may stay in `.connecting` after
@@ -427,7 +581,16 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         guard !sshInstallStarted else { return }
         sshInstallStarted = true
         guard let dc = dataChannel else { return }
-        let transport = SSHNIOTransport(dataChannel: dc)
+        // Passed to the initializer (not assigned after construction) so
+        // there is no window between `SSHNIOTransport.init` re-assigning
+        // `dc.delegate` to its own internal delegate — which is what
+        // stops `dataChannelDelegate.onClosed` (wired in `RemoteHostConnection.init`)
+        // from observing this DataChannel any further — and this closure
+        // being wired up to replace it as the way to learn the
+        // DataChannel died.
+        let transport = SSHNIOTransport(dataChannel: dc) { [weak self] in
+            Task { await self?.handleDataChannelClosed() }
+        }
         self.sshTransport = transport  // assign before start so close() can find it
         do {
             // Wrap the handler in an SSHHandlerBox inside the event-loop
@@ -450,7 +613,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             // close() resumed it; don't overwrite .failed/.closed with .connected.
             if let cont = openContinuation {
                 openContinuation = nil
-                self.state = .connected
+                setState(.connected)
                 cont.resume(returning: ())
             }
         } catch {
@@ -458,7 +621,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             self.sshTransport = nil
             if let cont = openContinuation {
                 openContinuation = nil
-                self.state = .failed(reason: "SSH handshake failed: \(error)")
+                setState(.failed(reason: "SSH handshake failed: \(error)"))
                 cont.resume(throwing: error)
             }
         }
@@ -472,7 +635,7 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         // re-enter `handleDataChannelOpen` after we've failed the
         // connection. Mirrors `handleIceGatheringComplete`'s cleanup.
         dataChannelDelegate.onOpen = nil
-        state = .failed(reason: "data channel did not open within \(Self.dataChannelOpenTimeout)")
+        setState(.failed(reason: "data channel did not open within \(Self.dataChannelOpenTimeout)"))
         continuation.resume(throwing: ConnectionError.dataChannelOpenTimedOut)
     }
 
@@ -546,7 +709,12 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate,
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {}
+    /// See `RemoteHostConnection.handleIceStateChange` for which ICE
+    /// states are treated as terminal.
+    nonisolated(unsafe) var onIceStateChange: (@Sendable (RTCIceConnectionState) -> Void)?
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
+        onIceStateChange?(newState)
+    }
     nonisolated(unsafe) var onIceGatheringComplete: (@Sendable () -> Void)?
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
         if newState == .complete {
@@ -582,10 +750,20 @@ private final class SSHHandlerBox: @unchecked Sendable {
 private final class DataChannelDelegate: NSObject, RTCDataChannelDelegate, @unchecked Sendable {
     nonisolated(unsafe) var onOpen: (@Sendable () -> Void)?
     nonisolated(unsafe) var onMessage: (@Sendable (Data) -> Void)?
+    /// Fires on `.closing` or `.closed` — see
+    /// `RemoteHostConnection.handleDataChannelClosed`.
+    nonisolated(unsafe) var onClosed: (@Sendable () -> Void)?
 
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
-        if dataChannel.readyState == .open {
+        switch dataChannel.readyState {
+        case .open:
             onOpen?()
+        case .closing, .closed:
+            onClosed?()
+        case .connecting:
+            break
+        @unknown default:
+            break
         }
     }
 
