@@ -77,6 +77,64 @@ struct SSHTerminalLoopbackTests {
         }
     }
 
+    /// Decision-gate spike for W2: pins whether swift-nio-ssh 0.13 supports
+    /// writing SSH extended data (`.stdErr`-typed `SSHChannelData`) from
+    /// BOTH halves of a session channel — server→client and client→server —
+    /// interleaved with normal `.channel` byte traffic, without corrupting
+    /// order, mixing streams, or dropping data. The next two W2 tasks
+    /// (control-envelope carrier) are gated on this result: PASS locks in
+    /// `.stdErr` as the carrier; FAIL forces a `terminal-control@graftty.dev`
+    /// subsystem-channel fallback. (No @spec ID — this pins an
+    /// infrastructure capability, not a product requirement.)
+    @Test(.timeLimit(.minutes(3)))
+    func extendedDataFlowsBothDirectionsOnSessionChannel() async throws {
+        let serverKey = Curve25519.Signing.PrivateKey()
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let peerStore = InMemoryTrustedPeerSet()
+        peerStore.add(fingerprint: Self.fingerprint(of: clientKey))
+
+        let clientToServer: [Frame] = [
+            Frame(type: .channel, bytes: Data("client-c1".utf8)),
+            Frame(type: .stdErr, bytes: Data("client-e1".utf8)),
+            Frame(type: .channel, bytes: Data("client-c2".utf8)),
+            Frame(type: .stdErr, bytes: Data("client-e2".utf8)),
+            Frame(type: .stdErr, bytes: Data("client-e3".utf8)),
+            Frame(type: .channel, bytes: Data("client-c3".utf8)),
+        ]
+        let serverToClient: [Frame] = [
+            Frame(type: .stdErr, bytes: Data("server-e1".utf8)),
+            Frame(type: .channel, bytes: Data("server-c1".utf8)),
+            Frame(type: .stdErr, bytes: Data("server-e2".utf8)),
+            Frame(type: .channel, bytes: Data("server-c2".utf8)),
+            Frame(type: .channel, bytes: Data("server-c3".utf8)),
+            Frame(type: .stdErr, bytes: Data("server-e3".utf8)),
+        ]
+
+        let (serverReceived, clientReceived) = try await runExtendedDataLoopback(
+            serverKey: serverKey,
+            trustedPeers: peerStore,
+            clientKey: clientKey,
+            expectedHostFingerprint: Self.fingerprint(of: serverKey),
+            clientToServerFrames: clientToServer,
+            serverToClientFrames: serverToClient
+        )
+
+        // Full received order matches full sent order for each direction —
+        // proves NIOSSH preserves FIFO ordering BETWEEN `.channel` and
+        // `.stdErr` writes on the same channel (not just within each
+        // stream considered separately).
+        #expect(serverReceived == clientToServer)
+        #expect(clientReceived == serverToClient)
+
+        // Per-stream isolation: filtering by type recovers exactly the
+        // sub-sequence sent on that type, intact and in order — `.channel`
+        // and `.stdErr` never mix, and nothing is silently dropped.
+        #expect(serverReceived.filter { $0.type == .stdErr } == clientToServer.filter { $0.type == .stdErr })
+        #expect(serverReceived.filter { $0.type == .channel } == clientToServer.filter { $0.type == .channel })
+        #expect(clientReceived.filter { $0.type == .stdErr } == serverToClient.filter { $0.type == .stdErr })
+        #expect(clientReceived.filter { $0.type == .channel } == serverToClient.filter { $0.type == .channel })
+    }
+
     // MARK: - Loopback driver
 
     private func runTerminalLoopback(
@@ -176,6 +234,143 @@ struct SSHTerminalLoopbackTests {
         return received
     }
 
+    /// Loopback driver for the extended-data decision-gate spike. Opens a
+    /// bare session channel on each side (no env/pty/shell — this spike
+    /// tests raw `SSHChannelData` carriage, not the terminal protocol) with
+    /// a `FrameRecordingHandler` that records every inbound frame (type +
+    /// bytes) in receipt order. Writes `clientToServerFrames` and
+    /// `serverToClientFrames` sequentially (awaiting each flush) so the
+    /// send-side order is well-defined, then returns what each side
+    /// actually received.
+    private func runExtendedDataLoopback(
+        serverKey: Curve25519.Signing.PrivateKey,
+        trustedPeers: InMemoryTrustedPeerSet,
+        clientKey: Curve25519.Signing.PrivateKey,
+        expectedHostFingerprint: RemoteIdentityFingerprint,
+        clientToServerFrames: [Frame],
+        serverToClientFrames: [Frame],
+        responseDeadline: Duration = .seconds(60)
+    ) async throws -> (server: [Frame], client: [Frame]) {
+        let offerer = LoopbackPeer(role: .offerer)
+        let answerer = LoopbackPeer(role: .answerer)
+        let offer = try await offerer.createOffer()
+        let answer = try await answerer.accept(offer: offer)
+        await offerer.bindIceCandidates(to: answerer)
+        await answerer.bindIceCandidates(to: offerer)
+        try await offerer.applyAnswer(answer)
+        let offererDC = try await offerer.openedDataChannel()
+        let answererDC = try await answerer.openedDataChannel()
+
+        let clientTransport = SSHNIOTransport(dataChannel: offererDC)
+        let serverTransport = SSHNIOTransport(dataChannel: answererDC)
+
+        let serverCollector = FrameCollector()
+        let clientCollector = FrameCollector()
+        let serverChildPromise = serverTransport.eventLoop.makePromise(of: Channel.self)
+
+        // Server: accept the inbound session channel and just record
+        // frames — no TerminalSessionHandler, no env/pty/shell gating.
+        try await serverTransport.eventLoop.submit {
+            let serverConfig = SSHServerConfiguration(
+                hostKeys: [NIOSSHPrivateKey(ed25519Key: serverKey)],
+                userAuthDelegate: TrustSetServerUserAuthDelegate(store: trustedPeers)
+            )
+            let sshHandler = NIOSSHHandler(
+                role: .server(serverConfig),
+                allocator: serverTransport.channel.allocator,
+                inboundChildChannelInitializer: { childChannel, channelType in
+                    guard case .session = channelType else {
+                        return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
+                    }
+                    return childChannel.eventLoop.makeCompletedFuture {
+                        try childChannel.pipeline.syncOperations.addHandler(
+                            FrameRecordingHandler(collector: serverCollector)
+                        )
+                        serverChildPromise.succeed(childChannel)
+                    }
+                }
+            )
+            try serverTransport.channel.pipeline.syncOperations.addHandler(sshHandler)
+        }.get()
+
+        let handlerPromise = clientTransport.eventLoop.makePromise(of: NIOSSHHandler.self)
+        try await clientTransport.eventLoop.submit {
+            let h = SSHClientSetup.makeHandler(
+                clientKey: clientKey,
+                expectedHostFingerprint: expectedHostFingerprint,
+                allocator: clientTransport.channel.allocator
+            )
+            try clientTransport.channel.pipeline.syncOperations.addHandler(h)
+            handlerPromise.succeed(h)
+        }.get()
+        let sshHandler = try await handlerPromise.futureResult.get()
+
+        try await serverTransport.start()
+        try await clientTransport.start()
+
+        // Client: open a bare session channel directly through the parent
+        // handler (bypassing TerminalSessionClient, which only ever writes
+        // `.channel`-typed data) and record inbound frames the same way.
+        let clientChildPromise = clientTransport.eventLoop.makePromise(of: Channel.self)
+        sshHandler.createChannel(clientChildPromise, channelType: .session) { child, _ in
+            child.eventLoop.makeCompletedFuture {
+                try child.pipeline.syncOperations.addHandler(
+                    FrameRecordingHandler(collector: clientCollector)
+                )
+            }
+        }
+        let clientChild = try await clientChildPromise.futureResult.get()
+        let serverChild = try await serverChildPromise.futureResult.get()
+
+        // Belt-and-suspenders wall-clock deadline (same pattern as the
+        // byte-round-trip driver above) — closing both children also
+        // finishes both collectors' streams so `collect` below can't hang.
+        let deadlineTask = Task {
+            try? await Task.sleep(for: responseDeadline)
+            clientChild.close(promise: nil)
+            serverChild.close(promise: nil)
+        }
+        defer { deadlineTask.cancel() }
+
+        async let clientSend: Void = Self.writeFrames(clientToServerFrames, to: clientChild)
+        async let serverSend: Void = Self.writeFrames(serverToClientFrames, to: serverChild)
+        _ = try await (clientSend, serverSend)
+
+        let serverReceived = await Self.collect(serverCollector.frames, count: clientToServerFrames.count)
+        let clientReceived = await Self.collect(clientCollector.frames, count: serverToClientFrames.count)
+
+        clientChild.close(promise: nil)
+        serverChild.close(promise: nil)
+        await clientTransport.close()
+        await serverTransport.close()
+        await offerer.close()
+        await answerer.close()
+
+        return (serverReceived, clientReceived)
+    }
+
+    private static func writeFrames(_ frames: [Frame], to channel: Channel) async throws {
+        for frame in frames {
+            let buffer = channel.allocator.buffer(bytes: frame.bytes)
+            let channelData = SSHChannelData(type: frame.type, data: .byteBuffer(buffer))
+            try await channel.writeAndFlush(channelData).get()
+        }
+    }
+
+    /// Drains up to `count` frames from `stream`, stopping early if the
+    /// stream finishes (channel closed) before `count` is reached — the
+    /// caller's `#expect` equality checks then fail with a clear
+    /// short-received-fewer-than-sent mismatch rather than hanging.
+    private static func collect(_ stream: AsyncStream<Frame>, count: Int) async -> [Frame] {
+        var results: [Frame] = []
+        var iterator = stream.makeAsyncIterator()
+        for _ in 0..<count {
+            guard let next = await iterator.next() else { break }
+            results.append(next)
+        }
+        return results
+    }
+
     private static func fingerprint(of key: Curve25519.Signing.PrivateKey) -> RemoteIdentityFingerprint {
         let pubkey = try! RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation)
         return RemoteIdentityFingerprint(of: pubkey)
@@ -202,6 +397,63 @@ private final class EchoStream: TerminalByteStream, @unchecked Sendable {
 
     func close() async {
         continuation.finish()
+    }
+}
+
+// MARK: - Extended-data spike helpers (SSHChannelData carrier decision gate)
+
+/// One recorded `SSHChannelData` frame: which stream it arrived on
+/// (`.channel` vs `.stdErr`) and its payload bytes.
+private struct Frame: Equatable, Sendable {
+    let type: SSHChannelData.DataType
+    let bytes: Data
+}
+
+/// Collects inbound `Frame`s in receipt order via an `AsyncStream`, so the
+/// spike test can assert both content and ordering without polling.
+private final class FrameCollector: @unchecked Sendable {
+    private let continuation: AsyncStream<Frame>.Continuation
+    let frames: AsyncStream<Frame>
+
+    init() {
+        var cont: AsyncStream<Frame>.Continuation!
+        self.frames = AsyncStream { c in cont = c }
+        self.continuation = cont
+    }
+
+    func record(_ frame: Frame) {
+        continuation.yield(frame)
+    }
+
+    func finish() {
+        continuation.finish()
+    }
+}
+
+/// Records every inbound `SSHChannelData` frame on a session channel,
+/// tagged by data type, without interpreting or echoing it. Used only by
+/// `extendedDataFlowsBothDirectionsOnSessionChannel` to observe whether
+/// `.channel` and `.stdErr` writes arrive intact, in order, and unmixed.
+private final class FrameRecordingHandler: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = SSHChannelData
+
+    private let collector: FrameCollector
+
+    init(collector: FrameCollector) {
+        self.collector = collector
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let channelData = unwrapInboundIn(data)
+        guard case let .byteBuffer(buf) = channelData.data else { return }
+        var view = buf
+        guard let bytes = view.readBytes(length: view.readableBytes) else { return }
+        collector.record(Frame(type: channelData.type, bytes: Data(bytes)))
+    }
+
+    func channelInactive(context: ChannelHandlerContext) {
+        collector.finish()
+        context.fireChannelInactive()
     }
 }
 
