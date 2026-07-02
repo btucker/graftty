@@ -191,6 +191,112 @@ struct RemoteConnectionCoordinatorTests {
         #expect(counter.count == 2)
     }
 
+    // MARK: - isPaired(_:) — same source of truth as connection(for:)'s gate (Task-3 finding 3)
+
+    @Test(.timeLimit(.minutes(1)))
+    func isPairedFalseForHostWithNoRemoteDeviceID() async throws {
+        let dir = try Self.makeTempDirectory()
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: { _, _ in throw Self.unreachable })
+        )
+        let host = Host(label: "Unpaired", baseURL: URL(string: "https://host.local:9999")!, remoteDeviceID: nil)
+
+        #expect(!coordinator.isPaired(host))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func isPairedFalseForRemoteDeviceIDWithNoPinnedEntry() async throws {
+        let dir = try Self.makeTempDirectory()
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: { _, _ in throw Self.unreachable })
+        )
+        // remoteDeviceID set, but never added to PinnedHostStore — the
+        // same combination `hostWithRemoteDeviceIDButNoPinnedEntryReturnsNilWithoutNegotiating`
+        // exercises against `connection(for:)`.
+        let host = Host(
+            label: "Never paired",
+            baseURL: URL(string: "https://host.local:9999")!,
+            remoteDeviceID: .generate()
+        )
+
+        #expect(!coordinator.isPaired(host))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func isPairedTrueForHostWithMatchingPinnedEntry() async throws {
+        let dir = try Self.makeTempDirectory()
+        let host = try Self.makePairedHost(directory: dir)
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: { _, _ in throw Self.unreachable })
+        )
+
+        #expect(coordinator.isPaired(host))
+    }
+
+    // MARK: - invalidate(host:) mid-negotiation (Task 4: scenePhase-flapping interleaving)
+
+    /// Reproduces background→foreground→background flapping fast enough
+    /// that `invalidate(host:)` lands WHILE a negotiation for the same
+    /// host is still in flight: the negotiation is parked at `gate` (its
+    /// `signaling.exchange` call), `invalidate` fires before the gate is
+    /// released, and the chosen "let it finish, then evict" behavior
+    /// means the negotiation's own result — even though it's a
+    /// successful one — must never be registered as a live connection.
+    @Test(.timeLimit(.minutes(2)))
+    func invalidateDuringInFlightNegotiationEvictsOnCompletionRatherThanRegistering() async throws {
+        let dir = try Self.makeTempDirectory()
+        let host = try Self.makePairedHost(directory: dir)
+        let counter = CallCounter()
+        let box = ConnectionBox()
+        let gate = Gate()
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: { request, body in
+                await gate.wait()
+                return try await Self.successTransport(box: box)(request, body)
+            }),
+            connectionFactory: { key, fp in
+                counter.increment()
+                let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
+                box.set(connection)
+                return connection
+            }
+        )
+
+        async let negotiated = coordinator.connection(for: host)
+
+        // Wait until the negotiation has actually reached (and parked
+        // at) the gate before invalidating — proves `invalidate` lands
+        // WHILE the negotiation is genuinely in flight, not after it
+        // already completed.
+        try await Self.pollUntil(timeout: .seconds(10)) { await gate.enteredCount >= 1 }
+        await coordinator.invalidate(host: host)
+        await gate.open()
+
+        let result = await negotiated
+        #expect(result == nil, "a connection invalidated mid-negotiation must never be handed back to the caller")
+        #expect(counter.count == 1, "exactly one negotiation attempt — invalidate must not have started a second one")
+
+        // No zombie registration: the (successfully negotiated, then
+        // evicted) connection must be closed and absent from the
+        // registry.
+        let firstConnection = try #require(box.get(), "the negotiation reached the connectionFactory before invalidate fired")
+        #expect(await firstConnection.state == .closed)
+
+        // The NEXT call must negotiate fresh (not silently return the
+        // evicted connection, and not be permanently poisoned by the
+        // mid-flight invalidation) — proving `invalidatedWhileInFlight`
+        // is a one-shot flag cleared once the in-flight negotiation it
+        // applied to resolves.
+        let again = await coordinator.connection(for: host)
+        #expect(counter.count == 2, "a fresh call after invalidate-mid-flight must negotiate again, not reuse the evicted connection")
+        let secondConnection = try #require(again, "a fresh negotiation with no further invalidation should succeed normally")
+        #expect(secondConnection !== firstConnection)
+    }
+
     // MARK: - Stale eviction guard
 
     @Test(.timeLimit(.minutes(1)))

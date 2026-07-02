@@ -1546,7 +1546,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-5.1** When the application enters the background, the application shall close all `terminal` channels, close the `panes_state` channel, close the DataChannel, and tear down the `RemoteHostConnection`.
 
-**IPAD-5.2** When the application foregrounds and the biometric gate is satisfied, the application shall rebuild the `RemoteHostConnection` from signaling onward, completing a fresh Noise handshake before opening any channel.
+**IPAD-5.2** When the application foregrounds and the biometric gate is satisfied, the application shall rebuild the RemoteHostConnection from signaling onward, completing a fresh SSH userauth before opening any channel.
 
 **IPAD-5.3** When the application foregrounds, the application shall re-open the `panes_state` channel before re-opening any `terminal` channel, so the splittree shape is current before deciding which leaves to attach.
 

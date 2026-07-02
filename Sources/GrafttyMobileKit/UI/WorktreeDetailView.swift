@@ -83,6 +83,12 @@ public struct WorktreeDetailView: View {
     private func driveLifecycle() async {
         if LiveSessionReadiness.shouldTearDown(scene: scenePhase) {
             previews?.stopAll()
+            // IPAD-5.1: tear down the negotiated `RemoteHostConnection`
+            // on background. The pool's own clients already re-resolve a
+            // fresh connection per dial (below) — this just makes the
+            // teardown immediate rather than waiting for the next preview
+            // reconnect attempt to discover it's dead.
+            await coordinator?.invalidate(host: host)
             return
         }
         guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
@@ -94,17 +100,22 @@ public struct WorktreeDetailView: View {
             return
         }
         if previews == nil {
-            // Resolved once per pool lifetime — every preview in this
-            // worktree shares the same host, so one negotiated connection
-            // (or one `nil`, if unpaired/negotiation failed) covers the
-            // whole pool.
-            let remoteHost = await coordinator?.connection(for: host)
-            previews = PanePreviewClientPool { sessionName in
+            // The factory below re-resolves `coordinator.connection(for:)`
+            // on EVERY dial (not once at pool-construction time) — the
+            // same per-dial provider `SessionClient.live` uses for the
+            // fullscreen path. That's what keeps a background→foreground
+            // cycle from reusing a stale, already-invalidated connection:
+            // `stopAll()` above clears every preview client, and when
+            // `update(layout:)` rebuilds them below, each fresh
+            // `SessionClient` asks the coordinator fresh rather than
+            // inheriting a connection captured back when the pool itself
+            // was first built.
+            previews = PanePreviewClientPool { [coordinator, host] sessionName in
                 SessionClient.live(
                     baseURL: host.baseURL,
                     sessionName: sessionName,
                     role: .preview,
-                    remoteHost: remoteHost
+                    remoteConnectionProvider: makeRemoteConnectionProvider(coordinator: coordinator, host: host)
                 )
             }
         }

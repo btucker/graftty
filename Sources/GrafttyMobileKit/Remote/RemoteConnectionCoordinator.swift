@@ -46,6 +46,29 @@ public final class RemoteConnectionCoordinator: ObservableObject {
     /// `HostError.busy` guard on the host side).
     private var inFlightNegotiations: [UUID: Task<RemoteHostConnection?, Never>] = [:]
 
+    /// Hosts whose `invalidate(host:)` call landed while a negotiation
+    /// for that host was still in flight — i.e. scenePhase flapping
+    /// (background → foreground → background) fast enough that a
+    /// foreground rebuild's negotiation hadn't finished before the next
+    /// background teardown fired. `negotiate(host:pinnedHost:)` consults
+    /// this set in the same uninterrupted (no-`await`) stretch where it
+    /// would otherwise register the freshly negotiated connection, so
+    /// EVERY awaiter of that negotiation (the original caller and any
+    /// concurrent dedup'd callers via `inFlightNegotiations`) observes
+    /// the same `nil` outcome — closing the connection instead of
+    /// resurrecting one the app already asked to tear down.
+    ///
+    /// Chosen behavior: let the in-flight negotiation finish, then evict
+    /// (rather than cancelling its `Task`). `negotiate`'s own awaits —
+    /// `signaling.exchange`, `connection.createOffer`/`applyAnswer` —
+    /// have no cooperative-cancellation checkpoints of their own, so an
+    /// actual `Task.cancel()` would either no-op or require threading
+    /// `Task.isCancelled` checks through WebRTC/SSH setup code that
+    /// doesn't have them today. Letting it finish and closing the result
+    /// is simple, correct, and doesn't leave a half-negotiated
+    /// `RTCPeerConnection` in an undefined state.
+    private var invalidatedWhileInFlight: Set<UUID> = []
+
     private static let logger = Logger(
         subsystem: "com.quotably.graftty",
         category: "remote-connection-coordinator"
@@ -83,12 +106,7 @@ public final class RemoteConnectionCoordinator: ObservableObject {
     /// fall back to `/ws` in both cases and cannot tell them apart,
     /// which is intentional: neither case should ever crash the caller.
     public func connection(for host: Host) async -> RemoteHostConnection? {
-        guard
-            let remoteDeviceID = host.remoteDeviceID,
-            let pinnedHost = (try? pinnedHostStore.get(id: remoteDeviceID)) ?? nil
-        else {
-            return nil
-        }
+        guard let pinnedHost = pinnedHost(for: host) else { return nil }
 
         if let live = liveConnections[host.id] {
             return live
@@ -114,9 +132,34 @@ public final class RemoteConnectionCoordinator: ObservableObject {
     /// Evicts and closes the live connection for `host`, if any. Used by
     /// background teardown and reconnect paths that need to force a
     /// fresh negotiation on next use.
+    ///
+    /// If a negotiation for `host` is still in flight (IPAD-5.1 fired
+    /// mid-`IPAD-5.2` rebuild), there is no live connection to remove
+    /// yet — instead this marks the host in `invalidatedWhileInFlight`
+    /// so `negotiate(host:pinnedHost:)` self-evicts the moment that
+    /// negotiation finishes, rather than silently registering a
+    /// connection the app already asked to tear down.
     public func invalidate(host: Host) async {
+        if inFlightNegotiations[host.id] != nil {
+            invalidatedWhileInFlight.insert(host.id)
+        }
         guard let connection = liveConnections.removeValue(forKey: host.id) else { return }
         await connection.close()
+    }
+
+    /// Single source of truth for "is `host` paired" — the same
+    /// two-part check `connection(for:)` performs before ever attempting
+    /// to negotiate (a non-nil `remoteDeviceID` AND a matching
+    /// `PinnedHostStore` entry). `SingleSessionView.remoteFallbackSeverity`
+    /// reads this so its `/ws`-fallback log-level gate can't drift from
+    /// the coordinator's actual pairing gate.
+    public func isPaired(_ host: Host) -> Bool {
+        pinnedHost(for: host) != nil
+    }
+
+    private func pinnedHost(for host: Host) -> PinnedHost? {
+        guard let remoteDeviceID = host.remoteDeviceID else { return nil }
+        return (try? pinnedHostStore.get(id: remoteDeviceID)) ?? nil
     }
 
     /// Full negotiation body: build the connection, wire the terminal-state
@@ -126,6 +169,9 @@ public final class RemoteConnectionCoordinator: ObservableObject {
     /// half-built connection and returns `nil` without touching the
     /// registry, so the host is free to retry on the very next call.
     private func negotiate(host: Host, pinnedHost: PinnedHost) async -> RemoteHostConnection? {
+        // One-shot per attempt: cleared here regardless of outcome so a
+        // FUTURE negotiation for this host starts with a clean flag.
+        defer { invalidatedWhileInFlight.remove(host.id) }
         guard let clientKey = try? identityStore.loadOrGenerateAndPersist() else {
             Self.logger.warning("no client identity available; cannot negotiate with host \(host.id, privacy: .public)")
             return nil
@@ -154,6 +200,14 @@ public final class RemoteConnectionCoordinator: ObservableObject {
             // like any other non-2xx response — logged and retried on the
             // next call, never cached as a permanent failure.
             Self.logger.warning("negotiation with host \(host.id, privacy: .public) failed: \(String(describing: error), privacy: .public)")
+            await connection.close()
+            return nil
+        }
+
+        // No `await` between this check and registration below — see
+        // `invalidatedWhileInFlight`'s doc comment for why that makes
+        // this check race-free against a concurrent `invalidate(host:)`.
+        guard !invalidatedWhileInFlight.contains(host.id) else {
             await connection.close()
             return nil
         }

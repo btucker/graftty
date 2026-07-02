@@ -425,6 +425,13 @@ struct SingleSessionView: View {
             client?.stop()
             client = nil
             if connection != .ended { connection = .suspended }
+            // IPAD-5.1: tear down the negotiated `RemoteHostConnection`
+            // on background, not just this pane's terminal channel — a
+            // stale WebRTC/SSH connection left alive behind the lock
+            // overlay serves no one, and IPAD-5.2's foreground rebuild
+            // re-negotiates it from signaling onward via `verifyThenOpen`
+            // → `openWebSocket` → the provider Task 4 wires in below.
+            await coordinator?.invalidate(host: step.host)
             return
         }
         guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
@@ -460,11 +467,13 @@ struct SingleSessionView: View {
 
     /// How loudly to log an `/ws` fallback (`openWebSocket` found no
     /// `RemoteHostConnection`). `.loud` only when there WAS a coordinator
-    /// to ask AND the host is paired (`remoteDeviceID != nil`) — that
-    /// combination means negotiation itself failed, a regression from the
-    /// expected path. Every other combination (no coordinator, or a
-    /// coordinator that correctly fast-nil'd an unpaired host) is routine
-    /// `/ws` usage and stays quiet.
+    /// to ask AND the host is paired (per `RemoteConnectionCoordinator
+    /// .isPaired(_:)` — the SAME two-part gate `connection(for:)` checks:
+    /// a non-nil `remoteDeviceID` AND a matching `PinnedHostStore` entry,
+    /// not just the former) — that combination means negotiation itself
+    /// failed, a regression from the expected path. Every other
+    /// combination (no coordinator, or a coordinator that correctly
+    /// fast-nil'd an unpaired host) is routine `/ws` usage and stays quiet.
     enum RemoteFallbackSeverity: Equatable {
         case quiet
         case loud
@@ -479,11 +488,20 @@ struct SingleSessionView: View {
         // SessionClient.live(), so guard before the dial — otherwise we
         // burn a TCP/TLS handshake on a connection we'd immediately abort.
         if Task.isCancelled || connection == .ended { return }
+        // Resolved once here purely to classify THIS dial's fallback-log
+        // severity (below) and to fail fast on cancellation. The
+        // `remoteConnectionProvider` handed to `SessionClient.live`
+        // re-resolves independently on every dial `SessionClient`'s own
+        // backoff loop performs — this first lookup doesn't negotiate
+        // twice: `RemoteConnectionCoordinator.connection(for:)` caches
+        // a successful negotiation in `liveConnections`, so the
+        // provider's first invocation (inside `start()`) just returns
+        // the same cached value.
         let remoteHost = await coordinator?.connection(for: step.host)
         if remoteHost == nil {
             switch Self.remoteFallbackSeverity(
                 hasCoordinator: coordinator != nil,
-                hostIsPaired: step.host.remoteDeviceID != nil
+                hostIsPaired: coordinator?.isPaired(step.host) ?? false
             ) {
             case .loud:
                 Self.remoteWiringLogger.warning(
@@ -498,7 +516,13 @@ struct SingleSessionView: View {
         let new = SessionClient.live(
             baseURL: step.host.baseURL,
             sessionName: step.sessionName,
-            remoteHost: remoteHost
+            // REMOTE-2.1 (substance; the spec ID itself lands in W4): captures the
+            // COORDINATOR + host, not the `remoteHost` connection resolved
+            // above — every dial `SessionClient`'s backoff loop performs
+            // asks the coordinator fresh, so a degraded/evicted connection
+            // heals via a real re-negotiation (fresh WebRTC + fresh SSH
+            // userauth) instead of redialing the same dead actor forever.
+            remoteConnectionProvider: makeRemoteConnectionProvider(coordinator: coordinator, host: step.host)
         )
         if Task.isCancelled || connection == .ended {
             // Re-backgrounded (or ended) between WS construction and

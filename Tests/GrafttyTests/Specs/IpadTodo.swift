@@ -99,11 +99,6 @@ struct IpadTodo {
     func ipad_5_1() async throws { }
 
     @Test("""
-@spec IPAD-5.2: When the application foregrounds and the biometric gate is satisfied, the application shall rebuild the `RemoteHostConnection` from signaling onward, completing a fresh Noise handshake before opening any channel.
-""", .disabled("not yet implemented"))
-    func ipad_5_2() async throws { }
-
-    @Test("""
 @spec IPAD-5.3: When the application foregrounds, the application shall re-open the `panes_state` channel before re-opening any `terminal` channel, so the splittree shape is current before deciding which leaves to attach.
 """, .disabled("not yet implemented"))
     func ipad_5_3() async throws { }

@@ -37,6 +37,30 @@ struct RootViewSizeClassTests {
         #expect(appState.selectedHostId != nil)
     }
 
+    /// W3 Task 4 (Task-3 finding 4, LOW): this test exercises the SAME
+    /// construction call sites `RootView.body` itself uses
+    /// (`IPadRootLayout(... coordinator: coordinator)` and
+    /// `SingleSessionView(..., coordinator: coordinator)`) but never
+    /// actually renders `RootView.body` — `ipad_7_1_compactRendersExistingFlow`
+    /// above does call `.body` but only for the `.compact` branch, so
+    /// there's no single test that walks `.body` and captures the
+    /// coordinator instance handed to `IPadRootLayout` on the `.regular`
+    /// branch specifically.
+    ///
+    /// Strengthening this to actually assert on `RootView.body`'s output
+    /// would need either (a) reading `@Environment(\.horizontalSizeClass)`
+    /// from a real `UIHostingController` hosted in a UI-testable
+    /// environment (there's no `ViewInspector`-style dependency in this
+    /// package, and adding one is out of scope for this task), or (b)
+    /// reflecting over the opaque `some View` tree `body` returns, which
+    /// SwiftUI does not expose a stable, non-fragile API for. Both are
+    /// disproportionate to what this test is actually protecting against
+    /// (a copy-paste construction site handing `IPadRootLayout` or
+    /// `SingleSessionView` a DIFFERENT coordinator instance than the
+    /// other) — the construction-level assertion below already fails
+    /// loudly if either call site's argument changes from `coordinator`
+    /// to e.g. `RemoteConnectionCoordinator()`, which is the actual
+    /// regression this guards against.
     @Test("""
 W3 Task 3: `RootView` owns a single `RemoteConnectionCoordinator` and hands the SAME instance to both size classes — `IPadRootLayout` (regular width) and `SingleSessionView` (compact width) — so a host negotiated from either surface is cached for the other.
 """)

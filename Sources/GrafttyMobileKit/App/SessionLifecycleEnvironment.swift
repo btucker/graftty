@@ -38,30 +38,77 @@ extension SessionClient {
     /// `WorktreeDetailView` (preview pool) need the same triplet — URL
     /// composition + WS construction + SessionClient binding.
     ///
-    /// When `remoteHost` is non-nil (iPad paired-host path), the factory
-    /// opens an SSH terminal session over WebRTC via
-    /// `RemoteHostConnection.openTerminalSession(sessionName:)`. When nil
-    /// (iPhone path, or iPad before signaling lands), the factory falls
-    /// back to a plain `URLSessionWebSocketClient` pointed at `/ws`.
+    /// `remoteConnectionProvider`, when non-nil, is invoked FRESH on
+    /// EVERY dial — not just the first. `SessionClient`'s internal
+    /// backoff loop (`spawnOpenTask`) re-invokes `webSocketFactory` on
+    /// every reconnect attempt; before this, callers resolved
+    /// `coordinator.connection(for:)` once and baked the resulting
+    /// (possibly-since-invalidated) `RemoteHostConnection` into the
+    /// factory closure, so a dead connection was redialed forever —
+    /// only an external re-dial (a scenePhase flip) could recover.
+    /// Consulting the provider per-dial means a degraded connection
+    /// heals transparently: the coordinator negotiates a fresh
+    /// `RemoteHostConnection` (fresh WebRTC + fresh SSH userauth) the
+    /// next time the provider is asked. When the provider returns nil
+    /// (no coordinator, host unpaired, or negotiation failed) the
+    /// factory falls back to a plain `URLSessionWebSocketClient`
+    /// pointed at `/ws`.
+    ///
+    /// `clock` / `backoffSchedule` default to `SessionClient`'s own
+    /// production defaults; tests override them (e.g. `VirtualClock` +
+    /// a short schedule) to drive the backoff loop deterministically
+    /// while still exercising this factory's real
+    /// `remoteConnectionProvider` re-consultation logic instead of a
+    /// hand-rolled substitute.
     static func live(
         baseURL: URL,
         sessionName: String,
         role: Role = .fullscreen,
-        remoteHost: RemoteHostConnection? = nil
+        remoteConnectionProvider: (@Sendable () async -> RemoteHostConnection?)? = nil,
+        clock: any Clock = SystemClock(),
+        backoffSchedule: [TimeInterval] = HostController.backoffSchedule(attempts: 6)
     ) -> SessionClient {
         SessionClient(
             sessionName: sessionName,
             webSocketFactory: {
-                if let remoteHost {
+                if let remoteHost = await remoteConnectionProvider?() {
                     return try await remoteHost.openTerminalSession(sessionName: sessionName)
                 }
                 let wsURL = RootView.makeWebSocketURL(base: baseURL, session: sessionName)
                 return URLSessionWebSocketClient(url: wsURL)
             },
+            clock: clock,
+            backoffSchedule: backoffSchedule,
             idleThreshold: role == .preview ? previewIdleThreshold : fullscreenIdleThreshold,
             role: role
         )
     }
+}
+
+/// Builds the `remoteConnectionProvider` closure `SessionClient.live`
+/// consults on every dial: `nil` when there's no coordinator to ask
+/// (matches `SessionClient.live`'s own `/ws`-fallback default),
+/// otherwise a closure that asks `coordinator.connection(for: host)`
+/// FRESH every time it's invoked. Shared by `SingleSessionView`
+/// (fullscreen) and `WorktreeDetailView`'s preview pool so both surfaces
+/// get the same per-dial re-negotiation behavior from one place.
+///
+/// Written as a free function with an explicit `if let` rather than
+/// `coordinator.map { ... }` returning the closure: `Optional.map`'s
+/// generic return type isn't recognized as `@Sendable` at the call site,
+/// which trips "converting non-Sendable function value" under the iOS
+/// build's stricter concurrency checking (this file's `#if
+/// canImport(UIKit)` gate means that mismatch is invisible to a bare
+/// `swift build`/`swift test` on macOS, where UIKit isn't importable and
+/// this whole file compiles to nothing — the iOS `xcodebuild` target is
+/// what actually type-checks it).
+@MainActor
+func makeRemoteConnectionProvider(
+    coordinator: RemoteConnectionCoordinator?,
+    host: Host
+) -> (@Sendable () async -> RemoteHostConnection?)? {
+    guard let coordinator else { return nil }
+    return { [weak coordinator] in await coordinator?.connection(for: host) }
 }
 
 // MARK: - PaneEnvironment
