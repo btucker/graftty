@@ -411,7 +411,8 @@ struct GrafttyApp: App {
                 },
                 paneControlMutator: { _ in
                     .error(code: "starting", message: "host not yet wired (startup did not run)")
-                }
+                },
+                displayOwnershipStore: appServices.displayOwnershipStore
             )
         } catch {
             // Identity-store I/O failure leaves hostAgent nil; the signaling

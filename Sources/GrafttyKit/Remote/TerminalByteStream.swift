@@ -36,3 +36,18 @@ public extension TerminalByteStream {
 /// Factory the channel handler uses to obtain a stream for a given
 /// session name.
 public typealias TerminalByteStreamFactory = @Sendable (String) async throws -> TerminalByteStream
+
+/// Optional capability a `TerminalByteStream` conformer can add: reporting
+/// live PTY-size changes. Not folded into `TerminalByteStream` itself
+/// because most conformers (test fakes, non-PTY-backed streams) have no
+/// notion of size events and would otherwise all need to carry a dead
+/// stored property. Consumers that care (e.g. `TerminalSessionHandler`,
+/// REMOTE-9.4) probe for conformance with `as?` instead of requiring it
+/// on every `TerminalByteStream`.
+public protocol TerminalSizeReporting: AnyObject {
+    /// Invoked whenever the underlying PTY's size changes (and, for
+    /// `ZmxAttachEngine`, once more on initial attach). May be called
+    /// off the caller's thread — implementations document their own
+    /// threading contract. Setting to `nil` removes any installed callback.
+    var onPTYSize: ((_ cols: UInt16, _ rows: UInt16) -> Void)? { get set }
+}

@@ -1,7 +1,7 @@
 import Foundation
 import GrafttyProtocol
 
-internal final class DisplayOwnershipBroadcaster: @unchecked Sendable {
+public final class DisplayOwnershipBroadcaster: @unchecked Sendable {
     internal final class Registration: @unchecked Sendable {
         private let onCancel: () -> Void
         private let lock = NSLock()
@@ -45,7 +45,7 @@ internal final class DisplayOwnershipBroadcaster: @unchecked Sendable {
     /// shared store directly (via `HostManagedZmxOwnership`) and never pass
     /// through this bridge's own broadcast calls, so without this subscription
     /// web/iOS followers never learn the Mac took or released the display.
-    init(store: SessionDisplayOwnershipStore? = nil) {
+    public init(store: SessionDisplayOwnershipStore? = nil) {
         if let store {
             storeObserverToken = store.addObserver { [weak self] snapshot in
                 self?.broadcast(snapshot)
@@ -96,7 +96,11 @@ internal final class DisplayOwnershipBroadcaster: @unchecked Sendable {
 /// via the `sendText:resize:write:` closures supplied at init. Today the
 /// only consumer is the `/ws` bridge (`WebSocketBridgeHandler`); the type
 /// is transport-neutral so a future transport (e.g. SSH) can reuse it.
-internal final class TerminalAttachCoordinator: @unchecked Sendable {
+///
+/// Made `public` (REMOTE-9) so `GrafttyHostAgent`'s SSH terminal path
+/// (`TerminalSessionHandler`) can construct and drive it directly — the
+/// second consumer this doc comment anticipated.
+public final class TerminalAttachCoordinator: @unchecked Sendable {
     private let sessionName: String
     private let clientID: DisplayClientID
     private let defaultKind: DisplayClientKind
@@ -114,7 +118,7 @@ internal final class TerminalAttachCoordinator: @unchecked Sendable {
     private var detached = false
     private var lastAcceptedOwnerGrid: DisplayGrid?
 
-    init(
+    public init(
         sessionName: String,
         clientID: DisplayClientID,
         defaultKind: DisplayClientKind,
@@ -141,7 +145,7 @@ internal final class TerminalAttachCoordinator: @unchecked Sendable {
         detach()
     }
 
-    func handleControl(_ envelope: WebControlEnvelope) {
+    public func handleControl(_ envelope: WebControlEnvelope) {
         switch envelope {
         case let .hello(protocolClientID, _, role, visible, cols, rows):
             guard bindOrVerify(protocolClientID: protocolClientID) else { return }
@@ -203,7 +207,7 @@ internal final class TerminalAttachCoordinator: @unchecked Sendable {
         }
     }
 
-    func handleBinary(_ data: Data) {
+    public func handleBinary(_ data: Data) {
         if isCurrentOwner() {
             write(data)
             return
@@ -213,7 +217,7 @@ internal final class TerminalAttachCoordinator: @unchecked Sendable {
         broadcaster.broadcast(snapshot)
     }
 
-    func handlePTYSize(cols: UInt16, rows: UInt16) {
+    public func handlePTYSize(cols: UInt16, rows: UInt16) {
         guard let grid = try? DisplayGrid(cols: cols, rows: rows) else { return }
         sendText(WebControlEnvelope.grid(cols: cols, rows: rows).encoded())
         let snapshot = ownershipStore.snapshot(sessionName: sessionName, fallbackGrid: grid)
@@ -224,7 +228,7 @@ internal final class TerminalAttachCoordinator: @unchecked Sendable {
         }
     }
 
-    func detach() {
+    public func detach() {
         lock.lock()
         if detached {
             lock.unlock()

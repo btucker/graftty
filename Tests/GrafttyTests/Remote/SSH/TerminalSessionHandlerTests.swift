@@ -1,6 +1,7 @@
 import Foundation
 import GrafttyHostAgent
 import GrafttyKit
+import GrafttyProtocol
 import NIOConcurrencyHelpers
 import NIOCore
 import NIOEmbedded
@@ -24,7 +25,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
 
     func testShellCallsStreamFactoryWithEnvSessionName() async throws {
         let factory = RecordingStreamFactory(returning: .success(EchoStream()))
-        let handler = TerminalSessionHandler(streamFactory: factory.callable)
+        let handler = Self.makeHandler(streamFactory: factory.callable)
         let channel = try await Self.channel(handler)
 
         try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
@@ -40,7 +41,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
 
     func testShellWithoutEnvSessionNameRejected() async throws {
         let factory = RecordingStreamFactory(returning: .success(EchoStream()))
-        let handler = TerminalSessionHandler(streamFactory: factory.callable)
+        let handler = Self.makeHandler(streamFactory: factory.callable)
         let channel = try await Self.channel(handler)
 
         try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
@@ -58,7 +59,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
         let stream = EchoStream()
         let factory = RecordingStreamFactory(returning: .success(stream))
         let capture = OutboundEventCapture()
-        let handler = TerminalSessionHandler(streamFactory: factory.callable)
+        let handler = Self.makeHandler(streamFactory: factory.callable)
         let channel = try await Self.channel(capture, handler)
 
         try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
@@ -92,7 +93,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
         let stream = RecordingResizeStream()
         let factory = RecordingStreamFactory(returning: .success(stream))
         let capture = OutboundEventCapture()
-        let handler = TerminalSessionHandler(streamFactory: factory.callable)
+        let handler = Self.makeHandler(streamFactory: factory.callable)
         let channel = try await Self.channel(capture, handler)
 
         try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
@@ -124,7 +125,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
         let stream = ClosableStream()
         let factory = RecordingStreamFactory(returning: .success(stream))
         let capture = OutboundEventCapture()
-        let handler = TerminalSessionHandler(streamFactory: factory.callable)
+        let handler = Self.makeHandler(streamFactory: factory.callable)
         let channel = try await Self.channel(capture, handler)
 
         try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
@@ -153,7 +154,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(100))
             return stream
         }
-        let handler = TerminalSessionHandler(streamFactory: delayedFactory)
+        let handler = Self.makeHandler(streamFactory: delayedFactory)
         let channel = try await Self.channel(handler)
 
         try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
@@ -176,7 +177,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
         // can record user outbound events (triggerUserOutboundEvent goes
         // head-ward through the pipeline).
         let capture = OutboundEventCapture()
-        let handler = TerminalSessionHandler(streamFactory: factory.callable)
+        let handler = Self.makeHandler(streamFactory: factory.callable)
         let channel = try await Self.channel(capture, handler)
 
         try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "missing")
@@ -187,6 +188,410 @@ final class TerminalSessionHandlerTests: XCTestCase {
         try await waitUntil { capture.sawExitStatus1 }
 
         XCTAssertTrue(capture.sawExitStatus1, "expected exit-status: 1 after factory throw")
+    }
+
+    // MARK: - REMOTE-9: display ownership on SSH terminals
+
+    /// @spec REMOTE-9.1: When an SSH terminal session attaches, the host shall register the client in the display-ownership store with kind ios and the authenticated device identity.
+    func testAttachRegistersClientWithIOSKindAndAuthenticatedDeviceIdentity() async throws {
+        let stream = EchoStream()
+        let factory = RecordingStreamFactory(returning: .success(stream))
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = DisplayOwnershipBroadcaster()
+        let capture = OutboundEventCapture()
+        let handler = Self.makeHandler(
+            streamFactory: factory.callable,
+            ownershipStore: store,
+            ownershipBroadcaster: broadcaster,
+            deviceID: RemoteDeviceID(value: "device-42")
+        )
+        let channel = try await Self.channel(capture, handler)
+
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { capture.successCount >= 3 }
+
+        // The protocol-reported `kind: .web` must lose to the transport's
+        // own `defaultKind: .ios` — mirrors the web bridge's
+        // `requestDefaultKindWinsOverSpoofedFrameKind` guarantee.
+        try await sendControlEnvelope(channel, .hello(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .web,
+            role: .interactive,
+            visible: true,
+            cols: 80,
+            rows: 24
+        ))
+        try await sendControlEnvelope(channel, .takeControl(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .web,
+            cols: 80,
+            rows: 24
+        ))
+
+        try await waitUntil { store.snapshot(sessionName: "alpha").ownerClientID != nil }
+
+        let snapshot = store.snapshot(sessionName: "alpha")
+        XCTAssertEqual(snapshot.ownerKind, .ios)
+        let ownerID = try XCTUnwrap(snapshot.ownerClientID?.rawValue)
+        XCTAssertTrue(
+            ownerID.hasPrefix("ssh-device-42-"),
+            "expected clientID to embed the authenticated device identity, got \(ownerID)"
+        )
+
+        _ = try? await channel.finish()
+    }
+
+    /// @spec REMOTE-9.2: While an SSH terminal client is not the display owner, the host shall discard its terminal input bytes and rebroadcast the current ownership snapshot.
+    func testNonOwnerBytesAreDiscardedAndSnapshotIsRebroadcast() async throws {
+        let stream = EchoStream()
+        let factory = RecordingStreamFactory(returning: .success(stream))
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = DisplayOwnershipBroadcaster()
+        let capture = OutboundEventCapture()
+        let handler = Self.makeHandler(
+            streamFactory: factory.callable,
+            ownershipStore: store,
+            ownershipBroadcaster: broadcaster,
+            deviceID: RemoteDeviceID(value: "device-1")
+        )
+        let channel = try await Self.channel(capture, handler)
+
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { capture.successCount >= 3 }
+
+        try await sendControlEnvelope(channel, .hello(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            role: .interactive,
+            visible: true,
+            cols: 80,
+            rows: 24
+        ))
+        // Drain the ownership envelope produced by the attach itself
+        // before exercising the byte-send-while-not-owner path below.
+        _ = try await nextOutboundEnvelope(channel)
+
+        let bytes = ByteBuffer(string: "should-not-reach-the-pty")
+        try await channel.writeInbound(SSHChannelData(type: .channel, data: .byteBuffer(bytes)))
+
+        let envelope = try await nextOutboundEnvelope(channel)
+        guard case let .ownership(snapshot) = envelope else {
+            XCTFail("expected an ownership envelope, got \(envelope)")
+            return
+        }
+        XCTAssertNil(snapshot.ownerClientID, "no owner has claimed control yet")
+
+        // No echoed `.channel` frame should ever appear — the bytes were
+        // discarded before reaching `EchoStream`/the PTY.
+        let leftover = try await channel.readOutbound(as: SSHChannelData.self)
+        XCTAssertNil(leftover, "non-owner bytes must not reach the PTY")
+
+        _ = try? await channel.finish()
+    }
+
+    /// @spec REMOTE-9.3: When an SSH terminal client issues a take-control request, the host shall apply the same owner-eligibility rules as the web transport.
+    func testTakeControlAppliesSameEligibilityRulesAsWebTransport() async throws {
+        let stream = EchoStream()
+        let factory = RecordingStreamFactory(returning: .success(stream))
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = DisplayOwnershipBroadcaster()
+        let capture = OutboundEventCapture()
+        let handler = Self.makeHandler(
+            streamFactory: factory.callable,
+            ownershipStore: store,
+            ownershipBroadcaster: broadcaster,
+            deviceID: RemoteDeviceID(value: "device-2")
+        )
+        let channel = try await Self.channel(capture, handler)
+
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { capture.successCount >= 3 }
+
+        // `visible: false` is not owner-eligible (`AttachedClient.isOwnerEligible`)
+        // — the exact same rule `SessionDisplayOwnershipStore.claimOwner`
+        // enforces for the `/ws` web transport.
+        try await sendControlEnvelope(channel, .hello(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            role: .interactive,
+            visible: false,
+            cols: 80,
+            rows: 24
+        ))
+        _ = try await nextOutboundEnvelope(channel)
+
+        try await sendControlEnvelope(channel, .takeControl(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            cols: 80,
+            rows: 24
+        ))
+
+        let envelope = try await nextOutboundEnvelope(channel)
+        guard case let .ownership(snapshot) = envelope else {
+            XCTFail("expected an ownership envelope, got \(envelope)")
+            return
+        }
+        XCTAssertNil(
+            snapshot.ownerClientID,
+            "an invisible client must not be granted ownership, mirroring the web transport's eligibility gate"
+        )
+
+        _ = try? await channel.finish()
+    }
+
+    /// @spec REMOTE-9.4: When the PTY size changes, the host shall push grid and ownership envelopes to SSH terminal clients over the control carrier.
+    func testPTYSizeChangePushesGridAndOwnershipEnvelopes() async throws {
+        let stream = SizeReportingStream()
+        let factory = RecordingStreamFactory(returning: .success(stream))
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = DisplayOwnershipBroadcaster()
+        let capture = OutboundEventCapture()
+        let handler = Self.makeHandler(
+            streamFactory: factory.callable,
+            ownershipStore: store,
+            ownershipBroadcaster: broadcaster,
+            deviceID: RemoteDeviceID(value: "device-9")
+        )
+        let channel = try await Self.channel(capture, handler)
+
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { capture.successCount >= 3 }
+
+        try await sendControlEnvelope(channel, .hello(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            role: .interactive,
+            visible: true,
+            cols: 80,
+            rows: 24
+        ))
+
+        try await waitUntil { stream.onPTYSize != nil }
+        stream.onPTYSize?(120, 40)
+
+        var sawGrid = false
+        var sawOwnershipWithNewGrid = false
+        let deadline = Date().addingTimeInterval(2.0)
+        while !(sawGrid && sawOwnershipWithNewGrid) {
+            if Date() >= deadline {
+                XCTFail("timed out waiting for grid + ownership envelopes reflecting the new PTY size")
+                break
+            }
+            let envelope = try await nextOutboundEnvelope(channel)
+            switch envelope {
+            case let .grid(cols, rows) where cols == 120 && rows == 40:
+                sawGrid = true
+            case let .ownership(snapshot) where snapshot.grid == (try DisplayGrid(cols: 120, rows: 40)):
+                sawOwnershipWithNewGrid = true
+            default:
+                break
+            }
+        }
+
+        XCTAssertTrue(sawGrid, "expected a `.grid` envelope reflecting the new PTY size")
+        XCTAssertTrue(sawOwnershipWithNewGrid, "expected an `.ownership` envelope reflecting the new PTY size")
+
+        _ = try? await channel.finish()
+    }
+
+    /// A `.hello` that arrives while the async `streamFactory` is still
+    /// resolving (i.e. before `attach` installs the stream/coordinator)
+    /// must be buffered and processed once attach completes — not
+    /// silently dropped, which would leave the client permanently stuck
+    /// in the ungated legacy mode with no way to ever take control.
+    func testHelloArrivingBeforeAttachCompletesIsBufferedNotDropped() async throws {
+        let stream = EchoStream()
+        // Delayed factory so the hello can arrive mid-attach.
+        let delayedFactory: @Sendable (String) async throws -> any TerminalByteStream = { _ in
+            try await Task.sleep(for: .milliseconds(100))
+            return stream
+        }
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = DisplayOwnershipBroadcaster()
+        let capture = OutboundEventCapture()
+        let handler = Self.makeHandler(
+            streamFactory: delayedFactory,
+            ownershipStore: store,
+            ownershipBroadcaster: broadcaster,
+            deviceID: RemoteDeviceID(value: "device-early")
+        )
+        let channel = try await Self.channel(capture, handler)
+
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        // Send hello IMMEDIATELY — before the factory's 100ms sleep elapses.
+        try await sendControlEnvelope(channel, .hello(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            role: .interactive,
+            visible: true,
+            cols: 80,
+            rows: 24
+        ))
+
+        // Now wait for attach to complete (shell ack is the 3rd success).
+        try await waitUntil(timeout: 3.0) { capture.successCount >= 3 }
+
+        try await sendControlEnvelope(channel, .takeControl(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            cols: 80,
+            rows: 24
+        ))
+
+        try await waitUntil { store.snapshot(sessionName: "alpha").ownerClientID != nil }
+        XCTAssertNotNil(
+            store.snapshot(sessionName: "alpha").ownerClientID,
+            "hello buffered during attach must activate the control carrier; takeControl must then succeed"
+        )
+
+        _ = try? await channel.finish()
+    }
+
+    /// A `.stdErr` frame header claiming an absurd length must not cause
+    /// the host to buffer toward gigabytes — the control carrier is
+    /// abandoned (poisoned) for that channel, and terminal bytes keep
+    /// flowing untouched.
+    func testOversizedControlFrameHeaderPoisonsCarrierButTerminalBytesStillFlow() async throws {
+        let stream = EchoStream()
+        let factory = RecordingStreamFactory(returning: .success(stream))
+        let capture = OutboundEventCapture()
+        let handler = Self.makeHandler(streamFactory: factory.callable)
+        let channel = try await Self.channel(capture, handler)
+
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { capture.successCount >= 3 }
+
+        // Header claims a ~4GB frame; only a few junk bytes follow.
+        let oversized: [UInt8] = [0xff, 0xff, 0xff, 0xf0, 0x41, 0x42, 0x43]
+        try await channel.writeInbound(
+            SSHChannelData(type: .stdErr, data: .byteBuffer(ByteBuffer(bytes: oversized)))
+        )
+
+        // A hello after the poisoned header must NOT activate the carrier.
+        try await sendControlEnvelope(channel, .hello(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            role: .interactive,
+            visible: true,
+            cols: 80,
+            rows: 24
+        ))
+
+        // Terminal bytes still flow exactly as legacy.
+        let bytes = ByteBuffer(string: "still-works\n")
+        try await channel.writeInbound(SSHChannelData(type: .channel, data: .byteBuffer(bytes)))
+        let outbound = try await channel.waitForOutboundWrite(as: SSHChannelData.self)
+        XCTAssertEqual(outbound.type, .channel)
+        var echoed: String?
+        if case let .byteBuffer(buf) = outbound.data {
+            echoed = buf.getString(at: 0, length: buf.readableBytes)
+        }
+        XCTAssertEqual(echoed, "still-works\n")
+
+        // No `.stdErr` envelope may be emitted after poisoning.
+        let leftover = try await channel.readOutbound(as: SSHChannelData.self)
+        XCTAssertNil(leftover, "poisoned carrier must stay silent on .stdErr")
+
+        _ = try? await channel.finish()
+    }
+
+    /// While an SSH client is attached via the control carrier but is
+    /// NOT the display owner, an SSH-level `window-change` must not
+    /// resize the shared PTY (same owner gate the web transport applies
+    /// to its legacy `resize` frames). Pre-hello, window-change keeps
+    /// its historical direct-resize behavior.
+    func testWindowChangeAfterHelloIsOwnerGated() async throws {
+        let stream = RecordingResizeStream()
+        let factory = RecordingStreamFactory(returning: .success(stream))
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = DisplayOwnershipBroadcaster()
+        let capture = OutboundEventCapture()
+        let handler = Self.makeHandler(
+            streamFactory: factory.callable,
+            ownershipStore: store,
+            ownershipBroadcaster: broadcaster,
+            deviceID: RemoteDeviceID(value: "device-wc")
+        )
+        let channel = try await Self.channel(capture, handler)
+
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { capture.successCount >= 3 }
+
+        // Attach as an owner-INELIGIBLE client (invisible).
+        try await sendControlEnvelope(channel, .hello(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            role: .interactive,
+            visible: false,
+            cols: 80,
+            rows: 24
+        ))
+        _ = try await nextOutboundEnvelope(channel)
+
+        let event = SSHChannelRequestEvent.WindowChangeRequest(
+            terminalCharacterWidth: 200,
+            terminalRowHeight: 50,
+            terminalPixelWidth: 0,
+            terminalPixelHeight: 0
+        )
+        try await fireUserInboundEvent(channel, event)
+
+        // Give any (incorrect) resize Task time to land, then assert none did.
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertNil(
+            stream.lastResize,
+            "a non-owner's window-change must not reach the PTY once the control carrier is active"
+        )
+
+        _ = try? await channel.finish()
+    }
+
+    /// A legacy client (no `.hello` — today's `TerminalSessionClient` on
+    /// the mobile side) must see byte flow exactly as before REMOTE-9,
+    /// and must never be sent a `.stdErr` control frame, which it would
+    /// misinterpret as terminal bytes and corrupt its display.
+    func testLegacyClientWithoutHelloNeverReceivesStdErrFrames() async throws {
+        let stream = EchoStream()
+        let factory = RecordingStreamFactory(returning: .success(stream))
+        let capture = OutboundEventCapture()
+        let handler = Self.makeHandler(streamFactory: factory.callable)
+        let channel = try await Self.channel(capture, handler)
+
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { capture.successCount >= 3 }
+
+        let bytes = ByteBuffer(string: "legacy-bytes\n")
+        try await channel.writeInbound(SSHChannelData(type: .channel, data: .byteBuffer(bytes)))
+
+        let outbound = try await channel.waitForOutboundWrite(as: SSHChannelData.self)
+        XCTAssertEqual(outbound.type, .channel, "a legacy client must only ever see `.channel` bytes echoed back")
+        var echoed: String?
+        if case let .byteBuffer(buf) = outbound.data {
+            echoed = buf.getString(at: 0, length: buf.readableBytes)
+        }
+        XCTAssertEqual(echoed, "legacy-bytes\n")
+
+        let leftover = try await channel.readOutbound(as: SSHChannelData.self)
+        XCTAssertNil(leftover, "no `.stdErr` control envelope should ever be emitted to a legacy client")
+
+        _ = try? await channel.finish()
     }
 
     // MARK: - helpers
@@ -203,6 +608,76 @@ final class TerminalSessionHandlerTests: XCTestCase {
         }
         try await channel.connect(to: SocketAddress(unixDomainSocketPath: "graftty-test")).get()
         return channel
+    }
+
+    /// Builds a `TerminalSessionHandler` with fresh REMOTE-9 dependencies
+    /// by default, so tests that don't care about ownership (everything
+    /// pre-dating REMOTE-9, plus the explicit legacy-path test) don't
+    /// need to construct their own store/broadcaster/deviceID.
+    private static func makeHandler(
+        streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
+        ownershipStore: SessionDisplayOwnershipStore = SessionDisplayOwnershipStore(),
+        ownershipBroadcaster: DisplayOwnershipBroadcaster = DisplayOwnershipBroadcaster(),
+        deviceID: RemoteDeviceID = RemoteDeviceID(value: "test-device")
+    ) -> TerminalSessionHandler {
+        TerminalSessionHandler(
+            streamFactory: streamFactory,
+            ownershipStore: ownershipStore,
+            ownershipBroadcaster: ownershipBroadcaster,
+            deviceID: deviceID
+        )
+    }
+
+    /// Sends `envelope` inbound as a length-prefixed `.stdErr` frame —
+    /// the REMOTE-9 control-carrier wire shape (`<u32 BE length><UTF-8 JSON>`).
+    private func sendControlEnvelope(_ channel: NIOAsyncTestingChannel, _ envelope: WebControlEnvelope) async throws {
+        let payload = Array(envelope.encoded().utf8)
+        let length = UInt32(payload.count)
+        var framed: [UInt8] = [
+            UInt8((length >> 24) & 0xff),
+            UInt8((length >> 16) & 0xff),
+            UInt8((length >> 8) & 0xff),
+            UInt8(length & 0xff),
+        ]
+        framed.append(contentsOf: payload)
+        let buffer = ByteBuffer(bytes: framed)
+        try await channel.writeInbound(SSHChannelData(type: .stdErr, data: .byteBuffer(buffer)))
+    }
+
+    /// Drains outbound `SSHChannelData` (both `.channel` and `.stdErr`
+    /// frames share one outbound queue) until a complete `.stdErr`
+    /// control frame decodes to a `WebControlEnvelope`, then returns it.
+    /// `.channel` frames encountered along the way (byte echoes) are
+    /// skipped. Reassembles the length-prefix framing across multiple
+    /// `.stdErr` chunks, mirroring `TerminalSessionHandler.ingestStdErr`.
+    private func nextOutboundEnvelope(_ channel: NIOAsyncTestingChannel) async throws -> WebControlEnvelope {
+        var stdErrBuffer: [UInt8] = []
+        while true {
+            while stdErrBuffer.count >= 4 {
+                let length = (UInt32(stdErrBuffer[0]) << 24)
+                    | (UInt32(stdErrBuffer[1]) << 16)
+                    | (UInt32(stdErrBuffer[2]) << 8)
+                    | UInt32(stdErrBuffer[3])
+                let total = 4 + Int(length)
+                guard stdErrBuffer.count >= total else { break }
+                let payload = Data(stdErrBuffer[4..<total])
+                stdErrBuffer.removeFirst(total)
+                if let envelope = try? WebControlEnvelope.parse(payload) {
+                    return envelope
+                }
+            }
+            // `waitForOutboundWrite` (rather than a `readOutbound` poll
+            // loop) actually waits for a deferred write to land — see the
+            // type-level doc comment on why `NIOAsyncTestingChannel` is
+            // used here instead of `EmbeddedChannel`.
+            let frame = try await channel.waitForOutboundWrite(as: SSHChannelData.self)
+            guard case let .byteBuffer(buf) = frame.data else { continue }
+            var view = buf
+            guard let bytes = view.readBytes(length: view.readableBytes) else { continue }
+            if frame.type == .stdErr {
+                stdErrBuffer.append(contentsOf: bytes)
+            }
+        }
     }
 
     private func sendEnvRequest(_ channel: NIOAsyncTestingChannel, name: String, value: String) async throws {
@@ -394,4 +869,32 @@ private final class ClosableStream: TerminalByteStream, @unchecked Sendable {
         lock.withLock { _didClose = true }
         continuation.finish()
     }
+}
+
+/// `TerminalByteStream` + `TerminalSizeReporting` fake standing in for
+/// `ZmxAttachEngine`'s size-poller callback. Tests invoke `onPTYSize`
+/// directly to simulate a PTY resize (REMOTE-9.4) rather than driving a
+/// real PTY.
+private final class SizeReportingStream: TerminalByteStream, TerminalSizeReporting, @unchecked Sendable {
+    private let continuation: AsyncStream<Data>.Continuation
+    let inboundBytes: AsyncStream<Data>
+    private let lock = NIOLock()
+    private var _onPTYSize: ((UInt16, UInt16) -> Void)?
+
+    /// `TerminalSessionHandler.installCoordinator` sets this from the
+    /// channel's event loop; the test reads/invokes it from the test's
+    /// own task — lock-guarded so both sides see a consistent value.
+    var onPTYSize: ((UInt16, UInt16) -> Void)? {
+        get { lock.withLock { _onPTYSize } }
+        set { lock.withLock { _onPTYSize = newValue } }
+    }
+
+    init() {
+        var cont: AsyncStream<Data>.Continuation!
+        self.inboundBytes = AsyncStream { c in cont = c }
+        self.continuation = cont
+    }
+
+    func send(_ bytes: Data) async throws {}
+    func close() async { continuation.finish() }
 }

@@ -22,10 +22,19 @@ import Darwin
 /// Both surfaces observe the same underlying PTY; `dispatchPTYData` and
 /// `dispatchExit` feed both the callbacks and the `AsyncStream`.
 ///
+/// **Pick exactly one delivery surface per instance.** `dispatchPTYData`
+/// feeds `onPTYData` AND yields to `inboundBytes` unconditionally — a
+/// caller that both sets `onPTYData` and consumes `inboundBytes` on the
+/// same engine gets every chunk delivered twice, once on each surface.
+/// `WebSession` uses callbacks only; `TerminalSessionHandler` (the SSH
+/// path) uses `inboundBytes` only and must leave `onPTYData` unset.
+/// `onPTYSize`/`onExit` are not part of this either/or split — they're
+/// safe to set regardless of which byte-delivery surface a caller uses.
+///
 /// On `close()`, sends SIGTERM to the child and closes the master fd.
 /// SIGTERM (not SIGKILL) per WEB-4.5 so the client exits gracefully
 /// while the daemon survives.
-public final class ZmxAttachEngine: TerminalByteStream, @unchecked Sendable {
+public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, @unchecked Sendable {
 
     public struct Config {
         public let zmxExecutable: URL
@@ -66,7 +75,35 @@ public final class ZmxAttachEngine: TerminalByteStream, @unchecked Sendable {
     /// applied the session's size. The caller forwards this to the
     /// client as a `WebControlEnvelope.grid` text frame so it can size
     /// its rendering surface to match the server.
-    public var onPTYSize: ((_ cols: UInt16, _ rows: UInt16) -> Void)?
+    ///
+    /// Lock-guarded (unlike `onPTYData`/`onExit`, whose only writer —
+    /// `WebSession` — assigns them before `start()` spawns any thread):
+    /// the SSH path (`TerminalSessionHandler`, via `TerminalSizeReporting`)
+    /// installs this callback from a NIO event loop AFTER `start()`, so
+    /// an unguarded write would race the size-poller thread's read and
+    /// `closeSync()`'s clear. Installing a callback while a size is
+    /// already known immediately re-emits that size to the new callback
+    /// (outside the lock), so a late installer doesn't miss the
+    /// initial-attach emission the poller may have already delivered to
+    /// nobody.
+    public var onPTYSize: ((_ cols: UInt16, _ rows: UInt16) -> Void)? {
+        get {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            return _onPTYSize
+        }
+        set {
+            stateLock.lock()
+            _onPTYSize = newValue
+            let known = lastKnownSize
+            let closed = isClosed
+            stateLock.unlock()
+            if !closed, let newValue, let known {
+                newValue(known.cols, known.rows)
+            }
+        }
+    }
+    private var _onPTYSize: ((_ cols: UInt16, _ rows: UInt16) -> Void)?
 
     /// `TerminalByteStream.inboundBytes`: the same PTY bytes delivered
     /// to `onPTYData`, for consumers that prefer the async-stream
@@ -209,10 +246,12 @@ public final class ZmxAttachEngine: TerminalByteStream, @unchecked Sendable {
         let spawned = self.spawned
         // Drop callback references under the lock so a reader-thread EOF that
         // races with close() can't re-enter the channel after the caller has
-        // already handled the close path.
+        // already handled the close path. (`_onPTYSize` directly — the
+        // computed `onPTYSize` setter takes stateLock, which is already
+        // held here and is not recursive.)
         onPTYData = nil
         onExit = nil
-        onPTYSize = nil
+        _onPTYSize = nil
         stateLock.unlock()
 
         // TERM-11.5: a non-nil spawned means start() registered an attach;
@@ -329,7 +368,7 @@ public final class ZmxAttachEngine: TerminalByteStream, @unchecked Sendable {
                         emit = (size.cols, size.rows)
                     }
                 }
-                let cb = self.onPTYSize
+                let cb = self._onPTYSize
                 self.stateLock.unlock()
                 if let (cols, rows) = emit { cb?(cols, rows) }
                 Thread.sleep(forTimeInterval: 0.25)

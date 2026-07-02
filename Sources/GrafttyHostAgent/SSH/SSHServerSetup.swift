@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import GrafttyKit
+import GrafttyProtocol
 import NIO
 import NIOSSH
 
@@ -21,11 +22,12 @@ public enum SSHServerSetup {
         hostKey: Curve25519.Signing.PrivateKey,
         trustedPeerStore: TrustedPeerStore,
         allocator: ByteBufferAllocator,
+        onAuthenticated: (@Sendable (RemoteDeviceID) -> Void)? = nil,
         inboundChildChannelInitializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>
     ) -> NIOSSHHandler {
         let config = SSHServerConfiguration(
             hostKeys: [NIOSSHPrivateKey(ed25519Key: hostKey)],
-            userAuthDelegate: SSHUserAuthDelegate(store: trustedPeerStore)
+            userAuthDelegate: SSHUserAuthDelegate(store: trustedPeerStore, onAuthenticated: onAuthenticated)
         )
         // REMOTE-8.5: transportProtectionSchemes is intentionally left at
         // swift-nio-ssh's bundled defaults (AES-256-GCM + AES-128-GCM)
