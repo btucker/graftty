@@ -2,6 +2,7 @@
 import GhosttyTerminal
 import GrafttyProtocol
 import SwiftUI
+import os
 
 public struct RootView: View {
 
@@ -10,6 +11,13 @@ public struct RootView: View {
     @State private var navigationPath = NavigationPath()
     @Environment(\.scenePhase) private var scenePhase
     @State private var iPadAppState = IPadAppState()
+    /// Owned here (not per-screen) so a negotiated SSH connection survives
+    /// navigation-stack pushes/pops on the compact path and layout
+    /// transitions on the iPad path — both `compactBody`'s
+    /// `SingleSessionView` and `IPadRootLayout` are handed the SAME
+    /// instance so a host negotiated once from either surface is cached
+    /// for the other.
+    @State private var coordinator = RemoteConnectionCoordinator()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     public init() {}
@@ -20,7 +28,8 @@ public struct RootView: View {
             case .regular:
                 IPadRootLayout(
                     hostStore: hostStore,
-                    appState: iPadAppState
+                    appState: iPadAppState,
+                    coordinator: coordinator
                 )
             default:
                 compactBody
@@ -80,7 +89,8 @@ public struct RootView: View {
                 .navigationDestination(for: WorktreeStep.self) { step in
                     WorktreeDetailView(
                         host: step.host,
-                        worktree: step.worktree
+                        worktree: step.worktree,
+                        coordinator: coordinator
                     ) { sessionName in
                         navigationPath.append(SessionStep(
                             host: step.host,
@@ -90,7 +100,7 @@ public struct RootView: View {
                     }
                 }
                 .navigationDestination(for: SessionStep.self) { step in
-                    SingleSessionView(step: step, navigationPath: $navigationPath)
+                    SingleSessionView(step: step, navigationPath: $navigationPath, coordinator: coordinator)
                 }
         }
     }
@@ -165,12 +175,15 @@ struct SingleSessionView: View {
     /// hide the sidebar-toggle button — leaving no way to re-show a
     /// collapsed sidebar (IPAD-1.7).
     let isFullScreen: Bool
-    /// Injected on the iPad path so `openWebSocket()` can fetch the
-    /// per-host `RemoteHostConnection` for SSH-over-WebRTC. nil on the
-    /// iPhone path (and on iPad before any signaling has registered a
-    /// connection), in which case `SessionClient.live` falls back to
-    /// `URLSessionWebSocketClient` against `/ws`.
-    let iPadAppState: IPadAppState?
+    /// Injected from `RootView` on BOTH size classes so `openWebSocket()`
+    /// can negotiate (or reuse) the per-host `RemoteHostConnection` for
+    /// SSH-over-WebRTC. `nil` only in contexts that construct this view
+    /// directly without going through `RootView` (previews, unit tests
+    /// that exercise unrelated behavior) — `SessionClient.live` falls
+    /// back to `URLSessionWebSocketClient` against `/ws` whenever the
+    /// coordinator is absent, returns nil (host isn't paired), or
+    /// negotiation fails.
+    let coordinator: RemoteConnectionCoordinator?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -250,16 +263,25 @@ struct SingleSessionView: View {
         case ended
     }
 
+    /// Surfaces the `/ws` fallback for wiring diagnostics. Distinguishes
+    /// routine unpaired usage (`.debug`, silent by default) from a paired
+    /// host whose negotiation failed (`.warning`, visible in console) —
+    /// see `openWebSocket()`.
+    private static let remoteWiringLogger = Logger(
+        subsystem: "com.quotably.graftty",
+        category: "remote-wiring"
+    )
+
     init(
         step: SessionStep,
         navigationPath: Binding<NavigationPath>,
         isFullScreen: Bool = true,
-        iPadAppState: IPadAppState? = nil
+        coordinator: RemoteConnectionCoordinator? = nil
     ) {
         self.step = step
         self._navigationPath = navigationPath
         self.isFullScreen = isFullScreen
-        self.iPadAppState = iPadAppState
+        self.coordinator = coordinator
     }
 
     var body: some View {
@@ -436,21 +458,42 @@ struct SingleSessionView: View {
         }
     }
 
+    /// How loudly to log an `/ws` fallback (`openWebSocket` found no
+    /// `RemoteHostConnection`). `.loud` only when there WAS a coordinator
+    /// to ask AND the host is paired (`remoteDeviceID != nil`) — that
+    /// combination means negotiation itself failed, a regression from the
+    /// expected path. Every other combination (no coordinator, or a
+    /// coordinator that correctly fast-nil'd an unpaired host) is routine
+    /// `/ws` usage and stays quiet.
+    enum RemoteFallbackSeverity: Equatable {
+        case quiet
+        case loud
+    }
+
+    static func remoteFallbackSeverity(hasCoordinator: Bool, hostIsPaired: Bool) -> RemoteFallbackSeverity {
+        (hasCoordinator && hostIsPaired) ? .loud : .quiet
+    }
+
     private func openWebSocket() async {
         // URLSessionWebSocketTask.resume() fires synchronously inside
         // SessionClient.live(), so guard before the dial — otherwise we
         // burn a TCP/TLS handshake on a connection we'd immediately abort.
         if Task.isCancelled || connection == .ended { return }
-        let remoteHost = iPadAppState?.remoteHostConnection(for: step.host)
-        if remoteHost == nil, iPadAppState != nil {
-            // iPad path landed on the `/ws` fallback. Today this is
-            // expected (signaling has not landed yet) so the message
-            // logs at `.debug`. Once signaling lands and the cache is
-            // populated on first iPad-side connect, promote to
-            // `.warning` so a wiring regression is visible in console.
-            IPadAppState.remoteWiringLogger.debug(
-                "iPad has no RemoteHostConnection for host \(step.host.id, privacy: .public); falling back to /ws for session \(step.sessionName, privacy: .public)"
-            )
+        let remoteHost = await coordinator?.connection(for: step.host)
+        if remoteHost == nil {
+            switch Self.remoteFallbackSeverity(
+                hasCoordinator: coordinator != nil,
+                hostIsPaired: step.host.remoteDeviceID != nil
+            ) {
+            case .loud:
+                Self.remoteWiringLogger.warning(
+                    "no RemoteHostConnection for paired host \(step.host.id, privacy: .public); falling back to /ws for session \(step.sessionName, privacy: .public)"
+                )
+            case .quiet:
+                Self.remoteWiringLogger.debug(
+                    "no RemoteHostConnection for host \(step.host.id, privacy: .public) (unpaired or no coordinator); using /ws for session \(step.sessionName, privacy: .public)"
+                )
+            }
         }
         let new = SessionClient.live(
             baseURL: step.host.baseURL,

@@ -11,6 +11,12 @@ public struct WorktreeDetailView: View {
     public let host: Host
     public let worktree: WorktreePanes
     public let onSelectPane: (_ sessionName: String) -> Void
+    /// Resolves the per-host `RemoteHostConnection` for the preview pool
+    /// so pane previews ride SSH-over-WebRTC when `host` is paired,
+    /// falling back to `/ws` otherwise. `nil` in contexts that construct
+    /// this view directly without going through `RootView` (previews,
+    /// unit tests).
+    public let coordinator: RemoteConnectionCoordinator?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -21,10 +27,12 @@ public struct WorktreeDetailView: View {
     public init(
         host: Host,
         worktree: WorktreePanes,
+        coordinator: RemoteConnectionCoordinator? = nil,
         onSelectPane: @escaping (_ sessionName: String) -> Void
     ) {
         self.host = host
         self.worktree = worktree
+        self.coordinator = coordinator
         self.onSelectPane = onSelectPane
     }
 
@@ -86,11 +94,17 @@ public struct WorktreeDetailView: View {
             return
         }
         if previews == nil {
+            // Resolved once per pool lifetime — every preview in this
+            // worktree shares the same host, so one negotiated connection
+            // (or one `nil`, if unpaired/negotiation failed) covers the
+            // whole pool.
+            let remoteHost = await coordinator?.connection(for: host)
             previews = PanePreviewClientPool { sessionName in
                 SessionClient.live(
                     baseURL: host.baseURL,
                     sessionName: sessionName,
-                    role: .preview
+                    role: .preview,
+                    remoteHost: remoteHost
                 )
             }
         }

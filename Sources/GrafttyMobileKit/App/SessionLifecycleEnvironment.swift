@@ -72,12 +72,21 @@ extension SessionClient {
 /// `split`/`close`/`swap` RPCs. Both fields are `nil` on the iPhone path
 /// (and on iPad before signaling has wired up a `RemoteHostConnection`),
 /// where the existing `/ws` flow handles terminal traffic and there is
-/// no SSH session to multiplex these subsystem channels onto. R6's
+/// no SSH session to multiplex these subsystem channels onto. A future
 /// iPhone cutover will populate them on that path too.
 ///
-/// No UI surfaces consume these yet — the env is infrastructure
-/// plumbing landed in R5 so the signaling layer (and future sidebar /
-/// pane-control UI work) can read both from a single source of truth.
+/// No UI surfaces consume these yet, and W3 Task 3 (wiring
+/// `RemoteConnectionCoordinator` into `RootView`/`IPadRootLayout`/
+/// `WorktreeDetailView`) re-checked this before threading a call site
+/// through: `WorktreeListContent`'s sidebar still polls `GET
+/// /worktrees/panes` over HTTP, and there is no pane-control (split/close/
+/// swap) UI anywhere yet. Constructing a `PaneEnvironment` today with no
+/// reader would just be a second flavor of dead plumbing (an
+/// `EnvironmentKey` nothing reads, instead of a function nothing calls),
+/// so the call site stays deferred to whichever future task adds the
+/// sidebar/pane-control UI that actually reads `worktreePanesStore` /
+/// `paneControlClient` — this remains infrastructure only, single-sourced
+/// for that consumer to read from once it exists.
 public struct PaneEnvironment: Sendable {
     public let worktreePanesStore: WorktreePanesStore?
     public let paneControlClient: PaneControlClient?

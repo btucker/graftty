@@ -54,6 +54,40 @@ struct LivePreviewIdleThresholdTests {
         #expect(preview.idleThreshold == SessionClient.previewIdleThreshold)
     }
 }
+
+@Suite("SingleSessionView.remoteFallbackSeverity — W3 Task 3 /ws fallback log-level wiring")
+struct RemoteFallbackSeverityTests {
+
+    @Test("""
+Paired host (remoteDeviceID set) but the coordinator still returned nil — negotiation failed, a regression from the expected path — logs loudly.
+""")
+    func pairedHostWithNoConnectionIsLoud() {
+        #expect(
+            SingleSessionView.remoteFallbackSeverity(hasCoordinator: true, hostIsPaired: true) == .loud
+        )
+    }
+
+    @Test("""
+Unpaired host with a coordinator present fast-nils by design (Task 2) — routine /ws usage, stays quiet.
+""")
+    func unpairedHostWithCoordinatorIsQuiet() {
+        #expect(
+            SingleSessionView.remoteFallbackSeverity(hasCoordinator: true, hostIsPaired: false) == .quiet
+        )
+    }
+
+    @Test("""
+No coordinator at all (a context that bypassed RootView, e.g. a preview/test construction) stays quiet regardless of pairing — there's nothing to have negotiated with.
+""")
+    func noCoordinatorIsAlwaysQuiet() {
+        #expect(
+            SingleSessionView.remoteFallbackSeverity(hasCoordinator: false, hostIsPaired: true) == .quiet
+        )
+        #expect(
+            SingleSessionView.remoteFallbackSeverity(hasCoordinator: false, hostIsPaired: false) == .quiet
+        )
+    }
+}
 #endif
 
 @Suite
