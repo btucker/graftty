@@ -42,6 +42,7 @@
 		9FC5E92497F5755C7182F797 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 2E297959F982E90ED939C39C /* LaunchScreen.storyboard */; };
 		A4728892B4B24D5A7BBD8712 /* SSHNIOTransportUnitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC0DCD66C68CA001206BFDA5 /* SSHNIOTransportUnitTests.swift */; };
 		A63A9ED30E91C1F8ADE5E21F /* RemoteHostConnectionLoopbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAE37F91AA547A6F65922B34 /* RemoteHostConnectionLoopbackTests.swift */; };
+		5DCC62A0E2454108B3D5DD03 /* RemoteConnectionCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B1CB1E46CFB4066B15E8484 /* RemoteConnectionCoordinatorTests.swift */; };
 		AA14A2ACD895768E8B7A2E2B /* HostControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5914CCCFEA6C67504BAA55A9 /* HostControllerTests.swift */; };
 		B803FA26B311180F52B5B40D /* HostPickerViewCallbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A1E0255EB1F41513A753E8A /* HostPickerViewCallbackTests.swift */; };
 		9261A6D6AC923F7E179F8E1B /* PairingFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EFACB4B503E736931ACBF7B /* PairingFlowTests.swift */; };
@@ -117,6 +118,7 @@
 		DE2551EB151BA762B2AF7663 /* GhosttyConfigFetcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttyConfigFetcherTests.swift; sourceTree = "<group>"; };
 		E9F5598DDE610D5D1567DBB2 /* MobileNavigationDecisionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileNavigationDecisionTests.swift; sourceTree = "<group>"; };
 		EAE37F91AA547A6F65922B34 /* RemoteHostConnectionLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteHostConnectionLoopbackTests.swift; sourceTree = "<group>"; };
+		5B1CB1E46CFB4066B15E8484 /* RemoteConnectionCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteConnectionCoordinatorTests.swift; sourceTree = "<group>"; };
 		ED959C313A3C4E3787C08C4F /* SSHTerminalLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHTerminalLoopbackTests.swift; sourceTree = "<group>"; };
 		B1C2D3E4F5A60011223344BB /* SSHPanesAndControlLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHPanesAndControlLoopbackTests.swift; sourceTree = "<group>"; };
 		F263C2F1D739C0FD226B2AE7 /* SSHOverWebRTCLoopbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSHOverWebRTCLoopbackTests.swift; sourceTree = "<group>"; };
@@ -296,6 +298,7 @@
 				113D17A6F18C81F658071CA9 /* LocalPairingClientTests.swift */,
 				2CA75F1FC20E9BF1D9260BF5 /* PaneControlClientTests.swift */,
 				43512CF737A58622F747D84F /* PinnedHostStoreTests.swift */,
+				5B1CB1E46CFB4066B15E8484 /* RemoteConnectionCoordinatorTests.swift */,
 				EAE37F91AA547A6F65922B34 /* RemoteHostConnectionLoopbackTests.swift */,
 				911E37CB1354D7E59EAA1D7E /* SignalingClientTests.swift */,
 				CC57C9F746D99FF6B7BEADFD /* WorktreePanesStoreTests.swift */,
@@ -433,6 +436,7 @@
 				81DB8F5B4AA670E833184E67 /* PanePreviewFontSizingTests.swift in Sources */,
 				959E08934ACAF3DEEE251931 /* PinnedHostStoreTests.swift in Sources */,
 				CAF2F1261BE1D2E9862B28E7 /* PreviewCapTests.swift in Sources */,
+				5DCC62A0E2454108B3D5DD03 /* RemoteConnectionCoordinatorTests.swift in Sources */,
 				A63A9ED30E91C1F8ADE5E21F /* RemoteHostConnectionLoopbackTests.swift in Sources */,
 				4FCF3928EE66699587F57A20 /* ReposFetcherTests.swift in Sources */,
 				16F9774F4AD6CAB9EB7BA47C /* RootViewSizeClassTests.swift in Sources */,

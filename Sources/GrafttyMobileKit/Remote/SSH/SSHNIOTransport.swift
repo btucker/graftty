@@ -183,13 +183,17 @@ public final class SSHNIOTransport: @unchecked Sendable {
             channel.register(promise: nil)
         }.wait()
         self.dcDelegate = DataChannelDelegate()
-        dataChannel.delegate = dcDelegate
 
-        // Install delegate callbacks before returning so a `.open`
-        // transition that fires between `init` and the caller's
-        // `start()` is observed: `start()` checks `readyState` once
-        // synchronously on-loop, and otherwise parks a continuation
-        // that `handleDataChannelOpen` will resume.
+        // Wire every callback BEFORE handing `dcDelegate` to the
+        // DataChannel as its delegate. WebRTC can dispatch a state change
+        // the instant `dataChannel.delegate` is assigned (e.g. the
+        // channel is already `.open`/`.closed` on a background queue) —
+        // assigning the delegate first left a window where such a
+        // transition would land on `dcDelegate.onOpen`/`onClose`/`onMessage`
+        // while they were still nil, silently dropping it (a missed
+        // terminal fire). Installing the closures first closes that
+        // window: by the time the delegate is attached, every callback is
+        // already live.
         dcDelegate.onOpen = { [weak self] in
             guard let self else { return }
             self.embeddedLoop.execute {
@@ -208,6 +212,8 @@ public final class SSHNIOTransport: @unchecked Sendable {
                 self.deliverInbound(data)
             }
         }
+
+        dataChannel.delegate = dcDelegate
     }
 
     /// Block until the DataChannel reaches `.open`, then fire

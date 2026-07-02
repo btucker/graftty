@@ -94,6 +94,17 @@ public final class IPadAppState {
     }
 
     // MARK: - RemoteHostConnection wiring (R4)
+    //
+    // SUPERSEDED by `RemoteConnectionCoordinator` (W3 Task 2), which owns
+    // real negotiate-on-demand + in-flight dedup + eviction against
+    // production signaling. This cache and its accessors are kept as-is
+    // for now — `RootView.swift`'s `openWebSocket()` (:444) still reads
+    // `remoteHostConnection(for:)` — because rewiring that call site to
+    // `await coordinator.connection(for:)` is UI wiring that belongs to
+    // Task 3, not this one. `setRemoteHostConnection` has no production
+    // caller (the negotiation half never landed against this cache); Task
+    // 3 removes all of this once `RootView` reads from the coordinator
+    // instead.
 
     /// Per-host `RemoteHostConnection` cache keyed by `Host.id`. iPad's
     /// `SessionClient.live` calls reach for these via
@@ -101,12 +112,8 @@ public final class IPadAppState {
     /// SSH-over-WebRTC when a paired connection is available, falling
     /// back to `/ws` when not.
     ///
-    /// Today this cache stays empty: production iPad has no signaling
-    /// path to negotiate `RemoteHostConnection.createOffer` /
-    /// `applyAnswer` with the Mac yet (R4 wires the consumer side of
-    /// the connection; the negotiation half lands in a follow-up).
-    /// Once signaling lands, the connection-construction site populates
-    /// this map per paired host on first iPad-side connect.
+    /// Today this cache stays empty: nothing populates it — see the
+    /// "SUPERSEDED" note above.
     @ObservationIgnored
     private var remoteHostConnectionsByHostId: [UUID: RemoteHostConnection] = [:]
 
@@ -119,11 +126,9 @@ public final class IPadAppState {
         remoteHostConnectionsByHostId[host.id]
     }
 
-    /// Setter for the connection cache — used by the signaling layer
-    /// (not yet wired) to register a freshly-negotiated connection.
-    /// Exposed now so the iPad call sites in `RootView` /
-    /// `WorktreeDetailView` can read from a single source of truth and
-    /// the future signaling code only needs to write to one place.
+    /// Setter for the connection cache. See the "SUPERSEDED" note above —
+    /// no production code calls this; `RemoteConnectionCoordinator` is the
+    /// real registry now.
     public func setRemoteHostConnection(_ connection: RemoteHostConnection?, for host: Host) {
         if let connection {
             remoteHostConnectionsByHostId[host.id] = connection

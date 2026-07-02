@@ -1624,7 +1624,7 @@ struct GrafttyApp: App {
                         return .success(SignalingAnswer(sdp: answer.sdp))
                     } catch {
                         NSLog("[Graftty] WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
-                        return .internalFailure("acceptOffer failed: \(error)")
+                        return Self.signalingOutcome(forAcceptOfferFailure: error)
                     }
                 }
             }
@@ -1652,6 +1652,25 @@ struct GrafttyApp: App {
                 controller.stop()
             }
         }
+    }
+
+    /// Maps an error thrown by `WebRTCHostAgent.acceptOffer` to the HTTP
+    /// outcome the `/v1/rtc/offer` signaling endpoint returns. Extracted
+    /// from the `setSignalingHandler` closure in `startup()` so the
+    /// mapping is unit-testable without booting the whole app.
+    ///
+    /// `WebRTCHostAgent.HostError.busy` — thrown when a second offer
+    /// arrives while a prior negotiation is still in flight — maps to
+    /// `.unavailable` (503) rather than the `.internalFailure` (500)
+    /// catch-all: a busy host is a transient, retryable condition, and
+    /// `RemoteConnectionCoordinator` treats a 503 as "fall back to /ws,
+    /// try again later" without marking the host permanently bad. Every
+    /// other `acceptOffer` failure stays `.internalFailure`.
+    nonisolated static func signalingOutcome(forAcceptOfferFailure error: Error) -> WebServer.SignalingHandlerOutcome {
+        if case WebRTCHostAgent.HostError.busy = error {
+            return .unavailable("host is busy with another remote connection")
+        }
+        return .internalFailure("acceptOffer failed: \(error)")
     }
 
     nonisolated static func codexStopDeliveryPlan(
