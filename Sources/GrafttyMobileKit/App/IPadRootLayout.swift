@@ -10,10 +10,15 @@ public struct IPadRootLayout: View {
 
     @Bindable public var hostStore: HostStore
     @Bindable public var appState: IPadAppState
+    /// Shared with the compact path's `SingleSessionView` at the
+    /// `RootView` level so a host negotiated from either surface is
+    /// cached for the other (W3 Task 3).
+    public let coordinator: RemoteConnectionCoordinator
 
-    public init(hostStore: HostStore, appState: IPadAppState) {
+    public init(hostStore: HostStore, appState: IPadAppState, coordinator: RemoteConnectionCoordinator) {
         self.hostStore = hostStore
         self.appState = appState
+        self.coordinator = coordinator
     }
 
     private var selectedHost: Host? {
@@ -80,7 +85,8 @@ public struct IPadRootLayout: View {
         } detail: {
             IPadDetailColumn(
                 host: selectedHost,
-                appState: appState
+                appState: appState,
+                coordinator: coordinator
             )
             .background(appState.theme.background)
         }
@@ -250,6 +256,7 @@ private struct HostMenu: View {
 private struct IPadDetailColumn: View {
     let host: Host?
     @Bindable var appState: IPadAppState
+    let coordinator: RemoteConnectionCoordinator
 
     var body: some View {
         content
@@ -283,7 +290,7 @@ private struct IPadDetailColumn: View {
                 step: SessionStep(host: host, sessionName: pane, title: pane),
                 navigationPath: .constant(NavigationPath()),
                 isFullScreen: false,
-                iPadAppState: appState
+                coordinator: coordinator
             )
             .id("\(host.id)-\(path)-\(pane)")
         } else {

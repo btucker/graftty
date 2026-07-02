@@ -45,7 +45,19 @@ public actor WebRTCHostAgent {
     private var sshTransport: SSHNIOTransport?
     private var sshInstallStarted = false
 
-    private let factory: RTCPeerConnectionFactory
+    /// Built lazily, on first `acceptOffer` use, rather than in `init` — an
+    /// agent that never negotiates never touches native libwebrtc. This is
+    /// what keeps mac CI's REMOTE-11.1 busy-guard test (which never
+    /// negotiates) free of native WebRTC work; see `SignalingHandlerOutcomeTests`
+    /// for the CI hang this was extracted to fix. Production behavior is
+    /// unchanged: the factory still exists before any real negotiation.
+    private lazy var factory: RTCPeerConnectionFactory = {
+        // SSL and codec subsystems are process-wide; initialize once,
+        // immediately before the first native factory build.
+        Self.initializeWebRTC()
+        // nil factories: DataChannel-only — no video codec work needed.
+        return RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
+    }()
     private var peerConnection: RTCPeerConnection?
     private var dataChannel: RTCDataChannel?
     private let delegate: PeerConnectionDelegate
@@ -74,8 +86,6 @@ public actor WebRTCHostAgent {
         paneControlMutator: @escaping PaneControlChannelHandler.Mutator,
         displayOwnershipStore: SessionDisplayOwnershipStore
     ) {
-        // SSL and codec subsystems are process-wide; initialize once.
-        Self.initializeWebRTC()
         self.hostKey = hostKey
         self.trustedPeerStore = trustedPeerStore
         self.streamFactory = streamFactory
@@ -83,8 +93,6 @@ public actor WebRTCHostAgent {
         self.paneControlMutator = paneControlMutator
         self.displayOwnershipStore = displayOwnershipStore
         self.displayOwnershipBroadcaster = DisplayOwnershipBroadcaster(store: displayOwnershipStore)
-        // nil factories: DataChannel-only — no video codec work needed.
-        self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
         self.delegate = PeerConnectionDelegate()
         self.dataChannelDelegate = DataChannelDelegate()
     }
@@ -105,6 +113,16 @@ public actor WebRTCHostAgent {
     /// split and the same "wire before signaling" ordering requirement.
     public func setPaneControlMutator(_ mutator: @escaping PaneControlChannelHandler.Mutator) {
         self.paneControlMutator = mutator
+    }
+
+    /// Test-only seam mirroring `acceptOffer`'s busy-guard precondition
+    /// surface (`state == .idle || state == .closed`), so a test can put
+    /// the agent into `.answering` / `.connected` and exercise the guard
+    /// without driving any native WebRTC negotiation to get there — see
+    /// `SignalingHandlerOutcomeTests.busyOfferDoesNotTearDownActiveConnection`.
+    /// `internal` so `@testable import GrafttyHostAgent` can reach it.
+    internal func setStateForTesting(_ newState: State) {
+        state = newState
     }
 
     /// Accept an incoming offer and return the answer.

@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import CryptoKit
 import Foundation
 import Testing
 @testable import GrafttyMobileKit
@@ -158,6 +159,78 @@ struct SessionReconnectTests {
         clock.advance(by: 10.0)
         await quiesce()
         #expect(factory.creations == snapshot)
+    }
+
+    // MARK: - W3 Task 4 / Task-3 finding 1: per-dial coordinator re-consult
+
+    /// Builds a `RemoteHostConnection` that was never negotiated —
+    /// `openTerminalSession` throws `ConnectionError.notConnected`
+    /// synchronously (no networking, no WebRTC handshake), which is
+    /// exactly what a connection looks like once
+    /// `RemoteConnectionCoordinator.invalidate(host:)` has torn it down
+    /// out from under a still-dialing `SessionClient`.
+    private nonisolated static func makeDeadConnection() -> RemoteHostConnection {
+        let key = Curve25519.Signing.PrivateKey()
+        let fingerprint = RemoteIdentityFingerprint(
+            of: try! RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation)
+        )
+        return RemoteHostConnection(clientKey: key, expectedHostFingerprint: fingerprint)
+    }
+
+    /// Thread-safe counter recording how many times
+    /// `remoteConnectionProvider` was invoked. Each call returns a FRESH
+    /// dead connection (never the same instance twice) — mirroring what
+    /// `RemoteConnectionCoordinator.connection(for:)` does after an
+    /// eviction: hand back a newly negotiated (here: newly *constructed*,
+    /// deliberately never negotiated) connection rather than the same
+    /// stale one.
+    private final class ProviderRecorder: @unchecked Sendable {
+        private let lock = NSLock()
+        private var _invocationCount = 0
+        var invocationCount: Int { lock.withLock { _invocationCount } }
+
+        func provide() async -> RemoteHostConnection? {
+            lock.withLock { _invocationCount += 1 }
+            return makeDeadConnection()
+        }
+    }
+
+    @Test("""
+    W3 Task 4 (closes Task-3 finding 1, HIGH): `SessionClient.live`'s `remoteConnectionProvider` shall be re-consulted on EVERY dial the internal backoff loop performs, not resolved once and baked into the WebSocket factory closure — the prior behavior redialed a dead `RemoteHostConnection` forever, recoverable only by an external re-dial (a scenePhase flip).
+    """)
+    func remoteConnectionProviderIsReconsultedOnEveryBackoffAttempt() async throws {
+        let clock = VirtualClock()
+        let provider = ProviderRecorder()
+        let client = SessionClient.live(
+            baseURL: URL(string: "http://example.invalid")!,
+            sessionName: "s",
+            remoteConnectionProvider: { await provider.provide() },
+            clock: clock,
+            backoffSchedule: [1, 2, 4]
+        )
+        defer { client.stop() }
+        client.start()
+        await quiesce()
+        // First dial: the provider hands back a dead connection whose
+        // `openTerminalSession` throws immediately, feeding the same
+        // backoff path a plain socket failure would.
+        #expect(provider.invocationCount == 1)
+        #expect(client.connectionState == .reconnecting(attempt: 1))
+
+        clock.advance(by: 1.0)
+        await quiesce()
+        // Second dial. Before this fix, the connection resolved for the
+        // FIRST dial was captured by value in the factory closure and
+        // reused forever — this asserts the provider closure itself,
+        // not a cached connection, is what `SessionClient`'s backoff
+        // loop calls on every attempt.
+        #expect(provider.invocationCount == 2, "the provider must be asked again on the second dial, not just the first")
+        #expect(client.connectionState == .reconnecting(attempt: 2))
+
+        clock.advance(by: 2.0)
+        await quiesce()
+        #expect(provider.invocationCount == 3, "and again on the third dial")
+        #expect(client.connectionState == .reconnecting(attempt: 3))
     }
 }
 #endif

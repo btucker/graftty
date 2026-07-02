@@ -130,8 +130,28 @@ public final class SSHNIOTransport: @unchecked Sendable {
     private static let pendingInboundByteCap: Int = 1 * 1024 * 1024
     private var pendingInboundByteCount: Int = 0
 
-    public init(dataChannel: RTCDataChannel) {
+    /// Fires exactly once, the moment the transport becomes closed —
+    /// whether via an explicit `close()` call or because the underlying
+    /// DataChannel closed out from under it (remote hang-up, transport
+    /// reset). `init` re-assigns `RTCDataChannel.delegate` to this
+    /// transport's own `dcDelegate`, which means whatever delegate the
+    /// caller had installed on the DataChannel before wrapping it here
+    /// (e.g. `RemoteHostConnection`'s own `dataChannelDidChangeState`
+    /// hook) stops receiving callbacks the instant this transport takes
+    /// over. `onClose` is that caller's only remaining way to observe a
+    /// DataChannel death once the transport owns it. Set via the
+    /// initializer — see its doc comment.
+    public var onClose: (@Sendable () -> Void)?
+
+    /// `onClose` is an initializer parameter (rather than requiring the
+    /// caller to set the `onClose` property after construction) so there
+    /// is no window between `init` returning and the caller wiring up
+    /// the callback — `init` re-assigns `dataChannel.delegate` to
+    /// `dcDelegate` before returning, so a close landing in a
+    /// post-construction gap would otherwise be observed by nothing.
+    public init(dataChannel: RTCDataChannel, onClose: (@Sendable () -> Void)? = nil) {
         self.dataChannel = dataChannel
+        self.onClose = onClose
         let loop = NIOAsyncTestingEventLoop()
         self.embeddedLoop = loop
         // Create the channel without handlers first; register it and
@@ -163,13 +183,17 @@ public final class SSHNIOTransport: @unchecked Sendable {
             channel.register(promise: nil)
         }.wait()
         self.dcDelegate = DataChannelDelegate()
-        dataChannel.delegate = dcDelegate
 
-        // Install delegate callbacks before returning so a `.open`
-        // transition that fires between `init` and the caller's
-        // `start()` is observed: `start()` checks `readyState` once
-        // synchronously on-loop, and otherwise parks a continuation
-        // that `handleDataChannelOpen` will resume.
+        // Wire every callback BEFORE handing `dcDelegate` to the
+        // DataChannel as its delegate. WebRTC can dispatch a state change
+        // the instant `dataChannel.delegate` is assigned (e.g. the
+        // channel is already `.open`/`.closed` on a background queue) —
+        // assigning the delegate first left a window where such a
+        // transition would land on `dcDelegate.onOpen`/`onClose`/`onMessage`
+        // while they were still nil, silently dropping it (a missed
+        // terminal fire). Installing the closures first closes that
+        // window: by the time the delegate is attached, every callback is
+        // already live.
         dcDelegate.onOpen = { [weak self] in
             guard let self else { return }
             self.embeddedLoop.execute {
@@ -188,6 +212,8 @@ public final class SSHNIOTransport: @unchecked Sendable {
                 self.deliverInbound(data)
             }
         }
+
+        dataChannel.delegate = dcDelegate
     }
 
     /// Block until the DataChannel reaches `.open`, then fire
@@ -215,6 +241,15 @@ public final class SSHNIOTransport: @unchecked Sendable {
                     self.fireChannelActive()
                     continuation.resume()
                 case .closing, .closed:
+                    // Tear down (and fire `onClose`) BEFORE resuming so
+                    // `onClose`'s "fires exactly once, whichever way the
+                    // transport dies" contract holds even for a
+                    // DataChannel that was already dead before `start()`
+                    // was ever called — without this, a caller relying
+                    // solely on `onClose` (rather than also catching
+                    // `start()`'s thrown error) would never learn the
+                    // transport never came up.
+                    self.performClose()
                     continuation.resume(throwing: TransportError.dataChannelClosedBeforeOpen)
                 case .connecting:
                     self.startContinuation = continuation
@@ -370,6 +405,7 @@ public final class SSHNIOTransport: @unchecked Sendable {
         // need the latter, so call `close` directly to keep this
         // function synchronous.
         embedded.close(promise: nil)
+        onClose?()
     }
 
     /// Internal test seam: forces an inbound delivery as if WebRTC's
