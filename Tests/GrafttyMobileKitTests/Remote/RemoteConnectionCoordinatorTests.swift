@@ -193,6 +193,28 @@ struct RemoteConnectionCoordinatorTests {
         #expect(counter.count == 2, "invalidate(host:) must clear the cooldown so the very next call negotiates again")
     }
 
+    /// This test's subject is cooldown bookkeeping (`cooldownUntil` is
+    /// only ever populated on the FAILURE exit of `negotiate` — see
+    /// `fail(host:)` — never on success), not whether a second real
+    /// end-to-end WebRTC handshake can complete. `connectionFactory`'s
+    /// counter increments the instant `negotiate` calls it — before the
+    /// offer/answer exchange even starts — so "the second call wasn't
+    /// blocked by a cooldown" is fully proven by `counter.count == 2`
+    /// regardless of whether that second attempt goes on to succeed.
+    ///
+    /// The second attempt therefore fails fast at the signaling step
+    /// (`exchangeCount`-gated 503, exactly like
+    /// `busyResponseReturnsNilAndRetriesAfterCooldownExpires`'s already-
+    /// covered failure path) instead of running a second real loopback
+    /// data-channel negotiation. Two real negotiations per test made this
+    /// specifically the marginal one under full-suite load on CI: the
+    /// FIRST negotiation itself intermittently missed
+    /// `RemoteHostConnection`'s 30s `dataChannelOpenTimedOut` on a loaded
+    /// simulator (`negotiated` came back `nil`), even though every other
+    /// loopback test in the same run — each paying that cost once, not
+    /// twice — passed. Cutting this test to one real negotiation removes
+    /// one of the suite's real-WebRTC data points without weakening the
+    /// assertion it's actually making.
     @Test(.timeLimit(.minutes(2)))
     func successfulNegotiationLeavesNoCooldownForSubsequentRenegotiation() async throws {
         let dir = try RemoteConnectionTestSupport.makeTempDirectory()
@@ -200,9 +222,16 @@ struct RemoteConnectionCoordinatorTests {
         let counter = CallCounter()
         let box = ConnectionBox()
         let clock = MutableClock()
+        let exchangeCount = CallCounter()
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
-            signaling: SignalingClient(transport: Self.successTransport(box: box)),
+            signaling: SignalingClient(transport: { request, body in
+                exchangeCount.increment()
+                if exchangeCount.count == 1 {
+                    return try await Self.successTransport(box: box)(request, body)
+                }
+                return Self.httpResponse(for: request, statusCode: 503, body: "host is busy")
+            }),
             connectionFactory: { key, fp in
                 counter.increment()
                 let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
@@ -220,15 +249,14 @@ struct RemoteConnectionCoordinatorTests {
         // `terminalStateChangeEvictsFromRegistry` exercises, then —
         // crucially — retry with NO clock advance. If a successful
         // negotiation ever left a cooldown entry behind, this would
-        // fast-nil instead of renegotiating.
+        // fast-nil WITHOUT ever calling `connectionFactory` again, and
+        // `counter.count` would stay at 1.
         await live.close()
-        var again: RemoteHostConnection?
         try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(5)) {
-            again = await coordinator.connection(for: host)
-            return again !== live
+            _ = await coordinator.connection(for: host)
+            return counter.count == 2
         }
         #expect(counter.count == 2, "a successful negotiation must not leave a cooldown behind for the host")
-        await again?.close()
     }
 
     // MARK: - Eviction on terminal state change
