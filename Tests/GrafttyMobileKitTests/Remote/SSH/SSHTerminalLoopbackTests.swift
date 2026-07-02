@@ -727,30 +727,27 @@ struct SSHTerminalLoopbackTests {
         // above) so a regression that silently drops the poisoned frame
         // (never closing the channel) fails fast instead of hanging past
         // the test's own `.timeLimit`.
+        var deadlineFired = false
         let deadlineTask = Task { [client] in
             try? await Task.sleep(for: responseDeadline)
+            deadlineFired = true
             client.close()
         }
         defer { deadlineTask.cancel() }
 
         try await client.connect()
 
-        // Timed explicitly (rather than just checking for
-        // `.channelClosed`) so a regression that silently drops the
-        // poisoned frame forever — and only closes via this driver's own
-        // belt-and-suspenders `deadlineTask` above — still fails instead
-        // of passing for the wrong reason: both paths raise the same
-        // error, but only `InboundRelay`'s own poison-and-close reacts
-        // near-instantly.
-        let start = ContinuousClock.now
+        // Check that the channel closes due to InboundRelay's poison detection,
+        // not via the deadline: if deadlineFired is true when we observe the
+        // close, it means the timeout fell back to the belt-and-suspenders close
+        // rather than reacting to the poisoned frame near-instantly.
         do {
             _ = try await client.receive()
             Issue.record("expected receive() to throw once the poisoned control frame closed the channel")
         } catch TerminalSessionClient.ClientError.channelClosed {
-            let elapsed = ContinuousClock.now - start
             #expect(
-                elapsed < .seconds(10),
-                "expected InboundRelay to close the channel promptly on poisoning, not via the test's own \(responseDeadline) belt-and-suspenders deadline (took \(elapsed))"
+                !deadlineFired,
+                "expected InboundRelay to close the channel promptly on poisoning, not via the test's own \(responseDeadline) belt-and-suspenders deadline"
             )
         } catch {
             Issue.record("expected .channelClosed, got \(error)")
