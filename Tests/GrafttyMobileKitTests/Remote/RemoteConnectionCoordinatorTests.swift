@@ -23,7 +23,7 @@ struct RemoteConnectionCoordinatorTests {
 
     @Test(.timeLimit(.minutes(1)))
     func hostWithNoRemoteDeviceIDReturnsNilWithoutNegotiating() async throws {
-        let dir = try Self.makeTempDirectory()
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
         let counter = CallCounter()
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
@@ -40,7 +40,7 @@ struct RemoteConnectionCoordinatorTests {
 
     @Test(.timeLimit(.minutes(1)))
     func hostWithRemoteDeviceIDButNoPinnedEntryReturnsNilWithoutNegotiating() async throws {
-        let dir = try Self.makeTempDirectory()
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
         let counter = CallCounter()
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
@@ -64,8 +64,8 @@ struct RemoteConnectionCoordinatorTests {
 
     @Test(.timeLimit(.minutes(1)))
     func concurrentCallsForSameHostDedupToOneNegotiation() async throws {
-        let dir = try Self.makeTempDirectory()
-        let host = try Self.makePairedHost(directory: dir)
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
         let counter = CallCounter()
         let gate = Gate()
         let coordinator = RemoteConnectionCoordinator(
@@ -87,7 +87,7 @@ struct RemoteConnectionCoordinatorTests {
         // (not 5s) because `createOffer()`'s real ICE-gathering wait can
         // ride its own 5s internal timeout on the simulator before the
         // negotiation ever reaches this transport.
-        try await Self.pollUntil(timeout: .seconds(10)) { await gate.enteredCount >= 1 }
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(10)) { await gate.enteredCount >= 1 }
         await gate.open()
 
         let r1 = await first
@@ -97,36 +97,146 @@ struct RemoteConnectionCoordinatorTests {
         #expect(counter.count == 1, "expected exactly one negotiation, factory was called \(counter.count) times")
     }
 
-    // MARK: - Busy (503) is retryable, not permanently cached
+    // MARK: - Busy (503) is retryable, not permanently cached — but is
+    // still subject to the failure cooldown (A3(b)): a 503 is not a
+    // PERMANENT failure, so retrying once the cooldown expires is fine;
+    // hammering the host again a millisecond later is exactly what the
+    // cooldown exists to prevent.
 
     @Test(.timeLimit(.minutes(1)))
-    func busyResponseReturnsNilAndRetriesOnNextCall() async throws {
-        let dir = try Self.makeTempDirectory()
-        let host = try Self.makePairedHost(directory: dir)
+    func busyResponseReturnsNilAndRetriesAfterCooldownExpires() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
         let counter = CallCounter()
+        let clock = MutableClock()
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
             signaling: SignalingClient(transport: { request, _ in
                 Self.httpResponse(for: request, statusCode: 503, body: "host is busy")
             }),
-            connectionFactory: { key, fp in counter.increment(); return RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp) }
+            connectionFactory: { key, fp in counter.increment(); return RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp) },
+            now: { clock.now() }
         )
 
         let first = await coordinator.connection(for: host)
         #expect(first == nil)
         #expect(counter.count == 1)
 
+        // Advancing the injected clock (not a real 30s wait) past the
+        // cooldown is what proves this is a TEMPORARY, not permanent,
+        // failure — see `cooldownSkipsNegotiationWithoutClockAdvance`
+        // below for the complementary proof that a call BEFORE the
+        // cooldown expires does NOT retry.
+        clock.advance(by: 31)
+
         let second = await coordinator.connection(for: host)
         #expect(second == nil)
-        #expect(counter.count == 2, "a 503 must not be cached as a permanent failure — the second call should retry")
+        #expect(counter.count == 2, "a 503 must not be cached as a PERMANENT failure — a call after the cooldown expires should retry")
+    }
+
+    // MARK: - Failure cooldown (A3(b))
+
+    @Test(.timeLimit(.minutes(1)))
+    func cooldownSkipsNegotiationWithoutClockAdvance() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let counter = CallCounter()
+        let clock = MutableClock()
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: { request, _ in
+                Self.httpResponse(for: request, statusCode: 503, body: "host is busy")
+            }),
+            connectionFactory: { key, fp in counter.increment(); return RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp) },
+            now: { clock.now() }
+        )
+
+        let first = await coordinator.connection(for: host)
+        #expect(first == nil)
+        #expect(counter.count == 1)
+
+        // No clock advance: still within the 30s cooldown window.
+        let second = await coordinator.connection(for: host)
+        #expect(second == nil)
+        #expect(counter.count == 1, "a call within the cooldown window must fast-nil WITHOUT negotiating again")
+    }
+
+    @Test(.timeLimit(.minutes(2)))
+    func invalidateClearsCooldownAllowingImmediateRetry() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let counter = CallCounter()
+        let clock = MutableClock()
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: { request, _ in
+                Self.httpResponse(for: request, statusCode: 503, body: "host is busy")
+            }),
+            connectionFactory: { key, fp in counter.increment(); return RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp) },
+            now: { clock.now() }
+        )
+
+        let first = await coordinator.connection(for: host)
+        #expect(first == nil)
+        #expect(counter.count == 1)
+
+        // `invalidate(host:)` is the exact call `RootView`'s background
+        // scenePhase path makes — a user-driven fresh start must not be
+        // blocked by a stale cooldown from a background-era failure (see
+        // `invalidate`'s doc comment). No clock advance: proves this is
+        // `invalidate` clearing the cooldown, not the cooldown expiring
+        // on its own.
+        await coordinator.invalidate(host: host)
+
+        let second = await coordinator.connection(for: host)
+        #expect(second == nil)
+        #expect(counter.count == 2, "invalidate(host:) must clear the cooldown so the very next call negotiates again")
+    }
+
+    @Test(.timeLimit(.minutes(2)))
+    func successfulNegotiationLeavesNoCooldownForSubsequentRenegotiation() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let counter = CallCounter()
+        let box = ConnectionBox()
+        let clock = MutableClock()
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: Self.successTransport(box: box)),
+            connectionFactory: { key, fp in
+                counter.increment()
+                let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
+                box.set(connection)
+                return connection
+            },
+            now: { clock.now() }
+        )
+
+        let negotiated = await coordinator.connection(for: host)
+        let live = try #require(negotiated)
+        #expect(counter.count == 1)
+
+        // Evict via the SAME terminal-transition path
+        // `terminalStateChangeEvictsFromRegistry` exercises, then —
+        // crucially — retry with NO clock advance. If a successful
+        // negotiation ever left a cooldown entry behind, this would
+        // fast-nil instead of renegotiating.
+        await live.close()
+        var again: RemoteHostConnection?
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(5)) {
+            again = await coordinator.connection(for: host)
+            return again !== live
+        }
+        #expect(counter.count == 2, "a successful negotiation must not leave a cooldown behind for the host")
+        await again?.close()
     }
 
     // MARK: - Eviction on terminal state change
 
     @Test(.timeLimit(.minutes(2)))
     func terminalStateChangeEvictsFromRegistry() async throws {
-        let dir = try Self.makeTempDirectory()
-        let host = try Self.makePairedHost(directory: dir)
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
         let counter = CallCounter()
         let box = ConnectionBox()
         let coordinator = RemoteConnectionCoordinator(
@@ -153,19 +263,87 @@ struct RemoteConnectionCoordinatorTests {
         // Eviction happens asynchronously (the observer hops back onto
         // the coordinator's actor via a `Task`); poll for the effect
         // rather than asserting immediately.
-        try await Self.pollUntil(timeout: .seconds(5)) {
-            let again = await coordinator.connection(for: host)
+        var again: RemoteHostConnection?
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(5)) {
+            again = await coordinator.connection(for: host)
             return again !== live
         }
         #expect(counter.count == 2, "eviction should allow a fresh negotiation on the next call")
+        await again?.close()
+    }
+
+    // MARK: - Register-then-verify (A2(i))
+
+    /// Best-effort regression test, NOT a deterministic RED reproduction:
+    /// the race `negotiate`'s register-then-verify guard closes — a
+    /// terminal transition landing in the single `await` gap between
+    /// `liveConnections[host.id] = connection` and the immediately
+    /// following `await connection.state` — depends on WebRTC's internal
+    /// ICE/DataChannel-close callback timing relative to actor-hop
+    /// scheduling, which this harness has no way to pin exactly. Killing
+    /// the answerer shortly after the handshake completes lands the
+    /// terminal transition SOMEWHERE close to that gap, sometimes
+    /// exercising the new inline guard and sometimes the pre-existing
+    /// async `onStateChange` eviction path instead — either is
+    /// acceptable, because what this test actually verifies is the
+    /// user-visible invariant BOTH paths exist to uphold: the registry
+    /// must never stay wedged on a connection whose peer is already gone.
+    @Test(.timeLimit(.minutes(1)))
+    func negotiationWhosePeerDiesImmediatelyIsNeverLeftRegisteredAsLive() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let box = ConnectionBox()
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: { request, body in
+                let offer = try JSONDecoder().decode(SignalingOffer.self, from: body)
+                let answerer = TestAnswerer()
+                let rtcOffer = RTCSessionDescription(type: .offer, sdp: offer.sdp)
+                let rtcAnswer = try await answerer.accept(offer: rtcOffer)
+                if let connection = box.get() {
+                    await connection.bindIceCandidates(to: answerer)
+                    await answerer.bindIceCandidates(to: connection)
+                }
+                box.retain(answerer)
+                // Kill the far side shortly after standing up — races
+                // the client's own post-registration verify. See this
+                // test's doc comment for why this is best-effort, not a
+                // pinned reproduction.
+                Task {
+                    try? await Task.sleep(for: .milliseconds(200))
+                    await answerer.close()
+                }
+                let answer = SignalingAnswer(sdp: rtcAnswer.sdp)
+                let data = try JSONEncoder().encode(answer)
+                return Self.httpResponseSuccess(for: request, data: data)
+            }),
+            connectionFactory: { key, fp in
+                let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
+                box.set(connection)
+                return connection
+            }
+        )
+
+        let firstResult = await coordinator.connection(for: host)
+
+        // If the guard caught the death inline, `firstResult` is already
+        // `nil` and there's nothing further to prove. Otherwise, poll
+        // until the dead connection is no longer the one on offer — the
+        // pre-existing async `onStateChange` eviction path is the
+        // fallback net if the inline guard's exact window was missed.
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(20)) {
+            guard let firstResult else { return true }
+            let again = await coordinator.connection(for: host)
+            return again !== firstResult
+        }
     }
 
     // MARK: - invalidate(host:) closes and evicts
 
     @Test(.timeLimit(.minutes(2)))
     func invalidateClosesAndEvictsTheLiveConnection() async throws {
-        let dir = try Self.makeTempDirectory()
-        let host = try Self.makePairedHost(directory: dir)
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
         let counter = CallCounter()
         let box = ConnectionBox()
         let coordinator = RemoteConnectionCoordinator(
@@ -189,13 +367,14 @@ struct RemoteConnectionCoordinatorTests {
         let again = await coordinator.connection(for: host)
         #expect(again !== live, "invalidate must evict so the next call negotiates fresh")
         #expect(counter.count == 2)
+        await again?.close()
     }
 
     // MARK: - isPaired(_:) — same source of truth as connection(for:)'s gate (Task-3 finding 3)
 
     @Test(.timeLimit(.minutes(1)))
     func isPairedFalseForHostWithNoRemoteDeviceID() async throws {
-        let dir = try Self.makeTempDirectory()
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
             signaling: SignalingClient(transport: { _, _ in throw Self.unreachable })
@@ -207,7 +386,7 @@ struct RemoteConnectionCoordinatorTests {
 
     @Test(.timeLimit(.minutes(1)))
     func isPairedFalseForRemoteDeviceIDWithNoPinnedEntry() async throws {
-        let dir = try Self.makeTempDirectory()
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
             signaling: SignalingClient(transport: { _, _ in throw Self.unreachable })
@@ -226,8 +405,8 @@ struct RemoteConnectionCoordinatorTests {
 
     @Test(.timeLimit(.minutes(1)))
     func isPairedTrueForHostWithMatchingPinnedEntry() async throws {
-        let dir = try Self.makeTempDirectory()
-        let host = try Self.makePairedHost(directory: dir)
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
             signaling: SignalingClient(transport: { _, _ in throw Self.unreachable })
@@ -247,8 +426,8 @@ struct RemoteConnectionCoordinatorTests {
     /// successful one — must never be registered as a live connection.
     @Test(.timeLimit(.minutes(2)))
     func invalidateDuringInFlightNegotiationEvictsOnCompletionRatherThanRegistering() async throws {
-        let dir = try Self.makeTempDirectory()
-        let host = try Self.makePairedHost(directory: dir)
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
         let counter = CallCounter()
         let box = ConnectionBox()
         let gate = Gate()
@@ -272,7 +451,7 @@ struct RemoteConnectionCoordinatorTests {
         // at) the gate before invalidating — proves `invalidate` lands
         // WHILE the negotiation is genuinely in flight, not after it
         // already completed.
-        try await Self.pollUntil(timeout: .seconds(10)) { await gate.enteredCount >= 1 }
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(10)) { await gate.enteredCount >= 1 }
         await coordinator.invalidate(host: host)
         await gate.open()
 
@@ -288,21 +467,22 @@ struct RemoteConnectionCoordinatorTests {
 
         // The NEXT call must negotiate fresh (not silently return the
         // evicted connection, and not be permanently poisoned by the
-        // mid-flight invalidation) — proving `invalidatedWhileInFlight`
-        // is a one-shot flag cleared once the in-flight negotiation it
-        // applied to resolves.
+        // mid-flight invalidation) — proving `invalidatedAttempts` only
+        // ever marks the ONE attempt it was recorded against, not every
+        // future attempt for the same host.
         let again = await coordinator.connection(for: host)
         #expect(counter.count == 2, "a fresh call after invalidate-mid-flight must negotiate again, not reuse the evicted connection")
         let secondConnection = try #require(again, "a fresh negotiation with no further invalidation should succeed normally")
         #expect(secondConnection !== firstConnection)
+        await secondConnection.close()
     }
 
     // MARK: - Stale eviction guard
 
     @Test(.timeLimit(.minutes(1)))
     func staleTerminalNotificationDoesNotEvictANewerConnection() async throws {
-        let dir = try Self.makeTempDirectory()
-        let host = try Self.makePairedHost(directory: dir)
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
             signaling: SignalingClient(transport: { _, _ in throw Self.unreachable })
@@ -332,35 +512,6 @@ struct RemoteConnectionCoordinatorTests {
     // MARK: - Helpers
 
     private nonisolated static let unreachable = NSError(domain: "RemoteConnectionCoordinatorTests", code: -1)
-
-    private static func makeTempDirectory() throws -> URL {
-        let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
-    /// Pairs `host` with a freshly generated pinned host record in
-    /// `directory`'s `PinnedHostStore`, mirroring what a real pairing
-    /// flow (`PairDeviceFlowView.buildModel`) would have persisted.
-    private static func makePairedHost(directory: URL) throws -> Host {
-        let hostKey = Curve25519.Signing.PrivateKey()
-        let hostPublicKey = try RemoteIdentityPublicKey(rawRepresentation: hostKey.publicKey.rawRepresentation)
-        let remoteDeviceID = RemoteDeviceID.generate()
-        let pinnedStore = PinnedHostStore(directory: directory)
-        try pinnedStore.add(PinnedHost(
-            id: remoteDeviceID,
-            kind: .mac,
-            publicKey: hostPublicKey,
-            displayName: "Test host",
-            pinnedAt: Date(),
-            pairingURL: URL(string: "https://host.local:9999")!
-        ))
-        return Host(
-            label: "Test host",
-            baseURL: URL(string: "https://host.local:9999")!,
-            remoteDeviceID: remoteDeviceID
-        )
-    }
 
     private nonisolated static func httpResponse(for request: URLRequest, statusCode: Int, body: String) -> (Data, HTTPURLResponse) {
         let data = Data("{\"error\":\"\(body)\"}".utf8)
@@ -408,7 +559,72 @@ struct RemoteConnectionCoordinatorTests {
         return (data, response)
     }
 
-    private static func pollUntil(
+}
+
+// MARK: - Shared test helpers (also used by `RemoteConnectionReconnectTests`)
+//
+// Namespaced under an enum (rather than bare top-level declarations) at
+// `internal` access — this file's/target's default — because
+// `RemoteHostConnectionLoopbackTests.swift` separately declares its OWN
+// file-`private` `pollUntil`/`PollTimeout` with the identical signature;
+// bare top-level `internal` declarations of the same name collide with
+// that file's `private` ones at the WHOLE-MODULE redeclaration check
+// (access control doesn't partition top-level name lookup the way it
+// does for type members). Namespacing sidesteps that without touching
+// `RemoteHostConnectionLoopbackTests.swift`, which is out of this dedupe's
+// scope.
+//
+// `makeTempDirectory`/`makePairedHost`/`pollUntil`/`PollTimeout` were
+// byte-identical copies duplicated across `RemoteConnectionCoordinatorTests.swift`
+// and `RemoteConnectionReconnectTests.swift` — consolidated here so both
+// files reference one definition. `LoopbackPeer`/`ConnectionBox`/
+// `httpResponseSuccess` etc. are NOT consolidated: they're
+// `RemoteConnectionReconnectTests`' own SSH-flavored variants of ideas
+// that also appear here in a WebRTC-only flavor, not true duplicates —
+// see that file's own doc comment on `LoopbackPeer` (deferred to a W5
+// sweep).
+enum RemoteConnectionTestSupport {
+    static func makeTempDirectory() throws -> URL {
+        let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    /// Pairs a host with a pinned host record in `directory`'s
+    /// `PinnedHostStore`, mirroring what a real pairing flow
+    /// (`PairDeviceFlowView.buildModel`) would have persisted. `serverKey`
+    /// defaults to a freshly generated key (the common case — most
+    /// callers don't need to know it up front); reconnect tests that must
+    /// seed a host-side SSH server with the SAME key the pinned record
+    /// trusts pass it explicitly.
+    static func makePairedHost(
+        directory: URL,
+        serverKey: Curve25519.Signing.PrivateKey? = nil
+    ) throws -> Host {
+        let hostKey = serverKey ?? Curve25519.Signing.PrivateKey()
+        let hostPublicKey = try RemoteIdentityPublicKey(rawRepresentation: hostKey.publicKey.rawRepresentation)
+        let remoteDeviceID = RemoteDeviceID.generate()
+        let pinnedStore = PinnedHostStore(directory: directory)
+        try pinnedStore.add(PinnedHost(
+            id: remoteDeviceID,
+            kind: .mac,
+            publicKey: hostPublicKey,
+            displayName: "Test host",
+            pinnedAt: Date(),
+            pairingURL: URL(string: "https://host.local:9999")!
+        ))
+        return Host(
+            label: "Test host",
+            baseURL: URL(string: "https://host.local:9999")!,
+            remoteDeviceID: remoteDeviceID
+        )
+    }
+
+    /// Poll until `condition()` returns true or the deadline expires.
+    /// Used instead of arbitrary `Task.sleep` so a test exits promptly on
+    /// success but still fails clearly when the condition genuinely
+    /// doesn't hold.
+    static func pollUntil(
         timeout: Duration,
         interval: Duration = .milliseconds(50),
         condition: () async -> Bool
@@ -421,7 +637,7 @@ struct RemoteConnectionCoordinatorTests {
         throw PollTimeout(timeout: timeout)
     }
 
-    private struct PollTimeout: Error, CustomStringConvertible {
+    struct PollTimeout: Error, CustomStringConvertible {
         let timeout: Duration
         var description: String { "pollUntil timed out after \(timeout)" }
     }
@@ -429,11 +645,34 @@ struct RemoteConnectionCoordinatorTests {
 
 /// Thread-safe call counter for asserting how many times a stubbed
 /// `connectionFactory` was invoked.
-private final class CallCounter: @unchecked Sendable {
+final class CallCounter: @unchecked Sendable {
     private let lock = NSLock()
     private var _count = 0
     func increment() { lock.lock(); _count += 1; lock.unlock() }
     var count: Int { lock.lock(); defer { lock.unlock() }; return _count }
+}
+
+/// Controllable clock for the failure-cooldown tests: `now()` — matching
+/// `RemoteConnectionCoordinator.init`'s `now` seam's signature exactly so
+/// it can be passed as `clock.now` — returns a fixed instant that only
+/// moves when the test calls `advance(by:)`, so "cooldown expired"
+/// behavior doesn't need a real 30s wait.
+private final class MutableClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: Date
+
+    init(_ date: Date = Date()) {
+        self.current = date
+    }
+
+    func now() -> Date {
+        lock.lock(); defer { lock.unlock() }
+        return current
+    }
+
+    func advance(by seconds: TimeInterval) {
+        lock.lock(); current = current.addingTimeInterval(seconds); lock.unlock()
+    }
 }
 
 /// Holds the most recently factory-created `RemoteHostConnection` (so the

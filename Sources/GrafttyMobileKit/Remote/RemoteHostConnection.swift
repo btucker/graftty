@@ -477,13 +477,6 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// `.closed` transition.
     private func performTeardown() {
         if let transport = sshTransport {
-            // Detach `onClose` first: `setState` already guards against a
-            // second terminal transition, but without this every teardown
-            // that reached SSH install would still pay for a pointless
-            // extra `Task { await handleDataChannelClosed() }` hop back
-            // into this (already terminal) actor once `transport.close()`
-            // fires its own `onClose`.
-            transport.onClose = nil
             Task { await transport.close() }
             sshTransport = nil
             sshHandlerBox = nil

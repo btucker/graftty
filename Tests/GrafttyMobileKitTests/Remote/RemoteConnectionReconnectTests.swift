@@ -45,7 +45,7 @@ struct RemoteConnectionReconnectTests {
 @spec IPAD-5.2: When the application foregrounds and the biometric gate is satisfied, the application shall rebuild the RemoteHostConnection from signaling onward, completing a fresh SSH userauth before opening any channel.
 """, .timeLimit(.minutes(3)))
     func invalidateThenReconnectProducesASecondFullUserauth() async throws {
-        let dir = try Self.makeTempDirectory()
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
 
         // Pre-generate + persist the client identity BEFORE constructing
         // the coordinator, so its fingerprint is known up front to seed
@@ -59,11 +59,12 @@ struct RemoteConnectionReconnectTests {
         )
 
         let serverKey = Curve25519.Signing.PrivateKey()
-        let host = try Self.makePairedHost(directory: dir, serverKey: serverKey)
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: serverKey)
 
         let userauthCounter = CallCounter()
         let box = ConnectionBox()
         let negotiationCounter = CallCounter()
+        let recorder = TerminalByteRecorder()
 
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
@@ -71,7 +72,21 @@ struct RemoteConnectionReconnectTests {
                 serverKey: serverKey,
                 trustedClientFingerprint: clientFingerprint,
                 userauthCounter: userauthCounter,
-                box: box
+                box: box,
+                // A real inbound channel initializer (not `nil`, this
+                // suite's default) so the "before opening any channel"
+                // clause below has an actual channel to open against —
+                // reused verbatim from Task 5's E2E test.
+                inboundChildChannelInitializer: { childChannel, channelType in
+                    guard case .session = channelType else {
+                        return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
+                    }
+                    return childChannel.eventLoop.makeCompletedFuture {
+                        try childChannel.pipeline.syncOperations.addHandler(
+                            TerminalEchoSessionHandler(recorder: recorder)
+                        )
+                    }
+                }
             )),
             connectionFactory: { key, fp in
                 negotiationCounter.increment()
@@ -85,7 +100,7 @@ struct RemoteConnectionReconnectTests {
         let first = await coordinator.connection(for: host)
         #expect(first != nil, "first negotiation should succeed")
         #expect(negotiationCounter.count == 1)
-        try await Self.pollUntil(timeout: .seconds(15)) { userauthCounter.count >= 1 }
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { userauthCounter.count >= 1 }
 
         // Background teardown (the exact call Task 4 wires into
         // `RootView`'s / `WorktreeDetailView`'s scenePhase handling).
@@ -99,7 +114,26 @@ struct RemoteConnectionReconnectTests {
         let liveSecond = try #require(second, "reconnect should succeed")
         #expect(liveSecond !== first, "must be a genuinely new connection, not the invalidated one")
         #expect(negotiationCounter.count == 2, "a second WebRTC negotiation must have occurred")
-        try await Self.pollUntil(timeout: .seconds(15)) { userauthCounter.count >= 2 }
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { userauthCounter.count >= 2 }
+
+        // EARS clause under test: "...completing a fresh SSH userauth
+        // BEFORE opening any channel." The counter snapshot taken here —
+        // immediately before the ONLY channel-open call in this test —
+        // is the ordering proof: `openTerminalSession` only ever succeeds
+        // against an already-installed `NIOSSHHandler`
+        // (`RemoteHostConnection.openTerminalSession` throws
+        // `.notConnected` otherwise), which in turn only exists once
+        // `installSSHHandlerAndResume` has already driven userauth to
+        // completion — so a snapshot of 2 taken right here, BEFORE the
+        // call below, is not a coincidence of timing but a consequence
+        // of that ordering.
+        let userauthCountBeforeChannelOpen = userauthCounter.count
+        #expect(userauthCountBeforeChannelOpen == 2, "userauth must already be complete before any channel-open is issued")
+        let session = try await liveSecond.openTerminalSession(sessionName: "ipad-5-2-order-check")
+        let bytes = Data("ipad-5-2\n".utf8)
+        try await session.send(.binary(bytes))
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { recorder.contains(bytes) }
+        #expect(userauthCounter.count == userauthCountBeforeChannelOpen, "opening a channel must not itself trigger another userauth")
 
         await coordinator.invalidate(host: host)
     }
@@ -151,13 +185,13 @@ struct RemoteConnectionReconnectTests {
     ///      now proven one layer up through `SessionClient` itself.
     @Test(.timeLimit(.minutes(3)))
     func endToEndSignalingSSHReconnectSelfHeals() async throws {
-        let dir = try Self.makeTempDirectory()
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
         let clientKey = try ClientIdentityStore(directory: dir).loadOrGenerateAndPersist()
         let clientFingerprint = Self.fingerprint(
             of: try RemoteIdentityPublicKey(rawRepresentation: clientKey.publicKey.rawRepresentation)
         )
         let serverKey = Curve25519.Signing.PrivateKey()
-        let host = try Self.makePairedHost(directory: dir, serverKey: serverKey)
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir, serverKey: serverKey)
 
         let userauthCounter = CallCounter()
         let negotiationCounter = CallCounter()
@@ -203,16 +237,16 @@ struct RemoteConnectionReconnectTests {
         client.start()
 
         // 1: first dial negotiates through the real coordinator + signaling.
-        try await Self.pollUntil(timeout: .seconds(15)) { negotiationCounter.count == 1 }
-        try await Self.pollUntil(timeout: .seconds(15)) { userauthCounter.count >= 1 }
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { negotiationCounter.count == 1 }
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { userauthCounter.count >= 1 }
 
         // 2/3: hello grants ownership; injected PTY bytes reach the host
         // and echo back over the SAME SSH session channel `SessionClient`
         // opened.
-        try await Self.pollUntil(timeout: .seconds(15)) { client.isOwner }
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { client.isOwner }
         let firstBytes = Data("hello-from-client\n".utf8)
         client.session.sendInput(firstBytes)
-        try await Self.pollUntil(timeout: .seconds(15)) { recorder.contains(firstBytes) }
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { recorder.contains(firstBytes) }
 
         // 4: kill the negotiation-#1 peer.
         guard let firstAnswerer = box.latestAnswerer() else {
@@ -225,7 +259,7 @@ struct RemoteConnectionReconnectTests {
         // dying and fall into backoff — real wall-clock (WebRTC/SSH
         // teardown isn't on the `VirtualClock`), gated by polling rather
         // than a sleep.
-        try await Self.pollUntil(timeout: .seconds(20)) {
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(20)) {
             if case .reconnecting = client.connectionState { return true }
             return false
         }
@@ -243,18 +277,18 @@ struct RemoteConnectionReconnectTests {
         for delay in backoffSchedule {
             if negotiationCounter.count >= 2 { break }
             clock.advance(by: delay)
-            _ = try? await Self.pollUntil(timeout: .seconds(5)) { negotiationCounter.count >= 2 }
+            _ = try? await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(5)) { negotiationCounter.count >= 2 }
         }
         #expect(negotiationCounter.count == 2, "a second negotiation must occur once the coordinator evicts the dead connection")
-        try await Self.pollUntil(timeout: .seconds(15)) { userauthCounter.count >= 2 }
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { userauthCounter.count >= 2 }
 
         // 6: self-heal proof — a fresh hello re-grants ownership on the
         // NEW connection, and bytes flow again through the NEW SSH
         // session channel the healed `SessionClient` opened.
-        try await Self.pollUntil(timeout: .seconds(15)) { client.isOwner }
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { client.isOwner }
         let secondBytes = Data("hello-after-reconnect\n".utf8)
         client.session.sendInput(secondBytes)
-        try await Self.pollUntil(timeout: .seconds(15)) { recorder.contains(secondBytes) }
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { recorder.contains(secondBytes) }
 
         client.stop()
         await coordinator.invalidate(host: host)
@@ -342,65 +376,15 @@ struct RemoteConnectionReconnectTests {
         return (data, response)
     }
 
-    private static func makeTempDirectory() throws -> URL {
-        let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
-    /// Pairs `host` with a pinned host record for `serverKey`, mirroring
-    /// what a real pairing flow persists to `PinnedHostStore`.
-    private static func makePairedHost(directory: URL, serverKey: Curve25519.Signing.PrivateKey) throws -> Host {
-        let hostPublicKey = try RemoteIdentityPublicKey(rawRepresentation: serverKey.publicKey.rawRepresentation)
-        let remoteDeviceID = RemoteDeviceID.generate()
-        let pinnedStore = PinnedHostStore(directory: directory)
-        try pinnedStore.add(PinnedHost(
-            id: remoteDeviceID,
-            kind: .mac,
-            publicKey: hostPublicKey,
-            displayName: "Test host",
-            pinnedAt: Date(),
-            pairingURL: URL(string: "https://host.local:9999")!
-        ))
-        return Host(
-            label: "Test host",
-            baseURL: URL(string: "https://host.local:9999")!,
-            remoteDeviceID: remoteDeviceID
-        )
-    }
-
     private nonisolated static func fingerprint(of key: RemoteIdentityPublicKey) -> RemoteIdentityFingerprint {
         RemoteIdentityFingerprint(of: key)
     }
-
-    private static func pollUntil(
-        timeout: Duration,
-        interval: Duration = .milliseconds(50),
-        condition: () async -> Bool
-    ) async throws {
-        let deadline = ContinuousClock.now.advanced(by: timeout)
-        while ContinuousClock.now < deadline {
-            if await condition() { return }
-            try await Task.sleep(for: interval)
-        }
-        throw PollTimeout(timeout: timeout)
-    }
-
-    private struct PollTimeout: Error, CustomStringConvertible {
-        let timeout: Duration
-        var description: String { "pollUntil timed out after \(timeout)" }
-    }
 }
 
-/// Thread-safe call counter — mirrors `RemoteConnectionCoordinatorTests.CallCounter`
-/// (copy-don't-extract precedent already established across this test
-/// target's loopback suites).
-private final class CallCounter: @unchecked Sendable {
-    private let lock = NSLock()
-    private var _count = 0
-    func increment() { lock.lock(); _count += 1; lock.unlock() }
-    var count: Int { lock.lock(); defer { lock.unlock() }; return _count }
-}
+// `RemoteConnectionTestSupport.makeTempDirectory()`, `.makePairedHost(directory:serverKey:)`,
+// `.pollUntil(timeout:interval:condition:)`, `.PollTimeout`, and top-level
+// `CallCounter` are defined once, in `RemoteConnectionCoordinatorTests.swift`
+// (this test target's byte-identical duplicates were consolidated there).
 
 /// Holds the most-recently factory-created `RemoteHostConnection` (so the
 /// fake transport can route ICE candidates to/from it), every `LoopbackPeer`
@@ -509,6 +493,9 @@ private struct CountingServerUserAuthDelegate: NIOSSHServerUserAuthenticationDel
 }
 
 // MARK: - LoopbackPeer (copy of R2/R3's LoopbackPeer — copy-don't-extract precedent)
+// Left duplicated deliberately (unlike this file's other consolidated
+// helpers above) — a real extraction is a W5 test-consolidation sweep,
+// not part of this review-fix wave.
 
 private actor LoopbackPeer: WebRTCIceCandidateReceiver {
     enum Role { case offerer, answerer }

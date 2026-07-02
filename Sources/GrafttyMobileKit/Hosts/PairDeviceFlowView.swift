@@ -347,24 +347,22 @@ public struct PairDeviceFlowView: View {
         payload: PairingPayload,
         directory: URL = ClientIdentityStore.defaultDirectory
     ) -> PairDeviceFlowModel? {
-        let identityStore = ClientIdentityStore(directory: directory)
-        let pinnedHostStore = PinnedHostStore(directory: directory)
-        let deviceIDStore = ClientDeviceIDStore(directory: directory)
+        let stores = ClientRemoteStores(directory: directory)
 
-        guard let clientDeviceID = try? deviceIDStore.loadOrGenerateAndPersist() else {
+        guard let clientDeviceID = try? stores.deviceIDStore.loadOrGenerateAndPersist() else {
             return nil
         }
 
         let session = ClientPairingSession(
-            identityStore: identityStore,
-            pinnedHostStore: pinnedHostStore,
+            identityStore: stores.identityStore,
+            pinnedHostStore: stores.pinnedHostStore,
             clientDeviceID: clientDeviceID,
             clientKind: UIDevice.current.userInterfaceIdiom == .pad ? .ipad : .iphone,
             clientDisplayName: UIDevice.current.name
         )
         let client = LocalPairingClient(
             session: session,
-            identityStore: identityStore,
+            identityStore: stores.identityStore,
             transport: Self.productionTransport
         )
         return PairDeviceFlowModel(payload: payload, session: session, client: client)
