@@ -58,6 +58,16 @@ public final class PairDeviceFlowModel {
     /// after the user believed they'd cancelled).
     private var pairingTask: Task<Result<PinnedHost, Swift.Error>, Never>?
 
+    /// Latched by `cancel()` *before* it tears down `pairingTask`/`session`,
+    /// so `run()`'s failure handling can tell "the user cancelled" apart
+    /// from "the ceremony genuinely failed" even when the underlying error
+    /// doesn't say so. Without this, a failure racing the teardown — e.g.
+    /// `session.confirm()` losing a race with `session.cancel()` and
+    /// throwing `ClientPairingSession.Error.wrongState(current: .cancelled)`
+    /// — falls through to the generic `.failed` branch and flashes a
+    /// spurious error message on a ceremony the user already backed out of.
+    private var wasCancelled = false
+
     // MARK: Init
 
     public init(payload: PairingPayload, session: ClientPairingSession, client: LocalPairingClient) {
@@ -86,7 +96,12 @@ public final class PairDeviceFlowModel {
 
         let pollTask = Task { [weak self] in
             while !Task.isCancelled {
-                self?.reflectAwaitingConfirmation()
+                // Stop as soon as the code has been reflected (or the model
+                // is gone) — polling on after that point wakes the timer
+                // every 100ms for the rest of the ~300s await-outcome
+                // long-poll for no observable benefit, since `run()`'s own
+                // await on `pairingTask.value` takes over from here.
+                if self?.reflectAwaitingConfirmation() ?? true { break }
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
         }
@@ -107,23 +122,27 @@ public final class PairDeviceFlowModel {
             state = .expired
         case .failure(LocalPairingClient.Error.cancelled):
             state = .cancelled
-        // `LocalPairingClient.postJSON` maps a cancelled `Task` (and the
-        // `URLError(.cancelled)` the production transport throws for one)
-        // to `.cancelled` above, but guard here too in case a future
-        // throwing point in the chain lets a raw `CancellationError`
-        // through unwrapped — it must land on `.cancelled`, never
-        // `.failed`, or `cancel()` would flash a spurious error message.
-        case .failure(let error) where error is CancellationError:
+        // `wasCancelled` is checked before the generic `.failed` fallback
+        // so any error surfacing after the user cancelled — regardless of
+        // its concrete type — presents as `.cancelled` rather than a
+        // spurious failure message. See `wasCancelled`'s doc comment.
+        case .failure where wasCancelled:
             state = .cancelled
         case .failure(let error):
             state = .failed(message: "\(error)")
         }
     }
 
-    private func reflectAwaitingConfirmation() {
-        guard case .connecting = state else { return }
-        guard case .awaitingHostConfirmation(_, let code, let payload) = session.state else { return }
+    /// Returns `true` once there's nothing left for the poll loop to do:
+    /// either it just reflected `.awaitingConfirmation`, or `state` has
+    /// already moved past `.connecting` for some other reason (e.g. the
+    /// ceremony failed outright before the host ever acknowledged it).
+    @discardableResult
+    private func reflectAwaitingConfirmation() -> Bool {
+        guard case .connecting = state else { return true }
+        guard case .awaitingHostConfirmation(_, let code, let payload) = session.state else { return false }
         state = .awaitingConfirmation(code: code.display, hostDisplayName: payload.hostDisplayName)
+        return true
     }
 
     /// Cancels an in-flight pairing ceremony.
@@ -139,6 +158,7 @@ public final class PairDeviceFlowModel {
     /// `ClientPairingSession.cancel()` no-ops from `.confirmed` and other
     /// terminal states.
     public func cancel() {
+        wasCancelled = true
         pairingTask?.cancel()
         session.cancel()
     }
@@ -176,6 +196,12 @@ public struct PairDeviceFlowView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var model: PairDeviceFlowModel?
     @State private var saveError: String?
+    /// True when `buildModel` returned `nil` (e.g. `ClientDeviceIDStore`
+    /// couldn't read/persist an identity). Tracked separately from `model`
+    /// because a nil model is otherwise indistinguishable from "hasn't
+    /// started yet" — without this, `content` falls through to
+    /// `connectingView` forever, an infinite spinner with no way out.
+    @State private var buildFailed = false
 
     let payload: PairingPayload
     let onSave: (Host) throws -> Void
@@ -202,10 +228,7 @@ public struct PairDeviceFlowView: View {
                 }
             }
             .task {
-                guard model == nil else { return }
-                let built = Self.buildModel(payload: payload)
-                model = built
-                await built?.run()
+                await start()
             }
             // Covers swipe-to-dismiss and any other disappearance path that
             // doesn't go through the toolbar button — without this, the
@@ -216,23 +239,47 @@ public struct PairDeviceFlowView: View {
             }
     }
 
+    private func start() async {
+        guard model == nil else { return }
+        guard let built = Self.buildModel(payload: payload) else {
+            buildFailed = true
+            return
+        }
+        buildFailed = false
+        model = built
+        await built.run()
+    }
+
+    /// Retries from a `buildModel` failure — distinct from `onRetry`, which
+    /// backs out to the QR scanner. A broken `ClientDeviceIDStore` won't be
+    /// fixed by rescanning the same host's QR code, so this re-attempts
+    /// `buildModel` in place instead.
+    private func retryBuild() {
+        buildFailed = false
+        Task { await start() }
+    }
+
     @ViewBuilder
     private var content: some View {
-        switch model?.state ?? .connecting {
-        case .connecting:
-            connectingView
-        case .awaitingConfirmation(let code, let hostDisplayName):
-            awaitingConfirmationView(code: code, hostDisplayName: hostDisplayName)
-        case .success(let host, let addressUnconfirmed):
-            successView(host: host, addressUnconfirmed: addressUnconfirmed)
-        case .denied:
-            retryView(message: "Pairing was denied on your Mac.")
-        case .expired:
-            retryView(message: "The pairing code expired. Scan the QR code again.")
-        case .cancelled:
-            retryView(message: "Pairing was cancelled.")
-        case .failed(let message):
-            retryView(message: "Couldn't pair: \(message)")
+        if buildFailed {
+            retryView(message: "Couldn't start pairing. Try again.", onRetry: retryBuild)
+        } else {
+            switch model?.state ?? .connecting {
+            case .connecting:
+                connectingView
+            case .awaitingConfirmation(let code, let hostDisplayName):
+                awaitingConfirmationView(code: code, hostDisplayName: hostDisplayName)
+            case .success(let host, let addressUnconfirmed):
+                successView(host: host, addressUnconfirmed: addressUnconfirmed)
+            case .denied:
+                retryView(message: "Pairing was denied on your Mac.", onRetry: onRetry)
+            case .expired:
+                retryView(message: "The pairing code expired. Scan the QR code again.", onRetry: onRetry)
+            case .cancelled:
+                retryView(message: "Pairing was cancelled.", onRetry: onRetry)
+            case .failed(let message):
+                retryView(message: "Couldn't pair: \(message)", onRetry: onRetry)
+            }
         }
     }
 
@@ -274,10 +321,10 @@ public struct PairDeviceFlowView: View {
         .padding()
     }
 
-    private func retryView(message: String) -> some View {
+    private func retryView(message: String, onRetry: @escaping () -> Void) -> some View {
         VStack(spacing: 16) {
             Text(message)
-            Button("Retry") { onRetry() }
+            Button("Retry", action: onRetry)
         }
         .padding()
     }
@@ -291,10 +338,15 @@ public struct PairDeviceFlowView: View {
         }
     }
 
-    // MARK: - Model construction
+    // MARK: - Model construction (unit-testable, no SwiftUI/View state)
 
-    private static func buildModel(payload: PairingPayload) -> PairDeviceFlowModel? {
-        let directory = ClientIdentityStore.defaultDirectory
+    /// `directory` is injectable so tests can force `ClientDeviceIDStore`'s
+    /// underlying I/O to fail (e.g. by pointing it at a path a file already
+    /// occupies) without touching the production `defaultDirectory`.
+    static func buildModel(
+        payload: PairingPayload,
+        directory: URL = ClientIdentityStore.defaultDirectory
+    ) -> PairDeviceFlowModel? {
         let identityStore = ClientIdentityStore(directory: directory)
         let pinnedHostStore = PinnedHostStore(directory: directory)
         let deviceIDStore = ClientDeviceIDStore(directory: directory)

@@ -22,7 +22,10 @@ public struct AddHostView: View {
                 PairDeviceFlowView(
                     payload: pairingPayload,
                     onSave: onSave,
-                    onRetry: { self.pairingPayload = nil }
+                    onRetry: {
+                        scanError = nil
+                        self.pairingPayload = nil
+                    }
                 )
             } else if isScanning {
                 scanner
@@ -108,6 +111,12 @@ public struct AddHostView: View {
     private func handle(rawURL: String) {
         switch Self.route(for: rawURL) {
         case .pairing(let payload):
+            // A prior scan's error (e.g. "QR did not contain a Graftty
+            // URL") must not linger behind the pairing sheet — if that
+            // ceremony's Retry bounces back to the scanner (via `onRetry`
+            // above), a stale error from before this successful scan would
+            // otherwise still be showing.
+            scanError = nil
             pairingPayload = payload
         case .url(let url):
             let host = Host(

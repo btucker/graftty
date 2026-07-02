@@ -55,6 +55,54 @@ struct AddHostViewRoutingTests {
     }
 }
 
+// MARK: - PairDeviceFlowView.buildModel
+
+@Suite("PairDeviceFlowView.buildModel")
+struct PairDeviceFlowViewBuildModelTests {
+
+    private func makePayload() -> PairingPayload {
+        PairingPayload(
+            hostDeviceID: RemoteDeviceID(value: "host-1"),
+            hostKind: .mac,
+            hostDisplayName: "Test Mac",
+            hostPublicKeyFingerprint: RemoteIdentityFingerprint(
+                of: try! RemoteIdentityPublicKey(rawRepresentation: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation)
+            ),
+            nonce: RemotePairingNonce.generate(),
+            expiry: Date().addingTimeInterval(300),
+            pairingURL: URL(string: "http://mac.local:8800/v1/pairing")!
+        )
+    }
+
+    @Test("A usable directory builds a model")
+    func succeedsWithUsableDirectory() throws {
+        let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let model = PairDeviceFlowView.buildModel(payload: makePayload(), directory: dir)
+        #expect(model != nil)
+    }
+
+    /// A nil return here is what lets the view present a failed/retry
+    /// state — previously the caller silently proceeded with no model,
+    /// leaving the view stuck on `connectingView` forever with no way out.
+    @Test("""
+    @spec REMOTE-1.10: When `ClientDeviceIDStore` cannot read or persist a client device identity, `PairDeviceFlowView.buildModel` shall return nil so the view can present a failed state whose Retry re-attempts model construction, rather than an indefinite connecting spinner.
+    """)
+    func returnsNilWhenDeviceIDStoreDirectoryIsUnusable() throws {
+        // A regular file where `ClientDeviceIDStore` needs a directory: its
+        // `createDirectory(at:withIntermediateDirectories:)` call throws
+        // because a non-directory item already occupies that path.
+        let blockedPath = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data("blocking file".utf8).write(to: blockedPath)
+        defer { try? FileManager.default.removeItem(at: blockedPath) }
+
+        let model = PairDeviceFlowView.buildModel(payload: makePayload(), directory: blockedPath)
+        #expect(model == nil)
+    }
+}
+
 // MARK: - ClientDeviceIDStore persistence
 
 @Suite("ClientDeviceIDStore")
@@ -461,11 +509,56 @@ struct PairDeviceFlowModelTests {
 
         await runTask.value
 
-        if case .success = fx.model.state {
-            Issue.record("cancel() must not let a pairing complete, got .success")
+        // The confirmed outcome races `session.cancel()`: `runPairing`
+        // still calls `session.confirm(...)` after the outcome resolves,
+        // but the session is already `.cancelled`, so `confirm` throws
+        // `ClientPairingSession.Error.wrongState(current: .cancelled)`.
+        // Before the `wasCancelled` guard, that error fell through to the
+        // generic `.failure` branch and flashed `.failed("wrongState(...)")`
+        // even though the user had already cancelled — assert the exact
+        // terminal state, not just "not success", so that regression stays
+        // caught.
+        guard case .cancelled = fx.model.state else {
+            Issue.record("Expected .cancelled, got \(fx.model.state)")
+            return
         }
         let pinnedList = try fx.pinnedStore.list()
         #expect(pinnedList.isEmpty)
+    }
+
+    /// Direct, deterministic coverage of the `wasCancelled`-checked-first
+    /// guard: the `await-outcome` gate reproduction above only exercises
+    /// the case where `pairingTask.cancel()` wins the race via the
+    /// transport's own `CancellationError` path (already mapped correctly
+    /// pre-fix). The actual regression — an arbitrary pairing failure
+    /// (e.g. `ClientPairingSession.Error.wrongState` from `confirm()`
+    /// losing a race with `session.cancel()`) surfacing as a spurious
+    /// `.failed(...)` after the user already cancelled — has no I/O
+    /// boundary to gate, so this drives it structurally: `cancel()` before
+    /// `run()` ever starts a `pairingTask` (a no-op for the not-yet-created
+    /// task and the still-`.idle` session, but it must still latch
+    /// `wasCancelled`), then a malformed `introduce` response produces a
+    /// `LocalPairingClient.Error.decode` — a failure `run()` doesn't map to
+    /// `.denied`/`.expired`/`.cancelled` — which must still present as
+    /// `.cancelled`, not the raw decode error.
+    @Test("""
+    @spec REMOTE-1.9: While a pairing ceremony has already been cancelled, the client shall present .cancelled for any subsequent pairing failure rather than the failure's raw error message.
+    """)
+    func cancelBeforeRunPresentsCancelledForAnyFailure() async throws {
+        let dir = try makeTempDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let stub = StubTransport()
+        let fx = try await makeFixtures(dir: dir, stub: stub)
+        await stub.setResponse(for: "introduce", body: Data("not json".utf8))
+
+        fx.model.cancel()
+        await fx.model.run()
+
+        guard case .cancelled = fx.model.state else {
+            Issue.record("Expected .cancelled, got \(fx.model.state)")
+            return
+        }
     }
 }
 #endif

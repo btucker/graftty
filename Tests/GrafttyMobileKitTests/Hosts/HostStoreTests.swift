@@ -1,6 +1,7 @@
 #if canImport(UIKit)
 import Foundation
 import Testing
+import GrafttyProtocol
 @testable import GrafttyMobileKit
 
 @Suite
@@ -141,6 +142,46 @@ struct HostStoreTests {
         #expect(decoded.first?.id == id)
         #expect(decoded.first?.label == "mac")
         #expect(decoded.first?.remoteDeviceID == nil)
+    }
+
+    /// `add`'s same-URL dedupe branch (a re-scan of a host already saved
+    /// under a manually-entered URL) refreshed `label`/`lastUsedAt` but
+    /// dropped the newly-scanned `remoteDeviceID` on the floor, silently
+    /// discarding the identity REMOTE-1.5 pairing just established.
+    @Test("""
+    @spec REMOTE-1.7: When `HostStore.add` merges a newly-paired host into an existing same-URL entry, the store shall adopt the incoming `remoteDeviceID` rather than discarding it.
+    """)
+    func addMergesRemoteDeviceIDIntoExistingHostBySameURL() throws {
+        let (store, url) = makeStore()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let baseURL = URL(string: "http://mac.local:8799/")!
+        try store.add(Host(label: "mac", baseURL: baseURL))
+        #expect(store.hosts.first?.remoteDeviceID == nil)
+
+        let deviceID = RemoteDeviceID(value: "host-1")
+        try store.add(Host(label: "mac", baseURL: baseURL, remoteDeviceID: deviceID))
+
+        #expect(store.hosts.count == 1)
+        #expect(store.hosts.first?.remoteDeviceID == deviceID)
+    }
+
+    /// The merge must be additive, not destructive: re-adding a host whose
+    /// incoming record carries no `remoteDeviceID` (e.g. a plain URL rescan)
+    /// must not clobber an identity already recorded from an earlier pairing.
+    @Test("""
+    @spec REMOTE-1.8: When `HostStore.add` merges a same-URL host whose incoming record has no `remoteDeviceID`, the store shall preserve the existing entry's `remoteDeviceID`.
+    """)
+    func addPreservesExistingRemoteDeviceIDWhenIncomingHostHasNone() throws {
+        let (store, url) = makeStore()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let baseURL = URL(string: "http://mac.local:8799/")!
+        let deviceID = RemoteDeviceID(value: "host-1")
+        try store.add(Host(label: "mac", baseURL: baseURL, remoteDeviceID: deviceID))
+
+        try store.add(Host(label: "mac", baseURL: baseURL))
+
+        #expect(store.hosts.count == 1)
+        #expect(store.hosts.first?.remoteDeviceID == deviceID)
     }
 }
 #endif
