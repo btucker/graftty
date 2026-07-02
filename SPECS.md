@@ -1770,6 +1770,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.4** When the PTY size changes, the host shall push grid and ownership envelopes to SSH terminal clients over the control carrier.
 
+**REMOTE-9.5** When two SSH clients attach to one session over the control carrier, the application shall grant display ownership to the first client that sends hello and takeControl — localized to that client's own clientID in its ownership envelopes — attach the second hello client as a follower whose envelopes never name it as owner, and answer a follower's terminal bytes with an ownership rebroadcast instead of a PTY echo.
+
+**REMOTE-9.6** When an owner-eligible follower SSH client sends takeControl, the application shall transfer display ownership to it and bump the session epoch, observable by the new owner as a self-owned snapshot and by the former owner as a non-self owner in their next ownership envelopes.
+
+**REMOTE-9.7** If an SSH client that is not the current display owner sends ownerResize, then the application shall reject it and leave the broadcast grid unchanged; while the current owner's ownerResize at the current epoch shall update the broadcast grid without bumping the epoch.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x

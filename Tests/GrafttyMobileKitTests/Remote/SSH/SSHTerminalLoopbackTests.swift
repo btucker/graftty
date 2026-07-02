@@ -135,6 +135,134 @@ struct SSHTerminalLoopbackTests {
         #expect(clientReceived.filter { $0.type == .channel } == serverToClient.filter { $0.type == .channel })
     }
 
+    // MARK: - Task 5: SSH terminal ownership (hello / takeControl / ownerResize)
+
+    /// Also proves localization: each client's OWN ownership envelope
+    /// reports the owner using ITS OWN supplied `clientID` iff it is
+    /// actually the owner (`SessionClient.isOwner` depends on this).
+    @Test(
+        """
+        @spec REMOTE-9.5: When two SSH clients attach to one session over the control carrier, \
+        the application shall grant display ownership to the first client that sends hello and \
+        takeControl — localized to that client's own clientID in its ownership envelopes — attach \
+        the second hello client as a follower whose envelopes never name it as owner, and answer \
+        a follower's terminal bytes with an ownership rebroadcast instead of a PTY echo.
+        """,
+        .timeLimit(.minutes(3))
+    )
+    func firstClientTakesControlSecondFollowsAndBytesAreDiscarded() async throws {
+        try await runOwnershipLoopback { clientA, clientB in
+            let idA = DisplayClientID("client-a")
+            let idB = DisplayClientID("client-b")
+
+            await clientA.sendHello(clientID: idA, kind: .ios, role: .interactive, visible: true, cols: 80, rows: 24)
+            await clientA.takeControl(clientID: idA, kind: .ios, cols: 80, rows: 24)
+
+            // A's own view: it IS the owner, localized to its own clientID.
+            let aOwns = try await nextOwnershipSnapshot(clientA) { $0.ownerClientID != nil }
+            #expect(aOwns.ownerClientID == idA)
+            #expect(aOwns.ownerKind == .ios)
+            #expect(aOwns.epoch == 1)
+
+            await clientB.sendHello(clientID: idB, kind: .ios, role: .interactive, visible: true, cols: 80, rows: 24)
+
+            // B's view: someone else owns — never localized to B's own id.
+            let bSees = try await nextOwnershipSnapshot(clientB) { $0.ownerClientID != nil }
+            #expect(bSees.ownerClientID != idB)
+            #expect(bSees.ownerKind == .ios)
+
+            // B is a follower — its bytes must be discarded, not echoed.
+            // The very next frame B observes is the discard's ownership
+            // rebroadcast, never a `.binary` echo of what it just sent.
+            try await clientB.send(.binary(Data("should-not-echo".utf8)))
+            let followup = try await clientB.receive()
+            guard case .text = followup else {
+                Issue.record("expected the discard rebroadcast as a .text control frame, got \(followup)")
+                return
+            }
+        }
+    }
+
+    @Test(
+        """
+        @spec REMOTE-9.6: When an owner-eligible follower SSH client sends takeControl, the \
+        application shall transfer display ownership to it and bump the session epoch, observable \
+        by the new owner as a self-owned snapshot and by the former owner as a non-self owner in \
+        their next ownership envelopes.
+        """,
+        .timeLimit(.minutes(3))
+    )
+    func takeControlFlipsOwnershipAndBumpsEpoch() async throws {
+        try await runOwnershipLoopback { clientA, clientB in
+            let idA = DisplayClientID("client-a")
+            let idB = DisplayClientID("client-b")
+
+            await clientA.sendHello(clientID: idA, kind: .ios, role: .interactive, visible: true, cols: 80, rows: 24)
+            await clientA.takeControl(clientID: idA, kind: .ios, cols: 80, rows: 24)
+            let aOwns = try await nextOwnershipSnapshot(clientA) { $0.ownerClientID == idA }
+            #expect(aOwns.epoch == 1)
+
+            await clientB.sendHello(clientID: idB, kind: .ios, role: .interactive, visible: true, cols: 80, rows: 24)
+            _ = try await nextOwnershipSnapshot(clientB) { $0.ownerClientID != nil }
+
+            await clientB.takeControl(clientID: idB, kind: .ios, cols: 80, rows: 24)
+
+            let bOwns = try await nextOwnershipSnapshot(clientB) { $0.ownerClientID == idB }
+            #expect(bOwns.epoch == 2, "owner change must bump the epoch")
+
+            let aSeesHandoff = try await nextOwnershipSnapshot(clientA) { $0.epoch == 2 }
+            #expect(aSeesHandoff.ownerClientID != idA, "the former owner must never see itself as owner after losing control")
+        }
+    }
+
+    /// Mirrors the web transport's `SessionDisplayOwnershipStore.ownerResize`
+    /// epoch+identity check on the SSH carrier.
+    @Test(
+        """
+        @spec REMOTE-9.7: If an SSH client that is not the current display owner sends ownerResize, \
+        then the application shall reject it and leave the broadcast grid unchanged; while the \
+        current owner's ownerResize at the current epoch shall update the broadcast grid without \
+        bumping the epoch.
+        """,
+        .timeLimit(.minutes(3))
+    )
+    func ownerResizeAcceptedOnlyFromCurrentOwner() async throws {
+        try await runOwnershipLoopback { clientA, clientB in
+            let idA = DisplayClientID("client-a")
+            let idB = DisplayClientID("client-b")
+
+            await clientA.sendHello(clientID: idA, kind: .ios, role: .interactive, visible: true, cols: 80, rows: 24)
+            await clientA.takeControl(clientID: idA, kind: .ios, cols: 80, rows: 24)
+            let aOwns = try await nextOwnershipSnapshot(clientA) { $0.ownerClientID == idA }
+            let ownerEpoch = aOwns.epoch
+
+            await clientB.sendHello(clientID: idB, kind: .ios, role: .interactive, visible: true, cols: 80, rows: 24)
+            _ = try await nextOwnershipSnapshot(clientB) { $0.ownerClientID != nil }
+
+            // Owner resize: accepted, grid updates, epoch unchanged.
+            await clientA.ownerResize(clientID: idA, epoch: ownerEpoch, cols: 100, rows: 30)
+            let acceptedGrid = try DisplayGrid(cols: 100, rows: 30)
+            let resized = try await nextOwnershipSnapshot(clientA) { $0.grid == acceptedGrid }
+            #expect(resized.epoch == ownerEpoch, "an owner resize must not bump the epoch")
+            // Drain B's copy of the SAME accepted-resize broadcast before
+            // exercising the rejection below — otherwise the next raw
+            // envelope B observes could be this already-queued, unrelated
+            // broadcast (which coincidentally carries the same grid),
+            // masking a bug that incorrectly accepted B's resize.
+            _ = try await nextOwnershipSnapshot(clientB) { $0.grid == acceptedGrid }
+
+            // Non-owner resize: rejected — the very next envelope B observes
+            // still carries the owner's committed grid, never B's requested one.
+            await clientB.ownerResize(clientID: idB, epoch: ownerEpoch, cols: 999, rows: 999)
+            let afterRejected = try await nextEnvelope(clientB)
+            guard case let .ownership(snapshot) = afterRejected else {
+                Issue.record("expected an ownership envelope, got \(afterRejected)")
+                return
+            }
+            #expect(snapshot.grid == acceptedGrid, "a non-owner's resize must be rejected")
+        }
+    }
+
     // MARK: - Loopback driver
 
     private func runTerminalLoopback(
@@ -375,6 +503,165 @@ struct SSHTerminalLoopbackTests {
         let pubkey = try! RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation)
         return RemoteIdentityFingerprint(of: pubkey)
     }
+
+    // MARK: - Ownership loopback driver (task 5)
+
+    /// Opens ONE SSH-over-WebRTC connection and TWO `TerminalSessionClient`
+    /// session channels on it (mirroring two iPads attached to the same
+    /// graftty session over independent SSH connections closely enough for
+    /// these scenarios — ownership is keyed by the coordinator's own
+    /// per-channel `clientID`, not by connection identity). Both server-side
+    /// channels share ONE `TestOwnershipStore` + `TestOwnershipBroadcaster`,
+    /// exactly like production's single store/broadcaster shared across
+    /// every `TerminalSessionHandler` on a `WebRTCHostAgent`
+    /// (`SubsystemDispatcher.init`). `body` drives each client directly
+    /// (`sendHello`/`takeControl`/`ownerResize`/`send`) and asserts on the
+    /// `.ownership` envelopes each observes.
+    private func runOwnershipLoopback(
+        sessionName: String = "alpha",
+        responseDeadline: Duration = .seconds(60),
+        body: (TerminalSessionClient, TerminalSessionClient) async throws -> Void
+    ) async throws {
+        let serverKey = Curve25519.Signing.PrivateKey()
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let peerStore = InMemoryTrustedPeerSet()
+        peerStore.add(fingerprint: Self.fingerprint(of: clientKey))
+
+        let offerer = LoopbackPeer(role: .offerer)
+        let answerer = LoopbackPeer(role: .answerer)
+        let offer = try await offerer.createOffer()
+        let answer = try await answerer.accept(offer: offer)
+        await offerer.bindIceCandidates(to: answerer)
+        await answerer.bindIceCandidates(to: offerer)
+        try await offerer.applyAnswer(answer)
+        let offererDC = try await offerer.openedDataChannel()
+        let answererDC = try await answerer.openedDataChannel()
+
+        let clientTransport = SSHNIOTransport(dataChannel: offererDC)
+        let serverTransport = SSHNIOTransport(dataChannel: answererDC)
+
+        let store = TestOwnershipStore()
+        let broadcaster = TestOwnershipBroadcaster()
+
+        try await serverTransport.eventLoop.submit {
+            let serverConfig = SSHServerConfiguration(
+                hostKeys: [NIOSSHPrivateKey(ed25519Key: serverKey)],
+                userAuthDelegate: TrustSetServerUserAuthDelegate(store: peerStore)
+            )
+            let sshHandler = NIOSSHHandler(
+                role: .server(serverConfig),
+                allocator: serverTransport.channel.allocator,
+                inboundChildChannelInitializer: { childChannel, channelType in
+                    guard case .session = channelType else {
+                        return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
+                    }
+                    return childChannel.eventLoop.makeCompletedFuture {
+                        let h = TerminalSessionHandler(
+                            streamFactory: { _ in EchoStream() },
+                            store: store,
+                            broadcaster: broadcaster
+                        )
+                        try childChannel.pipeline.syncOperations.addHandler(h)
+                    }
+                }
+            )
+            try serverTransport.channel.pipeline.syncOperations.addHandler(sshHandler)
+        }.get()
+
+        let handlerPromise = clientTransport.eventLoop.makePromise(of: NIOSSHHandler.self)
+        try await clientTransport.eventLoop.submit {
+            let h = SSHClientSetup.makeHandler(
+                clientKey: clientKey,
+                expectedHostFingerprint: Self.fingerprint(of: serverKey),
+                allocator: clientTransport.channel.allocator
+            )
+            try clientTransport.channel.pipeline.syncOperations.addHandler(h)
+            handlerPromise.succeed(h)
+        }.get()
+        let sshHandler = try await handlerPromise.futureResult.get()
+
+        try await serverTransport.start()
+        try await clientTransport.start()
+
+        let clientA = TerminalSessionClient(
+            parentChannel: clientTransport.channel,
+            parentHandler: sshHandler,
+            sessionName: sessionName
+        )
+        let clientB = TerminalSessionClient(
+            parentChannel: clientTransport.channel,
+            parentHandler: sshHandler,
+            sessionName: sessionName
+        )
+
+        // Belt-and-suspenders deadline (same pattern as the other drivers
+        // above) — force-closes both clients so any stuck `receive()` call
+        // fails with `channelClosed` instead of hanging past the test's
+        // own `.timeLimit`.
+        let deadlineTask = Task { [clientA, clientB] in
+            try? await Task.sleep(for: responseDeadline)
+            clientA.close()
+            clientB.close()
+        }
+        defer { deadlineTask.cancel() }
+
+        try await clientA.connect()
+        try await clientB.connect()
+
+        // Run `body` via a captured Result so the teardown below executes
+        // on BOTH exits — `defer` can't await the async transport closes,
+        // and skipping them on a thrown assertion failure would leak live
+        // WebRTC peer connections + NIO channels into subsequent tests
+        // (noisier failures exactly when a real regression is present).
+        let bodyResult: Result<Void, any Error>
+        do {
+            try await body(clientA, clientB)
+            bodyResult = .success(())
+        } catch {
+            bodyResult = .failure(error)
+        }
+
+        clientA.close()
+        clientB.close()
+        await clientTransport.close()
+        await serverTransport.close()
+        await offerer.close()
+        await answerer.close()
+
+        try bodyResult.get()
+    }
+
+    /// Drains `client.receive()` until a `.ownership` envelope satisfying
+    /// `predicate` is observed, silently skipping any interleaved `.binary`
+    /// terminal-byte frames or non-matching `.ownership` envelopes (e.g. a
+    /// sibling client's unrelated attach broadcast). Relies on the driver's
+    /// belt-and-suspenders deadline to bound how long this can block.
+    private func nextOwnershipSnapshot(
+        _ client: TerminalSessionClient,
+        where predicate: (DisplayOwnershipSnapshot) -> Bool
+    ) async throws -> DisplayOwnershipSnapshot {
+        while true {
+            let envelope = try await nextEnvelope(client)
+            guard case let .ownership(snapshot) = envelope else { continue }
+            if predicate(snapshot) { return snapshot }
+        }
+    }
+
+    /// Returns the next frame from `client.receive()` that decodes as a
+    /// `WebControlEnvelope`, skipping non-`.text` frames and undecodable
+    /// text. Unlike `nextOwnershipSnapshot`, does not skip past envelopes
+    /// that fail a caller predicate — callers needing "the very next
+    /// thing, whatever it is" (e.g. proving a rejection didn't change
+    /// anything) use this directly instead.
+    private func nextEnvelope(_ client: TerminalSessionClient) async throws -> WebControlEnvelope {
+        while true {
+            let frame = try await client.receive()
+            guard case let .text(text) = frame else { continue }
+            if let envelope = try? WebControlEnvelope.parse(Data(text.utf8)) {
+                return envelope
+            }
+        }
+    }
 }
 
 // MARK: - Fakes / helpers
@@ -457,39 +744,416 @@ private final class FrameRecordingHandler: ChannelInboundHandler, @unchecked Sen
     }
 }
 
-// MARK: - Inlined TerminalSessionHandler (copy of GrafttyHostAgent's production type)
+// MARK: - Inlined TerminalSessionHandler (mirror of GrafttyHostAgent's production type, ownership included)
 //
 // `TerminalSessionHandler` lives in `GrafttyHostAgent`, which transitively
 // pulls in `GrafttyKit`'s AppKit-importing files and is therefore not
-// importable from this iOS-only test target. The inline below mirrors the
-// production implementation exactly, using `TerminalByteStream` from
-// `GrafttyMobileKit` instead of `GrafttyKit`. Per R3's precedent for the
+// importable from this iOS-only test target. Likewise
+// `SessionDisplayOwnershipStore`/`DisplayOwnershipBroadcaster`/
+// `TerminalAttachCoordinator` live in `GrafttyKit` and are unavailable here
+// too. The types below mirror the production shapes (see
+// `Sources/GrafttyHostAgent/SSH/Channels/TerminalSessionHandler.swift`,
+// `Sources/GrafttyKit/SessionDisplayOwnershipStore.swift`,
+// `Sources/GrafttyKit/Remote/TerminalAttachCoordinator.swift`) closely
+// enough to exercise task 5's SSH-terminal-ownership scenarios: hello/
+// attach, takeControl eligibility, owner-gated binary writes, ownerResize,
+// and localized ownership-snapshot broadcast. Per R3's precedent for the
 // server-side userauth delegate — copy, don't extract; post-R6 work.
+
+/// Test-local mirror of `GrafttyKit.SessionDisplayOwnershipStore`, trimmed
+/// to the operations task 5's scenarios exercise (no
+/// `restoreOwnerAfterFailedClaim`/`releaseOwner`/`claimOwnerIfOwnerlessOrCurrent`
+/// — those back the Mac-host and legacy-resize paths, neither of which this
+/// suite drives).
+private final class TestOwnershipStore: @unchecked Sendable {
+    struct ClaimResult { let accepted: Bool; let snapshot: DisplayOwnershipSnapshot }
+    struct ResizeResult { let accepted: Bool; let snapshot: DisplayOwnershipSnapshot }
+
+    private struct AttachedClient {
+        var kind: DisplayClientKind
+        var role: DisplayClientRole
+        var visible: Bool
+
+        func isOwnerEligible(claimingAs kind: DisplayClientKind) -> Bool {
+            self.kind == kind && self.kind != .preview && role != .preview && visible
+        }
+    }
+
+    private struct Record {
+        var ownerClientID: DisplayClientID?
+        var ownerKind: DisplayClientKind?
+        var grid: DisplayGrid?
+        var epoch: UInt64 = 0
+        var revision: UInt64 = 0
+        var attachedClients: [DisplayClientID: AttachedClient] = [:]
+    }
+
+    private let lock = NSLock()
+    private var records: [String: Record] = [:]
+
+    func attachClient(
+        sessionName: String,
+        clientID: DisplayClientID,
+        kind: DisplayClientKind,
+        role: DisplayClientRole,
+        visible: Bool,
+        grid: DisplayGrid
+    ) -> DisplayOwnershipSnapshot {
+        lock.lock(); defer { lock.unlock() }
+        var record = records[sessionName] ?? Record()
+        record.attachedClients[clientID] = AttachedClient(kind: kind, role: role, visible: visible)
+        record.revision += 1
+        records[sessionName] = record
+        return snapshot(sessionName: sessionName, record: record, fallbackGrid: grid)
+    }
+
+    func claimOwner(
+        sessionName: String,
+        clientID: DisplayClientID,
+        kind: DisplayClientKind,
+        grid: DisplayGrid
+    ) -> ClaimResult {
+        lock.lock(); defer { lock.unlock() }
+        var record = records[sessionName] ?? Record()
+        guard let attached = record.attachedClients[clientID], attached.isOwnerEligible(claimingAs: kind) else {
+            return ClaimResult(accepted: false, snapshot: snapshot(sessionName: sessionName, record: record, fallbackGrid: grid))
+        }
+        let ownerChanged = record.ownerClientID != clientID || record.ownerKind != kind
+        record.ownerClientID = clientID
+        record.ownerKind = kind
+        record.grid = grid
+        if ownerChanged { record.epoch += 1 }
+        record.revision += 1
+        records[sessionName] = record
+        return ClaimResult(accepted: true, snapshot: snapshot(sessionName: sessionName, record: record, fallbackGrid: grid))
+    }
+
+    func ownerResize(
+        sessionName: String,
+        clientID: DisplayClientID,
+        epoch: UInt64,
+        grid: DisplayGrid
+    ) -> ResizeResult {
+        lock.lock(); defer { lock.unlock() }
+        var record = records[sessionName] ?? Record()
+        let accepted = record.ownerClientID == clientID && record.epoch == epoch
+        if accepted {
+            record.grid = grid
+            record.revision += 1
+            records[sessionName] = record
+        }
+        return ResizeResult(accepted: accepted, snapshot: snapshot(sessionName: sessionName, record: record, fallbackGrid: .daemonFallback))
+    }
+
+    func detachClient(sessionName: String, clientID: DisplayClientID, fallbackGrid: DisplayGrid) -> DisplayOwnershipSnapshot {
+        lock.lock(); defer { lock.unlock() }
+        var record = records[sessionName] ?? Record()
+        record.attachedClients.removeValue(forKey: clientID)
+        if record.ownerClientID == clientID {
+            record.ownerClientID = nil
+            record.ownerKind = nil
+            record.epoch += 1
+            record.revision += 1
+        }
+        let result = snapshot(sessionName: sessionName, record: record, fallbackGrid: fallbackGrid)
+        if record.ownerClientID == nil, record.grid == nil, record.attachedClients.isEmpty {
+            records.removeValue(forKey: sessionName)
+        } else {
+            records[sessionName] = record
+        }
+        return result
+    }
+
+    func snapshot(sessionName: String, fallbackGrid: DisplayGrid = .daemonFallback) -> DisplayOwnershipSnapshot {
+        lock.lock(); defer { lock.unlock() }
+        let record = records[sessionName] ?? Record()
+        return snapshot(sessionName: sessionName, record: record, fallbackGrid: fallbackGrid)
+    }
+
+    private func snapshot(sessionName: String, record: Record, fallbackGrid: DisplayGrid) -> DisplayOwnershipSnapshot {
+        try! DisplayOwnershipSnapshot(
+            sessionName: sessionName,
+            ownerClientID: record.ownerClientID,
+            ownerKind: record.ownerKind,
+            grid: record.grid ?? fallbackGrid,
+            epoch: record.epoch,
+            revision: record.revision
+        )
+    }
+}
+
+/// Test-local mirror of `GrafttyKit.DisplayOwnershipBroadcaster`, trimmed to
+/// direct `register`/`broadcast` (no store-observer subscription — that
+/// bridges Mac-host-originated mutations, which this suite never performs;
+/// `TestAttachCoordinator` always broadcasts explicitly right after
+/// mutating the store, exactly like the production coordinator does).
+private final class TestOwnershipBroadcaster: @unchecked Sendable {
+    private struct Subscriber { let send: @Sendable (DisplayOwnershipSnapshot) -> Void }
+    private let lock = NSLock()
+    private var subscribers: [String: [UUID: Subscriber]] = [:]
+
+    func register(sessionName: String, send: @escaping @Sendable (DisplayOwnershipSnapshot) -> Void) -> () -> Void {
+        let id = UUID()
+        lock.lock()
+        var sessionSubscribers = subscribers[sessionName] ?? [:]
+        sessionSubscribers[id] = Subscriber(send: send)
+        subscribers[sessionName] = sessionSubscribers
+        lock.unlock()
+        return { [weak self] in self?.unregister(sessionName: sessionName, id: id) }
+    }
+
+    func broadcast(_ snapshot: DisplayOwnershipSnapshot) {
+        lock.lock()
+        let sends = subscribers[snapshot.sessionName]?.values.map(\.send) ?? []
+        lock.unlock()
+        for send in sends { send(snapshot) }
+    }
+
+    private func unregister(sessionName: String, id: UUID) {
+        lock.lock()
+        subscribers[sessionName]?.removeValue(forKey: id)
+        lock.unlock()
+    }
+}
+
+/// Test-local mirror of `GrafttyKit.TerminalAttachCoordinator`, trimmed to
+/// the `.hello`/`.takeControl`/`.ownerResize`/binary-write/detach seams
+/// task 5's scenarios exercise (no PTY-size push, no legacy `.resize`
+/// handling — this test double's clients always speak the control
+/// carrier, unlike the production server which must also serve pre-hello
+/// legacy clients on the same handler).
+private final class TestAttachCoordinator: @unchecked Sendable {
+    private let sessionName: String
+    private let clientID: DisplayClientID
+    private let defaultKind: DisplayClientKind
+    private let store: TestOwnershipStore
+    private let broadcaster: TestOwnershipBroadcaster
+    private let sendText: @Sendable (String) -> Void
+    private let write: @Sendable (Data) -> Void
+    private let lock = NSLock()
+
+    private var unregister: (() -> Void)?
+    private var boundProtocolClientID: DisplayClientID?
+    private var attachedKind: DisplayClientKind?
+    private var attached = false
+    private var detached = false
+
+    init(
+        sessionName: String,
+        clientID: DisplayClientID,
+        defaultKind: DisplayClientKind,
+        store: TestOwnershipStore,
+        broadcaster: TestOwnershipBroadcaster,
+        sendText: @escaping @Sendable (String) -> Void,
+        write: @escaping @Sendable (Data) -> Void
+    ) {
+        self.sessionName = sessionName
+        self.clientID = clientID
+        self.defaultKind = defaultKind
+        self.store = store
+        self.broadcaster = broadcaster
+        self.sendText = sendText
+        self.write = write
+        self.unregister = broadcaster.register(sessionName: sessionName) { [weak self] snapshot in
+            self?.sendOwnershipSnapshot(snapshot)
+        }
+    }
+
+    func handleControl(_ envelope: WebControlEnvelope) {
+        switch envelope {
+        case let .hello(protocolClientID, _, role, visible, cols, rows):
+            guard bindOrVerify(protocolClientID) else { return }
+            let kind = defaultKind
+            let grid = try! DisplayGrid(cols: cols, rows: rows)
+            lock.lock(); attached = true; attachedKind = kind; lock.unlock()
+            let snapshot = store.attachClient(
+                sessionName: sessionName,
+                clientID: clientID,
+                kind: kind,
+                role: role,
+                visible: visible,
+                grid: grid
+            )
+            broadcaster.broadcast(snapshot)
+
+        case let .takeControl(protocolClientID, _, cols, rows):
+            guard bindOrVerify(protocolClientID) else { return }
+            let kind = currentKind() ?? defaultKind
+            let grid = try! DisplayGrid(cols: cols, rows: rows)
+            // Production parity: TerminalAttachCoordinator defensively
+            // attaches a client that takes control without a prior hello.
+            ensureAttached(kind: kind, grid: grid)
+            let result = store.claimOwner(sessionName: sessionName, clientID: clientID, kind: kind, grid: grid)
+            broadcaster.broadcast(result.snapshot)
+
+        case let .ownerResize(protocolClientID, epoch, cols, rows):
+            guard bindOrVerify(protocolClientID) else { return }
+            let grid = try! DisplayGrid(cols: cols, rows: rows)
+            let result = store.ownerResize(sessionName: sessionName, clientID: clientID, epoch: epoch, grid: grid)
+            broadcaster.broadcast(result.snapshot)
+
+        case .resize, .grid, .ownership:
+            break
+        }
+    }
+
+    func handleBinary(_ data: Data) {
+        if isCurrentOwner() {
+            write(data)
+            return
+        }
+        broadcaster.broadcast(store.snapshot(sessionName: sessionName))
+    }
+
+    func detach() {
+        lock.lock()
+        if detached { lock.unlock(); return }
+        detached = true
+        let wasAttached = attached
+        let cancel = unregister
+        unregister = nil
+        lock.unlock()
+        cancel?()
+        guard wasAttached else { return }
+        let snapshot = store.detachClient(sessionName: sessionName, clientID: clientID, fallbackGrid: .daemonFallback)
+        broadcaster.broadcast(snapshot)
+    }
+
+    /// Production parity with `TerminalAttachCoordinator.ensureAttached`:
+    /// registers this client in the store on first contact if `.hello`
+    /// hasn't already done so (a client may `.takeControl` first).
+    private func ensureAttached(kind: DisplayClientKind, grid: DisplayGrid) {
+        lock.lock()
+        if attached {
+            lock.unlock()
+            return
+        }
+        attached = true
+        attachedKind = kind
+        lock.unlock()
+        let snapshot = store.attachClient(
+            sessionName: sessionName,
+            clientID: clientID,
+            kind: kind,
+            role: .interactive,
+            visible: true,
+            grid: grid
+        )
+        broadcaster.broadcast(snapshot)
+    }
+
+    private func bindOrVerify(_ protocolClientID: DisplayClientID) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if protocolClientID == clientID { return true }
+        if let boundProtocolClientID { return boundProtocolClientID == protocolClientID }
+        boundProtocolClientID = protocolClientID
+        return true
+    }
+
+    private func currentKind() -> DisplayClientKind? {
+        lock.lock(); defer { lock.unlock() }
+        return attachedKind
+    }
+
+    private func isCurrentOwner() -> Bool {
+        store.snapshot(sessionName: sessionName).ownerClientID == clientID
+    }
+
+    private func sendOwnershipSnapshot(_ snapshot: DisplayOwnershipSnapshot) {
+        sendText(WebControlEnvelope.ownership(localizedSnapshot(snapshot)).encoded())
+    }
+
+    /// Mirrors `TerminalAttachCoordinator.localizedSnapshot`: rewrites the
+    /// server-internal `ownerClientID` into the recipient's own
+    /// protocol-level clientID when the recipient IS the owner (so
+    /// `ownershipSnapshot?.ownerClientID == displayClientID` matches on
+    /// the client, per `SessionClient.isOwner`); any other owner's
+    /// internal ID is left as-is.
+    private func localizedSnapshot(_ snapshot: DisplayOwnershipSnapshot) -> DisplayOwnershipSnapshot {
+        guard let ownerClientID = snapshot.ownerClientID else { return snapshot }
+        let protocolClientID = currentProtocolClientID()
+        let localizedOwnerID: DisplayClientID
+        if ownerClientID == clientID {
+            localizedOwnerID = protocolClientID ?? ownerClientID
+        } else if ownerClientID == protocolClientID {
+            localizedOwnerID = DisplayClientID("remote-owner:\(ownerClientID.rawValue)")
+        } else {
+            localizedOwnerID = ownerClientID
+        }
+        return try! DisplayOwnershipSnapshot(
+            sessionName: snapshot.sessionName,
+            ownerClientID: localizedOwnerID,
+            ownerKind: snapshot.ownerKind,
+            grid: snapshot.grid,
+            epoch: snapshot.epoch,
+            revision: snapshot.revision
+        )
+    }
+
+    private func currentProtocolClientID() -> DisplayClientID? {
+        lock.lock(); defer { lock.unlock() }
+        return boundProtocolClientID
+    }
+}
 
 fileprivate final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = SSHChannelData
     typealias OutboundOut = SSHChannelData
 
     private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
+    private let store: TestOwnershipStore
+    private let broadcaster: TestOwnershipBroadcaster
+    private let deviceID: String
     private var envSessionName: String?
     private var ptyAccepted = false
     private var stream: TerminalByteStream?
+    private var coordinator: TestAttachCoordinator?
     private var inboundForwardingTask: Task<Void, Never>?
     private var isShuttingDown = false
+    /// See the production handler's `helloLock` doc comment — same
+    /// rationale (`sendText` reads this from the broadcaster fan-out
+    /// path, which can fire from a sibling channel's mutation).
+    private let helloLock = NSLock()
+    private var _receivedHello = false
+    private var receivedHello: Bool {
+        get { helloLock.lock(); defer { helloLock.unlock() }; return _receivedHello }
+        set { helloLock.lock(); defer { helloLock.unlock() }; _receivedHello = newValue }
+    }
+    private var stdErrAccumulator: [UInt8] = []
+    private var stdErrPoisoned = false
+    private static let maxControlFrameLength: UInt32 = 1 << 20
+    private var ptyWriteContinuation: AsyncStream<Data>.Continuation?
+    private var ptyWriterTask: Task<Void, Never>?
 
-    init(streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream) {
+    init(
+        streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
+        store: TestOwnershipStore = TestOwnershipStore(),
+        broadcaster: TestOwnershipBroadcaster = TestOwnershipBroadcaster(),
+        deviceID: String = "test-device"
+    ) {
         self.streamFactory = streamFactory
+        self.store = store
+        self.broadcaster = broadcaster
+        self.deviceID = deviceID
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
-        guard stream != nil else { return }
         let channelData = unwrapInboundIn(data)
         guard case let .byteBuffer(buf) = channelData.data else { return }
         var view = buf
         guard let bytes = view.readBytes(length: view.readableBytes) else { return }
-        let snapshot = stream
-        Task { [snapshot] in
-            try? await snapshot?.send(Data(bytes))
+
+        switch channelData.type {
+        case .stdErr:
+            ingestStdErr(Data(bytes), channel: context.channel)
+        default:
+            guard stream != nil else { return }
+            let payload = Data(bytes)
+            if receivedHello, let coordinator {
+                coordinator.handleBinary(payload)
+            } else {
+                ptyWriteContinuation?.yield(payload)
+            }
         }
     }
 
@@ -520,11 +1184,18 @@ fileprivate final class TerminalSessionHandler: ChannelInboundHandler, @unchecke
             attach(context: context, sessionName: name, wantReply: shellEvent.wantReply)
 
         case let winEvent as SSHChannelRequestEvent.WindowChangeRequest:
-            guard let snapshot = stream else { return }
+            guard stream != nil else { return }
             let cols = winEvent.terminalCharacterWidth
             let rows = winEvent.terminalRowHeight
-            Task { [snapshot] in
-                await snapshot.resize(cols: cols, rows: rows)
+            if receivedHello, let coordinator {
+                guard
+                    let gridCols = UInt16(exactly: cols), gridCols > 0,
+                    let gridRows = UInt16(exactly: rows), gridRows > 0
+                else { return }
+                coordinator.handleControl(.resize(cols: gridCols, rows: gridRows))
+            } else {
+                let snapshot = stream
+                Task { [snapshot] in await snapshot?.resize(cols: cols, rows: rows) }
             }
 
         default:
@@ -535,8 +1206,14 @@ fileprivate final class TerminalSessionHandler: ChannelInboundHandler, @unchecke
     func channelInactive(context: ChannelHandlerContext) {
         isShuttingDown = true
         inboundForwardingTask?.cancel()
+        ptyWriteContinuation?.finish()
+        ptyWriteContinuation = nil
+        ptyWriterTask = nil
         let snapshot = stream
         stream = nil
+        let coordinatorSnapshot = coordinator
+        coordinator = nil
+        coordinatorSnapshot?.detach()
         Task { [snapshot] in
             await snapshot?.close()
         }
@@ -562,6 +1239,8 @@ fileprivate final class TerminalSessionHandler: ChannelInboundHandler, @unchecke
                         return
                     }
                     self.stream = stream
+                    self.startPTYWriter(stream: stream)
+                    self.installCoordinator(sessionName: sessionName, channel: channel, loop: loop)
                     if wantReply {
                         pipeline.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
                     }
@@ -580,6 +1259,43 @@ fileprivate final class TerminalSessionHandler: ChannelInboundHandler, @unchecke
         }
     }
 
+    private func startPTYWriter(stream: TerminalByteStream) {
+        var continuation: AsyncStream<Data>.Continuation!
+        let pipe = AsyncStream<Data> { continuation = $0 }
+        ptyWriteContinuation = continuation
+        ptyWriterTask = Task {
+            for await chunk in pipe {
+                try? await stream.send(chunk)
+            }
+        }
+    }
+
+    private func installCoordinator(sessionName: String, channel: Channel, loop: EventLoop) {
+        let clientID = DisplayClientID("ssh-\(deviceID)-\(UUID().uuidString.prefix(8))")
+        let coordinator = TestAttachCoordinator(
+            sessionName: sessionName,
+            clientID: clientID,
+            defaultKind: .ios,
+            store: store,
+            broadcaster: broadcaster,
+            sendText: { [weak self] payload in
+                guard let self, self.receivedHello else { return }
+                guard let framed = Self.encodeStdErrFrame(payload) else { return }
+                loop.execute {
+                    var buffer = channel.allocator.buffer(capacity: framed.count)
+                    buffer.writeBytes(framed)
+                    let data = SSHChannelData(type: .stdErr, data: .byteBuffer(buffer))
+                    channel.writeAndFlush(data, promise: nil)
+                }
+            },
+            write: { [weak self] data in
+                self?.ptyWriteContinuation?.yield(data)
+            }
+        )
+        self.coordinator = coordinator
+        drainControlFrames(channel: channel)
+    }
+
     private func startInboundForwarding(stream: TerminalByteStream, channel: Channel, loop: EventLoop) {
         let task = Task {
             for await chunk in stream.inboundBytes {
@@ -591,6 +1307,63 @@ fileprivate final class TerminalSessionHandler: ChannelInboundHandler, @unchecke
             }
         }
         inboundForwardingTask = task
+    }
+
+    // MARK: - `.stdErr` control-frame framing (mirrors TerminalSessionHandler)
+
+    private func ingestStdErr(_ data: Data, channel: Channel) {
+        guard !stdErrPoisoned else { return }
+        stdErrAccumulator.append(contentsOf: data)
+        if coordinator != nil {
+            drainControlFrames(channel: channel)
+        }
+        if stdErrAccumulator.count > Int(Self.maxControlFrameLength) + 4 {
+            poisonStdErr(channel: channel)
+        }
+    }
+
+    private func drainControlFrames(channel: Channel) {
+        while stdErrAccumulator.count >= 4 {
+            let length = (UInt32(stdErrAccumulator[0]) << 24)
+                | (UInt32(stdErrAccumulator[1]) << 16)
+                | (UInt32(stdErrAccumulator[2]) << 8)
+                | UInt32(stdErrAccumulator[3])
+            guard length <= Self.maxControlFrameLength else {
+                poisonStdErr(channel: channel)
+                return
+            }
+            let total = 4 + Int(length)
+            guard stdErrAccumulator.count >= total else { break }
+            let payload = Data(stdErrAccumulator[4..<total])
+            stdErrAccumulator.removeFirst(total)
+
+            guard let envelope = try? WebControlEnvelope.parse(payload) else { continue }
+            if case .hello = envelope {
+                receivedHello = true
+            }
+            guard receivedHello else { continue }
+            coordinator?.handleControl(envelope)
+        }
+    }
+
+    private func poisonStdErr(channel: Channel) {
+        stdErrPoisoned = true
+        stdErrAccumulator = []
+        guard receivedHello else { return }
+        channel.close(promise: nil)
+    }
+
+    private static func encodeStdErrFrame(_ payload: String) -> [UInt8]? {
+        let bytes = Array(payload.utf8)
+        guard let length = UInt32(exactly: bytes.count) else { return nil }
+        var framed: [UInt8] = [
+            UInt8((length >> 24) & 0xff),
+            UInt8((length >> 16) & 0xff),
+            UInt8((length >> 8) & 0xff),
+            UInt8(length & 0xff),
+        ]
+        framed.append(contentsOf: bytes)
+        return framed
     }
 }
 

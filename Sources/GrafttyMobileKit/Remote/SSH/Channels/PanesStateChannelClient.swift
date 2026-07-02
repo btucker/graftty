@@ -87,22 +87,31 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     /// been written to the wire (wantReply: false — no server acknowledgement).
     public func open() async throws {
         let promise = parentChannel.eventLoop.makePromise(of: Channel.self)
-        parentHandler.createChannel(promise, channelType: .session) { [weak self] child, _ in
-            guard let self else {
-                return child.eventLoop.makeFailedFuture(ClientError.channelClosed)
-            }
-            do {
-                // SSHChannelDataCodec bridges SSHChannelData ↔ ByteBuffer
-                // so the downstream framing handlers operate on raw bytes.
-                try child.pipeline.syncOperations.addHandler(SSHChannelDataCodec())
-                try child.pipeline.syncOperations.addHandler(LengthPrefixedFraming.makeFrameDecoder())
-                try child.pipeline.syncOperations.addHandler(LengthPrefixedFraming.makeFramePrepender())
-                try child.pipeline.syncOperations.addHandler(
-                    InboundSnapshotRelay(owner: self)
-                )
-                return child.eventLoop.makeSucceededVoidFuture()
-            } catch {
-                return child.eventLoop.makeFailedFuture(error)
+        // `NIOSSHHandler.createChannel` is not thread-safe ("may only be
+        // called from on the channel" per its doc): once the SSH handshake
+        // has settled it synchronously drains the multiplexer's pending-
+        // channel queue on the calling thread, tripping NIO's
+        // `preconditionInEventLoop` when invoked from an arbitrary Swift
+        // Concurrency thread — see TerminalSessionClient.connect() where
+        // this crashed in a two-channels-on-one-connection test.
+        parentChannel.eventLoop.execute { [self] in
+            parentHandler.createChannel(promise, channelType: .session) { [weak self] child, _ in
+                guard let self else {
+                    return child.eventLoop.makeFailedFuture(ClientError.channelClosed)
+                }
+                do {
+                    // SSHChannelDataCodec bridges SSHChannelData ↔ ByteBuffer
+                    // so the downstream framing handlers operate on raw bytes.
+                    try child.pipeline.syncOperations.addHandler(SSHChannelDataCodec())
+                    try child.pipeline.syncOperations.addHandler(LengthPrefixedFraming.makeFrameDecoder())
+                    try child.pipeline.syncOperations.addHandler(LengthPrefixedFraming.makeFramePrepender())
+                    try child.pipeline.syncOperations.addHandler(
+                        InboundSnapshotRelay(owner: self)
+                    )
+                    return child.eventLoop.makeSucceededVoidFuture()
+                } catch {
+                    return child.eventLoop.makeFailedFuture(error)
+                }
             }
         }
         do {
