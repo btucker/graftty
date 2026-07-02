@@ -262,7 +262,12 @@ struct GrafttyApp: App {
     @StateObject private var terminalManager: TerminalManager
     @StateObject private var webController: WebServerController
     @StateObject private var updaterController: UpdaterController
+    @StateObject private var hostPairingCoordinator: HostPairingCoordinator
     private let services: AppServices
+    /// Same `TrustedPeerStore` instance the coordinator and
+    /// `WebRTCHostAgent` share — `PairedDevicesSection` reads it directly
+    /// (list/remove) since the coordinator doesn't expose it publicly.
+    private let trustedPeerStore: TrustedPeerStore
 
     /// Observable proxy for per-pane port bindings. Mutated by the
     /// `PortScanner` `onChange` callback; injected into the SwiftUI
@@ -340,12 +345,13 @@ struct GrafttyApp: App {
             .appendingPathComponent("zmx", isDirectory: true)
         let zmxExe = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Helpers/zmx")
-        _webController = StateObject(wrappedValue: WebServerController(
+        let webController = WebServerController(
             settings: WebAccessSettings.shared,
             zmxExecutable: zmxExe,
             zmxDir: zmxDir,
             displayOwnershipStore: appServices.displayOwnershipStore
-        ))
+        )
+        _webController = StateObject(wrappedValue: webController)
         _updaterController = StateObject(wrappedValue: UpdaterController())
 
         // R4: Construct the Mac-side WebRTC host agent. The agent accepts
@@ -355,6 +361,28 @@ struct GrafttyApp: App {
         // `webController.setSignalingHandler(_:)` once @State is accessible.
         let hostIdentityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
         let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
+        self.trustedPeerStore = trustedPeerStore
+
+        // Task 3: the Mac settings UI's "Device Pairing" section binds to
+        // this coordinator. Reuses the SAME identity/trusted-peer stores as
+        // `WebRTCHostAgent` above — a peer confirmed through the pairing UI
+        // must be the same peer `WebRTCHostAgent.acceptOffer` later trusts.
+        // `webBaseURLProvider` is `@MainActor`-isolated (see
+        // `HostPairingCoordinator`) so it can read `webController`'s
+        // published state directly instead of needing a `Sendable` bridge.
+        _hostPairingCoordinator = StateObject(wrappedValue: HostPairingCoordinator(
+            identityStore: hostIdentityStore,
+            trustedPeerStore: trustedPeerStore,
+            deviceIDStore: HostDeviceIDStore(directory: HostDeviceIDStore.defaultDirectory),
+            hostDisplayName: Host.current().localizedName ?? "Mac",
+            webBaseURLProvider: { [weak webController] in
+                guard let webController,
+                      case let .listening(_, port) = webController.status,
+                      let host = webController.serverHostname else { return nil }
+                return URL(string: WebURLComposer.baseURL(host: host, port: port))
+            }
+        ))
+
         do {
             appServices.hostAgent = WebRTCHostAgent(
                 hostKey: try hostIdentityStore.loadOrGenerateAndPersist(),
@@ -549,8 +577,9 @@ struct GrafttyApp: App {
                     editorPreference: terminalManager.editorPreference
                 )
                     .tabItem { Label("General", systemImage: "gear") }
-                WebSettingsPane()
+                WebSettingsPane(trustedPeerStore: trustedPeerStore)
                     .environmentObject(webController)
+                    .environmentObject(hostPairingCoordinator)
                     .tabItem { Label("Web Access", systemImage: "network") }
                 AgentTeamsSettingsPane()
                     .tabItem { Label("Agent Teams", systemImage: "person.2.fill") }

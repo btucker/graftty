@@ -29,6 +29,20 @@ public enum HostPairingSessionState: Sendable, Equatable {
     case expired
     /// An unexpected error terminated the session.
     case failed(message: String)
+
+    /// True for the terminal states `.confirmed`, `.denied`,
+    /// `.cancelled`, `.expired`, and `.failed` — the states from which
+    /// the ceremony never resumes. Drives the coordinator's tick-task
+    /// teardown decision and `HostPairingServer.terminalOutcome(of:)`'s
+    /// outcome mapping.
+    public var isTerminal: Bool {
+        switch self {
+        case .confirmed, .denied, .cancelled, .expired, .failed:
+            return true
+        case .idle, .awaitingClient, .pendingConfirmation:
+            return false
+        }
+    }
 }
 
 // MARK: - HostPairingSession
@@ -77,6 +91,7 @@ public final class HostPairingSession: @unchecked Sendable {
     private let hostDeviceID: RemoteDeviceID
     private let hostKind: RemoteDeviceKind
     private let hostDisplayName: String
+    private let webBaseURL: URL?
     private let pairingURLProvider: () -> URL
 
     // MARK: State
@@ -100,6 +115,7 @@ public final class HostPairingSession: @unchecked Sendable {
         hostDeviceID: RemoteDeviceID,
         hostKind: RemoteDeviceKind,
         hostDisplayName: String,
+        webBaseURL: URL? = nil,
         pairingURLProvider: @escaping () -> URL
     ) {
         self.identityStore = identityStore
@@ -109,6 +125,7 @@ public final class HostPairingSession: @unchecked Sendable {
         self.hostDeviceID = hostDeviceID
         self.hostKind = hostKind
         self.hostDisplayName = hostDisplayName
+        self.webBaseURL = webBaseURL
         self.pairingURLProvider = pairingURLProvider
     }
 
@@ -123,7 +140,7 @@ public final class HostPairingSession: @unchecked Sendable {
     /// `.pendingConfirmation`), calling `startPairing` again abandons
     /// it and starts a fresh nonce. The prior nonce will be rejected
     /// by `receiveClientIdentity` when an old client connects.
-    public func startPairing(validFor: TimeInterval = 300) throws -> PairingPayload {
+    public func startPairing(validFor: TimeInterval = PairingProtocolDefaults.sessionValidity) throws -> PairingPayload {
         lock.lock()
         defer { lock.unlock() }
 
@@ -143,7 +160,8 @@ public final class HostPairingSession: @unchecked Sendable {
             hostPublicKeyFingerprint: fingerprint,
             nonce: nonce,
             expiry: expiry,
-            pairingURL: pairingURLProvider()
+            pairingURL: pairingURLProvider(),
+            webBaseURL: webBaseURL
         )
         _state = .awaitingClient(payload: payload, expiry: expiry)
         return payload

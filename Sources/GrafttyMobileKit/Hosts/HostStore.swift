@@ -82,6 +82,11 @@ public final class HostStore {
             var existing = next[idx]
             existing.label = host.label
             existing.lastUsedAt = Date()
+            // Adopt the incoming remoteDeviceID (e.g. from a fresh pairing
+            // ceremony) but fall back to the prior value when the incoming
+            // host doesn't carry one (a manual/plain-URL rescan), so a
+            // rescan can never erase an identity a prior pairing recorded.
+            existing.remoteDeviceID = host.remoteDeviceID ?? existing.remoteDeviceID
             next[idx] = existing
         } else if let idx = next.firstIndex(where: { $0.id == host.id }) {
             next[idx] = host
