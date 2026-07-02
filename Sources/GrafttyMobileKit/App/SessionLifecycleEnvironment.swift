@@ -1,5 +1,6 @@
 import GrafttyProtocol
 import SwiftUI
+import os
 
 #if canImport(UIKit)
 private struct BiometricGateKey: EnvironmentKey {
@@ -55,9 +56,11 @@ extension SessionClient {
     /// pointed at `/ws`.
     ///
     /// `clock` / `backoffSchedule` default to `SessionClient`'s own
-    /// production defaults; tests override them (e.g. `VirtualClock` +
-    /// a short schedule) to drive the backoff loop deterministically
-    /// while still exercising this factory's real
+    /// `productionClock()` / `productionBackoffSchedule()` — the single
+    /// source both this default and `SessionClient.init`'s own default
+    /// read from, so the two never drift independently; tests override
+    /// them (e.g. `VirtualClock` + a short schedule) to drive the backoff
+    /// loop deterministically while still exercising this factory's real
     /// `remoteConnectionProvider` re-consultation logic instead of a
     /// hand-rolled substitute.
     static func live(
@@ -65,8 +68,8 @@ extension SessionClient {
         sessionName: String,
         role: Role = .fullscreen,
         remoteConnectionProvider: (@Sendable () async -> RemoteHostConnection?)? = nil,
-        clock: any Clock = SystemClock(),
-        backoffSchedule: [TimeInterval] = HostController.backoffSchedule(attempts: 6)
+        clock: any Clock = SessionClient.productionClock(),
+        backoffSchedule: [TimeInterval] = SessionClient.productionBackoffSchedule()
     ) -> SessionClient {
         SessionClient(
             sessionName: sessionName,
@@ -85,13 +88,40 @@ extension SessionClient {
     }
 }
 
+/// Shared home for `/ws`-fallback observability: distinguishes routine
+/// unpaired usage (`.debug`, silent by default) from a paired host whose
+/// negotiation failed (`.warning`, visible in console) — see
+/// `makeRemoteConnectionProvider`, the single place that logs against
+/// this category now that both the fullscreen and preview-pool dial
+/// paths share one provider factory.
+private let remoteWiringLogger = Logger(
+    subsystem: "com.quotably.graftty",
+    category: "remote-wiring"
+)
+
+/// How loudly to log an `/ws` fallback (the provider built by
+/// `makeRemoteConnectionProvider` found no `RemoteHostConnection`).
+/// `true` only when there WAS a coordinator to ask AND the host is
+/// paired (per `RemoteConnectionCoordinator.isPaired(_:)` — the SAME
+/// two-part gate `connection(for:)` checks: a non-nil `remoteDeviceID`
+/// AND a matching `PinnedHostStore` entry, not just the former) — that
+/// combination means negotiation itself failed, a regression from the
+/// expected path. Every other combination (no coordinator, or a
+/// coordinator that correctly fast-nil'd an unpaired host) is routine
+/// `/ws` usage and stays quiet.
+func shouldLogFallbackLoudly(hasCoordinator: Bool, hostIsPaired: Bool) -> Bool {
+    hasCoordinator && hostIsPaired
+}
+
 /// Builds the `remoteConnectionProvider` closure `SessionClient.live`
-/// consults on every dial: `nil` when there's no coordinator to ask
-/// (matches `SessionClient.live`'s own `/ws`-fallback default),
-/// otherwise a closure that asks `coordinator.connection(for: host)`
-/// FRESH every time it's invoked. Shared by `SingleSessionView`
-/// (fullscreen) and `WorktreeDetailView`'s preview pool so both surfaces
-/// get the same per-dial re-negotiation behavior from one place.
+/// consults on every dial: asks `coordinator.connection(for: host)`
+/// FRESH every time it's invoked, logging once per fallback dial via
+/// `shouldLogFallbackLoudly` when that lookup comes back empty (no
+/// coordinator, unpaired host, or a failed negotiation). Shared by
+/// `SingleSessionView` (fullscreen) and `WorktreeDetailView`'s preview
+/// pool so both surfaces get the same per-dial re-negotiation behavior
+/// AND the same fallback logging from one place — the preview pool was
+/// previously silent on this path.
 ///
 /// Written as a free function with an explicit `if let` rather than
 /// `coordinator.map { ... }` returning the closure: `Optional.map`'s
@@ -105,10 +135,33 @@ extension SessionClient {
 @MainActor
 func makeRemoteConnectionProvider(
     coordinator: RemoteConnectionCoordinator?,
-    host: Host
-) -> (@Sendable () async -> RemoteHostConnection?)? {
-    guard let coordinator else { return nil }
-    return { [weak coordinator] in await coordinator?.connection(for: host) }
+    host: Host,
+    sessionName: String
+) -> @Sendable () async -> RemoteHostConnection? {
+    { [weak coordinator] in
+        guard let coordinator else {
+            remoteWiringLogger.debug(
+                "no RemoteHostConnection for host \(host.id, privacy: .public) (unpaired or no coordinator); using /ws for session \(sessionName, privacy: .public)"
+            )
+            return nil
+        }
+        if let connection = await coordinator.connection(for: host) {
+            return connection
+        }
+        // isPaired is checked here — once per fallback, only on the
+        // path that already knows negotiation came back empty — not
+        // pre-resolved before every dial.
+        if shouldLogFallbackLoudly(hasCoordinator: true, hostIsPaired: await coordinator.isPaired(host)) {
+            remoteWiringLogger.warning(
+                "no RemoteHostConnection for paired host \(host.id, privacy: .public); falling back to /ws for session \(sessionName, privacy: .public)"
+            )
+        } else {
+            remoteWiringLogger.debug(
+                "no RemoteHostConnection for host \(host.id, privacy: .public) (unpaired or no coordinator); using /ws for session \(sessionName, privacy: .public)"
+            )
+        }
+        return nil
+    }
 }
 
 // MARK: - PaneEnvironment

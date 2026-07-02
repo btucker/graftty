@@ -229,11 +229,27 @@ public final class SessionClient {
     @ObservationIgnored
     private var idleWatchdogTask: Task<Void, Never>?
 
+    /// Single source for the production `clock` default — also consulted
+    /// by `SessionClient.live`'s own `clock` default
+    /// (`SessionLifecycleEnvironment.swift`) so the two never drift
+    /// independently. Tests inject their own `Clock` (e.g. `VirtualClock`)
+    /// and never touch this.
+    public nonisolated static func productionClock() -> any Clock {
+        SystemClock()
+    }
+
+    /// Single source for the production `backoffSchedule` default — see
+    /// `productionClock()`'s doc comment; same duplication concern, same
+    /// fix shape.
+    public nonisolated static func productionBackoffSchedule() -> [TimeInterval] {
+        HostController.backoffSchedule(attempts: 6)
+    }
+
     public init(
         sessionName: String,
         webSocketFactory: @Sendable @escaping () async throws -> WebSocketClient,
-        clock: any Clock = SystemClock(),
-        backoffSchedule: [TimeInterval] = HostController.backoffSchedule(attempts: 6),
+        clock: any Clock = SessionClient.productionClock(),
+        backoffSchedule: [TimeInterval] = SessionClient.productionBackoffSchedule(),
         idleThreshold: TimeInterval = SessionClient.fullscreenIdleThreshold,
         idleCheckInterval: TimeInterval = 5,
         role: Role = .fullscreen

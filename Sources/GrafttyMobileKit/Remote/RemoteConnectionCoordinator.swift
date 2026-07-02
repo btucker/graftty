@@ -218,12 +218,41 @@ public final class RemoteConnectionCoordinator {
         await connection.close()
     }
 
+    /// Evicts and closes EVERY live connection, invalidates every
+    /// in-flight negotiation attempt (per-attempt, via the same
+    /// `invalidatedAttempts` mechanism `invalidate(host:)` uses), and
+    /// unconditionally clears every host's failure cooldown. Used by
+    /// `RootView`'s `.background` scenePhase transition: unlike
+    /// `invalidate(host:)`, which only reaches whichever host a
+    /// currently-mounted view happens to be watching, this closes the
+    /// gap for a connection negotiated by a view that has since been
+    /// popped off the navigation stack (and so has no `driveLifecycle`/
+    /// `driveConnection` task left to call the per-host `invalidate`
+    /// on background) — nothing survives into the background, and
+    /// foreground re-negotiates every host from a clean slate.
+    public func invalidateAll() async {
+        cooldownUntil.removeAll()
+        let hostIDs = Set(liveConnections.keys).union(inFlightAttempts.keys)
+        for hostID in hostIDs {
+            if let inFlight = inFlightAttempts[hostID] {
+                invalidatedAttempts.insert(inFlight.id)
+            }
+            guard let connection = liveConnections.removeValue(forKey: hostID) else { continue }
+            // See `invalidate(host:)`'s identical detach-before-close
+            // comment: this is an intentional, caller-driven close, not
+            // a terminal signal the coordinator needs to react to.
+            await connection.setOnStateChange(nil)
+            await connection.close()
+        }
+    }
+
     /// Single source of truth for "is `host` paired" — the same
     /// two-part check `connection(for:)` performs before ever attempting
     /// to negotiate (a non-nil `remoteDeviceID` AND a matching
-    /// `PinnedHostStore` entry). `SingleSessionView.remoteFallbackSeverity`
-    /// reads this so its `/ws`-fallback log-level gate can't drift from
-    /// the coordinator's actual pairing gate.
+    /// `PinnedHostStore` entry). `shouldLogFallbackLoudly`
+    /// (`SessionLifecycleEnvironment.swift`) reads this so its
+    /// `/ws`-fallback log-level gate can't drift from the coordinator's
+    /// actual pairing gate.
     public func isPaired(_ host: Host) -> Bool {
         pinnedHost(for: host) != nil
     }

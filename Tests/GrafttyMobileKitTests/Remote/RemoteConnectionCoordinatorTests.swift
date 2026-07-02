@@ -370,6 +370,122 @@ struct RemoteConnectionCoordinatorTests {
         await again?.close()
     }
 
+    // MARK: - invalidateAll() — W3 review wave B1 (RootView's `.background`-only teardown)
+
+    @Test(.timeLimit(.minutes(2)))
+    func invalidateAllEvictsEveryLiveConnection() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let hostA = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let hostB = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let counter = CallCounter()
+        let box = ConnectionBox()
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: Self.successTransport(box: box)),
+            connectionFactory: { key, fp in
+                counter.increment()
+                let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
+                box.set(connection)
+                return connection
+            }
+        )
+
+        // Negotiated sequentially (not concurrently) — `box` holds only
+        // the MOST RECENT connection, which `successTransport` reads to
+        // route ICE candidates, so overlapping negotiations against one
+        // shared box would race. Nothing about `invalidateAll` itself
+        // requires concurrent negotiation to exercise "evicts EVERY live
+        // host," only that more than one host is registered at once.
+        let liveA = try #require(await coordinator.connection(for: hostA))
+        let liveB = try #require(await coordinator.connection(for: hostB))
+        #expect(counter.count == 2)
+
+        await coordinator.invalidateAll()
+
+        #expect(await liveA.state == .closed)
+        #expect(await liveB.state == .closed)
+
+        // Eviction proof: the next call for either host must negotiate
+        // fresh rather than returning the (closed) cached connection.
+        let againA = await coordinator.connection(for: hostA)
+        #expect(againA !== liveA)
+        #expect(counter.count == 3)
+        await againA?.close()
+    }
+
+    @Test(.timeLimit(.minutes(2)))
+    func invalidateAllEvictsInFlightAttemptWithoutRegisteringItsResult() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let counter = CallCounter()
+        let box = ConnectionBox()
+        let gate = Gate()
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: { request, body in
+                await gate.wait()
+                return try await Self.successTransport(box: box)(request, body)
+            }),
+            connectionFactory: { key, fp in
+                counter.increment()
+                let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
+                box.set(connection)
+                return connection
+            }
+        )
+
+        async let negotiated = coordinator.connection(for: host)
+
+        // As in `invalidateDuringInFlightNegotiationEvictsOnCompletionRatherThanRegistering`,
+        // wait until the negotiation is genuinely parked at the gate
+        // before invoking `invalidateAll` — proves this isn't racing a
+        // negotiation that already finished.
+        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(10)) { await gate.enteredCount >= 1 }
+        await coordinator.invalidateAll()
+        await gate.open()
+
+        let result = await negotiated
+        #expect(result == nil, "a connection invalidated mid-negotiation via invalidateAll must never be handed back")
+        #expect(counter.count == 1, "invalidateAll must not itself trigger a second negotiation")
+
+        let firstConnection = try #require(box.get())
+        #expect(await firstConnection.state == .closed, "the in-flight negotiation's result must be closed, not left dangling")
+
+        let again = await coordinator.connection(for: host)
+        #expect(counter.count == 2, "a fresh call after invalidateAll must negotiate again")
+        #expect(await again !== firstConnection)
+        await again?.close()
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func invalidateAllClearsCooldownAllowingImmediateRetry() async throws {
+        let dir = try RemoteConnectionTestSupport.makeTempDirectory()
+        let host = try RemoteConnectionTestSupport.makePairedHost(directory: dir)
+        let counter = CallCounter()
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: { request, _ in
+                Self.httpResponse(for: request, statusCode: 503, body: "host is busy")
+            }),
+            connectionFactory: { key, fp in counter.increment(); return RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp) }
+        )
+
+        let first = await coordinator.connection(for: host)
+        #expect(first == nil)
+        #expect(counter.count == 1)
+
+        // No live connection exists for this host (negotiation failed) —
+        // invalidateAll must still clear its cooldown, matching
+        // `invalidate(host:)`'s unconditional-clear behavior (see that
+        // method's doc comment): a background→foreground cycle must not
+        // leave a stale cooldown blocking the very next dial.
+        await coordinator.invalidateAll()
+
+        let second = await coordinator.connection(for: host)
+        #expect(second == nil, "still a 503 — no clock advance, no successful negotiation swapped in")
+        #expect(counter.count == 2, "invalidateAll must clear the cooldown so the very next call negotiates again")
+    }
+
     // MARK: - isPaired(_:) — same source of truth as connection(for:)'s gate (Task-3 finding 3)
 
     @Test(.timeLimit(.minutes(1)))

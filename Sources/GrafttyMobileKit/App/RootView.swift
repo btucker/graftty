@@ -2,7 +2,6 @@
 import GhosttyTerminal
 import GrafttyProtocol
 import SwiftUI
-import os
 
 public struct RootView: View {
 
@@ -44,6 +43,15 @@ public struct RootView: View {
             switch newPhase {
             case .background:
                 gate.applicationDidEnterBackground()
+                // Only `.background`, not `.inactive`: IPAD-5.1 is scoped to
+                // "enters the background." `.inactive` also fires for
+                // Control Center pulls / app-switcher / call banners, where
+                // tearing down every negotiated connection would force a
+                // needless full re-negotiation on the very next frame —
+                // the per-view `shouldTearDown` branches below still pause
+                // (client.stop() / previews.stopAll()) on `.inactive` per
+                // IOS-10.1, unchanged.
+                Task { await coordinator.invalidateAll() }
             case .active:
                 gate.applicationWillEnterForeground()
                 if gate.state == .locked {
@@ -263,15 +271,6 @@ struct SingleSessionView: View {
         case ended
     }
 
-    /// Surfaces the `/ws` fallback for wiring diagnostics. Distinguishes
-    /// routine unpaired usage (`.debug`, silent by default) from a paired
-    /// host whose negotiation failed (`.warning`, visible in console) —
-    /// see `openWebSocket()`.
-    private static let remoteWiringLogger = Logger(
-        subsystem: "com.quotably.graftty",
-        category: "remote-wiring"
-    )
-
     init(
         step: SessionStep,
         navigationPath: Binding<NavigationPath>,
@@ -425,13 +424,13 @@ struct SingleSessionView: View {
             client?.stop()
             client = nil
             if connection != .ended { connection = .suspended }
-            // IPAD-5.1: tear down the negotiated `RemoteHostConnection`
-            // on background, not just this pane's terminal channel — a
-            // stale WebRTC/SSH connection left alive behind the lock
-            // overlay serves no one, and IPAD-5.2's foreground rebuild
-            // re-negotiates it from signaling onward via `verifyThenOpen`
-            // → `openWebSocket` → the provider Task 4 wires in below.
-            await coordinator?.invalidate(host: step.host)
+            // The negotiated `RemoteHostConnection` itself is torn down at
+            // `RootView`'s `.background`-only `coordinator.invalidateAll()`,
+            // not here — this branch also fires on `.inactive` (IOS-10.1),
+            // where the shared connection must survive. IPAD-5.2's
+            // foreground rebuild re-negotiates via `verifyThenOpen` →
+            // `openWebSocket` → the provider wired in below whenever
+            // `invalidateAll()` did evict it.
             return
         }
         guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
@@ -465,64 +464,28 @@ struct SingleSessionView: View {
         }
     }
 
-    /// How loudly to log an `/ws` fallback (`openWebSocket` found no
-    /// `RemoteHostConnection`). `.loud` only when there WAS a coordinator
-    /// to ask AND the host is paired (per `RemoteConnectionCoordinator
-    /// .isPaired(_:)` — the SAME two-part gate `connection(for:)` checks:
-    /// a non-nil `remoteDeviceID` AND a matching `PinnedHostStore` entry,
-    /// not just the former) — that combination means negotiation itself
-    /// failed, a regression from the expected path. Every other
-    /// combination (no coordinator, or a coordinator that correctly
-    /// fast-nil'd an unpaired host) is routine `/ws` usage and stays quiet.
-    enum RemoteFallbackSeverity: Equatable {
-        case quiet
-        case loud
-    }
-
-    static func remoteFallbackSeverity(hasCoordinator: Bool, hostIsPaired: Bool) -> RemoteFallbackSeverity {
-        (hasCoordinator && hostIsPaired) ? .loud : .quiet
-    }
-
     private func openWebSocket() async {
         // URLSessionWebSocketTask.resume() fires synchronously inside
         // SessionClient.live(), so guard before the dial — otherwise we
         // burn a TCP/TLS handshake on a connection we'd immediately abort.
         if Task.isCancelled || connection == .ended { return }
-        // Resolved once here purely to classify THIS dial's fallback-log
-        // severity (below) and to fail fast on cancellation. The
-        // `remoteConnectionProvider` handed to `SessionClient.live`
-        // re-resolves independently on every dial `SessionClient`'s own
-        // backoff loop performs — this first lookup doesn't negotiate
-        // twice: `RemoteConnectionCoordinator.connection(for:)` caches
-        // a successful negotiation in `liveConnections`, so the
-        // provider's first invocation (inside `start()`) just returns
-        // the same cached value.
-        let remoteHost = await coordinator?.connection(for: step.host)
-        if remoteHost == nil {
-            switch Self.remoteFallbackSeverity(
-                hasCoordinator: coordinator != nil,
-                hostIsPaired: coordinator?.isPaired(step.host) ?? false
-            ) {
-            case .loud:
-                Self.remoteWiringLogger.warning(
-                    "no RemoteHostConnection for paired host \(step.host.id, privacy: .public); falling back to /ws for session \(step.sessionName, privacy: .public)"
-                )
-            case .quiet:
-                Self.remoteWiringLogger.debug(
-                    "no RemoteHostConnection for host \(step.host.id, privacy: .public) (unpaired or no coordinator); using /ws for session \(step.sessionName, privacy: .public)"
-                )
-            }
-        }
         let new = SessionClient.live(
             baseURL: step.host.baseURL,
             sessionName: step.sessionName,
-            // REMOTE-2.1 (substance; the spec ID itself lands in W4): captures the
-            // COORDINATOR + host, not the `remoteHost` connection resolved
-            // above — every dial `SessionClient`'s backoff loop performs
-            // asks the coordinator fresh, so a degraded/evicted connection
-            // heals via a real re-negotiation (fresh WebRTC + fresh SSH
-            // userauth) instead of redialing the same dead actor forever.
-            remoteConnectionProvider: makeRemoteConnectionProvider(coordinator: coordinator, host: step.host)
+            // REMOTE-2.1 (substance; the spec ID itself lands in W4):
+            // `makeRemoteConnectionProvider` captures the COORDINATOR +
+            // host, not a pre-resolved connection — every dial
+            // `SessionClient`'s backoff loop performs asks the
+            // coordinator fresh (and is the ONLY negotiation path;
+            // there is no separate pre-resolve here), so a
+            // degraded/evicted connection heals via a real
+            // re-negotiation (fresh WebRTC + fresh SSH userauth)
+            // instead of redialing the same dead actor forever.
+            remoteConnectionProvider: makeRemoteConnectionProvider(
+                coordinator: coordinator,
+                host: step.host,
+                sessionName: step.sessionName
+            )
         )
         if Task.isCancelled || connection == .ended {
             // Re-backgrounded (or ended) between WS construction and

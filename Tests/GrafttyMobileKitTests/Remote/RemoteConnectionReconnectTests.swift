@@ -229,7 +229,7 @@ struct RemoteConnectionReconnectTests {
         let client = SessionClient.live(
             baseURL: host.baseURL,
             sessionName: "e2e-session",
-            remoteConnectionProvider: makeRemoteConnectionProvider(coordinator: coordinator, host: host),
+            remoteConnectionProvider: makeRemoteConnectionProvider(coordinator: coordinator, host: host, sessionName: "e2e-session"),
             clock: clock,
             backoffSchedule: backoffSchedule
         )

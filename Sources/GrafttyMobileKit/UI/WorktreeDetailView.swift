@@ -83,12 +83,12 @@ public struct WorktreeDetailView: View {
     private func driveLifecycle() async {
         if LiveSessionReadiness.shouldTearDown(scene: scenePhase) {
             previews?.stopAll()
-            // IPAD-5.1: tear down the negotiated `RemoteHostConnection`
-            // on background. The pool's own clients already re-resolve a
-            // fresh connection per dial (below) — this just makes the
-            // teardown immediate rather than waiting for the next preview
-            // reconnect attempt to discover it's dead.
-            await coordinator?.invalidate(host: host)
+            // The negotiated `RemoteHostConnection` itself is torn down at
+            // `RootView`'s `.background`-only `coordinator.invalidateAll()`,
+            // not here — this branch also fires on `.inactive`, where the
+            // shared connection must survive. The pool's own clients
+            // re-resolve a fresh connection per dial (below) once
+            // `invalidateAll()` has evicted it.
             return
         }
         guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
@@ -115,7 +115,7 @@ public struct WorktreeDetailView: View {
                     baseURL: host.baseURL,
                     sessionName: sessionName,
                     role: .preview,
-                    remoteConnectionProvider: makeRemoteConnectionProvider(coordinator: coordinator, host: host)
+                    remoteConnectionProvider: makeRemoteConnectionProvider(coordinator: coordinator, host: host, sessionName: sessionName)
                 )
             }
         }
