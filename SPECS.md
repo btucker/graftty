@@ -1780,6 +1780,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.
 
+### REMOTE-11.x
+
+**REMOTE-11.1** If the host receives a signaling offer while another remote connection is active, then the application shall respond with a retryable unavailable status and shall not tear down the active connection.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x
