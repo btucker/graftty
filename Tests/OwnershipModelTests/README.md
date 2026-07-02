@@ -168,7 +168,7 @@ is covered; new work would add the per-pane multiplexing invariant.
 A green macOS `OwnershipModel` run exercises REAL production code for:
 
 - **S1–S4** — `SessionDisplayOwnershipStore` driven through the real
-  `WebSocketBridgeCoordinator`.  The corpus is genuinely **multi-client**: each
+  `TerminalAttachCoordinator`.  The corpus is genuinely **multi-client**: each
   web client (`web-a/b/c`) gets its own coordinator with a distinct store client
   ID — exactly as production spins up one coordinator per WebSocket connection —
   so ownership genuinely hands off between clients (`ownerHandoffCount`,
@@ -201,7 +201,7 @@ convenience harness for local iOS-SDK runs only; `SessionClientTests` is the
 authoritative iOS check.
 
 **Not yet exercised:** the `claimOwnerIfOwnerlessOrCurrent` rejection path
-(the binary-frame implicit-claim guard in `WebSocketBridgeCoordinator`) is not
+(the binary-frame implicit-claim guard in `TerminalAttachCoordinator`) is not
 driven by any generated op in the current corpus.  Adding a `.binaryFrame` op
 kind to `nextWebOp` would cover it.
 

@@ -388,18 +388,15 @@ struct GrafttyApp: App {
                 hostKey: try hostIdentityStore.loadOrGenerateAndPersist(),
                 trustedPeerStore: trustedPeerStore,
                 streamFactory: { [registry = appServices.remoteAttachmentRegistry] sessionName in
-                    // Task 3: SSH-over-WebRTC terminal sessions are still
-                    // raw TerminalByteStream participants. Until Task 4+
-                    // adds explicit display-owner protocol handling on this
-                    // path, the shared store is not consulted here; the
-                    // registry remains connection accounting only.
-                    try ZmxAttachStream(
+                    let engine = ZmxAttachEngine(config: ZmxAttachEngine.Config(
                         zmxExecutable: zmxExe,
                         zmxDir: zmxDir,
                         sessionName: sessionName,
-                        workingDirectory: nil,
-                        attachmentRegistry: registry
-                    )
+                        workingDirectory: nil
+                    ))
+                    engine.attachmentRegistry = registry
+                    try engine.start()
+                    return engine
                 },
                 // R5 Task 11: init-time placeholder closures. The host
                 // agent is constructed in `init()` (before SwiftUI `@State`
@@ -414,7 +411,8 @@ struct GrafttyApp: App {
                 },
                 paneControlMutator: { _ in
                     .error(code: "starting", message: "host not yet wired (startup did not run)")
-                }
+                },
+                displayOwnershipStore: appServices.displayOwnershipStore
             )
         } catch {
             // Identity-store I/O failure leaves hostAgent nil; the signaling

@@ -16,7 +16,7 @@ import Testing
 /// ## Gate-honesty note
 ///
 /// A green macOS `OwnershipModel` run exercises REAL production code for:
-///   - S1–S4  (`SessionDisplayOwnershipStore` + real `WebSocketBridgeCoordinator`,
+///   - S1–S4  (`SessionDisplayOwnershipStore` + real `TerminalAttachCoordinator`,
 ///             genuinely multi-client — one coordinator per web client; S3 driven
 ///             with real `ownerResize` acceptance results, see `S3Tests`)
 ///   - S5/L1  (`WebFollowerView` (epoch,revision) guard, deliveries round-tripped

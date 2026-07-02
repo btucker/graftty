@@ -6,7 +6,7 @@ import GrafttyProtocol
 /// The corpus generates ops across distinct web clients (`web-a/b/c`) to
 /// exercise ownership handoff.  For that to be non-vacuous, each web client must
 /// drive the store through its OWN coordinator with a distinct store client ID —
-/// exactly as production does (one `WebSocketBridgeCoordinator` per WebSocket
+/// exactly as production does (one `TerminalAttachCoordinator` per WebSocket
 /// connection, each `clientID = websocket-<UUID>`).  A single shared coordinator
 /// would bind to the first protocol client and silently drop the rest, so owner
 /// identity could never change between clients and the epoch would stop advancing.

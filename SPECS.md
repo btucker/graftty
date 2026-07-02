@@ -1760,6 +1760,26 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-8.5** While accepting a remote attach, the host shall negotiate SSH transport protection from swift-nio-ssh's bundled AEAD ciphers (`aes256-gcm@openssh.com`, `aes128-gcm@openssh.com`) and shall not negotiate any weak or legacy cipher.
 
+### REMOTE-9.x
+
+**REMOTE-9.1** When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with kind ios and the authenticated device identity.
+
+**REMOTE-9.2** While an SSH terminal client is not the display owner, the host shall discard its terminal input bytes and rebroadcast the current ownership snapshot.
+
+**REMOTE-9.3** When an SSH terminal client issues a take-control request, the host shall apply the same owner-eligibility rules as the web transport.
+
+**REMOTE-9.4** When the PTY size changes, the host shall push grid and ownership envelopes to SSH terminal clients over the control carrier.
+
+**REMOTE-9.5** When two SSH clients attach to one session over the control carrier, the application shall grant display ownership to the first client that sends hello and takeControl — localized to that client's own clientID in its ownership envelopes — attach the second hello client as a follower whose envelopes never name it as owner, and answer a follower's terminal bytes with an ownership rebroadcast instead of a PTY echo.
+
+**REMOTE-9.6** When an owner-eligible follower SSH client sends takeControl, the application shall transfer display ownership to it and bump the session epoch, observable by the new owner as a self-owned snapshot and by the former owner as a non-self owner in their next ownership envelopes.
+
+**REMOTE-9.7** If an SSH client that is not the current display owner sends ownerResize, then the application shall reject it and leave the broadcast grid unchanged; while the current owner sends ownerResize at the current epoch, the application shall update the broadcast grid without bumping the epoch.
+
+### REMOTE-10.x
+
+**REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x
