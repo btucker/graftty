@@ -93,13 +93,14 @@ public final class DisplayOwnershipBroadcaster: @unchecked Sendable {
 /// Transport-neutral display-ownership coordinator for a single attached
 /// client. Owns the handshake/claim/resize/detach flow against the shared
 /// `SessionDisplayOwnershipStore` and reports outcomes back to the caller
-/// via the `sendText:resize:write:` closures supplied at init. Today the
-/// only consumer is the `/ws` bridge (`WebSocketBridgeHandler`); the type
-/// is transport-neutral so a future transport (e.g. SSH) can reuse it.
+/// via the `sendText:resize:write:` closures supplied at init. Two
+/// consumers drive it today: the `/ws` bridge (`WebSocketBridgeHandler`)
+/// and `GrafttyHostAgent`'s SSH terminal path (`TerminalSessionHandler`,
+/// REMOTE-9) — the transport-neutral design anticipated exactly this
+/// second consumer.
 ///
-/// Made `public` (REMOTE-9) so `GrafttyHostAgent`'s SSH terminal path
-/// (`TerminalSessionHandler`) can construct and drive it directly — the
-/// second consumer this doc comment anticipated.
+/// Made `public` (REMOTE-9) so `TerminalSessionHandler` can construct and
+/// drive it directly.
 public final class TerminalAttachCoordinator: @unchecked Sendable {
     private let sessionName: String
     private let clientID: DisplayClientID
@@ -355,7 +356,8 @@ public final class TerminalAttachCoordinator: @unchecked Sendable {
             ownerClientID: localizedOwnerID,
             ownerKind: snapshot.ownerKind,
             grid: snapshot.grid,
-            epoch: snapshot.epoch
+            epoch: snapshot.epoch,
+            revision: snapshot.revision
         )
     }
 

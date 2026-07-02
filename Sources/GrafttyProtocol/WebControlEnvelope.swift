@@ -1,8 +1,13 @@
 import Foundation
 
-/// A control event sent from the web client as a WebSocket *text*
-/// frame. Binary frames carry raw PTY bytes; this shape is for
-/// everything else.
+/// A control event carried on a transport's text-shaped control carrier,
+/// alongside — but multiplexed separately from — raw PTY bytes. Two
+/// transports share this shape as of REMOTE-9: the `/ws` bridge encodes
+/// it as a WebSocket *text* frame, and `GrafttyHostAgent`'s SSH terminal
+/// path (`TerminalSessionHandler`/`TerminalSessionClient`) encodes it as
+/// a length-prefixed (`<u32 BE length><UTF-8 JSON>`) frame on the SSH
+/// channel's `.stdErr` sub-stream. Binary/`.channel` frames carry raw PTY
+/// bytes; this shape is for everything else.
 ///
 public enum WebControlEnvelope: Equatable {
     private static let maxGridDimension = 10_000

@@ -176,10 +176,15 @@ struct SSHTerminalLoopbackTests {
             // rebroadcast, never a `.binary` echo of what it just sent.
             try await clientB.send(.binary(Data("should-not-echo".utf8)))
             let followup = try await clientB.receive()
-            guard case .text = followup else {
+            guard case let .text(text) = followup else {
                 Issue.record("expected the discard rebroadcast as a .text control frame, got \(followup)")
                 return
             }
+            guard case let .ownership(rebroadcast) = try WebControlEnvelope.parse(Data(text.utf8)) else {
+                Issue.record("expected the discard rebroadcast to decode as an ownership envelope, got \(text)")
+                return
+            }
+            #expect(rebroadcast.ownerClientID != idB, "the discard rebroadcast must never name the follower itself as owner")
         }
     }
 
@@ -261,6 +266,18 @@ struct SSHTerminalLoopbackTests {
             }
             #expect(snapshot.grid == acceptedGrid, "a non-owner's resize must be rejected")
         }
+    }
+
+    /// A poisoned-but-alive `.stdErr` carrier is a frozen-ownership black
+    /// hole: no more take-control/ownerResize requests could ever be
+    /// parsed, and (if this client isn't the owner) inbound ownership
+    /// updates would stop too, with no signal to the client that anything
+    /// is wrong. Closing the child channel on poisoning routes into
+    /// `SessionClient`'s existing reconnect/backoff instead, so the
+    /// client self-heals rather than hanging silently forever.
+    @Test(.timeLimit(.minutes(3)))
+    func oversizedInboundControlFrameClosesChildChannelAndEndsTheClientStream() async throws {
+        try await runPoisonedControlFrameLoopback()
     }
 
     // MARK: - Loopback driver
@@ -631,6 +648,121 @@ struct SSHTerminalLoopbackTests {
         try bodyResult.get()
     }
 
+    // MARK: - Poisoned control-carrier loopback driver (task 6)
+
+    /// Opens ONE `TerminalSessionClient` session channel against a bare
+    /// server-side handler (`PoisonInjectingSessionHandler`) that acks the
+    /// shell request — so `connect()` resolves exactly like a real
+    /// attach — then immediately writes a single malformed `.stdErr`
+    /// frame (a length prefix that overflows `maxControlFrameLength`)
+    /// directly onto the wire, bypassing the coordinator entirely (the
+    /// real coordinator/handler never emit malformed frames; this
+    /// simulates a corrupted carrier the way a buggy peer or bit-flip
+    /// would). Asserts the client's `receive()` observes `.channelClosed`
+    /// — proving `InboundRelay` closed the child channel instead of
+    /// silently dropping control parsing forever.
+    private func runPoisonedControlFrameLoopback(
+        responseDeadline: Duration = .seconds(20)
+    ) async throws {
+        let serverKey = Curve25519.Signing.PrivateKey()
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let peerStore = InMemoryTrustedPeerSet()
+        peerStore.add(fingerprint: Self.fingerprint(of: clientKey))
+
+        let offerer = LoopbackPeer(role: .offerer)
+        let answerer = LoopbackPeer(role: .answerer)
+        let offer = try await offerer.createOffer()
+        let answer = try await answerer.accept(offer: offer)
+        await offerer.bindIceCandidates(to: answerer)
+        await answerer.bindIceCandidates(to: offerer)
+        try await offerer.applyAnswer(answer)
+        let offererDC = try await offerer.openedDataChannel()
+        let answererDC = try await answerer.openedDataChannel()
+
+        let clientTransport = SSHNIOTransport(dataChannel: offererDC)
+        let serverTransport = SSHNIOTransport(dataChannel: answererDC)
+
+        try await serverTransport.eventLoop.submit {
+            let serverConfig = SSHServerConfiguration(
+                hostKeys: [NIOSSHPrivateKey(ed25519Key: serverKey)],
+                userAuthDelegate: TrustSetServerUserAuthDelegate(store: peerStore)
+            )
+            let sshHandler = NIOSSHHandler(
+                role: .server(serverConfig),
+                allocator: serverTransport.channel.allocator,
+                inboundChildChannelInitializer: { childChannel, channelType in
+                    guard case .session = channelType else {
+                        return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
+                    }
+                    return childChannel.eventLoop.makeCompletedFuture {
+                        try childChannel.pipeline.syncOperations.addHandler(PoisonInjectingSessionHandler())
+                    }
+                }
+            )
+            try serverTransport.channel.pipeline.syncOperations.addHandler(sshHandler)
+        }.get()
+
+        let handlerPromise = clientTransport.eventLoop.makePromise(of: NIOSSHHandler.self)
+        try await clientTransport.eventLoop.submit {
+            let h = SSHClientSetup.makeHandler(
+                clientKey: clientKey,
+                expectedHostFingerprint: Self.fingerprint(of: serverKey),
+                allocator: clientTransport.channel.allocator
+            )
+            try clientTransport.channel.pipeline.syncOperations.addHandler(h)
+            handlerPromise.succeed(h)
+        }.get()
+        let sshHandler = try await handlerPromise.futureResult.get()
+
+        try await serverTransport.start()
+        try await clientTransport.start()
+
+        let client = TerminalSessionClient(
+            parentChannel: clientTransport.channel,
+            parentHandler: sshHandler,
+            sessionName: "poison-test"
+        )
+
+        // Belt-and-suspenders deadline (same pattern as the other drivers
+        // above) so a regression that silently drops the poisoned frame
+        // (never closing the channel) fails fast instead of hanging past
+        // the test's own `.timeLimit`.
+        let deadlineTask = Task { [client] in
+            try? await Task.sleep(for: responseDeadline)
+            client.close()
+        }
+        defer { deadlineTask.cancel() }
+
+        try await client.connect()
+
+        // Timed explicitly (rather than just checking for
+        // `.channelClosed`) so a regression that silently drops the
+        // poisoned frame forever — and only closes via this driver's own
+        // belt-and-suspenders `deadlineTask` above — still fails instead
+        // of passing for the wrong reason: both paths raise the same
+        // error, but only `InboundRelay`'s own poison-and-close reacts
+        // near-instantly.
+        let start = ContinuousClock.now
+        do {
+            _ = try await client.receive()
+            Issue.record("expected receive() to throw once the poisoned control frame closed the channel")
+        } catch TerminalSessionClient.ClientError.channelClosed {
+            let elapsed = ContinuousClock.now - start
+            #expect(
+                elapsed < .seconds(10),
+                "expected InboundRelay to close the channel promptly on poisoning, not via the test's own \(responseDeadline) belt-and-suspenders deadline (took \(elapsed))"
+            )
+        } catch {
+            Issue.record("expected .channelClosed, got \(error)")
+        }
+
+        client.close()
+        await clientTransport.close()
+        await serverTransport.close()
+        await offerer.close()
+        await answerer.close()
+    }
+
     /// Drains `client.receive()` until a `.ownership` envelope satisfying
     /// `predicate` is observed, silently skipping any interleaved `.binary`
     /// terminal-byte frames or non-matching `.ownership` envelopes (e.g. a
@@ -741,6 +873,38 @@ private final class FrameRecordingHandler: ChannelInboundHandler, @unchecked Sen
     func channelInactive(context: ChannelHandlerContext) {
         collector.finish()
         context.fireChannelInactive()
+    }
+}
+
+/// Server-side handler for `runPoisonedControlFrameLoopback`: acks the
+/// shell request (so the client's `connect()` resolves exactly like a
+/// real attach), then immediately writes a single malformed `.stdErr`
+/// frame — a `u32 BE` length prefix that overflows
+/// `TerminalSessionClient`'s `maxControlFrameLength` — directly onto the
+/// channel. Deliberately bypasses `WebControlEnvelope` encoding entirely;
+/// the real coordinator/handler never emit malformed frames, so this
+/// simulates a corrupted carrier (buggy peer, bit-flip) rather than any
+/// real production code path.
+private final class PoisonInjectingSessionHandler: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = SSHChannelData
+    typealias OutboundOut = SSHChannelData
+
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if let shellEvent = event as? SSHChannelRequestEvent.ShellRequest {
+            if shellEvent.wantReply {
+                context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
+            }
+            var buffer = context.channel.allocator.buffer(capacity: 4)
+            buffer.writeBytes([0xFF, 0xFF, 0xFF, 0xFF])
+            let data = SSHChannelData(type: .stdErr, data: .byteBuffer(buffer))
+            context.writeAndFlush(wrapOutboundOut(data), promise: nil)
+        }
+        context.fireUserInboundEventTriggered(event)
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        // Ignore all inbound bytes — this handler only ever injects the
+        // one malformed frame above.
     }
 }
 

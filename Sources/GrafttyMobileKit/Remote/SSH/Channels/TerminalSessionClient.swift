@@ -369,17 +369,19 @@ private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
     let owner: TerminalSessionClient
     private var stdErrAccumulator: [UInt8] = []
     /// Set once a `.stdErr` frame header claims a length above
-    /// `maxControlFrameLength`, or a complete frame's bytes aren't valid
-    /// UTF-8. Framing is unrecoverable in the length-overflow case (we
-    /// can't tell where the next frame starts), so all further `.stdErr`
-    /// bytes are silently dropped — no more control envelopes are ever
-    /// surfaced on this channel. Unlike the server
-    /// (`TerminalSessionHandler.poisonStdErr`), the client does not close
-    /// the channel: the server is the one that enforces protocol
-    /// correctness and will close its side if it judges the carrier
-    /// unrecoverable; the client's posture is simply to tolerate a
-    /// poisoned carrier without corrupting the still-live `.channel`
-    /// byte path.
+    /// `maxControlFrameLength`, or undrained accumulation exceeds that
+    /// same bound with no complete frame in sight. Framing is
+    /// unrecoverable at that point (we can't tell where the next frame
+    /// starts) — a single malformed frame's bytes failing UTF-8 decoding
+    /// is handled separately and does NOT poison the carrier (framing
+    /// stays intact; see `ingestControlBytes`). Mirrors the server
+    /// (`TerminalSessionHandler.poisonStdErr`): a poisoned-but-alive
+    /// client would be a frozen-ownership black hole — no more
+    /// take-control/ownerResize requests could ever be parsed, and (if
+    /// this client isn't the owner) inbound ownership updates would stop
+    /// too — so closing the child channel here routes into
+    /// `SessionClient`'s existing reconnect/backoff and self-heals
+    /// instead of hanging silently forever.
     private var stdErrPoisoned = false
     /// Mirrors `TerminalSessionHandler.maxControlFrameLength` — same cap
     /// so a well-behaved peer's frames never trip it, while bounding what
@@ -397,7 +399,7 @@ private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
         guard let bytes = view.readBytes(length: view.readableBytes) else { return }
         switch channelData.type {
         case .stdErr:
-            ingestControlBytes(Data(bytes))
+            ingestControlBytes(Data(bytes), context: context)
         default:
             owner.deliverInboundBinary(Data(bytes))
         }
@@ -410,7 +412,7 @@ private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
     /// (framing is still intact — we know exactly where the next frame
     /// starts) rather than poisoning the whole carrier; only a
     /// length-prefix overflow (unrecoverable framing) poisons it.
-    private func ingestControlBytes(_ data: Data) {
+    private func ingestControlBytes(_ data: Data, context: ChannelHandlerContext) {
         guard !stdErrPoisoned else { return }
         stdErrAccumulator.append(contentsOf: data)
         while stdErrAccumulator.count >= 4 {
@@ -419,8 +421,7 @@ private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
                 | (UInt32(stdErrAccumulator[2]) << 8)
                 | UInt32(stdErrAccumulator[3])
             guard length <= Self.maxControlFrameLength else {
-                stdErrPoisoned = true
-                stdErrAccumulator.removeAll()
+                poisonAndClose(context: context)
                 return
             }
             let total = 4 + Int(length)
@@ -434,9 +435,21 @@ private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
         // more than one max-size frame's worth of bytes with no complete
         // frame in sight is itself a protocol violation.
         if stdErrAccumulator.count > Int(Self.maxControlFrameLength) + 4 {
-            stdErrPoisoned = true
-            stdErrAccumulator.removeAll()
+            poisonAndClose(context: context)
         }
+    }
+
+    /// Marks the carrier unrecoverably framed and closes the child
+    /// channel. `channelInactive` (via `TerminalSessionClient`'s
+    /// `closeFuture` observer / `handleChildClose`) then fails any
+    /// pending/future `receive()` calls with `.channelClosed`, which
+    /// `SessionClient` treats like any other transport drop — it
+    /// reconnects with backoff rather than being stuck forever behind a
+    /// carrier that can never surface another control envelope.
+    private func poisonAndClose(context: ChannelHandlerContext) {
+        stdErrPoisoned = true
+        stdErrAccumulator.removeAll()
+        context.close(promise: nil)
     }
 }
 
