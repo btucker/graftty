@@ -636,6 +636,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **KEY-1.3** Application-level menu keyboard shortcuts (Cmd+D split, Cmd+W close pane, Cmd+O add repository, and pane navigation shortcuts) shall be matched by AppKit's menu `keyEquivalent` interception before the keyDown event reaches the terminal, so menu shortcuts override any conflicting libghostty keybinding.
 
+**KEY-1.4** When a modifier key is pressed or released over a terminal pane (AppKit `flagsChanged`), the application shall forward the modifier transition to libghostty as a modifier-only key event, so link hover state refreshes and a cmd+click on an already-hovered file path opens the editor without requiring mouse movement.
+
+**KEY-1.5** When a modifier key is pressed while the pointer hovers a terminal pane that is not first responder, the application shall refresh that pane's link hover state, so cmd+click on a file path in an unfocused pane opens the editor without first moving the mouse. (AppKit delivers `flagsChanged` only to the first responder, so KEY-1.4's forwarding does not reach the hovered pane, and the click's own mouse-pos event is cell-deduped inside libghostty.)
+
 ### KEY-2.x — Clipboard
 
 **KEY-2.1** When libghostty requests a clipboard write (e.g., from `Cmd+C` or the context menu Copy), the application shall write the provided content to `NSPasteboard.general`.
