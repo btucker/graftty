@@ -333,6 +333,9 @@ final class GhosttyApp {
             // the request asynchronously via `complete_clipboard_request`.
             DispatchQueue.main.async {
                 guard let handle = manager?.handle(for: terminalID) else { return }
+                // OWN-2.3: a paste into a follower/ownerless pane reclaims
+                // display ownership before the clipboard text is delivered.
+                handle.reclaimDisplayControlForPasteIfNeeded()
                 let pasteboard = pasteboardForClipboard(clipboardEnum)
                 let text = pasteboard.string(forType: .string) ?? ""
                 text.withCString { cstr in

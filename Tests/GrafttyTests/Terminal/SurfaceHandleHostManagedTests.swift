@@ -212,7 +212,7 @@ struct SurfaceHandleHostManagedTests {
         var writes: [Data] = []
         view.hostManagedInputWriter = { writes.append($0) }
 
-        let event = try #require(Self.keyEvent(
+        let event = try #require(testKeyDownEvent(
             keyCode: 0x33,
             characters: "\u{7F}"
         ))
@@ -429,22 +429,4 @@ struct SurfaceHandleHostManagedTests {
         PaneSlotID(id: UUID(uuidString: "DEADBEEF-0000-0000-0000-000000000000")!)
     }
 
-    private static func keyEvent(
-        keyCode: UInt16,
-        characters: String,
-        modifierFlags: NSEvent.ModifierFlags = []
-    ) -> NSEvent? {
-        NSEvent.keyEvent(
-            with: .keyDown,
-            location: .zero,
-            modifierFlags: modifierFlags,
-            timestamp: 0,
-            windowNumber: 0,
-            context: nil,
-            characters: characters,
-            charactersIgnoringModifiers: characters,
-            isARepeat: false,
-            keyCode: keyCode
-        )
-    }
 }

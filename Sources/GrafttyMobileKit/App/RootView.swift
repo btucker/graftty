@@ -737,20 +737,21 @@ struct SingleSessionView: View {
     }
 
     /// @spec IOS-6.10
-    /// Owner guard: once `client.isOwner` is true, this
-    /// reconciler stops driving the font. The currently-applied font
-    /// (override or base) remains the owner's baseline. Removing this
-    /// guard would regress IOS-6.10.
+    /// Owner promotion restores the base config font: while a follower,
+    /// the auto-fit override shrinks the font to match the authoritative
+    /// (often desktop-width) grid, and carrying that tiny font into
+    /// ownership would leave the session at the previous owner's width
+    /// until some later incidental layout tick. Restoring the config font
+    /// re-lays the pane out at an iOS-natural grid, and the resulting
+    /// owner resize snaps the session width immediately. While owner with
+    /// no override active, the reconciler leaves the font alone so
+    /// libghostty's pinch-to-zoom (IOS-6.8) keeps adjusting from that
+    /// baseline without interference.
     private func reconcileFontOverride(
         client: SessionClient,
         controller: TerminalController,
         containerWidth: CGFloat
     ) {
-        // Owner mode preserves the existing user-adjustable font behavior.
-        // The user can adjust
-        // from here via libghostty's built-in pinch-to-zoom (IOS-6.8) —
-        // there is intentionally no automatic path back to base config.
-        guard !client.isOwner else { return }
         guard let baseConfig = baseConfigText else { return }
         let configSize = Float(
             GhosttyConfigFetcher.lastFontSize(in: baseConfig)
@@ -769,20 +770,18 @@ struct SingleSessionView: View {
             configFontSize: configSize,
             measuredCellWidthPoints: client.cellWidthPoints,
             measuredAtFontSize: measuredAt,
-            isOwner: false
+            isOwner: client.isOwner
         )
-        switch decision {
-        case .useConfigFont:
-            guard liveFontOverride != nil else { return }
+        switch TerminalWidthLayout.overrideAction(
+            decision: decision,
+            liveFontOverride: liveFontOverride
+        ) {
+        case .keep:
+            return
+        case .restoreConfigFont:
             controller.updateConfigSource(.generated(baseConfig))
             liveFontOverride = nil
-        case let .fitFont(pointSize):
-            // Epsilon dedupe: pointSize is derived from a Double / Float
-            // chain that's sensitive to sub-pixel containerWidth drift.
-            // 0.05pt is well below any visible difference and prevents
-            // a thrash of `controller.updateConfigSource(...)` calls
-            // when the recomputed value differs only in low Float bits.
-            if let live = liveFontOverride, abs(live - pointSize) < 0.05 { return }
+        case let .applyOverride(pointSize):
             let overridden = MobileTerminalControllerFactory.appendingFontSizeOverride(
                 to: baseConfig,
                 fontSize: pointSize,
