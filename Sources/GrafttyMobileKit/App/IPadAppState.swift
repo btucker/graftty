@@ -92,12 +92,9 @@ public final class IPadAppState {
         static let sidebarWidth = "iPadAppState.sidebarWidth"
     }
 
-    // Note: this type used to carry a `RemoteHostConnection` registry
-    // (`remoteHostConnectionsByHostId` / `remoteHostConnection(for:)` /
-    // `setRemoteHostConnection`) as a placeholder ahead of real signaling.
-    // `RemoteConnectionCoordinator` (W3 Task 2) is the production registry
-    // now — negotiate-on-demand, in-flight dedup, eviction — and `RootView`
-    // (W3 Task 3) reads from it directly on both size classes, so the
-    // placeholder cache and its `os.Logger` were deleted here.
+    // Per-host `RemoteHostConnection`s live in `RemoteConnectionCoordinator`
+    // (negotiate-on-demand, in-flight dedup, eviction), not here — `RootView`
+    // holds and reads the coordinator directly on both size classes. This
+    // type owns only sidebar/detail selection and layout state.
 }
 #endif

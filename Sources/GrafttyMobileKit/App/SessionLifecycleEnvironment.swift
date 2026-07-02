@@ -116,11 +116,14 @@ func makeRemoteConnectionProvider(
 /// Bundles the iPad-only pane façades that ride the per-host
 /// `RemoteHostConnection`'s SSH session: a `WorktreePanesStore` for the
 /// sidebar's worktree+pane snapshot, and a `PaneControlClient` for typed
-/// `split`/`close`/`swap` RPCs. Both fields are `nil` on the iPhone path
-/// (and on iPad before signaling has wired up a `RemoteHostConnection`),
+/// `split`/`close`/`swap` RPCs. Both fields are `nil` on the iPhone path,
 /// where the existing `/ws` flow handles terminal traffic and there is
-/// no SSH session to multiplex these subsystem channels onto. A future
-/// iPhone cutover will populate them on that path too.
+/// no SSH session to multiplex these subsystem channels onto — signaling
+/// (W3) is iPad-only; a future iPhone cutover would populate them on
+/// that path too. Also `nil` on iPad whenever `RootView`'s own
+/// `RemoteConnectionCoordinator` has no live `RemoteHostConnection` for
+/// the host (unpaired, or negotiation failed) — same fallback trigger as
+/// the fullscreen/preview `/ws` paths.
 ///
 /// No UI surfaces consume these yet, and W3 Task 3 (wiring
 /// `RemoteConnectionCoordinator` into `RootView`/`IPadRootLayout`/
@@ -151,8 +154,9 @@ public struct PaneEnvironment: Sendable {
 
 /// Constructs a `PaneEnvironment` over the supplied per-host
 /// `RemoteHostConnection`. Returns `.empty` when `remoteHost` is nil
-/// (iPhone, or iPad before signaling lands) or when either subsystem
-/// channel fails to open.
+/// (iPhone — signaling is iPad-only this milestone — or an iPad host with
+/// no live `RemoteHostConnection`, e.g. unpaired or a failed negotiation)
+/// or when either subsystem channel fails to open.
 ///
 /// Construction shape: the channel client is built first with no-op
 /// callbacks (via `RemoteHostConnection.makePanesStateClient`), then the

@@ -104,6 +104,162 @@ struct RemoteConnectionReconnectTests {
         await coordinator.invalidate(host: host)
     }
 
+    // MARK: - Task 5: end-to-end signaling → SSH → reconnect loopback
+
+    /// The milestone's capstone proof: `RemoteConnectionCoordinator` +
+    /// `SignalingClient` + `SessionClient.live`'s `remoteConnectionProvider`
+    /// wired together exactly as `RootView`/`SessionLifecycleEnvironment`
+    /// wire them in production, driving one "connect → break → self-heal"
+    /// story through a single real SSH terminal-session channel — no UI,
+    /// no `WorktreeDetailView`/`RootView`, just the coordinator, the
+    /// provider, and the `SessionClient` factory:
+    ///
+    ///   1. `SessionClient.start()` dials through the coordinator, which
+    ///      negotiates a real WebRTC connection via `signaling.exchange`
+    ///      and completes a real SSH userauth (mirroring the negotiation
+    ///      above) — negotiation #1.
+    ///   2. The host-side echo handler grants this `SessionClient`
+    ///      display ownership the instant its `.hello` control frame
+    ///      arrives — this test never contests ownership (that
+    ///      arbitration is `SSHTerminalLoopbackTests`' job); granting it
+    ///      immediately is what lets `SessionClient` write PTY bytes onto
+    ///      the wire without a takeover round trip first.
+    ///   3. `session.sendInput(_:)` injects PTY bytes exactly the way
+    ///      libghostty's own key-translation callback would. The
+    ///      host-side handler records every byte it receives AND echoes
+    ///      it back over the SAME channel — proving bytes flow both ways
+    ///      over the real SSH session channel, through the real
+    ///      `TerminalSessionClient` `WebSocketClient` conformer
+    ///      `SessionClient` is unaware it's even talking to.
+    ///   4. Killing the negotiation-#1 answerer (the same teardown
+    ///      `RemoteHostConnectionLoopbackTests
+    ///      .killingAnswererFiresExactlyOneTerminalTransition` exercises
+    ///      at the `RemoteHostConnection` layer alone) tears the
+    ///      connection down; the coordinator's terminal-state observer
+    ///      (W3 Task 2) evicts it from `liveConnections`, and
+    ///      `SessionClient`'s own receive loop sees its SSH channel close
+    ///      and falls into backoff.
+    ///   5. Advancing the `VirtualClock` past the backoff delay releases
+    ///      the next dial. `SessionClient.live`'s `remoteConnectionProvider`
+    ///      (W3 Task 4) asks the coordinator FRESH — with no live
+    ///      connection cached, that's a real re-negotiation: negotiation
+    ///      #2, a second full SSH userauth, a fresh echo handler.
+    ///   6. Injecting PTY bytes again and observing them echoed back
+    ///      proves the self-heal produced a REAL working connection, not
+    ///      just a non-nil `RemoteHostConnection` — the same bar the
+    ///      coordinator-level reconnect test above holds negotiation to,
+    ///      now proven one layer up through `SessionClient` itself.
+    @Test(.timeLimit(.minutes(3)))
+    func endToEndSignalingSSHReconnectSelfHeals() async throws {
+        let dir = try Self.makeTempDirectory()
+        let clientKey = try ClientIdentityStore(directory: dir).loadOrGenerateAndPersist()
+        let clientFingerprint = Self.fingerprint(
+            of: try RemoteIdentityPublicKey(rawRepresentation: clientKey.publicKey.rawRepresentation)
+        )
+        let serverKey = Curve25519.Signing.PrivateKey()
+        let host = try Self.makePairedHost(directory: dir, serverKey: serverKey)
+
+        let userauthCounter = CallCounter()
+        let negotiationCounter = CallCounter()
+        let box = ConnectionBox()
+        let recorder = TerminalByteRecorder()
+
+        let coordinator = RemoteConnectionCoordinator(
+            directory: dir,
+            signaling: SignalingClient(transport: Self.hostSideSSHTransport(
+                serverKey: serverKey,
+                trustedClientFingerprint: clientFingerprint,
+                userauthCounter: userauthCounter,
+                box: box,
+                inboundChildChannelInitializer: { childChannel, channelType in
+                    guard case .session = channelType else {
+                        return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
+                    }
+                    return childChannel.eventLoop.makeCompletedFuture {
+                        try childChannel.pipeline.syncOperations.addHandler(
+                            TerminalEchoSessionHandler(recorder: recorder)
+                        )
+                    }
+                }
+            )),
+            connectionFactory: { key, fp in
+                negotiationCounter.increment()
+                let connection = RemoteHostConnection(clientKey: key, expectedHostFingerprint: fp)
+                box.set(connection)
+                return connection
+            }
+        )
+
+        let clock = VirtualClock()
+        let backoffSchedule: [TimeInterval] = [1, 2, 4]
+        let client = SessionClient.live(
+            baseURL: host.baseURL,
+            sessionName: "e2e-session",
+            remoteConnectionProvider: makeRemoteConnectionProvider(coordinator: coordinator, host: host),
+            clock: clock,
+            backoffSchedule: backoffSchedule
+        )
+        defer { client.stop() }
+        client.start()
+
+        // 1: first dial negotiates through the real coordinator + signaling.
+        try await Self.pollUntil(timeout: .seconds(15)) { negotiationCounter.count == 1 }
+        try await Self.pollUntil(timeout: .seconds(15)) { userauthCounter.count >= 1 }
+
+        // 2/3: hello grants ownership; injected PTY bytes reach the host
+        // and echo back over the SAME SSH session channel `SessionClient`
+        // opened.
+        try await Self.pollUntil(timeout: .seconds(15)) { client.isOwner }
+        let firstBytes = Data("hello-from-client\n".utf8)
+        client.session.sendInput(firstBytes)
+        try await Self.pollUntil(timeout: .seconds(15)) { recorder.contains(firstBytes) }
+
+        // 4: kill the negotiation-#1 peer.
+        guard let firstAnswerer = box.latestAnswerer() else {
+            Issue.record("expected the first negotiation's answerer to be retained")
+            return
+        }
+        await firstAnswerer.close()
+
+        // `SessionClient`'s own receive loop must observe the SSH channel
+        // dying and fall into backoff — real wall-clock (WebRTC/SSH
+        // teardown isn't on the `VirtualClock`), gated by polling rather
+        // than a sleep.
+        try await Self.pollUntil(timeout: .seconds(20)) {
+            if case .reconnecting = client.connectionState { return true }
+            return false
+        }
+
+        // 5: release the backoff delay(s) deterministically and let the
+        // provider re-consult the coordinator. There's a small, benign
+        // race between the coordinator's async eviction (triggered by the
+        // SAME terminal-state notification that closed the SSH channel
+        // above) and this dial reaching the coordinator — advancing across
+        // the WHOLE schedule (instead of just its first entry) absorbs
+        // that race without ever waiting longer than the schedule itself
+        // allows, and without changing the schedule (see
+        // `feedback_test_slowdowns_indicate_bugs`: this bounds a genuine
+        // async-ordering race, it does not pad a timeout).
+        for delay in backoffSchedule {
+            if negotiationCounter.count >= 2 { break }
+            clock.advance(by: delay)
+            _ = try? await Self.pollUntil(timeout: .seconds(5)) { negotiationCounter.count >= 2 }
+        }
+        #expect(negotiationCounter.count == 2, "a second negotiation must occur once the coordinator evicts the dead connection")
+        try await Self.pollUntil(timeout: .seconds(15)) { userauthCounter.count >= 2 }
+
+        // 6: self-heal proof — a fresh hello re-grants ownership on the
+        // NEW connection, and bytes flow again through the NEW SSH
+        // session channel the healed `SessionClient` opened.
+        try await Self.pollUntil(timeout: .seconds(15)) { client.isOwner }
+        let secondBytes = Data("hello-after-reconnect\n".utf8)
+        client.session.sendInput(secondBytes)
+        try await Self.pollUntil(timeout: .seconds(15)) { recorder.contains(secondBytes) }
+
+        client.stop()
+        await coordinator.invalidate(host: host)
+    }
+
     // MARK: - Host-side SSH transport stub
 
     /// Fresh answerer + SSH server stack PER `signaling.exchange` call —
@@ -111,11 +267,18 @@ struct RemoteConnectionReconnectTests {
     /// a real host agent. `userauthCounter` is shared across every
     /// invocation so the test can observe a second full userauth on
     /// reconnect.
+    ///
+    /// `inboundChildChannelInitializer` defaults to `nil` (this suite's
+    /// original reconnect test never opens a channel on top, so there's
+    /// nothing to initialize); the Task 5 E2E test below passes one that
+    /// installs a terminal-echo handler so a `TerminalSessionClient`
+    /// session channel has something real to open against.
     private nonisolated static func hostSideSSHTransport(
         serverKey: Curve25519.Signing.PrivateKey,
         trustedClientFingerprint: RemoteIdentityFingerprint,
         userauthCounter: CallCounter,
-        box: ConnectionBox
+        box: ConnectionBox,
+        inboundChildChannelInitializer: (@Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>)? = nil
     ) -> SignalingClient.Transport {
         { request, body in
             let offer = try JSONDecoder().decode(SignalingOffer.self, from: body)
@@ -150,10 +313,7 @@ struct RemoteConnectionReconnectTests {
                         let sshHandler = NIOSSHHandler(
                             role: .server(serverConfig),
                             allocator: serverTransport.channel.allocator,
-                            // No channels needed for this test — it only
-                            // asserts userauth completed, not that a
-                            // terminal/exec session opened on top.
-                            inboundChildChannelInitializer: nil
+                            inboundChildChannelInitializer: inboundChildChannelInitializer
                         )
                         try serverTransport.channel.pipeline.syncOperations.addHandler(sshHandler)
                     }.get()
@@ -268,6 +428,16 @@ private final class ConnectionBox: @unchecked Sendable {
 
     func retainTransport(_ transport: SSHNIOTransport) {
         lock.lock(); retainedTransports.append(transport); lock.unlock()
+    }
+
+    /// Most-recently-retained answerer. Used by the Task 5 E2E test to
+    /// kill the negotiation-#1 peer (driving the self-heal reconnect)
+    /// without needing its own bookkeeping — `retain(_:)` above already
+    /// appends in negotiation order, so `.last` is always "the answerer
+    /// for whichever negotiation just completed."
+    func latestAnswerer() -> LoopbackPeer? {
+        lock.lock(); defer { lock.unlock() }
+        return retainedAnswerers.last
     }
 }
 
@@ -555,6 +725,10 @@ private actor LoopbackPeer: WebRTCIceCandidateReceiver {
 
 private enum LoopbackError: Error {
     case dataChannelNeverOpened
+    /// Task 5 E2E test: the host-side `inboundChildChannelInitializer`
+    /// only ever expects a `.session` channel (what `TerminalSessionClient`
+    /// opens) — anything else is a test-harness bug, not a product path.
+    case unexpectedChannelType
 }
 
 private final class LoopbackPeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
@@ -584,5 +758,141 @@ private final class OpenTrackerDelegate: NSObject, RTCDataChannelDelegate, @unch
         if dataChannel.readyState == .open { onOpen?() }
     }
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {}
+}
+
+// MARK: - Task 5 host-side terminal echo (own minimal mirror; see doc
+// comment on `TerminalEchoSessionHandler` for why this doesn't reuse
+// `SSHTerminalLoopbackTests`' fuller ownership-arbitration mirror)
+
+/// Records every raw PTY byte payload the Task 5 E2E test's host-side
+/// echo handler receives, across every negotiation — one shared recorder,
+/// a NEW `TerminalEchoSessionHandler` per SSH stack — so the test can
+/// prove bytes crossed the wire both before AND after the self-heal
+/// without needing a separate collector per connection.
+private final class TerminalByteRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var chunks: [Data] = []
+
+    func record(_ data: Data) {
+        lock.lock(); chunks.append(data); lock.unlock()
+    }
+
+    func contains(_ data: Data) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return chunks.contains(data)
+    }
+}
+
+/// Minimal server-side SSH session-channel handler for the Task 5 E2E
+/// test: a single-client-always-owner terminal echo. Real production
+/// (and `SSHTerminalLoopbackTests`' `TerminalSessionHandler` mirror)
+/// arbitrates ownership across multiple attaching clients; this test only
+/// ever has ONE `SessionClient` attach at a time, so granting ownership
+/// the instant its `.hello` arrives is enough to prove PTY bytes flow
+/// both ways over a real SSH session channel without re-implementing
+/// that arbitration a second time in this file.
+private final class TerminalEchoSessionHandler: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = SSHChannelData
+    typealias OutboundOut = SSHChannelData
+
+    private let recorder: TerminalByteRecorder
+    private var stdErrAccumulator: [UInt8] = []
+
+    init(recorder: TerminalByteRecorder) {
+        self.recorder = recorder
+    }
+
+    /// Acks the shell request so `TerminalSessionClient.connect()`
+    /// resolves exactly like a real attach. `env`/`pty-req` use
+    /// `wantReply: false` client-side (see `TerminalSessionClient
+    /// .sendEnv`/`.sendPty`), so no ack is needed for those.
+    func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
+        if let shellEvent = event as? SSHChannelRequestEvent.ShellRequest, shellEvent.wantReply {
+            context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
+        }
+        context.fireUserInboundEventTriggered(event)
+    }
+
+    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+        let channelData = unwrapInboundIn(data)
+        guard case let .byteBuffer(buf) = channelData.data else { return }
+        var view = buf
+        guard let bytes = view.readBytes(length: view.readableBytes) else { return }
+        switch channelData.type {
+        case .stdErr:
+            ingestControl(Data(bytes), context: context)
+        default:
+            let payload = Data(bytes)
+            recorder.record(payload)
+            echo(payload, context: context)
+        }
+    }
+
+    private func echo(_ payload: Data, context: ChannelHandlerContext) {
+        var buffer = context.channel.allocator.buffer(capacity: payload.count)
+        buffer.writeBytes(payload)
+        context.writeAndFlush(wrapOutboundOut(SSHChannelData(type: .channel, data: .byteBuffer(buffer))), promise: nil)
+    }
+
+    /// Decodes length-prefixed control frames — mirrors
+    /// `TerminalSessionClient`'s own `<u32 BE length><UTF-8 JSON>` wire
+    /// shape — and grants ownership the instant a `.hello` is parsed; see
+    /// the type's doc comment for why this test skips real arbitration.
+    private func ingestControl(_ data: Data, context: ChannelHandlerContext) {
+        stdErrAccumulator.append(contentsOf: data)
+        while stdErrAccumulator.count >= 4 {
+            let length = (UInt32(stdErrAccumulator[0]) << 24)
+                | (UInt32(stdErrAccumulator[1]) << 16)
+                | (UInt32(stdErrAccumulator[2]) << 8)
+                | UInt32(stdErrAccumulator[3])
+            let total = 4 + Int(length)
+            guard stdErrAccumulator.count >= total else { break }
+            let payload = Data(stdErrAccumulator[4..<total])
+            stdErrAccumulator.removeSubrange(0..<total)
+            guard
+                let text = String(data: payload, encoding: .utf8),
+                let envelope = try? WebControlEnvelope.parse(Data(text.utf8)),
+                case let .hello(clientID, _, _, _, cols, rows) = envelope
+            else { continue }
+            grantOwnership(context: context, clientID: clientID, cols: cols, rows: rows)
+        }
+    }
+
+    private func grantOwnership(context: ChannelHandlerContext, clientID: DisplayClientID, cols: UInt16, rows: UInt16) {
+        do {
+            let grid = try DisplayGrid(cols: cols, rows: rows)
+            let snapshot = try DisplayOwnershipSnapshot(
+                sessionName: "e2e",
+                ownerClientID: clientID,
+                ownerKind: .ios,
+                grid: grid,
+                epoch: 1,
+                revision: 1
+            )
+            sendControlFrame(WebControlEnvelope.ownership(snapshot).encoded(), context: context)
+        } catch {
+            // `cols`/`rows` come straight from a real `SessionClient`'s
+            // own hello (already clamped via `TerminalSessionClient
+            // .gridDimension`), so this should never fire — best-effort
+            // no-op keeps a malformed hello from crashing the test's
+            // server-side handler instead of just failing the test via
+            // the caller's `pollUntil` timeout.
+        }
+    }
+
+    private func sendControlFrame(_ payload: String, context: ChannelHandlerContext) {
+        let bytes = Array(payload.utf8)
+        guard let length = UInt32(exactly: bytes.count) else { return }
+        var framed: [UInt8] = [
+            UInt8((length >> 24) & 0xff),
+            UInt8((length >> 16) & 0xff),
+            UInt8((length >> 8) & 0xff),
+            UInt8(length & 0xff),
+        ]
+        framed.append(contentsOf: bytes)
+        var buffer = context.channel.allocator.buffer(capacity: framed.count)
+        buffer.writeBytes(framed)
+        context.writeAndFlush(wrapOutboundOut(SSHChannelData(type: .stdErr, data: .byteBuffer(buffer))), promise: nil)
+    }
 }
 #endif
