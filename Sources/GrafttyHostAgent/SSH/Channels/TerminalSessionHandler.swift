@@ -48,10 +48,13 @@ import NIOSSH
 /// directions.
 ///
 /// Concurrency: `@unchecked Sendable` because all mutable state
-/// (`envSessionName`, `ptyAccepted`, `stream`, `inboundForwardingTask`)
-/// is accessed exclusively on the channel's event loop. NIO guarantees
-/// `channelRead`, `userInboundEventTriggered`, and `channelInactive` all
-/// run on that loop; `loop.execute` callbacks in `attach` also run there.
+/// (`envSessionName`, `ptyAccepted`, `stream`, `inboundForwardingTask`,
+/// `coordinator`, `stdErrAccumulator`, `stdErrPoisoned`, `ptyGrid`,
+/// `ptyWriteContinuation`) is accessed exclusively on the channel's event
+/// loop. NIO guarantees `channelRead`, `userInboundEventTriggered`, and
+/// `channelInactive` all run on that loop; `loop.execute` callbacks in
+/// `attach` also run there. `_receivedHello` is the one exception — see
+/// `helloLock`.
 public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sendable {
     public typealias InboundIn = SSHChannelData
     public typealias OutboundOut = SSHChannelData
@@ -87,10 +90,13 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     private var stdErrAccumulator: [UInt8] = []
     /// Set when a `.stdErr` frame header claims a length above
     /// `Self.maxControlFrameLength`. Framing is unrecoverable at that
-    /// point (we can't tell where the next frame starts), so the control
-    /// carrier is abandoned for this channel: all further `.stdErr`
-    /// bytes are dropped and nothing is ever emitted on `.stdErr`.
-    /// Terminal bytes keep flowing untouched.
+    /// point (we can't tell where the next frame starts), so all further
+    /// `.stdErr` bytes are dropped and nothing is ever emitted on
+    /// `.stdErr` again. Pre-hello, that's the whole story: the client
+    /// behaves like a legacy client from then on and terminal bytes keep
+    /// flowing untouched. Post-hello, abandoning the carrier alone would
+    /// silently strand a live client (see `poisonStdErr`), so the
+    /// channel is also closed.
     private var stdErrPoisoned = false
     /// Control envelopes are small JSON (hello/takeControl/ownership —
     /// hundreds of bytes). 1 MiB is orders of magnitude above any real
@@ -136,7 +142,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
             // `receivedHello`, and this was its one). `ingestStdErr`
             // buffers raw bytes; frames drain once the coordinator
             // exists (`installCoordinator` calls `drainControlFrames`).
-            ingestStdErr(Data(bytes))
+            ingestStdErr(Data(bytes), channel: context.channel)
 
         default:
             guard stream != nil else {
@@ -373,7 +379,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         // shell ack) — BEFORE the initial grid push, so a buffered hello
         // activates the carrier first and the grid push below actually
         // reaches the client.
-        drainControlFrames()
+        drainControlFrames(channel: channel)
 
         if let ptyGrid {
             coordinator.handlePTYSize(cols: ptyGrid.cols, rows: ptyGrid.rows)
@@ -398,20 +404,19 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     /// Accumulates inbound `.stdErr` bytes, then drains complete frames
     /// if the coordinator exists. Pre-attach (`coordinator == nil`),
     /// bytes only accumulate — `installCoordinator` calls
-    /// `drainControlFrames()` to replay them once attach completes, so
-    /// an early `.hello` is never lost.
-    private func ingestStdErr(_ data: Data) {
+    /// `drainControlFrames(channel:)` to replay them once attach
+    /// completes, so an early `.hello` is never lost.
+    private func ingestStdErr(_ data: Data, channel: Channel) {
         guard !stdErrPoisoned else { return }
         stdErrAccumulator.append(contentsOf: data)
         if coordinator != nil {
-            drainControlFrames()
+            drainControlFrames(channel: channel)
         }
         // Bound pre-attach accumulation too (frames don't drain until
         // the coordinator exists): anything past one max-size frame's
         // worth of undrained bytes is a protocol violation.
         if stdErrAccumulator.count > Int(Self.maxControlFrameLength) + 4 {
-            stdErrPoisoned = true
-            stdErrAccumulator = []
+            poisonStdErr(channel: channel)
         }
     }
 
@@ -421,15 +426,14 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     /// frame is dropped until one arrives (a well-behaved client always
     /// sends `.hello` first). A length above `maxControlFrameLength`
     /// poisons the carrier — see `stdErrPoisoned`.
-    private func drainControlFrames() {
+    private func drainControlFrames(channel: Channel) {
         while stdErrAccumulator.count >= 4 {
             let length = (UInt32(stdErrAccumulator[0]) << 24)
                 | (UInt32(stdErrAccumulator[1]) << 16)
                 | (UInt32(stdErrAccumulator[2]) << 8)
                 | UInt32(stdErrAccumulator[3])
             guard length <= Self.maxControlFrameLength else {
-                stdErrPoisoned = true
-                stdErrAccumulator = []
+                poisonStdErr(channel: channel)
                 return
             }
             let total = 4 + Int(length)
@@ -444,6 +448,31 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
             guard receivedHello else { continue }
             coordinator?.handleControl(envelope)
         }
+    }
+
+    /// Marks the `.stdErr` carrier as unrecoverably framed (see
+    /// `stdErrPoisoned`) and, if this client had already proven protocol
+    /// awareness via `.hello`, closes the channel.
+    ///
+    /// Pre-hello, closing would be gratuitous: `sendText` is still a
+    /// silent no-op and inbound `.channel` bytes still flow ungated
+    /// (`receivedHello == false`), so a poisoned pre-hello carrier leaves
+    /// the client behaving exactly like a legacy (pre-REMOTE-9) one —
+    /// nothing is stranded, just no ownership features.
+    ///
+    /// Post-hello, the owner-gated path is active on both directions:
+    /// silently abandoning the carrier would leave the client receiving
+    /// grid/ownership envelopes while its own takeControl/resize requests
+    /// can never be parsed again, and — if it isn't the owner — its
+    /// keystrokes are discarded too. That's a silent, unrecoverable brick.
+    /// Closing the channel instead surfaces a disconnect the client can
+    /// react to (reconnect), and drives the existing `channelInactive`
+    /// path to run `detach()`/`stream.close()` cleanup exactly once.
+    private func poisonStdErr(channel: Channel) {
+        stdErrPoisoned = true
+        stdErrAccumulator = []
+        guard receivedHello else { return }
+        channel.close(promise: nil)
     }
 
     private static func encodeStdErrFrame(_ payload: String) -> [UInt8]? {

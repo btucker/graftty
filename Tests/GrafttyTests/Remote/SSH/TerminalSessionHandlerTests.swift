@@ -192,7 +192,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
 
     // MARK: - REMOTE-9: display ownership on SSH terminals
 
-    /// @spec REMOTE-9.1: When an SSH terminal session attaches, the host shall register the client in the display-ownership store with kind ios and the authenticated device identity.
+    /// @spec REMOTE-9.1: When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with kind ios and the authenticated device identity.
     func testAttachRegistersClientWithIOSKindAndAuthenticatedDeviceIdentity() async throws {
         let stream = EchoStream()
         let factory = RecordingStreamFactory(returning: .success(stream))
@@ -504,6 +504,53 @@ final class TerminalSessionHandlerTests: XCTestCase {
         // No `.stdErr` envelope may be emitted after poisoning.
         let leftover = try await channel.readOutbound(as: SSHChannelData.self)
         XCTAssertNil(leftover, "poisoned carrier must stay silent on .stdErr")
+
+        _ = try? await channel.finish()
+    }
+
+    /// A client that has already sent `.hello` (proving it understands the
+    /// control carrier) is receiving grid/ownership envelopes and having
+    /// its `.channel` bytes owner-gated. If a subsequent `.stdErr` frame
+    /// poisons the carrier, silently abandoning it (the pre-hello
+    /// behavior) would strand the client: its outbound takeControl/resize
+    /// can never be parsed again, and — if it isn't the owner — its
+    /// keystrokes are discarded too, with no error and no way to recover
+    /// short of a manual reconnect. The fix closes the channel instead so
+    /// the client observes a disconnect and can reconnect.
+    func testPostHelloOversizedControlFrameClosesChannel() async throws {
+        let stream = ClosableStream()
+        let factory = RecordingStreamFactory(returning: .success(stream))
+        let capture = OutboundEventCapture()
+        let handler = Self.makeHandler(streamFactory: factory.callable)
+        let channel = try await Self.channel(capture, handler)
+
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { capture.successCount >= 3 }
+
+        // Prove protocol awareness first, as a well-behaved client does.
+        try await sendControlEnvelope(channel, .hello(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            role: .interactive,
+            visible: true,
+            cols: 80,
+            rows: 24
+        ))
+        _ = try await nextOutboundEnvelope(channel)
+
+        // A framing-unrecoverable `.stdErr` header arrives after hello.
+        let oversized: [UInt8] = [0xff, 0xff, 0xff, 0xf0, 0x41, 0x42, 0x43]
+        try await channel.writeInbound(
+            SSHChannelData(type: .stdErr, data: .byteBuffer(ByteBuffer(bytes: oversized)))
+        )
+
+        try await waitUntil { !channel.isActive }
+        // channelInactive's cleanup (detach()/stream.close()) must have run
+        // exactly once as a result of that close, not zero or more times.
+        try await waitUntil { stream.didClose }
+        XCTAssertEqual(stream.closeCount, 1, "cleanup must run exactly once")
 
         _ = try? await channel.finish()
     }
@@ -854,8 +901,10 @@ private final class ClosableStream: TerminalByteStream, @unchecked Sendable {
     let inboundBytes: AsyncStream<Data>
     private let lock = NIOLock()
     private var _didClose = false
+    private var _closeCount = 0
 
     var didClose: Bool { lock.withLock { _didClose } }
+    var closeCount: Int { lock.withLock { _closeCount } }
 
     init() {
         var cont: AsyncStream<Data>.Continuation!
@@ -866,7 +915,10 @@ private final class ClosableStream: TerminalByteStream, @unchecked Sendable {
     func send(_ bytes: Data) async throws {}
 
     func close() async {
-        lock.withLock { _didClose = true }
+        lock.withLock {
+            _didClose = true
+            _closeCount += 1
+        }
         continuation.finish()
     }
 }

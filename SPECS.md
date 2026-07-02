@@ -1762,7 +1762,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### REMOTE-9.x
 
-**REMOTE-9.1** When an SSH terminal session attaches, the host shall register the client in the display-ownership store with kind ios and the authenticated device identity.
+**REMOTE-9.1** When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with kind ios and the authenticated device identity.
 
 **REMOTE-9.2** While an SSH terminal client is not the display owner, the host shall discard its terminal input bytes and rebroadcast the current ownership snapshot.
 
