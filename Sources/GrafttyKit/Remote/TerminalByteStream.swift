@@ -51,3 +51,21 @@ public protocol TerminalSizeReporting: AnyObject {
     /// threading contract. Setting to `nil` removes any installed callback.
     var onPTYSize: ((_ cols: UInt16, _ rows: UInt16) -> Void)? { get set }
 }
+
+/// Optional capability a `TerminalByteStream` conformer can add: a
+/// **synchronous** resize, alongside `TerminalByteStream.resize(cols:rows:)`'s
+/// `async` signature. `TerminalSessionHandler`'s owner-gated resize seam
+/// runs entirely on the SSH channel's event loop, and previously wrapped
+/// every `resize` in its own unstructured `Task` to call the protocol's
+/// async method — with no ordering guarantee between that `Task` and a
+/// concurrently-queued PTY write (the exact FIFO hazard
+/// `TerminalSessionHandler.ptyWriteContinuation`'s doc comment describes
+/// for writes). A conformer whose resize is inherently synchronous
+/// (`ZmxAttachEngine`'s `ioctl(TIOCSWINSZ)`) implements this so a caller
+/// already on the right thread can invoke it directly, closing that
+/// window. Probed for with `as?`, mirroring `TerminalSizeReporting` —
+/// conformers/test fakes that only implement the protocol's `async`
+/// resize keep working via the existing `Task`-wrapped fallback.
+public protocol TerminalSyncResizing: AnyObject {
+    func resize(cols: UInt16, rows: UInt16)
+}

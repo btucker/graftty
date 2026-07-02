@@ -49,9 +49,9 @@ import NIOSSH
 ///
 /// Concurrency: `@unchecked Sendable` because all mutable state
 /// (`envSessionName`, `ptyAccepted`, `stream`, `inboundForwardingTask`,
-/// `coordinator`, `stdErrAccumulator`, `stdErrPoisoned`, `ptyGrid`,
-/// `ptyWriteContinuation`) is accessed exclusively on the channel's event
-/// loop. NIO guarantees `channelRead`, `userInboundEventTriggered`, and
+/// `coordinator`, `stdErrAccumulator`, `stdErrCursor`, `stdErrPoisoned`,
+/// `ptyGrid`, `ptyWriteContinuation`) is accessed exclusively on the
+/// channel's event loop. NIO guarantees `channelRead`, `userInboundEventTriggered`, and
 /// `channelInactive` all run on that loop; `loop.execute` callbacks in
 /// `attach` also run there. `_receivedHello` is the one exception — see
 /// `helloLock`.
@@ -88,6 +88,14 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         set { helloLock.lock(); defer { helloLock.unlock() }; _receivedHello = newValue }
     }
     private var stdErrAccumulator: [UInt8] = []
+    /// Read cursor into `stdErrAccumulator` — bytes before this index have
+    /// already been consumed into a drained frame but not yet physically
+    /// removed. `drainControlFrames` advances this per frame and performs
+    /// ONE `removeSubrange(0..<cursor)` compaction at the end of the pass,
+    /// rather than the `removeFirst(total)` this replaced, which shifted
+    /// the whole remaining tail on every single frame (O(n) per frame,
+    /// O(n·k) for a burst of k frames in one ingest).
+    private var stdErrCursor = 0
     /// Set when a `.stdErr` frame header claims a length above
     /// `Self.maxControlFrameLength`. Framing is unrecoverable at that
     /// point (we can't tell where the next frame starts), so all further
@@ -182,9 +190,18 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
             // re-sends window-change after shell completes for any
             // subsequent resize.
             ptyAccepted = true
+            // REMOTE-9 grid-cap coherence: clamp to
+            // WebControlEnvelope.maxGridDimension (not just UInt16's
+            // range) — an unclamped grid here would seed `ptyGrid`,
+            // which `installCoordinator` feeds straight into the shared
+            // ownership store via `handlePTYSize`. `DisplayGrid` itself
+            // has no upper bound, so an over-cap grid would enter the
+            // store and poison every subsequent `.ownership` broadcast
+            // for every client on the session (`WebControlEnvelope.parse`
+            // rejects any grid above the cap).
             ptyGrid = try? DisplayGrid(
-                cols: UInt16(clamping: ptyEvent.terminalCharacterWidth),
-                rows: UInt16(clamping: ptyEvent.terminalRowHeight)
+                cols: WebControlEnvelope.clampedGridDimension(ptyEvent.terminalCharacterWidth),
+                rows: WebControlEnvelope.clampedGridDimension(ptyEvent.terminalRowHeight)
             )
             if ptyEvent.wantReply {
                 context.triggerUserOutboundEvent(ChannelSuccessEvent(), promise: nil)
@@ -217,11 +234,27 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                     let gridCols = UInt16(exactly: cols), gridCols > 0,
                     let gridRows = UInt16(exactly: rows), gridRows > 0
                 else { return }
-                coordinator.handleControl(.resize(cols: gridCols, rows: gridRows))
+                // Clamp (don't reject) to the shared cap — see the
+                // pty-req handler's comment on why an unclamped grid here
+                // would poison every client's `.ownership` broadcast.
+                coordinator.handleControl(.resize(
+                    cols: WebControlEnvelope.clampedGridDimension(Int(gridCols)),
+                    rows: WebControlEnvelope.clampedGridDimension(Int(gridRows))
+                ))
             } else {
                 // Pre-hello (legacy client): historical direct resize.
-                Task { [snapshot] in
-                    await snapshot.resize(cols: cols, rows: rows)
+                // Same FIFO reasoning as the owner-gated seam above — call
+                // synchronously when the concrete stream supports it
+                // (`TerminalSyncResizing`); this handler already runs on
+                // the event loop (`userInboundEventTriggered`). Falls back
+                // to the `Task`-wrapped async path for streams that only
+                // implement the protocol's `async` resize (test fakes).
+                if let syncResizing = snapshot as? TerminalSyncResizing {
+                    syncResizing.resize(cols: UInt16(clamping: cols), rows: UInt16(clamping: rows))
+                } else {
+                    Task { [snapshot] in
+                        await snapshot.resize(cols: cols, rows: rows)
+                    }
                 }
             }
 
@@ -326,8 +359,14 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     ) {
         // REMOTE-9.1: clientID embeds the authenticated device identity
         // so ownership-store entries are attributable to a real paired
-        // device, not just an opaque per-channel UUID.
-        let clientID = DisplayClientID("ssh-\(deviceID.value)-\(UUID().uuidString.prefix(8))")
+        // device, not just an opaque per-channel UUID. The UUID suffix is
+        // the FULL 36-character `uuidString` (not an 8-char prefix) — the
+        // store keys attached clients by clientID, and truncating to 32
+        // bits of entropy widens the window for two concurrent SSH
+        // attaches from the same device to collide and cross-contaminate
+        // each other's channel. `/ws`'s equivalent path uses the full
+        // UUID for the same reason.
+        let clientID = DisplayClientID("ssh-\(deviceID.value)-\(UUID().uuidString)")
         let coordinator = TerminalAttachCoordinator(
             sessionName: sessionName,
             clientID: clientID,
@@ -348,9 +387,26 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                 }
             },
             resize: { [weak self] cols, rows in
-                let snapshot = self?.stream
-                Task { [snapshot] in
-                    await snapshot?.resize(cols: Int(cols), rows: Int(rows))
+                // This closure runs synchronously on the channel's event
+                // loop (via `handleControl`, from `channelRead` or
+                // `drainControlFrames`) — the same loop that serializes
+                // `ptyWriteContinuation` writes. Calling a
+                // `TerminalSyncResizing` conformer (`ZmxAttachEngine` in
+                // production) directly here preserves that ordering;
+                // spawning a `Task` per call (the previous shape, still
+                // used as a fallback below for streams — test fakes —
+                // that only implement the protocol's `async` resize) gave
+                // no FIFO guarantee against a concurrently-queued PTY
+                // write, exactly the hazard `ptyWriteContinuation`'s doc
+                // comment describes.
+                guard let self else { return }
+                if let syncResizing = self.stream as? TerminalSyncResizing {
+                    syncResizing.resize(cols: cols, rows: rows)
+                } else {
+                    let snapshot = self.stream
+                    Task { [snapshot] in
+                        await snapshot?.resize(cols: Int(cols), rows: Int(rows))
+                    }
                 }
             },
             write: { [weak self] data in
@@ -387,13 +443,28 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     }
 
     private func startInboundForwarding(stream: TerminalByteStream, channel: Channel, loop: EventLoop) {
-        let task = Task {
+        let task = Task { [weak self] in
             for await chunk in stream.inboundBytes {
                 let buffer = channel.allocator.buffer(bytes: chunk)
                 let data = SSHChannelData(type: .channel, data: .byteBuffer(buffer))
                 loop.execute {
                     channel.writeAndFlush(data, promise: nil)
                 }
+            }
+            // `inboundBytes` finished — either because `channelInactive`
+            // already called `stream.close()` (in which case
+            // `isShuttingDown` is already true and closing again would be
+            // redundant), or because the underlying child exited on its
+            // own with the channel still active. In the latter case
+            // nothing else would ever close this channel or detach the
+            // coordinator from the ownership store, leaving a stale
+            // attached/owner entry and a leaked channel — close it here
+            // so the existing `channelInactive` cleanup runs exactly
+            // once. `isShuttingDown` is read on the event loop per the
+            // type's concurrency contract, not from this Task's thread.
+            loop.execute { [weak self] in
+                guard let self, !self.isShuttingDown else { return }
+                channel.close(promise: nil)
             }
         }
         inboundForwardingTask = task
@@ -414,8 +485,16 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         }
         // Bound pre-attach accumulation too (frames don't drain until
         // the coordinator exists): anything past one max-size frame's
-        // worth of undrained bytes is a protocol violation.
-        if stdErrAccumulator.count > Int(Self.maxControlFrameLength) + 4 {
+        // worth of undrained bytes past the cursor is a protocol
+        // violation. Must compare against the still-unconsumed tail
+        // (`count - cursor`), not raw `count` — `drainControlFrames`
+        // only compacts once at the end of its own pass, so on the
+        // pre-attach path (where it never runs) `cursor` stays 0 and this
+        // reduces to the original `count`-only check; once frames DO
+        // start draining, `count` alone would trip this threshold on a
+        // perfectly ordinary long-running connection that has drained
+        // many frames but not yet been given a reason to compact.
+        if stdErrAccumulator.count - stdErrCursor > Int(Self.maxControlFrameLength) + 4 {
             poisonStdErr(channel: channel)
         }
     }
@@ -426,27 +505,61 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     /// frame is dropped until one arrives (a well-behaved client always
     /// sends `.hello` first). A length above `maxControlFrameLength`
     /// poisons the carrier — see `stdErrPoisoned`.
+    ///
+    /// Consumed bytes are tracked via `stdErrCursor` rather than removed
+    /// immediately: advancing an `Int` per frame is O(1), so a burst of k
+    /// buffered frames drains in O(k) instead of the O(n·k) the previous
+    /// per-frame `removeFirst(total)` cost (each call shifts the entire
+    /// remaining tail). The accumulator is compacted with a single
+    /// `removeSubrange` once, after the loop, regardless of how many
+    /// frames were drained in this pass.
     private func drainControlFrames(channel: Channel) {
-        while stdErrAccumulator.count >= 4 {
-            let length = (UInt32(stdErrAccumulator[0]) << 24)
-                | (UInt32(stdErrAccumulator[1]) << 16)
-                | (UInt32(stdErrAccumulator[2]) << 8)
-                | UInt32(stdErrAccumulator[3])
+        while stdErrAccumulator.count - stdErrCursor >= 4 {
+            let base = stdErrCursor
+            let length = (UInt32(stdErrAccumulator[base]) << 24)
+                | (UInt32(stdErrAccumulator[base + 1]) << 16)
+                | (UInt32(stdErrAccumulator[base + 2]) << 8)
+                | UInt32(stdErrAccumulator[base + 3])
             guard length <= Self.maxControlFrameLength else {
+                // Both poison paths must reset the cursor — see
+                // `poisonStdErr`, which zeroes it alongside emptying the
+                // accumulator.
                 poisonStdErr(channel: channel)
                 return
             }
             let total = 4 + Int(length)
-            guard stdErrAccumulator.count >= total else { break }
-            let payload = Data(stdErrAccumulator[4..<total])
-            stdErrAccumulator.removeFirst(total)
+            guard stdErrAccumulator.count - base >= total else { break }
+            let payload = Data(stdErrAccumulator[(base + 4)..<(base + total)])
+            stdErrCursor = base + total
 
-            guard let envelope = try? WebControlEnvelope.parse(payload) else { continue }
+            guard let envelope = try? WebControlEnvelope.parse(payload) else {
+                // A structurally-valid `.hello` whose grid exceeds
+                // `WebControlEnvelope.maxGridDimension` fails `parse`
+                // outright (`.invalidDimension`). Since only a
+                // successfully-parsed `.hello` ever flips
+                // `receivedHello`, silently dropping it here (the
+                // pre-existing behavior) would permanently strand an
+                // otherwise carrier-capable client: every future frame
+                // keeps failing the same way, so it can never attach,
+                // never take control, and its keystrokes vanish into the
+                // pre-hello ungated path forever with no error surfaced.
+                // Detect the hello shape leniently and clamp the grid
+                // instead of rejecting.
+                if !receivedHello, let lenientHello = Self.parseLenientHello(payload) {
+                    receivedHello = true
+                    coordinator?.handleControl(lenientHello)
+                }
+                continue
+            }
             if case .hello = envelope {
                 receivedHello = true
             }
             guard receivedHello else { continue }
             coordinator?.handleControl(envelope)
+        }
+        if stdErrCursor > 0 {
+            stdErrAccumulator.removeSubrange(0..<stdErrCursor)
+            stdErrCursor = 0
         }
     }
 
@@ -471,8 +584,44 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     private func poisonStdErr(channel: Channel) {
         stdErrPoisoned = true
         stdErrAccumulator = []
+        stdErrCursor = 0
         guard receivedHello else { return }
         channel.close(promise: nil)
+    }
+
+    /// Lenient fallback for a `.hello` envelope that is structurally valid
+    /// (well-formed JSON, `type == "hello"`, every other field present)
+    /// but whose declared grid exceeds `WebControlEnvelope.maxGridDimension`
+    /// — the one condition `WebControlEnvelope.parse` rejects outright via
+    /// `.invalidDimension` that this handler can safely recover from by
+    /// clamping instead. Deliberately narrow: any OTHER malformation
+    /// (missing/invalid clientID, kind, role, visible, or a non-positive
+    /// grid dimension) returns `nil` and the frame is dropped exactly as
+    /// before — those shapes were never the reported failure mode, and
+    /// synthesizing defaults for them risks attaching a client under
+    /// fabricated identity instead of surfacing the malformed frame.
+    private static func parseLenientHello(_ payload: Data) -> WebControlEnvelope? {
+        guard
+            let json = try? JSONSerialization.jsonObject(with: payload),
+            let dict = json as? [String: Any],
+            dict["type"] as? String == "hello",
+            let clientIDRaw = dict["clientID"] as? String,
+            let kindRaw = dict["kind"] as? String,
+            let kind = DisplayClientKind(rawValue: kindRaw),
+            let roleRaw = dict["role"] as? String,
+            let role = DisplayClientRole(rawValue: roleRaw),
+            let visible = dict["visible"] as? Bool,
+            let cols = dict["cols"] as? Int, cols > 0,
+            let rows = dict["rows"] as? Int, rows > 0
+        else { return nil }
+        return .hello(
+            clientID: DisplayClientID(clientIDRaw),
+            kind: kind,
+            role: role,
+            visible: visible,
+            cols: WebControlEnvelope.clampedGridDimension(cols),
+            rows: WebControlEnvelope.clampedGridDimension(rows)
+        )
     }
 
     private static func encodeStdErrFrame(_ payload: String) -> [UInt8]? {

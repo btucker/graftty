@@ -43,7 +43,7 @@ import Darwin
 /// On `close()`, sends SIGTERM to the child and closes the master fd.
 /// SIGTERM (not SIGKILL) per WEB-4.5 so the client exits gracefully
 /// while the daemon survives.
-public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, @unchecked Sendable {
+public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, TerminalSyncResizing, @unchecked Sendable {
 
     public struct Config {
         public let zmxExecutable: URL
@@ -238,7 +238,18 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, @
     }
 
     public func write(_ data: Data) {
-        guard let fd = spawned?.masterFD, !data.isEmpty else { return }
+        // `closeSync()` closes `spawned?.masterFD` outside `stateLock` and
+        // never nils `spawned` itself — checking `isClosed` under the lock
+        // first closes the TOCTOU window where a write racing an
+        // in-flight `close()` (SSH's write-FIFO consumer and
+        // `channelInactive`'s close run on unordered `Task`s) would use a
+        // stale fd number the OS may already have reused for something
+        // else.
+        stateLock.lock()
+        let closed = isClosed
+        let fd = spawned?.masterFD
+        stateLock.unlock()
+        guard !closed, let fd, !data.isEmpty else { return }
         // TEAM-IDLE-2.2: track the chunk before we hand it to the PTY so an
         // idle-delivery tick that observes the session right after the write
         // sees the uncommitted-byte count we just produced.
@@ -256,8 +267,16 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, @
         write(bytes)
     }
 
+    /// `TerminalSyncResizing`'s synchronous entry point — see `write(_:)`'s
+    /// comment for why a closed-fd guard is needed here too (the
+    /// size-poller thread's own `isClosed`-under-lock check, just above,
+    /// documents the identical fd-reuse race for reads).
     public func resize(cols: UInt16, rows: UInt16) {
-        guard let fd = spawned?.masterFD else { return }
+        stateLock.lock()
+        let closed = isClosed
+        let fd = spawned?.masterFD
+        stateLock.unlock()
+        guard !closed, let fd else { return }
         try? PtyProcess.resize(masterFD: fd, cols: cols, rows: rows)
     }
 
@@ -361,14 +380,25 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, @
         let surface = deliverySurface
         if surface == .stream { _streamYieldCountForTesting += 1 }
         stateLock.unlock()
-        cb?(data)
-        // Only the surface selected at start() ever receives bytes — the
-        // other one is not just unused, it must not buffer (see the class
-        // doc). Without this guard, an AsyncStream's default .unbounded
-        // policy retains every chunk nobody will ever drain for the
-        // engine's whole lifetime: unbounded per-session memory growth on
-        // the callback (`/ws`) surface.
-        if surface == .stream {
+        // Exhaustive switch, not an unconditional `cb?(data)` alongside a
+        // separate `if surface == .stream` for the stream branch: the two
+        // used to be independent, so a stream-mode engine (the SSH path
+        // never sets `onPTYData` before `start()`, locking in `.stream`)
+        // that later had `onPTYData` assigned anyway — e.g. by a caller
+        // that doesn't realize `start()` already locked in the other
+        // surface — would double-deliver every chunk: once via `cb?(data)`
+        // and once via `continuation.yield(data)`. The switch makes each
+        // surface's bytes go through exactly the branch `start()` selected.
+        switch surface {
+        case .callback:
+            cb?(data)
+        case .stream:
+            // Only the surface selected at start() ever receives bytes —
+            // the other one is not just unused, it must not buffer (see
+            // the class doc). Without this guard, an AsyncStream's
+            // default .unbounded policy retains every chunk nobody will
+            // ever drain for the engine's whole lifetime: unbounded
+            // per-session memory growth on the callback (`/ws`) surface.
             continuation.yield(data)
         }
     }

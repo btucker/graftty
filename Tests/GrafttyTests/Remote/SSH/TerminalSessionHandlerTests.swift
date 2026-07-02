@@ -608,6 +608,259 @@ final class TerminalSessionHandlerTests: XCTestCase {
         _ = try? await channel.finish()
     }
 
+    /// Positive-path counterpart to `testWindowChangeAfterHelloIsOwnerGated`:
+    /// an OWNER's window-change must still reach the PTY once the control
+    /// carrier is active. Nothing else in this file asserts the ACCEPTED
+    /// path actually resizes the PTY — every other window-change test
+    /// covers either the pre-hello legacy path or a rejected (non-owner)
+    /// resize.
+    func testWindowChangeAfterHelloReachesPTYForOwner() async throws {
+        let stream = RecordingResizeStream()
+        let factory = RecordingStreamFactory(returning: .success(stream))
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = DisplayOwnershipBroadcaster()
+        let capture = OutboundEventCapture()
+        let handler = Self.makeHandler(
+            streamFactory: factory.callable,
+            ownershipStore: store,
+            ownershipBroadcaster: broadcaster,
+            deviceID: RemoteDeviceID(value: "device-owner-wc")
+        )
+        let channel = try await Self.channel(capture, handler)
+
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { capture.successCount >= 3 }
+
+        // Attach as an owner-ELIGIBLE client (visible) and take control.
+        try await sendControlEnvelope(channel, .hello(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            role: .interactive,
+            visible: true,
+            cols: 80,
+            rows: 24
+        ))
+        _ = try await nextOutboundEnvelope(channel)
+        try await sendControlEnvelope(channel, .takeControl(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            cols: 80,
+            rows: 24
+        ))
+        _ = try await nextOutboundEnvelope(channel)
+        try await waitUntil { store.snapshot(sessionName: "alpha").ownerClientID != nil }
+
+        let event = SSHChannelRequestEvent.WindowChangeRequest(
+            terminalCharacterWidth: 132,
+            terminalRowHeight: 43,
+            terminalPixelWidth: 0,
+            terminalPixelHeight: 0
+        )
+        try await fireUserInboundEvent(channel, event)
+
+        try await waitUntil { stream.lastResize != nil }
+        XCTAssertEqual(stream.lastResize?.cols, 132)
+        XCTAssertEqual(stream.lastResize?.rows, 43)
+
+        _ = try? await channel.finish()
+    }
+
+    /// A grid dimension that fits `UInt16` but exceeds
+    /// `WebControlEnvelope.maxGridDimension` must be clamped before it
+    /// reaches `SessionDisplayOwnershipStore` — `DisplayGrid` itself only
+    /// checks `> 0`, so an unclamped over-cap grid would enter the store
+    /// and get broadcast in an `.ownership` envelope that
+    /// `WebControlEnvelope.parse` then rejects for EVERY client on the
+    /// session (its `.ownership` decode path enforces the same cap),
+    /// freezing every follower's view until a valid resize/restart.
+    func testWindowChangeAboveGridCapIsClampedAndOwnershipStaysParseable() async throws {
+        let stream = RecordingResizeStream()
+        let factory = RecordingStreamFactory(returning: .success(stream))
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = DisplayOwnershipBroadcaster()
+        let capture = OutboundEventCapture()
+        let handler = Self.makeHandler(
+            streamFactory: factory.callable,
+            ownershipStore: store,
+            ownershipBroadcaster: broadcaster,
+            deviceID: RemoteDeviceID(value: "device-cap")
+        )
+        let channel = try await Self.channel(capture, handler)
+
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { capture.successCount >= 3 }
+
+        try await sendControlEnvelope(channel, .hello(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            role: .interactive,
+            visible: true,
+            cols: 80,
+            rows: 24
+        ))
+        _ = try await nextOutboundEnvelope(channel)
+        try await sendControlEnvelope(channel, .takeControl(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            cols: 80,
+            rows: 24
+        ))
+        _ = try await nextOutboundEnvelope(channel)
+        try await waitUntil { store.snapshot(sessionName: "alpha").ownerClientID != nil }
+
+        // 20_000 fits UInt16 (< 65_536) but is well above the 10_000 cap.
+        let event = SSHChannelRequestEvent.WindowChangeRequest(
+            terminalCharacterWidth: 20_000,
+            terminalRowHeight: 50,
+            terminalPixelWidth: 0,
+            terminalPixelHeight: 0
+        )
+        try await fireUserInboundEvent(channel, event)
+
+        try await waitUntil { stream.lastResize != nil }
+        let clampedCols = try XCTUnwrap(stream.lastResize?.cols)
+        XCTAssertLessThanOrEqual(clampedCols, WebControlEnvelope.maxGridDimension)
+
+        let storeGrid = store.snapshot(sessionName: "alpha").grid
+        XCTAssertLessThanOrEqual(Int(storeGrid.cols), WebControlEnvelope.maxGridDimension)
+
+        // The resulting `.ownership` broadcast must still parse — this is
+        // the actual failure mode: an unclamped grid in the store poisons
+        // every subsequent `.ownership` envelope for every client.
+        let payload = try await drainNextStdErrPayload(channel)
+        let envelope = try WebControlEnvelope.parse(payload)
+        guard case let .ownership(snapshot) = envelope else {
+            XCTFail("expected an ownership envelope reflecting the clamped resize, got \(envelope)")
+            return
+        }
+        XCTAssertLessThanOrEqual(Int(snapshot.grid.cols), WebControlEnvelope.maxGridDimension)
+
+        _ = try? await channel.finish()
+    }
+
+    /// A structurally-valid `.hello` — parses as JSON, `type == "hello"`,
+    /// every other field present — whose declared grid exceeds
+    /// `WebControlEnvelope.maxGridDimension` is rejected outright by
+    /// `WebControlEnvelope.parse` (`.invalidDimension`). Because
+    /// `drainControlFrames` swallows any parse failure with `try?`, and
+    /// only a successfully-parsed `.hello` ever flips `receivedHello`,
+    /// that would otherwise permanently strand an otherwise
+    /// carrier-capable client: every future frame from it keeps failing
+    /// to parse (the grid doesn't change), so it can never attach, never
+    /// take control, and its keystrokes vanish into the pre-hello ungated
+    /// path forever with no error surfaced. A lenient fallback must detect
+    /// the hello shape and clamp the grid instead of dropping the frame.
+    func testOversizedGridHelloStillAttachesViaLenientFallback() async throws {
+        let stream = EchoStream()
+        let factory = RecordingStreamFactory(returning: .success(stream))
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = DisplayOwnershipBroadcaster()
+        let capture = OutboundEventCapture()
+        let handler = Self.makeHandler(
+            streamFactory: factory.callable,
+            ownershipStore: store,
+            ownershipBroadcaster: broadcaster,
+            deviceID: RemoteDeviceID(value: "device-lenient")
+        )
+        let channel = try await Self.channel(capture, handler)
+
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { capture.successCount >= 3 }
+
+        // WebControlEnvelope.parse rejects this outright — the grid is
+        // out of range but every other field is well-formed.
+        try await sendControlEnvelope(channel, .hello(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            role: .interactive,
+            visible: true,
+            cols: 20_000,
+            rows: 50
+        ))
+        try await sendControlEnvelope(channel, .takeControl(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            cols: 80,
+            rows: 24
+        ))
+
+        try await waitUntil(timeout: 3.0) { store.snapshot(sessionName: "alpha").ownerClientID != nil }
+        XCTAssertNotNil(
+            store.snapshot(sessionName: "alpha").ownerClientID,
+            "an oversized-grid hello must not permanently strand the client — a lenient hello " +
+            "fallback should flip receivedHello and let a subsequent takeControl succeed"
+        )
+
+        _ = try? await channel.finish()
+    }
+
+    /// When the engine's `inboundBytes` finishes on its own (child EOF) —
+    /// not because the handler called `close()` — the channel must close
+    /// so `channelInactive`'s cleanup (coordinator detach, `stream.close()`)
+    /// still runs. Before the fix, `startInboundForwarding`'s `for await`
+    /// loop simply returned, leaving the channel open and the ownership
+    /// store permanently holding a stale attached/owner entry for a client
+    /// that is never coming back.
+    func testInboundStreamFinishingOnItsOwnClosesChannelAndDetachesCoordinator() async throws {
+        let stream = FinishableStream()
+        let factory = RecordingStreamFactory(returning: .success(stream))
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = DisplayOwnershipBroadcaster()
+        let capture = OutboundEventCapture()
+        let handler = Self.makeHandler(
+            streamFactory: factory.callable,
+            ownershipStore: store,
+            ownershipBroadcaster: broadcaster,
+            deviceID: RemoteDeviceID(value: "device-eof")
+        )
+        let channel = try await Self.channel(capture, handler)
+
+        try await sendEnvRequest(channel, name: "GRAFTTY_SESSION", value: "alpha")
+        try await sendPtyRequest(channel, term: "xterm", cols: 80, rows: 24)
+        try await sendShellRequest(channel)
+        try await waitUntil { capture.successCount >= 3 }
+
+        try await sendControlEnvelope(channel, .hello(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            role: .interactive,
+            visible: true,
+            cols: 80,
+            rows: 24
+        ))
+        _ = try await nextOutboundEnvelope(channel)
+        try await sendControlEnvelope(channel, .takeControl(
+            clientID: DisplayClientID("ipad-1"),
+            kind: .ios,
+            cols: 80,
+            rows: 24
+        ))
+        _ = try await nextOutboundEnvelope(channel)
+        try await waitUntil { store.snapshot(sessionName: "alpha").ownerClientID != nil }
+
+        // Simulate the underlying child process exiting on its own —
+        // ZmxAttachEngine's reader thread finishes `inboundBytes` on EOF
+        // even when the caller never calls `close()`.
+        stream.finishInboundForTesting()
+
+        try await waitUntil(timeout: 3.0) { !channel.isActive }
+        try await waitUntil { store.snapshot(sessionName: "alpha").ownerClientID == nil }
+
+        XCTAssertFalse(channel.isActive, "channel must close when the engine's byte stream ends on its own")
+        XCTAssertNil(
+            store.snapshot(sessionName: "alpha").ownerClientID,
+            "coordinator must detach (clearing ownership) once the channel closes"
+        )
+
+        _ = try? await channel.finish()
+    }
+
     /// A legacy client (no `.hello` — today's `TerminalSessionClient` on
     /// the mobile side) must see byte flow exactly as before REMOTE-9,
     /// and must never be sent a `.stdErr` control frame, which it would
@@ -724,6 +977,66 @@ final class TerminalSessionHandlerTests: XCTestCase {
             if frame.type == .stdErr {
                 stdErrBuffer.append(contentsOf: bytes)
             }
+        }
+    }
+
+    /// Drains outbound `SSHChannelData` until a complete `.stdErr` control
+    /// frame is available, returning its RAW payload without attempting to
+    /// parse it — unlike `nextOutboundEnvelope`, which silently skips (and
+    /// keeps waiting past) any frame that fails to parse. That's fine for
+    /// tests that only care about frames that DO parse, but a caller that
+    /// wants to assert on a parse failure needs the raw bytes, and doing
+    /// so via `nextOutboundEnvelope`'s loop would hang forever on
+    /// `waitForOutboundWrite` (no internal timeout — see `waitUntil`'s
+    /// doc) once no further frame ever arrives. Races
+    /// `waitForOutboundWrite` (which, per that type's doc, actually drives
+    /// the thread-safe testing loop — a plain `readOutbound` poll does
+    /// not) against a bounded timeout so a parse failure surfaces as an
+    /// ordinary test failure instead.
+    private func drainNextStdErrPayload(
+        _ channel: NIOAsyncTestingChannel,
+        timeout: TimeInterval = 2.0
+    ) async throws -> Data {
+        var stdErrBuffer: [UInt8] = []
+        while true {
+            while stdErrBuffer.count >= 4 {
+                let length = (UInt32(stdErrBuffer[0]) << 24)
+                    | (UInt32(stdErrBuffer[1]) << 16)
+                    | (UInt32(stdErrBuffer[2]) << 8)
+                    | UInt32(stdErrBuffer[3])
+                let total = 4 + Int(length)
+                guard stdErrBuffer.count >= total else { break }
+                return Data(stdErrBuffer[4..<total])
+            }
+            let frame = try await withBoundedTimeout(timeout) {
+                try await channel.waitForOutboundWrite(as: SSHChannelData.self)
+            }
+            guard case let .byteBuffer(buf) = frame.data else { continue }
+            var view = buf
+            guard let bytes = view.readBytes(length: view.readableBytes) else { continue }
+            if frame.type == .stdErr {
+                stdErrBuffer.append(contentsOf: bytes)
+            }
+        }
+    }
+
+    /// Races `operation` against a `timeout`-second deadline, throwing
+    /// `WaitTimedOut` if the deadline wins. Exists so a helper built on an
+    /// inherently un-timed-out NIO async testing API (`waitForOutboundWrite`
+    /// has none — see its doc comment on `waitUntil`) can still fail fast
+    /// instead of hanging the whole test run.
+    private func withBoundedTimeout<T: Sendable>(
+        _ timeout: TimeInterval,
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(for: .seconds(timeout))
+                throw WaitTimedOut()
+            }
+            defer { group.cancelAll() }
+            return try await group.next()!
         }
     }
 
@@ -868,6 +1181,32 @@ private final class EchoStream: TerminalByteStream, @unchecked Sendable {
     }
 
     func close() async {
+        continuation.finish()
+    }
+}
+
+/// Lets a test simulate the underlying process exiting on its own (child
+/// EOF) by finishing `inboundBytes` directly — without the handler ever
+/// calling `close()`. Mirrors `ZmxAttachEngine`'s reader-thread EOF path
+/// (`dispatchExit` calls `continuation.finish()` even when the caller
+/// never calls `close()`).
+private final class FinishableStream: TerminalByteStream, @unchecked Sendable {
+    private let continuation: AsyncStream<Data>.Continuation
+    let inboundBytes: AsyncStream<Data>
+
+    init() {
+        var cont: AsyncStream<Data>.Continuation!
+        self.inboundBytes = AsyncStream { c in cont = c }
+        self.continuation = cont
+    }
+
+    func send(_ bytes: Data) async throws {}
+
+    func close() async {
+        continuation.finish()
+    }
+
+    func finishInboundForTesting() {
         continuation.finish()
     }
 }
