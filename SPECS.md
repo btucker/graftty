@@ -1774,7 +1774,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-9.6** When an owner-eligible follower SSH client sends takeControl, the application shall transfer display ownership to it and bump the session epoch, observable by the new owner as a self-owned snapshot and by the former owner as a non-self owner in their next ownership envelopes.
 
-**REMOTE-9.7** If an SSH client that is not the current display owner sends ownerResize, then the application shall reject it and leave the broadcast grid unchanged; while the current owner's ownerResize at the current epoch shall update the broadcast grid without bumping the epoch.
+**REMOTE-9.7** If an SSH client that is not the current display owner sends ownerResize, then the application shall reject it and leave the broadcast grid unchanged; while the current owner sends ownerResize at the current epoch, the application shall update the broadcast grid without bumping the epoch.
 
 ### REMOTE-10.x
 

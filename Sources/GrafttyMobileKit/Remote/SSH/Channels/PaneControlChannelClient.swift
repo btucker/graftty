@@ -58,16 +58,11 @@ public final class PaneControlChannelClient: @unchecked Sendable {
     /// Resolves when the server ChannelSuccess-acknowledges the
     /// subsystem (wantReply: true).
     public func open() async throws {
-        let promise = parentChannel.eventLoop.makePromise(of: Channel.self)
-        // `NIOSSHHandler.createChannel` is not thread-safe ("may only be
-        // called from on the channel" per its doc): once the SSH handshake
-        // has settled it synchronously drains the multiplexer's pending-
-        // channel queue on the calling thread, tripping NIO's
-        // `preconditionInEventLoop` when invoked from an arbitrary Swift
-        // Concurrency thread — see TerminalSessionClient.connect() where
-        // this crashed in a two-channels-on-one-connection test.
-        parentChannel.eventLoop.execute { [self] in
-            parentHandler.createChannel(promise, channelType: .session) { [weak self] child, _ in
+        do {
+            let child = try await openChildChannel(
+                parentChannel: parentChannel,
+                parentHandler: parentHandler
+            ) { [weak self] child, _ in
                 guard let self else {
                     return child.eventLoop.makeFailedFuture(ClientError.channelClosed)
                 }
@@ -83,9 +78,6 @@ public final class PaneControlChannelClient: @unchecked Sendable {
                     return child.eventLoop.makeFailedFuture(error)
                 }
             }
-        }
-        do {
-            let child = try await promise.futureResult.get()
             lock.withLock { self.childChannel = child }
             // Register the close handler IMMEDIATELY — before the subsystem
             // request — so a partial-open failure still propagates onClosed

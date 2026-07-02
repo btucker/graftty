@@ -28,20 +28,11 @@ struct SSHTerminalLoopbackTests {
     /// writes "hi\n", server-side echo stream returns "hi\n".
     @Test(.timeLimit(.minutes(3)))
     func bytesRoundTripThroughTerminalSessionChannel() async throws {
-        let serverKey = Curve25519.Signing.PrivateKey()
-        let clientKey = Curve25519.Signing.PrivateKey()
-        let peerStore = InMemoryTrustedPeerSet()
-        peerStore.add(fingerprint: Self.fingerprint(of: clientKey))
-
         let echoFactory: @Sendable (String) async throws -> TerminalByteStream = { _ in
             EchoStream()
         }
 
         let received = try await runTerminalLoopback(
-            serverKey: serverKey,
-            trustedPeers: peerStore,
-            clientKey: clientKey,
-            expectedHostFingerprint: Self.fingerprint(of: serverKey),
             streamFactory: echoFactory,
             sessionName: "alpha",
             outboundBytes: Data("hi\n".utf8)
@@ -54,21 +45,12 @@ struct SSHTerminalLoopbackTests {
     /// call (channel closes via exit-status: 1 + close on the server).
     @Test(.timeLimit(.minutes(3)))
     func streamFactoryThrowsClosesChannel() async throws {
-        let serverKey = Curve25519.Signing.PrivateKey()
-        let clientKey = Curve25519.Signing.PrivateKey()
-        let peerStore = InMemoryTrustedPeerSet()
-        peerStore.add(fingerprint: Self.fingerprint(of: clientKey))
-
         let failingFactory: @Sendable (String) async throws -> TerminalByteStream = { _ in
             throw FactoryError.notFound
         }
 
         await #expect(throws: (any Error).self) {
             _ = try await runTerminalLoopback(
-                serverKey: serverKey,
-                trustedPeers: peerStore,
-                clientKey: clientKey,
-                expectedHostFingerprint: Self.fingerprint(of: serverKey),
                 streamFactory: failingFactory,
                 sessionName: "missing",
                 outboundBytes: Data("hi\n".utf8),
@@ -88,11 +70,6 @@ struct SSHTerminalLoopbackTests {
     /// infrastructure capability, not a product requirement.)
     @Test(.timeLimit(.minutes(3)))
     func extendedDataFlowsBothDirectionsOnSessionChannel() async throws {
-        let serverKey = Curve25519.Signing.PrivateKey()
-        let clientKey = Curve25519.Signing.PrivateKey()
-        let peerStore = InMemoryTrustedPeerSet()
-        peerStore.add(fingerprint: Self.fingerprint(of: clientKey))
-
         let clientToServer: [Frame] = [
             Frame(type: .channel, bytes: Data("client-c1".utf8)),
             Frame(type: .stdErr, bytes: Data("client-e1".utf8)),
@@ -111,10 +88,6 @@ struct SSHTerminalLoopbackTests {
         ]
 
         let (serverReceived, clientReceived) = try await runExtendedDataLoopback(
-            serverKey: serverKey,
-            trustedPeers: peerStore,
-            clientKey: clientKey,
-            expectedHostFingerprint: Self.fingerprint(of: serverKey),
             clientToServerFrames: clientToServer,
             serverToClientFrames: serverToClient
         )
@@ -226,8 +199,8 @@ struct SSHTerminalLoopbackTests {
         """
         @spec REMOTE-9.7: If an SSH client that is not the current display owner sends ownerResize, \
         then the application shall reject it and leave the broadcast grid unchanged; while the \
-        current owner's ownerResize at the current epoch shall update the broadcast grid without \
-        bumping the epoch.
+        current owner sends ownerResize at the current epoch, the application shall update the \
+        broadcast grid without bumping the epoch.
         """,
         .timeLimit(.minutes(3))
     )
@@ -280,18 +253,98 @@ struct SSHTerminalLoopbackTests {
         try await runPoisonedControlFrameLoopback()
     }
 
+    /// Before this fix, `TerminalSessionClient.gridDimension` only clamped
+    /// to `UInt16`'s range (0...65535) — a transient layout value like
+    /// 20_000 sails through that check untouched, gets encoded into the
+    /// `.hello` envelope as-is, and fails `WebControlEnvelope.parse`'s
+    /// `cols <= maxGridDimension (10_000)` check server-side. Pre-wave-A
+    /// that silently stranded the connection forever (no `.hello` frame
+    /// ever parses, so `receivedHello` never flips); even with wave A's
+    /// lenient-hello fallback the client should never SEND an
+    /// envelope its own protocol would reject. `gridDimension` now clamps
+    /// through `WebControlEnvelope.clampedGridDimension` (the same shared
+    /// bound the server enforces), so this hello is accepted immediately
+    /// and the resulting grid is clamped rather than rejected or dropped.
+    @Test(.timeLimit(.minutes(3)))
+    func outOfRangeHelloGridIsClampedNotStranded() async throws {
+        try await runOwnershipLoopback { clientA, _ in
+            let idA = DisplayClientID("client-a")
+            await clientA.sendHello(
+                clientID: idA,
+                kind: .ios,
+                role: .interactive,
+                visible: true,
+                cols: 20_000,
+                rows: 30
+            )
+            await clientA.takeControl(clientID: idA, kind: .ios, cols: 20_000, rows: 30)
+
+            let aOwns = try await nextOwnershipSnapshot(clientA) { $0.ownerClientID == idA }
+            #expect(
+                aOwns.grid.cols == UInt16(WebControlEnvelope.maxGridDimension),
+                "an out-of-range hello/takeControl grid must clamp to the shared cap, not strand the connection"
+            )
+        }
+    }
+
+    /// `send(.text)` used to write the envelope JSON as `.channel` PTY
+    /// bytes — asymmetric with `receive()` (which surfaces control frames
+    /// as `.text`) and with `URLSessionWebSocketClient` (where `.text` IS
+    /// the control encoding): a polymorphic caller sending a control
+    /// envelope through the generic `WebSocketClient.send` surface would
+    /// have had its JSON typed into the shared PTY instead of reaching the
+    /// server's control parser. Proven end-to-end here: a hello delivered
+    /// via `send(.text(helloJSON))` must flip the server's hello gating —
+    /// observable because a subsequent `takeControl` is only honored (and
+    /// only produces a self-owned ownership snapshot) after a `.hello` has
+    /// been PARSED from the control carrier; a hello that went out as PTY
+    /// bytes would leave every control frame dropped and the snapshot
+    /// unobservable (echoed keystrokes, no ownership).
+    @Test(.timeLimit(.minutes(3)))
+    func sendTextRoutesThroughControlCarrierNotPTYBytes() async throws {
+        try await runOwnershipLoopback { clientA, _ in
+            let idA = DisplayClientID("client-a")
+            let helloJSON = WebControlEnvelope.hello(
+                clientID: idA,
+                kind: .ios,
+                role: .interactive,
+                visible: true,
+                cols: 80,
+                rows: 24
+            ).encoded()
+
+            try await clientA.send(.text(helloJSON))
+            await clientA.takeControl(clientID: idA, kind: .ios, cols: 80, rows: 24)
+
+            let aOwns = try await nextOwnershipSnapshot(clientA) { $0.ownerClientID == idA }
+            #expect(
+                aOwns.ownerClientID == idA,
+                "a hello sent via send(.text) must arrive on the control carrier and flip hello gating"
+            )
+        }
+    }
+
     // MARK: - Loopback driver
 
-    private func runTerminalLoopback(
-        serverKey: Curve25519.Signing.PrivateKey,
-        trustedPeers: InMemoryTrustedPeerSet,
-        clientKey: Curve25519.Signing.PrivateKey,
-        expectedHostFingerprint: RemoteIdentityFingerprint,
-        streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
-        sessionName: String,
-        outboundBytes: Data,
-        responseDeadline: Duration = .seconds(180)
-    ) async throws -> Data {
+    /// Bootstraps ONE SSH-over-WebRTC connection: a loopback WebRTC data
+    /// channel pair, an `SSHNIOTransport` on each side, a server-side
+    /// `NIOSSHHandler` wired to `inboundChildChannelInitializer`, and a
+    /// client-side `NIOSSHHandler` trusted to the server's fingerprint.
+    /// Every `run*Loopback` driver in this file used to bootstrap an
+    /// identical ~40-line copy of this WebRTC+SSH-handshake plumbing before
+    /// installing its own test-specific server-side channel handler — this
+    /// is that shared bootstrap, extracted once four drivers had each grown
+    /// their own copy. Server/client identity keys and the trusted-peer
+    /// store are generated internally: no caller needed the concrete keys
+    /// themselves, only a connection whose handshake succeeds.
+    private func makeLoopbackConnection(
+        inboundChildChannelInitializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>
+    ) async throws -> LoopbackConnection {
+        let serverKey = Curve25519.Signing.PrivateKey()
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let peerStore = InMemoryTrustedPeerSet()
+        peerStore.add(fingerprint: Self.fingerprint(of: clientKey))
+
         let offerer = LoopbackPeer(role: .offerer)
         let answerer = LoopbackPeer(role: .answerer)
         let offer = try await offerer.createOffer()
@@ -305,36 +358,26 @@ struct SSHTerminalLoopbackTests {
         let clientTransport = SSHNIOTransport(dataChannel: offererDC)
         let serverTransport = SSHNIOTransport(dataChannel: answererDC)
 
-        // Server: SSHServerSetup-equivalent with TerminalSessionHandler
-        // factory for incoming session channels.
         try await serverTransport.eventLoop.submit {
             let serverConfig = SSHServerConfiguration(
                 hostKeys: [NIOSSHPrivateKey(ed25519Key: serverKey)],
-                userAuthDelegate: TrustSetServerUserAuthDelegate(store: trustedPeers)
+                userAuthDelegate: TrustSetServerUserAuthDelegate(store: peerStore)
             )
             let sshHandler = NIOSSHHandler(
                 role: .server(serverConfig),
                 allocator: serverTransport.channel.allocator,
-                inboundChildChannelInitializer: { childChannel, channelType in
-                    guard case .session = channelType else {
-                        return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
-                    }
-                    return childChannel.eventLoop.makeCompletedFuture {
-                        let h = TerminalSessionHandler(streamFactory: streamFactory)
-                        try childChannel.pipeline.syncOperations.addHandler(h)
-                    }
-                }
+                inboundChildChannelInitializer: inboundChildChannelInitializer
             )
             try serverTransport.channel.pipeline.syncOperations.addHandler(sshHandler)
         }.get()
 
-        // Client: real SSHClientSetup. Capture the handler for
-        // TerminalSessionClient to use.
+        // Client: real SSHClientSetup. Capture the handler for the caller's
+        // channel client(s) to use.
         let handlerPromise = clientTransport.eventLoop.makePromise(of: NIOSSHHandler.self)
         try await clientTransport.eventLoop.submit {
             let h = SSHClientSetup.makeHandler(
                 clientKey: clientKey,
-                expectedHostFingerprint: expectedHostFingerprint,
+                expectedHostFingerprint: Self.fingerprint(of: serverKey),
                 allocator: clientTransport.channel.allocator
             )
             try clientTransport.channel.pipeline.syncOperations.addHandler(h)
@@ -345,10 +388,35 @@ struct SSHTerminalLoopbackTests {
         try await serverTransport.start()
         try await clientTransport.start()
 
+        return LoopbackConnection(
+            clientTransport: clientTransport,
+            serverTransport: serverTransport,
+            sshHandler: sshHandler,
+            offerer: offerer,
+            answerer: answerer
+        )
+    }
+
+    private func runTerminalLoopback(
+        streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
+        sessionName: String,
+        outboundBytes: Data,
+        responseDeadline: Duration = .seconds(180)
+    ) async throws -> Data {
+        let connection = try await makeLoopbackConnection { childChannel, channelType in
+            guard case .session = channelType else {
+                return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
+            }
+            return childChannel.eventLoop.makeCompletedFuture {
+                let h = TerminalSessionHandler(streamFactory: streamFactory)
+                try childChannel.pipeline.syncOperations.addHandler(h)
+            }
+        }
+
         // Open the terminal session channel via TerminalSessionClient.
         let client = TerminalSessionClient(
-            parentChannel: clientTransport.channel,
-            parentHandler: sshHandler,
+            parentChannel: connection.clientTransport.channel,
+            parentHandler: connection.sshHandler,
             sessionName: sessionName
         )
 
@@ -371,10 +439,7 @@ struct SSHTerminalLoopbackTests {
         }
 
         client.close()
-        await clientTransport.close()
-        await serverTransport.close()
-        await offerer.close()
-        await answerer.close()
+        await connection.close()
 
         return received
     }
@@ -388,76 +453,40 @@ struct SSHTerminalLoopbackTests {
     /// send-side order is well-defined, then returns what each side
     /// actually received.
     private func runExtendedDataLoopback(
-        serverKey: Curve25519.Signing.PrivateKey,
-        trustedPeers: InMemoryTrustedPeerSet,
-        clientKey: Curve25519.Signing.PrivateKey,
-        expectedHostFingerprint: RemoteIdentityFingerprint,
         clientToServerFrames: [Frame],
         serverToClientFrames: [Frame],
         responseDeadline: Duration = .seconds(60)
     ) async throws -> (server: [Frame], client: [Frame]) {
-        let offerer = LoopbackPeer(role: .offerer)
-        let answerer = LoopbackPeer(role: .answerer)
-        let offer = try await offerer.createOffer()
-        let answer = try await answerer.accept(offer: offer)
-        await offerer.bindIceCandidates(to: answerer)
-        await answerer.bindIceCandidates(to: offerer)
-        try await offerer.applyAnswer(answer)
-        let offererDC = try await offerer.openedDataChannel()
-        let answererDC = try await answerer.openedDataChannel()
-
-        let clientTransport = SSHNIOTransport(dataChannel: offererDC)
-        let serverTransport = SSHNIOTransport(dataChannel: answererDC)
-
         let serverCollector = FrameCollector()
         let clientCollector = FrameCollector()
-        let serverChildPromise = serverTransport.eventLoop.makePromise(of: Channel.self)
+        // Buffered `AsyncStream` rather than an `EventLoopPromise` — unlike
+        // the promise this replaced, it needs no live `EventLoop` at
+        // construction time, so it can be captured by the
+        // `inboundChildChannelInitializer` closure BEFORE
+        // `makeLoopbackConnection` has created the server transport whose
+        // event loop the old promise was made on.
+        var serverChildContinuation: AsyncStream<Channel>.Continuation!
+        let serverChildStream = AsyncStream<Channel> { serverChildContinuation = $0 }
 
         // Server: accept the inbound session channel and just record
         // frames — no TerminalSessionHandler, no env/pty/shell gating.
-        try await serverTransport.eventLoop.submit {
-            let serverConfig = SSHServerConfiguration(
-                hostKeys: [NIOSSHPrivateKey(ed25519Key: serverKey)],
-                userAuthDelegate: TrustSetServerUserAuthDelegate(store: trustedPeers)
-            )
-            let sshHandler = NIOSSHHandler(
-                role: .server(serverConfig),
-                allocator: serverTransport.channel.allocator,
-                inboundChildChannelInitializer: { childChannel, channelType in
-                    guard case .session = channelType else {
-                        return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
-                    }
-                    return childChannel.eventLoop.makeCompletedFuture {
-                        try childChannel.pipeline.syncOperations.addHandler(
-                            FrameRecordingHandler(collector: serverCollector)
-                        )
-                        serverChildPromise.succeed(childChannel)
-                    }
-                }
-            )
-            try serverTransport.channel.pipeline.syncOperations.addHandler(sshHandler)
-        }.get()
-
-        let handlerPromise = clientTransport.eventLoop.makePromise(of: NIOSSHHandler.self)
-        try await clientTransport.eventLoop.submit {
-            let h = SSHClientSetup.makeHandler(
-                clientKey: clientKey,
-                expectedHostFingerprint: expectedHostFingerprint,
-                allocator: clientTransport.channel.allocator
-            )
-            try clientTransport.channel.pipeline.syncOperations.addHandler(h)
-            handlerPromise.succeed(h)
-        }.get()
-        let sshHandler = try await handlerPromise.futureResult.get()
-
-        try await serverTransport.start()
-        try await clientTransport.start()
+        let connection = try await makeLoopbackConnection { childChannel, channelType in
+            guard case .session = channelType else {
+                return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
+            }
+            return childChannel.eventLoop.makeCompletedFuture {
+                try childChannel.pipeline.syncOperations.addHandler(
+                    FrameRecordingHandler(collector: serverCollector)
+                )
+                serverChildContinuation.yield(childChannel)
+            }
+        }
 
         // Client: open a bare session channel directly through the parent
         // handler (bypassing TerminalSessionClient, which only ever writes
         // `.channel`-typed data) and record inbound frames the same way.
-        let clientChildPromise = clientTransport.eventLoop.makePromise(of: Channel.self)
-        sshHandler.createChannel(clientChildPromise, channelType: .session) { child, _ in
+        let clientChildPromise = connection.clientTransport.eventLoop.makePromise(of: Channel.self)
+        connection.sshHandler.createChannel(clientChildPromise, channelType: .session) { child, _ in
             child.eventLoop.makeCompletedFuture {
                 try child.pipeline.syncOperations.addHandler(
                     FrameRecordingHandler(collector: clientCollector)
@@ -465,7 +494,10 @@ struct SSHTerminalLoopbackTests {
             }
         }
         let clientChild = try await clientChildPromise.futureResult.get()
-        let serverChild = try await serverChildPromise.futureResult.get()
+        var serverChildIterator = serverChildStream.makeAsyncIterator()
+        guard let serverChild = await serverChildIterator.next() else {
+            throw LoopbackError.channelInactiveBeforeResponse
+        }
 
         // Belt-and-suspenders wall-clock deadline (same pattern as the
         // byte-round-trip driver above) — closing both children also
@@ -486,10 +518,7 @@ struct SSHTerminalLoopbackTests {
 
         clientChild.close(promise: nil)
         serverChild.close(promise: nil)
-        await clientTransport.close()
-        await serverTransport.close()
-        await offerer.close()
-        await answerer.close()
+        await connection.close()
 
         return (serverReceived, clientReceived)
     }
@@ -539,75 +568,31 @@ struct SSHTerminalLoopbackTests {
         responseDeadline: Duration = .seconds(60),
         body: (TerminalSessionClient, TerminalSessionClient) async throws -> Void
     ) async throws {
-        let serverKey = Curve25519.Signing.PrivateKey()
-        let clientKey = Curve25519.Signing.PrivateKey()
-        let peerStore = InMemoryTrustedPeerSet()
-        peerStore.add(fingerprint: Self.fingerprint(of: clientKey))
-
-        let offerer = LoopbackPeer(role: .offerer)
-        let answerer = LoopbackPeer(role: .answerer)
-        let offer = try await offerer.createOffer()
-        let answer = try await answerer.accept(offer: offer)
-        await offerer.bindIceCandidates(to: answerer)
-        await answerer.bindIceCandidates(to: offerer)
-        try await offerer.applyAnswer(answer)
-        let offererDC = try await offerer.openedDataChannel()
-        let answererDC = try await answerer.openedDataChannel()
-
-        let clientTransport = SSHNIOTransport(dataChannel: offererDC)
-        let serverTransport = SSHNIOTransport(dataChannel: answererDC)
-
         let store = TestOwnershipStore()
         let broadcaster = TestOwnershipBroadcaster()
 
-        try await serverTransport.eventLoop.submit {
-            let serverConfig = SSHServerConfiguration(
-                hostKeys: [NIOSSHPrivateKey(ed25519Key: serverKey)],
-                userAuthDelegate: TrustSetServerUserAuthDelegate(store: peerStore)
-            )
-            let sshHandler = NIOSSHHandler(
-                role: .server(serverConfig),
-                allocator: serverTransport.channel.allocator,
-                inboundChildChannelInitializer: { childChannel, channelType in
-                    guard case .session = channelType else {
-                        return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
-                    }
-                    return childChannel.eventLoop.makeCompletedFuture {
-                        let h = TerminalSessionHandler(
-                            streamFactory: { _ in EchoStream() },
-                            store: store,
-                            broadcaster: broadcaster
-                        )
-                        try childChannel.pipeline.syncOperations.addHandler(h)
-                    }
-                }
-            )
-            try serverTransport.channel.pipeline.syncOperations.addHandler(sshHandler)
-        }.get()
-
-        let handlerPromise = clientTransport.eventLoop.makePromise(of: NIOSSHHandler.self)
-        try await clientTransport.eventLoop.submit {
-            let h = SSHClientSetup.makeHandler(
-                clientKey: clientKey,
-                expectedHostFingerprint: Self.fingerprint(of: serverKey),
-                allocator: clientTransport.channel.allocator
-            )
-            try clientTransport.channel.pipeline.syncOperations.addHandler(h)
-            handlerPromise.succeed(h)
-        }.get()
-        let sshHandler = try await handlerPromise.futureResult.get()
-
-        try await serverTransport.start()
-        try await clientTransport.start()
+        let connection = try await makeLoopbackConnection { childChannel, channelType in
+            guard case .session = channelType else {
+                return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
+            }
+            return childChannel.eventLoop.makeCompletedFuture {
+                let h = TerminalSessionHandler(
+                    streamFactory: { _ in EchoStream() },
+                    store: store,
+                    broadcaster: broadcaster
+                )
+                try childChannel.pipeline.syncOperations.addHandler(h)
+            }
+        }
 
         let clientA = TerminalSessionClient(
-            parentChannel: clientTransport.channel,
-            parentHandler: sshHandler,
+            parentChannel: connection.clientTransport.channel,
+            parentHandler: connection.sshHandler,
             sessionName: sessionName
         )
         let clientB = TerminalSessionClient(
-            parentChannel: clientTransport.channel,
-            parentHandler: sshHandler,
+            parentChannel: connection.clientTransport.channel,
+            parentHandler: connection.sshHandler,
             sessionName: sessionName
         )
 
@@ -640,10 +625,7 @@ struct SSHTerminalLoopbackTests {
 
         clientA.close()
         clientB.close()
-        await clientTransport.close()
-        await serverTransport.close()
-        await offerer.close()
-        await answerer.close()
+        await connection.close()
 
         try bodyResult.get()
     }
@@ -664,62 +646,18 @@ struct SSHTerminalLoopbackTests {
     private func runPoisonedControlFrameLoopback(
         responseDeadline: Duration = .seconds(20)
     ) async throws {
-        let serverKey = Curve25519.Signing.PrivateKey()
-        let clientKey = Curve25519.Signing.PrivateKey()
-        let peerStore = InMemoryTrustedPeerSet()
-        peerStore.add(fingerprint: Self.fingerprint(of: clientKey))
-
-        let offerer = LoopbackPeer(role: .offerer)
-        let answerer = LoopbackPeer(role: .answerer)
-        let offer = try await offerer.createOffer()
-        let answer = try await answerer.accept(offer: offer)
-        await offerer.bindIceCandidates(to: answerer)
-        await answerer.bindIceCandidates(to: offerer)
-        try await offerer.applyAnswer(answer)
-        let offererDC = try await offerer.openedDataChannel()
-        let answererDC = try await answerer.openedDataChannel()
-
-        let clientTransport = SSHNIOTransport(dataChannel: offererDC)
-        let serverTransport = SSHNIOTransport(dataChannel: answererDC)
-
-        try await serverTransport.eventLoop.submit {
-            let serverConfig = SSHServerConfiguration(
-                hostKeys: [NIOSSHPrivateKey(ed25519Key: serverKey)],
-                userAuthDelegate: TrustSetServerUserAuthDelegate(store: peerStore)
-            )
-            let sshHandler = NIOSSHHandler(
-                role: .server(serverConfig),
-                allocator: serverTransport.channel.allocator,
-                inboundChildChannelInitializer: { childChannel, channelType in
-                    guard case .session = channelType else {
-                        return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
-                    }
-                    return childChannel.eventLoop.makeCompletedFuture {
-                        try childChannel.pipeline.syncOperations.addHandler(PoisonInjectingSessionHandler())
-                    }
-                }
-            )
-            try serverTransport.channel.pipeline.syncOperations.addHandler(sshHandler)
-        }.get()
-
-        let handlerPromise = clientTransport.eventLoop.makePromise(of: NIOSSHHandler.self)
-        try await clientTransport.eventLoop.submit {
-            let h = SSHClientSetup.makeHandler(
-                clientKey: clientKey,
-                expectedHostFingerprint: Self.fingerprint(of: serverKey),
-                allocator: clientTransport.channel.allocator
-            )
-            try clientTransport.channel.pipeline.syncOperations.addHandler(h)
-            handlerPromise.succeed(h)
-        }.get()
-        let sshHandler = try await handlerPromise.futureResult.get()
-
-        try await serverTransport.start()
-        try await clientTransport.start()
+        let connection = try await makeLoopbackConnection { childChannel, channelType in
+            guard case .session = channelType else {
+                return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
+            }
+            return childChannel.eventLoop.makeCompletedFuture {
+                try childChannel.pipeline.syncOperations.addHandler(PoisonInjectingSessionHandler())
+            }
+        }
 
         let client = TerminalSessionClient(
-            parentChannel: clientTransport.channel,
-            parentHandler: sshHandler,
+            parentChannel: connection.clientTransport.channel,
+            parentHandler: connection.sshHandler,
             sessionName: "poison-test"
         )
 
@@ -754,10 +692,7 @@ struct SSHTerminalLoopbackTests {
         }
 
         client.close()
-        await clientTransport.close()
-        await serverTransport.close()
-        await offerer.close()
-        await answerer.close()
+        await connection.close()
     }
 
     /// Drains `client.receive()` until a `.ownership` envelope satisfying
@@ -794,6 +729,26 @@ struct SSHTerminalLoopbackTests {
 }
 
 // MARK: - Fakes / helpers
+
+/// Result of `SSHTerminalLoopbackTests.makeLoopbackConnection`: everything a
+/// `run*Loopback` driver needs to open its own channel(s) on top of an
+/// already-handshaken SSH-over-WebRTC connection, plus a single `close()`
+/// that tears the whole stack down in the order every driver used to repeat
+/// by hand (transports, then the WebRTC peers underneath them).
+private struct LoopbackConnection {
+    let clientTransport: SSHNIOTransport
+    let serverTransport: SSHNIOTransport
+    let sshHandler: NIOSSHHandler
+    let offerer: LoopbackPeer
+    let answerer: LoopbackPeer
+
+    func close() async {
+        await clientTransport.close()
+        await serverTransport.close()
+        await offerer.close()
+        await answerer.close()
+    }
+}
 
 private enum FactoryError: Error { case notFound }
 
