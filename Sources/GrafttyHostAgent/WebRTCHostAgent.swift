@@ -45,6 +45,20 @@ public actor WebRTCHostAgent {
     private var sshTransport: SSHNIOTransport?
     private var sshInstallStarted = false
 
+    /// REMOTE-3.1 revocation (W4): the process-wide map from authenticated
+    /// peer to this connection's close action. Registered once userauth
+    /// resolves the peer's `RemoteDeviceID` (see `onAuthenticated` below)
+    /// and deregistered in `close()` so a revoked-then-reconnected peer's
+    /// next `revoke` hits the CURRENT connection rather than a stale
+    /// closure over a torn-down agent.
+    private let sshConnectionRegistry: SSHConnectionRegistry
+    /// Set once userauth succeeds on this connection's SSH transport.
+    /// `close()` reads this to deregister the right key from
+    /// `sshConnectionRegistry`; nil until `onAuthenticated` fires, which
+    /// happens at most once per `installSSHHandler` call (one connection,
+    /// one peer).
+    private var authenticatedDeviceID: RemoteDeviceID?
+
     /// Built lazily, on first `acceptOffer` use, rather than in `init` — an
     /// agent that never negotiates never touches native libwebrtc. This is
     /// what keeps mac CI's REMOTE-11.1 busy-guard test (which never
@@ -84,7 +98,8 @@ public actor WebRTCHostAgent {
         streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
         panesStateSubscribe: @escaping PanesStateChannelHandler.Subscribe,
         paneControlMutator: @escaping PaneControlChannelHandler.Mutator,
-        displayOwnershipStore: SessionDisplayOwnershipStore
+        displayOwnershipStore: SessionDisplayOwnershipStore,
+        sshConnectionRegistry: SSHConnectionRegistry = SSHConnectionRegistry()
     ) {
         self.hostKey = hostKey
         self.trustedPeerStore = trustedPeerStore
@@ -93,6 +108,7 @@ public actor WebRTCHostAgent {
         self.paneControlMutator = paneControlMutator
         self.displayOwnershipStore = displayOwnershipStore
         self.displayOwnershipBroadcaster = DisplayOwnershipBroadcaster(store: displayOwnershipStore)
+        self.sshConnectionRegistry = sshConnectionRegistry
         self.delegate = PeerConnectionDelegate()
         self.dataChannelDelegate = DataChannelDelegate()
     }
@@ -231,6 +247,16 @@ public actor WebRTCHostAgent {
             Task { await transport.close() }
             sshTransport = nil
         }
+        if let deviceID = authenticatedDeviceID {
+            // Remove the stale entry so a later `revoke` of this same
+            // peer (after it reconnects) hits the NEW connection's
+            // closure rather than this torn-down one. `deregister` is
+            // a no-op if `revoke` already removed the entry (that's
+            // how we got here in the first place).
+            authenticatedDeviceID = nil
+            let registry = sshConnectionRegistry
+            Task { await registry.deregister(deviceID: deviceID) }
+        }
         state = .closed
         if let pc = peerConnection {
             pc.close()
@@ -288,7 +314,22 @@ public actor WebRTCHostAgent {
                     hostKey: hostKey,
                     trustedPeerStore: trustedPeerStore,
                     allocator: transport.channel.allocator,
-                    onAuthenticated: { deviceID in peerBox.deviceID = deviceID },
+                    onAuthenticated: { [weak self] deviceID in
+                        peerBox.deviceID = deviceID
+                        // REMOTE-3.1 revocation (W4): `onAuthenticated` runs
+                        // synchronously on the transport's event loop, not
+                        // on this actor, and `SSHConnectionRegistry.register`
+                        // is async — so registration happens via a Task
+                        // hop rather than inline here. That means a
+                        // channel-open racing this Task's actor hop is
+                        // possible in theory, but harmless: `peerBox`
+                        // (read by every child channel's `deviceIDProvider`)
+                        // is already populated synchronously above, and
+                        // the registry's only job is to make a FUTURE
+                        // `revoke` able to find this connection — it
+                        // doesn't gate channel-open.
+                        Task { await self?.registerAuthenticatedConnection(deviceID: deviceID) }
+                    },
                     inboundChildChannelInitializer: { child, channelType in
                         guard case .session = channelType else {
                             return child.eventLoop.makeFailedFuture(WebRTCHostAgentError.unsupportedChannelType)
@@ -322,6 +363,27 @@ public actor WebRTCHostAgent {
             if self.state != .closed {
                 self.state = .failed(reason: "SSH install failed: \(error)")
             }
+        }
+    }
+
+    /// REMOTE-3.1 revocation (W4): records this connection's close action
+    /// under the authenticated peer's `RemoteDeviceID` so a later admin
+    /// action (`SSHConnectionRegistry.revoke`) can close it. Invoked
+    /// from a `Task` spawned inside `SSHUserAuthDelegate.onAuthenticated`
+    /// (see the call site's comment for why this can't happen inline).
+    ///
+    /// Guards against registering a connection that's already torn
+    /// down: if `close()` ran before this Task's actor hop completed
+    /// (state flips to `.closed` synchronously as one of `close()`'s
+    /// first steps), skip registering — otherwise `close`'s own
+    /// closure would run and immediately re-close an already-closed
+    /// agent, and the registry would hold a dangling entry until the
+    /// peer reconnects.
+    private func registerAuthenticatedConnection(deviceID: RemoteDeviceID) async {
+        guard state != .closed else { return }
+        authenticatedDeviceID = deviceID
+        await sshConnectionRegistry.register(deviceID: deviceID) { [weak self] in
+            await self?.close()
         }
     }
 
