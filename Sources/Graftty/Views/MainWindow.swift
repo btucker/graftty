@@ -24,6 +24,10 @@ struct MainWindow: View {
     /// can present the Add Worktree sheet pre-scoped to the current repo.
     @State private var pendingAddWorktree: AddWorktreeRequest?
 
+    /// GIT-4.20: resolved-PR "delete worktree?" offers that fired while
+    /// no window could host the sheet, kept for retry when one appears.
+    @State private var pendingResolvedOffers = PendingResolvedOfferQueue()
+
     var body: some View {
         NavigationSplitView(
             columnVisibility: $columnVisibility
@@ -169,6 +173,38 @@ struct MainWindow: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didUnhideNotification)) { _ in
             applyAppVisibility(isVisible: true)
+        }
+        // GIT-4.20: retry any resolved-PR offers that couldn't present
+        // when they fired (no host window). Two triggers, because the
+        // offer can be enqueued whenever `NSApp.mainWindow` is nil:
+        // `didBecomeActive` covers returning from the background (a PR
+        // merged while the user was away — the reported case), and
+        // `didBecomeMain` covers a window reappearing while the app
+        // stayed active (e.g. the primary window was deminiaturized).
+        // The retry hosts on `NSApp.mainWindow`, same as every other
+        // alert site here — presenting on a non-primary main window is
+        // still strictly better than losing the offer, which is what
+        // happened before.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            retryPendingResolvedOffers()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeMainNotification)) { _ in
+            retryPendingResolvedOffers()
+        }
+    }
+
+    /// GIT-4.20: re-attempt the resolved-PR "delete worktree?" offers
+    /// that were queued while no window could host the sheet. Each retry
+    /// re-enters `offerDeleteForResolvedPR`, which re-checks the marker /
+    /// stale guards and re-queues itself if a window still isn't ready.
+    private func retryPendingResolvedOffers() {
+        for offer in pendingResolvedOffers.drain() {
+            offerDeleteForResolvedPR(
+                worktreePath: offer.worktreePath,
+                prNumber: offer.prNumber,
+                prTitle: offer.prTitle,
+                state: offer.state
+            )
         }
     }
 
@@ -766,10 +802,20 @@ struct MainWindow: View {
         guard let config = PRResolutionOfferAlert.configuration(prNumber: prNumber, prTitle: prTitle, state: state) else { return }
         // `NSApp.mainWindow` only — falling through to "any visible
         // non-panel window" would attach the sheet to Settings or the
-        // Team Activity Log when those are foregrounded. Dropping the
-        // offer (and leaving the marker unset) lets the next poll retry.
-        guard let host = NSApp.mainWindow else { return }
+        // Team Activity Log when those are foregrounded. GIT-4.20: the
+        // store fires the resolved edge exactly once (GIT-4.7 idempotent
+        // guard), so we can't rely on "the next poll retries" — queue
+        // the offer instead and retry it when a window appears.
+        guard let host = NSApp.mainWindow else {
+            pendingResolvedOffers.enqueue(PendingResolvedOffer(
+                worktreePath: worktreePath, prNumber: prNumber,
+                prTitle: prTitle, state: state
+            ))
+            return
+        }
 
+        // The offer is presenting, so it no longer needs to be retried.
+        pendingResolvedOffers.remove(worktreePath: worktreePath)
         // Set the marker now that the sheet is definitely going up, so a
         // user who clicks Keep doesn't get re-prompted on the next poll.
         appState.repos[repoIdx].worktrees[wtIdx].offeredDeleteForResolvedPR = prNumber
