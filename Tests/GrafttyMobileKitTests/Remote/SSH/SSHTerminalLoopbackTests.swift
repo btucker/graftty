@@ -12,7 +12,7 @@ import WebRTC
 ///
 /// Uses R3's `LoopbackPeer` pattern + real `SSHServerSetup`-equivalent
 /// + real `SSHClientSetup` + a fake echoing `TerminalByteStream`. The
-/// fake replaces the production `ZmxAttachStream` because iOS Simulator
+/// fake replaces the production `ZmxAttachEngine` because iOS Simulator
 /// doesn't have host binaries — real `zmx attach` integration is
 /// verified at the manual TestFlight gate, not in CI.
 ///
