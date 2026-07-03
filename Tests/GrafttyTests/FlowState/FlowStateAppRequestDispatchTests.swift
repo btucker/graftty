@@ -50,10 +50,22 @@ struct FlowStateAppRequestDispatchTests {
             message: "asked",
             worktreeRef: worktreeRef
         ))
+        try activityStore.append(.init(
+            createdAt: Date(timeIntervalSince1970: 90),
+            kind: .publishAccepted,
+            message: "accepted recommendation",
+            worktreeRef: worktreeRef
+        ))
+        let cooldownAt = Date(timeIntervalSince1970: 85)
+        try activityStore.recordStatusRequest(worktreeRef: worktreeRef, at: cooldownAt)
         let inputRegistry = PaneInputActivityRegistry(now: { Date(timeIntervalSince1970: 70) })
         let paneID = UUID(uuidString: "00000000-0000-0000-0000-000000000111")!
         inputRegistry.recordKeystroke(paneID: paneID)
         var withPane = worktree
+        withPane.setAttention(
+            Attention(text: "Codex needs input", timestamp: Date(timeIntervalSince1970: 75), source: .agentStop),
+            pane: nil
+        )
         let paneSlot = PaneSlotID(id: paneID)
         withPane.focusedPaneSlotID = paneSlot
         withPane.paneSessions[paneSlot] = PaneSessionID(id: paneID)
@@ -83,7 +95,8 @@ struct FlowStateAppRequestDispatchTests {
             #expect(snapshot.pr?.mergeState == "conflicting")
             #expect(snapshot.pr?.urgency == .critical)
             #expect(snapshot.scoring.riskUrgency == .critical)
-            #expect(snapshot.lastFlowMessageAt == flowMessageAt)
+            #expect(snapshot.agentPresence?.waiting == true)
+            #expect(snapshot.lastFlowMessageAt == cooldownAt)
             #expect(snapshot.lastUserActivityAt == Date(timeIntervalSince1970: 70))
         } else {
             Issue.record("Expected flowContext response")
@@ -132,6 +145,22 @@ struct FlowStateAppRequestDispatchTests {
         )
 
         #expect(response == .flowStatus(FlowStatus(enabled: true, running: true, message: "Running")))
+    }
+
+    @Test("@spec FLOW-4.13: Until the Task 5 action executor is wired, Flow State app request dispatch shall return an explicit error for request-status instead of leaving the socket request unanswered.")
+    func requestStatusReturnsExplicitInterimError() throws {
+        let response = FlowStateAppRequestDispatcher.handle(
+            .flowRequestStatus(worktreeRef: "repo:feature", explicit: false),
+            appState: AppState(),
+            store: FlowStateStore(rootDirectory: try temporaryDirectory()),
+            activityStore: FlowStateActivityStore(rootDirectory: try temporaryDirectory())
+        )
+
+        if case .error(let message) = response {
+            #expect(message.contains("action executor"))
+        } else {
+            Issue.record("Expected explicit request-status error")
+        }
     }
 
     private func waitUntil(

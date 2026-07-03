@@ -57,6 +57,28 @@ struct FlowStateModelsTests {
         #expect(envelope.proposedActions.first?.kind == .teamStatusRequest)
     }
 
+    @Test
+    func validEstimatedEffortSymbolsDecode() throws {
+        let json = """
+        {
+          "schemaVersion": 1,
+          "generatedAt": "2026-07-03T19:00:00Z",
+          "primary": {
+            "intent": "none",
+            "title": "None",
+            "reason": "Idle",
+            "confidence": "low"
+          },
+          "sameContext": [
+            {"title": "Deep task", "reason": "Needs reload", "estimatedEffort": "deep"},
+            {"title": "Unknown task", "reason": "Unclear", "estimatedEffort": "unknown"}
+          ]
+        }
+        """
+        let envelope = try JSONDecoder.flowState.decode(FlowRecommendationEnvelope.self, from: Data(json.utf8))
+        #expect(envelope.sameContext.map(\.estimatedEffort) == [.deep, .unknown])
+    }
+
     /// @spec FLOW-1.2: If a Flow State recommendation envelope contains an unknown enum value in any rendered or executable field, the application shall reject the publish rather than silently render incompatible state.
     @Test
     func unknownEnumValueFailsDecode() throws {

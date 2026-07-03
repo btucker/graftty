@@ -8,9 +8,7 @@ public enum FlowActionRequirement: String, Codable, Sendable, Equatable {
 }
 
 public enum FlowStateActionPolicy {
-    private static let mutationVerbs: Set<String> = [
-        "run", "push", "merge", "rebase", "restart", "close", "delete"
-    ]
+    public static let statusRequestTemplate = "[Flow State] Please reply with status, blocker, next action, tests/PR state, and whether you need the human."
 
     public static func effectiveRequirement(for action: FlowProposedAction) -> FlowActionRequirement {
         switch action.kind {
@@ -30,20 +28,6 @@ public enum FlowStateActionPolicy {
               !body.isEmpty
         else { return false }
 
-        let normalized = body.lowercased()
-        guard body.contains("[Flow State]"),
-              normalized.contains("status"),
-              normalized.contains("blocker"),
-              normalized.contains("next action"),
-              normalized.contains("need"),
-              normalized.contains("human")
-        else { return false }
-
-        return !containsMutationVerb(normalized)
-    }
-
-    private static func containsMutationVerb(_ normalizedBody: String) -> Bool {
-        let words = normalizedBody.split { !$0.isLetter && !$0.isNumber }.map(String.init)
-        return words.contains { mutationVerbs.contains($0) }
+        return body == statusRequestTemplate
     }
 }

@@ -109,14 +109,28 @@ enum FlowStateSignalBuilder {
             return FlowAgentPresenceSnapshot(runtime: "claude", present: true, busy: false, waiting: true)
         }
 
-        guard let agentStateRegistry else { return nil }
+        guard let agentStateRegistry else {
+            if hasAgentStopAttention(worktree) {
+                return FlowAgentPresenceSnapshot(runtime: nil, present: true, busy: false, waiting: true)
+            }
+            return nil
+        }
         let codex = agentStateRegistry.state(worktree: worktree.path, runtime: "codex")
         let claude = agentStateRegistry.state(worktree: worktree.path, runtime: "claude")
         let states = [("codex", codex), ("claude", claude)].filter { $0.1 != .unknown }
-        guard let first = states.first else { return nil }
+        guard let first = states.first else {
+            if hasAgentStopAttention(worktree) {
+                return FlowAgentPresenceSnapshot(runtime: nil, present: true, busy: false, waiting: true)
+            }
+            return nil
+        }
         let busy = states.contains { $0.1 == .active }
-        let waiting = states.contains { $0.1 == .idle || $0.1 == .user_engaged }
+        let waiting = states.contains { $0.1 == .idle || $0.1 == .user_engaged } || hasAgentStopAttention(worktree)
         return FlowAgentPresenceSnapshot(runtime: first.0, present: true, busy: busy, waiting: waiting)
+    }
+
+    private static func hasAgentStopAttention(_ worktree: WorktreeEntry) -> Bool {
+        worktree.attention?.source == .agentStop || worktree.paneAttention.values.contains { $0.source == .agentStop }
     }
 
     private static func activitySnapshot(
@@ -126,8 +140,9 @@ enum FlowStateSignalBuilder {
         activityStore: FlowStateActivityStore?
     ) -> FlowActivitySnapshot? {
         let lastInput = latestInput(in: worktree, inputActivityRegistry: inputActivityRegistry)
-        let lastFlow = latestFlowMessage(worktreeRef: worktreeRef, activityStore: activityStore)
-            ?? (try? activityStore?.lastStatusRequestAt(worktreeRef: worktreeRef))
+        let lastActivityMessage = latestFlowMessage(worktreeRef: worktreeRef, activityStore: activityStore)
+        let lastCooldown = try? activityStore?.lastStatusRequestAt(worktreeRef: worktreeRef)
+        let lastFlow = [lastActivityMessage, lastCooldown].compactMap { $0 }.max()
         guard lastInput != nil || lastFlow != nil else { return nil }
         return FlowActivitySnapshot(lastUserActivityAt: lastInput, lastAgentActivityAt: nil, lastFlowMessageAt: lastFlow)
     }
@@ -148,9 +163,20 @@ enum FlowStateSignalBuilder {
     ) -> Date? {
         guard let rows = try? activityStore?.recent(limit: 200) else { return nil }
         return rows.lazy
-            .filter { $0.worktreeRef == worktreeRef }
+            .filter { $0.worktreeRef == worktreeRef && $0.kind.contributesToLastFlowMessage }
             .map(\.createdAt)
             .max()
+    }
+}
+
+private extension FlowStateActivity.Kind {
+    var contributesToLastFlowMessage: Bool {
+        switch self {
+        case .statusRequestSent, .actionExecuted:
+            return true
+        case .publishError, .publishAccepted, .statusRequestSkipped, .actionRequiresConfirmation:
+            return false
+        }
     }
 }
 
@@ -169,6 +195,10 @@ enum FlowStateAppRequestDispatcher {
         statusProvider: (() -> FlowStatus)? = nil,
         now: @escaping () -> Date = Date.init
     ) -> ResponseMessage? {
+        if case .flowRequestStatus = message {
+            return .error("Flow State request-status is not available until the action executor is wired")
+        }
+
         let signals = FlowStateSignalBuilder.build(
             appState: appState,
             statsStore: statsStore,

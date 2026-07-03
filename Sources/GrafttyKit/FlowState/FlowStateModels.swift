@@ -504,7 +504,8 @@ public enum FlowEstimatedEffort: String, Codable, Sendable, Equatable {
     case quick
     case short
     case medium
-    case long
+    case deep
+    case unknown
 }
 
 public enum FlowUrgency: String, Codable, Sendable, Equatable {

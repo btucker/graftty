@@ -1896,6 +1896,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **FLOW-4.12** Flow State app request dispatch shall use an injected status provider.
 
+**FLOW-4.13** Until the Task 5 action executor is wired, Flow State app request dispatch shall return an explicit error for request-status instead of leaving the socket request unanswered.
+
+**FLOW-4.14** Flow State activity reads shall ignore corrupt JSONL rows so one partial row does not erase recent valid activity.
+
+**FLOW-4.15** Valid Flow State publish output using v1 estimated-effort symbols shall be accepted and persisted.") func validPublishAcceptsAllEstimatedEffortSymbols() throws { let root = try temporaryDirectory() let store = FlowStateStore(rootDirectory: root) let handler = FlowStateRequestHandler( store: store, activityStore: FlowStateActivityStore(rootDirectory: root), appState: AppState(), now: { Date(timeIntervalSince1970: 100) } ) let valid =
+
 ## MEM — MEM
 
 ### MEM-1.x

@@ -22,7 +22,7 @@ struct FlowStateActionPolicyTests {
             id: "ask",
             kind: .teamStatusRequest,
             target: "feature",
-            body: "[Flow State] Please reply with status, blocker, next action, tests/PR state, and whether you need the human.",
+            body: FlowStateActionPolicy.statusRequestTemplate,
             requiresConfirmation: false
         )
         let missingHumanNeed = FlowProposedAction(
@@ -39,10 +39,18 @@ struct FlowStateActionPolicyTests {
             body: "[Flow State] Please reply with status, blocker, next action, whether you need the human, then run tests and push fixes.",
             requiresConfirmation: false
         )
+        let extraInstruction = FlowProposedAction(
+            id: "extra",
+            kind: .teamStatusRequest,
+            target: "feature",
+            body: FlowStateActionPolicy.statusRequestTemplate + " Then commit anything obvious.",
+            requiresConfirmation: false
+        )
 
         #expect(FlowStateActionPolicy.effectiveRequirement(for: ok) == .autonomousAllowed)
         #expect(FlowStateActionPolicy.effectiveRequirement(for: missingHumanNeed) == .confirmationRequired)
         #expect(FlowStateActionPolicy.effectiveRequirement(for: mutation) == .confirmationRequired)
+        #expect(FlowStateActionPolicy.effectiveRequirement(for: extraInstruction) == .confirmationRequired)
     }
 
     @Test("@spec FLOW-4.6: Flow State shall require confirmation for team messages, focus changes, and agent restarts, and shall require explicit opt-in for pane commands.")

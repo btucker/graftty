@@ -78,6 +78,24 @@ struct FlowStateRequestHandlerTests {
         }
     }
 
+    @Test("@spec FLOW-4.15: Valid Flow State publish output using v1 estimated-effort symbols shall be accepted and persisted.")
+    func validPublishAcceptsAllEstimatedEffortSymbols() throws {
+        let root = try temporaryDirectory()
+        let store = FlowStateStore(rootDirectory: root)
+        let handler = FlowStateRequestHandler(
+            store: store,
+            activityStore: FlowStateActivityStore(rootDirectory: root),
+            appState: AppState(),
+            now: { Date(timeIntervalSince1970: 100) }
+        )
+        let valid = """
+        {"schemaVersion":1,"generatedAt":"2026-07-03T19:00:00Z","primary":{"intent":"none","title":"None","reason":"Idle","confidence":"low"},"sameContext":[{"title":"Deep","reason":"Reload","estimatedEffort":"deep"},{"title":"Unknown","reason":"Needs probe","estimatedEffort":"unknown"}]}
+        """
+
+        #expect(try handler.handle(.flowPublish(rawJSON: valid)) == .ok)
+        #expect(try store.recommendation()?.sameContext.map(\.estimatedEffort) == [.deep, .unknown])
+    }
+
     @Test("@spec FLOW-4.8: If no stored recommendation exists, Flow State recommend shall return a low-confidence none recommendation.")
     func recommendReturnsLowConfidenceNoneWhenAbsent() throws {
         let handler = FlowStateRequestHandler(

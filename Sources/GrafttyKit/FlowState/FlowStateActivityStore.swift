@@ -61,8 +61,8 @@ public final class FlowStateActivityStore: @unchecked Sendable {
         guard limit > 0, FileManager.default.fileExists(atPath: activityURL.path) else { return [] }
         let data = try Data(contentsOf: activityURL)
         guard let text = String(data: data, encoding: .utf8) else { return [] }
-        let rows = try text.split(separator: "\n", omittingEmptySubsequences: true).map { line in
-            try JSONDecoder.flowState.decode(FlowStateActivity.self, from: Data(line.utf8))
+        let rows = text.split(separator: "\n", omittingEmptySubsequences: true).compactMap { line in
+            try? JSONDecoder.flowState.decode(FlowStateActivity.self, from: Data(line.utf8))
         }
         return Array(rows.suffix(limit).reversed())
     }
