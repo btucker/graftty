@@ -1262,6 +1262,7 @@ git commit -m "feat(flow): handle Flow State requests"
 - Create: `Sources/GrafttyKit/FlowState/FlowStateRefreshCoordinator.swift`
 - Create: `Sources/GrafttyKit/FlowState/FlowStateActionExecutor.swift`
 - Modify: `Sources/GrafttyKit/FlowState/FlowStateActivityStore.swift`
+- Modify: `Sources/Graftty/Settings/SettingsKeys.swift`
 - Modify: `Sources/Graftty/GrafttyApp.swift`
 - Test: `Tests/GrafttyKitTests/FlowState/FlowStateRefreshCoordinatorTests.swift`
 - Test: `Tests/GrafttyKitTests/FlowState/FlowStateActionExecutorTests.swift`
@@ -1450,6 +1451,9 @@ In `GrafttyApp.handlePaneRequest` or its Flow request helper:
 - Construct the executor with `permissionMode` read from
   `SettingsKeys.flowStatePermissionMode`; invalid/missing values fall back to
   `.conservative`.
+- Add only the `SettingsKeys.flowStatePermissionMode` key in this task so the
+  app wiring compiles. Task 6 still owns defaults, prompt editing, and the
+  settings UI.
 - Implement production `FlowTeamMessaging` by sending through `TeamInboxRequestHandler.send` with a Flow State pseudo-caller only for status requests. If the existing team handler requires a real caller worktree, resolve the target worktree's team and use the team lead/root worktree as caller; record an activity error if no team can be resolved.
 - Implement production `FlowConfirmedAppActions` in the app target, not in
   `GrafttyKit`, because focus and agent restart require `AppState`,
