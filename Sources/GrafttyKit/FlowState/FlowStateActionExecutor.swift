@@ -3,6 +3,13 @@ import Foundation
 public protocol FlowTeamMessaging {
     func sendStatusRequest(target: String, body: String) throws
     func sendMessage(target: String, body: String) throws
+    func canonicalStatusRequestTarget(_ target: String) -> String?
+}
+
+public extension FlowTeamMessaging {
+    func canonicalStatusRequestTarget(_ target: String) -> String? {
+        target
+    }
 }
 
 public enum FlowTeamMessagingError: Error, Sendable, Equatable {
@@ -66,29 +73,34 @@ public struct FlowStateActionExecutor {
     }
 
     public func requestStatus(worktreeRef: String, explicit: Bool) throws {
+        try requestStatus(worktreeRef: worktreeRef, explicit: explicit, respectManualOnly: true)
+    }
+
+    private func requestStatus(worktreeRef: String, explicit: Bool, respectManualOnly: Bool) throws {
         let date = now()
-        if permissionMode == .manualOnly {
+        let target = canonicalStatusRequestTarget(worktreeRef)
+        if respectManualOnly, permissionMode == .manualOnly {
             try append(
                 kind: .statusRequestSkipped,
                 message: "Flow State status request requires confirmation in manual-only mode",
-                worktreeRef: worktreeRef,
+                worktreeRef: target,
                 at: date
             )
             try append(
                 kind: .actionRequiresConfirmation,
                 message: "Flow State status request requires confirmation",
-                worktreeRef: worktreeRef,
+                worktreeRef: target,
                 at: date
             )
             return
         }
 
-        if !explicit, let last = try activityStore.lastStatusRequestAt(worktreeRef: worktreeRef),
+        if !explicit, let last = try activityStore.lastStatusRequestAt(worktreeRef: target),
            date.timeIntervalSince(last) < statusRequestCooldown {
             try append(
                 kind: .statusRequestSkipped,
                 message: "Flow State status request skipped during cooldown",
-                worktreeRef: worktreeRef,
+                worktreeRef: target,
                 at: date
             )
             return
@@ -96,14 +108,14 @@ public struct FlowStateActionExecutor {
 
         do {
             try teamMessenger.sendStatusRequest(
-                target: worktreeRef,
+                target: target,
                 body: FlowStateActionPolicy.statusRequestTemplate
             )
         } catch FlowTeamMessagingError.skipped(let message) {
             try append(
                 kind: .statusRequestSkipped,
                 message: message,
-                worktreeRef: worktreeRef,
+                worktreeRef: target,
                 at: date
             )
             return
@@ -111,16 +123,16 @@ public struct FlowStateActionExecutor {
         try append(
             kind: .statusRequestSent,
             message: "Flow State requested status",
-            worktreeRef: worktreeRef,
+            worktreeRef: target,
             at: date
         )
-        try activityStore.recordStatusRequest(worktreeRef: worktreeRef, at: date)
+        try activityStore.recordStatusRequest(worktreeRef: target, at: date)
     }
 
     public func executeConfirmedAction(_ action: FlowProposedAction) throws {
         switch action.kind {
         case .teamStatusRequest:
-            try requestStatus(worktreeRef: action.target ?? "", explicit: true)
+            try requestStatus(worktreeRef: action.target ?? "", explicit: true, respectManualOnly: false)
         case .teamMessage:
             guard let target = action.target, let body = action.body else {
                 try append(kind: .actionSkipped, message: "Flow State team message missing target or body", worktreeRef: action.target)
@@ -165,41 +177,46 @@ public struct FlowStateActionExecutor {
             return
         }
         let date = now()
+        let canonicalTarget = canonicalStatusRequestTarget(target)
         if permissionMode == .manualOnly {
             try append(
                 kind: .actionRequiresConfirmation,
                 message: "Flow State status request requires confirmation",
-                worktreeRef: target,
+                worktreeRef: canonicalTarget,
                 at: date
             )
             return
         }
-        if let last = try activityStore.lastStatusRequestAt(worktreeRef: target),
+        if let last = try activityStore.lastStatusRequestAt(worktreeRef: canonicalTarget),
            date.timeIntervalSince(last) < statusRequestCooldown {
             try append(
                 kind: .statusRequestSkipped,
                 message: "Flow State status request skipped during cooldown",
-                worktreeRef: target,
+                worktreeRef: canonicalTarget,
                 at: date
             )
             return
         }
         do {
             try teamMessenger.sendStatusRequest(
-                target: target,
+                target: canonicalTarget,
                 body: FlowStateActionPolicy.statusRequestTemplate
             )
         } catch FlowTeamMessagingError.skipped(let message) {
-            try append(kind: .actionSkipped, message: message, worktreeRef: target, at: date)
+            try append(kind: .actionSkipped, message: message, worktreeRef: canonicalTarget, at: date)
             return
         }
         try append(
             kind: .actionExecuted,
             message: "Flow State executed autonomous status request",
-            worktreeRef: target,
+            worktreeRef: canonicalTarget,
             at: date
         )
-        try activityStore.recordStatusRequest(worktreeRef: target, at: date)
+        try activityStore.recordStatusRequest(worktreeRef: canonicalTarget, at: date)
+    }
+
+    private func canonicalStatusRequestTarget(_ target: String) -> String {
+        teamMessenger.canonicalStatusRequestTarget(target) ?? target
     }
 
     private func append(

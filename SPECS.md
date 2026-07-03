@@ -1920,6 +1920,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **FLOW-5.9** Publish-time autonomous Flow State status-request actions shall obey the same per-worktree cooldown as direct request-status calls.
 
+**FLOW-5.10** Flow State status-request cooldowns shall use canonical worktree identity rather than the caller's raw target alias.
+
+**FLOW-5.11** Flow State app request dispatch shall skip status requests when the resolved team member name is ambiguous instead of delivering to the wrong worktree.
+
+**FLOW-5.12** Manual Only mode shall not block a Flow State status-request action after explicit UI confirmation.
+
+**FLOW-5.13** Flow State app request dispatch shall enforce status-request cooldowns across aliases for the same resolved worktree.
+
 ## MEM — MEM
 
 ### MEM-1.x

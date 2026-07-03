@@ -294,11 +294,14 @@ private final class FlowStateTeamMessenger: FlowTeamMessaging {
         guard let resolved = resolveTarget(target) else {
             throw FlowTeamMessagingError.skipped("Flow State status request skipped: unresolved worktree \(target)")
         }
-        guard let team = TeamView.team(for: resolved, in: appState.repos, teamsEnabled: true) else {
+        guard let team = TeamView.team(for: resolved.worktree, in: appState.repos, teamsEnabled: true) else {
             throw FlowTeamMessagingError.skipped("Flow State status request skipped: target has no team")
         }
-        guard let recipient = team.members.first(where: { $0.worktreePath == resolved.path }) else {
+        guard let recipient = team.members.first(where: { $0.worktreePath == resolved.worktree.path }) else {
             throw FlowTeamMessagingError.skipped("Flow State status request skipped: target is not a team member")
+        }
+        guard team.members.filter({ $0.name == recipient.name }).count == 1 else {
+            throw FlowTeamMessagingError.skipped("Flow State status request skipped: ambiguous team member name \(recipient.name)")
         }
         let caller = team.lead
 
@@ -317,7 +320,17 @@ private final class FlowStateTeamMessenger: FlowTeamMessaging {
         throw FlowTeamMessagingError.skipped("Flow State team messages require confirmation in the app UI")
     }
 
-    private func resolveTarget(_ target: String) -> WorktreeEntry? {
+    func canonicalStatusRequestTarget(_ target: String) -> String? {
+        resolveTarget(target)?.worktreeRef
+    }
+
+    private struct ResolvedTarget {
+        var worktree: WorktreeEntry
+        var worktreeRef: String
+    }
+
+    private func resolveTarget(_ target: String) -> ResolvedTarget? {
+        var matches: [ResolvedTarget] = []
         for repo in appState.repos {
             for worktree in repo.worktrees {
                 let key = FlowWorktreeIdentity.key(repoPath: repo.path, worktreePath: worktree.path)
@@ -330,10 +343,10 @@ private final class FlowStateTeamMessenger: FlowTeamMessaging {
                 let memberName = WorktreeNameSanitizer.sanitize(worktree.branch)
                 let displayRef = "\(repo.displayName):\(memberName)"
                 if [ref, key, displayRef, memberName, worktree.path].contains(target) {
-                    return worktree
+                    matches.append(ResolvedTarget(worktree: worktree, worktreeRef: ref))
                 }
             }
         }
-        return nil
+        return matches.count == 1 ? matches[0] : nil
     }
 }
