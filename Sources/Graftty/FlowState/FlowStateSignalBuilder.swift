@@ -88,7 +88,7 @@ enum FlowStateSignalBuilder {
 
     private static func urgency(for info: PRInfo) -> FlowUrgency? {
         if info.state.isTerminal { return .medium }
-        if info.checks == .failure || info.mergeable == .conflicting { return .high }
+        if info.checks == .failure || info.mergeable == .conflicting { return .critical }
         if info.checks == .pending || info.mergeable == .unknown { return .medium }
         return .low
     }

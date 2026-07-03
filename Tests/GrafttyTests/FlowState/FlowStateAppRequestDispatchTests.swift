@@ -81,6 +81,8 @@ struct FlowStateAppRequestDispatchTests {
             #expect(snapshot.pr?.number == 42)
             #expect(snapshot.pr?.ciConclusion == "failure")
             #expect(snapshot.pr?.mergeState == "conflicting")
+            #expect(snapshot.pr?.urgency == .critical)
+            #expect(snapshot.scoring.riskUrgency == .critical)
             #expect(snapshot.lastFlowMessageAt == flowMessageAt)
             #expect(snapshot.lastUserActivityAt == Date(timeIntervalSince1970: 70))
         } else {
