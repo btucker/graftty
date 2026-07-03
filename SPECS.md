@@ -1928,6 +1928,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **FLOW-5.13** Flow State app request dispatch shall enforce status-request cooldowns across aliases for the same resolved worktree.
 
+### FLOW-6.x
+
+**FLOW-6.1** The application shall register non-empty Flow State defaults for enablement, runtime, and editable system prompt.
+
+**FLOW-6.2** The Flow State system prompt shall instruct the agent to preserve human flow and use `graftty flow` rather than acting as a repo-scoped team member.
+
 ## MEM — MEM
 
 ### MEM-1.x

@@ -327,6 +327,7 @@ struct GrafttyApp: App {
         // Must run before any UserDefaults read so non-binding readers see
         // the same defaults as @AppStorage. TEAM-1.6.
         UserDefaults.standard.register(defaults: DefaultPrompts.registrations)
+        UserDefaults.standard.register(defaults: FlowStateDefaults.registrations)
 
         let loaded = AppState.loadOrFreshBackingUpCorruption(from: AppState.defaultDirectory)
         _appState = State(initialValue: loaded)
@@ -588,6 +589,8 @@ struct GrafttyApp: App {
                     .tabItem { Label("Web Access", systemImage: "network") }
                 AgentTeamsSettingsPane()
                     .tabItem { Label("Agent Teams", systemImage: "person.2.fill") }
+                FlowStateSettingsPane()
+                    .tabItem { Label("Flow State", systemImage: "arrow.triangle.branch") }
             }
         }
 
