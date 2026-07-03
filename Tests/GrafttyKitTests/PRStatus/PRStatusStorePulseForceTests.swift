@@ -30,7 +30,7 @@ struct PRStatusStorePulseForceTests {
     )
 
     @MainActor
-    @Test("@spec PR-8.24: When a pulse is requested, the application shall force the next poll past the per-repo cadence gate so an explicit refresh signal (window focus, add-worktree picker, newly-pushed branch) fetches fresh PR data even while the background cadence is in a long backoff.")
+    @Test("@spec PR-8.25: When a pulse is requested, the application shall force the next poll past the per-repo cadence gate so an explicit refresh signal (window focus, add-worktree picker, newly-pushed branch) fetches fresh PR data even while the background cadence is in a long backoff.")
     func pulseForcesFetchPastCadenceGate() async throws {
         let fetcher = CountingFetcher()
         let store = PRStatusStore(
@@ -73,7 +73,7 @@ struct PRStatusStorePulseForceTests {
         }
         #expect(
             await fetcher.invocations == 2,
-            "pulse must force a fetch past the cadence gate (PR-8.24)"
+            "pulse must force a fetch past the cadence gate (PR-8.25)"
         )
     }
 }

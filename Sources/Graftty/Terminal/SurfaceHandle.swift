@@ -385,6 +385,11 @@ final class SurfaceHandle {
             surfaceView.takeDisplayControlNotifier = { [weak self] in
                 self?.takeDisplayControl() ?? false
             }
+            // OWN-2.2: consulted by the keyDown reclaim — see
+            // `reclaimDisplayControlForUserInputIfNeeded` for the rationale.
+            surfaceView.canTakeDisplayControlNotifier = { [weak self] in
+                self?.canTakeDisplayControl() ?? false
+            }
             // TERM-11.10: spawn-time injection rides along with the
             // deferred start.
             pendingZmxStart = PendingZmxStart(extraInitialInput: extraInitialInput)
@@ -534,18 +539,48 @@ final class SurfaceHandle {
         zmxBackend?.takeControl() ?? false
     }
 
-    /// True when this pane's zmx session is currently owned by a *different*
-    /// display client (e.g. iOS or web took control), so the Mac should offer
-    /// a "Take Control" affordance to reclaim it. False for direct-shell panes,
-    /// while this Mac pane already owns the session, or while it is ownerless.
-    /// Mac startup performs an explicit ownerless/current claim before this UI
-    /// path is relevant.
+    /// @spec OWN-2.1
+    /// True when this pane's zmx session is owned by a *different* display
+    /// client (e.g. iOS or web took control) OR is ownerless after a prior
+    /// ownership change (epoch > 0 — e.g. the remote owner disconnected and
+    /// its detach cleared the owner without anyone reclaiming). In both
+    /// states the Mac should offer a "Take Control" affordance. False for
+    /// direct-shell panes, while this Mac pane already owns the session, and
+    /// for a session with no ownership history (pre-attach; the backend's
+    /// start() claim resolves that state within the first layout). A pane
+    /// attaching to a session that already carries history (epoch > 0, e.g.
+    /// after an app relaunch onto a previously-remote-owned session) may
+    /// report true for the sub-layout moment before start()'s ownerless
+    /// claim runs — accepted: takeControl() fails closed until the backend
+    /// is running, and the claim flips this false immediately after.
     func canTakeDisplayControl() -> Bool {
         guard let displayOwnershipStore,
               let displayClientID,
               let zmxSessionName else { return false }
         let snapshot = displayOwnershipStore.snapshot(sessionName: zmxSessionName)
-        return snapshot.ownerClientID != nil && snapshot.ownerClientID != displayClientID
+        guard snapshot.ownerClientID != displayClientID else { return false }
+        return !snapshot.isOwnerless || snapshot.epoch > 0
+    }
+
+    /// @spec OWN-2.3
+    /// Reclaim display ownership at paste delivery. Every Mac paste path
+    /// (Cmd+V and the context menu's Paste both trigger libghostty's
+    /// `paste_from_clipboard` binding) completes through the bridge's
+    /// `read_clipboard_cb`, which hops to the main queue before calling
+    /// `ghostty_surface_complete_clipboard_request` — so the paste bytes
+    /// are emitted after the triggering event, outside any user-input
+    /// scope, and neither the OWN-2.2 key-event reclaim (Cmd chords are
+    /// excluded) nor the emitted-bytes classification can claim for them.
+    /// A paste is always an intentional input event, so it may claim.
+    ///
+    /// Known limit: under the non-default `clipboard-read = allow` config,
+    /// OSC 52 clipboard reads reach the same callback and would also
+    /// reclaim — accepted, since that config is an explicit opt-in to
+    /// program-initiated clipboard access (the default `ask` drops OSC 52
+    /// before the callback).
+    func reclaimDisplayControlForPasteIfNeeded() {
+        guard canTakeDisplayControl() else { return }
+        _ = takeDisplayControl()
     }
 
     var needsConfirmQuit: Bool {
@@ -717,6 +752,9 @@ final class SurfaceNSView: NSView {
     var hostManagedLayoutNotifier: (() -> Void)?
     var visibleForInputNotifier: (() -> Void)?
     var takeDisplayControlNotifier: (() -> Bool)?
+    /// Whether this pane's session can currently be reclaimed for the Mac —
+    /// see `reclaimDisplayControlForUserInputIfNeeded` (OWN-2.2).
+    var canTakeDisplayControlNotifier: (() -> Bool)?
 
     /// Cursor to display when the mouse is over this surface. libghostty
     /// drives this via `GHOSTTY_ACTION_MOUSE_SHAPE` (e.g., pointer when
@@ -1001,6 +1039,7 @@ final class SurfaceNSView: NSView {
             inputActivityObserver?.recordKeystroke(paneID: paneID)
         }
         markVisibleForInput()
+        reclaimDisplayControlForUserInputIfNeeded(event)
         if let directInput = Self.hostManagedDirectInput(
             forKeyCode: event.keyCode,
             modifierFlags: event.modifierFlags
@@ -1024,6 +1063,34 @@ final class SurfaceNSView: NSView {
         if !handled {
             super.keyDown(with: event)
         }
+    }
+
+    /// @spec OWN-2.2
+    /// Reclaim display ownership on a real (non-command) key press when the
+    /// pane is a follower or its session is ownerless. This runs on the main
+    /// thread inside the key event, BEFORE the key is dispatched, so the
+    /// resulting bytes are written as the owner. It cannot be left to the
+    /// emitted-bytes `claimEngagement` path: libghostty's host-managed
+    /// backend emits key bytes on its IO thread after `ghostty_surface_key`
+    /// returns (resize-trace shows the write callbacks on a non-main
+    /// thread), so the TERM-11.8 user-input scope has already exited and
+    /// those bytes always arrive classified as non-engaging.
+    ///
+    /// Key repeats are skipped: a repeat can never be the ownership-
+    /// transition press (its initiating non-repeat keyDown already
+    /// reclaimed), so gating on it keeps the per-event store snapshot off
+    /// the highest-frequency key events.
+    ///
+    /// Command-modified chords (Cmd+C copy, Cmd+V paste, …) are excluded:
+    /// like KEY-1.4's modifier-only transitions, an app-level shortcut must
+    /// not steal display ownership from a remote owner. Paste reclaims at
+    /// clipboard delivery instead — see
+    /// `reclaimDisplayControlForPasteIfNeeded` (OWN-2.3).
+    func reclaimDisplayControlForUserInputIfNeeded(_ event: NSEvent) {
+        guard !event.isARepeat,
+              !event.modifierFlags.contains(.command),
+              canTakeDisplayControlNotifier?() == true else { return }
+        _ = takeDisplayControlNotifier?()
     }
 
     override func keyUp(with event: NSEvent) {
@@ -1164,9 +1231,13 @@ final class SurfaceNSView: NSView {
         keyEvent.composing = false
 
         // TERM-11.8: dispatch inside the backend's user-input scope so
-        // the bytes libghostty emits for this key are classified as real
-        // user input. Synchronous: libghostty encodes and emits via the
-        // receive-buffer callback within ghostty_surface_key.
+        // bytes emitted during the dispatch are classified as real user
+        // input. NOTE: with the real libghostty the emission is queued to
+        // its IO thread and usually lands after this scope exits (the
+        // resize-trace shows write callbacks on a non-main thread), so the
+        // scope is a best-effort legacy annotation — it must not carry
+        // ownership decisions. Ownership reclaim happens at the key event
+        // itself (OWN-2.2) and at paste delivery (OWN-2.3).
         var handled = false
         let textForPTY = Self.ghosttyTextField(for: event)
         let dispatch: () -> Void

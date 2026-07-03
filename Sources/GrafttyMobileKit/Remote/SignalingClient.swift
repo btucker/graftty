@@ -60,11 +60,31 @@ public struct SignalingClient: Sendable {
     }
 
     public static let defaultTransport: Transport = { request, body in
-        let (data, response) = try await URLSession.shared.upload(for: request, from: body)
+        let (data, response) = try await Self.session.upload(for: request, from: body)
         guard let http = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
         }
         return (data, http)
     }
+
+    /// A dedicated session — NEVER `URLSession.shared` — so this timeout
+    /// can't leak onto other callers that happen to share the process's
+    /// default session, and so this file doesn't mutate shared, ambient
+    /// state as a side effect of being imported.
+    ///
+    /// Signaling is LAN/tailnet-local: a healthy host answers
+    /// `/v1/rtc/offer` in well under a second. 10s is generous headroom
+    /// above that normal case while still failing fast enough that a
+    /// hung request (dropped Wi-Fi, a host that vanished mid-request)
+    /// doesn't stall negotiation indefinitely — paired with
+    /// `RemoteConnectionCoordinator`'s per-host failure cooldown, which
+    /// only starts once this timeout (or any other failure) actually
+    /// surfaces.
+    private static let session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 10
+        config.timeoutIntervalForResource = 10
+        return URLSession(configuration: config)
+    }()
 }
 #endif

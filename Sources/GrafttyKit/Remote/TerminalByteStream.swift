@@ -36,3 +36,36 @@ public extension TerminalByteStream {
 /// Factory the channel handler uses to obtain a stream for a given
 /// session name.
 public typealias TerminalByteStreamFactory = @Sendable (String) async throws -> TerminalByteStream
+
+/// Optional capability a `TerminalByteStream` conformer can add: reporting
+/// live PTY-size changes. Not folded into `TerminalByteStream` itself
+/// because most conformers (test fakes, non-PTY-backed streams) have no
+/// notion of size events and would otherwise all need to carry a dead
+/// stored property. Consumers that care (e.g. `TerminalSessionHandler`,
+/// REMOTE-9.4) probe for conformance with `as?` instead of requiring it
+/// on every `TerminalByteStream`.
+public protocol TerminalSizeReporting: AnyObject {
+    /// Invoked whenever the underlying PTY's size changes (and, for
+    /// `ZmxAttachEngine`, once more on initial attach). May be called
+    /// off the caller's thread — implementations document their own
+    /// threading contract. Setting to `nil` removes any installed callback.
+    var onPTYSize: ((_ cols: UInt16, _ rows: UInt16) -> Void)? { get set }
+}
+
+/// Optional capability a `TerminalByteStream` conformer can add: a
+/// **synchronous** resize, alongside `TerminalByteStream.resize(cols:rows:)`'s
+/// `async` signature. `TerminalSessionHandler`'s owner-gated resize seam
+/// runs entirely on the SSH channel's event loop, and previously wrapped
+/// every `resize` in its own unstructured `Task` to call the protocol's
+/// async method — with no ordering guarantee between that `Task` and a
+/// concurrently-queued PTY write (the exact FIFO hazard
+/// `TerminalSessionHandler.ptyWriteContinuation`'s doc comment describes
+/// for writes). A conformer whose resize is inherently synchronous
+/// (`ZmxAttachEngine`'s `ioctl(TIOCSWINSZ)`) implements this so a caller
+/// already on the right thread can invoke it directly, closing that
+/// window. Probed for with `as?`, mirroring `TerminalSizeReporting` —
+/// conformers/test fakes that only implement the protocol's `async`
+/// resize keep working via the existing `Task`-wrapped fallback.
+public protocol TerminalSyncResizing: AnyObject {
+    func resize(cols: UInt16, rows: UInt16)
+}

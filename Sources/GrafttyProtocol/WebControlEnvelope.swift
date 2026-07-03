@@ -1,11 +1,37 @@
 import Foundation
 
-/// A control event sent from the web client as a WebSocket *text*
-/// frame. Binary frames carry raw PTY bytes; this shape is for
-/// everything else.
+/// A control event carried on a transport's text-shaped control carrier,
+/// alongside — but multiplexed separately from — raw PTY bytes. Two
+/// transports share this shape as of REMOTE-9: the `/ws` bridge encodes
+/// it as a WebSocket *text* frame, and `GrafttyHostAgent`'s SSH terminal
+/// path (`TerminalSessionHandler`/`TerminalSessionClient`) encodes it as
+/// a length-prefixed (`<u32 BE length><UTF-8 JSON>`) frame on the SSH
+/// channel's `.stdErr` sub-stream. Binary/`.channel` frames carry raw PTY
+/// bytes; this shape is for everything else.
 ///
 public enum WebControlEnvelope: Equatable {
-    private static let maxGridDimension = 10_000
+    /// Upper bound on a `DisplayGrid` dimension carried by any envelope.
+    /// `DisplayGrid` itself only enforces `> 0` (it has no notion of a
+    /// transport-level cap), so an over-cap grid can be constructed and
+    /// broadcast — `.ownership`'s decode path below is the one place this
+    /// enum still *rejects* rather than clamps, because a `DisplayGrid`
+    /// already over cap has already reached `SessionDisplayOwnershipStore`
+    /// and every OTHER client's `.ownership` broadcast must fail parse
+    /// identically (this is deliberately a shared, `public` constant —
+    /// SSH's `TerminalSessionHandler` clamps pty-req/window-change
+    /// dimensions to it before they ever reach the store, closing that
+    /// hole at the source instead of merely detecting it here).
+    public static let maxGridDimension = 10_000
+
+    /// Clamp an arbitrary `Int` dimension (cols or rows) to
+    /// `maxGridDimension`, mirroring `UInt16(clamping:)`'s posture for the
+    /// lower bound (negative values clamp to 0) while additionally
+    /// bounding the upper end. Callers that already hold a valid
+    /// (`> 0`)-checked `UInt16` — e.g. SSH's window-change handler — only
+    /// need this to enforce the upper cap.
+    public static func clampedGridDimension(_ value: Int) -> UInt16 {
+        UInt16(clamping: min(value, maxGridDimension))
+    }
 
     /// Client → server legacy resize. Kept during ownership migration so older
     /// clients fail soft while owner-aware clients move to `.ownerResize`.

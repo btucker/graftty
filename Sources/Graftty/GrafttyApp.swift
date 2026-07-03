@@ -388,18 +388,15 @@ struct GrafttyApp: App {
                 hostKey: try hostIdentityStore.loadOrGenerateAndPersist(),
                 trustedPeerStore: trustedPeerStore,
                 streamFactory: { [registry = appServices.remoteAttachmentRegistry] sessionName in
-                    // Task 3: SSH-over-WebRTC terminal sessions are still
-                    // raw TerminalByteStream participants. Until Task 4+
-                    // adds explicit display-owner protocol handling on this
-                    // path, the shared store is not consulted here; the
-                    // registry remains connection accounting only.
-                    try ZmxAttachStream(
+                    let engine = ZmxAttachEngine(config: ZmxAttachEngine.Config(
                         zmxExecutable: zmxExe,
                         zmxDir: zmxDir,
                         sessionName: sessionName,
-                        workingDirectory: nil,
-                        attachmentRegistry: registry
-                    )
+                        workingDirectory: nil
+                    ))
+                    engine.attachmentRegistry = registry
+                    try engine.start()
+                    return engine
                 },
                 // R5 Task 11: init-time placeholder closures. The host
                 // agent is constructed in `init()` (before SwiftUI `@State`
@@ -414,7 +411,8 @@ struct GrafttyApp: App {
                 },
                 paneControlMutator: { _ in
                     .error(code: "starting", message: "host not yet wired (startup did not run)")
-                }
+                },
+                displayOwnershipStore: appServices.displayOwnershipStore
             )
         } catch {
             // Identity-store I/O failure leaves hostAgent nil; the signaling
@@ -1632,7 +1630,7 @@ struct GrafttyApp: App {
                         return .success(SignalingAnswer(sdp: answer.sdp))
                     } catch {
                         NSLog("[Graftty] WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
-                        return .internalFailure("acceptOffer failed: \(error)")
+                        return Self.signalingOutcome(forAcceptOfferFailure: error)
                     }
                 }
             }
@@ -1660,6 +1658,25 @@ struct GrafttyApp: App {
                 controller.stop()
             }
         }
+    }
+
+    /// Maps an error thrown by `WebRTCHostAgent.acceptOffer` to the HTTP
+    /// outcome the `/v1/rtc/offer` signaling endpoint returns. Extracted
+    /// from the `setSignalingHandler` closure in `startup()` so the
+    /// mapping is unit-testable without booting the whole app.
+    ///
+    /// `WebRTCHostAgent.HostError.busy` — thrown when a second offer
+    /// arrives while a prior negotiation is still in flight — maps to
+    /// `.unavailable` (503) rather than the `.internalFailure` (500)
+    /// catch-all: a busy host is a transient, retryable condition, and
+    /// `RemoteConnectionCoordinator` treats a 503 as "fall back to /ws,
+    /// try again later" without marking the host permanently bad. Every
+    /// other `acceptOffer` failure stays `.internalFailure`.
+    nonisolated static func signalingOutcome(forAcceptOfferFailure error: Error) -> WebServer.SignalingHandlerOutcome {
+        if case WebRTCHostAgent.HostError.busy = error {
+            return .unavailable("host is busy with another remote connection")
+        }
+        return .internalFailure("acceptOffer failed: \(error)")
     }
 
     nonisolated static func codexStopDeliveryPlan(

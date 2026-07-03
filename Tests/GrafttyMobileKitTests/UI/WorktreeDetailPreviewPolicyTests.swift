@@ -20,3 +20,64 @@ struct WorktreeDetailSinglePaneTests {
         #expect(!layout.isLeaf)
     }
 }
+
+#if canImport(UIKit)
+import Foundation
+
+@MainActor
+@Suite("""
+W3 Task 3: `WorktreeDetailView` threads a `RemoteConnectionCoordinator` through so its preview pool can ride SSH-over-WebRTC when the host is paired, instead of always falling back to `/ws`.
+""")
+struct WorktreeDetailViewCoordinatorWiringTests {
+    @Test
+    func storesTheInjectedCoordinator() {
+        let host = Host(
+            id: UUID(),
+            label: "test",
+            baseURL: URL(string: "https://test.local")!,
+            addedAt: Date(),
+            lastUsedAt: nil
+        )
+        let worktree = WorktreePanes(
+            path: "/repo/feat",
+            displayName: "feat",
+            repoDisplayName: "repo",
+            displayBranch: "feature",
+            state: .running,
+            isMainCheckout: false,
+            prBadge: nil,
+            stats: nil,
+            attentionText: nil,
+            layout: nil
+        )
+        let coordinator = RemoteConnectionCoordinator()
+        let view = WorktreeDetailView(host: host, worktree: worktree, coordinator: coordinator) { _ in }
+        #expect(view.coordinator === coordinator)
+    }
+
+    @Test
+    func defaultsToNilCoordinatorForBackwardCompatibleConstruction() {
+        let host = Host(
+            id: UUID(),
+            label: "test",
+            baseURL: URL(string: "https://test.local")!,
+            addedAt: Date(),
+            lastUsedAt: nil
+        )
+        let worktree = WorktreePanes(
+            path: "/repo/feat",
+            displayName: "feat",
+            repoDisplayName: "repo",
+            displayBranch: "feature",
+            state: .running,
+            isMainCheckout: false,
+            prBadge: nil,
+            stats: nil,
+            attentionText: nil,
+            layout: nil
+        )
+        let view = WorktreeDetailView(host: host, worktree: worktree) { _ in }
+        #expect(view.coordinator == nil)
+    }
+}
+#endif

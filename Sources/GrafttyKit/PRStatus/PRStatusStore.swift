@@ -55,7 +55,7 @@ public final class PRStatusStore {
     @ObservationIgnored private var ticker: PollingTickerLike?
     /// Set by `pulse()`, consumed by the next `tick()`: forces that
     /// tick's per-repo dispatches past the cadence gate (see `pulse()`,
-    /// PR-8.24).
+    /// PR-8.25).
     @ObservationIgnored private var forceNextTick = false
     @ObservationIgnored private var getRepos: @MainActor () -> [RepoEntry] = { [] }
     @ObservationIgnored private let logger = Logger(subsystem: "com.btucker.graftty", category: "PRStatusStore")
@@ -71,6 +71,9 @@ public final class PRStatusStore {
     /// for a tracked worktree. Idempotent polls (same info twice) do not
     /// fire. The initial discovery of a PR (previous == nil) does not
     /// fire — a transition requires a previous state to transition FROM.
+    /// A CI/mergeability transition INTO an absence-of-signal value
+    /// (`checks == .none` / `mergeable == .unknown`) does not fire
+    /// either — those are transient blips, not conclusions (PR-8.24).
     ///
     /// Delivers a `(RoutableEvent, worktreePath, attrs)` tuple. The body
     /// string is reconstructable from `attrs` via
@@ -398,13 +401,20 @@ public final class PRStatusStore {
             let routable: RoutableEvent = (current.state == .merged) ? .prMerged : .prStateChanged
             onTransition(routable, worktreePath, attrs)
         }
-        if checksChanged {
+        // PR-8.24: `.none` / `.unknown` are absence-of-signal values —
+        // an empty / all-neutral rollup or GitHub still recomputing
+        // mergeability, both of which appear transiently (mid-run and
+        // around merge, where a terminal PR forces both). A transition
+        // whose destination is one of those isn't a settled conclusion,
+        // so it must not wake an agent. Transitions FROM them into a
+        // real value still fire — that's the genuine edge.
+        if checksChanged && current.checks != .none {
             var attrs = common
             attrs["from"] = previous.checks.rawValue
             attrs["to"] = current.checks.rawValue
             onTransition(.ciConclusionChanged, worktreePath, attrs)
         }
-        if mergeableChanged {
+        if mergeableChanged && current.mergeable != .unknown {
             var attrs = common
             attrs["from"] = previous.mergeable.rawValue
             attrs["to"] = current.mergeable.rawValue
@@ -489,7 +499,7 @@ extension PRStatusStore {
     /// only to have the gate suppress the fetch, silently rendering
     /// stale PR data. The in-flight guard still applies, so a pulse
     /// can't stack a duplicate fetch on top of one already running.
-    /// @spec PR-8.24
+    /// @spec PR-8.25
     public func pulse() {
         forceNextTick = true
         ticker?.pulse()

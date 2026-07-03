@@ -8,7 +8,7 @@ import GrafttyProtocol
 #endif
 
 /// Extends `StoreWorld`-style ownership driving with the real
-/// `WebSocketBridgeCoordinator` + `WebDisplayOwnershipBroadcaster` so the
+/// `TerminalAttachCoordinator` + `DisplayOwnershipBroadcaster` so the
 /// harness can exercise the full web-server path, not just the bare store.
 ///
 /// The web follower (`webFollower`) is a model standing in for the TypeScript
@@ -25,12 +25,12 @@ struct MultiTransportWorld {
 
     /// One coordinator per web client, keyed by the browser-side protocol client
     /// ID — mirroring production, where each WebSocket connection constructs its
-    /// own `WebSocketBridgeCoordinator` with a distinct store client ID
+    /// own `TerminalAttachCoordinator` with a distinct store client ID
     /// (`websocket-<UUID>`).  A single shared coordinator would bind to the first
     /// protocol client and drop every other client's frames, collapsing the
     /// multi-client corpus to a single owner identity.
-    private var webCoordinators: [DisplayClientID: WebSocketBridgeCoordinator] = [:]
-    private let broadcaster: WebDisplayOwnershipBroadcaster
+    private var webCoordinators: [DisplayClientID: TerminalAttachCoordinator] = [:]
+    private let broadcaster: DisplayOwnershipBroadcaster
 
     /// Records owner resizes the store ACCEPTED, observed through the real
     /// coordinator's `resize` seam — production forwards to the PTY only when
@@ -83,7 +83,7 @@ struct MultiTransportWorld {
 
     init(session: String) {
         let store = SessionDisplayOwnershipStore()
-        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let broadcaster = DisplayOwnershipBroadcaster()
         self.session = session
         self.store = store
         self.oracle = Oracle()
@@ -99,9 +99,9 @@ struct MultiTransportWorld {
     /// store client ID (`ws-<protocolID>`), all sharing this world's store and
     /// broadcaster — so takeovers between clients genuinely contend through the
     /// real `claimOwner` takeover path (owner-change bumps the epoch).
-    private mutating func coordinator(for protocolID: DisplayClientID) -> WebSocketBridgeCoordinator {
+    private mutating func coordinator(for protocolID: DisplayClientID) -> TerminalAttachCoordinator {
         if let existing = webCoordinators[protocolID] { return existing }
-        let coord = WebSocketBridgeCoordinator(
+        let coord = TerminalAttachCoordinator(
             sessionName: session,
             clientID: Self.storeID(for: protocolID),
             defaultKind: .web,

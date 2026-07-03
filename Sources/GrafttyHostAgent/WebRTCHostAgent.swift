@@ -30,10 +30,34 @@ public actor WebRTCHostAgent {
     private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
     private var panesStateSubscribe: PanesStateChannelHandler.Subscribe
     private var paneControlMutator: PaneControlChannelHandler.Mutator
+    /// REMOTE-9: the SAME process-wide store the `/ws` bridge uses
+    /// (`AppServices.displayOwnershipStore`), so a Mac-side or web-side
+    /// owner change reaches SSH terminal clients and vice versa. This
+    /// agent constructs its own `DisplayOwnershipBroadcaster` wrapping
+    /// that store rather than sharing the web side's broadcaster
+    /// instance — `DisplayOwnershipBroadcaster.init(store:)` subscribes
+    /// to every store mutation regardless of which broadcaster (or which
+    /// transport's coordinator) caused it, so two broadcaster instances
+    /// fanning out from the same store already gives full cross-transport
+    /// propagation without sharing the instance itself.
+    private let displayOwnershipStore: SessionDisplayOwnershipStore
+    private let displayOwnershipBroadcaster: DisplayOwnershipBroadcaster
     private var sshTransport: SSHNIOTransport?
     private var sshInstallStarted = false
 
-    private let factory: RTCPeerConnectionFactory
+    /// Built lazily, on first `acceptOffer` use, rather than in `init` — an
+    /// agent that never negotiates never touches native libwebrtc. This is
+    /// what keeps mac CI's REMOTE-11.1 busy-guard test (which never
+    /// negotiates) free of native WebRTC work; see `SignalingHandlerOutcomeTests`
+    /// for the CI hang this was extracted to fix. Production behavior is
+    /// unchanged: the factory still exists before any real negotiation.
+    private lazy var factory: RTCPeerConnectionFactory = {
+        // SSL and codec subsystems are process-wide; initialize once,
+        // immediately before the first native factory build.
+        Self.initializeWebRTC()
+        // nil factories: DataChannel-only — no video codec work needed.
+        return RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
+    }()
     private var peerConnection: RTCPeerConnection?
     private var dataChannel: RTCDataChannel?
     private let delegate: PeerConnectionDelegate
@@ -59,17 +83,16 @@ public actor WebRTCHostAgent {
         trustedPeerStore: TrustedPeerStore,
         streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
         panesStateSubscribe: @escaping PanesStateChannelHandler.Subscribe,
-        paneControlMutator: @escaping PaneControlChannelHandler.Mutator
+        paneControlMutator: @escaping PaneControlChannelHandler.Mutator,
+        displayOwnershipStore: SessionDisplayOwnershipStore
     ) {
-        // SSL and codec subsystems are process-wide; initialize once.
-        Self.initializeWebRTC()
         self.hostKey = hostKey
         self.trustedPeerStore = trustedPeerStore
         self.streamFactory = streamFactory
         self.panesStateSubscribe = panesStateSubscribe
         self.paneControlMutator = paneControlMutator
-        // nil factories: DataChannel-only — no video codec work needed.
-        self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
+        self.displayOwnershipStore = displayOwnershipStore
+        self.displayOwnershipBroadcaster = DisplayOwnershipBroadcaster(store: displayOwnershipStore)
         self.delegate = PeerConnectionDelegate()
         self.dataChannelDelegate = DataChannelDelegate()
     }
@@ -90,6 +113,16 @@ public actor WebRTCHostAgent {
     /// split and the same "wire before signaling" ordering requirement.
     public func setPaneControlMutator(_ mutator: @escaping PaneControlChannelHandler.Mutator) {
         self.paneControlMutator = mutator
+    }
+
+    /// Test-only seam mirroring `acceptOffer`'s busy-guard precondition
+    /// surface (`state == .idle || state == .closed`), so a test can put
+    /// the agent into `.answering` / `.connected` and exercise the guard
+    /// without driving any native WebRTC negotiation to get there — see
+    /// `SignalingHandlerOutcomeTests.busyOfferDoesNotTearDownActiveConnection`.
+    /// `internal` so `@testable import GrafttyHostAgent` can reach it.
+    internal func setStateForTesting(_ newState: State) {
+        state = newState
     }
 
     /// Accept an incoming offer and return the answer.
@@ -241,12 +274,21 @@ public actor WebRTCHostAgent {
         let factory = streamFactory
         let panesStateSubscribe = self.panesStateSubscribe
         let paneControlMutator = self.paneControlMutator
+        let ownershipStore = self.displayOwnershipStore
+        let ownershipBroadcaster = self.displayOwnershipBroadcaster
+        // REMOTE-9.1: NIOSSH authenticates the connection before any
+        // channel can open, so `onAuthenticated` (called synchronously
+        // inside `SSHUserAuthDelegate.requestReceived`, before the
+        // success outcome is returned) always populates this box before
+        // `inboundChildChannelInitializer` runs for the first channel.
+        let peerBox = AuthenticatedPeerBox()
         do {
             try await transport.eventLoop.submit { [hostKey, trustedPeerStore] in
                 let handler = SSHServerSetup.makeHandler(
                     hostKey: hostKey,
                     trustedPeerStore: trustedPeerStore,
                     allocator: transport.channel.allocator,
+                    onAuthenticated: { deviceID in peerBox.deviceID = deviceID },
                     inboundChildChannelInitializer: { child, channelType in
                         guard case .session = channelType else {
                             return child.eventLoop.makeFailedFuture(WebRTCHostAgentError.unsupportedChannelType)
@@ -255,7 +297,10 @@ public actor WebRTCHostAgent {
                             let dispatcher = SubsystemDispatcher(
                                 streamFactory: factory,
                                 panesStateSubscribe: panesStateSubscribe,
-                                paneControlMutator: paneControlMutator
+                                paneControlMutator: paneControlMutator,
+                                ownershipStore: ownershipStore,
+                                ownershipBroadcaster: ownershipBroadcaster,
+                                deviceIDProvider: { peerBox.deviceID }
                             )
                             try child.pipeline.syncOperations.addHandler(dispatcher)
                         }
@@ -361,6 +406,22 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate,
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
         onDataChannel?(dataChannel)
+    }
+}
+
+/// Thread-safe box holding the `RemoteDeviceID` of the peer that
+/// completed SSH userauth on this connection. One instance per
+/// `installSSHHandler` call (i.e. per data channel / SSH connection);
+/// `SSHUserAuthDelegate.onAuthenticated` sets `deviceID` synchronously
+/// during userauth, and `SubsystemDispatcher`'s `deviceIDProvider`
+/// reads it once per child channel thereafter.
+private final class AuthenticatedPeerBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _deviceID: RemoteDeviceID?
+
+    var deviceID: RemoteDeviceID? {
+        get { lock.lock(); defer { lock.unlock() }; return _deviceID }
+        set { lock.lock(); defer { lock.unlock() }; _deviceID = newValue }
     }
 }
 
