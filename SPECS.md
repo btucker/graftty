@@ -1830,6 +1830,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **CLI-1.1** When a subprocess pipe's read fd is closed out from under the in-flight readability handler (process/pipe teardown after a timeout SIGTERM, where the per-stream EOF wait lapsed under load), the application shall treat the read as EOF rather than crash. The legacy `NSFileHandle.availableData` raises an *uncatchable* `NSFileHandleOperationException` ("Bad file descriptor") on a closed fd, SIGABRT-ing the whole process; the crash-safe drain returns `nil`.
 
+## FLOW — FLOW
+
+### FLOW-1.x
+
+**FLOW-1.1** When `graftty flow publish` receives a version-1 recommendation envelope with valid primary/list/action fields, the application shall decode and preserve it as Flow State's latest recommendation.
+
+**FLOW-1.2** If a Flow State recommendation envelope contains an unknown enum value in any rendered or executable field, the application shall reject the publish rather than silently render incompatible state.
+
+**FLOW-1.3** When Flow State stores a recommendation, summary, note, or snooze, the application shall persist it under the Flow State root and load it after store reinitialization.
+
+**FLOW-1.4** When a Flow State recommendation object contains unknown object fields, the application shall preserve those fields when storing and re-emitting the recommendation while ignoring them for v1 rendering.
+
+**FLOW-1.5** Flow State shall reject recommendation envelopes with unsupported schema versions, missing required envelope fields, missing required primary fields, invalid action kinds, invalid action payloads, or unknown rendered list enum values.
+
+**FLOW-1.6** Flow State shall normalize omitted recommendation lists to empty arrays and default omitted resume-card stale state to false.
+
 ## MEM — MEM
 
 ### MEM-1.x
