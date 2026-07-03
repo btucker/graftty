@@ -2369,6 +2369,8 @@ struct GrafttyApp: App {
                 appState: appState.wrappedValue,
                 store: flowStateStore,
                 activityStore: flowStateActivityStore,
+                teamInbox: teamInbox,
+                teamEventDispatcher: teamEventDispatcher,
                 statsStore: statsStore,
                 prStatusStore: prStatusStore,
                 claudeSessionRegistry: claudeSessionRegistry,

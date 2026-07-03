@@ -1896,11 +1896,27 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **FLOW-4.12** Flow State app request dispatch shall use an injected status provider.
 
-**FLOW-4.13** Until the Task 5 action executor is wired, Flow State app request dispatch shall return an explicit error for request-status instead of leaving the socket request unanswered.
-
 **FLOW-4.14** Flow State activity reads shall ignore corrupt JSONL rows so one partial row does not erase recent valid activity.
 
 **FLOW-4.15** Valid Flow State publish output using v1 estimated-effort symbols shall be accepted and persisted.") func validPublishAcceptsAllEstimatedEffortSymbols() throws { let root = try temporaryDirectory() let store = FlowStateStore(rootDirectory: root) let handler = FlowStateRequestHandler( store: store, activityStore: FlowStateActivityStore(rootDirectory: root), appState: AppState(), now: { Date(timeIntervalSince1970: 100) } ) let valid =
+
+### FLOW-5.x
+
+**FLOW-5.1** Flow State shall request a recommendation refresh on view open, selected-worktree stability, attention events after a stable focus block, and a conservative background interval.
+
+**FLOW-5.2** Flow State shall not ask the same worktree agent for status more than once during the configured cooldown unless the user explicitly requests refresh.
+
+**FLOW-5.3** Flow State shall autonomously execute only policy-allowed team status requests and shall record skipped or confirmation-required actions as activity.
+
+**FLOW-5.4** When Flow State permission mode is Manual Only, the application shall not execute autonomous status requests and shall record them as requiring confirmation.
+
+**FLOW-5.5** `graftty flow request-status` shall construct the fixed status-request body internally, enforce cooldowns for autonomous requests, and record normal skips without throwing.
+
+**FLOW-5.6** Flow State app request dispatch shall resolve request-status worktree refs to team members, send the fixed status request through the team inbox, and return ok for normal delivery.
+
+**FLOW-5.7** Flow State app request dispatch shall record no-team request-status skips as activity and return ok without throwing for normal skips.
+
+**FLOW-5.8** After accepting a valid Flow State publish, app request dispatch shall execute policy-allowed autonomous status-request actions through the team inbox.
 
 ## MEM — MEM
 

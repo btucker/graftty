@@ -134,6 +134,63 @@ struct FlowStateAppRequestDispatchTests {
         }
     }
 
+    // @spec FLOW-5.8: After accepting a valid Flow State publish, app request dispatch shall execute policy-allowed autonomous status-request actions through the team inbox.
+    @Test("Valid publish executes autonomous status request action")
+    func validPublishExecutesAutonomousStatusRequestAction() throws {
+        UserDefaults.standard.set(FlowStatePermissionMode.conservative.rawValue, forKey: SettingsKeys.flowStatePermissionMode)
+        defer { UserDefaults.standard.removeObject(forKey: SettingsKeys.flowStatePermissionMode) }
+
+        let root = try temporaryDirectory()
+        let inbox = TeamInbox(rootDirectory: root, idGenerator: { "flow-publish-1" }, now: { Date(timeIntervalSince1970: 100) })
+        let dispatcher = TeamEventDispatcher(
+            inbox: inbox,
+            preferencesProvider: { TeamEventRoutingPreferences() },
+            templateProvider: { "" }
+        )
+        let lead = WorktreeEntry(path: "/repo", branch: "main", state: .running)
+        let feature = WorktreeEntry(path: "/repo/.worktrees/feature", branch: "feature", state: .running)
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [lead, feature])
+        let worktreeRef = FlowWorktreeIdentity.ref(
+            repoDisplayName: repo.displayName,
+            repoPath: repo.path,
+            worktreePath: feature.path,
+            branch: feature.branch
+        )
+        let publish = """
+        {
+          "schemaVersion": 1,
+          "generatedAt": "2026-07-03T19:00:00Z",
+          "primary": {"intent": "none", "title": "None", "reason": "Idle", "confidence": "low"},
+          "proposedActions": [{
+            "id": "ask-feature",
+            "kind": "team_status_request",
+            "target": "\(worktreeRef)",
+            "body": "\(FlowStateActionPolicy.statusRequestTemplate)",
+            "requiresConfirmation": false
+          }]
+        }
+        """
+        let activityStore = FlowStateActivityStore(rootDirectory: root)
+
+        let response = FlowStateAppRequestDispatcher.handle(
+            .flowPublish(rawJSON: publish),
+            appState: AppState(repos: [repo]),
+            store: FlowStateStore(rootDirectory: root),
+            activityStore: activityStore,
+            teamInbox: inbox,
+            teamEventDispatcher: dispatcher,
+            teamsEnabled: true,
+            now: { Date(timeIntervalSince1970: 100) }
+        )
+
+        #expect(response == .ok)
+        let messages = try inbox.messages(teamID: repo.path)
+        #expect(messages.count == 1)
+        #expect(messages.first?.to.member == "feature")
+        #expect(messages.first?.body == FlowStateActionPolicy.statusRequestTemplate)
+        #expect(try activityStore.recent(limit: 10).contains { $0.kind == .actionExecuted })
+    }
+
     @Test("@spec FLOW-4.12: Flow State app request dispatch shall use an injected status provider.")
     func flowStatusUsesInjectedProvider() throws {
         let response = FlowStateAppRequestDispatcher.handle(
@@ -147,20 +204,77 @@ struct FlowStateAppRequestDispatchTests {
         #expect(response == .flowStatus(FlowStatus(enabled: true, running: true, message: "Running")))
     }
 
-    @Test("@spec FLOW-4.13: Until the Task 5 action executor is wired, Flow State app request dispatch shall return an explicit error for request-status instead of leaving the socket request unanswered.")
-    func requestStatusReturnsExplicitInterimError() throws {
+    @Test("@spec FLOW-5.6: Flow State app request dispatch shall resolve request-status worktree refs to team members, send the fixed status request through the team inbox, and return ok for normal delivery.")
+    func requestStatusResolvesWorktreeRefAndSendsTeamInboxMessage() throws {
+        UserDefaults.standard.set(FlowStatePermissionMode.conservative.rawValue, forKey: SettingsKeys.flowStatePermissionMode)
+        defer { UserDefaults.standard.removeObject(forKey: SettingsKeys.flowStatePermissionMode) }
+
+        let root = try temporaryDirectory()
+        let inbox = TeamInbox(rootDirectory: root, idGenerator: { "flow-1" }, now: { Date(timeIntervalSince1970: 100) })
+        let dispatcher = TeamEventDispatcher(
+            inbox: inbox,
+            preferencesProvider: { TeamEventRoutingPreferences() },
+            templateProvider: { "" }
+        )
+        let lead = WorktreeEntry(path: "/repo", branch: "main", state: .running)
+        let feature = WorktreeEntry(path: "/repo/.worktrees/feature", branch: "feature", state: .running)
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [lead, feature])
+        let worktreeRef = FlowWorktreeIdentity.ref(
+            repoDisplayName: repo.displayName,
+            repoPath: repo.path,
+            worktreePath: feature.path,
+            branch: feature.branch
+        )
+        let activityStore = FlowStateActivityStore(rootDirectory: root)
+
         let response = FlowStateAppRequestDispatcher.handle(
-            .flowRequestStatus(worktreeRef: "repo:feature", explicit: false),
-            appState: AppState(),
+            .flowRequestStatus(worktreeRef: worktreeRef, explicit: false),
+            appState: AppState(repos: [repo]),
             store: FlowStateStore(rootDirectory: try temporaryDirectory()),
-            activityStore: FlowStateActivityStore(rootDirectory: try temporaryDirectory())
+            activityStore: activityStore,
+            teamInbox: inbox,
+            teamEventDispatcher: dispatcher,
+            teamsEnabled: true,
+            now: { Date(timeIntervalSince1970: 100) }
         )
 
-        if case .error(let message) = response {
-            #expect(message.contains("action executor"))
-        } else {
-            Issue.record("Expected explicit request-status error")
-        }
+        #expect(response == .ok)
+        let messages = try inbox.messages(teamID: repo.path)
+        #expect(messages.count == 1)
+        #expect(messages.first?.from.member == "main")
+        #expect(messages.first?.to.member == "feature")
+        #expect(messages.first?.body == FlowStateActionPolicy.statusRequestTemplate)
+        #expect(try activityStore.recent(limit: 10).contains { $0.kind == .statusRequestSent })
+    }
+
+    @Test("@spec FLOW-5.7: Flow State app request dispatch shall record no-team request-status skips as activity and return ok without throwing for normal skips.")
+    func requestStatusWithoutTeamRecordsSkipAndReturnsOK() throws {
+        let root = try temporaryDirectory()
+        let inbox = TeamInbox(rootDirectory: root)
+        let dispatcher = TeamEventDispatcher(
+            inbox: inbox,
+            preferencesProvider: { TeamEventRoutingPreferences() },
+            templateProvider: { "" }
+        )
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [
+            WorktreeEntry(path: "/repo", branch: "main", state: .running)
+        ])
+        let activityStore = FlowStateActivityStore(rootDirectory: root)
+
+        let response = FlowStateAppRequestDispatcher.handle(
+            .flowRequestStatus(worktreeRef: "repo:missing", explicit: false),
+            appState: AppState(repos: [repo]),
+            store: FlowStateStore(rootDirectory: try temporaryDirectory()),
+            activityStore: activityStore,
+            teamInbox: inbox,
+            teamEventDispatcher: dispatcher,
+            teamsEnabled: true,
+            now: { Date(timeIntervalSince1970: 100) }
+        )
+
+        #expect(response == .ok)
+        #expect(try inbox.messages(teamID: repo.path).isEmpty)
+        #expect(try activityStore.recent(limit: 10).contains { $0.kind == .statusRequestSkipped })
     }
 
     private func waitUntil(

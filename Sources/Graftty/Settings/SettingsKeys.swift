@@ -8,6 +8,7 @@ enum SettingsKeys {
     static let teamEventRoutingPreferences = "teamEventRoutingPreferences"
     static let teamSessionPrompt         = "teamSessionPrompt"
     static let teamPrompt                = "teamPrompt"
+    static let flowStatePermissionMode   = "flowStatePermissionMode"
     static let defaultCommand            = "defaultCommand"
     // Editor keys are owned by GrafttyKit (so the resolver and the UI never drift).
     static let editorKind                = EditorPreference.Keys.kind

@@ -8,6 +8,7 @@ public struct FlowStateActivity: Codable, Sendable, Equatable {
         case statusRequestSkipped
         case actionRequiresConfirmation
         case actionExecuted
+        case actionSkipped
     }
 
     public let createdAt: Date
