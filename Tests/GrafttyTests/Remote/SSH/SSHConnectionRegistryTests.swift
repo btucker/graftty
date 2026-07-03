@@ -169,6 +169,10 @@ struct SSHConnectionRegistryTests {
     /// write the new entry anyway, resurrecting a device an admin just
     /// revoked, with a close callback that would never fire again.
     ///
+    /// Regression guard protecting REMOTE-3.1's revocation guarantee
+    /// against a register/revoke race — not a distinct requirement of its
+    /// own.
+    ///
     /// `Gate` pins the interleaving deterministically: connection A's close
     /// closure parks on `gate.wait()`, so `register`'s `await previous
     /// .close()` (replacing A with B) is suspended exactly at the point
@@ -176,11 +180,7 @@ struct SSHConnectionRegistryTests {
     /// suspension has actually happened — no `Task.yield()` guessing —
     /// before `revoke` is issued and the gate is opened to let A's close
     /// (and therefore B's registration) finish.
-    @Test("""
-    @spec REMOTE-3.4: When a revoke for a device lands while `register` is \
-    still awaiting the prior connection's teardown for that same device, \
-    the application shall not resurrect the device with the new registration.
-    """)
+    @Test
     func revokeDuringRegisterReplaceAwaitDoesNotResurrectDevice() async {
         let registry = SSHConnectionRegistry()
         let device = RemoteDeviceID.generate()

@@ -40,22 +40,7 @@ struct SSHRevocationCascadeTests {
         let clientKey = Curve25519.Signing.PrivateKey()
 
         let store = TrustedPeerStore(directory: Self.tempDir())
-        try store.add(
-            TrustedPeer(
-                id: RemoteDeviceID.generate(),
-                kind: .ipad,
-                publicKey: try RemoteIdentityPublicKey(rawRepresentation: clientKey.publicKey.rawRepresentation),
-                displayName: "test",
-                capabilities: PairedDeviceCapabilities(
-                    terminalControl: .allowed,
-                    portTunnel: .disabled,
-                    screenView: .disabled,
-                    screenControl: .disabled
-                ),
-                pairedAt: Date(),
-                lastSeenAt: nil
-            )
-        )
+        try store.add(SSHUserAuthTestSupport.makePeer(key: clientKey, kind: .ipad))
 
         let loop = EmbeddedEventLoop()
         defer { try? loop.syncShutdownGracefully() }
@@ -100,7 +85,7 @@ struct SSHRevocationCascadeTests {
         try client.connect(to: SocketAddress(unixDomainSocketPath: "/fake")).wait()
         try server.connect(to: SocketAddress(unixDomainSocketPath: "/fake")).wait()
 
-        try Self.interactInMemory(loop: loop, client: client, server: server)
+        try SSHUserAuthTestSupport.interactInMemory(loop: loop, client: client, server: server)
 
         // Open a session child channel from the client and pump until
         // the server's `inboundChildChannelInitializer` has run.
@@ -113,7 +98,7 @@ struct SSHRevocationCascadeTests {
             clientChild = channel
             return channel.eventLoop.makeSucceededVoidFuture()
         }
-        try Self.interactInMemory(loop: loop, client: client, server: server)
+        try SSHUserAuthTestSupport.interactInMemory(loop: loop, client: client, server: server)
 
         let serverChild = try #require(serverChildBox.channel, "server never opened the session child channel")
         #expect(clientChild?.isActive == true)
@@ -157,22 +142,7 @@ struct SSHRevocationCascadeTests {
         let peerID = RemoteDeviceID.generate()
 
         let store = TrustedPeerStore(directory: Self.tempDir())
-        try store.add(
-            TrustedPeer(
-                id: peerID,
-                kind: .ipad,
-                publicKey: try RemoteIdentityPublicKey(rawRepresentation: clientKey.publicKey.rawRepresentation),
-                displayName: "test",
-                capabilities: PairedDeviceCapabilities(
-                    terminalControl: .allowed,
-                    portTunnel: .disabled,
-                    screenView: .disabled,
-                    screenControl: .disabled
-                ),
-                pairedAt: Date(),
-                lastSeenAt: nil
-            )
-        )
+        try store.add(SSHUserAuthTestSupport.makePeer(id: peerID, key: clientKey, kind: .ipad))
 
         let loop = EmbeddedEventLoop()
         // `syncShutdownGracefully()` is unavailable in an async context
@@ -216,7 +186,7 @@ struct SSHRevocationCascadeTests {
 
         try await client.connect(to: SocketAddress(unixDomainSocketPath: "/fake")).get()
         try await server.connect(to: SocketAddress(unixDomainSocketPath: "/fake")).get()
-        try Self.interactInMemory(loop: loop, client: client, server: server)
+        try SSHUserAuthTestSupport.interactInMemory(loop: loop, client: client, server: server)
 
         var clientChild: Channel?
         let clientSSHHandler = try client.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
@@ -227,7 +197,7 @@ struct SSHRevocationCascadeTests {
             clientChild = channel
             return channel.eventLoop.makeSucceededVoidFuture()
         }
-        try Self.interactInMemory(loop: loop, client: client, server: server)
+        try SSHUserAuthTestSupport.interactInMemory(loop: loop, client: client, server: server)
 
         let serverChild = try #require(serverChildBox.channel, "server never opened the session child channel")
         let deviceID = try #require(authenticatedDeviceIDBox.value, "userauth never authenticated the peer")
@@ -257,7 +227,7 @@ struct SSHRevocationCascadeTests {
         // untrusted) fingerprint must fail. `SSHUserAuthDelegate` enforces
         // this by exclusion — a peer absent from `TrustedPeerStore` cannot
         // authenticate, so it cannot open any future channel either.
-        let outcome = try Self.runUserAuth(key: clientKey, store: store, loop: loop)
+        let outcome = try SSHUserAuthTestSupport.runUserAuth(key: clientKey, store: store, loop: loop)
         guard case .failure = outcome else {
             Issue.record("expected revoked peer's userauth to fail, got \(outcome)")
             return
@@ -287,22 +257,7 @@ struct SSHRevocationCascadeTests {
         let peerID = RemoteDeviceID.generate()
 
         let store = TrustedPeerStore(directory: Self.tempDir())
-        try store.add(
-            TrustedPeer(
-                id: peerID,
-                kind: .ipad,
-                publicKey: try RemoteIdentityPublicKey(rawRepresentation: clientKey.publicKey.rawRepresentation),
-                displayName: "test",
-                capabilities: PairedDeviceCapabilities(
-                    terminalControl: .allowed,
-                    portTunnel: .disabled,
-                    screenView: .disabled,
-                    screenControl: .disabled
-                ),
-                pairedAt: Date(),
-                lastSeenAt: nil
-            )
-        )
+        try store.add(SSHUserAuthTestSupport.makePeer(id: peerID, key: clientKey, kind: .ipad))
 
         let loop = EmbeddedEventLoop()
         // See `revokedPeerChannelsCloseAndFutureAttachRejected` above for
@@ -361,7 +316,7 @@ struct SSHRevocationCascadeTests {
 
         try await client.connect(to: SocketAddress(unixDomainSocketPath: "/fake")).get()
         try await server.connect(to: SocketAddress(unixDomainSocketPath: "/fake")).get()
-        try Self.interactInMemory(loop: loop, client: client, server: server)
+        try SSHUserAuthTestSupport.interactInMemory(loop: loop, client: client, server: server)
 
         var clientChild: Channel?
         let clientSSHHandler = try client.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
@@ -372,7 +327,7 @@ struct SSHRevocationCascadeTests {
             clientChild = channel
             return channel.eventLoop.makeSucceededVoidFuture()
         }
-        try Self.interactInMemory(loop: loop, client: client, server: server)
+        try SSHUserAuthTestSupport.interactInMemory(loop: loop, client: client, server: server)
 
         let serverChild = try #require(serverChildBox.channel, "server never opened the session child channel")
         let deviceID = try #require(authenticatedDeviceIDBox.value, "userauth never authenticated the peer")
@@ -404,63 +359,15 @@ struct SSHRevocationCascadeTests {
 
         #expect(serverChild.isActive == false, "revocation must close the peer's open pane_control channel")
 
-        let outcome = try Self.runUserAuth(key: clientKey, store: store, loop: loop)
+        let outcome = try SSHUserAuthTestSupport.runUserAuth(key: clientKey, store: store, loop: loop)
         guard case .failure = outcome else {
             Issue.record("expected revoked peer's userauth to fail, got \(outcome)")
             return
         }
     }
 
-    /// Mirrors `SSHUserAuthCapabilityTests.runUserAuth` (an `XCTestCase`
-    /// in a different file/framework, so not directly callable from here):
-    /// drives a single userauth roundtrip against a real
-    /// `SSHUserAuthDelegate` and returns the outcome. `requestReceived`
-    /// resolves its promise synchronously (no channel I/O), so `wait()`
-    /// returns immediately without blocking any event loop thread.
-    private static func runUserAuth(
-        key: Curve25519.Signing.PrivateKey,
-        store: TrustedPeerStore,
-        loop: EmbeddedEventLoop
-    ) throws -> NIOSSHUserAuthenticationOutcome {
-        let delegate = SSHUserAuthDelegate(store: store)
-        let publicKey = NIOSSHPrivateKey(ed25519Key: key).publicKey
-        let request = NIOSSHUserAuthenticationRequest(
-            username: "graftty",
-            serviceName: "ssh-connection",
-            request: .publicKey(.init(publicKey: publicKey))
-        )
-        let promise = loop.makePromise(of: NIOSSHUserAuthenticationOutcome.self)
-        delegate.requestReceived(request: request, responsePromise: promise)
-        return try promise.futureResult.wait()
-    }
-
     private static func tempDir() -> URL {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("graftty-revocation-cascade-\(UUID().uuidString)")
-        try! FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
-    }
-
-    /// Hand-pumps outbound bytes between two `EmbeddedChannel`s sharing
-    /// one `EmbeddedEventLoop` until neither side has anything left to
-    /// send — the same technique swift-nio-ssh's own
-    /// `BackToBackEmbeddedChannel.interactInMemory()` uses to drive a
-    /// real SSH handshake between two in-process endpoints without any
-    /// real socket or (in our case) any WebRTC data channel.
-    private static func interactInMemory(loop: EmbeddedEventLoop, client: EmbeddedChannel, server: EmbeddedChannel) throws {
-        var workToDo = true
-        while workToDo {
-            workToDo = false
-            loop.run()
-            if let clientMsg = try client.readOutbound(as: IOData.self) {
-                try server.writeInbound(clientMsg)
-                workToDo = true
-            }
-            if let serverMsg = try server.readOutbound(as: IOData.self) {
-                try client.writeInbound(serverMsg)
-                workToDo = true
-            }
-        }
+        SSHUserAuthTestSupport.tempDir(prefix: "graftty-revocation-cascade")
     }
 }
 

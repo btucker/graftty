@@ -104,6 +104,14 @@ struct PairedDevicesSection: View {
     /// disables itself for the duration of the call.
     @State private var isStartingPairing = false
 
+    /// Guards against a double-tap on a single row's Remove button firing
+    /// two overlapping `performRemove` calls: `remove(_:)` spawns a `Task`
+    /// with an `await revoke` suspension, and `TrustedPeerStore.remove` is
+    /// not idempotent (a second call for the same id throws `.notFound`),
+    /// which without this guard surfaces as a false "Could not remove"
+    /// error flash on the second tap.
+    @State private var removingPeerIDs: Set<RemoteDeviceID> = []
+
     /// Local UI-only override: once true, the idle/list branch renders
     /// even though `coordinator.state` is still `.confirmed`. The
     /// coordinator never resets `state` back to `.idle` after a terminal
@@ -191,6 +199,7 @@ struct PairedDevicesSection: View {
             Spacer()
             Button("Remove") { remove(peer) }
                 .buttonStyle(.borderless)
+                .disabled(removingPeerIDs.contains(peer.id))
         }
         .padding(.vertical, 2)
     }
@@ -308,6 +317,8 @@ struct PairedDevicesSection: View {
     }
 
     private func remove(_ peer: TrustedPeer) {
+        guard !removingPeerIDs.contains(peer.id) else { return }
+        removingPeerIDs.insert(peer.id)
         Task {
             let error = await Self.performRemove(
                 peerID: peer.id,
@@ -317,8 +328,19 @@ struct PairedDevicesSection: View {
             if let error {
                 listError = "Could not remove device: \(error)"
             } else {
+                // Drop the removed peer locally first: `refreshPeers()`
+                // re-reads `trustedPeerStore.list()` below, but if that
+                // read throws (corrupt/racing file), its `catch` only sets
+                // `listError` and leaves `peers` untouched — without this,
+                // the just-removed-and-revoked device would keep rendering
+                // as live. Removing it here means the UI reflects the
+                // successful removal regardless of whether the reload
+                // succeeds; `refreshPeers()` then reconciles the rest of
+                // the list on success.
+                peers.removeAll { $0.id == peer.id }
                 refreshPeers()
             }
+            removingPeerIDs.remove(peer.id)
         }
     }
 

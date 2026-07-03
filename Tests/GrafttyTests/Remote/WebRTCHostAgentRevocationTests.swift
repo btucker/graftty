@@ -42,12 +42,10 @@ struct WebRTCHostAgentRevocationTests {
         #expect(await agent.shouldCloseAfterRegister(deviceID: deviceID) == false)
     }
 
-    @Test("""
-    @spec REMOTE-3.5: If a trusted peer is revoked while the host is still \
-    completing registration of that peer's newly authenticated connection, \
-    then the application shall close the connection rather than leave it \
-    live for a peer no longer in the trust store.
-    """)
+    /// Regression guard protecting REMOTE-3.1's revocation guarantee
+    /// against the register Task-hop race — not a distinct requirement of
+    /// its own.
+    @Test
     func shouldCloseWhenPeerWasRevokedDuringTheRegisterTaskHop() async throws {
         let store = TrustedPeerStore(directory: Self.tempDir())
         let deviceID = RemoteDeviceID.generate()

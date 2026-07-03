@@ -58,8 +58,8 @@ final class SSHReconnectFreshAuthTests: XCTestCase {
         // exactly what `SSHServerSetup.makeHandler` builds for an inbound
         // connection.
         let firstAuthenticated = AuthenticatedIDBox()
-        let firstOutcome = try runUserAuth(key: key, store: store) { firstAuthenticated.set($0) }
-        XCTAssertTrue(isSuccess(firstOutcome), "attach #1 must authenticate")
+        let firstOutcome = try SSHUserAuthTestSupport.runUserAuth(key: key, store: store) { firstAuthenticated.set($0) }
+        XCTAssertTrue(SSHUserAuthTestSupport.isSuccess(firstOutcome), "attach #1 must authenticate")
         XCTAssertEqual(firstAuthenticated.value, peer.id, "onAuthenticated must fire for attach #1")
 
         // Revoke trust between attaches — the peer became untrusted while
@@ -74,9 +74,9 @@ final class SSHReconnectFreshAuthTests: XCTestCase {
         // brand-new WebRTC data channel standing up a brand-new
         // NIOSSHHandler + delegate.
         let secondAuthenticated = AuthenticatedIDBox()
-        let secondOutcome = try runUserAuth(key: key, store: store) { secondAuthenticated.set($0) }
+        let secondOutcome = try SSHUserAuthTestSupport.runUserAuth(key: key, store: store) { secondAuthenticated.set($0) }
         XCTAssertTrue(
-            isFailure(secondOutcome),
+            SSHUserAuthTestSupport.isFailure(secondOutcome),
             "reconnect must require its own fresh authenticated attach; it must not honor attach #1's now-stale success"
         )
         XCTAssertNil(
@@ -97,86 +97,28 @@ final class SSHReconnectFreshAuthTests: XCTestCase {
         try store.add(peer)
 
         let firstCallCount = CallCounterBox()
-        let firstOutcome = try runUserAuth(key: key, store: store) { _ in firstCallCount.increment() }
-        XCTAssertTrue(isSuccess(firstOutcome), "attach #1 must authenticate")
+        let firstOutcome = try SSHUserAuthTestSupport.runUserAuth(key: key, store: store) { _ in firstCallCount.increment() }
+        XCTAssertTrue(SSHUserAuthTestSupport.isSuccess(firstOutcome), "attach #1 must authenticate")
         XCTAssertEqual(firstCallCount.value, 1)
 
         // Reconnect: brand-new delegate + brand-new loop, trust unchanged.
         let secondCallCount = CallCounterBox()
-        let secondOutcome = try runUserAuth(key: key, store: store) { _ in secondCallCount.increment() }
-        XCTAssertTrue(isSuccess(secondOutcome), "reconnect with unchanged trust must still succeed on its own fresh handshake")
+        let secondOutcome = try SSHUserAuthTestSupport.runUserAuth(key: key, store: store) { _ in secondCallCount.increment() }
+        XCTAssertTrue(SSHUserAuthTestSupport.isSuccess(secondOutcome), "reconnect with unchanged trust must still succeed on its own fresh handshake")
         XCTAssertEqual(secondCallCount.value, 1, "attach #2's onAuthenticated must fire independently of attach #1's")
     }
 
     // MARK: - helpers
 
     private func makeStore() -> TrustedPeerStore {
-        TrustedPeerStore(directory: tempDir())
-    }
-
-    private func tempDir() -> URL {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("graftty-remote-2-1-reconnect-\(UUID().uuidString)")
-        try! FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+        SSHUserAuthTestSupport.makeStore(prefix: "graftty-remote-2-1-reconnect")
     }
 
     private func makePeer(
         key: Curve25519.Signing.PrivateKey,
         terminalControl: PairedDeviceCapabilities.TerminalControl
     ) -> TrustedPeer {
-        let publicKey = try! RemoteIdentityPublicKey(rawRepresentation: key.publicKey.rawRepresentation)
-        return TrustedPeer(
-            id: RemoteDeviceID(value: UUID().uuidString),
-            kind: .iphone,
-            publicKey: publicKey,
-            displayName: "test",
-            capabilities: PairedDeviceCapabilities(
-                terminalControl: terminalControl,
-                portTunnel: .disabled,
-                screenView: .disabled,
-                screenControl: .disabled
-            ),
-            pairedAt: Date(),
-            lastSeenAt: nil
-        )
-    }
-
-    /// Runs a single userauth roundtrip against a FRESH
-    /// `SSHUserAuthDelegate` on a FRESH `EmbeddedEventLoop` — i.e. one
-    /// "attach." Each call stands up entirely new delegate + loop
-    /// instances (never reused across calls in this file), mirroring how
-    /// `SSHServerSetup.makeHandler` builds a new `SSHUserAuthDelegate`
-    /// per inbound connection. `requestReceived` resolves its promise
-    /// synchronously (no channel I/O involved), so `wait()` returns
-    /// immediately without blocking any event-loop thread.
-    private func runUserAuth(
-        key: Curve25519.Signing.PrivateKey,
-        store: TrustedPeerStore,
-        onAuthenticated: @escaping @Sendable (RemoteDeviceID) -> Void = { _ in }
-    ) throws -> NIOSSHUserAuthenticationOutcome {
-        let loop = EmbeddedEventLoop()
-        defer { try! loop.syncShutdownGracefully() }
-        let delegate = SSHUserAuthDelegate(store: store, onAuthenticated: onAuthenticated)
-        let publicKey = NIOSSHPrivateKey(ed25519Key: key).publicKey
-        let request = NIOSSHUserAuthenticationRequest(
-            username: "graftty",
-            serviceName: "ssh-connection",
-            request: .publicKey(.init(publicKey: publicKey))
-        )
-        let promise = loop.makePromise(of: NIOSSHUserAuthenticationOutcome.self)
-        delegate.requestReceived(request: request, responsePromise: promise)
-        return try promise.futureResult.wait()
-    }
-
-    private func isSuccess(_ outcome: NIOSSHUserAuthenticationOutcome) -> Bool {
-        if case .success = outcome { return true }
-        return false
-    }
-
-    private func isFailure(_ outcome: NIOSSHUserAuthenticationOutcome) -> Bool {
-        if case .failure = outcome { return true }
-        return false
+        SSHUserAuthTestSupport.makePeer(key: key, terminalControl: terminalControl)
     }
 }
 
