@@ -1726,9 +1726,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
 
-**REMOTE-3.2** When a stale connection's fire-and-forget deregister arrives after a reconnect for the same peer has already replaced it with a fresh registration, the application shall ignore the stale deregister rather than removing the newer connection's live closer.
+**REMOTE-3.2** When a superseded SSH connection's teardown completes after a newer connection for the same peer has already registered, the host shall not remove the newer registration.
 
-**REMOTE-3.3** When a host operator removes a paired device from Settings, the application shall revoke that device's live SSH connection via `SSHConnectionRegistry` immediately, rather than waiting for its next userauth attempt to fail — and shall NOT revoke if the device could not be removed from the trust store.
+**REMOTE-3.3** When a host operator removes a paired device from Settings, the application shall close that device's live session immediately rather than waiting for its next attach attempt to fail, and shall not close any session if the device could not be removed from the trust store.
 
 ### REMOTE-4.x — Port Tunnels
 

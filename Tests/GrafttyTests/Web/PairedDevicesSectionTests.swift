@@ -159,10 +159,10 @@ private actor RevokeSpy {
 }
 
 /// @spec REMOTE-3.3: When a host operator removes a paired device from
-/// Settings, the application shall revoke that device's live SSH
-/// connection via `SSHConnectionRegistry` immediately, rather than
-/// waiting for its next userauth attempt to fail — and shall NOT revoke
-/// if the device could not be removed from the trust store.
+/// Settings, the application shall close that device's live session
+/// immediately rather than waiting for its next attach attempt to fail,
+/// and shall not close any session if the device could not be removed
+/// from the trust store.
 @Suite("PairedDevicesSection.performRemove Tests")
 struct PairedDevicesSectionPerformRemoveTests {
 

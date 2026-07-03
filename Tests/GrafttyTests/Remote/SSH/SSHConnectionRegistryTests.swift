@@ -73,10 +73,9 @@ struct SSHConnectionRegistryTests {
     /// the token it was handed at registration time is what makes A's late
     /// call a no-op instead.
     @Test("""
-    @spec REMOTE-3.2: When a stale connection's fire-and-forget deregister \
-    arrives after a reconnect for the same peer has already replaced it with \
-    a fresh registration, the application shall ignore the stale deregister \
-    rather than removing the newer connection's live closer.
+    @spec REMOTE-3.2: When a superseded SSH connection's teardown completes \
+    after a newer connection for the same peer has already registered, the \
+    host shall not remove the newer registration.
     """)
     func staleDeregisterAfterReconnectDoesNotWipeNewRegistration() async {
         let registry = SSHConnectionRegistry()
