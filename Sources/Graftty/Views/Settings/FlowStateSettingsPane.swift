@@ -41,7 +41,12 @@ struct FlowStateSettingsPane: View {
                     Text(reason)
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                    Button("Restart Flow State Agent", action: onConfirmRestart)
+                    HStack {
+                        Button("Restart Flow State Agent", action: onConfirmRestart)
+                        Button("Cancel Restart") {
+                            flowStateAgentController.cancelPendingRestart()
+                        }
+                    }
                 }
 
                 HStack {

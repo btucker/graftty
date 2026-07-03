@@ -32,6 +32,22 @@ struct FlowStateAgentControllerTests {
         #expect(controller.status.running)
     }
 
+    @Test("enabling Flow State through settings starts the persistent pane")
+    func settingsEnableStartsPane() throws {
+        let launcher = FakeFlowStateAgentLauncher()
+        let controller = makeController(enabled: false, launcher: launcher)
+
+        controller.settingsDidChange(
+            enabled: true,
+            runtime: .codex,
+            systemPrompt: "Flow prompt",
+            permissionMode: "conservative"
+        )
+
+        #expect(launcher.launches.count == 1)
+        #expect(controller.status.running)
+    }
+
     @Test("ensureRunning creates the Flow State workspace and writes the system prompt before launch")
     func ensureRunningWritesPromptFile() throws {
         let launcher = FakeFlowStateAgentLauncher()
@@ -97,6 +113,26 @@ struct FlowStateAgentControllerTests {
         #expect(launcher.launches.count == 2)
     }
 
+    @Test("cancelPendingRestart clears pending restart without restarting")
+    func cancelPendingRestartDoesNotRestart() throws {
+        let launcher = FakeFlowStateAgentLauncher()
+        let controller = makeController(enabled: true, launcher: launcher)
+        try controller.ensureRunning()
+
+        controller.settingsDidChange(
+            enabled: true,
+            runtime: .claude,
+            systemPrompt: "new prompt",
+            permissionMode: "manualOnly"
+        )
+
+        controller.cancelPendingRestart()
+
+        #expect(controller.pendingRestartReason == nil)
+        #expect(launcher.launches.count == 1)
+        #expect(controller.status.running)
+    }
+
     @Test("reverting running settings to the launched values clears pending restart")
     func revertedSettingsClearPendingRestart() throws {
         let launcher = FakeFlowStateAgentLauncher()
@@ -121,7 +157,25 @@ struct FlowStateAgentControllerTests {
         #expect(controller.pendingRestartReason == nil)
     }
 
-    @Test("requestRefresh injects graftty flow commands into the running pane")
+    @Test("notePaneClosed clears the live Flow State pane without destroying it again")
+    func notePaneClosedClearsLiveState() throws {
+        let launcher = FakeFlowStateAgentLauncher()
+        let controller = makeController(enabled: true, launcher: launcher)
+        try controller.ensureRunning()
+        let terminalID = try #require(controller.splitTree.allLeaves.first)
+
+        controller.notePaneClosed(terminalID)
+
+        #expect(launcher.destroyed.isEmpty)
+        #expect(controller.splitTree.root == nil)
+        #expect(controller.paneSessions.isEmpty)
+        #expect(!controller.status.running)
+
+        try controller.ensureRunning()
+        #expect(launcher.launches.count == 2)
+    }
+
+    @Test("requestRefresh injects the exact Flow State refresh instruction into the running pane")
     func requestRefreshTypesFlowCommandLine() throws {
         let launcher = FakeFlowStateAgentLauncher()
         let controller = makeController(enabled: true, launcher: launcher)
@@ -131,10 +185,7 @@ struct FlowStateAgentControllerTests {
 
         let typed = try #require(launcher.typedLines.first)
         #expect(typed.terminalID == controller.splitTree.allLeaves.first)
-        #expect(typed.text.contains("graftty flow context"))
-        #expect(typed.text.contains("graftty flow request-status"))
-        #expect(typed.text.contains("graftty flow publish --stdin"))
-        #expect(typed.text.hasSuffix("\r"))
+        #expect(typed.text == "Flow State refresh requested (manual refresh). Run graftty flow context; request needed agent status only with graftty flow request-status <worktreeRef>; then publish with graftty flow publish --stdin.\r")
     }
 
     private func makeController(

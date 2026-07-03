@@ -238,6 +238,11 @@ struct FlowStateView: View {
                     Button("Refresh", action: requestRefresh)
                     Button("Open Flow State Agent Pane", action: openAgentPane)
                     Button("Restart Agent", action: restartAgent)
+                    if agentController.pendingRestartReason != nil {
+                        Button("Cancel Restart") {
+                            agentController.cancelPendingRestart()
+                        }
+                    }
                 }
                 .buttonStyle(.bordered)
             }

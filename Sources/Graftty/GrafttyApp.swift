@@ -185,6 +185,7 @@ final class AppServices {
     var inputActivityRegistry: PaneInputActivityRegistry?
     var graceScheduler: EngagedGraceScheduler?
     var flowStateStatusProvider: (() -> FlowStatus)?
+    var mainWindowSelection: MainWindowSelection = .worktree(nil)
     /// Holds the `TeamInboxObserver` cancellables so the observers stay
     /// active for the lifetime of the app (one observer per team-ID started
     /// at launch for each known repo).
@@ -468,7 +469,8 @@ struct GrafttyApp: App {
                 remoteBranchStore: services.remoteBranchStore,
                 worktreeMonitor: services.worktreeMonitor,
                 teamEventDispatcher: services.teamEventDispatcher,
-                flowStateAgentController: services.flowStateAgentController
+                flowStateAgentController: services.flowStateAgentController,
+                onMainSelectionChange: { services.mainWindowSelection = $0 }
             )
                 .environmentObject(webController)
                 .environmentObject(updaterController)
@@ -749,6 +751,7 @@ struct GrafttyApp: App {
         }
 
         terminalManager.initialize()
+        services.flowStateAgentController.reconcileSettingsFromUserDefaults()
         AgentNotificationRouter.shared.install()
         AgentNotificationRouter.shared.onActivate = { [appState = $appState, tm = terminalManager] payload in
             Self.activateAgentStopNotification(
@@ -827,8 +830,12 @@ struct GrafttyApp: App {
         // Shell-exit (or libghostty-initiated close) → remove the pane from
         // the tree and free the surface. Same logic Cmd+W uses, but keyed
         // on an arbitrary terminalID rather than the currently-focused one.
-        terminalManager.onCloseRequest = { [appState = $appState, tm = terminalManager] terminalID in
+        terminalManager.onCloseRequest = { [appState = $appState, tm = terminalManager, flowStateAgentController = services.flowStateAgentController] terminalID in
             MainActor.assumeIsolated {
+                if flowStateAgentController.ownsPane(terminalID) {
+                    tm.destroySurface(terminalID: terminalID)
+                    return
+                }
                 switch paneCloseAction() {
                 case .closePane:
                     Self.closePane(
@@ -1315,7 +1322,8 @@ struct GrafttyApp: App {
         // without the registered process getting a chance to clean up.
         // input-stamp eviction stays on the same trigger so the per-pane
         // registries don't grow unbounded across the app's lifetime.
-        terminalManager.paneClosed = { [stateRegistry, inputRegistry, presenceStorage] paneSlotID, sessionName in
+        terminalManager.paneClosed = { [stateRegistry, inputRegistry, presenceStorage, flowStateAgentController = services.flowStateAgentController] paneSlotID, sessionName in
+            flowStateAgentController.notePaneClosed(paneSlotID)
             inputRegistry.removeStamp(paneID: paneSlotID.id)
             guard let sessionName else { return }
             for record in presenceIndex.records(forPaneSessionName: sessionName) {
@@ -3397,13 +3405,21 @@ struct GrafttyApp: App {
 
     /// The terminal currently holding focus in the selected worktree.
     private var focusedPaneSlotID: PaneSlotID? {
+        let selectedWorktreeFocusedPane: PaneSlotID?
         guard let path = appState.selectedWorktreePath else { return nil }
-        for repo in appState.repos {
-            for wt in repo.worktrees where wt.path == path && wt.state == .running {
-                return wt.firstPane
+        selectedWorktreeFocusedPane = {
+            for repo in appState.repos {
+                for wt in repo.worktrees where wt.path == path && wt.state == .running {
+                    return wt.firstPane
+                }
             }
-        }
-        return nil
+            return nil
+        }()
+        return MainWindowPaneCommandTarget.resolve(
+            selection: services.mainWindowSelection,
+            selectedWorktreeFocusedPane: selectedWorktreeFocusedPane,
+            flowStateFocusedPane: services.flowStateAgentController.focusedPaneSlotID
+        )
     }
 
     private func handleSplit(_ split: PaneSplit) {

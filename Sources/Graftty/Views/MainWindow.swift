@@ -42,6 +42,30 @@ struct MainWindowSelectionTransition: Equatable {
     }
 }
 
+enum MainWindowPaneCommandTarget {
+    static func resolve(
+        selection: MainWindowSelection,
+        selectedWorktreeFocusedPane: PaneSlotID?,
+        flowStateFocusedPane: PaneSlotID?
+    ) -> PaneSlotID? {
+        switch selection {
+        case .flowState:
+            return nil
+        case .worktree:
+            return selectedWorktreeFocusedPane
+        }
+    }
+}
+
+enum FlowStateViewOpenRefreshPolicy {
+    static func shouldRequestRefresh(
+        wasRunningBeforeOpen: Bool,
+        isRunningAfterOpen: Bool
+    ) -> Bool {
+        isRunningAfterOpen
+    }
+}
+
 private struct FlowStateViewTeamMessenger: FlowTeamMessaging {
     func sendStatusRequest(target: String, body: String) throws {
         throw FlowTeamMessagingError.skipped("Flow State status request from the view is unavailable until the agent lifecycle is wired.")
@@ -78,6 +102,7 @@ struct MainWindow: View {
     let worktreeMonitor: WorktreeMonitor
     let teamEventDispatcher: TeamEventDispatcher
     @ObservedObject var flowStateAgentController: FlowStateAgentController
+    var onMainSelectionChange: (MainWindowSelection) -> Void = { _ in }
 
     @EnvironmentObject private var updaterController: UpdaterController
 
@@ -255,6 +280,9 @@ struct MainWindow: View {
                 splitTreesByPath: appState.runningSplitTreesByPath()
             )
         }
+        .onChange(of: mainSelection, initial: true) { _, newSelection in
+            onMainSelectionChange(newSelection)
+        }
         // AGENT-3.4 resume rule runs at the model layer via
         // ClaudeSessionRegistry.onLivenessChange (wired in startup), so it
         // applies to the iPad/web snapshot and the window-closed case too —
@@ -336,6 +364,7 @@ struct MainWindow: View {
     /// `selectWorktree` sidebar clicks use, so surface show/hide and
     /// `acknowledgeAttention()` all fire identically.
     private var worktreeNavAction: ((Bool) -> Void)? {
+        guard mainSelection != .flowState else { return nil }
         // Enablement is direction-agnostic: `nextWorktreePath` returns nil in
         // exactly one case — 0/1 selectable worktrees — for both directions,
         // so probing `forward: true` correctly gates Next and Previous alike.
@@ -426,7 +455,12 @@ struct MainWindow: View {
         flowStateAgentController.reconcileSettingsFromUserDefaults()
         let wasRunning = flowStateAgentController.status.running
         try? flowStateAgentController.ensureRunning()
-        refreshFlowState(reason: wasRunning && flowStateAgentController.status.running ? "view open" : nil)
+        refreshFlowState(
+            reason: FlowStateViewOpenRefreshPolicy.shouldRequestRefresh(
+                wasRunningBeforeOpen: wasRunning,
+                isRunningAfterOpen: flowStateAgentController.status.running
+            ) ? "view open" : nil
+        )
     }
 
     private func openFlowStateAgentPane() {

@@ -15,6 +15,12 @@ struct FlowStateRuntimeCapabilities: Equatable {
     var claudeSupportsSystemPromptFile: Bool
 }
 
+struct FlowStateRuntimeLaunchResult: Equatable {
+    var commandText: String
+    var environment: [String: String]
+    var promptMode: FlowPromptMode
+}
+
 enum FlowStateRuntimeLaunchCommand {
     static func build(
         runtime: FlowStateRuntime,
@@ -26,30 +32,50 @@ enum FlowStateRuntimeLaunchCommand {
             codexSupportsSystemPromptConfig: false,
             claudeSupportsSystemPromptFile: true
         )
-    ) -> String {
+    ) -> FlowStateRuntimeLaunchResult {
         let workspace = shellQuote(workspaceURL.path)
         let socket = shellQuote(socketPath)
         let envPrefix = "GRAFTTY_SOCK=\(socket)"
+        let environment = ["GRAFTTY_SOCK": socketPath]
 
         switch runtime {
         case .codex:
             var parts = ["codex", "--cd", workspace]
+            let promptMode: FlowPromptMode
             if !capabilities.codexSupportsSystemPromptConfig {
                 parts.append(shellQuote(systemPrompt))
+                promptMode = .bootstrapPrompt
+            } else {
+                promptMode = .systemPrompt
             }
-            return "\(envPrefix) \(parts.joined(separator: " "))"
+            return FlowStateRuntimeLaunchResult(
+                commandText: "\(envPrefix) \(parts.joined(separator: " "))",
+                environment: environment,
+                promptMode: promptMode
+            )
 
         case .claude:
             var parts = ["claude"]
+            let promptMode: FlowPromptMode
             if capabilities.claudeSupportsSystemPromptFile {
                 parts.append("--system-prompt-file")
                 parts.append(shellQuote(promptFileURL.path))
+                promptMode = .systemPrompt
+            } else {
+                promptMode = .appendSystemPrompt
             }
             parts.append("--permission-mode")
             parts.append("manual")
             parts.append("--name")
             parts.append(shellQuote("Flow State"))
-            return "cd \(workspace) && \(envPrefix) \(parts.joined(separator: " "))"
+            if !capabilities.claudeSupportsSystemPromptFile {
+                parts.append(shellQuote(systemPrompt))
+            }
+            return FlowStateRuntimeLaunchResult(
+                commandText: "cd \(workspace) && \(envPrefix) \(parts.joined(separator: " "))",
+                environment: environment,
+                promptMode: promptMode
+            )
         }
     }
 
@@ -154,6 +180,7 @@ final class FlowStateAgentController: ObservableObject {
     private var liveTerminalID: PaneSlotID?
     private var livePaneSessionID: PaneSessionID?
     private var launchedSettings: FlowStateAgentSettings?
+    private var activePromptMode: FlowPromptMode = .unavailable
 
     init(
         launcher: any FlowStateAgentLaunching,
@@ -192,7 +219,7 @@ final class FlowStateAgentController: ObservableObject {
 
         let terminalID = PaneSlotID()
         let paneSessionID = PaneSessionID()
-        let command = FlowStateRuntimeLaunchCommand.build(
+        let launch = FlowStateRuntimeLaunchCommand.build(
             runtime: settings.runtime,
             workspaceURL: workspaceURL,
             promptFileURL: promptFileURL,
@@ -203,12 +230,13 @@ final class FlowStateAgentController: ObservableObject {
             terminalID: terminalID,
             paneSessionID: paneSessionID,
             worktreePath: workspaceURL.path,
-            extraInitialInput: command + "\r"
+            extraInitialInput: launch.commandText + "\r"
         )
         guard didLaunch else {
             status = FlowStatus(
                 enabled: settings.enabled,
                 running: false,
+                promptMode: .unavailable,
                 message: "Flow State agent pane could not start"
             )
             return
@@ -217,6 +245,7 @@ final class FlowStateAgentController: ObservableObject {
         liveTerminalID = terminalID
         livePaneSessionID = paneSessionID
         launchedSettings = settings
+        activePromptMode = launch.promptMode
         paneSessions = [terminalID: paneSessionID]
         splitTree = SplitTree(root: .leaf(terminalID))
         focusedPaneSlotID = terminalID
@@ -231,6 +260,7 @@ final class FlowStateAgentController: ObservableObject {
         liveTerminalID = nil
         livePaneSessionID = nil
         launchedSettings = nil
+        activePromptMode = .unavailable
         splitTree = SplitTree(root: nil)
         paneSessions = [:]
         focusedPaneSlotID = nil
@@ -267,6 +297,9 @@ final class FlowStateAgentController: ObservableObject {
             pendingRestartReason = previousLaunched == next
                 ? nil
                 : restartReason(from: previousLaunched, to: next)
+        } else if liveTerminalID == nil {
+            try? ensureRunning(settings: next)
+            return
         }
         updateStatus()
     }
@@ -288,21 +321,44 @@ final class FlowStateAgentController: ObservableObject {
         updateStatus()
     }
 
+    func cancelPendingRestart() {
+        pendingRestartReason = nil
+        updateStatus()
+    }
+
+    func ownsPane(_ terminalID: PaneSlotID) -> Bool {
+        liveTerminalID == terminalID
+    }
+
+    func notePaneClosed(_ terminalID: PaneSlotID) {
+        guard liveTerminalID == terminalID else { return }
+        liveTerminalID = nil
+        livePaneSessionID = nil
+        launchedSettings = nil
+        activePromptMode = .unavailable
+        splitTree = SplitTree(root: nil)
+        paneSessions = [:]
+        focusedPaneSlotID = nil
+        updateStatus()
+    }
+
     func requestRefresh(reason: String) {
         guard let terminalID = liveTerminalID else {
             status = FlowStatus(
                 enabled: settings.enabled,
                 running: false,
+                promptMode: .unavailable,
                 message: "Flow State agent is not running"
             )
             return
         }
 
-        let line = "Refresh requested by Graftty (\(reason)). Run `graftty flow context`, run `graftty flow request-status` if useful, then publish the updated recommendation with `graftty flow publish --stdin`."
+        let line = "Flow State refresh requested (\(reason)). Run graftty flow context; request needed agent status only with graftty flow request-status <worktreeRef>; then publish with graftty flow publish --stdin."
         launcher.typeText(line + "\r", into: terminalID, claimEngagement: false)
         status = FlowStatus(
             enabled: settings.enabled,
             running: true,
+            promptMode: activePromptMode,
             lastUpdatedAt: Date(),
             message: "Refresh requested"
         )
@@ -329,23 +385,25 @@ final class FlowStateAgentController: ObservableObject {
         status = Self.makeStatus(
             settings: settings,
             running: liveTerminalID != nil,
-            pendingRestartReason: pendingRestartReason
+            pendingRestartReason: pendingRestartReason,
+            promptMode: activePromptMode
         )
     }
 
     private static func makeStatus(
         settings: FlowStateAgentSettings,
         running: Bool,
-        pendingRestartReason: String?
+        pendingRestartReason: String?,
+        promptMode: FlowPromptMode = .unavailable
     ) -> FlowStatus {
         if !settings.enabled {
             return FlowStatus(enabled: false, running: false, message: "Flow State is off")
         }
         if let pendingRestartReason {
-            return FlowStatus(enabled: true, running: running, message: pendingRestartReason)
+            return FlowStatus(enabled: true, running: running, promptMode: promptMode, message: pendingRestartReason)
         }
         if running {
-            return FlowStatus(enabled: true, running: true, message: "Flow State agent running")
+            return FlowStatus(enabled: true, running: true, promptMode: promptMode, message: "Flow State agent running")
         }
         return FlowStatus(enabled: true, running: false, message: "Flow State is idle")
     }
