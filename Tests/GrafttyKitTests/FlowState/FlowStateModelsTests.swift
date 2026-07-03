@@ -77,6 +77,47 @@ struct FlowStateModelsTests {
         }
     }
 
+    @Test
+    func setupRecommendationIntentDecodes() throws {
+        let json = """
+        {
+          "schemaVersion": 1,
+          "generatedAt": "2026-07-03T19:00:00Z",
+          "primary": {
+            "intent": "setup",
+            "title": "Set up Flow State",
+            "reason": "Bootstrap the persistent assistant.",
+            "confidence": "high"
+          }
+        }
+        """
+        let envelope = try JSONDecoder.flowState.decode(FlowRecommendationEnvelope.self, from: Data(json.utf8))
+        #expect(envelope.primary.intent == .setup)
+    }
+
+    @Test
+    func holdUntilSupportsV1ValuesAndAbsoluteTimestamps() throws {
+        let manualRefresh = try JSONDecoder.flowState.decode(FlowHoldUntil.self, from: Data(#""manual_refresh""#.utf8))
+        #expect(manualRefresh == .manualRefresh)
+
+        let encodedManualRefresh = try JSONEncoder.flowState.encode(FlowHoldUntil.manualRefresh)
+        #expect(String(data: encodedManualRefresh, encoding: .utf8)?.contains("manual_refresh") == true)
+
+        let nextFocusBreak = try JSONDecoder.flowState.decode(FlowHoldUntil.self, from: Data(#""next_focus_break""#.utf8))
+        #expect(nextFocusBreak == .nextFocusBreak)
+
+        let absolute = try JSONDecoder.flowState.decode(FlowHoldUntil.self, from: Data(#""2026-07-03T19:00:00Z""#.utf8))
+        let expectedDate = try #require(ISO8601DateFormatter().date(from: "2026-07-03T19:00:00Z"))
+        #expect(absolute == .absolute(expectedDate))
+    }
+
+    @Test
+    func unsupportedHoldUntilSymbolFailsDecode() throws {
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder.flowState.decode(FlowHoldUntil.self, from: Data(#""end_of_day""#.utf8))
+        }
+    }
+
     /// @spec FLOW-1.4: When a Flow State recommendation object contains unknown object fields, the application shall preserve those fields when storing and re-emitting the recommendation while ignoring them for v1 rendering.
     @Test
     func unknownObjectFieldsArePreserved() throws {
@@ -143,5 +184,24 @@ struct FlowStateModelsTests {
         #expect(decoded.heldInterruptions.isEmpty)
         #expect(decoded.proposedActions.isEmpty)
         #expect(decoded.resumeCards.first?.stale == false)
+    }
+
+    @Test
+    func flowStatusUsesEnabledKeyAndDecodesLegacyAvailable() throws {
+        let status = FlowStatus(enabled: true, running: false, promptMode: .systemPrompt)
+        let data = try JSONEncoder.flowState.encode(status)
+        let text = String(data: data, encoding: .utf8) ?? ""
+        #expect(text.contains("\"enabled\""))
+        #expect(!text.contains("\"available\""))
+
+        let decoded = try JSONDecoder.flowState.decode(FlowStatus.self, from: data)
+        #expect(decoded.enabled == true)
+        #expect(decoded.running == false)
+        #expect(decoded.promptMode == .systemPrompt)
+
+        let legacy = try JSONDecoder.flowState.decode(FlowStatus.self, from: Data(#"{"available":true,"running":true}"#.utf8))
+        #expect(legacy.enabled == true)
+        #expect(legacy.running == true)
+        #expect(legacy.promptMode == .unavailable)
     }
 }

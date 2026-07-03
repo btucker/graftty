@@ -220,6 +220,7 @@ public struct FlowPrimaryRecommendation: Codable, Sendable, Equatable {
 public enum FlowRecommendationIntent: String, Codable, Sendable, Equatable {
     case stay
     case switchWorktree = "switch"
+    case setup
     case wait
     case none
 }
@@ -513,8 +514,7 @@ public enum FlowUrgency: String, Codable, Sendable, Equatable {
 
 public enum FlowHoldUntil: Codable, Sendable, Equatable {
     case nextFocusBreak
-    case endOfDay
-    case tomorrow
+    case manualRefresh
     case absolute(Date)
 
     public init(from decoder: Decoder) throws {
@@ -523,10 +523,8 @@ public enum FlowHoldUntil: Codable, Sendable, Equatable {
         switch value {
         case "next_focus_break":
             self = .nextFocusBreak
-        case "end_of_day":
-            self = .endOfDay
-        case "tomorrow":
-            self = .tomorrow
+        case "manual_refresh":
+            self = .manualRefresh
         default:
             if let date = FlowISO8601.date(from: value) {
                 self = .absolute(date)
@@ -544,10 +542,8 @@ public enum FlowHoldUntil: Codable, Sendable, Equatable {
         switch self {
         case .nextFocusBreak:
             try container.encode("next_focus_break")
-        case .endOfDay:
-            try container.encode("end_of_day")
-        case .tomorrow:
-            try container.encode("tomorrow")
+        case .manualRefresh:
+            try container.encode("manual_refresh")
         case let .absolute(date):
             try container.encode(FlowISO8601.string(from: date))
         }
@@ -603,20 +599,20 @@ public struct FlowSnooze: Codable, Sendable, Equatable {
 }
 
 public struct FlowStatus: Codable, Sendable, Equatable {
-    public var available: Bool
+    public var enabled: Bool
     public var running: Bool
     public var promptMode: FlowPromptMode
     public var lastUpdatedAt: Date?
     public var message: String?
 
     public init(
-        available: Bool,
+        enabled: Bool,
         running: Bool,
         promptMode: FlowPromptMode = .unavailable,
         lastUpdatedAt: Date? = nil,
         message: String? = nil
     ) {
-        self.available = available
+        self.enabled = enabled
         self.running = running
         self.promptMode = promptMode
         self.lastUpdatedAt = lastUpdatedAt
@@ -625,11 +621,33 @@ public struct FlowStatus: Codable, Sendable, Equatable {
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        available = try container.decode(Bool.self, forKey: .available)
+        if let enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) {
+            self.enabled = enabled
+        } else {
+            self.enabled = try container.decode(Bool.self, forKey: .available)
+        }
         running = try container.decode(Bool.self, forKey: .running)
         promptMode = try container.decodeIfPresent(FlowPromptMode.self, forKey: .promptMode) ?? .unavailable
         lastUpdatedAt = try container.decodeIfPresent(Date.self, forKey: .lastUpdatedAt)
         message = try container.decodeIfPresent(String.self, forKey: .message)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(enabled, forKey: .enabled)
+        try container.encode(running, forKey: .running)
+        try container.encode(promptMode, forKey: .promptMode)
+        try container.encodeIfPresent(lastUpdatedAt, forKey: .lastUpdatedAt)
+        try container.encodeIfPresent(message, forKey: .message)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled
+        case available
+        case running
+        case promptMode
+        case lastUpdatedAt
+        case message
     }
 }
 
