@@ -24,7 +24,7 @@ struct IpadTodo {
     func ipad_2_3() async throws { }
 
     @Test("""
-@spec IPAD-2.4: When `MultiPaneDetailView` renders a `.leaf(sessionName, …)`, the application shall render a `PaneLeafView` that owns its own `terminal` channel via `TerminalChannelPool`.
+@spec IPAD-2.4: When `MultiPaneDetailView` renders a `.leaf(sessionName, …)`, the application shall render a `PaneLeafView` that owns its own SSH terminal session channel (one `TerminalSessionClient` per visible leaf over the shared `RemoteHostConnection`).
 """, .disabled("not yet implemented"))
     func ipad_2_4() async throws { }
 
