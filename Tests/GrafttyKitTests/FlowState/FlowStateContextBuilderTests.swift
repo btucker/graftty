@@ -197,4 +197,50 @@ struct FlowStateContextBuilderTests {
         #expect(sameRepo.resumptionCostHint == .medium)
         #expect(unrelated.resumptionCostHint == .high)
     }
+
+    @Test("@spec FLOW-2.5: When external PR signals mark a worktree as critically urgent, Flow State context shall preserve that critical risk urgency in scoring hints.")
+    func criticalPRUrgencyStaysCritical() throws {
+        let wt = WorktreeEntry(path: "/repo/.worktrees/prod-fix", branch: "prod-fix", state: .running)
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [wt])
+        let worktreeRef = FlowWorktreeIdentity.ref(
+            repoDisplayName: "repo",
+            repoPath: "/repo",
+            worktreePath: wt.path,
+            branch: wt.branch
+        )
+
+        let context = FlowStateContextBuilder.build(
+            appState: AppState(repos: [repo]),
+            summaries: [:],
+            notes: [:],
+            snoozes: [:],
+            signals: FlowExternalSignals(
+                prByWorktreeRef: [
+                    worktreeRef: FlowPRSnapshot(number: 99, state: "open", urgency: .critical)
+                ]
+            ),
+            now: Date(timeIntervalSince1970: 30)
+        )
+
+        let snapshot = try #require(context.worktrees.first)
+        #expect(snapshot.scoring.riskUrgency == .critical)
+    }
+
+    @Test("@spec FLOW-2.6: Flow State context snapshots shall expose each worktree lifecycle state so downstream consumers can distinguish running, closed, stale, and in-flight worktrees.")
+    func snapshotsExposeWorktreeLifecycleState() throws {
+        let wt = WorktreeEntry(path: "/repo/.worktrees/stale", branch: "stale", state: .stale)
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [wt])
+
+        let context = FlowStateContextBuilder.build(
+            appState: AppState(repos: [repo]),
+            summaries: [:],
+            notes: [:],
+            snoozes: [:],
+            signals: .empty,
+            now: Date(timeIntervalSince1970: 30)
+        )
+
+        let snapshot = try #require(context.worktrees.first)
+        #expect(snapshot.worktreeState == .stale)
+    }
 }

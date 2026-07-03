@@ -78,6 +78,7 @@ public enum FlowStateContextBuilder {
             worktreeName: sanitizedBranch,
             worktreePath: worktree.path,
             worktreeBranch: worktree.branch,
+            worktreeState: worktree.state,
             worktreeKey: worktreeKey,
             worktreeRef: worktreeRef,
             displayRef: displayRef,
@@ -179,7 +180,10 @@ public enum FlowStateContextBuilder {
     }
 
     private static func riskUrgency(pr: FlowPRSnapshot?, git: FlowGitSnapshot?) -> FlowRiskUrgencyHint {
-        if pr?.urgency == .critical || prConclusionIsFailure(pr?.ciConclusion) || prMergeStateIsDirty(pr?.mergeState) {
+        if pr?.urgency == .critical {
+            return .critical
+        }
+        if prConclusionIsFailure(pr?.ciConclusion) || prMergeStateIsDirty(pr?.mergeState) {
             return .high
         }
         if pr != nil || gitHasChanges(git) {

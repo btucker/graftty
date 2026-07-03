@@ -1856,6 +1856,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **FLOW-2.4** Flow State scoring shall preserve the current human context by ranking selected or same-repo low-reload work above unrelated failing CI unless the unrelated work is critical or explicitly higher payoff.
 
+**FLOW-2.5** When external PR signals mark a worktree as critically urgent, Flow State context shall preserve that critical risk urgency in scoring hints.
+
+**FLOW-2.6** Flow State context snapshots shall expose each worktree lifecycle state so downstream consumers can distinguish running, closed, stale, and in-flight worktrees.
+
 ## MEM — MEM
 
 ### MEM-1.x

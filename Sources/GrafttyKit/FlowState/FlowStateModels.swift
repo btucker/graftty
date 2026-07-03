@@ -678,6 +678,7 @@ public struct FlowWorktreeSnapshot: Codable, Sendable, Equatable {
     public var worktreeName: String
     public var worktreePath: String
     public var worktreeBranch: String
+    public var worktreeState: WorktreeState
     public var worktreeKey: String
     public var worktreeRef: String
     public var displayRef: String
@@ -708,6 +709,7 @@ public struct FlowWorktreeSnapshot: Codable, Sendable, Equatable {
         worktreeName: String,
         worktreePath: String,
         worktreeBranch: String,
+        worktreeState: WorktreeState,
         worktreeKey: String,
         worktreeRef: String,
         displayRef: String,
@@ -737,6 +739,7 @@ public struct FlowWorktreeSnapshot: Codable, Sendable, Equatable {
         self.worktreeName = worktreeName
         self.worktreePath = worktreePath
         self.worktreeBranch = worktreeBranch
+        self.worktreeState = worktreeState
         self.worktreeKey = worktreeKey
         self.worktreeRef = worktreeRef
         self.displayRef = displayRef
