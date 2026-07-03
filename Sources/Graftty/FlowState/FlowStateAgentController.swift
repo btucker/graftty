@@ -41,17 +41,16 @@ enum FlowStateRuntimeLaunchCommand {
         switch runtime {
         case .codex:
             var parts = ["codex", "--cd", workspace]
-            let promptMode: FlowPromptMode
-            if !capabilities.codexSupportsSystemPromptConfig {
-                parts.append(shellQuote(systemPrompt))
-                promptMode = .bootstrapPrompt
-            } else {
-                promptMode = .systemPrompt
-            }
+            // Keep this as a bootstrap prompt until Graftty writes a real
+            // Codex config/profile. The capability flag is retained for the
+            // future detection seam, but claiming system-prompt mode without
+            // actually installing a system instruction would be misleading.
+            _ = capabilities.codexSupportsSystemPromptConfig
+            parts.append(shellQuote(systemPrompt))
             return FlowStateRuntimeLaunchResult(
                 commandText: "\(envPrefix) \(parts.joined(separator: " "))",
                 environment: environment,
-                promptMode: promptMode
+                promptMode: .bootstrapPrompt
             )
 
         case .claude:
@@ -62,15 +61,14 @@ enum FlowStateRuntimeLaunchCommand {
                 parts.append(shellQuote(promptFileURL.path))
                 promptMode = .systemPrompt
             } else {
+                parts.append("--append-system-prompt-file")
+                parts.append(shellQuote(promptFileURL.path))
                 promptMode = .appendSystemPrompt
             }
             parts.append("--permission-mode")
             parts.append("manual")
             parts.append("--name")
             parts.append(shellQuote("Flow State"))
-            if !capabilities.claudeSupportsSystemPromptFile {
-                parts.append(shellQuote(systemPrompt))
-            }
             return FlowStateRuntimeLaunchResult(
                 commandText: "cd \(workspace) && \(envPrefix) \(parts.joined(separator: " "))",
                 environment: environment,

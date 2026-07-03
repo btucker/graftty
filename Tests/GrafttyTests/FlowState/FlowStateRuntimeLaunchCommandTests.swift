@@ -56,6 +56,23 @@ struct FlowStateRuntimeLaunchCommandTests {
         )
 
         #expect(launch.promptMode == .appendSystemPrompt)
-        #expect(launch.commandText == "cd '/tmp/flow-state/workspace' && GRAFTTY_SOCK='/tmp/graftty.sock' claude --permission-mode manual --name 'Flow State' 'Preserve the human'\"'\"'s flow'")
+        #expect(launch.commandText == "cd '/tmp/flow-state/workspace' && GRAFTTY_SOCK='/tmp/graftty.sock' claude --append-system-prompt-file '/tmp/flow-state/system-prompt.md' --permission-mode manual --name 'Flow State'")
+    }
+
+    @Test("Codex launch keeps bootstrap prompt until a real config path is implemented")
+    func codexCommandDoesNotDropPromptForUnimplementedConfigCapability() throws {
+        let workspace = URL(fileURLWithPath: "/tmp/flow-state/workspace")
+        let promptFile = URL(fileURLWithPath: "/tmp/flow-state/system-prompt.md")
+        let launch = FlowStateRuntimeLaunchCommand.build(
+            runtime: .codex,
+            workspaceURL: workspace,
+            promptFileURL: promptFile,
+            systemPrompt: "Preserve focus",
+            socketPath: "/tmp/graftty.sock",
+            capabilities: .init(codexSupportsSystemPromptConfig: true, claudeSupportsSystemPromptFile: true)
+        )
+
+        #expect(launch.promptMode == .bootstrapPrompt)
+        #expect(launch.commandText.contains("'Preserve focus'"))
     }
 }
