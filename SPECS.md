@@ -1942,6 +1942,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **FLOW-7.3** Flow State shall render recent activity such as publish errors and skipped status requests separately from the primary recommendation.
 
+**FLOW-7.4** Confirmed Flow State focus actions shall resolve collision-resistant worktree refs to worktree paths before changing the selected worktree.
+
+**FLOW-7.5** Confirmed Flow State focus actions shall refuse ambiguous display/member aliases instead of focusing the first sanitized-name match.
+
 ## MEM — MEM
 
 ### MEM-1.x

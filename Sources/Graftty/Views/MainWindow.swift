@@ -19,6 +19,27 @@ struct MainWindowSelectionTransition: Equatable {
     static func selectWorktree(_ path: String) -> MainWindowSelectionTransition {
         MainWindowSelectionTransition(selection: .worktree(path), selectedWorktreePath: path)
     }
+
+    static func resolveWorktreePath(target: String, repos: [RepoEntry]) -> String? {
+        var matches: [String] = []
+        for repo in repos {
+            for worktree in repo.worktrees {
+                let key = FlowWorktreeIdentity.key(repoPath: repo.path, worktreePath: worktree.path)
+                let ref = FlowWorktreeIdentity.ref(
+                    repoDisplayName: repo.displayName,
+                    repoPath: repo.path,
+                    worktreePath: worktree.path,
+                    branch: worktree.branch
+                )
+                let memberName = WorktreeNameSanitizer.sanitize(worktree.branch)
+                let displayRef = "\(repo.displayName):\(memberName)"
+                if [ref, key, displayRef, memberName, worktree.path].contains(target) {
+                    matches.append(worktree.path)
+                }
+            }
+        }
+        return matches.count == 1 ? matches[0] : nil
+    }
 }
 
 private struct FlowStateViewTeamMessenger: FlowTeamMessaging {
@@ -32,10 +53,14 @@ private struct FlowStateViewTeamMessenger: FlowTeamMessaging {
 }
 
 private struct FlowStateViewAppActions: FlowConfirmedAppActions {
+    let repos: [RepoEntry]
     let selectWorktree: (String) -> Void
 
     func focusWorktree(ref: String) throws {
-        selectWorktree(ref)
+        guard let path = MainWindowSelectionTransition.resolveWorktreePath(target: ref, repos: repos) else {
+            throw FlowTeamMessagingError.skipped("Flow State focus action skipped: unresolved worktree \(ref)")
+        }
+        selectWorktree(path)
     }
 
     func restartAgent(ref: String) throws {
@@ -401,7 +426,7 @@ struct MainWindow: View {
         let executor = FlowStateActionExecutor(
             activityStore: flowStateActivityStore,
             teamMessenger: FlowStateViewTeamMessenger(),
-            appActions: FlowStateViewAppActions(selectWorktree: selectWorktree),
+            appActions: FlowStateViewAppActions(repos: appState.repos, selectWorktree: selectWorktree),
             permissionMode: .conservative
         )
         do {
