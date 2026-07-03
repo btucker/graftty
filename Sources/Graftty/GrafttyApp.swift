@@ -1024,14 +1024,20 @@ struct GrafttyApp: App {
             services.remoteBranchStore.refresh(repoPath: repo.path)
         }
 
-        // Same reasoning for the PR poller: open→merged transitions
-        // happen on GitHub while Graftty is backgrounded, and the only
-        // signal channel is `gh pr list`. Previously we paused unless
-        // CI was pending, which meant a PR that merged after CI went
-        // green (the common case) stayed visibly "open" in the sidebar
-        // until the user clicked back into the app.
+        // The PR poller drives `gh pr list`, a GraphQL call metered
+        // against a separate 5,000-point/hour budget. Unlike the stats
+        // poller's local `git fetch`, every tick here costs API quota,
+        // so the per-repo cadence gate is 60s (see
+        // `PRStatusStore.cadenceFor`) — a 5s cadence exhausted the
+        // entire GraphQL budget on a single repo. The ticker keeps
+        // firing while Graftty is backgrounded (PR-7.6): `gh pr list`
+        // is the only channel for an open→merged transition that
+        // happens on GitHub without a local `git fetch`, and at 60s the
+        // background cost is genuinely negligible. The 30s wake stays
+        // below the 60s gate so cadence jitter can't stretch the
+        // effective interval toward 120s.
         let prTicker = PollingTicker(
-            interval: .seconds(5),
+            interval: .seconds(30),
             pauseWhenInactive: { false }
         )
         services.prStatusStore.start(

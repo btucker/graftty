@@ -11,7 +11,7 @@ import Foundation
 @Suite("""
 PRStatusStore — refresh bypasses cadence
 
-@spec PR-7.12: When the user selects a worktree in the sidebar, the application shall call `PRStatusStore.refresh`, bypassing the per-repo polling cadence. Even with the 60-second cap, a worst-case 60-second wait for a freshly-merged PR to appear in the breadcrumb is longer than the click-to-feedback loop a user expects on selection. Sidebar selection is a strong "user cares about this worktree now" signal, and the existing `refresh` path already short-circuits cadence and resets `failureStreak` on success — wiring it to selection closes the stale-UI escape hatch without any new mechanism.
+@spec PR-7.12: When the user selects a worktree in the sidebar, the application shall call `PRStatusStore.refresh`, bypassing the per-repo polling cadence. A 60-second base cadence — stretching to 300 seconds after repeated failures — is a worse wait for a freshly-merged PR to appear in the breadcrumb than the click-to-feedback loop a user expects on selection. Sidebar selection is a strong "user cares about this worktree now" signal, and the existing `refresh` path already short-circuits cadence and resets `failureStreak` on success — wiring it to selection closes the stale-UI escape hatch without any new mechanism.
 """)
 struct PRStatusStoreRefreshBypassTests {
 
@@ -62,7 +62,7 @@ struct PRStatusStoreRefreshBypassTests {
         #expect(await fetcher.invocations == 1, "first refresh should fetch")
         #expect(!store.isInFlightForTesting("/repo"))
 
-        // Second refresh immediately after, well within the 5s
+        // Second refresh immediately after, well within the 60s
         // cadence window. The background poll would gate this out;
         // refresh must not.
         store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "feat")
