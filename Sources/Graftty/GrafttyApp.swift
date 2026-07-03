@@ -268,6 +268,14 @@ struct GrafttyApp: App {
     /// `WebRTCHostAgent` share — `PairedDevicesSection` reads it directly
     /// (list/remove) since the coordinator doesn't expose it publicly.
     private let trustedPeerStore: TrustedPeerStore
+    /// Same `SSHConnectionRegistry` instance `WebRTCHostAgent` registers
+    /// its live SSH connection into (REMOTE-3.1 revocation, W4). Exposed
+    /// alongside `trustedPeerStore` so `PairedDevicesSection`'s "Remove"
+    /// action can call `registry.revoke(deviceID:)` right after removing
+    /// the peer from `trustedPeerStore` — closing the live connection
+    /// immediately rather than waiting for the peer's next userauth
+    /// attempt to fail.
+    private let sshConnectionRegistry: SSHConnectionRegistry
 
     /// Observable proxy for per-pane port bindings. Mutated by the
     /// `PortScanner` `onChange` callback; injected into the SwiftUI
@@ -362,6 +370,8 @@ struct GrafttyApp: App {
         let hostIdentityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
         let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
         self.trustedPeerStore = trustedPeerStore
+        let sshConnectionRegistry = SSHConnectionRegistry()
+        self.sshConnectionRegistry = sshConnectionRegistry
 
         // Task 3: the Mac settings UI's "Device Pairing" section binds to
         // this coordinator. Reuses the SAME identity/trusted-peer stores as
@@ -412,7 +422,8 @@ struct GrafttyApp: App {
                 paneControlMutator: { _ in
                     .error(code: "starting", message: "host not yet wired (startup did not run)")
                 },
-                displayOwnershipStore: appServices.displayOwnershipStore
+                displayOwnershipStore: appServices.displayOwnershipStore,
+                sshConnectionRegistry: sshConnectionRegistry
             )
         } catch {
             // Identity-store I/O failure leaves hostAgent nil; the signaling
@@ -575,7 +586,7 @@ struct GrafttyApp: App {
                     editorPreference: terminalManager.editorPreference
                 )
                     .tabItem { Label("General", systemImage: "gear") }
-                WebSettingsPane(trustedPeerStore: trustedPeerStore)
+                WebSettingsPane(trustedPeerStore: trustedPeerStore, sshConnectionRegistry: sshConnectionRegistry)
                     .environmentObject(webController)
                     .environmentObject(hostPairingCoordinator)
                     .tabItem { Label("Web Access", systemImage: "network") }

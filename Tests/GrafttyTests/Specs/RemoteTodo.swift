@@ -9,16 +9,6 @@ import Testing
 @Suite("REMOTE — pending specs")
 struct RemoteTodo {
     @Test("""
-@spec REMOTE-2.1: When a remote transport reconnects, the host shall require a fresh authenticated attach handshake before writing any bytes to the PTY.
-""", .disabled("not yet implemented"))
-    func remote_2_1() async throws { }
-
-    @Test("""
-@spec REMOTE-3.1: If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
-""", .disabled("not yet implemented"))
-    func remote_3_1() async throws { }
-
-    @Test("""
 @spec REMOTE-4.1: If a client requests a port tunnel without host approval under the default ask-each-time policy, then the host shall reject the channel open request before connecting to the target port.
 """, .disabled("not yet implemented"))
     func remote_4_1() async throws { }
@@ -32,11 +22,6 @@ struct RemoteTodo {
 @spec REMOTE-5.1: When a client attempts to use the retired `/ws` terminal endpoint, the host shall reject the request without attaching to a PTY.
 """, .disabled("not yet implemented"))
     func remote_5_1() async throws { }
-
-    @Test("""
-@spec REMOTE-7.6: If a trusted peer is revoked while a `pane_control` channel is open, the channel shall close and subsequent open requests from the revoked peer shall be rejected.
-""", .disabled("not yet implemented"))
-    func remote_7_6() async throws { }
 
     // MARK: - REMOTE-8.x — SSH session layer
 
