@@ -31,8 +31,9 @@ import NIOSSH
 /// `ByteBuffer` indiscriminately — correct for a subsystem channel that
 /// carries exactly one data type, wrong here where `.channel` and
 /// `.stdErr` must stay distinct streams on one channel. Framing is done
-/// inline instead (`ingestStdErr`/`encodeStdErrFrame`) using the same
-/// 4-byte-BE-length wire shape.
+/// inline instead (`ingestStdErr`, backed by the shared
+/// `StdErrControlFraming` codec) using the same 4-byte-BE-length wire
+/// shape.
 ///
 /// **Legacy-client gating.** Today's mobile `TerminalSessionClient`
 /// treats every inbound `SSHChannelData` as terminal bytes regardless of
@@ -49,7 +50,7 @@ import NIOSSH
 ///
 /// Concurrency: `@unchecked Sendable` because all mutable state
 /// (`envSessionName`, `ptyAccepted`, `stream`, `inboundForwardingTask`,
-/// `coordinator`, `stdErrAccumulator`, `stdErrCursor`, `stdErrPoisoned`,
+/// `coordinator`, `stdErrDecoder`, `stdErrPoisoned`,
 /// `ptyGrid`, `ptyWriteContinuation`) is accessed exclusively on the
 /// channel's event loop. NIO guarantees `channelRead`, `userInboundEventTriggered`, and
 /// `channelInactive` all run on that loop; `loop.execute` callbacks in
@@ -87,30 +88,21 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
         get { helloLock.lock(); defer { helloLock.unlock() }; return _receivedHello }
         set { helloLock.lock(); defer { helloLock.unlock() }; _receivedHello = newValue }
     }
-    private var stdErrAccumulator: [UInt8] = []
-    /// Read cursor into `stdErrAccumulator` — bytes before this index have
-    /// already been consumed into a drained frame but not yet physically
-    /// removed. `drainControlFrames` advances this per frame and performs
-    /// ONE `removeSubrange(0..<cursor)` compaction at the end of the pass,
-    /// rather than the `removeFirst(total)` this replaced, which shifted
-    /// the whole remaining tail on every single frame (O(n) per frame,
-    /// O(n·k) for a burst of k frames in one ingest).
-    private var stdErrCursor = 0
+    /// Accumulates/drains the `.stdErr` control carrier's
+    /// `<u32 BE length><UTF-8 JSON>` frames — see
+    /// `StdErrControlFraming` for the wire format and cap this shares
+    /// with `TerminalSessionClient`/`InboundRelay` on the client side.
+    private var stdErrDecoder = StdErrControlFraming.Decoder()
     /// Set when a `.stdErr` frame header claims a length above
-    /// `Self.maxControlFrameLength`. Framing is unrecoverable at that
-    /// point (we can't tell where the next frame starts), so all further
-    /// `.stdErr` bytes are dropped and nothing is ever emitted on
+    /// `StdErrControlFraming.maxFrameLength`. Framing is unrecoverable at
+    /// that point (we can't tell where the next frame starts), so all
+    /// further `.stdErr` bytes are dropped and nothing is ever emitted on
     /// `.stdErr` again. Pre-hello, that's the whole story: the client
     /// behaves like a legacy client from then on and terminal bytes keep
     /// flowing untouched. Post-hello, abandoning the carrier alone would
     /// silently strand a live client (see `poisonStdErr`), so the
     /// channel is also closed.
     private var stdErrPoisoned = false
-    /// Control envelopes are small JSON (hello/takeControl/ownership —
-    /// hundreds of bytes). 1 MiB is orders of magnitude above any real
-    /// frame while bounding what a buggy/hostile peer can make the host
-    /// buffer (the accumulator can never exceed cap + one inbound chunk).
-    private static let maxControlFrameLength: UInt32 = 1 << 20
 
     /// FIFO pipe for PTY writes. Both byte paths (pre-hello legacy and
     /// the coordinator's owner-gated `write` seam) yield into this
@@ -378,7 +370,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
                 // (via `.hello`) that it understands `.stdErr` control
                 // frames. See the type doc comment.
                 guard let self, self.receivedHello else { return }
-                guard let framed = Self.encodeStdErrFrame(payload) else { return }
+                guard let framed = StdErrControlFraming.encode(payload) else { return }
                 loop.execute {
                     var buffer = channel.allocator.buffer(capacity: framed.count)
                     buffer.writeBytes(framed)
@@ -479,59 +471,33 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     /// completes, so an early `.hello` is never lost.
     private func ingestStdErr(_ data: Data, channel: Channel) {
         guard !stdErrPoisoned else { return }
-        stdErrAccumulator.append(contentsOf: data)
+        stdErrDecoder.append(data)
         if coordinator != nil {
             drainControlFrames(channel: channel)
         }
         // Bound pre-attach accumulation too (frames don't drain until
         // the coordinator exists): anything past one max-size frame's
-        // worth of undrained bytes past the cursor is a protocol
-        // violation. Must compare against the still-unconsumed tail
-        // (`count - cursor`), not raw `count` — `drainControlFrames`
-        // only compacts once at the end of its own pass, so on the
-        // pre-attach path (where it never runs) `cursor` stays 0 and this
-        // reduces to the original `count`-only check; once frames DO
-        // start draining, `count` alone would trip this threshold on a
-        // perfectly ordinary long-running connection that has drained
-        // many frames but not yet been given a reason to compact.
-        if stdErrAccumulator.count - stdErrCursor > Int(Self.maxControlFrameLength) + 4 {
+        // worth of undrained bytes is a protocol violation. On the
+        // pre-attach path (where `drainControlFrames` never runs above)
+        // this is a plain `count`-only check; once frames DO start
+        // draining, `isOverAccumulated` compares against the
+        // still-unconsumed tail so a perfectly ordinary long-running
+        // connection that has drained many frames doesn't trip it.
+        if stdErrDecoder.isOverAccumulated {
             poisonStdErr(channel: channel)
         }
     }
 
     /// Extracts complete `<u32 BE length><UTF-8 JSON>` frames from the
-    /// accumulator, forwarding each parsed `WebControlEnvelope` to the
-    /// coordinator. A `.hello` frame flips `receivedHello`; every other
-    /// frame is dropped until one arrives (a well-behaved client always
-    /// sends `.hello` first). A length above `maxControlFrameLength`
-    /// poisons the carrier — see `stdErrPoisoned`.
-    ///
-    /// Consumed bytes are tracked via `stdErrCursor` rather than removed
-    /// immediately: advancing an `Int` per frame is O(1), so a burst of k
-    /// buffered frames drains in O(k) instead of the O(n·k) the previous
-    /// per-frame `removeFirst(total)` cost (each call shifts the entire
-    /// remaining tail). The accumulator is compacted with a single
-    /// `removeSubrange` once, after the loop, regardless of how many
-    /// frames were drained in this pass.
+    /// `StdErrControlFraming.Decoder`, forwarding each parsed
+    /// `WebControlEnvelope` to the coordinator. A `.hello` frame flips
+    /// `receivedHello`; every other frame is dropped until one arrives (a
+    /// well-behaved client always sends `.hello` first). A length above
+    /// `StdErrControlFraming.maxFrameLength` poisons the carrier — see
+    /// `stdErrPoisoned`.
     private func drainControlFrames(channel: Channel) {
-        while stdErrAccumulator.count - stdErrCursor >= 4 {
-            let base = stdErrCursor
-            let length = (UInt32(stdErrAccumulator[base]) << 24)
-                | (UInt32(stdErrAccumulator[base + 1]) << 16)
-                | (UInt32(stdErrAccumulator[base + 2]) << 8)
-                | UInt32(stdErrAccumulator[base + 3])
-            guard length <= Self.maxControlFrameLength else {
-                // Both poison paths must reset the cursor — see
-                // `poisonStdErr`, which zeroes it alongside emptying the
-                // accumulator.
-                poisonStdErr(channel: channel)
-                return
-            }
-            let total = 4 + Int(length)
-            guard stdErrAccumulator.count - base >= total else { break }
-            let payload = Data(stdErrAccumulator[(base + 4)..<(base + total)])
-            stdErrCursor = base + total
-
+        let (frames, oversized) = stdErrDecoder.drain()
+        for payload in frames {
             guard let envelope = try? WebControlEnvelope.parse(payload) else {
                 // A structurally-valid `.hello` whose grid exceeds
                 // `WebControlEnvelope.maxGridDimension` fails `parse`
@@ -557,9 +523,12 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
             guard receivedHello else { continue }
             coordinator?.handleControl(envelope)
         }
-        if stdErrCursor > 0 {
-            stdErrAccumulator.removeSubrange(0..<stdErrCursor)
-            stdErrCursor = 0
+        // Framing is unrecoverable once a length header exceeds the cap
+        // (we can't tell where the next frame starts) — poison after
+        // processing whatever complete frames arrived before it, exactly
+        // like the per-frame loop this replaced.
+        if oversized {
+            poisonStdErr(channel: channel)
         }
     }
 
@@ -583,8 +552,7 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
     /// path to run `detach()`/`stream.close()` cleanup exactly once.
     private func poisonStdErr(channel: Channel) {
         stdErrPoisoned = true
-        stdErrAccumulator = []
-        stdErrCursor = 0
+        stdErrDecoder.reset()
         guard receivedHello else { return }
         channel.close(promise: nil)
     }
@@ -622,21 +590,5 @@ public final class TerminalSessionHandler: ChannelInboundHandler, @unchecked Sen
             cols: WebControlEnvelope.clampedGridDimension(cols),
             rows: WebControlEnvelope.clampedGridDimension(rows)
         )
-    }
-
-    private static func encodeStdErrFrame(_ payload: String) -> [UInt8]? {
-        let bytes = Array(payload.utf8)
-        // A control envelope can never approach UInt32.max in practice;
-        // guard (rather than trap or clamp — clamping would desync the
-        // framing) and drop the frame if it somehow does.
-        guard let length = UInt32(exactly: bytes.count) else { return nil }
-        var framed: [UInt8] = [
-            UInt8((length >> 24) & 0xff),
-            UInt8((length >> 16) & 0xff),
-            UInt8((length >> 8) & 0xff),
-            UInt8(length & 0xff),
-        ]
-        framed.append(contentsOf: bytes)
-        return framed
     }
 }

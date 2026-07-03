@@ -783,7 +783,7 @@ private final class TerminalEchoSessionHandler: ChannelInboundHandler, @unchecke
     typealias OutboundOut = SSHChannelData
 
     private let recorder: TerminalByteRecorder
-    private var stdErrAccumulator: [UInt8] = []
+    private var stdErrDecoder = StdErrControlFraming.Decoder()
 
     init(recorder: TerminalByteRecorder) {
         self.recorder = recorder
@@ -821,21 +821,15 @@ private final class TerminalEchoSessionHandler: ChannelInboundHandler, @unchecke
         context.writeAndFlush(wrapOutboundOut(SSHChannelData(type: .channel, data: .byteBuffer(buffer))), promise: nil)
     }
 
-    /// Decodes length-prefixed control frames — mirrors
-    /// `TerminalSessionClient`'s own `<u32 BE length><UTF-8 JSON>` wire
-    /// shape — and grants ownership the instant a `.hello` is parsed; see
-    /// the type's doc comment for why this test skips real arbitration.
+    /// Decodes length-prefixed control frames via the shared
+    /// `StdErrControlFraming` codec — the same `<u32 BE length><UTF-8
+    /// JSON>` wire shape `TerminalSessionClient` uses — and grants
+    /// ownership the instant a `.hello` is parsed; see the type's doc
+    /// comment for why this test skips real arbitration.
     private func ingestControl(_ data: Data, context: ChannelHandlerContext) {
-        stdErrAccumulator.append(contentsOf: data)
-        while stdErrAccumulator.count >= 4 {
-            let length = (UInt32(stdErrAccumulator[0]) << 24)
-                | (UInt32(stdErrAccumulator[1]) << 16)
-                | (UInt32(stdErrAccumulator[2]) << 8)
-                | UInt32(stdErrAccumulator[3])
-            let total = 4 + Int(length)
-            guard stdErrAccumulator.count >= total else { break }
-            let payload = Data(stdErrAccumulator[4..<total])
-            stdErrAccumulator.removeSubrange(0..<total)
+        stdErrDecoder.append(data)
+        let (frames, _) = stdErrDecoder.drain()
+        for payload in frames {
             guard
                 let text = String(data: payload, encoding: .utf8),
                 let envelope = try? WebControlEnvelope.parse(Data(text.utf8)),
@@ -868,15 +862,7 @@ private final class TerminalEchoSessionHandler: ChannelInboundHandler, @unchecke
     }
 
     private func sendControlFrame(_ payload: String, context: ChannelHandlerContext) {
-        let bytes = Array(payload.utf8)
-        guard let length = UInt32(exactly: bytes.count) else { return }
-        var framed: [UInt8] = [
-            UInt8((length >> 24) & 0xff),
-            UInt8((length >> 16) & 0xff),
-            UInt8((length >> 8) & 0xff),
-            UInt8(length & 0xff),
-        ]
-        framed.append(contentsOf: bytes)
+        guard let framed = StdErrControlFraming.encode(payload) else { return }
         var buffer = context.channel.allocator.buffer(capacity: framed.count)
         buffer.writeBytes(framed)
         context.writeAndFlush(wrapOutboundOut(SSHChannelData(type: .stdErr, data: .byteBuffer(buffer))), promise: nil)
