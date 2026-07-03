@@ -1918,6 +1918,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **FLOW-5.8** After accepting a valid Flow State publish, app request dispatch shall execute policy-allowed autonomous status-request actions through the team inbox.
 
+**FLOW-5.9** Publish-time autonomous Flow State status-request actions shall obey the same per-worktree cooldown as direct request-status calls.
+
 ## MEM — MEM
 
 ### MEM-1.x

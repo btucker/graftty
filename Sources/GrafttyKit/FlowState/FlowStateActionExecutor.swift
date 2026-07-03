@@ -164,11 +164,23 @@ public struct FlowStateActionExecutor {
             try append(kind: .actionSkipped, message: "Flow State status request missing target", worktreeRef: nil)
             return
         }
+        let date = now()
         if permissionMode == .manualOnly {
             try append(
                 kind: .actionRequiresConfirmation,
                 message: "Flow State status request requires confirmation",
-                worktreeRef: target
+                worktreeRef: target,
+                at: date
+            )
+            return
+        }
+        if let last = try activityStore.lastStatusRequestAt(worktreeRef: target),
+           date.timeIntervalSince(last) < statusRequestCooldown {
+            try append(
+                kind: .statusRequestSkipped,
+                message: "Flow State status request skipped during cooldown",
+                worktreeRef: target,
+                at: date
             )
             return
         }
@@ -178,10 +190,9 @@ public struct FlowStateActionExecutor {
                 body: FlowStateActionPolicy.statusRequestTemplate
             )
         } catch FlowTeamMessagingError.skipped(let message) {
-            try append(kind: .actionSkipped, message: message, worktreeRef: target)
+            try append(kind: .actionSkipped, message: message, worktreeRef: target, at: date)
             return
         }
-        let date = now()
         try append(
             kind: .actionExecuted,
             message: "Flow State executed autonomous status request",

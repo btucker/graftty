@@ -76,6 +76,30 @@ struct FlowStateActionExecutorTests {
         #expect(sender.sentStatusRequests.map(\.body) == [FlowStateActionPolicy.statusRequestTemplate])
         #expect(try activity.recent(limit: 10).contains { $0.kind == .statusRequestSkipped })
     }
+
+    @Test("@spec FLOW-5.9: Publish-time autonomous Flow State status-request actions shall obey the same per-worktree cooldown as direct request-status calls.")
+    func autonomousStatusRequestActionsUseCooldown() throws {
+        let activity = FlowStateActivityStore(rootDirectory: try temporaryDirectory())
+        let sender = RecordingFlowTeamMessenger()
+        let executor = FlowStateActionExecutor(
+            activityStore: activity,
+            teamMessenger: sender,
+            now: { Date(timeIntervalSince1970: 100) }
+        )
+        let action = FlowProposedAction(
+            id: "ask",
+            kind: .teamStatusRequest,
+            target: "repo:feature",
+            body: FlowStateActionPolicy.statusRequestTemplate,
+            requiresConfirmation: false
+        )
+
+        try executor.executeAutonomousActions([action])
+        try executor.executeAutonomousActions([action])
+
+        #expect(sender.sentStatusRequests.count == 1)
+        #expect(try activity.recent(limit: 10).contains { $0.kind == .statusRequestSkipped })
+    }
 }
 
 private final class RecordingFlowTeamMessenger: FlowTeamMessaging {
