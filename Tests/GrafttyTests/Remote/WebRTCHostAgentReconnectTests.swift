@@ -52,16 +52,136 @@ struct WebRTCHostAgentReconnectTests {
         #expect(await agent.sshInstallStartedForTesting == false)
     }
 
+    /// Regression guard for the generation-guard fix — not a new spec ID.
+    /// `WebRTCHostAgent` is a single process-wide instance reused for every
+    /// device sequentially (`AppServices.hostAgent`); `installSSHHandler`'s
+    /// `sshInstallStarted` reset above is what makes this reachable — it was
+    /// impossible before that fix landed.
+    ///
+    /// `SSHConnectionRegistry.register`'s replace-path (see
+    /// `SSHConnectionRegistry.register`'s doc comment) runs `await previous
+    /// .close()`, where `previous.close` is the closure captured by the
+    /// OLD connection's `registerAuthenticatedConnection` call. Because
+    /// `self` is the SAME shared actor now serving the NEW (live)
+    /// connection, an unguarded `previous.close()` tears down the new
+    /// connection's state mid-lifetime — this reproduces that exact
+    /// mechanism using only actor-level seams (`bumpConnectionGenerationForTesting`,
+    /// `setStateForTesting`, `installSSHHandler`, `registerAuthenticatedConnection`
+    /// — all bumped to `internal` for testing, matching the existing
+    /// pattern in this file), no native WebRTC or NIOSSH involved.
+    @Test
+    func staleConnectionsCloseClosureDoesNotTearDownALiveReconnectedConnection() async throws {
+        let registry = SSHConnectionRegistry()
+        let store = TrustedPeerStore(directory: Self.tempDir())
+        let deviceID = RemoteDeviceID.generate()
+        try store.add(Self.makePeer(id: deviceID))
+        let agent = Self.makeHostAgent(trustedPeerStore: store, registry: registry)
+
+        // Connection A's lifecycle begins (mirrors what `acceptOffer` does
+        // on every accepted offer — see its generation bump) and
+        // authenticates, registering with the registry under generation 1.
+        await agent.bumpConnectionGenerationForTesting()
+        await agent.setStateForTesting(.connected)
+        await agent.registerAuthenticatedConnection(deviceID: deviceID)
+        #expect(await agent.state == .connected)
+
+        // Connection B's lifecycle begins on the SAME shared agent — the
+        // production scenario (one process-wide `WebRTCHostAgent` reused
+        // sequentially). Bumping the generation to 2 and re-arming the SSH
+        // install latch mirrors what a fresh `acceptOffer` +
+        // `installSSHHandler` do for a genuinely new, live connection.
+        await agent.bumpConnectionGenerationForTesting()
+        await agent.setStateForTesting(.connected)
+        await agent.installSSHHandler()
+        #expect(await agent.sshInstallStartedForTesting == true)
+
+        // B authenticates and registers for the SAME peer — a same-device
+        // reconnect. `SSHConnectionRegistry.register`'s replace-path runs
+        // `await previous.close()`, invoking A's STALE closure (captured at
+        // generation 1) before B's own registration below is recorded.
+        await agent.registerAuthenticatedConnection(deviceID: deviceID)
+
+        // RED (pre-fix): A's stale closure called `self?.close()`
+        // unconditionally, tearing down B's live state — `state` flipped to
+        // `.closed` and the install latch reset to `false` — even though B
+        // is the current, live connection and was never actually closed.
+        #expect(await agent.state == .connected)
+        #expect(await agent.sshInstallStartedForTesting == true)
+    }
+
+    /// Isolated unit-level companion to the interaction test above: proves
+    /// the guard's contract directly — a stale generation no-ops, the
+    /// current generation still closes.
+    @Test
+    func closeIfGenerationNoOpsForStaleGenerationButClosesForCurrentGeneration() async throws {
+        let agent = Self.makeHostAgent()
+        await agent.bumpConnectionGenerationForTesting()
+        let staleGeneration: UInt64 = 0
+        await agent.setStateForTesting(.connected)
+
+        await agent.close(ifGeneration: staleGeneration)
+        #expect(await agent.state == .connected, "a stale generation must not tear down the current connection")
+
+        let currentGeneration = await agent.connectionGenerationForTesting
+        await agent.close(ifGeneration: currentGeneration)
+        #expect(await agent.state == .closed, "the current generation must still close for real")
+    }
+
+    /// VERIFY (task step 4): the generation guard must not break REMOTE-3.1/3.3
+    /// revocation — an admin `revoke(deviceID:)` of the CURRENT connection
+    /// captures the CURRENT generation at registration time, so the guard
+    /// passes and the real close still runs.
+    @Test
+    func revokeOfTheCurrentConnectionStillClosesItBecauseTheGenerationMatches() async throws {
+        let registry = SSHConnectionRegistry()
+        let store = TrustedPeerStore(directory: Self.tempDir())
+        let deviceID = RemoteDeviceID.generate()
+        try store.add(Self.makePeer(id: deviceID))
+        let agent = Self.makeHostAgent(trustedPeerStore: store, registry: registry)
+
+        await agent.bumpConnectionGenerationForTesting()
+        await agent.setStateForTesting(.connected)
+        await agent.registerAuthenticatedConnection(deviceID: deviceID)
+        #expect(await agent.state == .connected)
+
+        await registry.revoke(deviceID: deviceID)
+
+        #expect(await agent.state == .closed)
+    }
+
     // MARK: - Fixtures
 
-    private static func makeHostAgent() -> WebRTCHostAgent {
+    private static func makeHostAgent(
+        trustedPeerStore: TrustedPeerStore? = nil,
+        registry: SSHConnectionRegistry = SSHConnectionRegistry()
+    ) -> WebRTCHostAgent {
         WebRTCHostAgent(
             hostKey: Curve25519.Signing.PrivateKey(),
-            trustedPeerStore: TrustedPeerStore(directory: Self.tempDir()),
+            trustedPeerStore: trustedPeerStore ?? TrustedPeerStore(directory: Self.tempDir()),
             streamFactory: { _ in fatalError("not expected: no data channel opens in this test") },
             panesStateSubscribe: { _ in PanesStateChannelHandler.Cancellable(cancel: {}) },
             paneControlMutator: { _ in fatalError("not expected: no data channel opens in this test") },
-            displayOwnershipStore: SessionDisplayOwnershipStore()
+            displayOwnershipStore: SessionDisplayOwnershipStore(),
+            sshConnectionRegistry: registry
+        )
+    }
+
+    private static func makePeer(id: RemoteDeviceID) -> TrustedPeer {
+        TrustedPeer(
+            id: id,
+            kind: .ipad,
+            publicKey: try! RemoteIdentityPublicKey(
+                rawRepresentation: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+            ),
+            displayName: "test",
+            capabilities: PairedDeviceCapabilities(
+                terminalControl: .allowed,
+                portTunnel: .disabled,
+                screenView: .disabled,
+                screenControl: .disabled
+            ),
+            pairedAt: Date(),
+            lastSeenAt: nil
         )
     }
 

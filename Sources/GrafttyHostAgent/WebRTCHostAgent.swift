@@ -74,6 +74,47 @@ public actor WebRTCHostAgent {
     /// instead of wiping the newer connection's live entry.
     private var authenticatedRegistration: (deviceID: RemoteDeviceID, token: SSHConnectionRegistry.RegistrationToken)?
 
+    /// W5 generation-guard fix: `WebRTCHostAgent` is a SINGLE process-wide
+    /// instance (`AppServices.hostAgent`) reused for every device
+    /// sequentially, not one instance per connection. `authenticatedRegistration`'s
+    /// `RegistrationToken` scopes the registry's MAP ENTRY to a connection,
+    /// but it does nothing to protect `self` from a stale connection's close
+    /// SIDE EFFECT: `SSHConnectionRegistry.register`'s replace-path runs
+    /// `await previous.close()`, where `previous.close` is the closure
+    /// captured by the OLD connection's `registerAuthenticatedConnection`
+    /// call. Because `self` is the SAME shared actor now serving a NEW,
+    /// live connection (a same-device reconnect racing the old connection's
+    /// fire-and-forget deregister Task — see `close()`'s registry-deregister
+    /// comment), that unguarded closure tears down the new connection's
+    /// live state mid-lifetime.
+    ///
+    /// Bumped exactly once per accepted connection, in `acceptOffer`,
+    /// guarded by the same busy-check (`.idle || .closed`) that gates every
+    /// other per-connection reset there — this is the single "a fresh
+    /// connection lifecycle begins" checkpoint, well before
+    /// `registerAuthenticatedConnection` can possibly run (which requires a
+    /// data channel to open and SSH userauth to complete on top of this).
+    /// `registerAuthenticatedConnection` captures the value current AT
+    /// REGISTRATION TIME into the registry closure; a later, different
+    /// connection's registration bumps it again, so the OLD closure's
+    /// captured value can never match `connectionGeneration` again.
+    private var connectionGeneration: UInt64 = 0
+
+    /// Test-only observability for `connectionGeneration` — see its doc
+    /// comment and `WebRTCHostAgentReconnectTests`. `internal` so
+    /// `@testable import GrafttyHostAgent` can reach it; production code
+    /// never reads this directly (only via the closure captured in
+    /// `registerAuthenticatedConnection`).
+    internal var connectionGenerationForTesting: UInt64 { connectionGeneration }
+
+    /// Test-only seam mirroring `acceptOffer`'s generation bump, so a test
+    /// can simulate a fresh connection lifecycle beginning — without
+    /// driving native WebRTC negotiation to get there. `internal` so
+    /// `@testable import GrafttyHostAgent` can reach it.
+    internal func bumpConnectionGenerationForTesting() {
+        connectionGeneration += 1
+    }
+
     /// Built lazily, on first `acceptOffer` use, rather than in `init` — an
     /// agent that never negotiates never touches native libwebrtc. This is
     /// what keeps mac CI's REMOTE-11.1 busy-guard test (which never
@@ -164,6 +205,11 @@ public actor WebRTCHostAgent {
         guard state == .idle || state == .closed else {
             throw HostError.busy
         }
+        // Generation-guard fix (W5): a fresh connection lifecycle begins
+        // here, exactly once per accepted offer — see `connectionGeneration`'s
+        // doc comment for why this is the right site and what it protects
+        // against.
+        connectionGeneration += 1
         let config = Self.defaultConfig()
         let constraints = RTCMediaConstraints(
             mandatoryConstraints: nil,
@@ -313,6 +359,24 @@ public actor WebRTCHostAgent {
         dataChannel = nil
     }
 
+    /// Generation-guarded teardown used ONLY by the closure registered with
+    /// `sshConnectionRegistry` (see `registerAuthenticatedConnection`). If
+    /// `generation` doesn't match `connectionGeneration`, this connection's
+    /// registration is stale — a NEWER connection has since begun on this
+    /// SAME shared actor — so the call no-ops instead of tearing down the
+    /// live connection. `close()` itself (direct teardown callers:
+    /// `channelInactive`, explicit close) is unaffected and still
+    /// unconditional.
+    ///
+    /// `internal` (rather than `private`) so `WebRTCHostAgentReconnectTests`
+    /// can exercise the guard directly without driving the full
+    /// `registerAuthenticatedConnection` dance; production reaches this
+    /// only through the registry closure.
+    internal func close(ifGeneration generation: UInt64) async {
+        guard generation == connectionGeneration else { return }
+        await close()
+    }
+
     private func adoptDataChannel(_ dc: RTCDataChannel) {
         guard dc.label == GrafttyWebRTC.dataChannelLabel else {
             // Unexpected label — close defensively. With Noise handshake (M1.3),
@@ -433,8 +497,19 @@ public actor WebRTCHostAgent {
     /// closure would run and immediately re-close an already-closed
     /// agent, and the registry would hold a dangling entry until the
     /// peer reconnects.
-    private func registerAuthenticatedConnection(deviceID: RemoteDeviceID) async {
+    ///
+    /// `internal` (rather than `private`) so `WebRTCHostAgentReconnectTests`
+    /// can drive the generation-guard regression test directly, on the SAME
+    /// shared agent instance, without native WebRTC or NIOSSH — see that
+    /// suite's `staleConnectionsCloseClosureDoesNotTearDownALiveReconnectedConnection`.
+    internal func registerAuthenticatedConnection(deviceID: RemoteDeviceID) async {
         guard state != .closed else { return }
+        // Generation-guard fix (W5): capture the generation CURRENT at
+        // registration time, not `self`'s live value read later — a later,
+        // different connection bumps `connectionGeneration` again before
+        // this closure could ever run, which is exactly what makes a stale
+        // closure's guard fail. See `connectionGeneration`'s doc comment.
+        let generation = connectionGeneration
         // NOTE on the residual window this guard doesn't close (finding 2,
         // W4 review): `close()` is synchronous and non-reentrant on this
         // actor, so it can only interleave here while the `await` below is
@@ -451,8 +526,8 @@ public actor WebRTCHostAgent {
         // post-await state check purely to close it.
         authenticatedRegistration = (
             deviceID,
-            await sshConnectionRegistry.register(deviceID: deviceID) { [weak self] in
-                await self?.close()
+            await sshConnectionRegistry.register(deviceID: deviceID) { [weak self, generation] in
+                await self?.close(ifGeneration: generation)
             }
         )
         // REMOTE-3.1 revocation (W4 finding 3): `await sshConnectionRegistry
