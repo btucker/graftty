@@ -1726,6 +1726,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
 
+**REMOTE-3.2** When a stale connection's fire-and-forget deregister arrives after a reconnect for the same peer has already replaced it with a fresh registration, the application shall ignore the stale deregister rather than removing the newer connection's live closer.
+
 ### REMOTE-4.x — Port Tunnels
 
 **REMOTE-4.1** If a client requests a port tunnel without host approval under the default ask-each-time policy, then the host shall reject the channel open request before connecting to the target port.

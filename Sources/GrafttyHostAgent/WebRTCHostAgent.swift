@@ -52,12 +52,21 @@ public actor WebRTCHostAgent {
     /// next `revoke` hits the CURRENT connection rather than a stale
     /// closure over a torn-down agent.
     private let sshConnectionRegistry: SSHConnectionRegistry
-    /// Set once userauth succeeds on this connection's SSH transport.
-    /// `close()` reads this to deregister the right key from
-    /// `sshConnectionRegistry`; nil until `onAuthenticated` fires, which
-    /// happens at most once per `installSSHHandler` call (one connection,
-    /// one peer).
-    private var authenticatedDeviceID: RemoteDeviceID?
+    /// Set once userauth succeeds on this connection's SSH transport and
+    /// this connection's entry is registered. `close()` reads this to
+    /// deregister the right key — AND generation — from
+    /// `sshConnectionRegistry`; nil until `registerAuthenticatedConnection`
+    /// completes, which happens at most once per `installSSHHandler` call
+    /// (one connection, one peer).
+    ///
+    /// Carrying the `RegistrationToken` alongside the device ID (rather
+    /// than deregistering by device ID alone) is what makes `close()`'s
+    /// fire-and-forget deregister Task identity-scoped: if this connection
+    /// was already replaced by a reconnect (`register` closed this one and
+    /// installed a new token for the same device), this stale token no
+    /// longer matches what's stored, so `deregister` becomes a no-op
+    /// instead of wiping the newer connection's live entry.
+    private var authenticatedRegistration: (deviceID: RemoteDeviceID, token: SSHConnectionRegistry.RegistrationToken)?
 
     /// Built lazily, on first `acceptOffer` use, rather than in `init` — an
     /// agent that never negotiates never touches native libwebrtc. This is
@@ -247,15 +256,17 @@ public actor WebRTCHostAgent {
             Task { await transport.close() }
             sshTransport = nil
         }
-        if let deviceID = authenticatedDeviceID {
+        if let (deviceID, token) = authenticatedRegistration {
             // Remove the stale entry so a later `revoke` of this same
             // peer (after it reconnects) hits the NEW connection's
             // closure rather than this torn-down one. `deregister` is
-            // a no-op if `revoke` already removed the entry (that's
-            // how we got here in the first place).
-            authenticatedDeviceID = nil
+            // a no-op if `revoke` already removed the entry, OR if a
+            // reconnect already replaced it with a fresh token (that's
+            // the identity-scoping `token` provides — see
+            // `authenticatedRegistration`'s doc comment).
+            authenticatedRegistration = nil
             let registry = sshConnectionRegistry
-            Task { await registry.deregister(deviceID: deviceID) }
+            Task { await registry.deregister(deviceID: deviceID, token: token) }
         }
         state = .closed
         if let pc = peerConnection {
@@ -381,10 +392,26 @@ public actor WebRTCHostAgent {
     /// peer reconnects.
     private func registerAuthenticatedConnection(deviceID: RemoteDeviceID) async {
         guard state != .closed else { return }
-        authenticatedDeviceID = deviceID
-        await sshConnectionRegistry.register(deviceID: deviceID) { [weak self] in
-            await self?.close()
-        }
+        // NOTE on the residual window this guard doesn't close (finding 2,
+        // W4 review): `close()` is synchronous and non-reentrant on this
+        // actor, so it can only interleave here while the `await` below is
+        // suspended. If it does, `close()` finds `authenticatedRegistration`
+        // still nil (this method hasn't set it yet) and so has nothing to
+        // deregister; when this method resumes it still installs the entry,
+        // now for an already-`.closed` agent. That leaves one phantom
+        // registry entry — `count` overcounts by one — until the SAME peer
+        // either reconnects (`register`'s replace-path awaits and no-ops
+        // this dead closure, then installs the real one) or is revoked
+        // (`revoke` removes it and no-ops the dead closure). Both are
+        // existing, already-tested paths, so this is treated as an
+        // acceptable, self-correcting window rather than adding a second
+        // post-await state check purely to close it.
+        authenticatedRegistration = (
+            deviceID,
+            await sshConnectionRegistry.register(deviceID: deviceID) { [weak self] in
+                await self?.close()
+            }
+        )
     }
 
     private enum WebRTCHostAgentError: Error {
