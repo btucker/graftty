@@ -2,6 +2,8 @@ import SwiftUI
 
 /// Settings pane for the persistent Flow State coordinator.
 struct FlowStateSettingsPane: View {
+    @EnvironmentObject private var flowStateAgentController: FlowStateAgentController
+
     @AppStorage(SettingsKeys.flowStateEnabled) private var flowStateEnabled: Bool = false
     @AppStorage(SettingsKeys.flowStateRuntime) private var runtime: String = "codex"
     @AppStorage(SettingsKeys.flowStatePermissionMode) private var permissionMode: String = "conservative"
@@ -12,21 +14,43 @@ struct FlowStateSettingsPane: View {
     var onStart: () -> Void = {}
     var onStop: () -> Void = {}
     var onRestart: () -> Void = {}
+    var onConfirmRestart: () -> Void = {}
 
     init(
         onStart: @escaping () -> Void = {},
         onStop: @escaping () -> Void = {},
-        onRestart: @escaping () -> Void = {}
+        onRestart: @escaping () -> Void = {},
+        onConfirmRestart: @escaping () -> Void = {}
     ) {
         self.onStart = onStart
         self.onStop = onStop
         self.onRestart = onRestart
+        self.onConfirmRestart = onConfirmRestart
     }
 
     var body: some View {
         Form {
             Section {
                 Toggle("Enable Flow State", isOn: $flowStateEnabled)
+            }
+
+            Section {
+                LabeledContent("Status", value: lifecycleStatusText)
+
+                if let reason = flowStateAgentController.pendingRestartReason {
+                    Text(reason)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    Button("Restart Flow State Agent", action: onConfirmRestart)
+                }
+
+                HStack {
+                    Button("Start", action: onStart)
+                    Button("Stop", action: onStop)
+                    Button("Restart", action: onRestart)
+                }
+            } header: {
+                Text("Lifecycle")
             }
 
             Section {
@@ -66,10 +90,6 @@ struct FlowStateSettingsPane: View {
                     }
 
                     Spacer()
-
-                    Button("Start", action: onStart)
-                    Button("Stop", action: onStop)
-                    Button("Restart", action: onRestart)
                 }
             } header: {
                 Text("System prompt")
@@ -77,9 +97,36 @@ struct FlowStateSettingsPane: View {
         }
         .formStyle(.grouped)
         .frame(minWidth: 540, minHeight: 560)
+        .onAppear(perform: reconcileLifecycleSettings)
+        .onChange(of: flowStateEnabled) { _, _ in reconcileLifecycleSettings() }
+        .onChange(of: runtime) { _, _ in reconcileLifecycleSettings() }
+        .onChange(of: permissionMode) { _, _ in reconcileLifecycleSettings() }
+        .onChange(of: systemPrompt) { _, _ in reconcileLifecycleSettings() }
+    }
+
+    private var lifecycleStatusText: String {
+        let status = flowStateAgentController.status
+        if let message = status.message, !message.isEmpty {
+            return message
+        }
+        if !status.enabled { return "Flow State is off" }
+        return status.running ? "Running" : "Idle"
+    }
+
+    private func reconcileLifecycleSettings() {
+        flowStateAgentController.settingsDidChange(
+            enabled: flowStateEnabled,
+            runtime: FlowStateRuntime(settingsValue: runtime),
+            systemPrompt: systemPrompt,
+            permissionMode: permissionMode
+        )
     }
 }
 
 #Preview {
     FlowStateSettingsPane()
+        .environmentObject(FlowStateAgentController(
+            launcher: FlowStateNoopAgentLauncher(),
+            socketPath: "/tmp/graftty.sock"
+        ))
 }

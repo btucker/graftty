@@ -77,6 +77,7 @@ struct MainWindow: View {
     let remoteBranchStore: RemoteBranchStore
     let worktreeMonitor: WorktreeMonitor
     let teamEventDispatcher: TeamEventDispatcher
+    @ObservedObject var flowStateAgentController: FlowStateAgentController
 
     @EnvironmentObject private var updaterController: UpdaterController
 
@@ -90,11 +91,6 @@ struct MainWindow: View {
     @State private var pendingAddWorktree: AddWorktreeRequest?
 
     @State private var mainSelection: MainWindowSelection = .worktree(nil)
-    @State private var flowStateStatus = FlowStatus(
-        enabled: UserDefaults.standard.bool(forKey: SettingsKeys.flowStateEnabled),
-        running: false,
-        message: nil
-    )
     @State private var flowStateRecommendation: FlowRecommendationEnvelope?
     @State private var flowStateActivity: [FlowStateActivity] = []
 
@@ -114,7 +110,7 @@ struct MainWindow: View {
                 prStatusStore: prStatusStore,
                 claudeSessionRegistry: claudeSessionRegistry,
                 remoteBranchStore: remoteBranchStore,
-                flowStateStatus: flowStateStatus,
+                flowStateStatus: flowStateAgentController.status,
                 flowStateRecommendation: flowStateRecommendation,
                 isFlowStateSelected: mainSelection == .flowState,
                 onSelectFlowState: selectFlowState,
@@ -144,15 +140,17 @@ struct MainWindow: View {
             VStack(spacing: 0) {
                 if mainSelection == .flowState {
                     FlowStateView(
-                        status: flowStateStatus,
+                        terminalManager: terminalManager,
+                        agentController: flowStateAgentController,
+                        status: flowStateAgentController.status,
                         recommendation: flowStateRecommendation,
                         activity: flowStateActivity,
-                        requestRefresh: refreshFlowState,
-                        openAgentPane: {},
-                        restartAgent: {},
+                        requestRefresh: { refreshFlowState(reason: "manual refresh") },
+                        openAgentPane: openFlowStateAgentPane,
+                        restartAgent: { try? flowStateAgentController.restart() },
                         confirmAction: confirmFlowStateAction
                     )
-                    .onAppear(perform: refreshFlowState)
+                    .onAppear(perform: flowStateViewDidAppear)
                 } else {
                     BreadcrumbBar(
                         repoName: selectedRepo?.displayName,
@@ -401,12 +399,14 @@ struct MainWindow: View {
         refreshFlowState()
     }
 
-    private func refreshFlowState() {
-        flowStateStatus = FlowStatus(
-            enabled: UserDefaults.standard.bool(forKey: SettingsKeys.flowStateEnabled),
-            running: false,
-            message: UserDefaults.standard.bool(forKey: SettingsKeys.flowStateEnabled) ? nil : "Flow State is off"
-        )
+    private func refreshFlowState(reason: String? = nil) {
+        loadFlowStateData()
+        if let reason {
+            flowStateAgentController.requestRefresh(reason: reason)
+        }
+    }
+
+    private func loadFlowStateData() {
         do {
             flowStateRecommendation = try flowStateStore.recommendation()
             flowStateActivity = try flowStateActivityStore.recent(limit: 10)
@@ -419,6 +419,22 @@ struct MainWindow: View {
                     worktreeRef: nil
                 )
             ]
+        }
+    }
+
+    private func flowStateViewDidAppear() {
+        flowStateAgentController.reconcileSettingsFromUserDefaults()
+        let wasRunning = flowStateAgentController.status.running
+        try? flowStateAgentController.ensureRunning()
+        refreshFlowState(reason: wasRunning && flowStateAgentController.status.running ? "view open" : nil)
+    }
+
+    private func openFlowStateAgentPane() {
+        selectFlowState()
+        flowStateAgentController.reconcileSettingsFromUserDefaults()
+        try? flowStateAgentController.ensureRunning()
+        if let focusedPaneSlotID = flowStateAgentController.focusedPaneSlotID {
+            makePaneFirstResponder(focusedPaneSlotID)
         }
     }
 

@@ -154,6 +154,7 @@ final class AppServices {
     let claudeSessionRegistry: ClaudeSessionRegistry
     let flowStateStore: FlowStateStore
     let flowStateActivityStore: FlowStateActivityStore
+    let flowStateAgentController: FlowStateAgentController
     /// TERM-11.5: per-zmx-session remote client attach counts. Fed by the
     /// web (/ws) and SSH-over-WebRTC attach paths; consulted by Mac pane
     /// backends to scope the IOS-12.1 silent gate to multi-device sessions.
@@ -203,7 +204,7 @@ final class AppServices {
     /// in `startup()`. Retained here so it outlives the SwiftUI init cycle.
     var hostAgent: WebRTCHostAgent?
 
-    init(socketPath: String) {
+    init(socketPath: String, terminalManager: TerminalManager) {
         self.socketServer = SocketServer(socketPath: socketPath)
 
         self.worktreeMonitor = WorktreeMonitor()
@@ -214,6 +215,15 @@ final class AppServices {
         self.claudeSessionRegistry = ClaudeSessionRegistry()
         self.flowStateStore = FlowStateStore.defaultStore()
         self.flowStateActivityStore = FlowStateActivityStore.defaultStore()
+        let flowStateAgentController = FlowStateAgentController(
+            launcher: TerminalFlowStateAgentLauncher(terminalManager: terminalManager),
+            socketPath: socketPath
+        )
+        self.flowStateAgentController = flowStateAgentController
+        self.flowStateStatusProvider = { [weak flowStateAgentController] in
+            flowStateAgentController?.status
+                ?? FlowStatus(enabled: false, running: false, message: "Flow State unavailable")
+        }
         self.remoteAttachmentRegistry = RemoteAttachmentRegistry()
         self.displayOwnershipStore = SessionDisplayOwnershipStore()
 
@@ -333,8 +343,9 @@ struct GrafttyApp: App {
         _appState = State(initialValue: loaded)
 
         let socketPath = AppState.defaultDirectory.appendingPathComponent("graftty.sock").path
-        _terminalManager = StateObject(wrappedValue: TerminalManager(socketPath: socketPath))
-        let appServices = AppServices(socketPath: socketPath)
+        let terminalManager = TerminalManager(socketPath: socketPath)
+        _terminalManager = StateObject(wrappedValue: terminalManager)
+        let appServices = AppServices(socketPath: socketPath, terminalManager: terminalManager)
         services = appServices
 
         // Web access server — reconstruct the same zmx paths that `startup()`
@@ -456,7 +467,8 @@ struct GrafttyApp: App {
                 claudeSessionRegistry: services.claudeSessionRegistry,
                 remoteBranchStore: services.remoteBranchStore,
                 worktreeMonitor: services.worktreeMonitor,
-                teamEventDispatcher: services.teamEventDispatcher
+                teamEventDispatcher: services.teamEventDispatcher,
+                flowStateAgentController: services.flowStateAgentController
             )
                 .environmentObject(webController)
                 .environmentObject(updaterController)
@@ -589,7 +601,23 @@ struct GrafttyApp: App {
                     .tabItem { Label("Web Access", systemImage: "network") }
                 AgentTeamsSettingsPane()
                     .tabItem { Label("Agent Teams", systemImage: "person.2.fill") }
-                FlowStateSettingsPane()
+                FlowStateSettingsPane(
+                    onStart: {
+                        services.flowStateAgentController.reconcileSettingsFromUserDefaults()
+                        try? services.flowStateAgentController.ensureRunning()
+                    },
+                    onStop: {
+                        services.flowStateAgentController.stop()
+                    },
+                    onRestart: {
+                        services.flowStateAgentController.reconcileSettingsFromUserDefaults()
+                        try? services.flowStateAgentController.restart()
+                    },
+                    onConfirmRestart: {
+                        try? services.flowStateAgentController.confirmPendingRestart()
+                    }
+                )
+                    .environmentObject(services.flowStateAgentController)
                     .tabItem { Label("Flow State", systemImage: "arrow.triangle.branch") }
             }
         }

@@ -123,6 +123,8 @@ struct FlowStateSidebarStatus {
 }
 
 struct FlowStateView: View {
+    @ObservedObject var terminalManager: TerminalManager
+    @ObservedObject var agentController: FlowStateAgentController
     let status: FlowStatus
     let recommendation: FlowRecommendationEnvelope?
     let activity: [FlowStateActivity]
@@ -138,6 +140,22 @@ struct FlowStateView: View {
             activity: activity
         )
 
+        Group {
+            if agentController.splitTree.root == nil {
+                recommendations(model)
+            } else {
+                VSplitView {
+                    recommendations(model)
+                        .frame(minHeight: 220)
+                    agentTerminal
+                        .frame(minHeight: 260)
+                }
+            }
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+    }
+
+    private func recommendations(_ model: FlowStateViewModel) -> some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 header(model)
@@ -187,7 +205,26 @@ struct FlowStateView: View {
             .padding(.horizontal, 28)
             .padding(.vertical, 24)
         }
-        .background(Color(nsColor: .textBackgroundColor))
+    }
+
+    private var agentTerminal: some View {
+        VStack(spacing: 0) {
+            Divider()
+            TerminalContentView(
+                terminalManager: terminalManager,
+                splitTree: Binding(
+                    get: { agentController.splitTree },
+                    set: { agentController.splitTree = $0 }
+                ),
+                focusedPaneSlotID: agentController.focusedPaneSlotID,
+                theme: terminalManager.theme,
+                onFocusTerminal: { terminalID in
+                    agentController.focus(terminalID)
+                    terminalManager.setFocus(terminalID)
+                }
+            )
+            .padding(.leading, 6)
+        }
     }
 
     @ViewBuilder
