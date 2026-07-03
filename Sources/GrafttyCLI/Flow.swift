@@ -54,8 +54,19 @@ struct FlowSnoozeCommand: ParsableCommand {
     @Option(name: .long, help: "Reason for snoozing this worktree")
     var reason: String?
 
+    @Option(name: .long, help: "Hold until: next_focus_break, manual_refresh, or ISO8601 timestamp")
+    var until: String = "manual_refresh"
+
+    func validate() throws {
+        _ = try FlowHoldUntilCLI.parse(until)
+    }
+
     func run() throws {
-        let exit = FlowCommandDispatcher.live.snooze(worktreeRef: worktreeRef, reason: reason)
+        let exit = FlowCommandDispatcher.live.snooze(
+            worktreeRef: worktreeRef,
+            until: try FlowHoldUntilCLI.parse(until),
+            reason: reason
+        )
         if exit != 0 { throw ExitCode(exit) }
     }
 }
@@ -193,8 +204,8 @@ struct FlowCommandDispatcher {
         }
     }
 
-    func snooze(worktreeRef: String, reason: String?) -> Int32 {
-        expectOk(transport.send(.flowSnooze(worktreeRef: worktreeRef, reason: reason)))
+    func snooze(worktreeRef: String, until: FlowHoldUntil = .manualRefresh, reason: String?) -> Int32 {
+        expectOk(transport.send(.flowSnooze(worktreeRef: worktreeRef, until: until, reason: reason)))
     }
 
     func note(worktreeRef: String) -> Int32 {
@@ -212,8 +223,15 @@ struct FlowCommandDispatcher {
     }
 
     func summary(worktreeRef: String) -> Int32 {
+        let body: String
         do {
-            let body = try stdin()
+            body = try stdin()
+        } catch {
+            emit("failed to read summary stdin: \(error)", to: stderr)
+            return 1
+        }
+
+        do {
             let summary = try JSONDecoder.flowState.decode(FlowWorktreeSummary.self, from: Data(body.utf8))
             guard summary.worktreeRef == worktreeRef else {
                 emit("summary worktreeRef '\(summary.worktreeRef)' does not match argument '\(worktreeRef)'", to: stderr)
@@ -221,7 +239,7 @@ struct FlowCommandDispatcher {
             }
             return expectOk(transport.send(.flowSummary(summary)))
         } catch {
-            emit("failed to read summary stdin: \(error)", to: stderr)
+            emit("invalid summary JSON: \(error)", to: stderr)
             return 1
         }
     }
@@ -267,6 +285,17 @@ private enum FlowStdinInput {
     static func readAll() -> String {
         let data = FileHandle.standardInput.readDataToEndOfFile()
         return String(data: data, encoding: .utf8) ?? ""
+    }
+}
+
+private enum FlowHoldUntilCLI {
+    static func parse(_ value: String) throws -> FlowHoldUntil {
+        let data = try JSONEncoder().encode(value)
+        do {
+            return try JSONDecoder.flowState.decode(FlowHoldUntil.self, from: data)
+        } catch {
+            throw ValidationError("--until must be one of: next_focus_break, manual_refresh, or an ISO8601 timestamp")
+        }
     }
 }
 

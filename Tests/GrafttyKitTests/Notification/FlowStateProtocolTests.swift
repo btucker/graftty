@@ -10,7 +10,10 @@ struct FlowStateProtocolTests {
             (.flowStatus, "flow_status"),
             (.flowContext, "flow_context"),
             (.flowRecommend, "flow_recommend"),
-            (.flowSnooze(worktreeRef: "repo:feature", reason: "Later"), "flow_snooze"),
+            (
+                .flowSnooze(worktreeRef: "repo:feature", until: .manualRefresh, reason: "Later"),
+                "flow_snooze"
+            ),
             (.flowNote(worktreeRef: "repo:feature", body: "note"), "flow_note"),
             (
                 .flowSummary(FlowWorktreeSummary(
@@ -29,6 +32,9 @@ struct FlowStateProtocolTests {
             let data = try JSONEncoder().encode(message)
             let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
             #expect(object["type"] as? String == wireType)
+            if case .flowSnooze = message {
+                #expect(object["until"] as? String == "manual_refresh")
+            }
             let decoded = try JSONDecoder().decode(NotificationMessage.self, from: data)
             #expect(decoded == message)
         }

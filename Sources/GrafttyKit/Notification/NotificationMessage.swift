@@ -43,7 +43,7 @@ public enum NotificationMessage: Sendable, Equatable {
     case flowStatus
     case flowContext
     case flowRecommend
-    case flowSnooze(worktreeRef: String, reason: String?)
+    case flowSnooze(worktreeRef: String, until: FlowHoldUntil, reason: String?)
     case flowNote(worktreeRef: String, body: String)
     case flowSummary(FlowWorktreeSummary)
     case flowPublish(rawJSON: String)
@@ -59,7 +59,7 @@ extension NotificationMessage: Codable {
         case paneSessionName = "pane_session_name"
         case pressEnter = "press_enter"
         case worktreeRef = "worktree_ref"
-        case reason, body, summary, explicit
+        case reason, until, body, summary, explicit
         case rawJSON = "raw_json"
     }
 
@@ -144,9 +144,10 @@ extension NotificationMessage: Codable {
             try container.encode("flow_context", forKey: .type)
         case .flowRecommend:
             try container.encode("flow_recommend", forKey: .type)
-        case .flowSnooze(let worktreeRef, let reason):
+        case .flowSnooze(let worktreeRef, let until, let reason):
             try container.encode("flow_snooze", forKey: .type)
             try container.encode(worktreeRef, forKey: .worktreeRef)
+            try container.encode(until, forKey: .until)
             try container.encodeIfPresent(reason, forKey: .reason)
         case .flowNote(let worktreeRef, let body):
             try container.encode("flow_note", forKey: .type)
@@ -250,8 +251,9 @@ extension NotificationMessage: Codable {
             self = .flowRecommend
         case "flow_snooze":
             let worktreeRef = try container.decode(String.self, forKey: .worktreeRef)
+            let until = try container.decode(FlowHoldUntil.self, forKey: .until)
             let reason = try container.decodeIfPresent(String.self, forKey: .reason)
-            self = .flowSnooze(worktreeRef: worktreeRef, reason: reason)
+            self = .flowSnooze(worktreeRef: worktreeRef, until: until, reason: reason)
         case "flow_note":
             let worktreeRef = try container.decode(String.self, forKey: .worktreeRef)
             let body = try container.decode(String.self, forKey: .body)

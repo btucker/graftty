@@ -57,7 +57,7 @@ struct FlowCommandTests {
         #expect(stdout.text == (try FlowCLIOutput.recommendationJSON(envelope)) + "\n")
     }
 
-    @Test("flow snooze sends worktree ref and optional reason")
+    @Test("flow snooze defaults to manual refresh")
     func snooze() throws {
         let transport = FlowCommandTransportStub(.ok)
         let exit = FlowCommandDispatcher(
@@ -68,7 +68,25 @@ struct FlowCommandTests {
         ).snooze(worktreeRef: "repo:feature", reason: "Later")
 
         #expect(exit == 0)
-        #expect(transport.messages == [.flowSnooze(worktreeRef: "repo:feature", reason: "Later")])
+        #expect(transport.messages == [
+            .flowSnooze(worktreeRef: "repo:feature", until: .manualRefresh, reason: "Later")
+        ])
+    }
+
+    @Test("flow snooze accepts explicit hold-until")
+    func snoozeExplicitUntil() throws {
+        let transport = FlowCommandTransportStub(.ok)
+        let exit = FlowCommandDispatcher(
+            transport: transport,
+            stdin: { "" },
+            stdout: FlowCommandTextSink(),
+            stderr: FlowCommandTextSink()
+        ).snooze(worktreeRef: "repo:feature", until: .nextFocusBreak, reason: nil)
+
+        #expect(exit == 0)
+        #expect(transport.messages == [
+            .flowSnooze(worktreeRef: "repo:feature", until: .nextFocusBreak, reason: nil)
+        ])
     }
 
     @Test("flow note --stdin reads stdin and sends note")
@@ -124,6 +142,20 @@ struct FlowCommandTests {
 
         #expect(mismatchExit == 1)
         #expect(mismatchStderr.text.contains("summary worktreeRef 'repo:other' does not match argument 'repo:feature'"))
+    }
+
+    @Test("flow summary reports invalid JSON separately from stdin read failure")
+    func invalidSummaryJSON() throws {
+        let stderr = FlowCommandTextSink()
+        let exit = FlowCommandDispatcher(
+            transport: FlowCommandTransportStub(.ok),
+            stdin: { "not json" },
+            stdout: FlowCommandTextSink(),
+            stderr: stderr
+        ).summary(worktreeRef: "repo:feature")
+
+        #expect(exit == 1)
+        #expect(stderr.text.contains("invalid summary JSON"))
     }
 
     @Test("flow publish --stdin sends raw stdin without local decoding")
