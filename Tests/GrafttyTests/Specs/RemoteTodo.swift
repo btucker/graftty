@@ -9,11 +9,6 @@ import Testing
 @Suite("REMOTE — pending specs")
 struct RemoteTodo {
     @Test("""
-@spec REMOTE-2.1: When a remote transport reconnects, the host shall require a fresh authenticated attach handshake before writing any bytes to the PTY.
-""", .disabled("not yet implemented"))
-    func remote_2_1() async throws { }
-
-    @Test("""
 @spec REMOTE-4.1: If a client requests a port tunnel without host approval under the default ask-each-time policy, then the host shall reject the channel open request before connecting to the target port.
 """, .disabled("not yet implemented"))
     func remote_4_1() async throws { }
