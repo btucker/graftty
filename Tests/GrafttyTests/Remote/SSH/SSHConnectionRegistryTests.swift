@@ -12,6 +12,50 @@ private actor CloseSpy {
     }
 }
 
+/// Lets a test suspend a closure at a precise point and resume it later,
+/// with a companion signal (`waitUntilArrived`) so the test can block until
+/// the closure has actually reached the gate before proceeding — avoiding
+/// a `Task.yield()`-based race to synchronize the interleaving under test.
+private actor Gate {
+    private var isOpen = false
+    private var openWaiters: [CheckedContinuation<Void, Never>] = []
+    private var hasArrived = false
+    private var arrivalWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Called from inside the closure under test. Signals arrival, then
+    /// suspends until `open()` is called (or returns immediately if
+    /// `open()` already ran).
+    func wait() async {
+        hasArrived = true
+        let toResume = arrivalWaiters
+        arrivalWaiters = []
+        for waiter in toResume { waiter.resume() }
+
+        if isOpen { return }
+        await withCheckedContinuation { continuation in
+            openWaiters.append(continuation)
+        }
+    }
+
+    /// Called from the test. Blocks until some Task has called `wait()`
+    /// and is parked on the gate (or already arrived).
+    func waitUntilArrived() async {
+        if hasArrived { return }
+        await withCheckedContinuation { continuation in
+            arrivalWaiters.append(continuation)
+        }
+    }
+
+    /// Releases every Task currently parked in `wait()`, and any that
+    /// call it afterward return immediately.
+    func open() {
+        isOpen = true
+        let toResume = openWaiters
+        openWaiters = []
+        for waiter in toResume { waiter.resume() }
+    }
+}
+
 @Suite("SSHConnectionRegistry tracks peer-keyed closable SSH connections")
 struct SSHConnectionRegistryTests {
 
@@ -114,6 +158,129 @@ struct SSHConnectionRegistryTests {
         _ = tokenB // token B itself is never passed to deregister in this
         // scenario — B's own close() hasn't run — but keeping it bound
         // documents that it's the value now stored inside the registry.
+    }
+
+    /// Reproduces the register-reentrancy TOCTOU (W4 review finding 1),
+    /// empirically confirmed 4/4 against the pre-fix ordering: `register`
+    /// used to read the OLD entry, `await` its close, and only THEN write
+    /// the new entry. A `revoke` landing during that `await` would remove
+    /// the OLD entry (the only one present at that point) and close it —
+    /// then the in-flight `register` call would resume and unconditionally
+    /// write the new entry anyway, resurrecting a device an admin just
+    /// revoked, with a close callback that would never fire again.
+    ///
+    /// `Gate` pins the interleaving deterministically: connection A's close
+    /// closure parks on `gate.wait()`, so `register`'s `await previous
+    /// .close()` (replacing A with B) is suspended exactly at the point
+    /// under test. `waitUntilArrived()` blocks the test until that
+    /// suspension has actually happened — no `Task.yield()` guessing —
+    /// before `revoke` is issued and the gate is opened to let A's close
+    /// (and therefore B's registration) finish.
+    @Test("""
+    @spec REMOTE-3.4: When a revoke for a device lands while `register` is \
+    still awaiting the prior connection's teardown for that same device, \
+    the application shall not resurrect the device with the new registration.
+    """)
+    func revokeDuringRegisterReplaceAwaitDoesNotResurrectDevice() async {
+        let registry = SSHConnectionRegistry()
+        let device = RemoteDeviceID.generate()
+        let spyA = CloseSpy()
+        let spyB = CloseSpy()
+        let gate = Gate()
+
+        // Connection A registers first, with a close closure gated so we
+        // can suspend register(B)'s replace-await at will.
+        _ = await registry.register(deviceID: device, close: {
+            await gate.wait()
+            await spyA.close()
+        })
+
+        // Connection B starts replacing A. This call's `await previous
+        // .close()` is A's gated closure above, so it parks on the gate
+        // until we open it below.
+        let registerB = Task {
+            await registry.register(deviceID: device, close: { await spyB.close() })
+        }
+
+        // Block until register(B) has actually reached the suspension
+        // point inside A's close closure — deterministic, no sleep/yield.
+        await gate.waitUntilArrived()
+
+        // An admin revoke lands for the SAME device while register(B) is
+        // suspended mid-replace. Spawned rather than awaited inline: under
+        // the PRE-FIX ordering, `entries[deviceID]` still holds A at this
+        // point (register(B) hasn't written B yet), so `revoke` removes A
+        // and re-invokes A's (still-gated) close closure — which would
+        // itself park on `gate` a second time. Awaiting `revoke` inline
+        // here would deadlock (nothing left to call `gate.open()`). `open()`
+        // is a persistent latch, so calling it right after — regardless of
+        // whether `revokeTask`'s own call into the gate has landed yet —
+        // is safe either way and lets every current or future parked
+        // caller through.
+        let revokeTask = Task { await registry.revoke(deviceID: device) }
+
+        // Pin the interleaving precisely: `revoke`'s synchronous removal
+        // (`entries.removeValue`, before its own `await entry.close()`)
+        // must have already run before we open the gate — otherwise, on a
+        // fast scheduler, register(B)'s resume-and-write could race ahead
+        // of revoke's read and this test would flakily pass for the wrong
+        // reason. Polling `count` (rather than sleeping) blocks exactly
+        // until that removal has happened: it drops to 0 the instant
+        // `revoke` reaches its own suspension point, whether it read A
+        // (pre-fix) or B (post-fix).
+        while await registry.count != 0 {
+            await Task.yield()
+        }
+
+        // Let A's gated close complete so register(B) (and, under the
+        // pre-fix ordering, revoke's re-entrant close of A) can finish.
+        await gate.open()
+        _ = await registerB.value
+        await revokeTask.value
+
+        // The device must stay revoked — B's registration, installed
+        // synchronously before the await (the fix), was the one `revoke`
+        // saw and closed; `register(B)` must not write anything further
+        // once it resumes.
+        #expect(await registry.count == 0, "revoke during register's replace-await must not be resurrected")
+        #expect(await spyA.closeCount == 1, "A must still be closed exactly once by the replace")
+        #expect(await spyB.closeCount == 1, "B must be closed by the revoke that landed mid-replace, not orphaned")
+
+        // A subsequent register for the same device must be a completely
+        // fresh registration (proves the device is truly gone, not just
+        // reporting count == 0 while some dangling entry still exists).
+        let spyC = CloseSpy()
+        await registry.register(deviceID: device, close: { await spyC.close() })
+        #expect(await registry.count == 1)
+        #expect(await spyC.closeCount == 0)
+    }
+
+    /// Complements the gated interleaving test above with plain concurrent
+    /// pressure: N concurrent `register` calls for the SAME device must
+    /// leave exactly one survivor, and every superseded registration's
+    /// close callback must fire exactly once (never zero — orphaned — and
+    /// never more than once — double-close).
+    @Test func concurrentRegistersForSameDeviceEachSupersededExactlyOnceWithOneSurvivor() async {
+        let registry = SSHConnectionRegistry()
+        let device = RemoteDeviceID.generate()
+        let spies = (0..<8).map { _ in CloseSpy() }
+
+        await withTaskGroup(of: Void.self) { group in
+            for spy in spies {
+                group.addTask {
+                    await registry.register(deviceID: device, close: { await spy.close() })
+                }
+            }
+        }
+
+        var closeCounts: [Int] = []
+        for spy in spies {
+            closeCounts.append(await spy.closeCount)
+        }
+
+        #expect(await registry.count == 1, "exactly one registration should remain current")
+        #expect(closeCounts.filter { $0 == 0 }.count == 1, "exactly one registration should survive unclosed")
+        #expect(closeCounts.allSatisfy { $0 <= 1 }, "no registration's close callback should run more than once")
     }
 
     @Test func concurrentRevokesCloseAtMostOnce() async {

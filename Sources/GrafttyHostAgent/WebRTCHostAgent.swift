@@ -246,15 +246,34 @@ public actor WebRTCHostAgent {
         }
     }
 
-    public func close() {
+    /// `async` — and `await`s the SSH transport's teardown directly rather
+    /// than spawning a fire-and-forget `Task` — so that a caller like
+    /// `SSHConnectionRegistry.revoke` (which `await`s the registered close
+    /// closure) only returns once the SSH parent channel has actually
+    /// closed. Before this, `revoke` could return while the channel close
+    /// was still in flight, letting a caller believe the connection was
+    /// torn down when it wasn't yet.
+    ///
+    /// `state = .closed` is still assigned SYNCHRONOUSLY, before the
+    /// `await transport.close()` below — `installSSHHandler`'s post-await
+    /// `if self.state != .closed` re-check depends on that atomic flip to
+    /// tell whether `close()` ran concurrently with SSH install.
+    ///
+    /// The registry deregister stays a fire-and-forget `Task` (not
+    /// `await`ed inline): awaiting it here would re-enter
+    /// `SSHConnectionRegistry` from inside a close the registry itself may
+    /// have initiated (via `revoke`), and it's a harmless no-op on the
+    /// revoke path (the entry is already gone).
+    public func close() async {
         if let pending = iceGatheringContinuation {
             iceGatheringContinuation = nil
             delegate.onIceGatheringComplete = nil
             pending.resume()
         }
+        state = .closed
         if let transport = sshTransport {
-            Task { await transport.close() }
             sshTransport = nil
+            await transport.close()
         }
         if let (deviceID, token) = authenticatedRegistration {
             // Remove the stale entry so a later `revoke` of this same
@@ -268,7 +287,6 @@ public actor WebRTCHostAgent {
             let registry = sshConnectionRegistry
             Task { await registry.deregister(deviceID: deviceID, token: token) }
         }
-        state = .closed
         if let pc = peerConnection {
             pc.close()
             peerConnection = nil
@@ -412,6 +430,29 @@ public actor WebRTCHostAgent {
                 await self?.close()
             }
         )
+        // REMOTE-3.1 revocation (W4 finding 3): `await sshConnectionRegistry
+        // .register` above is itself a suspension point (registry's own
+        // replace-await, see `SSHConnectionRegistry.register`), so an admin
+        // revoke can land for this SAME peer during the Task-hop between
+        // `onAuthenticated` firing and this method resuming here — a window
+        // `revoke(deviceID:)` can't see into, because this connection isn't
+        // registered yet when the revoke runs. Re-checking the trust store
+        // AFTER registration completes closes that window: if the peer was
+        // removed from `trustedPeerStore` while we were registering, close
+        // immediately rather than leaving a live, authenticated connection
+        // for a peer that's no longer trusted.
+        if shouldCloseAfterRegister(deviceID: deviceID) {
+            await close()
+        }
+    }
+
+    /// Extracted from `registerAuthenticatedConnection` so the
+    /// register-then-verify trust recheck is unit-testable without driving
+    /// native WebRTC (constructing `RTCPeerConnection`/`RTCPeerConnectionFactory`
+    /// hangs headless mac CI — see `factory`'s lazy-init comment). `internal`
+    /// so `@testable import GrafttyHostAgent` can reach it directly.
+    internal func shouldCloseAfterRegister(deviceID: RemoteDeviceID) -> Bool {
+        (try? trustedPeerStore.get(id: deviceID)) == nil
     }
 
     private enum WebRTCHostAgentError: Error {

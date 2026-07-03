@@ -1730,6 +1730,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-3.3** When a host operator removes a paired device from Settings, the application shall close that device's live session immediately rather than waiting for its next attach attempt to fail, and shall not close any session if the device could not be removed from the trust store.
 
+**REMOTE-3.4** When a revoke for a device lands while `register` is still awaiting the prior connection's teardown for that same device, the application shall not resurrect the device with the new registration.
+
+**REMOTE-3.5** If a trusted peer is revoked while the host is still completing registration of that peer's newly authenticated connection, then the application shall close the connection rather than leave it live for a peer no longer in the trust store.
+
 ### REMOTE-4.x — Port Tunnels
 
 **REMOTE-4.1** If a client requests a port tunnel without host approval under the default ask-each-time policy, then the host shall reject the channel open request before connecting to the target port.
