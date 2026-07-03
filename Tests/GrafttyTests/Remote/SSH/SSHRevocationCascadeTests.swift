@@ -130,6 +130,310 @@ struct SSHRevocationCascadeTests {
         #expect(serverChild.isActive == false)
     }
 
+    /// REMOTE-3.1 (see the `@Test` title below for the verbatim EARS text).
+    ///
+    /// End-to-end at the registry+SSH+userauth layer (the
+    /// Settings-UI-triggers-revoke layer is already owned by REMOTE-3.3's
+    /// `PairedDevicesSectionTests`):
+    ///   - close half: registers the SAME close-closure shape
+    ///     `WebRTCHostAgent.registerAuthenticatedConnection` installs
+    ///     (`SSHConnectionRegistry.register` → closes the SSH parent
+    ///     channel) under `SSHConnectionRegistry`, then `revoke`s it and
+    ///     asserts the open child channel goes inactive — the exact
+    ///     parent→child cascade `closingParentChannelClosesOpenChildChannel`
+    ///     above proves, now driven through the real registry instead of a
+    ///     bare `server.close()`.
+    ///   - reject half: mirrors `SSHUserAuthCapabilityTests`' delegate-on-
+    ///     EmbeddedEventLoop pattern — after `TrustedPeerStore.remove`
+    ///     (the same call `PairedDevicesSection.remove` makes right before
+    ///     `revoke`), a fresh `SSHUserAuthDelegate.requestReceived` for the
+    ///     revoked peer's key fails.
+    @Test("""
+@spec REMOTE-3.1: If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
+""")
+    func revokedPeerChannelsCloseAndFutureAttachRejected() async throws {
+        let serverKey = Curve25519.Signing.PrivateKey()
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let peerID = RemoteDeviceID.generate()
+
+        let store = TrustedPeerStore(directory: Self.tempDir())
+        try store.add(
+            TrustedPeer(
+                id: peerID,
+                kind: .ipad,
+                publicKey: try RemoteIdentityPublicKey(rawRepresentation: clientKey.publicKey.rawRepresentation),
+                displayName: "test",
+                capabilities: PairedDeviceCapabilities(
+                    terminalControl: .allowed,
+                    portTunnel: .disabled,
+                    screenView: .disabled,
+                    screenControl: .disabled
+                ),
+                pairedAt: Date(),
+                lastSeenAt: nil
+            )
+        )
+
+        let loop = EmbeddedEventLoop()
+        // `syncShutdownGracefully()` is unavailable in an async context
+        // (Swift 6 forbids the blocking `wait()` it's built on); the
+        // callback-based overload shuts the loop down without blocking.
+        defer { loop.shutdownGracefully { _ in } }
+        let client = EmbeddedChannel(loop: loop)
+        let server = EmbeddedChannel(loop: loop)
+
+        // Mirrors `WebRTCHostAgent.installSSHHandler`'s `onAuthenticated`
+        // wiring: capture the peer's `RemoteDeviceID` synchronously, the
+        // same moment `registerAuthenticatedConnection` would fire from.
+        let authenticatedDeviceIDBox = DeviceIDBox()
+        let serverChildBox = ChildChannelBox()
+        let serverHandler = SSHServerSetup.makeHandler(
+            hostKey: serverKey,
+            trustedPeerStore: store,
+            allocator: server.allocator,
+            onAuthenticated: { deviceID in authenticatedDeviceIDBox.value = deviceID },
+            inboundChildChannelInitializer: { child, channelType in
+                guard case .session = channelType else {
+                    return child.eventLoop.makeFailedFuture(TestError.unexpectedChannelType)
+                }
+                serverChildBox.channel = child
+                return child.eventLoop.makeSucceededVoidFuture()
+            }
+        )
+        try server.pipeline.syncOperations.addHandler(serverHandler)
+
+        let clientHandler = NIOSSHHandler(
+            role: .client(
+                SSHClientConfiguration(
+                    userAuthDelegate: SingleOfferClientAuth(key: clientKey),
+                    serverAuthDelegate: AcceptAllHostKeys()
+                )
+            ),
+            allocator: client.allocator,
+            inboundChildChannelInitializer: nil
+        )
+        try client.pipeline.syncOperations.addHandler(clientHandler)
+
+        try await client.connect(to: SocketAddress(unixDomainSocketPath: "/fake")).get()
+        try await server.connect(to: SocketAddress(unixDomainSocketPath: "/fake")).get()
+        try Self.interactInMemory(loop: loop, client: client, server: server)
+
+        var clientChild: Channel?
+        let clientSSHHandler = try client.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
+        clientSSHHandler.createChannel(channelType: .session) { channel, channelType in
+            guard case .session = channelType else {
+                return channel.eventLoop.makeFailedFuture(TestError.unexpectedChannelType)
+            }
+            clientChild = channel
+            return channel.eventLoop.makeSucceededVoidFuture()
+        }
+        try Self.interactInMemory(loop: loop, client: client, server: server)
+
+        let serverChild = try #require(serverChildBox.channel, "server never opened the session child channel")
+        let deviceID = try #require(authenticatedDeviceIDBox.value, "userauth never authenticated the peer")
+        #expect(clientChild?.isActive == true)
+        #expect(serverChild.isActive == true)
+
+        // All handshake byte-pumping is done above; everything from here is
+        // sequential `await`s with no concurrent `loop.run()` polling racing
+        // it, so the actor hop through `SSHConnectionRegistry` touching
+        // `server` (an `EmbeddedChannel`) once, synchronously, inside
+        // `close()` cannot collide with another thread the way
+        // `PaneControlChannelHandlerTests`' background-Task-vs-busy-poll
+        // pattern can — there IS no concurrent poller here to race against.
+        let registry = SSHConnectionRegistry()
+        await registry.register(deviceID: deviceID) {
+            try? await server.close().get()
+        }
+
+        // Close half: mirrors `PairedDevicesSection.remove`'s sequence —
+        // remove from the trust store, THEN revoke the live connection.
+        try store.remove(id: deviceID)
+        await registry.revoke(deviceID: deviceID)
+
+        #expect(serverChild.isActive == false, "revocation must close the peer's open child channel")
+
+        // Reject half: a subsequent userauth attempt for the SAME (now
+        // untrusted) fingerprint must fail. `SSHUserAuthDelegate` enforces
+        // this by exclusion — a peer absent from `TrustedPeerStore` cannot
+        // authenticate, so it cannot open any future channel either.
+        let outcome = try Self.runUserAuth(key: clientKey, store: store, loop: loop)
+        guard case .failure = outcome else {
+            Issue.record("expected revoked peer's userauth to fail, got \(outcome)")
+            return
+        }
+    }
+
+    /// REMOTE-7.6 (see the `@Test` title below for the verbatim EARS text).
+    ///
+    /// Same shape as `revokedPeerChannelsCloseAndFutureAttachRejected` above,
+    /// but the open child channel is specifically routed to a `pane_control`
+    /// subsystem (`SSHChannelTypeNames.paneControl`) via the PRODUCTION
+    /// `SubsystemDispatcher` — the same dispatcher
+    /// `WebRTCHostAgent.installSSHHandler`'s `inboundChildChannelInitializer`
+    /// installs — rather than left as a bare session channel. The reject
+    /// half is the same userauth-exclusion mechanism as REMOTE-3.1: no
+    /// channel-open-time capability check exists for `pane_control` (see
+    /// `SSHUserAuthDelegate`'s doc comment — REMOTE-6.1/7.1 enforcement is
+    /// folded into userauth for every R5-scope channel type), so a revoked
+    /// peer failing userauth is sufficient to reject a subsequent
+    /// `pane_control` open request too.
+    @Test("""
+@spec REMOTE-7.6: If a trusted peer is revoked while a `pane_control` channel is open, the channel shall close and subsequent open requests from the revoked peer shall be rejected.
+""")
+    func revokedPeerPaneControlChannelClosesAndReopenRejected() async throws {
+        let serverKey = Curve25519.Signing.PrivateKey()
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let peerID = RemoteDeviceID.generate()
+
+        let store = TrustedPeerStore(directory: Self.tempDir())
+        try store.add(
+            TrustedPeer(
+                id: peerID,
+                kind: .ipad,
+                publicKey: try RemoteIdentityPublicKey(rawRepresentation: clientKey.publicKey.rawRepresentation),
+                displayName: "test",
+                capabilities: PairedDeviceCapabilities(
+                    terminalControl: .allowed,
+                    portTunnel: .disabled,
+                    screenView: .disabled,
+                    screenControl: .disabled
+                ),
+                pairedAt: Date(),
+                lastSeenAt: nil
+            )
+        )
+
+        let loop = EmbeddedEventLoop()
+        // See `revokedPeerChannelsCloseAndFutureAttachRejected` above for
+        // why the callback-based overload is used instead of
+        // `syncShutdownGracefully()` here.
+        defer { loop.shutdownGracefully { _ in } }
+        let client = EmbeddedChannel(loop: loop)
+        let server = EmbeddedChannel(loop: loop)
+
+        let authenticatedDeviceIDBox = DeviceIDBox()
+        let serverChildBox = ChildChannelBox()
+        let serverHandler = SSHServerSetup.makeHandler(
+            hostKey: serverKey,
+            trustedPeerStore: store,
+            allocator: server.allocator,
+            onAuthenticated: { deviceID in authenticatedDeviceIDBox.value = deviceID },
+            inboundChildChannelInitializer: { child, channelType in
+                guard case .session = channelType else {
+                    return child.eventLoop.makeFailedFuture(TestError.unexpectedChannelType)
+                }
+                serverChildBox.channel = child
+                // Production wiring (`WebRTCHostAgent.installSSHHandler`):
+                // every inbound session child channel gets a
+                // `SubsystemDispatcher` so it can be routed to
+                // `pane-control@graftty.dev` by a subsystem request.
+                // `streamFactory` is never invoked on this path (we route
+                // to pane-control, not a terminal session) — asserting
+                // that would be a bug, hence the fatal error rather than a
+                // silent fallback.
+                return child.eventLoop.makeCompletedFuture {
+                    let dispatcher = SubsystemDispatcher(
+                        streamFactory: { _ in fatalError("terminal-session path not exercised by this test") },
+                        panesStateSubscribe: { _ in PanesStateChannelHandler.Cancellable(cancel: {}) },
+                        paneControlMutator: { _ in .ok },
+                        ownershipStore: SessionDisplayOwnershipStore(),
+                        ownershipBroadcaster: DisplayOwnershipBroadcaster(),
+                        deviceIDProvider: { authenticatedDeviceIDBox.value }
+                    )
+                    try child.pipeline.syncOperations.addHandler(dispatcher)
+                }
+            }
+        )
+        try server.pipeline.syncOperations.addHandler(serverHandler)
+
+        let clientHandler = NIOSSHHandler(
+            role: .client(
+                SSHClientConfiguration(
+                    userAuthDelegate: SingleOfferClientAuth(key: clientKey),
+                    serverAuthDelegate: AcceptAllHostKeys()
+                )
+            ),
+            allocator: client.allocator,
+            inboundChildChannelInitializer: nil
+        )
+        try client.pipeline.syncOperations.addHandler(clientHandler)
+
+        try await client.connect(to: SocketAddress(unixDomainSocketPath: "/fake")).get()
+        try await server.connect(to: SocketAddress(unixDomainSocketPath: "/fake")).get()
+        try Self.interactInMemory(loop: loop, client: client, server: server)
+
+        var clientChild: Channel?
+        let clientSSHHandler = try client.pipeline.syncOperations.handler(type: NIOSSHHandler.self)
+        clientSSHHandler.createChannel(channelType: .session) { channel, channelType in
+            guard case .session = channelType else {
+                return channel.eventLoop.makeFailedFuture(TestError.unexpectedChannelType)
+            }
+            clientChild = channel
+            return channel.eventLoop.makeSucceededVoidFuture()
+        }
+        try Self.interactInMemory(loop: loop, client: client, server: server)
+
+        let serverChild = try #require(serverChildBox.channel, "server never opened the session child channel")
+        let deviceID = try #require(authenticatedDeviceIDBox.value, "userauth never authenticated the peer")
+        #expect(clientChild?.isActive == true)
+        #expect(serverChild.isActive == true)
+
+        // Route the child channel to `pane_control` exactly as a real SSH
+        // subsystem-request message would (NIOSSH translates the wire
+        // message into this same `userInboundEventTriggered` call on the
+        // child channel's pipeline — this is the identical dispatch path,
+        // just fired directly instead of driven over the wire, mirroring
+        // `SubsystemDispatcherTests`' own approach to exercising
+        // `SubsystemDispatcher` in isolation).
+        serverChild.pipeline.fireUserInboundEventTriggered(
+            SSHChannelRequestEvent.SubsystemRequest(
+                subsystem: SSHChannelTypeNames.paneControl,
+                wantReply: false
+            )
+        )
+        #expect(serverChild.isActive == true, "pane-control routing must not itself close the channel")
+
+        let registry = SSHConnectionRegistry()
+        await registry.register(deviceID: deviceID) {
+            try? await server.close().get()
+        }
+
+        try store.remove(id: deviceID)
+        await registry.revoke(deviceID: deviceID)
+
+        #expect(serverChild.isActive == false, "revocation must close the peer's open pane_control channel")
+
+        let outcome = try Self.runUserAuth(key: clientKey, store: store, loop: loop)
+        guard case .failure = outcome else {
+            Issue.record("expected revoked peer's userauth to fail, got \(outcome)")
+            return
+        }
+    }
+
+    /// Mirrors `SSHUserAuthCapabilityTests.runUserAuth` (an `XCTestCase`
+    /// in a different file/framework, so not directly callable from here):
+    /// drives a single userauth roundtrip against a real
+    /// `SSHUserAuthDelegate` and returns the outcome. `requestReceived`
+    /// resolves its promise synchronously (no channel I/O), so `wait()`
+    /// returns immediately without blocking any event loop thread.
+    private static func runUserAuth(
+        key: Curve25519.Signing.PrivateKey,
+        store: TrustedPeerStore,
+        loop: EmbeddedEventLoop
+    ) throws -> NIOSSHUserAuthenticationOutcome {
+        let delegate = SSHUserAuthDelegate(store: store)
+        let publicKey = NIOSSHPrivateKey(ed25519Key: key).publicKey
+        let request = NIOSSHUserAuthenticationRequest(
+            username: "graftty",
+            serviceName: "ssh-connection",
+            request: .publicKey(.init(publicKey: publicKey))
+        )
+        let promise = loop.makePromise(of: NIOSSHUserAuthenticationOutcome.self)
+        delegate.requestReceived(request: request, responsePromise: promise)
+        return try promise.futureResult.wait()
+    }
+
     private static func tempDir() -> URL {
         let url = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("graftty-revocation-cascade-\(UUID().uuidString)")
@@ -172,6 +476,14 @@ private enum TestError: Error {
 /// signature `inboundChildChannelInitializer` requires.
 private final class ChildChannelBox: @unchecked Sendable {
     var channel: Channel?
+}
+
+/// Captures the `RemoteDeviceID` `SSHUserAuthDelegate`'s `onAuthenticated`
+/// callback fires with — mirrors `WebRTCHostAgent`'s `AuthenticatedPeerBox`.
+/// Same single-threaded, synchronous-callback justification as
+/// `ChildChannelBox` above applies here.
+private final class DeviceIDBox: @unchecked Sendable {
+    var value: RemoteDeviceID?
 }
 
 /// Offers a single Ed25519 key on the first auth attempt. Mirrors
