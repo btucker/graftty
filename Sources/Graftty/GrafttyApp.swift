@@ -152,6 +152,8 @@ final class AppServices {
     let remoteBranchStore: RemoteBranchStore
     let prStatusStore: PRStatusStore
     let claudeSessionRegistry: ClaudeSessionRegistry
+    let flowStateStore: FlowStateStore
+    let flowStateActivityStore: FlowStateActivityStore
     /// TERM-11.5: per-zmx-session remote client attach counts. Fed by the
     /// web (/ws) and SSH-over-WebRTC attach paths; consulted by Mac pane
     /// backends to scope the IOS-12.1 silent gate to multi-device sessions.
@@ -181,6 +183,7 @@ final class AppServices {
     var agentStateRegistry: WorktreeAgentStateRegistry?
     var inputActivityRegistry: PaneInputActivityRegistry?
     var graceScheduler: EngagedGraceScheduler?
+    var flowStateStatusProvider: (() -> FlowStatus)?
     /// Holds the `TeamInboxObserver` cancellables so the observers stay
     /// active for the lifetime of the app (one observer per team-ID started
     /// at launch for each known repo).
@@ -209,6 +212,8 @@ final class AppServices {
         self.remoteBranchStore = remoteBranchStore
         self.prStatusStore = PRStatusStore(remoteBranchStore: remoteBranchStore)
         self.claudeSessionRegistry = ClaudeSessionRegistry()
+        self.flowStateStore = FlowStateStore.defaultStore()
+        self.flowStateActivityStore = FlowStateActivityStore.defaultStore()
         self.remoteAttachmentRegistry = RemoteAttachmentRegistry()
         self.displayOwnershipStore = SessionDisplayOwnershipStore()
 
@@ -947,7 +952,15 @@ struct GrafttyApp: App {
                     terminalManager: tm,
                     teamInbox: teamInbox,
                     teamEventDispatcher: teamEventDispatcher,
-                    hookCallbacks: appServicesRef.teamHookCallbacks
+                    hookCallbacks: appServicesRef.teamHookCallbacks,
+                    statsStore: appServicesRef.statsStore,
+                    prStatusStore: appServicesRef.prStatusStore,
+                    claudeSessionRegistry: appServicesRef.claudeSessionRegistry,
+                    agentStateRegistry: appServicesRef.agentStateRegistry,
+                    inputActivityRegistry: appServicesRef.inputActivityRegistry,
+                    flowStateStore: appServicesRef.flowStateStore,
+                    flowStateActivityStore: appServicesRef.flowStateActivityStore,
+                    flowStateStatusProvider: appServicesRef.flowStateStatusProvider
                 )
             }
         }
@@ -2240,7 +2253,15 @@ struct GrafttyApp: App {
         terminalManager: TerminalManager,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher,
-        hookCallbacks: TeamHookCallbacks? = nil
+        hookCallbacks: TeamHookCallbacks? = nil,
+        statsStore: WorktreeStatsStore? = nil,
+        prStatusStore: PRStatusStore? = nil,
+        claudeSessionRegistry: ClaudeSessionRegistry? = nil,
+        agentStateRegistry: WorktreeAgentStateRegistry? = nil,
+        inputActivityRegistry: PaneInputActivityRegistry? = nil,
+        flowStateStore: FlowStateStore? = nil,
+        flowStateActivityStore: FlowStateActivityStore? = nil,
+        flowStateStatusProvider: (() -> FlowStatus)? = nil
     ) -> ResponseMessage? {
         switch message {
         case .listPanes(let path):
@@ -2340,7 +2361,21 @@ struct GrafttyApp: App {
             )
         case .flowStatus, .flowContext, .flowRecommend, .flowSnooze, .flowNote, .flowSummary,
              .flowPublish, .flowRequestStatus:
-            return .error("flow state requests are not handled by this build")
+            guard let flowStateStore, let flowStateActivityStore else {
+                return .error("flow state stores unavailable")
+            }
+            return FlowStateAppRequestDispatcher.handle(
+                message,
+                appState: appState.wrappedValue,
+                store: flowStateStore,
+                activityStore: flowStateActivityStore,
+                statsStore: statsStore,
+                prStatusStore: prStatusStore,
+                claudeSessionRegistry: claudeSessionRegistry,
+                agentStateRegistry: agentStateRegistry,
+                inputActivityRegistry: inputActivityRegistry,
+                statusProvider: flowStateStatusProvider
+            )
         case .notify, .clear:
             // Fire-and-forget cases — no response. `onMessage` already handled them.
             return nil

@@ -1870,6 +1870,32 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **FLOW-3.4** `graftty flow publish` shall send raw JSON to the app so invalid agent output can be recorded as Flow State activity while preserving the last valid recommendation.
 
+### FLOW-4.x
+
+**FLOW-4.1** Flow State shall treat an agent-provided `requiresConfirmation` value as advisory and derive the effective confirmation requirement from Graftty policy.
+
+**FLOW-4.2** Flow State may execute autonomous team status requests only when they are fixed-shape, single-target status-gathering template messages.
+
+**FLOW-4.3** When Flow State records activity, the application shall append durable activity rows and preserve per-worktree status-request cooldown timestamps.
+
+**FLOW-4.4** Flow State request handling shall persist notes, summaries, snoozes, and recommendations and return typed status/context/recommendation responses.
+
+**FLOW-4.5** If `flow publish` receives invalid structured output, the application shall keep the last valid recommendation and record a Flow State activity error.
+
+**FLOW-4.6** Flow State shall require confirmation for team messages, focus changes, and agent restarts, and shall require explicit opt-in for pane commands.
+
+**FLOW-4.7** Flow State activity storage shall expose default root and default store constructors under the app state Flow State directory.
+
+**FLOW-4.8** If no stored recommendation exists, Flow State recommend shall return a low-confidence none recommendation.
+
+**FLOW-4.9** Flow State request handling shall leave request-status execution to the Task 5 action executor.
+
+**FLOW-4.10** Flow State app request dispatch shall route context through app-built external signals where available.
+
+**FLOW-4.11** Flow State app request dispatch shall preserve the last valid recommendation when a later publish is invalid.
+
+**FLOW-4.12** Flow State app request dispatch shall use an injected status provider.
+
 ## MEM — MEM
 
 ### MEM-1.x
