@@ -252,37 +252,22 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
 
     /// Length-prefixes `payload` (`<u32 BE length><UTF-8 JSON>`) and writes
     /// it as a `.stdErr`-typed `SSHChannelData` on the session channel — the
-    /// same wire shape `TerminalSessionHandler.encodeStdErrFrame` produces
-    /// server-side. Shared by `sendControlEnvelope` (the fire-and-forget
-    /// internal senders) and `send(.text)` (the `WebSocketClient`
-    /// conformance surface) so both routes land on the SAME `.stdErr`
-    /// control carrier `receive()` reads back from, rather than `send(.text)`
-    /// writing `.channel` PTY bytes as it did before — asymmetric with
-    /// `receive()` and with `URLSessionWebSocketClient`, where `.text` IS
-    /// the control encoding.
+    /// same wire shape `StdErrControlFraming.encode` produces server-side
+    /// via `TerminalSessionHandler`. Shared by `sendControlEnvelope` (the
+    /// fire-and-forget internal senders) and `send(.text)` (the
+    /// `WebSocketClient` conformance surface) so both routes land on the
+    /// SAME `.stdErr` control carrier `receive()` reads back from, rather
+    /// than `send(.text)` writing `.channel` PTY bytes as it did before —
+    /// asymmetric with `receive()` and with `URLSessionWebSocketClient`,
+    /// where `.text` IS the control encoding.
     private func sendRawControlFrame(_ payload: String) async throws {
         let child = lock.withLock { childChannel }
         guard let child else { throw ClientError.notConnected }
-        guard let framed = Self.encodeStdErrFrame(payload) else { return }
+        guard let framed = StdErrControlFraming.encode(payload) else { return }
         var buffer = child.allocator.buffer(capacity: framed.count)
         buffer.writeBytes(framed)
         let data = SSHChannelData(type: .stdErr, data: .byteBuffer(buffer))
         try await child.writeAndFlush(data).get()
-    }
-
-    /// Mirrors `TerminalSessionHandler.encodeStdErrFrame` exactly so both
-    /// ends of the `.stdErr` carrier agree on the wire shape.
-    private static func encodeStdErrFrame(_ payload: String) -> [UInt8]? {
-        let bytes = Array(payload.utf8)
-        guard let length = UInt32(exactly: bytes.count) else { return nil }
-        var framed: [UInt8] = [
-            UInt8((length >> 24) & 0xff),
-            UInt8((length >> 16) & 0xff),
-            UInt8((length >> 8) & 0xff),
-            UInt8(length & 0xff),
-        ]
-        framed.append(contentsOf: bytes)
-        return framed
     }
 
     // MARK: - Inbound bytes from the SSH channel
@@ -369,7 +354,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
 /// reference to TerminalSessionClient while the channel is still alive.
 ///
 /// `InboundRelay` runs exclusively on the child channel's event loop
-/// (NIO's single-threaded-per-channel guarantee), so `stdErrAccumulator`
+/// (NIO's single-threaded-per-channel guarantee), so `stdErrDecoder`
 /// / `stdErrPoisoned` need no lock — unlike
 /// `TerminalSessionHandler.helloLock`, which exists there because that
 /// state is also read from a different SSH connection's broadcaster
@@ -379,20 +364,15 @@ private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = SSHChannelData
 
     let owner: TerminalSessionClient
-    private var stdErrAccumulator: [UInt8] = []
-    /// Read cursor into `stdErrAccumulator` — mirrors
-    /// `TerminalSessionHandler.stdErrCursor` server-side: bytes before this
-    /// index have already been consumed into a delivered frame but not yet
-    /// physically removed. `ingestControlBytes` advances this per frame and
-    /// performs ONE `removeSubrange(0..<cursor)` compaction at the end of
-    /// the pass, rather than the `removeFirst(total)` this replaced, which
-    /// shifted the whole remaining tail on every single frame (O(n) per
-    /// frame, O(n·k) for a burst of k frames in one ingest).
-    private var stdErrCursor = 0
+    /// Accumulates/drains the `.stdErr` control carrier's
+    /// `<u32 BE length><UTF-8 JSON>` frames — see
+    /// `StdErrControlFraming` for the wire format and cap this shares
+    /// with `TerminalSessionHandler` on the server side.
+    private var stdErrDecoder = StdErrControlFraming.Decoder()
     /// Set once a `.stdErr` frame header claims a length above
-    /// `maxControlFrameLength`, or undrained accumulation exceeds that
-    /// same bound with no complete frame in sight. Framing is
-    /// unrecoverable at that point (we can't tell where the next frame
+    /// `StdErrControlFraming.maxFrameLength`, or undrained accumulation
+    /// exceeds that same bound with no complete frame in sight. Framing
+    /// is unrecoverable at that point (we can't tell where the next frame
     /// starts) — a single malformed frame's bytes failing UTF-8 decoding
     /// is handled separately and does NOT poison the carrier (framing
     /// stays intact; see `ingestControlBytes`). Mirrors the server
@@ -404,10 +384,6 @@ private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
     /// `SessionClient`'s existing reconnect/backoff and self-heals
     /// instead of hanging silently forever.
     private var stdErrPoisoned = false
-    /// Mirrors `TerminalSessionHandler.maxControlFrameLength` — same cap
-    /// so a well-behaved peer's frames never trip it, while bounding what
-    /// a misbehaving/buggy server can make this client buffer.
-    private static let maxControlFrameLength: UInt32 = 1 << 20
 
     init(owner: TerminalSessionClient) {
         self.owner = owner
@@ -427,43 +403,29 @@ private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
     }
 
     /// Accumulates inbound `.stdErr` bytes and drains every complete
-    /// `<u32 BE length><UTF-8 JSON>` frame, mirroring
-    /// `TerminalSessionHandler.ingestStdErr`/`drainControlFrames` — same
-    /// cursor-based draining (O(k) for a burst of k buffered frames instead
-    /// of the O(n·k) `removeFirst(total)` per frame this replaced) and the
-    /// same single `removeSubrange` compaction at the end of the pass. A
-    /// frame whose bytes aren't valid UTF-8 is dropped individually
-    /// (framing is still intact — we know exactly where the next frame
-    /// starts) rather than poisoning the whole carrier; only a
-    /// length-prefix overflow (unrecoverable framing) poisons it.
+    /// `<u32 BE length><UTF-8 JSON>` frame via the shared
+    /// `StdErrControlFraming.Decoder`, mirroring
+    /// `TerminalSessionHandler.ingestStdErr`/`drainControlFrames`. A frame
+    /// whose bytes aren't valid UTF-8 is dropped individually (framing is
+    /// still intact — we know exactly where the next frame starts) rather
+    /// than poisoning the whole carrier; only a length-prefix overflow
+    /// (unrecoverable framing) poisons it.
     private func ingestControlBytes(_ data: Data, context: ChannelHandlerContext) {
         guard !stdErrPoisoned else { return }
-        stdErrAccumulator.append(contentsOf: data)
-        while stdErrAccumulator.count - stdErrCursor >= 4 {
-            let base = stdErrCursor
-            let length = (UInt32(stdErrAccumulator[base]) << 24)
-                | (UInt32(stdErrAccumulator[base + 1]) << 16)
-                | (UInt32(stdErrAccumulator[base + 2]) << 8)
-                | UInt32(stdErrAccumulator[base + 3])
-            guard length <= Self.maxControlFrameLength else {
-                poisonAndClose(context: context)
-                return
-            }
-            let total = 4 + Int(length)
-            guard stdErrAccumulator.count - base >= total else { break }
-            let payload = Data(stdErrAccumulator[(base + 4)..<(base + total)])
-            stdErrCursor = base + total
+        stdErrDecoder.append(data)
+        let (frames, oversized) = stdErrDecoder.drain()
+        for payload in frames {
             guard let text = String(data: payload, encoding: .utf8) else { continue }
             owner.deliverInboundText(text)
         }
-        if stdErrCursor > 0 {
-            stdErrAccumulator.removeSubrange(0..<stdErrCursor)
-            stdErrCursor = 0
+        if oversized {
+            poisonAndClose(context: context)
+            return
         }
         // Bound undrained accumulation the same way the server does:
         // more than one max-size frame's worth of bytes past the cursor
         // with no complete frame in sight is itself a protocol violation.
-        if stdErrAccumulator.count - stdErrCursor > Int(Self.maxControlFrameLength) + 4 {
+        if stdErrDecoder.isOverAccumulated {
             poisonAndClose(context: context)
         }
     }
@@ -477,8 +439,7 @@ private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
     /// carrier that can never surface another control envelope.
     private func poisonAndClose(context: ChannelHandlerContext) {
         stdErrPoisoned = true
-        stdErrAccumulator.removeAll()
-        stdErrCursor = 0
+        stdErrDecoder.reset()
         context.close(promise: nil)
     }
 }

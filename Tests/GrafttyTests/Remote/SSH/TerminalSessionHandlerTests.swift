@@ -928,18 +928,11 @@ final class TerminalSessionHandlerTests: XCTestCase {
         )
     }
 
-    /// Sends `envelope` inbound as a length-prefixed `.stdErr` frame —
-    /// the REMOTE-9 control-carrier wire shape (`<u32 BE length><UTF-8 JSON>`).
+    /// Sends `envelope` inbound as a length-prefixed `.stdErr` frame,
+    /// using the shared `StdErrControlFraming` codec — the same wire
+    /// shape `TerminalSessionHandler`/`TerminalSessionClient` produce.
     private func sendControlEnvelope(_ channel: NIOAsyncTestingChannel, _ envelope: WebControlEnvelope) async throws {
-        let payload = Array(envelope.encoded().utf8)
-        let length = UInt32(payload.count)
-        var framed: [UInt8] = [
-            UInt8((length >> 24) & 0xff),
-            UInt8((length >> 16) & 0xff),
-            UInt8((length >> 8) & 0xff),
-            UInt8(length & 0xff),
-        ]
-        framed.append(contentsOf: payload)
+        let framed = StdErrControlFraming.encode(envelope.encoded()) ?? []
         let buffer = ByteBuffer(bytes: framed)
         try await channel.writeInbound(SSHChannelData(type: .stdErr, data: .byteBuffer(buffer)))
     }
@@ -949,19 +942,13 @@ final class TerminalSessionHandlerTests: XCTestCase {
     /// control frame decodes to a `WebControlEnvelope`, then returns it.
     /// `.channel` frames encountered along the way (byte echoes) are
     /// skipped. Reassembles the length-prefix framing across multiple
-    /// `.stdErr` chunks, mirroring `TerminalSessionHandler.ingestStdErr`.
+    /// `.stdErr` chunks via the shared `StdErrControlFraming.Decoder`,
+    /// mirroring `TerminalSessionHandler.ingestStdErr`.
     private func nextOutboundEnvelope(_ channel: NIOAsyncTestingChannel) async throws -> WebControlEnvelope {
-        var stdErrBuffer: [UInt8] = []
+        var decoder = StdErrControlFraming.Decoder()
         while true {
-            while stdErrBuffer.count >= 4 {
-                let length = (UInt32(stdErrBuffer[0]) << 24)
-                    | (UInt32(stdErrBuffer[1]) << 16)
-                    | (UInt32(stdErrBuffer[2]) << 8)
-                    | UInt32(stdErrBuffer[3])
-                let total = 4 + Int(length)
-                guard stdErrBuffer.count >= total else { break }
-                let payload = Data(stdErrBuffer[4..<total])
-                stdErrBuffer.removeFirst(total)
+            let (frames, _) = decoder.drain()
+            for payload in frames {
                 if let envelope = try? WebControlEnvelope.parse(payload) {
                     return envelope
                 }
@@ -975,7 +962,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
             var view = buf
             guard let bytes = view.readBytes(length: view.readableBytes) else { continue }
             if frame.type == .stdErr {
-                stdErrBuffer.append(contentsOf: bytes)
+                decoder.append(bytes)
             }
         }
     }
@@ -997,16 +984,11 @@ final class TerminalSessionHandlerTests: XCTestCase {
         _ channel: NIOAsyncTestingChannel,
         timeout: TimeInterval = 2.0
     ) async throws -> Data {
-        var stdErrBuffer: [UInt8] = []
+        var decoder = StdErrControlFraming.Decoder()
         while true {
-            while stdErrBuffer.count >= 4 {
-                let length = (UInt32(stdErrBuffer[0]) << 24)
-                    | (UInt32(stdErrBuffer[1]) << 16)
-                    | (UInt32(stdErrBuffer[2]) << 8)
-                    | UInt32(stdErrBuffer[3])
-                let total = 4 + Int(length)
-                guard stdErrBuffer.count >= total else { break }
-                return Data(stdErrBuffer[4..<total])
+            let (frames, _) = decoder.drain()
+            if let payload = frames.first {
+                return payload
             }
             let frame = try await withBoundedTimeout(timeout) {
                 try await channel.waitForOutboundWrite(as: SSHChannelData.self)
@@ -1015,7 +997,7 @@ final class TerminalSessionHandlerTests: XCTestCase {
             var view = buf
             guard let bytes = view.readBytes(length: view.readableBytes) else { continue }
             if frame.type == .stdErr {
-                stdErrBuffer.append(contentsOf: bytes)
+                decoder.append(bytes)
             }
         }
     }

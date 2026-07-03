@@ -84,7 +84,7 @@ struct ZmxAttachEngineTests {
         defer { engine.close() }
 
         // Exercise the TerminalByteStream surface (not the WebSession
-        // callback surface) — this is what TerminalChannelHandler uses.
+        // callback surface) — this is what the SSH `terminal` channel uses.
         try await engine.send(Data("hi\n".utf8))
 
         var iterator = engine.inboundBytes.makeAsyncIterator()
@@ -124,7 +124,7 @@ struct ZmxAttachEngineTests {
 
         // TerminalByteStream.close() contract: inboundBytes must finish
         // synchronously with close() returning, so a `for await` consumer
-        // (TerminalChannelHandler) exits its loop rather than hanging.
+        // (the SSH `terminal` channel) exits its loop rather than hanging.
         var iterator = engine.inboundBytes.makeAsyncIterator()
         let next = await iterator.next()
         #expect(next == nil)

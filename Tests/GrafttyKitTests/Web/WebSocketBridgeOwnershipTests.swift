@@ -456,7 +456,9 @@ struct WebSocketBridgeOwnershipTests {
     /// cross-process orchestration of a macOS test binary and an iOS
     /// Simulator process — disproportionate to what this parity check
     /// needs to prove.
-    @Test
+    @Test("""
+    @spec REMOTE-5.2: While a session terminal is served over `/ws`, the application shall route its terminal and ownership traffic through the same `SessionDisplayOwnershipStore` instance used by SSH-attached clients, so a take-control transition originating from either transport is visible identically to the other.
+    """)
     func mixedTransportKindsShareOwnershipStoreAndSeeTakeControlFlips() throws {
         let store = SessionDisplayOwnershipStore()
         let broadcaster = DisplayOwnershipBroadcaster()

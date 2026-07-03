@@ -636,7 +636,7 @@ struct SSHTerminalLoopbackTests {
     /// server-side handler (`PoisonInjectingSessionHandler`) that acks the
     /// shell request — so `connect()` resolves exactly like a real
     /// attach — then immediately writes a single malformed `.stdErr`
-    /// frame (a length prefix that overflows `maxControlFrameLength`)
+    /// frame (a length prefix that overflows `StdErrControlFraming.maxFrameLength`)
     /// directly onto the wire, bypassing the coordinator entirely (the
     /// real coordinator/handler never emit malformed frames; this
     /// simulates a corrupted carrier the way a buggy peer or bit-flip
@@ -832,7 +832,7 @@ private final class FrameRecordingHandler: ChannelInboundHandler, @unchecked Sen
 /// shell request (so the client's `connect()` resolves exactly like a
 /// real attach), then immediately writes a single malformed `.stdErr`
 /// frame — a `u32 BE` length prefix that overflows
-/// `TerminalSessionClient`'s `maxControlFrameLength` — directly onto the
+/// `StdErrControlFraming.maxFrameLength` — directly onto the
 /// channel. Deliberately bypasses `WebControlEnvelope` encoding entirely;
 /// the real coordinator/handler never emit malformed frames, so this
 /// simulates a corrupted carrier (buggy peer, bit-flip) rather than any
@@ -1235,9 +1235,8 @@ fileprivate final class TerminalSessionHandler: ChannelInboundHandler, @unchecke
         get { helloLock.lock(); defer { helloLock.unlock() }; return _receivedHello }
         set { helloLock.lock(); defer { helloLock.unlock() }; _receivedHello = newValue }
     }
-    private var stdErrAccumulator: [UInt8] = []
+    private var stdErrDecoder = StdErrControlFraming.Decoder()
     private var stdErrPoisoned = false
-    private static let maxControlFrameLength: UInt32 = 1 << 20
     private var ptyWriteContinuation: AsyncStream<Data>.Continuation?
     private var ptyWriterTask: Task<Void, Never>?
 
@@ -1396,7 +1395,7 @@ fileprivate final class TerminalSessionHandler: ChannelInboundHandler, @unchecke
             broadcaster: broadcaster,
             sendText: { [weak self] payload in
                 guard let self, self.receivedHello else { return }
-                guard let framed = Self.encodeStdErrFrame(payload) else { return }
+                guard let framed = StdErrControlFraming.encode(payload) else { return }
                 loop.execute {
                     var buffer = channel.allocator.buffer(capacity: framed.count)
                     buffer.writeBytes(framed)
@@ -1425,34 +1424,23 @@ fileprivate final class TerminalSessionHandler: ChannelInboundHandler, @unchecke
         inboundForwardingTask = task
     }
 
-    // MARK: - `.stdErr` control-frame framing (mirrors TerminalSessionHandler)
+    // MARK: - `.stdErr` control-frame framing (mirrors TerminalSessionHandler,
+    // via the shared StdErrControlFraming codec)
 
     private func ingestStdErr(_ data: Data, channel: Channel) {
         guard !stdErrPoisoned else { return }
-        stdErrAccumulator.append(contentsOf: data)
+        stdErrDecoder.append(data)
         if coordinator != nil {
             drainControlFrames(channel: channel)
         }
-        if stdErrAccumulator.count > Int(Self.maxControlFrameLength) + 4 {
+        if stdErrDecoder.isOverAccumulated {
             poisonStdErr(channel: channel)
         }
     }
 
     private func drainControlFrames(channel: Channel) {
-        while stdErrAccumulator.count >= 4 {
-            let length = (UInt32(stdErrAccumulator[0]) << 24)
-                | (UInt32(stdErrAccumulator[1]) << 16)
-                | (UInt32(stdErrAccumulator[2]) << 8)
-                | UInt32(stdErrAccumulator[3])
-            guard length <= Self.maxControlFrameLength else {
-                poisonStdErr(channel: channel)
-                return
-            }
-            let total = 4 + Int(length)
-            guard stdErrAccumulator.count >= total else { break }
-            let payload = Data(stdErrAccumulator[4..<total])
-            stdErrAccumulator.removeFirst(total)
-
+        let (frames, oversized) = stdErrDecoder.drain()
+        for payload in frames {
             guard let envelope = try? WebControlEnvelope.parse(payload) else { continue }
             if case .hello = envelope {
                 receivedHello = true
@@ -1460,26 +1448,16 @@ fileprivate final class TerminalSessionHandler: ChannelInboundHandler, @unchecke
             guard receivedHello else { continue }
             coordinator?.handleControl(envelope)
         }
+        if oversized {
+            poisonStdErr(channel: channel)
+        }
     }
 
     private func poisonStdErr(channel: Channel) {
         stdErrPoisoned = true
-        stdErrAccumulator = []
+        stdErrDecoder.reset()
         guard receivedHello else { return }
         channel.close(promise: nil)
-    }
-
-    private static func encodeStdErrFrame(_ payload: String) -> [UInt8]? {
-        let bytes = Array(payload.utf8)
-        guard let length = UInt32(exactly: bytes.count) else { return nil }
-        var framed: [UInt8] = [
-            UInt8((length >> 24) & 0xff),
-            UInt8((length >> 16) & 0xff),
-            UInt8((length >> 8) & 0xff),
-            UInt8(length & 0xff),
-        ]
-        framed.append(contentsOf: bytes)
-        return framed
     }
 }
 

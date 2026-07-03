@@ -162,7 +162,7 @@
     "REMOTE.2": "Authenticated Attach",
     "REMOTE.3": "Revocation",
     "REMOTE.4": "Port Tunnels",
-    "REMOTE.5": "Retired Endpoints",
+    "REMOTE.5": "Web Terminal Endpoint (`/ws`)",
     "REMOTE.6": "panes_state Channel",
     "REMOTE.7": "pane_control Channel",
     "REMOTE.8": "SSH session layer"
