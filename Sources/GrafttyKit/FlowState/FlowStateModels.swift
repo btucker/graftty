@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import GrafttyProtocol
 
 public extension JSONDecoder {
     static var flowState: JSONDecoder {
@@ -658,6 +660,367 @@ public enum FlowPromptMode: String, Codable, Sendable, Equatable {
     case unavailable
 }
 
+public struct FlowContextEnvelope: Codable, Sendable, Equatable {
+    public var schemaVersion: Int
+    public var generatedAt: Date
+    public var worktrees: [FlowWorktreeSnapshot]
+
+    public init(schemaVersion: Int = 1, generatedAt: Date, worktrees: [FlowWorktreeSnapshot]) {
+        self.schemaVersion = schemaVersion
+        self.generatedAt = generatedAt
+        self.worktrees = worktrees
+    }
+}
+
+public struct FlowWorktreeSnapshot: Codable, Sendable, Equatable {
+    public var repoPath: String
+    public var repoName: String
+    public var worktreeName: String
+    public var worktreePath: String
+    public var worktreeBranch: String
+    public var worktreeKey: String
+    public var worktreeRef: String
+    public var displayRef: String
+    public var selected: Bool
+    public var focusedPaneSlotID: PaneSlotID?
+    public var focusedPaneSessionID: PaneSessionID?
+    public var lastUserActivityAt: Date?
+    public var lastAgentActivityAt: Date?
+    public var attention: FlowSnapshotAttention?
+    public var agentPresence: FlowAgentPresenceSnapshot?
+    public var pr: FlowPRSnapshot?
+    public var git: FlowGitSnapshot?
+    public var summary: FlowWorktreeSummary?
+    public var summaryText: String?
+    public var nextAction: String?
+    public var needsHuman: Bool?
+    public var note: FlowWorktreeNote?
+    public var lastFlowMessageAt: Date?
+    public var snooze: FlowSnooze?
+    public var topicLabels: [FlowTopicLabel]
+    public var clarity: FlowSnapshotClarity
+    public var resumptionCostHint: FlowResumptionCostHint
+    public var scoring: FlowScoringHints
+
+    public init(
+        repoPath: String,
+        repoName: String,
+        worktreeName: String,
+        worktreePath: String,
+        worktreeBranch: String,
+        worktreeKey: String,
+        worktreeRef: String,
+        displayRef: String,
+        selected: Bool,
+        focusedPaneSlotID: PaneSlotID? = nil,
+        focusedPaneSessionID: PaneSessionID? = nil,
+        lastUserActivityAt: Date? = nil,
+        lastAgentActivityAt: Date? = nil,
+        attention: FlowSnapshotAttention? = nil,
+        agentPresence: FlowAgentPresenceSnapshot? = nil,
+        pr: FlowPRSnapshot? = nil,
+        git: FlowGitSnapshot? = nil,
+        summary: FlowWorktreeSummary? = nil,
+        summaryText: String? = nil,
+        nextAction: String? = nil,
+        needsHuman: Bool? = nil,
+        note: FlowWorktreeNote? = nil,
+        lastFlowMessageAt: Date? = nil,
+        snooze: FlowSnooze? = nil,
+        topicLabels: [FlowTopicLabel] = [],
+        clarity: FlowSnapshotClarity,
+        resumptionCostHint: FlowResumptionCostHint,
+        scoring: FlowScoringHints
+    ) {
+        self.repoPath = repoPath
+        self.repoName = repoName
+        self.worktreeName = worktreeName
+        self.worktreePath = worktreePath
+        self.worktreeBranch = worktreeBranch
+        self.worktreeKey = worktreeKey
+        self.worktreeRef = worktreeRef
+        self.displayRef = displayRef
+        self.selected = selected
+        self.focusedPaneSlotID = focusedPaneSlotID
+        self.focusedPaneSessionID = focusedPaneSessionID
+        self.lastUserActivityAt = lastUserActivityAt
+        self.lastAgentActivityAt = lastAgentActivityAt
+        self.attention = attention
+        self.agentPresence = agentPresence
+        self.pr = pr
+        self.git = git
+        self.summary = summary
+        self.summaryText = summaryText
+        self.nextAction = nextAction
+        self.needsHuman = needsHuman
+        self.note = note
+        self.lastFlowMessageAt = lastFlowMessageAt
+        self.snooze = snooze
+        self.topicLabels = topicLabels
+        self.clarity = clarity
+        self.resumptionCostHint = resumptionCostHint
+        self.scoring = scoring
+    }
+}
+
+public enum FlowWorktreeIdentity {
+    public static func key(repoPath: String, worktreePath: String) -> String {
+        let material = "\(absolutePath(repoPath))\u{0}\(absolutePath(worktreePath))"
+        let digest = SHA256.hash(data: Data(material.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined().prefixString(16)
+    }
+
+    public static func ref(
+        repoDisplayName: String,
+        repoPath: String,
+        worktreePath: String,
+        branch: String
+    ) -> String {
+        let keyPrefix = key(repoPath: repoPath, worktreePath: worktreePath).prefixString(8)
+        return "\(repoDisplayName)#\(keyPrefix):\(WorktreeNameSanitizer.sanitize(branch))"
+    }
+
+    private static func absolutePath(_ path: String) -> String {
+        URL(fileURLWithPath: path).standardizedFileURL.path
+    }
+}
+
+public struct FlowSnapshotAttention: Codable, Sendable, Equatable {
+    public var text: String
+    public var timestamp: Date
+    public var source: AttentionSource
+    public var paneSlotID: PaneSlotID?
+
+    public init(text: String, timestamp: Date, source: AttentionSource, paneSlotID: PaneSlotID? = nil) {
+        self.text = text
+        self.timestamp = timestamp
+        self.source = source
+        self.paneSlotID = paneSlotID
+    }
+}
+
+public enum FlowSnapshotClarity: String, Codable, Sendable, Equatable {
+    case clear
+    case unclear
+}
+
+public enum FlowResumptionCostHint: String, Codable, Sendable, Equatable {
+    case low
+    case medium
+    case high
+}
+
+public struct FlowTopicLabel: Codable, Sendable, Equatable, Hashable {
+    public var value: String
+
+    public init(_ value: String) {
+        self.value = value
+    }
+}
+
+public struct FlowExternalSignals: Codable, Sendable, Equatable {
+    public var agentPresenceByWorktreeRef: [String: FlowAgentPresenceSnapshot]
+    public var agentPresenceByWorktreeKey: [String: FlowAgentPresenceSnapshot]
+    public var gitByWorktreeRef: [String: FlowGitSnapshot]
+    public var gitByWorktreeKey: [String: FlowGitSnapshot]
+    public var prByWorktreeRef: [String: FlowPRSnapshot]
+    public var prByWorktreeKey: [String: FlowPRSnapshot]
+    public var activityByWorktreeRef: [String: FlowActivitySnapshot]
+    public var activityByWorktreeKey: [String: FlowActivitySnapshot]
+
+    public static let empty = FlowExternalSignals()
+
+    public init(
+        agentPresenceByWorktreeRef: [String: FlowAgentPresenceSnapshot] = [:],
+        agentPresenceByWorktreeKey: [String: FlowAgentPresenceSnapshot] = [:],
+        gitByWorktreeRef: [String: FlowGitSnapshot] = [:],
+        gitByWorktreeKey: [String: FlowGitSnapshot] = [:],
+        prByWorktreeRef: [String: FlowPRSnapshot] = [:],
+        prByWorktreeKey: [String: FlowPRSnapshot] = [:],
+        activityByWorktreeRef: [String: FlowActivitySnapshot] = [:],
+        activityByWorktreeKey: [String: FlowActivitySnapshot] = [:]
+    ) {
+        self.agentPresenceByWorktreeRef = agentPresenceByWorktreeRef
+        self.agentPresenceByWorktreeKey = agentPresenceByWorktreeKey
+        self.gitByWorktreeRef = gitByWorktreeRef
+        self.gitByWorktreeKey = gitByWorktreeKey
+        self.prByWorktreeRef = prByWorktreeRef
+        self.prByWorktreeKey = prByWorktreeKey
+        self.activityByWorktreeRef = activityByWorktreeRef
+        self.activityByWorktreeKey = activityByWorktreeKey
+    }
+
+    public func agentPresence(worktreeRef: String, worktreeKey: String) -> FlowAgentPresenceSnapshot? {
+        agentPresenceByWorktreeRef[worktreeRef] ?? agentPresenceByWorktreeKey[worktreeKey]
+    }
+
+    public func git(worktreeRef: String, worktreeKey: String) -> FlowGitSnapshot? {
+        gitByWorktreeRef[worktreeRef] ?? gitByWorktreeKey[worktreeKey]
+    }
+
+    public func pr(worktreeRef: String, worktreeKey: String) -> FlowPRSnapshot? {
+        prByWorktreeRef[worktreeRef] ?? prByWorktreeKey[worktreeKey]
+    }
+
+    public func activity(worktreeRef: String, worktreeKey: String) -> FlowActivitySnapshot? {
+        activityByWorktreeRef[worktreeRef] ?? activityByWorktreeKey[worktreeKey]
+    }
+}
+
+public struct FlowAgentPresenceSnapshot: Codable, Sendable, Equatable {
+    public var runtime: String?
+    public var present: Bool
+    public var busy: Bool
+    public var waiting: Bool
+
+    public init(runtime: String? = nil, present: Bool, busy: Bool, waiting: Bool) {
+        self.runtime = runtime
+        self.present = present
+        self.busy = busy
+        self.waiting = waiting
+    }
+}
+
+public struct FlowGitSnapshot: Codable, Sendable, Equatable {
+    public var dirtyCount: Int?
+    public var ahead: Int?
+    public var behind: Int?
+
+    public init(dirtyCount: Int? = nil, ahead: Int? = nil, behind: Int? = nil) {
+        self.dirtyCount = dirtyCount
+        self.ahead = ahead
+        self.behind = behind
+    }
+}
+
+public struct FlowPRSnapshot: Codable, Sendable, Equatable {
+    public var number: Int?
+    public var state: String?
+    public var ciConclusion: String?
+    public var mergeState: String?
+    public var urgency: FlowUrgency?
+
+    public init(
+        number: Int? = nil,
+        state: String? = nil,
+        ciConclusion: String? = nil,
+        mergeState: String? = nil,
+        urgency: FlowUrgency? = nil
+    ) {
+        self.number = number
+        self.state = state
+        self.ciConclusion = ciConclusion
+        self.mergeState = mergeState
+        self.urgency = urgency
+    }
+}
+
+public struct FlowActivitySnapshot: Codable, Sendable, Equatable {
+    public var lastUserActivityAt: Date?
+    public var lastAgentActivityAt: Date?
+    public var lastFlowMessageAt: Date?
+
+    public init(lastUserActivityAt: Date? = nil, lastAgentActivityAt: Date? = nil, lastFlowMessageAt: Date? = nil) {
+        self.lastUserActivityAt = lastUserActivityAt
+        self.lastAgentActivityAt = lastAgentActivityAt
+        self.lastFlowMessageAt = lastFlowMessageAt
+    }
+}
+
+public struct FlowScoringHints: Codable, Sendable, Equatable {
+    public var flowAffinity: FlowAffinityHint
+    public var unlockValue: FlowUnlockValueHint
+    public var riskUrgency: FlowRiskUrgencyHint
+    public var completionMomentum: FlowCompletionMomentumHint
+    public var interruptPenalty: FlowInterruptPenaltyHint
+
+    public init(
+        flowAffinity: FlowAffinityHint,
+        unlockValue: FlowUnlockValueHint,
+        riskUrgency: FlowRiskUrgencyHint,
+        completionMomentum: FlowCompletionMomentumHint,
+        interruptPenalty: FlowInterruptPenaltyHint
+    ) {
+        self.flowAffinity = flowAffinity
+        self.unlockValue = unlockValue
+        self.riskUrgency = riskUrgency
+        self.completionMomentum = completionMomentum
+        self.interruptPenalty = interruptPenalty
+    }
+}
+
+public enum FlowAffinityHint: String, Codable, Sendable, Equatable {
+    case low
+    case medium
+    case high
+
+    public var rawRank: Int {
+        switch self {
+        case .low: return 1
+        case .medium: return 2
+        case .high: return 3
+        }
+    }
+}
+
+public enum FlowUnlockValueHint: String, Codable, Sendable, Equatable {
+    case low
+    case medium
+    case high
+
+    public var rawRank: Int {
+        switch self {
+        case .low: return 1
+        case .medium: return 2
+        case .high: return 3
+        }
+    }
+}
+
+public enum FlowRiskUrgencyHint: String, Codable, Sendable, Equatable {
+    case low
+    case medium
+    case high
+    case critical
+
+    public var rawRank: Int {
+        switch self {
+        case .low: return 1
+        case .medium: return 2
+        case .high: return 3
+        case .critical: return 4
+        }
+    }
+}
+
+public enum FlowCompletionMomentumHint: String, Codable, Sendable, Equatable {
+    case low
+    case medium
+    case high
+
+    public var rawRank: Int {
+        switch self {
+        case .low: return 1
+        case .medium: return 2
+        case .high: return 3
+        }
+    }
+}
+
+public enum FlowInterruptPenaltyHint: String, Codable, Sendable, Equatable {
+    case low
+    case medium
+    case high
+
+    public var rawRank: Int {
+        switch self {
+        case .low: return 1
+        case .medium: return 2
+        case .high: return 3
+        }
+    }
+}
+
 private struct FlowDynamicCodingKey: CodingKey, Sendable {
     var stringValue: String
     var intValue: Int?
@@ -675,6 +1038,18 @@ private struct FlowDynamicCodingKey: CodingKey, Sendable {
     init?(intValue: Int) {
         stringValue = "\(intValue)"
         self.intValue = intValue
+    }
+}
+
+private extension String.SubSequence {
+    func prefixString(_ maxLength: Int) -> String {
+        String(prefix(maxLength))
+    }
+}
+
+private extension String {
+    func prefixString(_ maxLength: Int) -> String {
+        String(prefix(maxLength))
     }
 }
 

@@ -1846,6 +1846,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **FLOW-1.6** Flow State shall normalize omitted recommendation lists to empty arrays and default omitted resume-card stale state to false.
 
+### FLOW-2.x
+
+**FLOW-2.1** `graftty flow context` shall expose each tracked worktree as a FlowWorktreeSnapshot with repo identity, worktree identity, selected/focused state, attention state, stored summary fields, scoring hints, and external git/agent signals when available.
+
+**FLOW-2.2** When a worktree has no summary and ambiguous observable state, Flow State context shall mark the snapshot as unclear instead of inventing a next action.
+
+**FLOW-2.3** Flow State shall use collision-resistant worktree identities so two repositories with the same display name and branch cannot share summaries, snoozes, notes, or status-request cooldowns.
+
+**FLOW-2.4** Flow State scoring shall preserve the current human context by ranking selected or same-repo low-reload work above unrelated failing CI unless the unrelated work is critical or explicitly higher payoff.
+
 ## MEM — MEM
 
 ### MEM-1.x
