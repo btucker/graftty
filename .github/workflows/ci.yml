@@ -110,6 +110,25 @@ jobs:
         working-directory: Apps/GrafttyMobile
         run: xcodegen generate
 
+      # Cache the resolved SwiftPM sources (.spm) and the compiled
+      # DerivedData (.derivedData). The bulk of the ~5-minute cold build
+      # is recompiling the stable dependency graph (swift-nio, swift-crypto,
+      # swift-certificates, GhosttyKit, MSDisplayLink, …), which only
+      # changes when Package.resolved does. On a same-deps hit xcodebuild
+      # reuses those artifacts and incrementally rebuilds just the
+      # first-party targets that changed. Both dirs are pinned to fixed
+      # workspace paths below — the default DerivedData path carries a
+      # random suffix that would never cache-hit. Bump `v1` to bust.
+      - name: Restore SPM / DerivedData cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .spm
+            .derivedData
+          key: ios-build-v1-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml') }}-${{ github.sha }}
+          restore-keys: |
+            ios-build-v1-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml') }}-
+
       - name: Build & test GrafttyMobile (iOS Simulator SDK)
         timeout-minutes: 15
         # Let xcodebuild apply the default simulator ad-hoc signature
@@ -123,5 +142,7 @@ jobs:
             -sdk iphonesimulator \
             -configuration Debug \
             -skipPackagePluginValidation \
+            -clonedSourcePackagesDirPath .spm \
+            -derivedDataPath .derivedData \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
             test

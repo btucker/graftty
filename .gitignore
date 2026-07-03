@@ -15,3 +15,7 @@ Apps/*/build/
 **/*.xcuserstate
 .swiftpm/xcode/
 __pycache__/
+
+# iOS CI build/dependency cache dirs (see .github/workflows/ci.yml)
+.derivedData/
+.spm/
