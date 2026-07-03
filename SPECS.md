@@ -1736,9 +1736,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-4.2** If a client requests a port tunnel to a non-loopback target under the default policy, then the host shall reject the channel open request.
 
-### REMOTE-5.x — Retired Endpoints
+### REMOTE-5.x — Web Terminal Endpoint (`/ws`)
 
-**REMOTE-5.1** When a client attempts to use the retired `/ws` terminal endpoint, the host shall reject the request without attaching to a PTY.
+**REMOTE-5.1** When a client requests a WebSocket upgrade to `/ws`, the application shall gate the upgrade on the same `AuthPolicy` (Tailscale-whois) check applied to every other path, rejecting the upgrade for a disallowed peer without attaching it to a terminal.
+
+**REMOTE-5.2** While a session terminal is served over `/ws`, the application shall route its terminal and ownership traffic through the same `SessionDisplayOwnershipStore` instance used by SSH-attached clients, so a take-control transition originating from either transport is visible identically to the other.
 
 ### REMOTE-6.x — panes_state Channel
 

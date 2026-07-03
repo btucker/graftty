@@ -18,11 +18,6 @@ struct RemoteTodo {
 """, .disabled("not yet implemented"))
     func remote_4_2() async throws { }
 
-    @Test("""
-@spec REMOTE-5.1: When a client attempts to use the retired `/ws` terminal endpoint, the host shall reject the request without attaching to a PTY.
-""", .disabled("not yet implemented"))
-    func remote_5_1() async throws { }
-
     // MARK: - REMOTE-8.x — SSH session layer
 
     @Test("""
