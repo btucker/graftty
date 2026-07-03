@@ -1,5 +1,6 @@
 import SwiftUI
 import GrafttyKit
+import GrafttyHostAgent
 import GrafttyProtocol
 
 // MARK: - PairingCountdownFormatter
@@ -86,6 +87,12 @@ enum PairingSectionDisplay: Equatable {
 struct PairedDevicesSection: View {
     @EnvironmentObject private var coordinator: HostPairingCoordinator
     let trustedPeerStore: TrustedPeerStore
+    /// Same instance `WebRTCHostAgent` registers its live SSH connection
+    /// into (REMOTE-3.1). `remove(_:)` revokes here right after a
+    /// successful `trustedPeerStore.remove` so the peer's live session
+    /// drops immediately instead of surviving until its next userauth
+    /// attempt fails.
+    let sshConnectionRegistry: SSHConnectionRegistry
 
     @State private var peers: [TrustedPeer] = []
     @State private var listError: String?
@@ -301,12 +308,38 @@ struct PairedDevicesSection: View {
     }
 
     private func remove(_ peer: TrustedPeer) {
-        do {
-            try trustedPeerStore.remove(id: peer.id)
-            refreshPeers()
-        } catch {
-            listError = "Could not remove device: \(error)"
+        Task {
+            let error = await Self.performRemove(
+                peerID: peer.id,
+                store: trustedPeerStore,
+                revoke: { await sshConnectionRegistry.revoke(deviceID: $0) }
+            )
+            if let error {
+                listError = "Could not remove device: \(error)"
+            } else {
+                refreshPeers()
+            }
         }
+    }
+
+    /// Extracted from `remove(_:)` for testability (SwiftUI view actions
+    /// aren't directly unit-testable). Removes `peerID` from `store`
+    /// first; `revoke` only runs on a SUCCESSFUL removal — a peer that
+    /// fails to leave the trust store is still considered paired, so its
+    /// live connection must not be killed. Returns the store error (if
+    /// any) rather than throwing so the caller can render it inline.
+    static func performRemove(
+        peerID: RemoteDeviceID,
+        store: TrustedPeerStore,
+        revoke: (RemoteDeviceID) async -> Void
+    ) async -> Swift.Error? {
+        do {
+            try store.remove(id: peerID)
+        } catch {
+            return error
+        }
+        await revoke(peerID)
+        return nil
     }
 
     private func refreshPeers() {

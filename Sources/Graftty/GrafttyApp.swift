@@ -270,11 +270,11 @@ struct GrafttyApp: App {
     private let trustedPeerStore: TrustedPeerStore
     /// Same `SSHConnectionRegistry` instance `WebRTCHostAgent` registers
     /// its live SSH connection into (REMOTE-3.1 revocation, W4). Exposed
-    /// alongside `trustedPeerStore` so a future "revoke" action in
-    /// `PairedDevicesSection` (W4 Task 3) can call `registry.revoke(deviceID:)`
-    /// right after removing the peer from `trustedPeerStore` — closing the
-    /// live connection immediately rather than waiting for the peer's
-    /// next userauth attempt to fail.
+    /// alongside `trustedPeerStore` so `PairedDevicesSection`'s "Remove"
+    /// action can call `registry.revoke(deviceID:)` right after removing
+    /// the peer from `trustedPeerStore` — closing the live connection
+    /// immediately rather than waiting for the peer's next userauth
+    /// attempt to fail.
     private let sshConnectionRegistry: SSHConnectionRegistry
 
     /// Observable proxy for per-pane port bindings. Mutated by the
@@ -586,7 +586,7 @@ struct GrafttyApp: App {
                     editorPreference: terminalManager.editorPreference
                 )
                     .tabItem { Label("General", systemImage: "gear") }
-                WebSettingsPane(trustedPeerStore: trustedPeerStore)
+                WebSettingsPane(trustedPeerStore: trustedPeerStore, sshConnectionRegistry: sshConnectionRegistry)
                     .environmentObject(webController)
                     .environmentObject(hostPairingCoordinator)
                     .tabItem { Label("Web Access", systemImage: "network") }
