@@ -119,8 +119,17 @@ jobs:
       # first-party targets that changed. Both dirs are pinned to fixed
       # workspace paths below — the default DerivedData path carries a
       # random suffix that would never cache-hit. Bump `v1` to bust.
+      #
+      # Restore + save are split (not the combined `actions/cache`) so the
+      # save runs even when the build step fails: the iOS test suite is
+      # flaky (real WebRTC loopback negotiations), and the combined action
+      # skips its post-save on job failure — which would mean the cache
+      # NEVER populates while a flake persists. The build artifacts are
+      # valid regardless of whether a later test flaked, so we save on
+      # `!cancelled()`.
       - name: Restore SPM / DerivedData cache
-        uses: actions/cache@v4
+        id: spm-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             .spm
@@ -146,3 +155,15 @@ jobs:
             -derivedDataPath .derivedData \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
             test
+
+      # Save whether or not the tests passed (see restore-step comment):
+      # the build artifacts are valid regardless of a flaky test. Skip
+      # only on an exact-key hit (a same-SHA rerun) where nothing changed.
+      - name: Save SPM / DerivedData cache
+        if: ${{ !cancelled() && steps.spm-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .spm
+            .derivedData
+          key: ${{ steps.spm-cache.outputs.cache-primary-key }}
