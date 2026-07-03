@@ -18,7 +18,8 @@ import Darwin
 ///   - Callbacks (`onPTYData`/`onExit`/`onPTYSize`) plus synchronous
 ///     `write(_:)`/`resize(cols:rows:)`/`close()`, used by `WebSession`.
 ///   - `TerminalByteStream`'s async `send`/`resize`/`close` plus the
-///     `inboundBytes` `AsyncStream`, used by `TerminalChannelHandler`.
+///     `inboundBytes` `AsyncStream`, used by the SSH `terminal` channel
+///     (`TerminalSessionHandler`).
 /// Both surfaces observe the same underlying PTY; `dispatchPTYData` and
 /// `dispatchExit` feed both the callbacks and the `AsyncStream`.
 ///
@@ -116,7 +117,7 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
 
     /// `TerminalByteStream.inboundBytes`: the same PTY bytes delivered
     /// to `onPTYData`, for consumers that prefer the async-stream
-    /// surface (`TerminalChannelHandler`) over the callback surface.
+    /// surface (the SSH `terminal` channel) over the callback surface.
     /// Finished exactly once, from `closeSync()`, on either explicit
     /// `close()` or reader-thread EOF.
     public let inboundBytes: AsyncStream<Data>
@@ -291,10 +292,10 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         closeSync()
     }
 
-    /// `TerminalByteStream.close`: `TerminalChannelHandler.teardown`
-    /// relies on `inboundBytes` finishing synchronously with this call
-    /// (see the protocol doc) — `closeSync()` finishes the continuation
-    /// before returning, so awaiting this is sufficient.
+    /// `TerminalByteStream.close`: callers rely on `inboundBytes`
+    /// finishing synchronously with this call (see the protocol doc) —
+    /// `closeSync()` finishes the continuation before returning, so
+    /// awaiting this is sufficient.
     public func close() async {
         closeSync()
     }
@@ -327,8 +328,8 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         // session that reuses this name doesn't inherit a stale byte count.
         inputState?.removeSession(config.sessionName)
 
-        // Finish the AsyncStream so any `for await` consumer (e.g.
-        // `TerminalChannelHandler`) exits its loop. Safe to call even if
+        // Finish the AsyncStream so any `for await` consumer (e.g. the
+        // SSH `terminal` channel) exits its loop. Safe to call even if
         // the reader thread's EOF already finished it — finish() is a
         // documented no-op once the stream has already finished.
         continuation.finish()

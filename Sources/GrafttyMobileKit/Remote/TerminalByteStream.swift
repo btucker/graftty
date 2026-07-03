@@ -12,10 +12,10 @@ public protocol TerminalByteStream: Sendable {
     /// Stop the stream and release any underlying resources (e.g.
     /// terminate the zmx attach process). Conformers **must** finish
     /// the `inboundBytes` `AsyncStream` continuation before returning —
-    /// `TerminalChannelHandler.teardown` relies on this to exit its
-    /// `for await` loop and reclaim the outbound forwarding task.
-    /// A conformer that releases resources without calling
-    /// `continuation.finish()` synchronously will leak that task.
+    /// callers rely on this to exit their `for await` loop and reclaim
+    /// the outbound forwarding task. A conformer that releases
+    /// resources without calling `continuation.finish()` synchronously
+    /// will leak that task.
     func close() async
 
     /// Adjust the underlying PTY's window size. Default implementation
