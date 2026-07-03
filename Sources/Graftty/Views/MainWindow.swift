@@ -3,6 +3,46 @@ import AppKit
 import GrafttyKit
 import GrafttyProtocol
 
+enum MainWindowSelection: Equatable {
+    case flowState
+    case worktree(String?)
+}
+
+struct MainWindowSelectionTransition: Equatable {
+    let selection: MainWindowSelection
+    let selectedWorktreePath: String?
+
+    static func selectFlowState(currentWorktreePath: String?) -> MainWindowSelectionTransition {
+        MainWindowSelectionTransition(selection: .flowState, selectedWorktreePath: currentWorktreePath)
+    }
+
+    static func selectWorktree(_ path: String) -> MainWindowSelectionTransition {
+        MainWindowSelectionTransition(selection: .worktree(path), selectedWorktreePath: path)
+    }
+}
+
+private struct FlowStateViewTeamMessenger: FlowTeamMessaging {
+    func sendStatusRequest(target: String, body: String) throws {
+        throw FlowTeamMessagingError.skipped("Flow State status request from the view is unavailable until the agent lifecycle is wired.")
+    }
+
+    func sendMessage(target: String, body: String) throws {
+        throw FlowTeamMessagingError.skipped("Flow State team message from the view is unavailable until the agent lifecycle is wired.")
+    }
+}
+
+private struct FlowStateViewAppActions: FlowConfirmedAppActions {
+    let selectWorktree: (String) -> Void
+
+    func focusWorktree(ref: String) throws {
+        selectWorktree(ref)
+    }
+
+    func restartAgent(ref: String) throws {
+        throw FlowTeamMessagingError.skipped("Flow State restart is unavailable until the agent lifecycle is wired.")
+    }
+}
+
 struct MainWindow: View {
     @Binding var appState: AppState
     @ObservedObject var terminalManager: TerminalManager
@@ -24,6 +64,18 @@ struct MainWindow: View {
     /// can present the Add Worktree sheet pre-scoped to the current repo.
     @State private var pendingAddWorktree: AddWorktreeRequest?
 
+    @State private var mainSelection: MainWindowSelection = .worktree(nil)
+    @State private var flowStateStatus = FlowStatus(
+        enabled: UserDefaults.standard.bool(forKey: SettingsKeys.flowStateEnabled),
+        running: false,
+        message: nil
+    )
+    @State private var flowStateRecommendation: FlowRecommendationEnvelope?
+    @State private var flowStateActivity: [FlowStateActivity] = []
+
+    private let flowStateStore = FlowStateStore.defaultStore()
+    private let flowStateActivityStore = FlowStateActivityStore.defaultStore()
+
     var body: some View {
         NavigationSplitView(
             columnVisibility: $columnVisibility
@@ -37,6 +89,10 @@ struct MainWindow: View {
                 prStatusStore: prStatusStore,
                 claudeSessionRegistry: claudeSessionRegistry,
                 remoteBranchStore: remoteBranchStore,
+                flowStateStatus: flowStateStatus,
+                flowStateRecommendation: flowStateRecommendation,
+                isFlowStateSelected: mainSelection == .flowState,
+                onSelectFlowState: selectFlowState,
                 onSelect: selectWorktree,
                 onSelectPane: selectPane,
                 onAddRepo: addRepository,
@@ -61,55 +117,68 @@ struct MainWindow: View {
             // traffic lights.
         } detail: {
             VStack(spacing: 0) {
-                BreadcrumbBar(
-                    repoName: selectedRepo?.displayName,
-                    worktreeDisplayName: worktreeDisplayName,
-                    worktreePath: selectedWorktree?.path,
-                    branchName: selectedWorktree?.displayBranch,
-                    isHomeCheckout: isHomeCheckout,
-                    prInfo: prInfo,
-                    theme: terminalManager.theme,
-                    sidebarHidden: columnVisibility == .detailOnly,
-                    onRefreshPR: refreshPR
-                )
-
-                if let worktree = selectedWorktreeBinding {
-                    TerminalContentView(
-                        terminalManager: terminalManager,
-                        splitTree: Binding(
-                            get: { worktree.wrappedValue.splitTree },
-                            set: { worktree.wrappedValue.splitTree = $0 }
-                        ),
-                        focusedPaneSlotID: worktree.wrappedValue.focusedPaneSlotID,
-                        theme: terminalManager.theme,
-                        onFocusTerminal: { terminalID in
-                            // Persist the focus change on the model BEFORE
-                            // routing to libghostty: `TERM-2.3`'s focus-
-                            // restore after a worktree switch reads
-                            // `focusedPaneSlotID`, so a mouse-click that
-                            // only called `setFocus` (the libghostty side)
-                            // used to let focus snap back to the first leaf
-                            // on the next return visit.
-                            if let wtPath = appState.selectedWorktreePath {
-                                appState.setFocusedTerminal(terminalID, forWorktreePath: wtPath)
-                                // STATE-2.4: clicking a pane's terminal to
-                                // focus it acknowledges that pane's attention
-                                // (e.g. the agent-stop "needs input" icon),
-                                // same as clicking its sidebar row.
-                                appState.acknowledgePaneAttention(terminalID, forWorktreePath: wtPath)
-                            }
-                            terminalManager.setFocus(terminalID)
-                        }
+                if mainSelection == .flowState {
+                    FlowStateView(
+                        status: flowStateStatus,
+                        recommendation: flowStateRecommendation,
+                        activity: flowStateActivity,
+                        requestRefresh: refreshFlowState,
+                        openAgentPane: {},
+                        restartAgent: {},
+                        confirmAction: confirmFlowStateAction
                     )
-                    // A hair of breathing room so terminal text doesn't
-                    // slam into the sidebar divider.
-                    .padding(.leading, 6)
+                    .onAppear(perform: refreshFlowState)
                 } else {
-                    ContentUnavailableView(
-                        "No Worktree Selected",
-                        systemImage: "terminal",
-                        description: Text("Select a worktree from the sidebar or add a repository.")
+                    BreadcrumbBar(
+                        repoName: selectedRepo?.displayName,
+                        worktreeDisplayName: worktreeDisplayName,
+                        worktreePath: selectedWorktree?.path,
+                        branchName: selectedWorktree?.displayBranch,
+                        isHomeCheckout: isHomeCheckout,
+                        prInfo: prInfo,
+                        theme: terminalManager.theme,
+                        sidebarHidden: columnVisibility == .detailOnly,
+                        onRefreshPR: refreshPR
                     )
+
+                    if let worktree = selectedWorktreeBinding {
+                        TerminalContentView(
+                            terminalManager: terminalManager,
+                            splitTree: Binding(
+                                get: { worktree.wrappedValue.splitTree },
+                                set: { worktree.wrappedValue.splitTree = $0 }
+                            ),
+                            focusedPaneSlotID: worktree.wrappedValue.focusedPaneSlotID,
+                            theme: terminalManager.theme,
+                            onFocusTerminal: { terminalID in
+                                // Persist the focus change on the model BEFORE
+                                // routing to libghostty: `TERM-2.3`'s focus-
+                                // restore after a worktree switch reads
+                                // `focusedPaneSlotID`, so a mouse-click that
+                                // only called `setFocus` (the libghostty side)
+                                // used to let focus snap back to the first leaf
+                                // on the next return visit.
+                                if let wtPath = appState.selectedWorktreePath {
+                                    appState.setFocusedTerminal(terminalID, forWorktreePath: wtPath)
+                                    // STATE-2.4: clicking a pane's terminal to
+                                    // focus it acknowledges that pane's attention
+                                    // (e.g. the agent-stop "needs input" icon),
+                                    // same as clicking its sidebar row.
+                                    appState.acknowledgePaneAttention(terminalID, forWorktreePath: wtPath)
+                                }
+                                terminalManager.setFocus(terminalID)
+                            }
+                        )
+                        // A hair of breathing room so terminal text doesn't
+                        // slam into the sidebar divider.
+                        .padding(.leading, 6)
+                    } else {
+                        ContentUnavailableView(
+                            "No Worktree Selected",
+                            systemImage: "terminal",
+                            description: Text("Select a worktree from the sidebar or add a repository.")
+                        )
+                    }
                 }
             }
             .ignoresSafeArea(.container, edges: .top)
@@ -154,6 +223,9 @@ struct MainWindow: View {
             set: { appState.sidebarWidth = $0 }
         ))
         .onChange(of: appState.selectedWorktreePath, initial: true) { oldPath, newPath in
+            if oldPath != newPath || mainSelection == .worktree(nil) {
+                mainSelection = .worktree(newPath)
+            }
             guard let newPath else { return }
             terminalManager.surfaceBudget.noteSelected(
                 worktreePath: newPath,
@@ -293,6 +365,58 @@ struct MainWindow: View {
         prStatusStore.refresh(worktreePath: wt.path, repoPath: repo.path, branch: wt.branch)
     }
 
+    private func selectFlowState() {
+        let transition = MainWindowSelectionTransition.selectFlowState(
+            currentWorktreePath: appState.selectedWorktreePath
+        )
+        mainSelection = transition.selection
+        if let path = transition.selectedWorktreePath {
+            setWorktreeSurfacesVisible(false, worktreePath: path)
+        }
+        refreshFlowState()
+    }
+
+    private func refreshFlowState() {
+        flowStateStatus = FlowStatus(
+            enabled: UserDefaults.standard.bool(forKey: SettingsKeys.flowStateEnabled),
+            running: false,
+            message: UserDefaults.standard.bool(forKey: SettingsKeys.flowStateEnabled) ? nil : "Flow State is off"
+        )
+        do {
+            flowStateRecommendation = try flowStateStore.recommendation()
+            flowStateActivity = try flowStateActivityStore.recent(limit: 10)
+        } catch {
+            flowStateActivity = [
+                FlowStateActivity(
+                    createdAt: Date(),
+                    kind: .publishError,
+                    message: "Could not read Flow State data: \(error)",
+                    worktreeRef: nil
+                )
+            ]
+        }
+    }
+
+    private func confirmFlowStateAction(_ action: FlowProposedAction) {
+        let executor = FlowStateActionExecutor(
+            activityStore: flowStateActivityStore,
+            teamMessenger: FlowStateViewTeamMessenger(),
+            appActions: FlowStateViewAppActions(selectWorktree: selectWorktree),
+            permissionMode: .conservative
+        )
+        do {
+            try executor.executeConfirmedAction(action)
+        } catch {
+            try? flowStateActivityStore.append(FlowStateActivity(
+                createdAt: Date(),
+                kind: .actionSkipped,
+                message: "Flow State action failed: \(error)",
+                worktreeRef: action.target
+            ))
+        }
+        refreshFlowState()
+    }
+
     /// Selects a worktree *and* focuses a specific pane within it. Used by
     /// the sidebar's per-pane title rows so clicking "claude" under a
     /// worktree both activates that worktree and focuses Claude's pane.
@@ -317,6 +441,7 @@ struct MainWindow: View {
         if let wt = appState.worktree(forPath: path), wt.state.isInFlight {
             return
         }
+        mainSelection = MainWindowSelectionTransition.selectWorktree(path).selection
         let previousPath = appState.selectedWorktreePath
         appState.selectedWorktreePath = path
 

@@ -18,6 +18,10 @@ struct SidebarView: View {
     /// busy/idle liveness (notify pings still win) into its attention pill.
     let claudeSessionRegistry: ClaudeSessionRegistry
     let remoteBranchStore: RemoteBranchStore
+    let flowStateStatus: FlowStatus
+    let flowStateRecommendation: FlowRecommendationEnvelope?
+    let isFlowStateSelected: Bool
+    let onSelectFlowState: () -> Void
     let onSelect: (String) -> Void
     let onSelectPane: (String, PaneSlotID) -> Void
     let onAddRepo: () -> Void
@@ -60,6 +64,19 @@ struct SidebarView: View {
         let _ = paneTitleInvalidations.generation
         VStack(spacing: 0) {
             List {
+                Button(action: onSelectFlowState) {
+                    FlowStateSidebarRow(
+                        isSelected: isFlowStateSelected,
+                        statusLabel: FlowStateSidebarStatus.label(
+                            recommendation: flowStateRecommendation,
+                            status: flowStateStatus
+                        ),
+                        theme: theme
+                    )
+                }
+                .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
+
                 ForEach(appState.repos) { repo in
                     repoSection(repo)
                 }

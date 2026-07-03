@@ -1934,6 +1934,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **FLOW-6.2** The Flow State system prompt shall instruct the agent to preserve human flow and use `graftty flow` rather than acting as a repo-scoped team member.
 
+### FLOW-7.x
+
+**FLOW-7.1** The Flow State sidebar row shall render a calm status label from the latest recommendation instead of counting every attention event.
+
+**FLOW-7.2** When Flow State has no valid recommendation, the view model shall render setup or unavailable state instead of a fake next action.
+
+**FLOW-7.3** Flow State shall render recent activity such as publish errors and skipped status requests separately from the primary recommendation.
+
 ## MEM — MEM
 
 ### MEM-1.x
