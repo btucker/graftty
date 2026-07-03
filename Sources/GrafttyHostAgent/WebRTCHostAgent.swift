@@ -45,6 +45,12 @@ public actor WebRTCHostAgent {
     private var sshTransport: SSHNIOTransport?
     private var sshInstallStarted = false
 
+    /// Test-only observability for the `sshInstallStarted` latch — see
+    /// `close()`'s reset of it (W4 follow-up) and
+    /// `WebRTCHostAgentReconnectTests`. `internal` so `@testable import
+    /// GrafttyHostAgent` can reach it; production code never reads this.
+    internal var sshInstallStartedForTesting: Bool { sshInstallStarted }
+
     /// REMOTE-3.1 revocation (W4): the process-wide map from authenticated
     /// peer to this connection's close action. Registered once userauth
     /// resolves the peer's `RemoteDeviceID` (see `onAuthenticated` below)
@@ -271,6 +277,18 @@ public actor WebRTCHostAgent {
             pending.resume()
         }
         state = .closed
+        // W4 follow-up: `sshInstallStarted` is a per-connection one-shot
+        // latch guarding `installSSHHandler` against a double-install on
+        // the SAME data channel. Left unreset here, a reconnect (a fresh
+        // `acceptOffer` after `close()`, which `acceptOffer`'s busy-guard
+        // permits from `.closed`) opens a brand-new data channel whose
+        // `onOpen` calls `installSSHHandler` — which would see the stale
+        // `true` from the PRIOR connection and return immediately, so SSH
+        // never installs on the new channel and the reconnected peer gets
+        // a dead channel. Resetting it here re-arms the latch per-connection,
+        // matching `sshTransport`/`authenticatedRegistration`/`peerConnection`/
+        // `dataChannel` below.
+        sshInstallStarted = false
         if let transport = sshTransport {
             sshTransport = nil
             await transport.close()
@@ -320,7 +338,14 @@ public actor WebRTCHostAgent {
         lastReceivedBinary = data
     }
 
-    private func installSSHHandler() async {
+    /// `internal` (rather than `private`) so `WebRTCHostAgentReconnectTests`
+    /// can drive the `sshInstallStarted` latch directly without a real data
+    /// channel — with `dataChannel` left `nil` (its default), this method
+    /// sets the latch and returns immediately at the `guard let dc =
+    /// dataChannel` line below, never touching native WebRTC or NIOSSH.
+    /// Production call sites (`adoptDataChannel`'s `onOpen` closure) are
+    /// unaffected by the widened access level.
+    internal func installSSHHandler() async {
         guard !sshInstallStarted else { return }
         sshInstallStarted = true
         guard let dc = dataChannel else { return }
