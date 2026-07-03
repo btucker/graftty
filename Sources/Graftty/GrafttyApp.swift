@@ -2220,7 +2220,9 @@ struct GrafttyApp: App {
                 }
             }
         case .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend,
-             .teamBroadcast, .teamHook, .teamInbox, .teamMembers, .teamList:
+             .teamBroadcast, .teamHook, .teamInbox, .teamMembers, .teamList,
+             .flowStatus, .flowContext, .flowRecommend, .flowSnooze, .flowNote, .flowSummary,
+             .flowPublish, .flowRequestStatus:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
             // fire-and-forget onMessage path.
@@ -2336,6 +2338,9 @@ struct GrafttyApp: App {
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
             )
+        case .flowStatus, .flowContext, .flowRecommend, .flowSnooze, .flowNote, .flowSummary,
+             .flowPublish, .flowRequestStatus:
+            return .error("flow state requests are not handled by this build")
         case .notify, .clear:
             // Fire-and-forget cases — no response. `onMessage` already handled them.
             return nil

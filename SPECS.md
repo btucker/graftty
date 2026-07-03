@@ -1860,6 +1860,16 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **FLOW-2.6** Flow State context snapshots shall expose each worktree lifecycle state so downstream consumers can distinguish running, closed, stale, and in-flight worktrees.
 
+### FLOW-3.x
+
+**FLOW-3.1** Flow State socket requests shall round-trip through NotificationMessage using stable wire type names.
+
+**FLOW-3.2** Flow State socket responses shall round-trip through ResponseMessage with typed status, context, and recommendation payloads.
+
+**FLOW-3.3** `graftty flow recommend` shall render the latest recommendation as JSON by default so agents can consume it without scraping prose.
+
+**FLOW-3.4** `graftty flow publish` shall send raw JSON to the app so invalid agent output can be recorded as Flow State activity while preserving the last valid recommendation.
+
 ## MEM — MEM
 
 ### MEM-1.x

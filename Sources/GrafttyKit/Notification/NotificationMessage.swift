@@ -40,6 +40,14 @@ public enum NotificationMessage: Sendable, Equatable {
     case teamInbox(callerWorktree: String?, worktree: String?, repo: String?, member: String?, unread: Bool, all: Bool)
     case teamMembers(callerWorktree: String?, worktree: String?, repo: String?)
     case teamList(callerWorktree: String)
+    case flowStatus
+    case flowContext
+    case flowRecommend
+    case flowSnooze(worktreeRef: String, reason: String?)
+    case flowNote(worktreeRef: String, body: String)
+    case flowSummary(FlowWorktreeSummary)
+    case flowPublish(rawJSON: String)
+    case flowRequestStatus(worktreeRef: String, explicit: Bool)
 }
 
 extension NotificationMessage: Codable {
@@ -50,6 +58,9 @@ extension NotificationMessage: Codable {
         case sessionID = "session_id"
         case paneSessionName = "pane_session_name"
         case pressEnter = "press_enter"
+        case worktreeRef = "worktree_ref"
+        case reason, body, summary, explicit
+        case rawJSON = "raw_json"
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -127,6 +138,30 @@ extension NotificationMessage: Codable {
         case .teamList(let path):
             try container.encode("team_list", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
+        case .flowStatus:
+            try container.encode("flow_status", forKey: .type)
+        case .flowContext:
+            try container.encode("flow_context", forKey: .type)
+        case .flowRecommend:
+            try container.encode("flow_recommend", forKey: .type)
+        case .flowSnooze(let worktreeRef, let reason):
+            try container.encode("flow_snooze", forKey: .type)
+            try container.encode(worktreeRef, forKey: .worktreeRef)
+            try container.encodeIfPresent(reason, forKey: .reason)
+        case .flowNote(let worktreeRef, let body):
+            try container.encode("flow_note", forKey: .type)
+            try container.encode(worktreeRef, forKey: .worktreeRef)
+            try container.encode(body, forKey: .body)
+        case .flowSummary(let summary):
+            try container.encode("flow_summary", forKey: .type)
+            try container.encode(summary, forKey: .summary)
+        case .flowPublish(let rawJSON):
+            try container.encode("flow_publish", forKey: .type)
+            try container.encode(rawJSON, forKey: .rawJSON)
+        case .flowRequestStatus(let worktreeRef, let explicit):
+            try container.encode("flow_request_status", forKey: .type)
+            try container.encode(worktreeRef, forKey: .worktreeRef)
+            try container.encode(explicit, forKey: .explicit)
         }
     }
 
@@ -207,6 +242,30 @@ extension NotificationMessage: Codable {
         case "team_list":
             let path = try container.decode(String.self, forKey: .callerWorktree)
             self = .teamList(callerWorktree: path)
+        case "flow_status":
+            self = .flowStatus
+        case "flow_context":
+            self = .flowContext
+        case "flow_recommend":
+            self = .flowRecommend
+        case "flow_snooze":
+            let worktreeRef = try container.decode(String.self, forKey: .worktreeRef)
+            let reason = try container.decodeIfPresent(String.self, forKey: .reason)
+            self = .flowSnooze(worktreeRef: worktreeRef, reason: reason)
+        case "flow_note":
+            let worktreeRef = try container.decode(String.self, forKey: .worktreeRef)
+            let body = try container.decode(String.self, forKey: .body)
+            self = .flowNote(worktreeRef: worktreeRef, body: body)
+        case "flow_summary":
+            let summary = try container.decode(FlowWorktreeSummary.self, forKey: .summary)
+            self = .flowSummary(summary)
+        case "flow_publish":
+            let rawJSON = try container.decode(String.self, forKey: .rawJSON)
+            self = .flowPublish(rawJSON: rawJSON)
+        case "flow_request_status":
+            let worktreeRef = try container.decode(String.self, forKey: .worktreeRef)
+            let explicit = try container.decode(Bool.self, forKey: .explicit)
+            self = .flowRequestStatus(worktreeRef: worktreeRef, explicit: explicit)
         default:
             throw DecodingError.dataCorrupted(.init(codingPath: [CodingKeys.type], debugDescription: "Unknown message type: \(type)"))
         }
@@ -290,6 +349,9 @@ public enum ResponseMessage: Sendable, Equatable {
     case teamList(teamName: String, members: [TeamListMember])
     case teamHookOutput(String)
     case teamInbox([TeamInboxMessage])
+    case flowStatus(FlowStatus)
+    case flowContext(FlowContextEnvelope)
+    case flowRecommendation(FlowRecommendationEnvelope)
 }
 
 extension ResponseMessage: Codable {
@@ -297,6 +359,7 @@ extension ResponseMessage: Codable {
         case type, message, panes, output, messages, text
         case teamName = "team_name"
         case members
+        case status, context, recommendation
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -323,6 +386,15 @@ extension ResponseMessage: Codable {
         case .teamInbox(let messages):
             try container.encode("team_inbox", forKey: .type)
             try container.encode(messages, forKey: .messages)
+        case .flowStatus(let status):
+            try container.encode("flow_status", forKey: .type)
+            try container.encode(status, forKey: .status)
+        case .flowContext(let context):
+            try container.encode("flow_context", forKey: .type)
+            try container.encode(context, forKey: .context)
+        case .flowRecommendation(let recommendation):
+            try container.encode("flow_recommendation", forKey: .type)
+            try container.encode(recommendation, forKey: .recommendation)
         }
     }
 
@@ -351,6 +423,15 @@ extension ResponseMessage: Codable {
         case "team_inbox":
             let messages = try container.decode([TeamInboxMessage].self, forKey: .messages)
             self = .teamInbox(messages)
+        case "flow_status":
+            let status = try container.decode(FlowStatus.self, forKey: .status)
+            self = .flowStatus(status)
+        case "flow_context":
+            let context = try container.decode(FlowContextEnvelope.self, forKey: .context)
+            self = .flowContext(context)
+        case "flow_recommendation":
+            let recommendation = try container.decode(FlowRecommendationEnvelope.self, forKey: .recommendation)
+            self = .flowRecommendation(recommendation)
         default:
             throw DecodingError.dataCorrupted(.init(codingPath: [CodingKeys.type], debugDescription: "Unknown response type: \(type)"))
         }
