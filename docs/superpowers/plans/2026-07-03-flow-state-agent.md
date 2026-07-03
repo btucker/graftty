@@ -1101,11 +1101,9 @@ SwiftUI app. Required coverage:
   previous valid recommendation in `FlowStateStore`.
 - `.flowStatus` uses an injected Flow State status provider, so Task 8 can
   return the controller status without rewriting request dispatch.
-- `.flowRequestStatus(worktreeRef:explicit:)` routes through
-  `FlowStateActionExecutor.requestStatus`, constructs the fixed Flow State
-  template internally, respects `flowStatePermissionMode`, enforces
-  `FlowStateActivityStore` cooldowns unless `explicit == true`, and records sent
-  or skipped activity.
+- `.flowRequestStatus(worktreeRef:explicit:)` remains a placeholder until Task
+  5, where `FlowStateActionExecutor.requestStatus` is introduced. Task 4 should
+  not create the executor early.
 
 - [ ] **Step 5: Run tests to verify they fail**
 
@@ -1187,12 +1185,14 @@ Behavior:
 - `.flowStatus`: return initializer-supplied status.
 - `.flowContext`: load summaries/notes/snoozes from store and return `.flowContext(FlowStateContextBuilder.build(..., signals: signals))`.
 - `.flowRecommend`: return stored recommendation if present; otherwise a `.none` recommendation with low confidence.
-- `.flowSnooze`: write `FlowSnooze`.
+- `.flowSnooze`: write `FlowSnooze` using the request's `worktreeRef`,
+  `until`, and `reason`.
 - `.flowNote`: write `FlowWorktreeNote`.
 - `.flowSummary`: write summary.
 - `.flowPublish(rawJSON)`: decode inside the app handler. On success, compute derived action requirements, write recommendation, append `.publishAccepted`, and return `.ok`. On decode/validation failure, do not overwrite `latest-recommendation.json`; append `.publishError`; return `.error`.
 - `.flowRequestStatus`: return nil here. The app layer handles this request in
-  Task 5 because it needs team messaging, settings, and cooldown services.
+  Task 5 because it needs the action executor, team messaging, settings, and
+  cooldown services.
 - Non-flow messages return nil.
 
 Do not execute proposed actions from inside this pure request handler. Action
