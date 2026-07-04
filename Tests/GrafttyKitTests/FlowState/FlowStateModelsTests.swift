@@ -181,6 +181,7 @@ struct FlowStateModelsTests {
             #"{"schemaVersion":1,"generatedAt":"2026-07-03T19:00:00Z","primary":{"intent":"none","reason":"Idle","confidence":"low"}}"#,
             #"{"schemaVersion":1,"generatedAt":"2026-07-03T19:00:00Z","primary":{"intent":"none","title":"None","reason":"Idle","confidence":"low"},"proposedActions":[{"id":"x","kind":"teleport","target":"repo:feature"}]}"#,
             #"{"schemaVersion":1,"generatedAt":"2026-07-03T19:00:00Z","primary":{"intent":"none","title":"None","reason":"Idle","confidence":"low"},"proposedActions":[{"id":"x","kind":"team_status_request"}]}"#,
+            #"{"schemaVersion":1,"generatedAt":"2026-07-03T19:00:00Z","primary":{"intent":"none","title":"None","reason":"Idle","confidence":"low"},"proposedActions":[{"id":"x","kind":"focus_worktree","target":"repo:feature"}]}"#,
             #"{"schemaVersion":1,"generatedAt":"2026-07-03T19:00:00Z","primary":{"intent":"none","title":"None","reason":"Idle","confidence":"low"},"sameContext":[{"title":"Nearby","reason":"r","estimatedEffort":"forever","confidence":"low"}]}"#
         ]
         for json in invalidJSON {

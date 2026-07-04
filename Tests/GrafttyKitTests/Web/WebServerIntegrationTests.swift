@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import GrafttyProtocol
 @testable import GrafttyKit
 
 @Suite("WebServer — integration (requires vendored zmx)")
@@ -13,6 +14,28 @@ struct WebServerIntegrationTests {
             .appendingPathComponent("zmx-web-it-\(UUID().uuidString.prefix(8))", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
+    }
+
+    private static func claimInteractiveControl(
+        _ task: URLSessionWebSocketTask,
+        cols: UInt16 = 80,
+        rows: UInt16 = 24
+    ) async throws {
+        let clientID = DisplayClientID("web-it-\(UUID().uuidString.prefix(8).lowercased())")
+        try await task.send(.string(WebControlEnvelope.hello(
+            clientID: clientID,
+            kind: .web,
+            role: .interactive,
+            visible: true,
+            cols: cols,
+            rows: rows
+        ).encoded()))
+        try await task.send(.string(WebControlEnvelope.takeControl(
+            clientID: clientID,
+            kind: .web,
+            cols: cols,
+            rows: rows
+        ).encoded()))
     }
 
     @Test func webSocketAttachStartsInResolvedWorktreeDirectory() async throws {
@@ -110,7 +133,7 @@ struct WebServerIntegrationTests {
         defer { wsSession.invalidateAndCancel() }
         let first = wsSession.webSocketTask(with: url)
         first.resume()
-        try await first.send(.string(#"{"type":"resize","cols":80,"rows":24}"#))
+        try await Self.claimInteractiveControl(first)
         try await first.send(.data(Data("echo ONE\n".utf8)))
 
         // Drain until we see the marker, then hang up — the server's
@@ -126,7 +149,7 @@ struct WebServerIntegrationTests {
 
         let second = wsSession.webSocketTask(with: url)
         second.resume()
-        try await second.send(.string(#"{"type":"resize","cols":80,"rows":24}"#))
+        try await Self.claimInteractiveControl(second)
         try await second.send(.data(Data("echo TWO\n".utf8)))
         let text = try await Self.readUntil(task: second, marker: "TWO", deadline: 8.0)
         #expect(text.contains("TWO"),
@@ -207,7 +230,7 @@ struct WebServerIntegrationTests {
         let wsTask = wsSession.webSocketTask(with: url)
         wsTask.resume()
 
-        try await wsTask.send(.string(#"{"type":"resize","cols":80,"rows":24}"#))
+        try await Self.claimInteractiveControl(wsTask)
         try await wsTask.send(.data(Data("echo HELLO_INTEG\n".utf8)))
 
         // URLSessionWebSocketTask.receive() blocks until a frame arrives —

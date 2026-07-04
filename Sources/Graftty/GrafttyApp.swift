@@ -477,6 +477,7 @@ struct GrafttyApp: App {
                 claudeSessionRegistry: services.claudeSessionRegistry,
                 remoteBranchStore: services.remoteBranchStore,
                 worktreeMonitor: services.worktreeMonitor,
+                teamInbox: services.teamInbox,
                 teamEventDispatcher: services.teamEventDispatcher,
                 flowStateAgentController: services.flowStateAgentController,
                 onMainSelectionChange: { services.mainWindowSelection = $0 }

@@ -47,4 +47,30 @@ struct FlowStateStoreTests {
         #expect(try reloaded.notes()["repo:feature"]?.body.contains("finish this repo") == true)
         #expect(try reloaded.snoozes()["repo:other"]?.until == .nextFocusBreak)
     }
+
+    @Test("worktree ref storage filenames are collision resistant")
+    func worktreeRefStorageFilenamesAreCollisionResistant() throws {
+        let root = try temporaryDirectory()
+        let store = FlowStateStore(rootDirectory: root)
+        let updatedAt = Date(timeIntervalSince1970: 100)
+
+        try store.writeSummary(FlowWorktreeSummary(
+            worktreeRef: "repo:a/b",
+            updatedAt: updatedAt,
+            summary: "slash",
+            nextAction: "one",
+            needsHuman: false
+        ))
+        try store.writeSummary(FlowWorktreeSummary(
+            worktreeRef: "repo:a_b",
+            updatedAt: updatedAt,
+            summary: "underscore",
+            nextAction: "two",
+            needsHuman: false
+        ))
+
+        let summaries = try FlowStateStore(rootDirectory: root).summaries()
+        #expect(summaries["repo:a/b"]?.summary == "slash")
+        #expect(summaries["repo:a_b"]?.summary == "underscore")
+    }
 }

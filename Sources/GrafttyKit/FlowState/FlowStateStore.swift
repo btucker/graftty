@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 public final class FlowStateStore: @unchecked Sendable {
     private let rootDirectory: URL
@@ -117,16 +118,8 @@ public final class FlowStateStore: @unchecked Sendable {
     }
 
     private static func safeFileName(for worktreeRef: String) -> String {
-        let separators = CharacterSet(charactersIn: "/:\\")
-        var result = ""
-        for scalar in worktreeRef.unicodeScalars {
-            if separators.contains(scalar) {
-                result.append("_")
-            } else {
-                result.unicodeScalars.append(scalar)
-            }
-        }
-        return result
+        let digest = SHA256.hash(data: Data(worktreeRef.utf8))
+        return "sha256-\(digest.map { String(format: "%02x", $0) }.joined())"
     }
 }
 

@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import Graftty
 
@@ -17,5 +18,13 @@ struct FlowStateRefreshPolicyTests {
             wasRunningBeforeOpen: false,
             isRunningAfterOpen: false
         ))
+    }
+
+    @Test("refresh runtime settings use the configured refresh interval")
+    func refreshRuntimeSettingsUseConfiguredInterval() {
+        UserDefaults.standard.set(1, forKey: SettingsKeys.flowStateRefreshIntervalMinutes)
+        defer { UserDefaults.standard.removeObject(forKey: SettingsKeys.flowStateRefreshIntervalMinutes) }
+
+        #expect(FlowStateRefreshRuntimeSettings.refreshInterval() == 60)
     }
 }

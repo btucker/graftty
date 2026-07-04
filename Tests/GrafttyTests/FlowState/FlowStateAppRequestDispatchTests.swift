@@ -191,6 +191,39 @@ struct FlowStateAppRequestDispatchTests {
         #expect(try activityStore.recent(limit: 10).contains { $0.kind == .actionExecuted })
     }
 
+    @Test("Flow State team messenger sends confirmed team messages through the team inbox")
+    func teamMessengerSendsConfirmedTeamMessage() throws {
+        let root = try temporaryDirectory()
+        let inbox = TeamInbox(rootDirectory: root, idGenerator: { "flow-confirmed-1" }, now: { Date(timeIntervalSince1970: 100) })
+        let dispatcher = TeamEventDispatcher(
+            inbox: inbox,
+            preferencesProvider: { TeamEventRoutingPreferences() },
+            templateProvider: { "" }
+        )
+        let lead = WorktreeEntry(path: "/repo", branch: "main", state: .running)
+        let feature = WorktreeEntry(path: "/repo/.worktrees/feature", branch: "feature", state: .running)
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [lead, feature])
+        let worktreeRef = FlowWorktreeIdentity.ref(
+            repoDisplayName: repo.displayName,
+            repoPath: repo.path,
+            worktreePath: feature.path,
+            branch: feature.branch
+        )
+        let messenger = FlowStateTeamMessenger(
+            appState: AppState(repos: [repo]),
+            teamInbox: inbox,
+            teamEventDispatcher: dispatcher,
+            teamsEnabled: true
+        )
+
+        try messenger.sendMessage(target: worktreeRef, body: "Please send your wrap-up.")
+
+        let messages = try inbox.messages(teamID: repo.path)
+        #expect(messages.count == 1)
+        #expect(messages.first?.to.member == "feature")
+        #expect(messages.first?.body == "Please send your wrap-up.")
+    }
+
     @Test("@spec FLOW-4.12: Flow State app request dispatch shall use an injected status provider.")
     func flowStatusUsesInjectedProvider() throws {
         let response = FlowStateAppRequestDispatcher.handle(

@@ -66,19 +66,22 @@ enum FlowStateViewOpenRefreshPolicy {
     }
 }
 
-private struct FlowStateViewTeamMessenger: FlowTeamMessaging {
-    func sendStatusRequest(target: String, body: String) throws {
-        throw FlowTeamMessagingError.skipped("Flow State status request from the view is unavailable until the agent lifecycle is wired.")
+enum FlowStateRefreshRuntimeSettings {
+    static func refreshInterval() -> TimeInterval {
+        let minutes = UserDefaults.standard.object(forKey: SettingsKeys.flowStateRefreshIntervalMinutes) as? Int ?? 10
+        return TimeInterval(max(1, minutes) * 60)
     }
 
-    func sendMessage(target: String, body: String) throws {
-        throw FlowTeamMessagingError.skipped("Flow State team message from the view is unavailable until the agent lifecycle is wired.")
+    static func statusRequestCooldown() -> TimeInterval {
+        let minutes = UserDefaults.standard.object(forKey: SettingsKeys.flowStateStatusRequestCooldownMinutes) as? Int ?? 20
+        return TimeInterval(max(1, minutes) * 60)
     }
 }
 
 private struct FlowStateViewAppActions: FlowConfirmedAppActions {
     let repos: [RepoEntry]
     let selectWorktree: (String) -> Void
+    let restartFlowStateAgent: () throws -> Void
 
     func focusWorktree(ref: String) throws {
         guard let path = MainWindowSelectionTransition.resolveWorktreePath(target: ref, repos: repos) else {
@@ -88,7 +91,7 @@ private struct FlowStateViewAppActions: FlowConfirmedAppActions {
     }
 
     func restartAgent(ref: String) throws {
-        throw FlowTeamMessagingError.skipped("Flow State restart is unavailable until the agent lifecycle is wired.")
+        try restartFlowStateAgent()
     }
 }
 
@@ -100,6 +103,7 @@ struct MainWindow: View {
     let claudeSessionRegistry: ClaudeSessionRegistry
     let remoteBranchStore: RemoteBranchStore
     let worktreeMonitor: WorktreeMonitor
+    let teamInbox: TeamInbox
     let teamEventDispatcher: TeamEventDispatcher
     @ObservedObject var flowStateAgentController: FlowStateAgentController
     var onMainSelectionChange: (MainWindowSelection) -> Void = { _ in }
@@ -118,6 +122,9 @@ struct MainWindow: View {
     @State private var mainSelection: MainWindowSelection = .worktree(nil)
     @State private var flowStateRecommendation: FlowRecommendationEnvelope?
     @State private var flowStateActivity: [FlowStateActivity] = []
+    @State private var flowStateRefreshCoordinator = FlowStateRefreshCoordinator()
+    @State private var flowStateSelectionRefreshTask: Task<Void, Never>?
+    @State private var flowStateCurrentFocusStableSince = Date()
 
     private let flowStateStore = FlowStateStore.defaultStore()
     private let flowStateActivityStore = FlowStateActivityStore.defaultStore()
@@ -174,7 +181,12 @@ struct MainWindow: View {
                         status: flowStateAgentController.status,
                         recommendation: flowStateRecommendation,
                         activity: flowStateActivity,
-                        requestRefresh: { refreshFlowState(reason: "manual refresh") },
+                        requestRefresh: {
+                            refreshFlowState(
+                                reason: "manual refresh",
+                                trigger: .explicitUserRefresh
+                            )
+                        },
                         openAgentPane: openFlowStateAgentPane,
                         restartAgent: { try? flowStateAgentController.restart() },
                         confirmAction: confirmFlowStateAction
@@ -283,6 +295,18 @@ struct MainWindow: View {
                 worktreePath: newPath,
                 splitTreesByPath: appState.runningSplitTreesByPath()
             )
+            scheduleFlowStateSelectionRefresh(for: newPath)
+        }
+        .onChange(of: flowStateAttentionSignature) { _, newSignature in
+            guard !newSignature.isEmpty, let worktreePath = appState.selectedWorktreePath,
+                  let worktreeRef = flowWorktreeRef(for: worktreePath) else { return }
+            refreshFlowState(
+                reason: "attention event",
+                trigger: .attention(
+                    worktreeRef: worktreeRef,
+                    currentFocusStableSince: flowStateCurrentFocusStableSince
+                )
+            )
         }
         .onChange(of: mainSelection, initial: true) { _, newSelection in
             onMainSelectionChange(newSelection)
@@ -313,6 +337,9 @@ struct MainWindow: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeMainNotification)) { _ in
             retryPendingResolvedOffers()
+        }
+        .onReceive(Timer.publish(every: 60, on: .main, in: .common).autoconnect()) { _ in
+            refreshFlowState(reason: "background interval", trigger: .backgroundTick)
         }
     }
 
@@ -371,6 +398,23 @@ struct MainWindow: View {
     private var selectedWorktree: WorktreeEntry? {
         guard let path = appState.selectedWorktreePath else { return nil }
         return appState.worktree(forPath: path)
+    }
+
+    private var flowStateAttentionSignature: String {
+        appState.repos.flatMap { repo in
+            repo.worktrees.flatMap { worktree in
+                var parts: [String] = []
+                if let attention = worktree.attention {
+                    parts.append("\(repo.path):\(worktree.path):worktree:\(attention.timestamp.timeIntervalSince1970)")
+                }
+                parts.append(contentsOf: worktree.paneAttention.map { paneID, attention in
+                    "\(repo.path):\(worktree.path):pane:\(paneID.id.uuidString):\(attention.timestamp.timeIntervalSince1970)"
+                })
+                return parts
+            }
+        }
+        .sorted()
+        .joined(separator: "|")
     }
 
     /// Computed command handler surfaced to `GrafttyApp.commands` via
@@ -464,11 +508,53 @@ struct MainWindow: View {
         refreshFlowState()
     }
 
-    private func refreshFlowState(reason: String? = nil) {
+    private func refreshFlowState(reason: String? = nil, trigger: FlowRefreshTrigger? = nil) {
         loadFlowStateData()
         if let reason {
+            configureFlowStateRefreshCoordinator()
+            if let trigger {
+                guard flowStateRefreshCoordinator.shouldRefresh(for: trigger) else { return }
+                if case .backgroundTick = trigger {
+                    flowStateRefreshCoordinator.recordBackgroundRefresh()
+                }
+            }
             flowStateAgentController.requestRefresh(reason: reason)
         }
+    }
+
+    private func configureFlowStateRefreshCoordinator() {
+        flowStateRefreshCoordinator.refreshInterval = FlowStateRefreshRuntimeSettings.refreshInterval()
+        flowStateRefreshCoordinator.statusRequestCooldown = FlowStateRefreshRuntimeSettings.statusRequestCooldown()
+    }
+
+    private func scheduleFlowStateSelectionRefresh(for worktreePath: String) {
+        guard let worktreeRef = flowWorktreeRef(for: worktreePath) else { return }
+        configureFlowStateRefreshCoordinator()
+        let selectedAt = Date()
+        flowStateCurrentFocusStableSince = selectedAt
+        flowStateRefreshCoordinator.recordSelectionChanged(to: worktreeRef, at: selectedAt)
+        flowStateSelectionRefreshTask?.cancel()
+        flowStateSelectionRefreshTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            guard !Task.isCancelled else { return }
+            refreshFlowState(
+                reason: "selected worktree stable",
+                trigger: .selectionStable(worktreeRef: worktreeRef, selectedAt: selectedAt)
+            )
+        }
+    }
+
+    private func flowWorktreeRef(for worktreePath: String) -> String? {
+        for repo in appState.repos {
+            guard let worktree = repo.worktrees.first(where: { $0.path == worktreePath }) else { continue }
+            return FlowWorktreeIdentity.ref(
+                repoDisplayName: repo.displayName,
+                repoPath: repo.path,
+                worktreePath: worktree.path,
+                branch: worktree.branch
+            )
+        }
+        return nil
     }
 
     private func loadFlowStateData() {
@@ -495,7 +581,8 @@ struct MainWindow: View {
             reason: FlowStateViewOpenRefreshPolicy.shouldRequestRefresh(
                 wasRunningBeforeOpen: wasRunning,
                 isRunningAfterOpen: flowStateAgentController.status.running
-            ) ? "view open" : nil
+            ) ? "view open" : nil,
+            trigger: .viewOpened
         )
     }
 
@@ -511,9 +598,20 @@ struct MainWindow: View {
     private func confirmFlowStateAction(_ action: FlowProposedAction) {
         let executor = FlowStateActionExecutor(
             activityStore: flowStateActivityStore,
-            teamMessenger: FlowStateViewTeamMessenger(),
-            appActions: FlowStateViewAppActions(repos: appState.repos, selectWorktree: selectWorktree),
-            permissionMode: .conservative
+            teamMessenger: FlowStateTeamMessenger(
+                appState: appState,
+                teamInbox: teamInbox,
+                teamEventDispatcher: teamEventDispatcher,
+                teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+            ),
+            appActions: FlowStateViewAppActions(
+                repos: appState.repos,
+                selectWorktree: selectWorktree,
+                restartFlowStateAgent: { try flowStateAgentController.restart() }
+            ),
+            permissionMode: FlowStatePermissionMode(
+                rawValue: UserDefaults.standard.string(forKey: SettingsKeys.flowStatePermissionMode) ?? ""
+            ) ?? .conservative
         )
         do {
             try executor.executeConfirmedAction(action)

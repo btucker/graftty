@@ -434,7 +434,7 @@ public struct FlowProposedAction: Codable, Sendable, Equatable {
         kind = try container.decode(FlowProposedActionKind.self, forKey: .kind)
         target = try container.decodeIfPresent(String.self, forKey: .target)
         body = try container.decodeIfPresent(String.self, forKey: .body)
-        requiresConfirmation = try container.decodeIfPresent(Bool.self, forKey: .requiresConfirmation) ?? false
+        requiresConfirmation = try container.decode(Bool.self, forKey: .requiresConfirmation)
         extraFields = try decoder.decodeExtraFields(knownKeys: CodingKeys.knownStringValues)
         try validateDecodedPayload(container: container)
     }

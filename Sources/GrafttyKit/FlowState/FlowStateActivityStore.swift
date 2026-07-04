@@ -25,6 +25,8 @@ public struct FlowStateActivity: Codable, Sendable, Equatable {
 }
 
 public final class FlowStateActivityStore: @unchecked Sendable {
+    private static let recentReadChunkSize = 64 * 1024
+
     private let rootDirectory: URL
     private let lock = NSLock()
 
@@ -60,12 +62,24 @@ public final class FlowStateActivityStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         guard limit > 0, FileManager.default.fileExists(atPath: activityURL.path) else { return [] }
-        let data = try Data(contentsOf: activityURL)
-        guard let text = String(data: data, encoding: .utf8) else { return [] }
-        let rows = text.split(separator: "\n", omittingEmptySubsequences: true).compactMap { line in
-            try? JSONDecoder.flowState.decode(FlowStateActivity.self, from: Data(line.utf8))
+        let handle = try FileHandle(forReadingFrom: activityURL)
+        defer { try? handle.close() }
+        var offset = try handle.seekToEnd()
+        var buffer = Data()
+
+        while true {
+            let rows = Self.decodeRows(from: buffer, startsAtFileBeginning: offset == 0)
+            if rows.count >= limit || offset == 0 {
+                return Array(rows.suffix(limit).reversed())
+            }
+
+            let readSize = min(Self.recentReadChunkSize, Int(offset))
+            guard readSize > 0 else { return [] }
+            offset -= UInt64(readSize)
+            try handle.seek(toOffset: offset)
+            let chunk = try handle.read(upToCount: readSize) ?? Data()
+            buffer = chunk + buffer
         }
-        return Array(rows.suffix(limit).reversed())
     }
 
     public func recordStatusRequest(worktreeRef: String, at date: Date) throws {
@@ -95,6 +109,15 @@ public final class FlowStateActivityStore: @unchecked Sendable {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]
         return encoder
+    }
+
+    private static func decodeRows(from data: Data, startsAtFileBeginning: Bool) -> [FlowStateActivity] {
+        guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return [] }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true)
+        let completeLines = startsAtFileBeginning ? lines[...] : lines.dropFirst()
+        return completeLines.compactMap { line in
+            try? JSONDecoder.flowState.decode(FlowStateActivity.self, from: Data(line.utf8))
+        }
     }
 
     private func readCooldowns() throws -> [String: Date] {

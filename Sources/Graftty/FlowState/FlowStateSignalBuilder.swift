@@ -276,7 +276,7 @@ enum FlowStateAppRequestDispatcher {
     }
 }
 
-private final class FlowStateTeamMessenger: FlowTeamMessaging {
+final class FlowStateTeamMessenger: FlowTeamMessaging {
     private let appState: AppState
     private let teamInbox: TeamInbox
     private let teamEventDispatcher: TeamEventDispatcher
@@ -295,20 +295,32 @@ private final class FlowStateTeamMessenger: FlowTeamMessaging {
     }
 
     func sendStatusRequest(target: String, body: String) throws {
+        try sendToTarget(target: target, body: body, skipPrefix: "status request")
+    }
+
+    func sendMessage(target: String, body: String) throws {
+        try sendToTarget(target: target, body: body, skipPrefix: "team message")
+    }
+
+    func canonicalStatusRequestTarget(_ target: String) -> String? {
+        resolveTarget(target)?.worktreeRef
+    }
+
+    private func sendToTarget(target: String, body: String, skipPrefix: String) throws {
         guard teamsEnabled else {
-            throw FlowTeamMessagingError.skipped("Flow State status request skipped: teams are disabled")
+            throw FlowTeamMessagingError.skipped("Flow State \(skipPrefix) skipped: teams are disabled")
         }
         guard let resolved = resolveTarget(target) else {
-            throw FlowTeamMessagingError.skipped("Flow State status request skipped: unresolved worktree \(target)")
+            throw FlowTeamMessagingError.skipped("Flow State \(skipPrefix) skipped: unresolved worktree \(target)")
         }
         guard let team = TeamView.team(for: resolved.worktree, in: appState.repos, teamsEnabled: true) else {
-            throw FlowTeamMessagingError.skipped("Flow State status request skipped: target has no team")
+            throw FlowTeamMessagingError.skipped("Flow State \(skipPrefix) skipped: target has no team")
         }
         guard let recipient = team.members.first(where: { $0.worktreePath == resolved.worktree.path }) else {
-            throw FlowTeamMessagingError.skipped("Flow State status request skipped: target is not a team member")
+            throw FlowTeamMessagingError.skipped("Flow State \(skipPrefix) skipped: target is not a team member")
         }
         guard team.members.filter({ $0.name == recipient.name }).count == 1 else {
-            throw FlowTeamMessagingError.skipped("Flow State status request skipped: ambiguous team member name \(recipient.name)")
+            throw FlowTeamMessagingError.skipped("Flow State \(skipPrefix) skipped: ambiguous team member name \(recipient.name)")
         }
         let caller = team.lead
 
@@ -321,14 +333,6 @@ private final class FlowStateTeamMessenger: FlowTeamMessaging {
             repos: appState.repos,
             teamsEnabled: true
         )
-    }
-
-    func sendMessage(target: String, body: String) throws {
-        throw FlowTeamMessagingError.skipped("Flow State team messages require confirmation in the app UI")
-    }
-
-    func canonicalStatusRequestTarget(_ target: String) -> String? {
-        resolveTarget(target)?.worktreeRef
     }
 
     private struct ResolvedTarget {
