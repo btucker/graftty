@@ -1,5 +1,6 @@
 import GrafttyProtocol
 import SwiftUI
+import os
 
 #if canImport(UIKit)
 private struct BiometricGateKey: EnvironmentKey {
@@ -38,29 +39,128 @@ extension SessionClient {
     /// `WorktreeDetailView` (preview pool) need the same triplet — URL
     /// composition + WS construction + SessionClient binding.
     ///
-    /// When `remoteHost` is non-nil (iPad paired-host path), the factory
-    /// opens an SSH terminal session over WebRTC via
-    /// `RemoteHostConnection.openTerminalSession(sessionName:)`. When nil
-    /// (iPhone path, or iPad before signaling lands), the factory falls
-    /// back to a plain `URLSessionWebSocketClient` pointed at `/ws`.
+    /// `remoteConnectionProvider`, when non-nil, is invoked FRESH on
+    /// EVERY dial — not just the first. `SessionClient`'s internal
+    /// backoff loop (`spawnOpenTask`) re-invokes `webSocketFactory` on
+    /// every reconnect attempt; before this, callers resolved
+    /// `coordinator.connection(for:)` once and baked the resulting
+    /// (possibly-since-invalidated) `RemoteHostConnection` into the
+    /// factory closure, so a dead connection was redialed forever —
+    /// only an external re-dial (a scenePhase flip) could recover.
+    /// Consulting the provider per-dial means a degraded connection
+    /// heals transparently: the coordinator negotiates a fresh
+    /// `RemoteHostConnection` (fresh WebRTC + fresh SSH userauth) the
+    /// next time the provider is asked. When the provider returns nil
+    /// (no coordinator, host unpaired, or negotiation failed) the
+    /// factory falls back to a plain `URLSessionWebSocketClient`
+    /// pointed at `/ws`.
+    ///
+    /// `clock` / `backoffSchedule` default to `SessionClient`'s own
+    /// `productionClock()` / `productionBackoffSchedule()` — the single
+    /// source both this default and `SessionClient.init`'s own default
+    /// read from, so the two never drift independently; tests override
+    /// them (e.g. `VirtualClock` + a short schedule) to drive the backoff
+    /// loop deterministically while still exercising this factory's real
+    /// `remoteConnectionProvider` re-consultation logic instead of a
+    /// hand-rolled substitute.
     static func live(
         baseURL: URL,
         sessionName: String,
         role: Role = .fullscreen,
-        remoteHost: RemoteHostConnection? = nil
+        remoteConnectionProvider: (@Sendable () async -> RemoteHostConnection?)? = nil,
+        clock: any Clock = SessionClient.productionClock(),
+        backoffSchedule: [TimeInterval] = SessionClient.productionBackoffSchedule()
     ) -> SessionClient {
         SessionClient(
             sessionName: sessionName,
             webSocketFactory: {
-                if let remoteHost {
+                if let remoteHost = await remoteConnectionProvider?() {
                     return try await remoteHost.openTerminalSession(sessionName: sessionName)
                 }
                 let wsURL = RootView.makeWebSocketURL(base: baseURL, session: sessionName)
                 return URLSessionWebSocketClient(url: wsURL)
             },
+            clock: clock,
+            backoffSchedule: backoffSchedule,
             idleThreshold: role == .preview ? previewIdleThreshold : fullscreenIdleThreshold,
             role: role
         )
+    }
+}
+
+/// Shared home for `/ws`-fallback observability: distinguishes routine
+/// unpaired usage (`.debug`, silent by default) from a paired host whose
+/// negotiation failed (`.warning`, visible in console) — see
+/// `makeRemoteConnectionProvider`, the single place that logs against
+/// this category now that both the fullscreen and preview-pool dial
+/// paths share one provider factory.
+private let remoteWiringLogger = Logger(
+    subsystem: "com.quotably.graftty",
+    category: "remote-wiring"
+)
+
+/// How loudly to log an `/ws` fallback (the provider built by
+/// `makeRemoteConnectionProvider` found no `RemoteHostConnection`).
+/// `true` only when there WAS a coordinator to ask AND the host is
+/// paired (per `RemoteConnectionCoordinator.isPaired(_:)` — the SAME
+/// two-part gate `connection(for:)` checks: a non-nil `remoteDeviceID`
+/// AND a matching `PinnedHostStore` entry, not just the former) — that
+/// combination means negotiation itself failed, a regression from the
+/// expected path. Every other combination (no coordinator, or a
+/// coordinator that correctly fast-nil'd an unpaired host) is routine
+/// `/ws` usage and stays quiet.
+func shouldLogFallbackLoudly(hasCoordinator: Bool, hostIsPaired: Bool) -> Bool {
+    hasCoordinator && hostIsPaired
+}
+
+/// Builds the `remoteConnectionProvider` closure `SessionClient.live`
+/// consults on every dial: asks `coordinator.connection(for: host)`
+/// FRESH every time it's invoked, logging once per fallback dial via
+/// `shouldLogFallbackLoudly` when that lookup comes back empty (no
+/// coordinator, unpaired host, or a failed negotiation). Shared by
+/// `SingleSessionView` (fullscreen) and `WorktreeDetailView`'s preview
+/// pool so both surfaces get the same per-dial re-negotiation behavior
+/// AND the same fallback logging from one place — the preview pool was
+/// previously silent on this path.
+///
+/// Written as a free function with an explicit `if let` rather than
+/// `coordinator.map { ... }` returning the closure: `Optional.map`'s
+/// generic return type isn't recognized as `@Sendable` at the call site,
+/// which trips "converting non-Sendable function value" under the iOS
+/// build's stricter concurrency checking (this file's `#if
+/// canImport(UIKit)` gate means that mismatch is invisible to a bare
+/// `swift build`/`swift test` on macOS, where UIKit isn't importable and
+/// this whole file compiles to nothing — the iOS `xcodebuild` target is
+/// what actually type-checks it).
+@MainActor
+func makeRemoteConnectionProvider(
+    coordinator: RemoteConnectionCoordinator?,
+    host: Host,
+    sessionName: String
+) -> @Sendable () async -> RemoteHostConnection? {
+    { [weak coordinator] in
+        guard let coordinator else {
+            remoteWiringLogger.debug(
+                "no RemoteHostConnection for host \(host.id, privacy: .public) (unpaired or no coordinator); using /ws for session \(sessionName, privacy: .public)"
+            )
+            return nil
+        }
+        if let connection = await coordinator.connection(for: host) {
+            return connection
+        }
+        // isPaired is checked here — once per fallback, only on the
+        // path that already knows negotiation came back empty — not
+        // pre-resolved before every dial.
+        if shouldLogFallbackLoudly(hasCoordinator: true, hostIsPaired: await coordinator.isPaired(host)) {
+            remoteWiringLogger.warning(
+                "no RemoteHostConnection for paired host \(host.id, privacy: .public); falling back to /ws for session \(sessionName, privacy: .public)"
+            )
+        } else {
+            remoteWiringLogger.debug(
+                "no RemoteHostConnection for host \(host.id, privacy: .public) (unpaired or no coordinator); using /ws for session \(sessionName, privacy: .public)"
+            )
+        }
+        return nil
     }
 }
 
@@ -69,15 +169,25 @@ extension SessionClient {
 /// Bundles the iPad-only pane façades that ride the per-host
 /// `RemoteHostConnection`'s SSH session: a `WorktreePanesStore` for the
 /// sidebar's worktree+pane snapshot, and a `PaneControlClient` for typed
-/// `split`/`close`/`swap` RPCs. Both fields are `nil` on the iPhone path
-/// (and on iPad before signaling has wired up a `RemoteHostConnection`),
-/// where the existing `/ws` flow handles terminal traffic and there is
-/// no SSH session to multiplex these subsystem channels onto. R6's
-/// iPhone cutover will populate them on that path too.
+/// `split`/`close`/`swap` RPCs. Since W3, both size classes negotiate a
+/// `RemoteHostConnection` for paired hosts, so either path could carry
+/// these channels; both fields are `nil` whenever `RootView`'s
+/// `RemoteConnectionCoordinator` has no live `RemoteHostConnection` for
+/// the host (unpaired, or negotiation failed) — same fallback trigger as
+/// the fullscreen/preview `/ws` paths.
 ///
-/// No UI surfaces consume these yet — the env is infrastructure
-/// plumbing landed in R5 so the signaling layer (and future sidebar /
-/// pane-control UI work) can read both from a single source of truth.
+/// No UI surfaces consume these yet, and W3 Task 3 (wiring
+/// `RemoteConnectionCoordinator` into `RootView`/`IPadRootLayout`/
+/// `WorktreeDetailView`) re-checked this before threading a call site
+/// through: `WorktreeListContent`'s sidebar still polls `GET
+/// /worktrees/panes` over HTTP, and there is no pane-control (split/close/
+/// swap) UI anywhere yet. Constructing a `PaneEnvironment` today with no
+/// reader would just be a second flavor of dead plumbing (an
+/// `EnvironmentKey` nothing reads, instead of a function nothing calls),
+/// so the call site stays deferred to whichever future task adds the
+/// sidebar/pane-control UI that actually reads `worktreePanesStore` /
+/// `paneControlClient` — this remains infrastructure only, single-sourced
+/// for that consumer to read from once it exists.
 public struct PaneEnvironment: Sendable {
     public let worktreePanesStore: WorktreePanesStore?
     public let paneControlClient: PaneControlClient?
@@ -95,8 +205,8 @@ public struct PaneEnvironment: Sendable {
 
 /// Constructs a `PaneEnvironment` over the supplied per-host
 /// `RemoteHostConnection`. Returns `.empty` when `remoteHost` is nil
-/// (iPhone, or iPad before signaling lands) or when either subsystem
-/// channel fails to open.
+/// (host unpaired, or negotiation failed — either size class) or when
+/// either subsystem channel fails to open.
 ///
 /// Construction shape: the channel client is built first with no-op
 /// callbacks (via `RemoteHostConnection.makePanesStateClient`), then the

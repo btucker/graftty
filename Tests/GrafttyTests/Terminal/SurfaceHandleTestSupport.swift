@@ -197,6 +197,30 @@ final class FakeSurfaceHandleZmxBackend: SurfaceHandleZmxBackend {
     }
 }
 
+/// Shared keyDown NSEvent builder for SurfaceNSView tests. Note: only
+/// host-managed *direct-input* keycodes (backspace, arrows, …) are safe to
+/// dispatch through `keyDown` here — other keys fall through to
+/// `ghostty_surface_key` on the fake surface pointer and would crash.
+func testKeyDownEvent(
+    keyCode: UInt16,
+    characters: String,
+    modifierFlags: NSEvent.ModifierFlags = [],
+    isARepeat: Bool = false
+) -> NSEvent? {
+    NSEvent.keyEvent(
+        with: .keyDown,
+        location: .zero,
+        modifierFlags: modifierFlags,
+        timestamp: 0,
+        windowNumber: 0,
+        context: nil,
+        characters: characters,
+        charactersIgnoringModifiers: characters,
+        isARepeat: isARepeat,
+        keyCode: keyCode
+    )
+}
+
 func fakeApp() -> ghostty_app_t {
     UnsafeMutableRawPointer(bitPattern: 0x1000)!
 }

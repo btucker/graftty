@@ -424,6 +424,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-4.19** When the user invokes a delete-flow confirmation dialog (GIT-4.2 Delete Worktree, GIT-4.4 force-delete recovery, GIT-4.11 final failure, or the GIT-3.6 Remove Repository menu item), the application shall present it as a window-attached sheet via `NSAlert.beginSheetModal(for:)` rather than `NSAlert.runModal()`. Extends GIT-4.14's policy from the auto-triggered offer dialog to every user-initiated delete dialog — otherwise the nested-event-loop `runModal()` freezes libghostty's PTY callbacks for every embedded terminal pane while the dialog awaits a click.
 
+**GIT-4.20** `PRStatusStore.onPRResolved` fires the resolved edge exactly once (the idempotent-refetch guard in GIT-4.7 forbids re-firing for the same terminal PR). So when the "delete worktree?" offer can't present at that moment — no `NSApp.mainWindow`, because the app is backgrounded or Settings / the Team Activity Log is foregrounded — the offer would be lost forever. The application shall instead queue such an offer and retry it when a window becomes available, keyed by worktree so a newer resolution supersedes an older one for the same worktree.
+
 ### GIT-5.x — Creating a Worktree
 
 **GIT-5.1** When the user types or pastes into the "Worktree name" or "Branch" field of the Add Worktree sheet, the application shall replace any character outside the set `A-Z a-z 0-9 . _ - /` with `-`, and shall collapse any run of consecutive `-` (including dashes the user typed directly) into a single `-`. `/` is permitted so branch names can use the conventional namespace separator (`feature/foo`); the resulting worktree path becomes a nested `.worktrees/<ns>/<leaf>` directory that `git worktree add` creates. Ref-format rules git already enforces (`//`, leading/trailing `/`, components beginning with `.`) are not duplicated here — git reports them at submit time. The replacement shall apply live on every edit so the field shows only sanitized content.
@@ -1078,6 +1080,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **OWN-1.1** When a display follower receives an ownership snapshot whose revision is lower than one already applied, the application shall discard the superseded delivery and preserve the current ownership and grid state.
 
+### OWN-2.x — Mac Take-Control Affordance and Reclaim
+
+**OWN-2.1** While a zmx-backed Mac pane's session is owned by another display client, or is ownerless after a prior ownership change, the application shall offer the pane's Take Control affordance (`canTakeDisplayControl()` true); while the Mac pane itself owns the session — including the automatic ownerless claim at first attach — or the session has no ownership history, the affordance shall be hidden.
+
+**OWN-2.2** When a non-command key press reaches a zmx-backed Mac pane that can take display control (OWN-2.1), the application shall reclaim display ownership at the key event itself — synchronously, before dispatching the key — rather than relying on the asynchronous emitted-bytes classification, which runs on libghostty's IO thread after the user-input scope has already exited.
+
+**OWN-2.3** When a clipboard paste is delivered to a zmx-backed Mac pane that can take display control (OWN-2.1), the application shall reclaim display ownership before completing the clipboard request — the clipboard read completes asynchronously on the main queue after the triggering key or menu event, so neither the OWN-2.2 key-event reclaim (command chords are excluded) nor the emitted-bytes classification can claim ownership for the paste bytes.
+
 ## UPDATE — Self-Update
 
 ### UPDATE-1.x — Install flow
@@ -1218,7 +1228,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PR-7.11** When host detection (`GitOriginHost.detect` or equivalent) throws for a repository — process launch failure, git binary missing from PATH, etc. — the application shall not cache the failure in the `hostByRepo` map. Only successful detections (whether returning a resolved `HostingOrigin` or a legitimate "no origin remote" nil) shall be cached. Otherwise a transient environment glitch at first fetch poisons the repo's PR tracking for the whole session, since the poll tick skips cached-nil repos and no code path re-attempts detection.
 
-**PR-7.12** When the user selects a worktree in the sidebar, the application shall call `PRStatusStore.refresh`, bypassing the per-repo polling cadence. Even with the 60-second cap, a worst-case 60-second wait for a freshly-merged PR to appear in the breadcrumb is longer than the click-to-feedback loop a user expects on selection. Sidebar selection is a strong "user cares about this worktree now" signal, and the existing `refresh` path already short-circuits cadence and resets `failureStreak` on success — wiring it to selection closes the stale-UI escape hatch without any new mechanism.
+**PR-7.12** When the user selects a worktree in the sidebar, the application shall call `PRStatusStore.refresh`, bypassing the per-repo polling cadence. A 60-second base cadence — stretching to 300 seconds after repeated failures — is a worse wait for a freshly-merged PR to appear in the breadcrumb than the click-to-feedback loop a user expects on selection. Sidebar selection is a strong "user cares about this worktree now" signal, and the existing `refresh` path already short-circuits cadence and resets `failureStreak` on success — wiring it to selection closes the stale-UI escape hatch without any new mechanism.
 
 **PR-7.13** `PRStatusStore` shall time-bound its per-repo `inFlight` refresh guard so a hung `gh pr list` / `glab mr list` subprocess cannot permanently lock out subsequent polls and user-triggered refreshes. A dispatch whose start timestamp is within the inFlight cap (30 seconds) shall suppress a fresh refresh; beyond that cap, the prior dispatch shall be treated as abandoned and superseded, with the per-repo `generation` counter bumped so the abandoned Task's late write is dropped if it ever returns. Without this, a single stuck subprocess (network flake, rate-limit back-off, expired gh auth refresh loop) freezes that repo's worktrees' sidebar badges and breadcrumb PR buttons at their last-cached state until the app is relaunched — the user-observable shape "PR status only updates when I click between worktrees". Mirrors `WorktreeStatsStore`'s `DIVERGE-4.4` recovery pattern for the equivalent stats-store bug.
 
@@ -1255,6 +1265,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PR-8.22**
 
 **PR-8.23** When a worktree's local branch name differs from the remote branch it tracks (via `branch.<name>.merge` / `git push -u`), the application shall associate the worktree with the PR/MR whose head ref equals the tracked remote branch name, not the local branch name. PR fetchers key snapshots by the remote-side head ref (`headRefName` for GitHub, `source_branch` for GitLab), so the previous `prsByBranch[localBranch]` lookup silently dropped the badge whenever the worktree's branch was renamed locally only or its upstream was bound to a differently-named ref.
+
+**PR-8.24** The `checks == .none` and `mergeable == .unknown` values denote *absence of a signal* (an empty / all-neutral `statusCheckRollup`, or GitHub's transient "still recomputing" mergeability), not a settled conclusion. When a CI-conclusion or mergeability transition's destination is one of those absence values, the application shall NOT fire a change notification — a blip toward "no signal" is not something an agent should be woken for. Transitions INTO a real value (`.success` / `.failure`, `.mergeable` / `.conflicting`) still fire.
+
+**PR-8.25** When a pulse is requested, the application shall force the next poll past the per-repo cadence gate so an explicit refresh signal (window focus, add-worktree picker, newly-pushed branch) fetches fresh PR data even while the background cadence is in a long backoff.
 
 ## IOS — iOS App
 
@@ -1372,7 +1386,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.9** While the iOS software keyboard is visible, the application shall raise the fullscreen terminal layout so its bottom edge sits at or above the keyboard's top edge rather than under it. SwiftUI's automatic `.keyboard` safe-area avoidance does not engage reliably while the first responder is the `UIViewRepresentable`-wrapped `UIKeyInput` proxy from `IOS-6.6` — SwiftUI's focus system is unaware of the proxy, so the avoidance machinery skips the layout. The application shall instead observe `UIResponder.keyboardWillChangeFrameNotification`, compute the keyboard end-frame's vertical intersection with the screen, and apply that height as an explicit `.padding(.bottom, …)` on the fullscreen layout so the terminal — and the `IOS-6.1` control bar overlaid at the bottom — both ride above the keyboard's top edge.
 
-**IOS-6.10** When the iOS client becomes the explicit display owner, the font size currently applied to the terminal controller shall remain in effect as the new baseline — including any active auto-fit override from `IOS-5.6` / `IPAD-2.5`. The application shall stop driving the font from `TerminalWidthLayout.decide` while it remains owner; libghostty's pinch-to-zoom (`IOS-6.8`) shall mutate font from this baseline without implicitly changing ownership.
+**IOS-6.10** When the iOS client becomes the explicit display owner while a non-owner auto-fit font override (`IOS-5.6` / `IPAD-2.5`) is active, the application shall restore the base config font so the pane re-lays out at the configured iOS font size and the resulting owner resize adopts an iOS-natural grid — rather than keeping the follower-fitted font (and therefore the previous owner's width) until the next incidental layout tick. libghostty's pinch-to-zoom (`IOS-6.8`) shall adjust font from that restored baseline without implicitly changing ownership.
 
 **IOS-6.11** While mobile terminal chrome is overlaid at the bottom of a fullscreen session, the terminal viewport used for rendering and font-fit decisions shall reserve that measured chrome height. The visual overlay placement remains bottom-aligned; only the terminal content size is reduced.
 
@@ -1510,7 +1524,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.3** When `MultiPaneDetailView` renders a `.split(.vertical, ratio, left, right)`, the application shall render a `VStack` with the two children proportionally sized by `ratio` and a draggable `Divider` between them.
 
-**IPAD-2.4** When `MultiPaneDetailView` renders a `.leaf(sessionName, …)`, the application shall render a `PaneLeafView` that owns its own `terminal` channel via `TerminalChannelPool`.
+**IPAD-2.4** When `MultiPaneDetailView` renders a `.leaf(sessionName, …)`, the application shall render a `PaneLeafView` that owns its own SSH terminal session channel (one `TerminalSessionClient` per visible leaf over the shared `RemoteHostConnection`).
 
 **IPAD-2.5** While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same font-fit policy as `IOS-5.6` (per-leaf), rendering each leaf's pane at the full leaf width with no horizontal `ScrollView`.
 
@@ -1546,7 +1560,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-5.1** When the application enters the background, the application shall close all `terminal` channels, close the `panes_state` channel, close the DataChannel, and tear down the `RemoteHostConnection`.
 
-**IPAD-5.2** When the application foregrounds and the biometric gate is satisfied, the application shall rebuild the `RemoteHostConnection` from signaling onward, completing a fresh Noise handshake before opening any channel.
+**IPAD-5.2** When the application foregrounds and the biometric gate is satisfied, the application shall rebuild the RemoteHostConnection from signaling onward, completing a fresh SSH userauth before opening any channel.
 
 **IPAD-5.3** When the application foregrounds, the application shall re-open the `panes_state` channel before re-opening any `terminal` channel, so the splittree shape is current before deciding which leaves to attach.
 
@@ -1714,15 +1728,21 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
 
+**REMOTE-3.2** When a superseded SSH connection's teardown completes after a newer connection for the same peer has already registered, the host shall not remove the newer registration.
+
+**REMOTE-3.3** When a host operator removes a paired device from Settings, the application shall close that device's live session immediately rather than waiting for its next attach attempt to fail, and shall not close any session if the device could not be removed from the trust store.
+
 ### REMOTE-4.x — Port Tunnels
 
 **REMOTE-4.1** If a client requests a port tunnel without host approval under the default ask-each-time policy, then the host shall reject the channel open request before connecting to the target port.
 
 **REMOTE-4.2** If a client requests a port tunnel to a non-loopback target under the default policy, then the host shall reject the channel open request.
 
-### REMOTE-5.x — Retired Endpoints
+### REMOTE-5.x — Web Terminal Endpoint (`/ws`)
 
-**REMOTE-5.1** When a client attempts to use the retired `/ws` terminal endpoint, the host shall reject the request without attaching to a PTY.
+**REMOTE-5.1** When a client requests a WebSocket upgrade to `/ws`, the application shall gate the upgrade on the same `AuthPolicy` (Tailscale-whois) check applied to every other path, rejecting the upgrade for a disallowed peer without attaching it to a terminal.
+
+**REMOTE-5.2** While a session terminal is served over `/ws`, the application shall route its terminal and ownership traffic through the same `SessionDisplayOwnershipStore` instance used by SSH-attached clients, so a take-control transition originating from either transport is visible identically to the other.
 
 ### REMOTE-6.x — panes_state Channel
 
@@ -1759,6 +1779,30 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-8.4** When the client receives a host key during SSH KEX, the client shall verify the key against `PinnedHostStore` and abort the connection on mismatch.
 
 **REMOTE-8.5** While accepting a remote attach, the host shall negotiate SSH transport protection from swift-nio-ssh's bundled AEAD ciphers (`aes256-gcm@openssh.com`, `aes128-gcm@openssh.com`) and shall not negotiate any weak or legacy cipher.
+
+### REMOTE-9.x
+
+**REMOTE-9.1** When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with kind ios and the authenticated device identity.
+
+**REMOTE-9.2** While an SSH terminal client is not the display owner, the host shall discard its terminal input bytes and rebroadcast the current ownership snapshot.
+
+**REMOTE-9.3** When an SSH terminal client issues a take-control request, the host shall apply the same owner-eligibility rules as the web transport.
+
+**REMOTE-9.4** When the PTY size changes, the host shall push grid and ownership envelopes to SSH terminal clients over the control carrier.
+
+**REMOTE-9.5** When two SSH clients attach to one session over the control carrier, the application shall grant display ownership to the first client that sends hello and takeControl — localized to that client's own clientID in its ownership envelopes — attach the second hello client as a follower whose envelopes never name it as owner, and answer a follower's terminal bytes with an ownership rebroadcast instead of a PTY echo.
+
+**REMOTE-9.6** When an owner-eligible follower SSH client sends takeControl, the application shall transfer display ownership to it and bump the session epoch, observable by the new owner as a self-owned snapshot and by the former owner as a non-self owner in their next ownership envelopes.
+
+**REMOTE-9.7** If an SSH client that is not the current display owner sends ownerResize, then the application shall reject it and leave the broadcast grid unchanged; while the current owner sends ownerResize at the current epoch, the application shall update the broadcast grid without bumping the epoch.
+
+### REMOTE-10.x
+
+**REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.
+
+### REMOTE-11.x
+
+**REMOTE-11.1** If the host receives a signaling offer while another remote connection is active, then the application shall respond with a retryable unavailable status and shall not tear down the active connection.
 
 ## URL — Worktree URL Handler
 

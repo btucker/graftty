@@ -7,7 +7,9 @@ import os
 /// an observer fires when the count returns to zero.
 ///
 /// Fed by both remote attach paths — `WebSession` (WebSocket `/ws` bridge)
-/// and `ZmxAttachStream` (SSH-over-WebRTC terminal channel). Consulted by
+/// and `ZmxAttachEngine` (SSH-over-WebRTC terminal channel), both of which
+/// share the same underlying engine as of W2's attach-engine unification.
+/// Consulted by
 /// `HostManagedZmxBackend` to decide whether the IOS-12.1 silent gate
 /// applies: the Mac pane withholds PTY resizes only while a remote client
 /// is attached to the same session.

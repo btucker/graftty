@@ -26,9 +26,16 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
     public let supportedAuthenticationMethods: NIOSSHAvailableUserAuthenticationMethods = .publicKey
 
     private let store: TrustedPeerStore
+    /// REMOTE-9.1: invoked synchronously with the authenticated peer's
+    /// `RemoteDeviceID` the moment userauth succeeds — before
+    /// `responsePromise` is even resolved, so a caller that stashes the
+    /// value in a box sees it populated by the time NIOSSH allows the
+    /// first channel-open (which cannot happen until auth completes).
+    private let onAuthenticated: (@Sendable (RemoteDeviceID) -> Void)?
 
-    public init(store: TrustedPeerStore) {
+    public init(store: TrustedPeerStore, onAuthenticated: (@Sendable (RemoteDeviceID) -> Void)? = nil) {
         self.store = store
+        self.onAuthenticated = onAuthenticated
     }
 
     public func requestReceived(
@@ -42,6 +49,7 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
                 let fingerprint = try Self.fingerprint(of: publicKeyRequest.publicKey)
                 if let peer = try store.get(fingerprint: fingerprint),
                    peer.capabilities.terminalControl == .allowed {
+                    onAuthenticated?(peer.id)
                     responsePromise.succeed(.success)
                 } else {
                     // Either no matching trusted peer (unpaired / revoked) or the

@@ -10,6 +10,13 @@ public struct RootView: View {
     @State private var navigationPath = NavigationPath()
     @Environment(\.scenePhase) private var scenePhase
     @State private var iPadAppState = IPadAppState()
+    /// Owned here (not per-screen) so a negotiated SSH connection survives
+    /// navigation-stack pushes/pops on the compact path and layout
+    /// transitions on the iPad path — both `compactBody`'s
+    /// `SingleSessionView` and `IPadRootLayout` are handed the SAME
+    /// instance so a host negotiated once from either surface is cached
+    /// for the other.
+    @State private var coordinator = RemoteConnectionCoordinator()
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     public init() {}
@@ -20,7 +27,8 @@ public struct RootView: View {
             case .regular:
                 IPadRootLayout(
                     hostStore: hostStore,
-                    appState: iPadAppState
+                    appState: iPadAppState,
+                    coordinator: coordinator
                 )
             default:
                 compactBody
@@ -35,6 +43,15 @@ public struct RootView: View {
             switch newPhase {
             case .background:
                 gate.applicationDidEnterBackground()
+                // Only `.background`, not `.inactive`: IPAD-5.1 is scoped to
+                // "enters the background." `.inactive` also fires for
+                // Control Center pulls / app-switcher / call banners, where
+                // tearing down every negotiated connection would force a
+                // needless full re-negotiation on the very next frame —
+                // the per-view `shouldTearDown` branches below still pause
+                // (client.stop() / previews.stopAll()) on `.inactive` per
+                // IOS-10.1, unchanged.
+                Task { await coordinator.invalidateAll() }
             case .active:
                 gate.applicationWillEnterForeground()
                 if gate.state == .locked {
@@ -80,7 +97,8 @@ public struct RootView: View {
                 .navigationDestination(for: WorktreeStep.self) { step in
                     WorktreeDetailView(
                         host: step.host,
-                        worktree: step.worktree
+                        worktree: step.worktree,
+                        coordinator: coordinator
                     ) { sessionName in
                         navigationPath.append(SessionStep(
                             host: step.host,
@@ -90,7 +108,7 @@ public struct RootView: View {
                     }
                 }
                 .navigationDestination(for: SessionStep.self) { step in
-                    SingleSessionView(step: step, navigationPath: $navigationPath)
+                    SingleSessionView(step: step, navigationPath: $navigationPath, coordinator: coordinator)
                 }
         }
     }
@@ -165,12 +183,15 @@ struct SingleSessionView: View {
     /// hide the sidebar-toggle button — leaving no way to re-show a
     /// collapsed sidebar (IPAD-1.7).
     let isFullScreen: Bool
-    /// Injected on the iPad path so `openWebSocket()` can fetch the
-    /// per-host `RemoteHostConnection` for SSH-over-WebRTC. nil on the
-    /// iPhone path (and on iPad before any signaling has registered a
-    /// connection), in which case `SessionClient.live` falls back to
-    /// `URLSessionWebSocketClient` against `/ws`.
-    let iPadAppState: IPadAppState?
+    /// Injected from `RootView` on BOTH size classes so `openWebSocket()`
+    /// can negotiate (or reuse) the per-host `RemoteHostConnection` for
+    /// SSH-over-WebRTC. `nil` only in contexts that construct this view
+    /// directly without going through `RootView` (previews, unit tests
+    /// that exercise unrelated behavior) — `SessionClient.live` falls
+    /// back to `URLSessionWebSocketClient` against `/ws` whenever the
+    /// coordinator is absent, returns nil (host isn't paired), or
+    /// negotiation fails.
+    let coordinator: RemoteConnectionCoordinator?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -254,12 +275,12 @@ struct SingleSessionView: View {
         step: SessionStep,
         navigationPath: Binding<NavigationPath>,
         isFullScreen: Bool = true,
-        iPadAppState: IPadAppState? = nil
+        coordinator: RemoteConnectionCoordinator? = nil
     ) {
         self.step = step
         self._navigationPath = navigationPath
         self.isFullScreen = isFullScreen
-        self.iPadAppState = iPadAppState
+        self.coordinator = coordinator
     }
 
     var body: some View {
@@ -403,6 +424,13 @@ struct SingleSessionView: View {
             client?.stop()
             client = nil
             if connection != .ended { connection = .suspended }
+            // The negotiated `RemoteHostConnection` itself is torn down at
+            // `RootView`'s `.background`-only `coordinator.invalidateAll()`,
+            // not here — this branch also fires on `.inactive` (IOS-10.1),
+            // where the shared connection must survive. IPAD-5.2's
+            // foreground rebuild re-negotiates via `verifyThenOpen` →
+            // `openWebSocket` → the provider wired in below whenever
+            // `invalidateAll()` did evict it.
             return
         }
         guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
@@ -441,21 +469,23 @@ struct SingleSessionView: View {
         // SessionClient.live(), so guard before the dial — otherwise we
         // burn a TCP/TLS handshake on a connection we'd immediately abort.
         if Task.isCancelled || connection == .ended { return }
-        let remoteHost = iPadAppState?.remoteHostConnection(for: step.host)
-        if remoteHost == nil, iPadAppState != nil {
-            // iPad path landed on the `/ws` fallback. Today this is
-            // expected (signaling has not landed yet) so the message
-            // logs at `.debug`. Once signaling lands and the cache is
-            // populated on first iPad-side connect, promote to
-            // `.warning` so a wiring regression is visible in console.
-            IPadAppState.remoteWiringLogger.debug(
-                "iPad has no RemoteHostConnection for host \(step.host.id, privacy: .public); falling back to /ws for session \(step.sessionName, privacy: .public)"
-            )
-        }
         let new = SessionClient.live(
             baseURL: step.host.baseURL,
             sessionName: step.sessionName,
-            remoteHost: remoteHost
+            // REMOTE-2.1 (substance; the spec ID itself lands in W4):
+            // `makeRemoteConnectionProvider` captures the COORDINATOR +
+            // host, not a pre-resolved connection — every dial
+            // `SessionClient`'s backoff loop performs asks the
+            // coordinator fresh (and is the ONLY negotiation path;
+            // there is no separate pre-resolve here), so a
+            // degraded/evicted connection heals via a real
+            // re-negotiation (fresh WebRTC + fresh SSH userauth)
+            // instead of redialing the same dead actor forever.
+            remoteConnectionProvider: makeRemoteConnectionProvider(
+                coordinator: coordinator,
+                host: step.host,
+                sessionName: step.sessionName
+            )
         )
         if Task.isCancelled || connection == .ended {
             // Re-backgrounded (or ended) between WS construction and
@@ -737,20 +767,21 @@ struct SingleSessionView: View {
     }
 
     /// @spec IOS-6.10
-    /// Owner guard: once `client.isOwner` is true, this
-    /// reconciler stops driving the font. The currently-applied font
-    /// (override or base) remains the owner's baseline. Removing this
-    /// guard would regress IOS-6.10.
+    /// Owner promotion restores the base config font: while a follower,
+    /// the auto-fit override shrinks the font to match the authoritative
+    /// (often desktop-width) grid, and carrying that tiny font into
+    /// ownership would leave the session at the previous owner's width
+    /// until some later incidental layout tick. Restoring the config font
+    /// re-lays the pane out at an iOS-natural grid, and the resulting
+    /// owner resize snaps the session width immediately. While owner with
+    /// no override active, the reconciler leaves the font alone so
+    /// libghostty's pinch-to-zoom (IOS-6.8) keeps adjusting from that
+    /// baseline without interference.
     private func reconcileFontOverride(
         client: SessionClient,
         controller: TerminalController,
         containerWidth: CGFloat
     ) {
-        // Owner mode preserves the existing user-adjustable font behavior.
-        // The user can adjust
-        // from here via libghostty's built-in pinch-to-zoom (IOS-6.8) —
-        // there is intentionally no automatic path back to base config.
-        guard !client.isOwner else { return }
         guard let baseConfig = baseConfigText else { return }
         let configSize = Float(
             GhosttyConfigFetcher.lastFontSize(in: baseConfig)
@@ -769,20 +800,18 @@ struct SingleSessionView: View {
             configFontSize: configSize,
             measuredCellWidthPoints: client.cellWidthPoints,
             measuredAtFontSize: measuredAt,
-            isOwner: false
+            isOwner: client.isOwner
         )
-        switch decision {
-        case .useConfigFont:
-            guard liveFontOverride != nil else { return }
+        switch TerminalWidthLayout.overrideAction(
+            decision: decision,
+            liveFontOverride: liveFontOverride
+        ) {
+        case .keep:
+            return
+        case .restoreConfigFont:
             controller.updateConfigSource(.generated(baseConfig))
             liveFontOverride = nil
-        case let .fitFont(pointSize):
-            // Epsilon dedupe: pointSize is derived from a Double / Float
-            // chain that's sensitive to sub-pixel containerWidth drift.
-            // 0.05pt is well below any visible difference and prevents
-            // a thrash of `controller.updateConfigSource(...)` calls
-            // when the recomputed value differs only in low Float bits.
-            if let live = liveFontOverride, abs(live - pointSize) < 0.05 { return }
+        case let .applyOverride(pointSize):
             let overridden = MobileTerminalControllerFactory.appendingFontSizeOverride(
                 to: baseConfig,
                 fontSize: pointSize,

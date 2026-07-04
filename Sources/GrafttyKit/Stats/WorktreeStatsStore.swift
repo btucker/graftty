@@ -384,8 +384,8 @@ public final class WorktreeStatsStore {
     /// concurrent `git push`, which doesn't respond to Task cancellation
     /// — without this threshold the worktree's gutter would lock at
     /// whatever value was observed during the lock window. 30s mirrors
-    /// `PRStatusStore.cadenceFor`'s base for symmetry across the two
-    /// per-worktree stores.
+    /// `PRStatusStore.refreshCadence()` (the PR store's in-flight
+    /// abandonment cap) for symmetry across the two per-worktree stores.
     nonisolated static func inFlightAbandonmentThreshold() -> Duration {
         .seconds(30)
     }

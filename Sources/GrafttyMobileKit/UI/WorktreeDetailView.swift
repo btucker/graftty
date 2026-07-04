@@ -11,6 +11,12 @@ public struct WorktreeDetailView: View {
     public let host: Host
     public let worktree: WorktreePanes
     public let onSelectPane: (_ sessionName: String) -> Void
+    /// Resolves the per-host `RemoteHostConnection` for the preview pool
+    /// so pane previews ride SSH-over-WebRTC when `host` is paired,
+    /// falling back to `/ws` otherwise. `nil` in contexts that construct
+    /// this view directly without going through `RootView` (previews,
+    /// unit tests).
+    public let coordinator: RemoteConnectionCoordinator?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -21,10 +27,12 @@ public struct WorktreeDetailView: View {
     public init(
         host: Host,
         worktree: WorktreePanes,
+        coordinator: RemoteConnectionCoordinator? = nil,
         onSelectPane: @escaping (_ sessionName: String) -> Void
     ) {
         self.host = host
         self.worktree = worktree
+        self.coordinator = coordinator
         self.onSelectPane = onSelectPane
     }
 
@@ -75,6 +83,12 @@ public struct WorktreeDetailView: View {
     private func driveLifecycle() async {
         if LiveSessionReadiness.shouldTearDown(scene: scenePhase) {
             previews?.stopAll()
+            // The negotiated `RemoteHostConnection` itself is torn down at
+            // `RootView`'s `.background`-only `coordinator.invalidateAll()`,
+            // not here — this branch also fires on `.inactive`, where the
+            // shared connection must survive. The pool's own clients
+            // re-resolve a fresh connection per dial (below) once
+            // `invalidateAll()` has evicted it.
             return
         }
         guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else { return }
@@ -86,11 +100,22 @@ public struct WorktreeDetailView: View {
             return
         }
         if previews == nil {
-            previews = PanePreviewClientPool { sessionName in
+            // The factory below re-resolves `coordinator.connection(for:)`
+            // on EVERY dial (not once at pool-construction time) — the
+            // same per-dial provider `SessionClient.live` uses for the
+            // fullscreen path. That's what keeps a background→foreground
+            // cycle from reusing a stale, already-invalidated connection:
+            // `stopAll()` above clears every preview client, and when
+            // `update(layout:)` rebuilds them below, each fresh
+            // `SessionClient` asks the coordinator fresh rather than
+            // inheriting a connection captured back when the pool itself
+            // was first built.
+            previews = PanePreviewClientPool { [coordinator, host] sessionName in
                 SessionClient.live(
                     baseURL: host.baseURL,
                     sessionName: sessionName,
-                    role: .preview
+                    role: .preview,
+                    remoteConnectionProvider: makeRemoteConnectionProvider(coordinator: coordinator, host: host, sessionName: sessionName)
                 )
             }
         }

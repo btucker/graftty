@@ -5,17 +5,6 @@ import Foundation
 @Suite("WebSession")
 struct WebSessionTests {
 
-    private static func makeTempDir(prefix: String = "web-session") throws -> URL {
-        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("\(prefix)-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
-    private static func shellQuoted(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-    }
-
     private static func makeFakeZmx(in dir: URL) throws -> URL {
         let script = dir.appendingPathComponent("zmx")
         let argvFile = dir.appendingPathComponent("argv.txt").path
@@ -23,9 +12,9 @@ struct WebSessionTests {
         let termFile = dir.appendingPathComponent("term.txt").path
         let body = """
         #!/bin/sh
-        printf '%s\\n' "$@" > \(shellQuoted(argvFile))
-        printf '%s\\n' "$ZMX_DIR" > \(shellQuoted(zmxDirFile))
-        trap 'printf TERM > \(shellQuoted(termFile)); exit 0' TERM
+        printf '%s\\n' "$@" > \(PTYFixtureTestSupport.shellQuoted(argvFile))
+        printf '%s\\n' "$ZMX_DIR" > \(PTYFixtureTestSupport.shellQuoted(zmxDirFile))
+        trap 'printf TERM > \(PTYFixtureTestSupport.shellQuoted(termFile)); exit 0' TERM
         while :; do sleep 0.05; done
         """
         try body.write(to: script, atomically: true, encoding: .utf8)
@@ -52,8 +41,8 @@ struct WebSessionTests {
         # and under parallel test load the scheduler can preempt between
         # that open and env's write — waitForFile would then admit a
         # reader to an empty file (the WEB-4.10 TERM-nil flake).
-        env > \(shellQuoted(envFile)).tmp
-        /bin/mv \(shellQuoted(envFile)).tmp \(shellQuoted(envFile))
+        env > \(PTYFixtureTestSupport.shellQuoted(envFile)).tmp
+        /bin/mv \(PTYFixtureTestSupport.shellQuoted(envFile)).tmp \(PTYFixtureTestSupport.shellQuoted(envFile))
         while :; do sleep 0.05; done
         """
         try body.write(to: script, atomically: true, encoding: .utf8)
@@ -82,20 +71,11 @@ struct WebSessionTests {
         }
     }
 
-    private static func waitForFile(_ url: URL, timeout: TimeInterval = 2.0) -> Bool {
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if FileManager.default.fileExists(atPath: url.path) { return true }
-            Thread.sleep(forTimeInterval: 0.02)
-        }
-        return FileManager.default.fileExists(atPath: url.path)
-    }
-
     @Test("""
     @spec WEB-4.4: For each incoming WebSocket, the application shall spawn one child `zmx attach <session>` whose PTY it owns (per §13 naming and ZMX_DIR rules from Phase 1).
     """)
     func startSpawnsZmxAttachForSession() throws {
-        let dir = try Self.makeTempDir()
+        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "web-session")
         defer { try? FileManager.default.removeItem(at: dir) }
         let fakeZmx = try Self.makeFakeZmx(in: dir)
         let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
@@ -110,7 +90,7 @@ struct WebSessionTests {
         defer { session.close() }
 
         let argvURL = dir.appendingPathComponent("argv.txt")
-        #expect(Self.waitForFile(argvURL))
+        #expect(PTYFixtureTestSupport.waitForFile(argvURL))
         let argv = try String(contentsOf: argvURL, encoding: .utf8)
             .split(separator: "\n")
             .map(String.init)
@@ -130,7 +110,7 @@ struct WebSessionTests {
     @spec WEB-4.5: When a WebSocket closes, the application shall send SIGTERM to the associated `zmx attach` child, leaving the zmx daemon alive.
     """)
     func closeSendsSIGTERMToAttachChild() throws {
-        let dir = try Self.makeTempDir()
+        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "web-session")
         defer { try? FileManager.default.removeItem(at: dir) }
         let fakeZmx = try Self.makeFakeZmx(in: dir)
         let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
@@ -142,12 +122,12 @@ struct WebSessionTests {
             sessionName: "graftty-fedcba98"
         ))
         try session.start()
-        #expect(Self.waitForFile(dir.appendingPathComponent("argv.txt")))
+        #expect(PTYFixtureTestSupport.waitForFile(dir.appendingPathComponent("argv.txt")))
 
         session.close()
 
         let termURL = dir.appendingPathComponent("term.txt")
-        #expect(Self.waitForFile(termURL))
+        #expect(PTYFixtureTestSupport.waitForFile(termURL))
         let termText = try String(contentsOf: termURL, encoding: .utf8)
         #expect(termText == "TERM")
     }
@@ -156,7 +136,7 @@ struct WebSessionTests {
     @spec WEB-4.10: When the WebSocket bridge spawns a `zmx attach` child to back a mobile-client session, the application shall propagate the same shell-integration env (`TERM`, `COLORTERM`, `TERM_PROGRAM`, `TERMINFO` when ghostty-terminfo is available, and `ZDOTDIR` pointing at Ghostty's zsh shell-integration when the user's shell is zsh) that host-managed native panes use (per `ZMX-6.3` / `ZMX-6.5`). Without this, the WS attach can win the create-session race against the Mac surface's attach (which is slow because it follows `git worktree add` + discovery) and spawn the daemon's user shell with no shell integration — silencing the first-PWD trigger (so the host pane never types the user's default command) and leaving the shell without truecolor.
     """)
     func startPropagatesTerminalCapabilitiesAndZshIntegrationEnv() throws {
-        let dir = try Self.makeTempDir()
+        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "web-session")
         defer { try? FileManager.default.removeItem(at: dir) }
         let fakeZmx = try Self.makeEnvCapturingZmx(in: dir)
         let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
@@ -187,7 +167,7 @@ struct WebSessionTests {
         defer { session.close() }
 
         let envURL = dir.appendingPathComponent("env.txt")
-        #expect(Self.waitForFile(envURL))
+        #expect(PTYFixtureTestSupport.waitForFile(envURL))
         let envText = try String(contentsOf: envURL, encoding: .utf8)
         let envPairs = envText
             .split(whereSeparator: { $0 == "\n" || $0 == "\r" })
@@ -215,7 +195,7 @@ struct WebSessionTests {
 
     @Test("WebSession shall register with the RemoteAttachmentRegistry on successful start and deregister exactly once on close (TERM-11.5).")
     func registersAttachOnStartAndDetachOnClose() throws {
-        let dir = try Self.makeTempDir(prefix: "web-session-registry")
+        let dir = try PTYFixtureTestSupport.makeTempDir(prefix: "web-session-registry")
         defer { try? FileManager.default.removeItem(at: dir) }
         let fakeZmx = try Self.makeFakeZmx(in: dir)
         let zmxDir = dir.appendingPathComponent("zmx-state", isDirectory: true)
@@ -270,7 +250,7 @@ struct WebSessionTests {
     }
 
     @Test func attachProcessStartsInConfiguredWorktreeDirectory() throws {
-        let root = try Self.makeTempDir(prefix: "web-session-cwd")
+        let root = try PTYFixtureTestSupport.makeTempDir(prefix: "web-session-cwd")
         let worktree = root.appendingPathComponent("repo/.worktrees/feature", isDirectory: true)
         let zmxDir = root.appendingPathComponent("zmx", isDirectory: true)
         let fakeZmx = root.appendingPathComponent("zmx-fake")

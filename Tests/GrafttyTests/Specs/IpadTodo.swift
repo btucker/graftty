@@ -24,7 +24,7 @@ struct IpadTodo {
     func ipad_2_3() async throws { }
 
     @Test("""
-@spec IPAD-2.4: When `MultiPaneDetailView` renders a `.leaf(sessionName, …)`, the application shall render a `PaneLeafView` that owns its own `terminal` channel via `TerminalChannelPool`.
+@spec IPAD-2.4: When `MultiPaneDetailView` renders a `.leaf(sessionName, …)`, the application shall render a `PaneLeafView` that owns its own SSH terminal session channel (one `TerminalSessionClient` per visible leaf over the shared `RemoteHostConnection`).
 """, .disabled("not yet implemented"))
     func ipad_2_4() async throws { }
 
@@ -97,11 +97,6 @@ struct IpadTodo {
 @spec IPAD-5.1: When the application enters the background, the application shall close all `terminal` channels, close the `panes_state` channel, close the DataChannel, and tear down the `RemoteHostConnection`.
 """, .disabled("not yet implemented"))
     func ipad_5_1() async throws { }
-
-    @Test("""
-@spec IPAD-5.2: When the application foregrounds and the biometric gate is satisfied, the application shall rebuild the `RemoteHostConnection` from signaling onward, completing a fresh Noise handshake before opening any channel.
-""", .disabled("not yet implemented"))
-    func ipad_5_2() async throws { }
 
     @Test("""
 @spec IPAD-5.3: When the application foregrounds, the application shall re-open the `panes_state` channel before re-opening any `terminal` channel, so the splittree shape is current before deciding which leaves to attach.

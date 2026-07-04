@@ -157,14 +157,20 @@ final class SubsystemDispatcherTests: XCTestCase {
     private func makeDispatcher(
         streamFactory: @escaping @Sendable (String) async throws -> any TerminalByteStream,
         panesStateSubscribe: PanesStateChannelHandler.Subscribe? = nil,
-        paneControlMutator: PaneControlChannelHandler.Mutator? = nil
+        paneControlMutator: PaneControlChannelHandler.Mutator? = nil,
+        ownershipStore: SessionDisplayOwnershipStore? = nil,
+        ownershipBroadcaster: DisplayOwnershipBroadcaster? = nil,
+        deviceID: RemoteDeviceID? = nil
     ) -> SubsystemDispatcher {
         SubsystemDispatcher(
             streamFactory: streamFactory,
             panesStateSubscribe: panesStateSubscribe ?? { _ in
                 PanesStateChannelHandler.Cancellable(cancel: {})
             },
-            paneControlMutator: paneControlMutator ?? { _ in .ok }
+            paneControlMutator: paneControlMutator ?? { _ in .ok },
+            ownershipStore: ownershipStore ?? SessionDisplayOwnershipStore(),
+            ownershipBroadcaster: ownershipBroadcaster ?? DisplayOwnershipBroadcaster(),
+            deviceIDProvider: { deviceID ?? RemoteDeviceID(value: "test-device") }
         )
     }
 

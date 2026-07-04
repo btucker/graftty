@@ -278,12 +278,12 @@ R6 deletes `/ws`, cutting iPhone's current production transport. Mitigation: Tes
 | `REMOTE-1.1` (host identity persistence) | Active, X25519 | Active, EARS text unchanged; doc/code now Ed25519 |
 | `REMOTE-1.2` (pairing verification code) | Active | Active, unchanged |
 | `REMOTE-2.1` (reconnect re-auth) | Disabled inventory | **Promoted** — fresh SSH KEX + userauth on each reconnect |
-| `REMOTE-3.1` (revocation tears down) | Disabled inventory | **Promoted** — `triggerUserInitiatedClose()` on revocation |
+| `REMOTE-3.1` (revocation tears down) | Disabled inventory | **Promoted** — `triggerUserInitiatedClose()` on revocation (superseded: implemented via parent-channel close — see W4) |
 | `REMOTE-4.1` / `4.2` (port tunnel policy) | Disabled inventory | Stays disabled — port-tunnel channels not in this delivery |
-| `REMOTE-5.1` (`/ws` retired) | Disabled inventory | **Promoted** — `/ws` route deleted, iPhone uses SSH session channel |
-| `REMOTE-6.1` (panes_state capability check) | Disabled inventory | **Promoted** — channel-open authorizer enforces |
+| `REMOTE-5.1` (`/ws` retired) | Disabled inventory | **Promoted** — `/ws` route deleted, iPhone uses SSH session channel (superseded: `/ws` was kept; REMOTE-5.1 rewritten for shared-core + auth parity — see W5) |
+| `REMOTE-6.1` (panes_state capability check) | Disabled inventory | **Promoted** — channel-open authorizer enforces (superseded: enforced at userauth via `SSHUserAuthDelegate` exclusion, not a channel-open hook — see W4/R5) |
 | `REMOTE-6.2 / 6.3 / 6.4` (snapshot push) | Active per PR #176 | Active, unchanged |
-| `REMOTE-7.1` (pane_control capability check) | Disabled inventory | **Promoted** — channel-open authorizer enforces |
+| `REMOTE-7.1` (pane_control capability check) | Disabled inventory | **Promoted** — channel-open authorizer enforces (superseded: enforced at userauth via `SSHUserAuthDelegate` exclusion, not a channel-open hook — see W4/R5) |
 | `REMOTE-7.2` (split RPC behavior) | Active per PR #176 | Active, unchanged |
 | `REMOTE-7.3 / 7.4 / 7.5` (close / conflict / focus) | Active per PR #177 | Active, unchanged |
 | `REMOTE-7.6` (revocation closes pane_control channel) | Disabled inventory | **Promoted** — same mechanism as REMOTE-3.1 |

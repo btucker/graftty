@@ -284,6 +284,14 @@ struct GrafttyApp: App {
     /// `WebRTCHostAgent` share — `PairedDevicesSection` reads it directly
     /// (list/remove) since the coordinator doesn't expose it publicly.
     private let trustedPeerStore: TrustedPeerStore
+    /// Same `SSHConnectionRegistry` instance `WebRTCHostAgent` registers
+    /// its live SSH connection into (REMOTE-3.1 revocation, W4). Exposed
+    /// alongside `trustedPeerStore` so `PairedDevicesSection`'s "Remove"
+    /// action can call `registry.revoke(deviceID:)` right after removing
+    /// the peer from `trustedPeerStore` — closing the live connection
+    /// immediately rather than waiting for the peer's next userauth
+    /// attempt to fail.
+    private let sshConnectionRegistry: SSHConnectionRegistry
 
     /// Observable proxy for per-pane port bindings. Mutated by the
     /// `PortScanner` `onChange` callback; injected into the SwiftUI
@@ -380,6 +388,8 @@ struct GrafttyApp: App {
         let hostIdentityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
         let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
         self.trustedPeerStore = trustedPeerStore
+        let sshConnectionRegistry = SSHConnectionRegistry()
+        self.sshConnectionRegistry = sshConnectionRegistry
 
         // Task 3: the Mac settings UI's "Device Pairing" section binds to
         // this coordinator. Reuses the SAME identity/trusted-peer stores as
@@ -406,18 +416,15 @@ struct GrafttyApp: App {
                 hostKey: try hostIdentityStore.loadOrGenerateAndPersist(),
                 trustedPeerStore: trustedPeerStore,
                 streamFactory: { [registry = appServices.remoteAttachmentRegistry] sessionName in
-                    // Task 3: SSH-over-WebRTC terminal sessions are still
-                    // raw TerminalByteStream participants. Until Task 4+
-                    // adds explicit display-owner protocol handling on this
-                    // path, the shared store is not consulted here; the
-                    // registry remains connection accounting only.
-                    try ZmxAttachStream(
+                    let engine = ZmxAttachEngine(config: ZmxAttachEngine.Config(
                         zmxExecutable: zmxExe,
                         zmxDir: zmxDir,
                         sessionName: sessionName,
-                        workingDirectory: nil,
-                        attachmentRegistry: registry
-                    )
+                        workingDirectory: nil
+                    ))
+                    engine.attachmentRegistry = registry
+                    try engine.start()
+                    return engine
                 },
                 // R5 Task 11: init-time placeholder closures. The host
                 // agent is constructed in `init()` (before SwiftUI `@State`
@@ -432,7 +439,9 @@ struct GrafttyApp: App {
                 },
                 paneControlMutator: { _ in
                     .error(code: "starting", message: "host not yet wired (startup did not run)")
-                }
+                },
+                displayOwnershipStore: appServices.displayOwnershipStore,
+                sshConnectionRegistry: sshConnectionRegistry
             )
         } catch {
             // Identity-store I/O failure leaves hostAgent nil; the signaling
@@ -597,7 +606,7 @@ struct GrafttyApp: App {
                     editorPreference: terminalManager.editorPreference
                 )
                     .tabItem { Label("General", systemImage: "gear") }
-                WebSettingsPane(trustedPeerStore: trustedPeerStore)
+                WebSettingsPane(trustedPeerStore: trustedPeerStore, sshConnectionRegistry: sshConnectionRegistry)
                     .environmentObject(webController)
                     .environmentObject(hostPairingCoordinator)
                     .tabItem { Label("Web Access", systemImage: "network") }
@@ -1066,14 +1075,20 @@ struct GrafttyApp: App {
             services.remoteBranchStore.refresh(repoPath: repo.path)
         }
 
-        // Same reasoning for the PR poller: open→merged transitions
-        // happen on GitHub while Graftty is backgrounded, and the only
-        // signal channel is `gh pr list`. Previously we paused unless
-        // CI was pending, which meant a PR that merged after CI went
-        // green (the common case) stayed visibly "open" in the sidebar
-        // until the user clicked back into the app.
+        // The PR poller drives `gh pr list`, a GraphQL call metered
+        // against a separate 5,000-point/hour budget. Unlike the stats
+        // poller's local `git fetch`, every tick here costs API quota,
+        // so the per-repo cadence gate is 60s (see
+        // `PRStatusStore.cadenceFor`) — a 5s cadence exhausted the
+        // entire GraphQL budget on a single repo. The ticker keeps
+        // firing while Graftty is backgrounded (PR-7.6): `gh pr list`
+        // is the only channel for an open→merged transition that
+        // happens on GitHub without a local `git fetch`, and at 60s the
+        // background cost is genuinely negligible. The 30s wake stays
+        // below the 60s gate so cadence jitter can't stretch the
+        // effective interval toward 120s.
         let prTicker = PollingTicker(
-            interval: .seconds(5),
+            interval: .seconds(30),
             pauseWhenInactive: { false }
         )
         services.prStatusStore.start(
@@ -1679,7 +1694,7 @@ struct GrafttyApp: App {
                         return .success(SignalingAnswer(sdp: answer.sdp))
                     } catch {
                         NSLog("[Graftty] WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
-                        return .internalFailure("acceptOffer failed: \(error)")
+                        return Self.signalingOutcome(forAcceptOfferFailure: error)
                     }
                 }
             }
@@ -1707,6 +1722,25 @@ struct GrafttyApp: App {
                 controller.stop()
             }
         }
+    }
+
+    /// Maps an error thrown by `WebRTCHostAgent.acceptOffer` to the HTTP
+    /// outcome the `/v1/rtc/offer` signaling endpoint returns. Extracted
+    /// from the `setSignalingHandler` closure in `startup()` so the
+    /// mapping is unit-testable without booting the whole app.
+    ///
+    /// `WebRTCHostAgent.HostError.busy` — thrown when a second offer
+    /// arrives while a prior negotiation is still in flight — maps to
+    /// `.unavailable` (503) rather than the `.internalFailure` (500)
+    /// catch-all: a busy host is a transient, retryable condition, and
+    /// `RemoteConnectionCoordinator` treats a 503 as "fall back to /ws,
+    /// try again later" without marking the host permanently bad. Every
+    /// other `acceptOffer` failure stays `.internalFailure`.
+    nonisolated static func signalingOutcome(forAcceptOfferFailure error: Error) -> WebServer.SignalingHandlerOutcome {
+        if case WebRTCHostAgent.HostError.busy = error {
+            return .unavailable("host is busy with another remote connection")
+        }
+        return .internalFailure("acceptOffer failed: \(error)")
     }
 
     nonisolated static func codexStopDeliveryPlan(

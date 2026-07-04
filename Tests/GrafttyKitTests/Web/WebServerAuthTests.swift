@@ -177,6 +177,64 @@ struct WebServerAuthTests {
         #expect(http.statusCode == 404, "/ws without Upgrade must NOT fall through to index.html")
     }
 
+    /// `/ws` was never retired (unlike the plan REMOTE-5.1 originally
+    /// described) — the browser client and the native fallback both
+    /// still attach terminals over it, with W2 routing that traffic
+    /// through the shared display-ownership core (see
+    /// `WebSocketBridgeOwnershipTests.mixedTransportKindsShareOwnershipStoreAndSeeTakeControlFlips`
+    /// for the REMOTE-5.2 half of this pair). What actually still holds
+    /// from the retirement-era intent is that an unauthorized peer can
+    /// never ride `/ws` into a terminal: `makeWSUpgrader`'s
+    /// `shouldUpgrade` calls the same `AuthPolicy.isAllowed` gate as
+    /// every other path (`WEB-2.1`/`WEB-2.2`) before the WebSocket
+    /// upgrade completes, so a denied peer never reaches the
+    /// `WebSocketBridgeHandler` at all.
+    @Test("""
+    @spec REMOTE-5.1: When a client requests a WebSocket upgrade to `/ws`, the application shall gate the upgrade on the same `AuthPolicy` (Tailscale-whois) check applied to every other path, rejecting the upgrade for a disallowed peer without attaching it to a terminal.
+    """)
+    func wsUpgradeRejectedWhenAuthDenies() async throws {
+        let server = WebServer(
+            config: Self.makeConfig(),
+            auth: WebServer.AuthPolicy(isAllowed: { _ in false }),
+            bindAddresses: ["127.0.0.1"],
+            tlsProvider: try makeTestTLSProvider()
+        )
+        try server.start()
+        defer { server.stop() }
+        guard case let .listening(_, port) = server.status else {
+            Issue.record("server not listening"); return
+        }
+
+        let url = URL(string: "wss://localhost:\(port)/ws?session=denied-peer")!
+        let session = trustAllSession()
+        defer { session.invalidateAndCancel() }
+        let task = session.webSocketTask(with: url)
+        task.resume()
+
+        // `receive()` fails either way here — a denied peer never gets a
+        // 101 response so the handshake never truly completes, but so
+        // does an *allowed* peer in this test's fixture config, because
+        // `zmxExecutable` points at `/dev/null` and the post-upgrade
+        // attach fails immediately. Checking `receive()` alone can't
+        // tell "auth rejected the upgrade" apart from "auth allowed the
+        // upgrade and something downstream broke" — so assert on the
+        // handshake's actual HTTP status instead: a denied peer must
+        // see `403` (the same plain-HTTP fallback path `deniedRequestReturns403`
+        // exercises), never the `101 Switching Protocols` that marks a
+        // completed WebSocket upgrade. Race against a short deadline so
+        // a regression that hangs the handshake fails fast instead of
+        // hanging the suite.
+        let cancelTask = Task {
+            try? await Task.sleep(nanoseconds: 3 * 1_000_000_000)
+            task.cancel(with: .goingAway, reason: nil)
+        }
+        defer { cancelTask.cancel() }
+
+        _ = try? await task.receive()
+        let statusCode = (task.response as? HTTPURLResponse)?.statusCode
+        #expect(statusCode == 403, "an unauthorized peer's /ws upgrade must be rejected with 403, not upgraded (saw \(String(describing: statusCode)))")
+    }
+
     @Test func servesAppJS() async throws {
         let server = WebServer(
             config: Self.makeConfig(),
