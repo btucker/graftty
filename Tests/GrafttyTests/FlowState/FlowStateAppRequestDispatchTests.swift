@@ -298,6 +298,59 @@ struct FlowStateAppRequestDispatchTests {
         #expect(try activityStore.recent(limit: 10).contains { $0.kind == .statusRequestSkipped })
     }
 
+    @Test("Flow State request dispatch uses the configured status request cooldown")
+    func requestStatusCooldownUsesUserDefaultMinutes() throws {
+        UserDefaults.standard.set(FlowStatePermissionMode.conservative.rawValue, forKey: SettingsKeys.flowStatePermissionMode)
+        UserDefaults.standard.set(1, forKey: SettingsKeys.flowStateStatusRequestCooldownMinutes)
+        defer {
+            UserDefaults.standard.removeObject(forKey: SettingsKeys.flowStatePermissionMode)
+            UserDefaults.standard.removeObject(forKey: SettingsKeys.flowStateStatusRequestCooldownMinutes)
+        }
+
+        let root = try temporaryDirectory()
+        let inbox = TeamInbox(rootDirectory: root, idGenerator: { UUID().uuidString }, now: { Date(timeIntervalSince1970: 100) })
+        let dispatcher = TeamEventDispatcher(
+            inbox: inbox,
+            preferencesProvider: { TeamEventRoutingPreferences() },
+            templateProvider: { "" }
+        )
+        let lead = WorktreeEntry(path: "/repo", branch: "main", state: .running)
+        let feature = WorktreeEntry(path: "/repo/.worktrees/feature", branch: "feature", state: .running)
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [lead, feature])
+        let worktreeRef = FlowWorktreeIdentity.ref(
+            repoDisplayName: repo.displayName,
+            repoPath: repo.path,
+            worktreePath: feature.path,
+            branch: feature.branch
+        )
+        let activityStore = FlowStateActivityStore(rootDirectory: root)
+
+        let first = FlowStateAppRequestDispatcher.handle(
+            .flowRequestStatus(worktreeRef: worktreeRef, explicit: false),
+            appState: AppState(repos: [repo]),
+            store: FlowStateStore(rootDirectory: try temporaryDirectory()),
+            activityStore: activityStore,
+            teamInbox: inbox,
+            teamEventDispatcher: dispatcher,
+            teamsEnabled: true,
+            now: { Date(timeIntervalSince1970: 100) }
+        )
+        let second = FlowStateAppRequestDispatcher.handle(
+            .flowRequestStatus(worktreeRef: worktreeRef, explicit: false),
+            appState: AppState(repos: [repo]),
+            store: FlowStateStore(rootDirectory: try temporaryDirectory()),
+            activityStore: activityStore,
+            teamInbox: inbox,
+            teamEventDispatcher: dispatcher,
+            teamsEnabled: true,
+            now: { Date(timeIntervalSince1970: 161) }
+        )
+
+        #expect(first == .ok)
+        #expect(second == .ok)
+        #expect(try inbox.messages(teamID: repo.path).count == 2)
+    }
+
     @Test("@spec FLOW-5.7: Flow State app request dispatch shall record no-team request-status skips as activity and return ok without throwing for normal skips.")
     func requestStatusWithoutTeamRecordsSkipAndReturnsOK() throws {
         let root = try temporaryDirectory()

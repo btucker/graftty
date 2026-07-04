@@ -751,7 +751,6 @@ struct GrafttyApp: App {
         }
 
         terminalManager.initialize()
-        services.flowStateAgentController.reconcileSettingsFromUserDefaults()
         AgentNotificationRouter.shared.install()
         AgentNotificationRouter.shared.onActivate = { [appState = $appState, tm = terminalManager] payload in
             Self.activateAgentStopNotification(
@@ -938,8 +937,9 @@ struct GrafttyApp: App {
         // default command. `maybeRunDefaultCommand` consults UserDefaults
         // and the TerminalManager's first-pane / rehydration markers to
         // decide; most of the time it's a no-op.
-        terminalManager.onShellReady = { [tm = terminalManager] terminalID in
+        terminalManager.onShellReady = { [tm = terminalManager, flowStateAgentController = services.flowStateAgentController] terminalID in
             MainActor.assumeIsolated {
+                guard !flowStateAgentController.ownsPane(terminalID) else { return }
                 Self.maybeRunDefaultCommand(
                     terminalManager: tm,
                     terminalID: terminalID
@@ -1344,6 +1344,7 @@ struct GrafttyApp: App {
         }
 
         restoreRunningWorktrees()
+        services.flowStateAgentController.reconcileSettingsFromUserDefaults()
 
         // TERM-11.5: WebSocket `/ws` sessions report attach/detach into the
         // shared registry so Mac pane backends can see web-client attaches.

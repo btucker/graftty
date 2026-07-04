@@ -652,6 +652,7 @@ struct MainWindow: View {
 
     private func applyAppVisibility(isVisible: Bool) {
         guard let action = AppVisibilitySurfacePolicy.action(
+            selection: mainSelection,
             selectedWorktreePath: appState.selectedWorktreePath,
             appIsVisible: isVisible
         ) else { return }

@@ -9,6 +9,7 @@ struct AppVisibilitySurfacePolicyTests {
     func hidingAppHidesSelectedWorktreeSurfaces() {
         #expect(
             AppVisibilitySurfacePolicy.action(
+                selection: .worktree("/repo/wt"),
                 selectedWorktreePath: "/repo/wt",
                 appIsVisible: false
             ) == .setSelectedWorktreeVisible(path: "/repo/wt", visible: false)
@@ -21,6 +22,7 @@ struct AppVisibilitySurfacePolicyTests {
     func unhidingAppShowsSelectedWorktreeSurfaces() {
         #expect(
             AppVisibilitySurfacePolicy.action(
+                selection: .worktree("/repo/wt"),
                 selectedWorktreePath: "/repo/wt",
                 appIsVisible: true
             ) == .setSelectedWorktreeVisible(path: "/repo/wt", visible: true)
@@ -29,6 +31,19 @@ struct AppVisibilitySurfacePolicyTests {
 
     @Test("No selected worktree means app visibility changes do not touch terminal surfaces")
     func noSelectedWorktreeNoops() {
-        #expect(AppVisibilitySurfacePolicy.action(selectedWorktreePath: nil, appIsVisible: false) == nil)
+        #expect(AppVisibilitySurfacePolicy.action(
+            selection: .worktree(nil),
+            selectedWorktreePath: nil,
+            appIsVisible: false
+        ) == nil)
+    }
+
+    @Test("Flow State selection preserves the background worktree visibility state on app visibility changes")
+    func flowStateSelectionDoesNotShowPreservedWorktree() {
+        #expect(AppVisibilitySurfacePolicy.action(
+            selection: .flowState,
+            selectedWorktreePath: "/repo/wt",
+            appIsVisible: true
+        ) == nil)
     }
 }

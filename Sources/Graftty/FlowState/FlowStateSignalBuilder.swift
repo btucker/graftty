@@ -211,6 +211,7 @@ enum FlowStateAppRequestDispatcher {
                     teamsEnabled: teamsEnabled
                 ),
                 permissionMode: permissionMode(),
+                statusRequestCooldown: statusRequestCooldown(),
                 now: now
             )
             do {
@@ -253,6 +254,7 @@ enum FlowStateAppRequestDispatcher {
                         teamsEnabled: teamsEnabled
                     ),
                     permissionMode: permissionMode(),
+                    statusRequestCooldown: statusRequestCooldown(),
                     now: now
                 )
                 try executor.executeAutonomousActions(recommendation.proposedActions)
@@ -266,6 +268,11 @@ enum FlowStateAppRequestDispatcher {
     private static func permissionMode() -> FlowStatePermissionMode {
         let raw = UserDefaults.standard.string(forKey: SettingsKeys.flowStatePermissionMode) ?? ""
         return FlowStatePermissionMode(rawValue: raw) ?? .conservative
+    }
+
+    private static func statusRequestCooldown() -> TimeInterval {
+        let minutes = UserDefaults.standard.object(forKey: SettingsKeys.flowStateStatusRequestCooldownMinutes) as? Int ?? 20
+        return TimeInterval(max(1, minutes) * 60)
     }
 }
 
