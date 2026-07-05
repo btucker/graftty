@@ -13,19 +13,16 @@ public enum TeamHookRenderer {
     public static func postToolUse(runtime: TeamHookRuntime, messages: [TeamInboxMessage]) throws -> String {
         switch runtime {
         case .codex:
-            return try codexPostToolUse(messages: messages)
+            return "{}"
         case .claude:
             return try claudePostToolUse(messages: messages)
         }
     }
 
     public static func stop(runtime: TeamHookRuntime, messages: [TeamInboxMessage]) throws -> String {
-        switch runtime {
-        case .codex:
-            return try codexStop(messages: messages)
-        case .claude:
-            return try claudeStop(messages: messages)
-        }
+        _ = runtime
+        _ = messages
+        return "{}"
     }
 
     public static func codexSessionStart(teamContext: String) throws -> String {
@@ -62,7 +59,7 @@ public enum TeamHookRenderer {
     /// requiring a full hook render.
     public static let teamProtocolPrimer_forTesting: String = teamProtocolPrimer()
 
-    public static func codexPostToolUse(messages: [TeamInboxMessage]) throws -> String {
+    public static func claudePostToolUse(messages: [TeamInboxMessage]) throws -> String {
         guard !messages.isEmpty else { return "{}" }
         let context = """
         Graftty team inbox update, unrelated to the tool result.
@@ -74,32 +71,8 @@ public enum TeamHookRenderer {
         return try hookJSON(eventName: "PostToolUse", additionalContext: context)
     }
 
-    public static func codexStop(messages: [TeamInboxMessage]) throws -> String {
-        // Stop schema in both runtimes accepts only top-level fields
-        // (decision/reason/continue/stopReason/systemMessage/
-        // suppressOutput) — `hookSpecificOutput.additionalContext` is
-        // not in either runtime's Stop schema, so emitting it triggers
-        // "hook returned invalid stop hook JSON output". Stop is
-        // therefore a true no-op for inbox delivery, and the request
-        // handler also skips the cursor advance so pending messages
-        // stay queued. Hook-based live delivery is Claude-only:
-        // PostToolUse renders urgent messages, and asyncRewake covers
-        // the watcher path. Codex hook delivery is intentionally
-        // disabled.
-        _ = messages
-        return "{}"
-    }
-
     public static func claudeSessionStart(teamContext: String) throws -> String {
         try codexSessionStart(teamContext: teamContext)
-    }
-
-    public static func claudePostToolUse(messages: [TeamInboxMessage]) throws -> String {
-        try codexPostToolUse(messages: messages)
-    }
-
-    public static func claudeStop(messages: [TeamInboxMessage]) throws -> String {
-        try codexStop(messages: messages)
     }
 
     public static func format(messages: [TeamInboxMessage]) -> String {

@@ -359,7 +359,17 @@ public struct AgentHookInstaller: Sendable {
               fi
               if [ -n "${_graftty_codex_app_server_pid:-}" ]; then
                 kill "$_graftty_codex_app_server_pid" 2>/dev/null || true
+                _graftty_codex_shutdown_wait_count=0
+                while kill -0 "$_graftty_codex_app_server_pid" 2>/dev/null; do
+                  if [ "$_graftty_codex_shutdown_wait_count" -ge 20 ]; then
+                    kill -KILL "$_graftty_codex_app_server_pid" 2>/dev/null || true
+                    break
+                  fi
+                  sleep 0.1
+                  _graftty_codex_shutdown_wait_count=$((_graftty_codex_shutdown_wait_count + 1))
+                done
                 wait "$_graftty_codex_app_server_pid" 2>/dev/null || true
+                unset _graftty_codex_shutdown_wait_count
               fi
               if [ -n "${_graftty_codex_socket:-}" ]; then
                 rm -f "$_graftty_codex_socket"
@@ -413,23 +423,26 @@ public struct AgentHookInstaller: Sendable {
                     --help|-h|--version|-V)
                       return 1
                       ;;
-                    -c|--config|--model|--profile|--sandbox|--ask-for-approval|--approval-policy|--cwd|--cd|--color|--output-schema|--origin|--settings|--remote)
+                    -c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote|--remote-auth-token-env|--local-provider|--add-dir|-i|--image)
                       shift
                       [ "$#" -gt 0 ] && shift
                       continue
                       ;;
-                    --*=*)
+                    --config=*|--enable=*|--disable=*|--model=*|--profile=*|--sandbox=*|--ask-for-approval=*|--approval-policy=*|--cwd=*|--cd=*|--color=*|--output-schema=*|--origin=*|--settings=*|--remote=*|--remote-auth-token-env=*|--local-provider=*|--add-dir=*|--image=*)
                       shift
                       continue
                       ;;
                     --)
                       shift
                       ;;
-                    -*)
+                    --oss|--strict-config|--dangerously-bypass-approvals-and-sandbox|--dangerously-bypass-hook-trust|--search|--no-alt-screen)
                       shift
                       continue
                       ;;
-                    app-server|remote-control|exec|login|logout|completion)
+                    -*)
+                      return 1
+                      ;;
+                    app-server|remote-control|exec|e|review|login|logout|mcp|plugin|mcp-server|app|completion|update|doctor|sandbox|debug|apply|a|archive|delete|unarchive|cloud|exec-server|features|help)
                       return 1
                       ;;
                     *)
@@ -612,12 +625,6 @@ public struct AgentHookInstaller: Sendable {
     }
 
     private static func shellCommandToken(_ value: String) -> String {
-        guard value.rangeOfCharacter(from: .whitespacesAndNewlines) != nil ||
-              value.contains("'") ||
-              value.contains("\"")
-        else {
-            return value
-        }
         return shellLiteral(value)
     }
 

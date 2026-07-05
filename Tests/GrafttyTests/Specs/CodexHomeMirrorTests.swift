@@ -73,6 +73,39 @@ struct CodexHomeMirrorTests {
         #expect(sessionStart2.count == 2)
     }
 
+    @Test("Codex mirror installs only the SessionStart graftty hook and removes stale graftty delivery hooks.")
+    func grafttyHooksAreSessionStartOnly() throws {
+        let (src, dst) = try makeMirrorSandbox()
+        defer { try? FileManager.default.removeItem(at: src.deletingLastPathComponent()) }
+
+        try writeFile(src.appendingPathComponent("hooks.json"), """
+        {
+          "hooks": {
+            "PostToolUse": [
+              { "hooks": [{ "type": "command", "command": "/usr/local/bin/graftty team hook codex post-tool-use" }] },
+              { "hooks": [{ "type": "command", "command": "/path/to/user-post-tool-use.sh" }] }
+            ],
+            "Stop": [
+              { "hooks": [{ "type": "command", "command": "/usr/local/bin/graftty team hook codex stop" }] }
+            ]
+          }
+        }
+        """)
+
+        try CodexHomeMirror(sourceDirectory: src, mirrorDirectory: dst, grafttyCLIPath: "/usr/local/bin/graftty").rebuild()
+
+        let mergedData = try Data(contentsOf: dst.appendingPathComponent("hooks.json"))
+        let merged = try JSONSerialization.jsonObject(with: mergedData) as! [String: Any]
+        let hooks = merged["hooks"] as! [String: Any]
+        let sessionStartCommands = commands(in: hooks["SessionStart"] as! [[String: Any]])
+        let postToolUseCommands = commands(in: hooks["PostToolUse"] as! [[String: Any]])
+        let stopCommands = commands(in: hooks["Stop"] as! [[String: Any]])
+
+        #expect(sessionStartCommands == ["/usr/local/bin/graftty team hook codex session-start"])
+        #expect(postToolUseCommands == ["/path/to/user-post-tool-use.sh"])
+        #expect(stopCommands.isEmpty)
+    }
+
     @Test("config.toml gains [features].hooks=true while preserving other keys.")
     func configFeatureFlagMerge() throws {
         let (src, dst) = try makeMirrorSandbox()
@@ -139,5 +172,12 @@ struct CodexHomeMirrorTests {
     private func writeFile(_ url: URL, _ content: String) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try content.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func commands(in groups: [[String: Any]]) -> [String] {
+        groups.flatMap { group -> [String] in
+            let handlers = (group["hooks"] as? [[String: Any]]) ?? []
+            return handlers.compactMap { $0["command"] as? String }
+        }
     }
 }

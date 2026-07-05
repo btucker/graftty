@@ -28,7 +28,7 @@ struct CodexAppServerClientTests {
             "turn/start",
         ])
         #expect(try dictionary(at: 0, in: requests)["params"].flatMap(valueDictionary)?["clientInfo"].flatMap(valueDictionary)?["name"] as? String == "graftty")
-        #expect(try dictionary(at: 2, in: requests)["params"].flatMap(valueDictionary)?["limit"] as? Int == 10)
+        #expect(try dictionary(at: 2, in: requests)["params"].flatMap(valueDictionary)?["limit"] as? Int == 100)
         #expect(try dictionary(at: 3, in: requests)["params"].flatMap(valueDictionary)?["threadId"] as? String == "thread-123")
 
         let turnParams = try #require(dictionary(at: 4, in: requests)["params"].flatMap(valueDictionary))
@@ -75,6 +75,68 @@ struct CodexAppServerClientTests {
         let requests = try fake.recordedRequests()
         #expect(try methods(in: requests).filter { $0 == "thread/read" }.count == 2)
         #expect(try methods(in: requests).contains("turn/start"))
+    }
+
+    @Test("Multiple loaded threads with the same cwd throw without starting a turn.")
+    func duplicateMatchingCWDThrowsWithoutStartingTurn() async throws {
+        let fake = try makeFakeProxy(
+            threads: ["one", "two"],
+            cwd: "/repo/.worktrees/alice"
+        )
+        let client = CodexAppServerClient(timeout: 1.0)
+
+        try await expectDeliveryThrows(containing: "refusing ambiguous delivery") {
+            _ = try await client.deliver(
+                binaryPath: fake.binaryPath.path,
+                socketPath: "/tmp/graftty-codex.sock",
+                expectedCWD: "/repo/.worktrees/alice",
+                message: "hello"
+            )
+        }
+
+        #expect(try methods(in: fake.recordedRequests()).contains("turn/start") == false)
+    }
+
+    @Test("Loaded thread list pagination is followed before matching cwd.")
+    func loadedThreadPaginationFindsMatchingCWD() async throws {
+        let fake = try makeFakeProxy(
+            threads: [],
+            cwd: "/repo/other",
+            cwdByThread: ["target": "/repo/.worktrees/alice"],
+            threadPages: [["other"], ["target"]]
+        )
+        let client = CodexAppServerClient(timeout: 1.0)
+
+        let result = try await client.deliver(
+            binaryPath: fake.binaryPath.path,
+            socketPath: "/tmp/graftty-codex.sock",
+            expectedCWD: "/repo/.worktrees/alice",
+            message: "hello"
+        )
+
+        #expect(result.threadID == "target")
+        let requests = try fake.recordedRequests()
+        #expect(try methods(in: requests).filter { $0 == "thread/loaded/list" }.count == 2)
+        #expect(try dictionary(at: 3, in: requests)["params"].flatMap(valueDictionary)?["cursor"] as? String == "1")
+    }
+
+    @Test("Fragmented websocket text responses are assembled before JSON parsing.")
+    func fragmentedWebSocketTextResponseIsAssembled() async throws {
+        let fake = try makeFakeProxy(
+            threads: ["thread-123"],
+            cwd: "/repo/.worktrees/alice",
+            fragmentThreadReadResponse: true
+        )
+        let client = CodexAppServerClient(timeout: 1.0)
+
+        let result = try await client.deliver(
+            binaryPath: fake.binaryPath.path,
+            socketPath: "/tmp/graftty-codex.sock",
+            expectedCWD: "/repo/.worktrees/alice",
+            message: "hello"
+        )
+
+        #expect(result.threadID == "thread-123")
     }
 
     @Test("Thread cwd mismatch throws and does not start a turn.")
@@ -332,6 +394,8 @@ struct CodexAppServerClientTests {
         turnStartResponse: TurnStartResponse = .accepted,
         loadedListResponseID: Int = 2,
         notificationBeforeLoadedListResponse: Bool = false,
+        threadPages: [[String]]? = nil,
+        fragmentThreadReadResponse: Bool = false,
         mode: FakeProxyMode = .normal
     ) throws -> FakeProxy {
         let dir = FileManager.default.temporaryDirectory
@@ -342,7 +406,7 @@ struct CodexAppServerClientTests {
         let args = dir.appendingPathComponent("args.txt")
         let stdin = dir.appendingPathComponent("stdin.jsonl")
         let handshake = dir.appendingPathComponent("handshake.txt")
-        let threadsJSON = try jsonLine(threads)
+        let threadPagesJSON = try jsonLine(threadPages ?? [threads])
         let cwdByThreadJSON = try jsonLine(cwdByThread)
         let turnResponseKind: String
         let turnErrorMessage: String
@@ -363,6 +427,9 @@ struct CodexAppServerClientTests {
         let loadedListNotification = notificationBeforeLoadedListResponse
             ? "  write_text('{\"method\":\"thread/updated\",\"params\":{}}')\n"
             : ""
+        let writeThreadReadResponse = fragmentThreadReadResponse
+            ? "write_fragmented_text"
+            : "write_text"
         let trapTerm = mode == .hangAfterTurnIgnoringSIGTERM ? "Signal.trap('TERM', 'IGNORE')\n" : ""
         let afterThreadRead = mode == .stopReadingAfterThreadRead
             ? "  loop { sleep 1 }\n"
@@ -403,9 +470,8 @@ struct CodexAppServerClientTests {
           [opcode, payload.pack('C*').force_encoding('UTF-8')]
         end
 
-        def write_text(text)
-          bytes = text.b
-          header = [0x81]
+        def write_frame(opcode, bytes, fin)
+          header = [(fin ? 0x80 : 0x00) | opcode]
           if bytes.bytesize < 126
             header << bytes.bytesize
           elsif bytes.bytesize <= 65_535
@@ -420,6 +486,18 @@ struct CodexAppServerClientTests {
           STDOUT.flush
         end
 
+        def write_text(text)
+          bytes = text.b
+          write_frame(0x1, bytes, true)
+        end
+
+        def write_fragmented_text(text)
+          bytes = text.b
+          split_at = [1, bytes.bytesize / 2].max
+          write_frame(0x1, bytes.byteslice(0, split_at), false)
+          write_frame(0x0, bytes.byteslice(split_at, bytes.bytesize - split_at), true)
+        end
+
         handshake = +''
         handshake << read_exact(1) until handshake.include?("\\r\\n\\r\\n")
         File.write('\(shellSingleQuoted(handshake.path))', handshake)
@@ -427,8 +505,8 @@ struct CodexAppServerClientTests {
         STDOUT.write("HTTP/1.1 101 Switching Protocols\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\nSec-WebSocket-Accept: test\\r\\n\\r\\n")
         STDOUT.flush
 
-        threads = JSON.parse(<<'GRAFTTY_JSON')
-        \(threadsJSON)
+        thread_pages = JSON.parse(<<'GRAFTTY_JSON')
+        \(threadPagesJSON)
         GRAFTTY_JSON
         cwd_by_thread = JSON.parse(<<'GRAFTTY_JSON')
         \(cwdByThreadJSON)
@@ -450,10 +528,14 @@ struct CodexAppServerClientTests {
             write_text(JSON.generate({ id: request['id'], result: {} }))
           when 'thread/loaded/list'
         \(loadedListNotification)
-            write_text(JSON.generate({ id: \(loadedListResponseID), result: { data: threads } }))
+            page_index = request.dig('params', 'cursor').to_i
+            result = { data: thread_pages.fetch(page_index) }
+            result[:nextCursor] = (page_index + 1).to_s if page_index + 1 < thread_pages.length
+            response_id = \(loadedListResponseID) == 2 ? request['id'] : \(loadedListResponseID)
+            write_text(JSON.generate({ id: response_id, result: result }))
           when 'thread/read'
             thread_id = request.dig('params', 'threadId')
-            write_text(JSON.generate({ id: request['id'], result: { thread: { cwd: cwd_by_thread.fetch(thread_id, default_cwd) } } }))
+            \(writeThreadReadResponse)(JSON.generate({ id: request['id'], result: { thread: { cwd: cwd_by_thread.fetch(thread_id, default_cwd) } } }))
         \(afterThreadRead)
         \(closeStdinAfterThreadRead)
           when 'turn/start'

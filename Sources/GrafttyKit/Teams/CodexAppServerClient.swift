@@ -109,17 +109,12 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
                 deadline: deadline
             )
 
-            try sendRequest(
-                ["id": 2, "method": "thread/loaded/list", "params": ["limit": 10]],
-                to: connection,
-                deadline: deadline
+            var nextRequestID = 2
+            let threadIDs = try loadedThreadIDs(
+                connection: connection,
+                deadline: deadline,
+                nextRequestID: &nextRequestID
             )
-            let loadedResult = try resultObject(
-                from: readResponse(connection: connection, deadline: deadline, expectedID: 2, method: "thread/loaded/list"),
-                method: "thread/loaded/list"
-            )
-            let threadIDs = try loadedThreadIDs(from: loadedResult)
-            var nextRequestID = 3
             let threadID = try matchingLoadedThreadID(
                 from: threadIDs,
                 expectedCWD: expectedCWD,
@@ -254,6 +249,44 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
         }
     }
 
+    private func loadedThreadIDs(
+        connection: CodexAppServerWebSocketConnection,
+        deadline: Date,
+        nextRequestID: inout Int
+    ) throws -> [String] {
+        var cursor: String?
+        var threadIDs: [String] = []
+        repeat {
+            let requestID = nextRequestID
+            nextRequestID += 1
+            var params: [String: Any] = ["limit": 100]
+            if let cursor {
+                params["cursor"] = cursor
+            }
+            try sendRequest(
+                ["id": requestID, "method": "thread/loaded/list", "params": params],
+                to: connection,
+                deadline: deadline
+            )
+            let result = try resultObject(
+                from: readResponse(
+                    connection: connection,
+                    deadline: deadline,
+                    expectedID: requestID,
+                    method: "thread/loaded/list"
+                ),
+                method: "thread/loaded/list"
+            )
+            threadIDs.append(contentsOf: try loadedThreadIDs(from: result))
+            cursor = nextCursor(from: result)
+        } while cursor != nil
+
+        guard !threadIDs.isEmpty else {
+            throw CodexAppServerClientError.loadedThreadCount(0)
+        }
+        return threadIDs
+    }
+
     private func loadedThreadIDs(from result: [String: Any]) throws -> [String] {
         guard let data = result["data"] as? [Any] else {
             throw CodexAppServerClientError.invalidResponse("thread/loaded/list result missing data array")
@@ -262,10 +295,16 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
         guard threadIDs.count == data.count else {
             throw CodexAppServerClientError.invalidResponse("thread/loaded/list data contained non-string thread ids")
         }
-        guard !threadIDs.isEmpty else {
-            throw CodexAppServerClientError.loadedThreadCount(0)
-        }
         return threadIDs
+    }
+
+    private func nextCursor(from result: [String: Any]) -> String? {
+        for key in ["nextCursor", "next_cursor"] {
+            if let cursor = result[key] as? String, !cursor.isEmpty {
+                return cursor
+            }
+        }
+        return nil
     }
 
     private func matchingLoadedThreadID(
@@ -276,6 +315,7 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
         nextRequestID: inout Int
     ) throws -> String {
         var actualCWDs: [String] = []
+        var matchingThreadIDs: [String] = []
         for threadID in threadIDs {
             let requestID = nextRequestID
             nextRequestID += 1
@@ -298,9 +338,19 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
             )
             let actualCWD = try threadCWD(in: readResult)
             if actualCWD == expectedCWD {
-                return threadID
+                matchingThreadIDs.append(threadID)
+            } else {
+                actualCWDs.append(actualCWD)
             }
-            actualCWDs.append(actualCWD)
+        }
+        if matchingThreadIDs.count == 1 {
+            return matchingThreadIDs[0]
+        }
+        if matchingThreadIDs.count > 1 {
+            throw CodexAppServerClientError.multipleLoadedThreadsMatchingCWD(
+                expected: expectedCWD,
+                count: matchingThreadIDs.count
+            )
         }
         if threadIDs.count == 1, let actual = actualCWDs.first {
             throw CodexAppServerClientError.cwdMismatch(expected: expectedCWD, actual: actual)
@@ -366,6 +416,7 @@ private enum CodexAppServerClientError: Error, Equatable, CustomStringConvertibl
     case missingThreadCWD
     case cwdMismatch(expected: String, actual: String)
     case noLoadedThreadMatchingCWD(expected: String, count: Int)
+    case multipleLoadedThreadsMatchingCWD(expected: String, count: Int)
 
     var description: String {
         switch self {
@@ -399,6 +450,8 @@ private enum CodexAppServerClientError: Error, Equatable, CustomStringConvertibl
             "Codex app-server thread cwd mismatch: expected \(expected), got \(actual)."
         case .noLoadedThreadMatchingCWD(let expected, let count):
             "Codex app-server found no loaded thread for cwd \(expected) among \(count) loaded threads."
+        case .multipleLoadedThreadsMatchingCWD(let expected, let count):
+            "Codex app-server found \(count) loaded threads for cwd \(expected); refusing ambiguous delivery."
         }
     }
 
@@ -483,14 +536,30 @@ private final class CodexAppServerWebSocketConnection {
     }
 
     func readText(deadline: Date) throws -> String {
+        try readMessageText(deadline: deadline)
+    }
+
+    private func readMessageText(deadline: Date) throws -> String {
+        var fragments: [UInt8]?
         while true {
             let frame = try readFrame(deadline: deadline)
             switch frame.opcode {
-            case 0x1:
-                guard let text = String(bytes: frame.payload, encoding: .utf8) else {
-                    throw CodexAppServerClientError.invalidResponse("websocket text frame was not UTF-8")
+            case 0x0:
+                guard fragments != nil else {
+                    throw CodexAppServerClientError.invalidResponse("websocket continuation frame without text frame")
                 }
-                return text
+                fragments?.append(contentsOf: frame.payload)
+                if frame.fin {
+                    return try decodeText(fragments ?? [])
+                }
+            case 0x1:
+                guard fragments == nil else {
+                    throw CodexAppServerClientError.invalidResponse("websocket text frame interrupted fragmented message")
+                }
+                if frame.fin {
+                    return try decodeText(frame.payload)
+                }
+                fragments = frame.payload
             case 0x8:
                 throw CodexAppServerClientError.closed
             case 0x9:
@@ -501,6 +570,13 @@ private final class CodexAppServerWebSocketConnection {
                 continue
             }
         }
+    }
+
+    private func decodeText(_ payload: [UInt8]) throws -> String {
+        guard let text = String(bytes: payload, encoding: .utf8) else {
+            throw CodexAppServerClientError.invalidResponse("websocket text frame was not UTF-8")
+        }
+        return text
     }
 
     private func readHTTPHeader(deadline: Date) throws -> String {
@@ -520,6 +596,7 @@ private final class CodexAppServerWebSocketConnection {
 
     private func readFrame(deadline: Date) throws -> WebSocketFrame {
         let header = try readExact(2, deadline: deadline)
+        let fin = header[0] & 0x80 != 0
         let opcode = header[0] & 0x0F
         let isMasked = header[1] & 0x80 != 0
         var length = UInt64(header[1] & 0x7F)
@@ -538,7 +615,7 @@ private final class CodexAppServerWebSocketConnection {
                 byte ^ mask[index % mask.count]
             }
         }
-        return WebSocketFrame(opcode: opcode, payload: payload)
+        return WebSocketFrame(fin: fin, opcode: opcode, payload: payload)
     }
 
     private func readExact(_ count: Int, deadline: Date) throws -> [UInt8] {
@@ -674,6 +751,7 @@ private final class CodexAppServerWebSocketConnection {
     }
 
     private struct WebSocketFrame {
+        let fin: Bool
         let opcode: UInt8
         let payload: [UInt8]
     }
