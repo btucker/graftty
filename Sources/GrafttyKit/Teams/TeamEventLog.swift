@@ -19,7 +19,10 @@ public struct TeamEvent: Codable, Sendable {
         case nudgeSent
         case nudgeSkipped
         case agentStateTransition
+        // Legacy event kind retained so existing append-only logs remain decodable.
+        // Codex delivery no longer writes zmx nudge events.
         case zmxNudgeAttempt
+        case codexAppServerDeliveryAttempt
     }
 
     public let teamID: String

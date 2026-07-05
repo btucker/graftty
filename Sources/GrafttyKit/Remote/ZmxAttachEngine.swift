@@ -251,9 +251,9 @@ public final class ZmxAttachEngine: TerminalByteStream, TerminalSizeReporting, T
         let fd = spawned?.masterFD
         stateLock.unlock()
         guard !closed, let fd, !data.isEmpty else { return }
-        // TEAM-IDLE-2.2: track the chunk before we hand it to the PTY so an
-        // idle-delivery tick that observes the session right after the write
-        // sees the uncommitted-byte count we just produced.
+        // Track the chunk before we hand it to the PTY so web-session
+        // typing state reflects writes even if the PTY consumer reacts
+        // immediately.
         inputState?.recordInput(data, forSession: config.sessionName)
         try? data.withUnsafeBytes { buf in
             guard let base = buf.baseAddress else { return }
