@@ -192,16 +192,18 @@ public final class TeamInboxRequestHandler {
         let context = try teamContext(callerWorktree: callerWorktree, repos: repos, teamsEnabled: teamsEnabled)
         let sessionID = sessionID ?? "\(runtime.rawValue):\(context.sender.name):\(context.sender.worktreePath)"
         let teamID = teamID(context.team)
-        let cursor = try cursorForHook(
-            teamID: teamID,
-            sessionID: sessionID,
-            worktree: context.sender.worktreePath,
-            runtime: runtime
-        )
 
         switch event {
         case .sessionStart:
             onSessionStart?(teamID, context.sender.worktreePath, runtime.rawValue, paneSessionName)
+            if runtime == .claude {
+                _ = try cursorForHook(
+                    teamID: teamID,
+                    sessionID: sessionID,
+                    worktree: context.sender.worktreePath,
+                    runtime: runtime
+                )
+            }
             var text = TeamInstructionsRenderer.render(team: context.team, viewer: context.sender)
             if let renderedPrompt = sessionPromptRenderer?(context.team, context.sender) {
                 text += "\n\n\(renderedPrompt)"
@@ -209,6 +211,9 @@ public final class TeamInboxRequestHandler {
             return try TeamHookRenderer.sessionStart(runtime: runtime, teamContext: text)
         case .postToolUse:
             onPostToolUse?(teamID, context.sender.worktreePath, runtime.rawValue, paneSessionName)
+            guard runtime != .codex else {
+                return try TeamHookRenderer.postToolUse(runtime: runtime, messages: [])
+            }
             guard canConsumeAutomaticInbox(
                 teamID: teamID,
                 worktree: context.sender.worktreePath,
@@ -217,6 +222,12 @@ public final class TeamInboxRequestHandler {
             ) else {
                 return try TeamHookRenderer.postToolUse(runtime: runtime, messages: [])
             }
+            let cursor = try cursorForHook(
+                teamID: teamID,
+                sessionID: sessionID,
+                worktree: context.sender.worktreePath,
+                runtime: runtime
+            )
             let allUnread = try inbox.unreadMessages(
                 teamID: teamID,
                 recipientWorktree: context.sender.worktreePath,
@@ -239,10 +250,9 @@ public final class TeamInboxRequestHandler {
             // `hookSpecificOutput.additionalContext`, so we can't
             // deliver content here. Skip the cursor advance too, since
             // advancing it would silently mark messages "delivered"
-            // and bury them past the next SessionStart's replay. The
+            // and bury them past the next real delivery path. The
             // Claude side picks them up via the asyncRewake watcher;
-            // Codex picks them up at the next SessionStart or via
-            // IdleDeliveryService once production zmx-send wiring lands.
+            // Codex hook delivery is intentionally disabled.
             onStop?(teamID, context.sender.worktreePath, runtime.rawValue, paneSessionName)
             return try TeamHookRenderer.stop(runtime: runtime, messages: [])
         }

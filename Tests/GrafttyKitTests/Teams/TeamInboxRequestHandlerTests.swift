@@ -117,7 +117,7 @@ struct TeamInboxRequestHandlerTests {
         #expect(output.contains("Graftty Agent Team session context"))
     }
 
-    @Test func postToolUseDoesNotAdvanceCursorPastUndeliveredNormalMessage() throws {
+    @Test func claudePostToolUseDoesNotAdvanceCursorPastUndeliveredNormalMessage() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let ids = Self.fixedIDs(["0001", "0002"])
@@ -143,7 +143,7 @@ struct TeamInboxRequestHandlerTests {
 
         let postToolOutput = try handler.hook(
             callerWorktree: "/repo/.worktrees/alice",
-            runtime: .codex,
+            runtime: .claude,
             event: .postToolUse,
             sessionID: "session-1",
             paneSessionName: nil,
@@ -159,8 +159,8 @@ struct TeamInboxRequestHandlerTests {
         // Stop hook in both runtimes only accepts top-level fields,
         // so the rendered output is `{}` regardless of the inbox
         // state — the previously-undelivered normal message stays
-        // pending and is replayed at the next SessionStart's inbox
-        // dump (or via the asyncRewake watcher on Claude).
+        // pending for the next real delivery path instead of being
+        // marked seen by a no-op hook response.
         let stopOutput = try handler.hook(
             callerWorktree: "/repo/.worktrees/alice",
             runtime: .codex,
@@ -176,7 +176,7 @@ struct TeamInboxRequestHandlerTests {
         // and never delivers content to the agent, it must NOT
         // advance the cursor. Advancing it would silently mark
         // pending messages "delivered" and bury them past the next
-        // SessionStart's replay — every Stop firing during an idle
+        // real delivery path — every Stop firing during an idle
         // period would walk the cursor forward over messages the
         // agent never saw. The cursor stays nil here for the same
         // reason it stayed nil after PostToolUse skipped the
@@ -185,13 +185,17 @@ struct TeamInboxRequestHandlerTests {
         #expect(cursorAfterStop?.lastSeenID == nil)
     }
 
-    @Test("Owner PostToolUse renders urgent inbox messages and advances delivery state.")
-    func ownerPostToolUseRendersUrgentMessagesAndAdvancesCursor() throws {
+    @Test("Codex owner PostToolUse fires callback but does not render or advance delivery state.")
+    func codexOwnerPostToolUseFiresCallbackWithoutRenderingOrAdvancing() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
+        let recorder = OnStopCallRecorder()
         let handler = Self.makeHandler(
             inbox: inbox,
+            onPostToolUse: { team, worktree, runtime, _ in
+                recorder.append(team: team, worktree: worktree, runtime: runtime)
+            },
             automaticDeliveryOwner: { _, _, _, paneSessionName in
                 paneSessionName == "graftty-owner"
             }
@@ -216,12 +220,117 @@ struct TeamInboxRequestHandlerTests {
             teamsEnabled: true
         )
 
+        #expect(recorder.calls.count == 1)
+        #expect(recorder.calls[0].team == "/repo")
+        #expect(recorder.calls[0].worktree == "/repo/.worktrees/alice")
+        #expect(recorder.calls[0].runtime == "codex")
+        #expect(!output.contains("urgent body"))
+        #expect(try inbox.cursor(teamID: "/repo", sessionID: "owner") == nil)
+        #expect(try inbox.worktreeWatermark(teamID: "/repo", worktree: "/repo/.worktrees/alice") == nil)
+    }
+
+    @Test("Claude owner PostToolUse renders urgent inbox messages and advances delivery state.")
+    func claudeOwnerPostToolUseRendersUrgentMessagesAndAdvancesCursor() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
+        let handler = Self.makeHandler(
+            inbox: inbox,
+            automaticDeliveryOwner: { _, _, _, paneSessionName in
+                paneSessionName == "graftty-owner"
+            }
+        )
+
+        _ = try handler.send(
+            callerWorktree: "/repo",
+            recipient: "alice",
+            text: "urgent body",
+            priority: .urgent,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        let output = try handler.hook(
+            callerWorktree: "/repo/.worktrees/alice",
+            runtime: .claude,
+            event: .postToolUse,
+            sessionID: "owner",
+            paneSessionName: "graftty-owner",
+            repos: [repo],
+            teamsEnabled: true
+        )
+
         #expect(output.contains("urgent body"))
         #expect(try inbox.cursor(teamID: "/repo", sessionID: "owner")?.lastSeenID == "0001")
         #expect(try inbox.worktreeWatermark(
             teamID: "/repo",
             worktree: "/repo/.worktrees/alice"
         )?.lastDeliveredToAnySessionID == "0001")
+    }
+
+    @Test("Claude SessionStart anchors delivery to the worktree watermark at session start.")
+    func claudeSessionStartAnchorsCursorToInitialWorktreeWatermark() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
+        let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001", "0002"]), now: { Self.fixedDate })
+        let handler = Self.makeHandler(inbox: inbox)
+        let aliceWorktree = "/repo/.worktrees/alice"
+
+        let initial = try handler.send(
+            callerWorktree: "/repo",
+            recipient: "alice",
+            text: "already delivered",
+            priority: .urgent,
+            repos: [repo],
+            teamsEnabled: true
+        )
+        try inbox.writeWorktreeWatermark(
+            TeamInboxWorktreeWatermark(
+                worktree: aliceWorktree,
+                lastDeliveredToAnySessionID: initial.message.id
+            ),
+            teamID: "/repo"
+        )
+
+        _ = try handler.hook(
+            callerWorktree: aliceWorktree,
+            runtime: .claude,
+            event: .sessionStart,
+            sessionID: "session-anchored",
+            paneSessionName: nil,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        let newer = try handler.send(
+            callerWorktree: "/repo",
+            recipient: "alice",
+            text: "newer urgent",
+            priority: .urgent,
+            repos: [repo],
+            teamsEnabled: true
+        )
+        try inbox.writeWorktreeWatermark(
+            TeamInboxWorktreeWatermark(
+                worktree: aliceWorktree,
+                lastDeliveredToAnySessionID: newer.message.id
+            ),
+            teamID: "/repo"
+        )
+
+        let output = try handler.hook(
+            callerWorktree: aliceWorktree,
+            runtime: .claude,
+            event: .postToolUse,
+            sessionID: "session-anchored",
+            paneSessionName: nil,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        #expect(!output.contains("already delivered"))
+        #expect(output.contains("newer urgent"))
+        #expect(try inbox.cursor(teamID: "/repo", sessionID: "session-anchored")?.lastSeenID == newer.message.id)
     }
 
     @Test("Non-owner PostToolUse does not render urgent inbox messages or advance delivery state.")
@@ -256,12 +365,12 @@ struct TeamInboxRequestHandlerTests {
         )
 
         #expect(!output.contains("urgent body"))
-        #expect(try inbox.cursor(teamID: "/repo", sessionID: "secondary")?.lastSeenID == nil)
+        #expect(try inbox.cursor(teamID: "/repo", sessionID: "secondary") == nil)
         #expect(try inbox.worktreeWatermark(teamID: "/repo", worktree: "/repo/.worktrees/alice") == nil)
     }
 
-    @Test("PostToolUse without ownership closure remains backward-compatible.")
-    func postToolUseWithoutOwnershipClosureStillRendersAndAdvances() throws {
+    @Test("Claude PostToolUse without ownership closure remains backward-compatible.")
+    func claudePostToolUseWithoutOwnershipClosureStillRendersAndAdvances() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root, idGenerator: Self.fixedIDs(["0001"]), now: { Self.fixedDate })
@@ -278,7 +387,7 @@ struct TeamInboxRequestHandlerTests {
 
         let output = try handler.hook(
             callerWorktree: "/repo/.worktrees/alice",
-            runtime: .codex,
+            runtime: .claude,
             event: .postToolUse,
             sessionID: "legacy",
             paneSessionName: nil,
@@ -351,7 +460,7 @@ struct TeamInboxRequestHandlerTests {
         )
 
         #expect(!output.contains("urgent body"))
-        #expect(try inbox.cursor(teamID: "/repo", sessionID: "secondary")?.lastSeenID == nil)
+        #expect(try inbox.cursor(teamID: "/repo", sessionID: "secondary") == nil)
         #expect(try inbox.worktreeWatermark(teamID: "/repo", worktree: "/repo/.worktrees/alice") == nil)
     }
 
@@ -495,7 +604,7 @@ struct TeamInboxRequestHandlerTests {
         #expect(recorder.calls[0].worktree == "/repo/.worktrees/alice")
         #expect(recorder.calls[0].runtime == "codex")
         #expect(!output.contains("urgent body"))
-        #expect(try inbox.cursor(teamID: "/repo", sessionID: "secondary")?.lastSeenID == nil)
+        #expect(try inbox.cursor(teamID: "/repo", sessionID: "secondary") == nil)
         #expect(try inbox.worktreeWatermark(teamID: "/repo", worktree: "/repo/.worktrees/alice") == nil)
     }
 

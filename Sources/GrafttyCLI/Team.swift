@@ -15,6 +15,7 @@ struct Team: ParsableCommand {
             TeamList.self,
             TeamRegister.self,
             TeamUnregister.self,
+            TeamCodexAppServer.self,
             TeamWatchInbox.self,
         ]
     )
@@ -286,19 +287,19 @@ struct TeamRegister: ParsableCommand {
             throw ValidationError("runtime must be one of: codex, claude")
         }
         let runtimeIdentity = try TeamRegisterPIDResolver.resolve(explicitPID: pid)
-        guard let (team, worktreeName) = TeamPresenceCLI.resolveTeamAndWorktree() else {
+        guard let resolved = TeamPresenceCLI.resolveTeamAndWorktree() else {
             // No team for this cwd — silently no-op so it's safe to call
             // unconditionally from a wrapper script.
             return
         }
         let storage = TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
-        let teamID = TeamLookup.id(of: team)
+        let teamID = TeamLookup.id(of: resolved.team)
         let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
             env: ProcessInfo.processInfo.environment
         )
         let record = TeamPresenceRecord(
             teamID: teamID,
-            worktree: worktreeName,
+            worktree: resolved.worktreePath,
             runtime: runtimeValue,
             paneSessionName: paneSessionName,
             pid: runtimeIdentity.pid,
@@ -306,9 +307,17 @@ struct TeamRegister: ParsableCommand {
             registeredAt: Date()
         )
         try storage.write(record)
+        _ = try? TeamPresenceCLI.deleteLegacyMemberNamePresence(
+            storage: storage,
+            teamID: teamID,
+            resolved: resolved,
+            runtime: runtimeValue,
+            paneSessionName: paneSessionName
+        )
         try? TeamEventLog.defaultLog().append(
             .init(teamID: teamID, kind: .registered, detail: [
-                "worktree": worktreeName,
+                "worktree": resolved.worktreePath,
+                "member": resolved.memberName,
                 "runtime": runtimeValue.rawValue,
                 "pid": String(record.pid),
                 "pane_session_name": paneSessionName ?? "",
@@ -357,30 +366,184 @@ struct TeamUnregister: ParsableCommand {
         guard let runtimeValue = TeamHookRuntime(rawValue: runtime) else {
             throw ValidationError("runtime must be one of: codex, claude")
         }
-        guard let (team, worktreeName) = TeamPresenceCLI.resolveTeamAndWorktree() else {
+        guard let resolved = TeamPresenceCLI.resolveTeamAndWorktree() else {
             return
         }
         let storage = TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
-        let teamID = TeamLookup.id(of: team)
+        let teamID = TeamLookup.id(of: resolved.team)
         let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
             env: ProcessInfo.processInfo.environment
         )
         let prior = try TeamUnregisterCore.unregister(
             storage: storage,
             teamID: teamID,
-            worktree: worktreeName,
+            worktree: resolved.worktreePath,
             runtime: runtimeValue,
             paneSessionName: paneSessionName
         )
-        if prior != nil {
+        let legacyPrior = try TeamPresenceCLI.deleteLegacyMemberNamePresence(
+            storage: storage,
+            teamID: teamID,
+            resolved: resolved,
+            runtime: runtimeValue,
+            paneSessionName: paneSessionName
+        )
+        if prior != nil || legacyPrior != nil {
             try? TeamEventLog.defaultLog().append(
                 .init(teamID: teamID, kind: .unregistered, detail: [
-                    "worktree": worktreeName,
+                    "worktree": resolved.worktreePath,
+                    "member": resolved.memberName,
                     "runtime": runtimeValue.rawValue,
                     "pane_session_name": paneSessionName ?? "",
                 ])
             )
         }
+    }
+}
+
+struct TeamCodexAppServer: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "codex-app-server",
+        subcommands: [TeamCodexAppServerRegister.self, TeamCodexAppServerUnregister.self]
+    )
+}
+
+struct TeamCodexAppServerRegister: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "register",
+        abstract: "Record a Codex app-server session for this pane."
+    )
+
+    @Option(name: .long) var socket: String
+    @Option(name: .long) var realBinary: String
+    @Option(name: .long) var appServerPid: Int32
+
+    func run() throws {
+        guard let resolved = TeamPresenceCLI.resolveTeamAndWorktree() else {
+            return
+        }
+        guard let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
+            env: ProcessInfo.processInfo.environment
+        ) else {
+            return
+        }
+        let identity = try TeamCodexAppServerPIDResolver.resolve(appServerPid: appServerPid)
+        _ = try TeamCodexAppServerCore.register(
+            storage: CodexAppServerSessionStorage(rootDirectory: TeamPresenceStorage.defaultRoot()),
+            teamID: TeamLookup.id(of: resolved.team),
+            worktree: resolved.worktreePath,
+            paneSessionName: paneSessionName,
+            socketPath: socket,
+            realBinaryPath: realBinary,
+            appServerPID: identity.pid,
+            appServerProcessStartTimeMicroseconds: identity.processStartTimeMicroseconds,
+            registeredAt: Date()
+        )
+    }
+}
+
+struct TeamCodexAppServerUnregister: ParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "unregister",
+        abstract: "Forget this pane's Codex app-server session."
+    )
+
+    @Option(name: .long) var socket: String?
+    @Option(name: .long) var appServerPid: Int32?
+
+    func run() throws {
+        guard let resolved = TeamPresenceCLI.resolveTeamAndWorktree() else {
+            return
+        }
+        guard let paneSessionName = TeamRegisterPaneResolver.paneSessionName(
+            env: ProcessInfo.processInfo.environment
+        ) else {
+            return
+        }
+        _ = try TeamCodexAppServerCore.unregister(
+            storage: CodexAppServerSessionStorage(rootDirectory: TeamPresenceStorage.defaultRoot()),
+            teamID: TeamLookup.id(of: resolved.team),
+            worktree: resolved.worktreePath,
+            paneSessionName: paneSessionName,
+            expectedSocketPath: socket,
+            expectedAppServerPID: appServerPid
+        )
+    }
+}
+
+enum TeamCodexAppServerPIDResolver {
+    struct Identity: Equatable {
+        let pid: Int32
+        let processStartTimeMicroseconds: Int64
+    }
+
+    static func resolve(
+        appServerPid: Int32,
+        startTimeMicroseconds: (Int32) -> Int64? = { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
+    ) throws -> Identity {
+        guard appServerPid > 0 else {
+            throw ValidationError("--app-server-pid must be greater than 0")
+        }
+        guard let startTime = startTimeMicroseconds(appServerPid) else {
+            throw ValidationError("--app-server-pid must identify a running process with a readable start time")
+        }
+        return Identity(pid: appServerPid, processStartTimeMicroseconds: startTime)
+    }
+}
+
+enum TeamCodexAppServerCore {
+    @discardableResult
+    static func register(
+        storage: CodexAppServerSessionStorage,
+        teamID: String,
+        worktree: String,
+        paneSessionName: String,
+        socketPath: String,
+        realBinaryPath: String,
+        appServerPID: Int32,
+        appServerProcessStartTimeMicroseconds: Int64,
+        registeredAt: Date
+    ) throws -> CodexAppServerSessionRecord {
+        let record = CodexAppServerSessionRecord(
+            teamID: teamID,
+            worktree: worktree,
+            paneSessionName: paneSessionName,
+            socketPath: socketPath,
+            realBinaryPath: realBinaryPath,
+            appServerPID: appServerPID,
+            appServerProcessStartTimeMicroseconds: appServerProcessStartTimeMicroseconds,
+            registeredAt: registeredAt
+        )
+        try storage.write(record)
+        return record
+    }
+
+    @discardableResult
+    static func unregister(
+        storage: CodexAppServerSessionStorage,
+        teamID: String,
+        worktree: String,
+        paneSessionName: String,
+        expectedSocketPath: String? = nil,
+        expectedAppServerPID: Int32? = nil
+    ) throws -> CodexAppServerSessionRecord? {
+        guard let prior = try storage.read(
+            teamID: teamID,
+            worktree: worktree,
+            paneSessionName: paneSessionName
+        ) else { return nil }
+        if let expectedSocketPath, prior.socketPath != expectedSocketPath {
+            return nil
+        }
+        if let expectedAppServerPID, prior.appServerPID != expectedAppServerPID {
+            return nil
+        }
+        try storage.delete(
+            teamID: teamID,
+            worktree: worktree,
+            paneSessionName: paneSessionName
+        )
+        return prior
     }
 }
 
@@ -411,10 +574,10 @@ struct TeamWatchInbox: ParsableCommand {
             return
         }
 
-        guard let (team, worktreeName) = TeamPresenceCLI.resolveTeamAndWorktree() else {
+        guard let resolved = TeamPresenceCLI.resolveTeamAndWorktree() else {
             return
         }
-        let teamID = TeamLookup.id(of: team)
+        let teamID = TeamLookup.id(of: resolved.team)
         let presenceStorage = TeamPresenceStorage(rootDirectory: TeamPresenceStorage.defaultRoot())
         let records = try presenceStorage.listAll()
         let resolver = TeamDeliveryOwnershipResolver(
@@ -429,7 +592,7 @@ struct TeamWatchInbox: ParsableCommand {
             hookPayloadSessionID: payload["session_id"] as? String,
             fallbackSessionID: { UUID().uuidString },
             teamID: teamID,
-            worktree: worktreeName,
+            worktree: resolved.worktreePath,
             paneSessionName: paneSessionName,
             resolver: resolver
         )
@@ -442,7 +605,7 @@ struct TeamWatchInbox: ParsableCommand {
         guard let watcher = Self.makeWatcherIfOwner(decision: decision, makeWatcher: {
             InboxWatcher(
                 sessionID: decision.sessionID,
-                recipient: .init(member: worktreeName, runtime: runtimeValue),
+                recipient: .init(member: resolved.memberName, runtime: runtimeValue),
                 teamID: teamID,
                 inboxRootDirectory: inboxRoot,
                 outcome: outcome,
@@ -524,25 +687,60 @@ struct SyncCodexHome: ParsableCommand {
     }
 }
 
-/// Helpers shared by `team register` / `team unregister` — both walk
-/// the same path: cwd → AppState → TeamView → (team, worktree name).
+/// Helpers shared by `team register` / `team unregister` / `team watch-inbox`.
+/// Presence ownership uses the canonical worktree path, while inbox addressing
+/// still uses the member name.
 /// Returns nil when the cwd is not in a tracked, team-enabled worktree
 /// so the wrapper-driven CLI calls can no-op cleanly.
-private enum TeamPresenceCLI {
-    static func resolveTeamAndWorktree() -> (TeamView, String)? {
+enum TeamPresenceCLI {
+    struct Resolved {
+        let team: TeamView
+        let worktreePath: String
+        let memberName: String
+    }
+
+    static func resolveTeamAndWorktree() -> Resolved? {
         guard let state = try? AppState.load(from: AppState.defaultDirectory) else {
             return nil
         }
         guard let worktreePath = try? WorktreeResolver.resolve() else {
             return nil
         }
+        return resolveTeamAndWorktree(state: state, worktreePath: worktreePath)
+    }
+
+    static func resolveTeamAndWorktree(state: AppState, worktreePath: String) -> Resolved? {
         guard let team = TeamLookup.team(for: worktreePath, in: state.repos) else {
             return nil
         }
         guard let worktreeName = team.members.first(where: { $0.worktreePath == worktreePath })?.name else {
             return nil
         }
-        return (team, worktreeName)
+        return Resolved(team: team, worktreePath: worktreePath, memberName: worktreeName)
+    }
+
+    @discardableResult
+    static func deleteLegacyMemberNamePresence(
+        storage: TeamPresenceStorage,
+        teamID: String,
+        resolved: Resolved,
+        runtime: TeamHookRuntime,
+        paneSessionName: String?
+    ) throws -> TeamPresenceRecord? {
+        guard resolved.memberName != resolved.worktreePath else { return nil }
+        let prior = try storage.read(
+            teamID: teamID,
+            worktree: resolved.memberName,
+            runtime: runtime,
+            paneSessionName: paneSessionName
+        )
+        try storage.delete(
+            teamID: teamID,
+            worktree: resolved.memberName,
+            runtime: runtime,
+            paneSessionName: paneSessionName
+        )
+        return prior
     }
 }
 

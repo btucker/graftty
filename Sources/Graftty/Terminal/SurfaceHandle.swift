@@ -161,7 +161,6 @@ final class SurfaceHandle {
         zmxSpawnConfiguration: ZmxSpawnConfiguration? = nil,
         extraInitialInput: String? = nil,
         terminalManager: TerminalManager? = nil,
-        inputActivityObserver: PaneInputActivityObserver? = nil,
         remoteAttachmentRegistry: RemoteAttachmentRegistry? = nil,
         displayOwnershipStore: SessionDisplayOwnershipStore? = nil,
         displayClientID: DisplayClientID? = nil,
@@ -218,7 +217,6 @@ final class SurfaceHandle {
         self.view = surfaceView
         surfaceView.terminalID = terminalID
         surfaceView.terminalManager = terminalManager
-        surfaceView.inputActivityObserver = inputActivityObserver
         if let backend {
             surfaceView.hostManagedInputWriter = { [weak backend] data in
                 try? backend?.write(data)
@@ -617,16 +615,15 @@ final class SurfaceHandle {
     /// Synthesize a Return keypress (press + release) via
     /// `ghostty_surface_key`, mirroring what `SurfaceNSView.keyDown`
     /// does for a real Enter key event but constructed without an
-    /// `NSEvent`. Used by the agent-teams idle-delivery nudge and the
-    /// send-pane IPC to commit a typed-in message: `typeText` alone
-    /// leaves a `\r` byte in the PTY that TUI receivers (Codex /
-    /// Claude in raw mode) don't treat as a submit trigger.
+    /// `NSEvent`. Used by send-pane IPC to commit typed-in messages:
+    /// `typeText` alone leaves a `\r` byte in the PTY that TUI receivers
+    /// (Codex / Claude in raw mode) don't treat as a submit trigger.
     ///
     /// - Parameter claimEngagement: When `true` (default), the bytes
     ///   libghostty emits for the synthesized key are classified like a
-    ///   human Return keypress. Automation paths (split-with-command,
-    ///   send-pane IPC, agent nudges) pass `false`; display ownership
-    ///   still decides whether zmx receives the bytes.
+    ///   human Return keypress. Automation paths such as split-with-command
+    ///   and send-pane IPC pass `false`; display ownership still decides
+    ///   whether zmx receives the bytes.
     func pressReturn(claimEngagement: Bool = true) {
         guard let zmxBackend else {
             performPressReturn()
@@ -728,11 +725,6 @@ final class SurfaceNSView: NSView {
     /// context-menu action so the checkmark reflects the current mode.
     /// libghostty owns authoritative state; this is our UI shadow.
     var isReadonly: Bool = false
-
-    /// Passive keystroke tap wired by the app at startup. Set by
-    /// `SurfaceHandle` after construction from the shared
-    /// `PaneInputActivityRegistry`. Nil-safe — missing observer is a no-op.
-    var inputActivityObserver: PaneInputActivityObserver?
 
     /// Direct PTY-input path for host-managed backends. Ghostty's own
     /// host-managed AppKit frontend bypasses `ghostty_surface_key` for
@@ -1034,9 +1026,6 @@ final class SurfaceNSView: NSView {
         guard surface != nil else {
             super.keyDown(with: event)
             return
-        }
-        if let paneID = terminalID?.id {
-            inputActivityObserver?.recordKeystroke(paneID: paneID)
         }
         markVisibleForInput()
         reclaimDisplayControlForUserInputIfNeeded(event)

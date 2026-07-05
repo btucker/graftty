@@ -82,10 +82,10 @@ public enum TeamHookRenderer {
         // "hook returned invalid stop hook JSON output". Stop is
         // therefore a true no-op for inbox delivery, and the request
         // handler also skips the cursor advance so pending messages
-        // stay queued. Live delivery paths are: PostToolUse (urgent
-        // only) for both runtimes, plus the Claude-only asyncRewake
-        // watcher; on Codex, normal-priority messages need zmx-send
-        // wiring in IdleDeliveryService to surface mid-session.
+        // stay queued. Hook-based live delivery is Claude-only:
+        // PostToolUse renders urgent messages, and asyncRewake covers
+        // the watcher path. Codex hook delivery is intentionally
+        // disabled.
         _ = messages
         return "{}"
     }

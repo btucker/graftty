@@ -5,11 +5,8 @@ import Foundation
 /// `SurfaceHandle.typeText(_:)`). Per-session instances are optional and
 /// owned by the callers that need them (web-attached sessions).
 ///
-/// Note: this type was part of an earlier idle-delivery design. The
-/// current event-driven design (TEAM-IDLE-2.2) uses `PaneInputActivityRegistry`
-/// to observe all keystroke boundaries (native + web) and gates on a 60s
-/// inactivity timer. `ZmxInputState` is retained for web-session typing
-/// state tracking and may be used by future refinements.
+/// Note: Codex inbox delivery no longer uses zmx input state or PTY
+/// nudges; this type is retained for web-session typing state tracking.
 public final class ZmxInputState: @unchecked Sendable {
     private var counts: [String: Int] = [:]
     private let lock = NSLock()
