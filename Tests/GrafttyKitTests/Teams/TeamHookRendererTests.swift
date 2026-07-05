@@ -48,9 +48,11 @@ struct TeamHookRendererTests {
         let context = try additionalContext(from: json)
 
         #expect(context.contains("graftty team inbox"))
-        #expect(context.contains("graftty team send"))
-        #expect(context.contains("graftty team status"))
+        #expect(context.contains("graftty team msg"))
+        #expect(context.contains("graftty team list"))
         #expect(context.contains("team data here"))
+        #expect(!context.lowercased().contains("coworker"))
+        #expect(!context.lowercased().contains("lead"))
 
         // TEAM-PRESENCE-1.3: registration is handled by the wrapper, not
         // typed by the model. The primer must not instruct it — that's the
@@ -120,4 +122,3 @@ struct TeamHookRendererTests {
         return try #require(hookSpecificOutput["additionalContext"] as? String)
     }
 }
-

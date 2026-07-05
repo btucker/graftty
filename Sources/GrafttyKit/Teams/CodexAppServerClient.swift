@@ -62,144 +62,109 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
         let process = Process()
         let stdin = Pipe()
         let stdout = Pipe()
+        let stderrCapture = CodexAppServerProxyStderrCapture.make()
         process.executableURL = URL(fileURLWithPath: binaryPath)
         process.arguments = ["app-server", "proxy", "--sock", socketPath]
         process.standardInput = stdin
         process.standardOutput = stdout
-        process.standardError = FileHandle.nullDevice
+        process.standardError = stderrCapture?.fileHandle ?? FileHandle.nullDevice
 
         do {
             try process.run()
         } catch {
+            stderrCapture?.closeAndRemove()
             throw CodexAppServerClientError.subprocessLaunchFailed(String(describing: error))
+        }
+        defer {
+            cleanup(process: process, stdin: stdin, stdout: stdout)
+            stderrCapture?.closeAndRemove()
         }
 
         let deadline = Date().addingTimeInterval(timeout)
         let stdinFD = stdin.fileHandleForWriting.fileDescriptor
         try setNoSigPipe(stdinFD)
         try makeNonBlocking(stdinFD)
-        let reader = CodexAppServerJSONLineReader(fd: stdout.fileHandleForReading.fileDescriptor)
-        defer {
-            cleanup(process: process, stdin: stdin, stdout: stdout)
+        let connection = CodexAppServerWebSocketConnection(
+            inputFD: stdinFD,
+            outputFD: stdout.fileHandleForReading.fileDescriptor
+        )
+        do {
+            try connection.performHandshake(deadline: deadline)
+
+            try sendRequest(
+                ["id": 1, "method": "initialize", "params": [
+                    "clientInfo": ["name": "graftty", "version": clientVersion()],
+                ]],
+                to: connection,
+                deadline: deadline
+            )
+            _ = try resultObject(
+                from: readResponse(connection: connection, deadline: deadline, expectedID: 1, method: "initialize"),
+                method: "initialize"
+            )
+
+            try sendRequest(
+                ["method": "initialized"],
+                to: connection,
+                deadline: deadline
+            )
+
+            try sendRequest(
+                ["id": 2, "method": "thread/loaded/list", "params": ["limit": 10]],
+                to: connection,
+                deadline: deadline
+            )
+            let loadedResult = try resultObject(
+                from: readResponse(connection: connection, deadline: deadline, expectedID: 2, method: "thread/loaded/list"),
+                method: "thread/loaded/list"
+            )
+            let threadIDs = try loadedThreadIDs(from: loadedResult)
+            var nextRequestID = 3
+            let threadID = try matchingLoadedThreadID(
+                from: threadIDs,
+                expectedCWD: expectedCWD,
+                connection: connection,
+                deadline: deadline,
+                nextRequestID: &nextRequestID
+            )
+
+            try sendRequest(
+                ["id": nextRequestID, "method": "turn/start", "params": [
+                    "threadId": threadID,
+                    "cwd": expectedCWD,
+                    "input": [["type": "text", "text": message]],
+                ]],
+                to: connection,
+                deadline: deadline
+            )
+            try requireNoRPCError(
+                in: readResponse(connection: connection, deadline: deadline, expectedID: nextRequestID, method: "turn/start"),
+                method: "turn/start"
+            )
+
+            try? stdin.fileHandleForWriting.close()
+            return CodexAppServerDeliveryResult(threadID: threadID)
+        } catch let error as CodexAppServerClientError {
+            throw error.appendingProxyStderr(stderrCapture?.contents())
         }
-
-        try sendRequest(
-            ["jsonrpc": "2.0", "id": 1, "method": "initialize", "params": [
-                "clientInfo": ["name": "graftty", "version": clientVersion()],
-            ]],
-            to: stdinFD,
-            deadline: deadline
-        )
-        _ = try resultObject(
-            from: readResponse(reader: reader, deadline: deadline, expectedID: 1, method: "initialize"),
-            method: "initialize"
-        )
-
-        try sendRequest(
-            ["jsonrpc": "2.0", "method": "initialized"],
-            to: stdinFD,
-            deadline: deadline
-        )
-
-        try sendRequest(
-            ["jsonrpc": "2.0", "id": 2, "method": "thread/loaded/list", "params": ["limit": 10]],
-            to: stdinFD,
-            deadline: deadline
-        )
-        let loadedResult = try resultObject(
-            from: readResponse(reader: reader, deadline: deadline, expectedID: 2, method: "thread/loaded/list"),
-            method: "thread/loaded/list"
-        )
-        let threadID = try exactlyOneLoadedThreadID(from: loadedResult)
-
-        try sendRequest(
-            ["jsonrpc": "2.0", "id": 3, "method": "thread/read", "params": [
-                "threadId": threadID,
-                "includeTurns": false,
-            ]],
-            to: stdinFD,
-            deadline: deadline
-        )
-        let readResult = try resultObject(
-            from: readResponse(reader: reader, deadline: deadline, expectedID: 3, method: "thread/read"),
-            method: "thread/read"
-        )
-        try requireCWD(expectedCWD, in: readResult)
-
-        try sendRequest(
-            ["jsonrpc": "2.0", "id": 4, "method": "turn/start", "params": [
-                "threadId": threadID,
-                "cwd": expectedCWD,
-                "input": [["type": "text", "text": message]],
-            ]],
-            to: stdinFD,
-            deadline: deadline
-        )
-        try requireNoRPCError(
-            in: readResponse(reader: reader, deadline: deadline, expectedID: 4, method: "turn/start"),
-            method: "turn/start"
-        )
-
-        try? stdin.fileHandleForWriting.close()
-        return CodexAppServerDeliveryResult(threadID: threadID)
     }
     #endif
 
-    private func sendRequest(_ object: [String: Any], to fd: Int32, deadline: Date) throws {
+    private func sendRequest(
+        _ object: [String: Any],
+        to connection: CodexAppServerWebSocketConnection,
+        deadline: Date
+    ) throws {
         do {
             let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
-            try writeAll(data + Data([0x0A]), to: fd, deadline: deadline)
+            guard let text = String(data: data, encoding: .utf8) else {
+                throw CodexAppServerClientError.writeFailed("request was not UTF-8")
+            }
+            try connection.sendText(text, deadline: deadline)
         } catch let error as CodexAppServerClientError {
             throw error
         } catch {
             throw CodexAppServerClientError.writeFailed(String(describing: error))
-        }
-    }
-
-    private func writeAll(_ data: Data, to fd: Int32, deadline: Date) throws {
-        try data.withUnsafeBytes { rawBuffer in
-            guard let baseAddress = rawBuffer.baseAddress else { return }
-            var offset = 0
-            while offset < data.count {
-                try waitForWritable(fd: fd, deadline: deadline)
-                let pointer = baseAddress.advanced(by: offset)
-                let count = Darwin.write(fd, pointer, data.count - offset)
-                if count > 0 {
-                    offset += count
-                } else if count == 0 {
-                    throw CodexAppServerClientError.writeTimedOut
-                } else if errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR {
-                    continue
-                } else if errno == EPIPE {
-                    throw CodexAppServerClientError.writeFailed("stdin pipe closed")
-                } else {
-                    throw CodexAppServerClientError.writeFailed(String(cString: strerror(errno)))
-                }
-            }
-        }
-    }
-
-    private func waitForWritable(fd: Int32, deadline: Date) throws {
-        while true {
-            let remaining = deadline.timeIntervalSinceNow
-            guard remaining > 0 else {
-                throw CodexAppServerClientError.writeTimedOut
-            }
-            let timeoutMilliseconds = max(1, Int32((remaining * 1000).rounded(.up)))
-            var descriptor = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
-            let result = poll(&descriptor, 1, timeoutMilliseconds)
-            if result > 0 {
-                if descriptor.revents & Int16(POLLOUT) != 0 {
-                    return
-                }
-                throw CodexAppServerClientError.writeFailed("stdin pipe is no longer writable")
-            }
-            if result == 0 {
-                throw CodexAppServerClientError.writeTimedOut
-            }
-            if errno != EINTR {
-                throw CodexAppServerClientError.writeFailed(String(cString: strerror(errno)))
-            }
         }
     }
 
@@ -222,13 +187,13 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
     }
 
     private func readResponse(
-        reader: CodexAppServerJSONLineReader,
+        connection: CodexAppServerWebSocketConnection,
         deadline: Date,
         expectedID: Int,
         method: String
     ) throws -> [String: Any] {
         while true {
-            let response = try parseResponseLine(try reader.readLine(deadline: deadline))
+            let response = try parseResponseText(try connection.readText(deadline: deadline))
             guard let id = responseID(response) else {
                 if response["method"] is String {
                     continue
@@ -242,8 +207,8 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
         }
     }
 
-    private func parseResponseLine(_ line: String) throws -> [String: Any] {
-        guard let data = line.data(using: .utf8) else {
+    private func parseResponseText(_ text: String) throws -> [String: Any] {
+        guard let data = text.data(using: .utf8) else {
             throw CodexAppServerClientError.invalidResponse("response was not UTF-8")
         }
         do {
@@ -251,14 +216,11 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
             guard let response = object as? [String: Any] else {
                 throw CodexAppServerClientError.invalidResponse("response was not a JSON object")
             }
-            guard response["jsonrpc"] as? String == "2.0" else {
-                throw CodexAppServerClientError.invalidResponse("response missing jsonrpc 2.0")
-            }
             return response
         } catch let error as CodexAppServerClientError {
             throw error
         } catch {
-            throw CodexAppServerClientError.invalidResponse("response was not valid JSON: \(line)")
+            throw CodexAppServerClientError.invalidResponse("response was not valid JSON: \(text)")
         }
     }
 
@@ -293,7 +255,7 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
         }
     }
 
-    private func exactlyOneLoadedThreadID(from result: [String: Any]) throws -> String {
+    private func loadedThreadIDs(from result: [String: Any]) throws -> [String] {
         guard let data = result["data"] as? [Any] else {
             throw CodexAppServerClientError.invalidResponse("thread/loaded/list result missing data array")
         }
@@ -301,22 +263,63 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
         guard threadIDs.count == data.count else {
             throw CodexAppServerClientError.invalidResponse("thread/loaded/list data contained non-string thread ids")
         }
-        guard threadIDs.count == 1, let threadID = threadIDs.first else {
-            throw CodexAppServerClientError.loadedThreadCount(threadIDs.count)
+        guard !threadIDs.isEmpty else {
+            throw CodexAppServerClientError.loadedThreadCount(0)
         }
-        return threadID
+        return threadIDs
     }
 
-    private func requireCWD(_ expectedCWD: String, in result: [String: Any]) throws {
+    private func matchingLoadedThreadID(
+        from threadIDs: [String],
+        expectedCWD: String,
+        connection: CodexAppServerWebSocketConnection,
+        deadline: Date,
+        nextRequestID: inout Int
+    ) throws -> String {
+        var actualCWDs: [String] = []
+        for threadID in threadIDs {
+            let requestID = nextRequestID
+            nextRequestID += 1
+            try sendRequest(
+                ["id": requestID, "method": "thread/read", "params": [
+                    "threadId": threadID,
+                    "includeTurns": false,
+                ]],
+                to: connection,
+                deadline: deadline
+            )
+            let readResult = try resultObject(
+                from: readResponse(
+                    connection: connection,
+                    deadline: deadline,
+                    expectedID: requestID,
+                    method: "thread/read"
+                ),
+                method: "thread/read"
+            )
+            let actualCWD = try threadCWD(in: readResult)
+            if actualCWD == expectedCWD {
+                return threadID
+            }
+            actualCWDs.append(actualCWD)
+        }
+        if threadIDs.count == 1, let actual = actualCWDs.first {
+            throw CodexAppServerClientError.cwdMismatch(expected: expectedCWD, actual: actual)
+        }
+        throw CodexAppServerClientError.noLoadedThreadMatchingCWD(
+            expected: expectedCWD,
+            count: threadIDs.count
+        )
+    }
+
+    private func threadCWD(in result: [String: Any]) throws -> String {
         guard let thread = result["thread"] as? [String: Any] else {
             throw CodexAppServerClientError.missingThreadCWD
         }
         guard let actualCWD = thread["cwd"] as? String else {
             throw CodexAppServerClientError.missingThreadCWD
         }
-        guard actualCWD == expectedCWD else {
-            throw CodexAppServerClientError.cwdMismatch(expected: expectedCWD, actual: actualCWD)
-        }
+        return actualCWD
     }
 
     private func clientVersion() -> String {
@@ -355,6 +358,7 @@ private enum CodexAppServerClientError: Error, Equatable, CustomStringConvertibl
     case writeTimedOut
     case timeout
     case closed
+    case closedWithStderr(String)
     case readFailed(String)
     case invalidResponse(String)
     case mismatchedResponseID(method: String, expected: Int, actual: Int)
@@ -362,6 +366,7 @@ private enum CodexAppServerClientError: Error, Equatable, CustomStringConvertibl
     case loadedThreadCount(Int)
     case missingThreadCWD
     case cwdMismatch(expected: String, actual: String)
+    case noLoadedThreadMatchingCWD(expected: String, count: Int)
 
     var description: String {
         switch self {
@@ -374,9 +379,11 @@ private enum CodexAppServerClientError: Error, Equatable, CustomStringConvertibl
         case .writeTimedOut:
             "Codex app-server proxy write timed out."
         case .timeout:
-            "Codex app-server proxy timed out waiting for a JSON-RPC response."
+            "Codex app-server proxy timed out waiting for a response."
         case .closed:
-            "Codex app-server proxy closed before sending a JSON-RPC response."
+            "Codex app-server proxy closed before sending a response."
+        case .closedWithStderr(let detail):
+            "Codex app-server proxy closed before sending a response: \(detail)"
         case .readFailed(let detail):
             "Codex app-server proxy read failed: \(detail)"
         case .invalidResponse(let detail):
@@ -391,39 +398,243 @@ private enum CodexAppServerClientError: Error, Equatable, CustomStringConvertibl
             "Codex app-server thread/read response missing thread cwd."
         case .cwdMismatch(let expected, let actual):
             "Codex app-server thread cwd mismatch: expected \(expected), got \(actual)."
+        case .noLoadedThreadMatchingCWD(let expected, let count):
+            "Codex app-server found no loaded thread for cwd \(expected) among \(count) loaded threads."
         }
+    }
+
+    func appendingProxyStderr(_ stderr: String?) -> CodexAppServerClientError {
+        guard case .closed = self,
+              let stderr,
+              !stderr.isEmpty
+        else {
+            return self
+        }
+        return .closedWithStderr(stderr)
     }
 }
 
-private final class CodexAppServerJSONLineReader {
-    private let fd: Int32
-    private var buffer: [UInt8] = []
+private final class CodexAppServerProxyStderrCapture {
+    let fileHandle: FileHandle
+    private let url: URL
 
-    init(fd: Int32) {
-        self.fd = fd
+    private init(fileHandle: FileHandle, url: URL) {
+        self.fileHandle = fileHandle
+        self.url = url
     }
 
-    func readLine(deadline: Date) throws -> String {
+    static func make() -> CodexAppServerProxyStderrCapture? {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-codex-proxy-stderr-\(UUID().uuidString).log")
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        guard let fileHandle = try? FileHandle(forWritingTo: url) else {
+            try? FileManager.default.removeItem(at: url)
+            return nil
+        }
+        return CodexAppServerProxyStderrCapture(fileHandle: fileHandle, url: url)
+    }
+
+    func contents() -> String? {
+        try? fileHandle.synchronize()
+        guard let data = try? Data(contentsOf: url), !data.isEmpty else {
+            return nil
+        }
+        let capped = data.count > 4096 ? Data(data.suffix(4096)) : data
+        let text = String(decoding: capped, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
+    func closeAndRemove() {
+        try? fileHandle.close()
+        try? FileManager.default.removeItem(at: url)
+    }
+}
+
+private final class CodexAppServerWebSocketConnection {
+    private let inputFD: Int32
+    private let outputFD: Int32
+    private var buffer: [UInt8] = []
+
+    init(inputFD: Int32, outputFD: Int32) {
+        self.inputFD = inputFD
+        self.outputFD = outputFD
+    }
+
+    func performHandshake(deadline: Date) throws {
+        let request = """
+        GET /rpc HTTP/1.1\r
+        Host: localhost\r
+        Upgrade: websocket\r
+        Connection: Upgrade\r
+        Sec-WebSocket-Key: \(Self.webSocketKey())\r
+        Sec-WebSocket-Version: 13\r
+        \r
+
+        """
+        try writeAll(Data(request.utf8), deadline: deadline)
+        let response = try readHTTPHeader(deadline: deadline)
+        guard response.hasPrefix("HTTP/1.1 101 ") || response.hasPrefix("HTTP/1.0 101 ") else {
+            throw CodexAppServerClientError.invalidResponse("websocket upgrade failed: \(response)")
+        }
+    }
+
+    func sendText(_ text: String, deadline: Date) throws {
+        try sendFrame(opcode: 0x1, payload: [UInt8](text.utf8), deadline: deadline)
+    }
+
+    func readText(deadline: Date) throws -> String {
         while true {
-            if let newlineIndex = buffer.firstIndex(of: 0x0A) {
-                let lineBytes = Array(buffer[..<newlineIndex])
-                buffer.removeSubrange(...newlineIndex)
-                guard let line = String(bytes: lineBytes, encoding: .utf8) else {
-                    throw CodexAppServerClientError.invalidResponse("response line was not UTF-8")
+            let frame = try readFrame(deadline: deadline)
+            switch frame.opcode {
+            case 0x1:
+                guard let text = String(bytes: frame.payload, encoding: .utf8) else {
+                    throw CodexAppServerClientError.invalidResponse("websocket text frame was not UTF-8")
                 }
-                return line
-            }
-
-            try waitForReadable(deadline: deadline)
-
-            var chunk = [UInt8](repeating: 0, count: 4096)
-            let count = Darwin.read(fd, &chunk, chunk.count)
-            if count > 0 {
-                buffer.append(contentsOf: chunk.prefix(count))
-            } else if count == 0 {
+                return text
+            case 0x8:
                 throw CodexAppServerClientError.closed
-            } else if errno != EINTR {
-                throw CodexAppServerClientError.readFailed(String(cString: strerror(errno)))
+            case 0x9:
+                try sendFrame(opcode: 0xA, payload: frame.payload, deadline: deadline)
+            case 0xA:
+                continue
+            default:
+                continue
+            }
+        }
+    }
+
+    private func readHTTPHeader(deadline: Date) throws -> String {
+        let terminator: [UInt8] = [0x0D, 0x0A, 0x0D, 0x0A]
+        while true {
+            if let end = buffer.firstRange(of: terminator)?.upperBound {
+                let headerBytes = Array(buffer[..<end])
+                buffer.removeSubrange(..<end)
+                guard let header = String(bytes: headerBytes, encoding: .utf8) else {
+                    throw CodexAppServerClientError.invalidResponse("websocket upgrade response was not UTF-8")
+                }
+                return header
+            }
+            try readMore(deadline: deadline)
+        }
+    }
+
+    private func readFrame(deadline: Date) throws -> WebSocketFrame {
+        let header = try readExact(2, deadline: deadline)
+        let opcode = header[0] & 0x0F
+        let isMasked = header[1] & 0x80 != 0
+        var length = UInt64(header[1] & 0x7F)
+        if length == 126 {
+            length = UInt64(Self.bigEndianUInt16(try readExact(2, deadline: deadline)))
+        } else if length == 127 {
+            length = Self.bigEndianUInt64(try readExact(8, deadline: deadline))
+        }
+        guard length <= UInt64(Int.max) else {
+            throw CodexAppServerClientError.invalidResponse("websocket frame was too large")
+        }
+        let mask = isMasked ? try readExact(4, deadline: deadline) : []
+        var payload = try readExact(Int(length), deadline: deadline)
+        if isMasked {
+            payload = payload.enumerated().map { index, byte in
+                byte ^ mask[index % mask.count]
+            }
+        }
+        return WebSocketFrame(opcode: opcode, payload: payload)
+    }
+
+    private func readExact(_ count: Int, deadline: Date) throws -> [UInt8] {
+        while buffer.count < count {
+            try readMore(deadline: deadline)
+        }
+        let bytes = Array(buffer.prefix(count))
+        buffer.removeSubrange(..<count)
+        return bytes
+    }
+
+    private func readMore(deadline: Date) throws {
+        try waitForReadable(deadline: deadline)
+        var chunk = [UInt8](repeating: 0, count: 4096)
+        let count = Darwin.read(outputFD, &chunk, chunk.count)
+        if count > 0 {
+            buffer.append(contentsOf: chunk.prefix(count))
+        } else if count == 0 {
+            throw CodexAppServerClientError.closed
+        } else if errno != EINTR {
+            throw CodexAppServerClientError.readFailed(String(cString: strerror(errno)))
+        }
+    }
+
+    private func sendFrame(opcode: UInt8, payload: [UInt8], deadline: Date) throws {
+        var frame: [UInt8] = [0x80 | opcode]
+        appendClientPayloadLength(payload.count, to: &frame)
+        var mask = [UInt8](repeating: 0, count: 4)
+        arc4random_buf(&mask, mask.count)
+        frame.append(contentsOf: mask)
+        frame.append(contentsOf: payload.enumerated().map { index, byte in
+            byte ^ mask[index % mask.count]
+        })
+        try writeAll(Data(frame), deadline: deadline)
+    }
+
+    private func appendClientPayloadLength(_ length: Int, to frame: inout [UInt8]) {
+        if length < 126 {
+            frame.append(0x80 | UInt8(length))
+        } else if length <= 65_535 {
+            frame.append(0x80 | 126)
+            frame.append(UInt8((length >> 8) & 0xFF))
+            frame.append(UInt8(length & 0xFF))
+        } else {
+            frame.append(0x80 | 127)
+            let value = UInt64(length)
+            for shift in stride(from: 56, through: 0, by: -8) {
+                frame.append(UInt8((value >> UInt64(shift)) & 0xFF))
+            }
+        }
+    }
+
+    private func writeAll(_ data: Data, deadline: Date) throws {
+        try data.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return }
+            var offset = 0
+            while offset < data.count {
+                try waitForWritable(deadline: deadline)
+                let pointer = baseAddress.advanced(by: offset)
+                let count = Darwin.write(inputFD, pointer, data.count - offset)
+                if count > 0 {
+                    offset += count
+                } else if count == 0 {
+                    throw CodexAppServerClientError.writeTimedOut
+                } else if errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR {
+                    continue
+                } else if errno == EPIPE {
+                    throw CodexAppServerClientError.writeFailed("stdin pipe closed")
+                } else {
+                    throw CodexAppServerClientError.writeFailed(String(cString: strerror(errno)))
+                }
+            }
+        }
+    }
+
+    private func waitForWritable(deadline: Date) throws {
+        while true {
+            let remaining = deadline.timeIntervalSinceNow
+            guard remaining > 0 else {
+                throw CodexAppServerClientError.writeTimedOut
+            }
+            let timeoutMilliseconds = max(1, Int32((remaining * 1000).rounded(.up)))
+            var descriptor = pollfd(fd: inputFD, events: Int16(POLLOUT), revents: 0)
+            let result = poll(&descriptor, 1, timeoutMilliseconds)
+            if result > 0 {
+                if descriptor.revents & Int16(POLLOUT) != 0 {
+                    return
+                }
+                throw CodexAppServerClientError.writeFailed("stdin pipe is no longer writable")
+            }
+            if result == 0 {
+                throw CodexAppServerClientError.writeTimedOut
+            }
+            if errno != EINTR {
+                throw CodexAppServerClientError.writeFailed(String(cString: strerror(errno)))
             }
         }
     }
@@ -435,7 +646,7 @@ private final class CodexAppServerJSONLineReader {
                 throw CodexAppServerClientError.timeout
             }
             let timeoutMilliseconds = max(1, Int32((remaining * 1000).rounded(.up)))
-            var descriptor = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+            var descriptor = pollfd(fd: outputFD, events: Int16(POLLIN), revents: 0)
             let result = poll(&descriptor, 1, timeoutMilliseconds)
             if result > 0 {
                 return
@@ -447,5 +658,24 @@ private final class CodexAppServerJSONLineReader {
                 throw CodexAppServerClientError.readFailed(String(cString: strerror(errno)))
             }
         }
+    }
+
+    private static func webSocketKey() -> String {
+        var bytes = [UInt8](repeating: 0, count: 16)
+        arc4random_buf(&bytes, bytes.count)
+        return Data(bytes).base64EncodedString()
+    }
+
+    private static func bigEndianUInt16(_ bytes: [UInt8]) -> UInt16 {
+        (UInt16(bytes[0]) << 8) | UInt16(bytes[1])
+    }
+
+    private static func bigEndianUInt64(_ bytes: [UInt8]) -> UInt64 {
+        bytes.reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+    }
+
+    private struct WebSocketFrame {
+        let opcode: UInt8
+        let payload: [UInt8]
     }
 }

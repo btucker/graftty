@@ -18,6 +18,7 @@ struct CodexAppServerClientTests {
 
         #expect(result == CodexAppServerDeliveryResult(threadID: "thread-123"))
 
+        #expect(try fake.recordedHandshake().contains("Upgrade: websocket"))
         let requests = try fake.recordedRequests()
         #expect(try methods(in: requests) == [
             "initialize",
@@ -54,21 +55,26 @@ struct CodexAppServerClientTests {
         #expect(try methods(in: fake.recordedRequests()).contains("turn/start") == false)
     }
 
-    @Test("Multiple loaded threads throws and does not start a turn.")
-    func multipleLoadedThreadsThrowsWithoutStartingTurn() async throws {
-        let fake = try makeFakeProxy(threads: ["one", "two"], cwd: "/repo/.worktrees/alice")
+    @Test("Multiple loaded threads chooses the one with matching cwd.")
+    func multipleLoadedThreadsChoosesMatchingCWD() async throws {
+        let fake = try makeFakeProxy(
+            threads: ["one", "two"],
+            cwd: "/repo/other",
+            cwdByThread: ["two": "/repo/.worktrees/alice"]
+        )
         let client = CodexAppServerClient(timeout: 1.0)
 
-        try await expectDeliveryThrows(containing: "exactly one loaded thread") {
-            _ = try await client.deliver(
-                binaryPath: fake.binaryPath.path,
-                socketPath: "/tmp/graftty-codex.sock",
-                expectedCWD: "/repo/.worktrees/alice",
-                message: "hello"
-            )
-        }
+        let result = try await client.deliver(
+            binaryPath: fake.binaryPath.path,
+            socketPath: "/tmp/graftty-codex.sock",
+            expectedCWD: "/repo/.worktrees/alice",
+            message: "hello"
+        )
 
-        #expect(try methods(in: fake.recordedRequests()).contains("turn/start") == false)
+        #expect(result.threadID == "two")
+        let requests = try fake.recordedRequests()
+        #expect(try methods(in: requests).filter { $0 == "thread/read" }.count == 2)
+        #expect(try methods(in: requests).contains("turn/start"))
     }
 
     @Test("Thread cwd mismatch throws and does not start a turn.")
@@ -222,8 +228,8 @@ struct CodexAppServerClientTests {
         #expect(result.threadID == "thread-123")
     }
 
-    @Test("Closed proxy stdin before turn write is reported as write failure.")
-    func closedProxyStdinBeforeTurnWriteDoesNotTerminateProcess() async throws {
+    @Test("Closed proxy stdin before turn response is reported as a timeout.")
+    func closedProxyStdinBeforeTurnResponseTimesOut() async throws {
         let fake = try makeFakeProxy(
             threads: ["thread-123"],
             cwd: "/repo/.worktrees/alice",
@@ -231,7 +237,7 @@ struct CodexAppServerClientTests {
         )
         let client = CodexAppServerClient(timeout: 1.0)
 
-        try await expectDeliveryThrows(containing: "write failed") {
+        try await expectDeliveryThrows(containing: "timed out waiting for a response") {
             _ = try await client.deliver(
                 binaryPath: fake.binaryPath.path,
                 socketPath: "/tmp/graftty-codex.sock",
@@ -261,6 +267,21 @@ struct CodexAppServerClientTests {
         ])
     }
 
+    @Test("Proxy stderr is included when startup exits before the websocket handshake.")
+    func proxyStartupStderrIsIncludedWhenHandshakeCloses() async throws {
+        let script = try makeFailingProxy(stderr: "env: node: No such file or directory")
+        let client = CodexAppServerClient(timeout: 1.0)
+
+        try await expectDeliveryThrows(containing: "env: node: No such file or directory") {
+            _ = try await client.deliver(
+                binaryPath: script.path,
+                socketPath: "/tmp/graftty-codex.sock",
+                expectedCWD: "/repo/.worktrees/alice",
+                message: "hello"
+            )
+        }
+    }
+
     private enum TurnStartResponse {
         case accepted
         case nullResult
@@ -279,6 +300,7 @@ struct CodexAppServerClientTests {
         let binaryPath: URL
         let argsPath: URL
         let stdinPath: URL
+        let handshakePath: URL
 
         func recordedArguments() throws -> [String] {
             try String(contentsOf: argsPath, encoding: .utf8)
@@ -297,11 +319,16 @@ struct CodexAppServerClientTests {
                 return try #require(object as? [String: Any])
             }
         }
+
+        func recordedHandshake() throws -> String {
+            try String(contentsOf: handshakePath, encoding: .utf8)
+        }
     }
 
     private func makeFakeProxy(
         threads: [String],
         cwd: String,
+        cwdByThread: [String: String] = [:],
         turnStartResponse: TurnStartResponse = .accepted,
         loadedListResponseID: Int = 2,
         notificationBeforeLoadedListResponse: Bool = false,
@@ -314,81 +341,158 @@ struct CodexAppServerClientTests {
         let script = dir.appendingPathComponent("codex-fake")
         let args = dir.appendingPathComponent("args.txt")
         let stdin = dir.appendingPathComponent("stdin.jsonl")
-        let loadedListResponse = try jsonLine([
-            "jsonrpc": "2.0",
-            "id": loadedListResponseID,
-            "result": ["data": threads],
-        ])
-        let readResponse = try jsonLine([
-            "jsonrpc": "2.0",
-            "id": 3,
-            "result": ["thread": ["cwd": cwd]],
-        ])
-        let turnResponse: String
+        let handshake = dir.appendingPathComponent("handshake.txt")
+        let threadsJSON = try jsonLine(threads)
+        let cwdByThreadJSON = try jsonLine(cwdByThread)
+        let turnResponseKind: String
+        let turnErrorMessage: String
         switch turnStartResponse {
         case .accepted:
-            turnResponse = try jsonLine(["jsonrpc": "2.0", "id": 4, "result": [:] as [String: String]])
+            turnResponseKind = "accepted"
+            turnErrorMessage = ""
         case .nullResult:
-            turnResponse = try jsonLine(["jsonrpc": "2.0", "id": 4, "result": NSNull()])
+            turnResponseKind = "nullResult"
+            turnErrorMessage = ""
         case .missingResult:
-            turnResponse = try jsonLine(["jsonrpc": "2.0", "id": 4])
+            turnResponseKind = "missingResult"
+            turnErrorMessage = ""
         case .error(let message):
-            turnResponse = try jsonLine([
-                "jsonrpc": "2.0",
-                "id": 4,
-                "error": ["code": -32000, "message": message] as [String: Any],
-            ])
+            turnResponseKind = "error"
+            turnErrorMessage = message
         }
         let loadedListNotification = notificationBeforeLoadedListResponse
-            ? "              printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"method\":\"thread/updated\",\"params\":{}}'\n"
+            ? "  write_text('{\"method\":\"thread/updated\",\"params\":{}}')\n"
             : ""
-        let trapTerm = mode == .hangAfterTurnIgnoringSIGTERM ? "trap '' TERM\n" : ""
+        let trapTerm = mode == .hangAfterTurnIgnoringSIGTERM ? "Signal.trap('TERM', 'IGNORE')\n" : ""
         let afterThreadRead = mode == .stopReadingAfterThreadRead
-            ? "              while true; do sleep 1; done\n"
+            ? "  loop { sleep 1 }\n"
             : ""
         let closeStdinAfterThreadRead = mode == .closeStdinAfterThreadRead
-            ? "              exec 0<&-\n              while true; do sleep 1; done\n"
+            ? "  STDIN.close\n  loop { sleep 1 }\n"
             : ""
         let afterTurn = mode == .hangAfterTurnIgnoringSIGTERM
-            ? "              while true; do sleep 1; done\n"
+            ? "  loop { sleep 1 }\n"
             : ""
 
         let body = """
-        #!/bin/sh
+        #!/usr/bin/env ruby
+        require 'json'
+        STDIN.binmode
+        STDOUT.binmode
         \(trapTerm)
-        printf '%s\\n' "$@" > '\(shellSingleQuoted(args.path))'
-        : > '\(shellSingleQuoted(stdin.path))'
+        File.write('\(shellSingleQuoted(args.path))', ARGV.join("\\n") + "\\n")
+        File.write('\(shellSingleQuoted(stdin.path))', '')
+
+        def read_exact(count)
+          data = STDIN.read(count)
+          exit 0 if data.nil?
+          exit 4 unless data.bytesize == count
+          data
+        end
+
+        def read_frame
+          first = read_exact(2).bytes
+          opcode = first[0] & 0x0f
+          length = first[1] & 0x7f
+          masked = (first[1] & 0x80) != 0
+          length = read_exact(2).unpack1('n') if length == 126
+          length = read_exact(8).unpack1('Q>') if length == 127
+          mask = masked ? read_exact(4).bytes : nil
+          payload = read_exact(length).bytes
+          payload = payload.each_with_index.map { |byte, index| byte ^ mask[index % 4] } if mask
+          [opcode, payload.pack('C*').force_encoding('UTF-8')]
+        end
+
+        def write_text(text)
+          bytes = text.b
+          header = [0x81]
+          if bytes.bytesize < 126
+            header << bytes.bytesize
+          elsif bytes.bytesize <= 65_535
+            header << 126
+            header.concat([bytes.bytesize].pack('n').bytes)
+          else
+            header << 127
+            header.concat([bytes.bytesize].pack('Q>').bytes)
+          end
+          STDOUT.write(header.pack('C*'))
+          STDOUT.write(bytes)
+          STDOUT.flush
+        end
+
+        handshake = +''
+        handshake << read_exact(1) until handshake.include?("\\r\\n\\r\\n")
+        File.write('\(shellSingleQuoted(handshake.path))', handshake)
+        exit 3 unless handshake.start_with?('GET ') && handshake.downcase.include?('upgrade: websocket')
+        STDOUT.write("HTTP/1.1 101 Switching Protocols\\r\\nConnection: Upgrade\\r\\nUpgrade: websocket\\r\\nSec-WebSocket-Accept: test\\r\\n\\r\\n")
+        STDOUT.flush
+
+        threads = JSON.parse(<<'GRAFTTY_JSON')
+        \(threadsJSON)
+        GRAFTTY_JSON
+        cwd_by_thread = JSON.parse(<<'GRAFTTY_JSON')
+        \(cwdByThreadJSON)
+        GRAFTTY_JSON
+        default_cwd = '\(shellSingleQuoted(cwd))'
+        turn_response_kind = '\(turnResponseKind)'
+        turn_error_message = '\(shellSingleQuoted(turnErrorMessage))'
+
         n=0
-        while IFS= read -r line; do
-          n=$((n + 1))
-          printf '%s\\n' "$line" >> '\(shellSingleQuoted(stdin.path))'
-          case "$n" in
-            1)
-              printf '%s\\n' '{"jsonrpc":"2.0","id":1,"result":{}}'
-              ;;
-            3)
+        loop do
+          opcode, line = read_frame
+          exit 0 if opcode == 8
+          next unless opcode == 1
+          n += 1
+          File.open('\(shellSingleQuoted(stdin.path))', 'a') { |file| file.puts(line) }
+          request = JSON.parse(line)
+          case request['method']
+          when 'initialize'
+            write_text(JSON.generate({ id: request['id'], result: {} }))
+          when 'thread/loaded/list'
         \(loadedListNotification)
-              printf '%s\\n' '\(shellSingleQuoted(loadedListResponse))'
-              ;;
-            4)
-              printf '%s\\n' '\(shellSingleQuoted(readResponse))'
+            write_text(JSON.generate({ id: \(loadedListResponseID), result: { data: threads } }))
+          when 'thread/read'
+            thread_id = request.dig('params', 'threadId')
+            write_text(JSON.generate({ id: request['id'], result: { thread: { cwd: cwd_by_thread.fetch(thread_id, default_cwd) } } }))
         \(afterThreadRead)
         \(closeStdinAfterThreadRead)
-              ;;
-            5)
-              printf '%s\\n' '\(shellSingleQuoted(turnResponse))'
+          when 'turn/start'
+            case turn_response_kind
+            when 'accepted'
+              write_text(JSON.generate({ id: request['id'], result: {} }))
+            when 'nullResult'
+              write_text(JSON.generate({ id: request['id'], result: nil }))
+            when 'missingResult'
+              write_text(JSON.generate({ id: request['id'] }))
+            when 'error'
+              write_text(JSON.generate({ id: request['id'], error: { code: -32_000, message: turn_error_message } }))
+            end
         \(afterTurn)
-              ;;
-          esac
-        done
+          end
+        end
         """
         try body.write(to: script, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
 
-        return FakeProxy(binaryPath: script, argsPath: args, stdinPath: stdin)
+        return FakeProxy(binaryPath: script, argsPath: args, stdinPath: stdin, handshakePath: handshake)
     }
 
-    private func jsonLine(_ value: [String: Any]) throws -> String {
+    private func makeFailingProxy(stderr: String) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-codex-client-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let script = dir.appendingPathComponent("codex-fake")
+        let body = """
+        #!/bin/sh
+        printf '%s\\n' '\(shellSingleQuoted(stderr))' >&2
+        exit 127
+        """
+        try body.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        return script
+    }
+
+    private func jsonLine(_ value: Any) throws -> String {
         let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
         return try #require(String(data: data, encoding: .utf8))
     }

@@ -6,13 +6,6 @@ import GrafttyKit
 import GrafttyProtocol
 import WebRTC
 
-/// Optional callbacks injected into `TeamInboxRequestHandler`.
-struct TeamHookCallbacks {
-    let onStop: @Sendable (String, String, String, String?) -> Void
-    let onSessionStart: @Sendable (String, String, String, String?) -> Void
-    let onPostToolUse: @Sendable (String, String, String, String?) -> Void
-}
-
 protocol CodexAppServerDeliveryTrigger: Sendable {
     func onMessageArrival(team: String, worktree: String) async
 }
@@ -2214,8 +2207,7 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         teamInbox: TeamInbox,
-        teamEventDispatcher: TeamEventDispatcher,
-        hookCallbacks: TeamHookCallbacks? = nil
+        teamEventDispatcher: TeamEventDispatcher
     ) -> ResponseMessage? {
         switch message {
         case .listPanes(let path):
@@ -2280,8 +2272,7 @@ struct GrafttyApp: App {
                 appState: appState,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher,
-                terminalManager: terminalManager,
-                hookCallbacks: hookCallbacks
+                terminalManager: terminalManager
             )
         case .teamInbox(let callerPath, let worktree, let repo, let member, let unread, let all):
             return handleTeamInbox(
@@ -2383,8 +2374,7 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher,
-        terminalManager: TerminalManager,
-        hookCallbacks: TeamHookCallbacks? = nil
+        terminalManager: TerminalManager
     ) -> ResponseMessage {
         do {
             let presenceRecords = (try? TeamPresenceStorage(
@@ -2400,7 +2390,6 @@ struct GrafttyApp: App {
             let output = try teamInboxRequestHandler(
                 inbox: teamInbox,
                 dispatcher: teamEventDispatcher,
-                hookCallbacks: hookCallbacks,
                 automaticDeliveryOwner: { teamID, worktree, runtime, paneSessionName in
                     guard let paneSessionName else { return false }
                     let resolver = TeamDeliveryOwnershipResolver(
@@ -2576,7 +2565,6 @@ struct GrafttyApp: App {
     private static func teamInboxRequestHandler(
         inbox: TeamInbox,
         dispatcher: TeamEventDispatcher,
-        hookCallbacks: TeamHookCallbacks? = nil,
         automaticDeliveryOwner: (@Sendable (
             _ teamID: String,
             _ worktree: String,
@@ -2588,9 +2576,6 @@ struct GrafttyApp: App {
             inbox: inbox,
             dispatcher: dispatcher,
             sessionPromptRenderer: renderTeamSessionPrompt(team:viewer:),
-            onStop: hookCallbacks?.onStop,
-            onSessionStart: hookCallbacks?.onSessionStart,
-            onPostToolUse: hookCallbacks?.onPostToolUse,
             automaticDeliveryOwner: automaticDeliveryOwner
         )
     }

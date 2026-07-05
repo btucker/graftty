@@ -491,6 +491,87 @@ enum TeamCodexAppServerPIDResolver {
     }
 }
 
+enum CodexDeliveryBinaryResolver {
+    static var targetTriple: String {
+        #if os(macOS)
+        #if arch(arm64)
+        return "aarch64-apple-darwin"
+        #elseif arch(x86_64)
+        return "x86_64-apple-darwin"
+        #else
+        return ""
+        #endif
+        #elseif os(Linux)
+        #if arch(arm64)
+        return "aarch64-unknown-linux-musl"
+        #elseif arch(x86_64)
+        return "x86_64-unknown-linux-musl"
+        #else
+        return ""
+        #endif
+        #else
+        return ""
+        #endif
+    }
+
+    static var platformPackageName: String {
+        #if os(macOS)
+        #if arch(arm64)
+        return "@openai/codex-darwin-arm64"
+        #elseif arch(x86_64)
+        return "@openai/codex-darwin-x64"
+        #else
+        return ""
+        #endif
+        #elseif os(Linux)
+        #if arch(arm64)
+        return "@openai/codex-linux-arm64"
+        #elseif arch(x86_64)
+        return "@openai/codex-linux-x64"
+        #else
+        return ""
+        #endif
+        #else
+        return ""
+        #endif
+    }
+
+    static var platformPackageDirectoryName: String {
+        platformPackageName.split(separator: "/").last.map(String.init) ?? ""
+    }
+
+    static func resolve(_ realBinaryPath: String, fileManager: FileManager = .default) -> String {
+        guard !targetTriple.isEmpty, !platformPackageDirectoryName.isEmpty else {
+            return realBinaryPath
+        }
+
+        let binaryURL = URL(fileURLWithPath: realBinaryPath)
+        let scriptURL = binaryURL.resolvingSymlinksInPath()
+        guard scriptURL.lastPathComponent == "codex.js",
+              let script = try? String(contentsOf: scriptURL, encoding: .utf8),
+              script.hasPrefix("#!/usr/bin/env node")
+        else {
+            return realBinaryPath
+        }
+
+        let packageRoot = scriptURL
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let openAIOrgRoot = packageRoot.deletingLastPathComponent()
+        let nativeURL = openAIOrgRoot
+            .appendingPathComponent(platformPackageDirectoryName, isDirectory: true)
+            .appendingPathComponent("vendor", isDirectory: true)
+            .appendingPathComponent(targetTriple, isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("codex")
+
+        guard fileManager.isExecutableFile(atPath: nativeURL.path) else {
+            return realBinaryPath
+        }
+        return nativeURL.path
+    }
+}
+
 enum TeamCodexAppServerCore {
     @discardableResult
     static func register(
@@ -504,12 +585,13 @@ enum TeamCodexAppServerCore {
         appServerProcessStartTimeMicroseconds: Int64,
         registeredAt: Date
     ) throws -> CodexAppServerSessionRecord {
+        let deliveryBinaryPath = CodexDeliveryBinaryResolver.resolve(realBinaryPath)
         let record = CodexAppServerSessionRecord(
             teamID: teamID,
             worktree: worktree,
             paneSessionName: paneSessionName,
             socketPath: socketPath,
-            realBinaryPath: realBinaryPath,
+            realBinaryPath: deliveryBinaryPath,
             appServerPID: appServerPID,
             appServerProcessStartTimeMicroseconds: appServerProcessStartTimeMicroseconds,
             registeredAt: registeredAt

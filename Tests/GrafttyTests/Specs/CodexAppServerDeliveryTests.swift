@@ -48,6 +48,7 @@ struct CodexAppServerDeliveryTests {
         #expect(pending.count == 1)
         let event = try #require(f.readEvents().last)
         #expect(event.detail["outcome"] == "error_delivery")
+        #expect(event.detail["error"] == "boom")
     }
 
     @Test("No owner skips without client delivery or watermark advancement.")

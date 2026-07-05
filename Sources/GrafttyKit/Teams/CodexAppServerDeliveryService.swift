@@ -167,7 +167,8 @@ public actor CodexAppServerDeliveryService {
                 runtime: runtime,
                 outcome: "error_delivery",
                 paneSessionName: owner.paneSessionName,
-                messageIDs: pending.map(\.id)
+                messageIDs: pending.map(\.id),
+                error: String(describing: error)
             )
             return
         }
@@ -217,7 +218,8 @@ public actor CodexAppServerDeliveryService {
         outcome: String,
         paneSessionName: String? = nil,
         messageIDs: [String] = [],
-        threadID: String? = nil
+        threadID: String? = nil,
+        error: String? = nil
     ) {
         guard let eventLog else { return }
         var detail: [String: String] = [
@@ -233,6 +235,9 @@ public actor CodexAppServerDeliveryService {
         }
         if let threadID {
             detail["threadID"] = threadID
+        }
+        if let error, !error.isEmpty {
+            detail["error"] = error
         }
         try? eventLog.append(TeamEvent(
             teamID: team,

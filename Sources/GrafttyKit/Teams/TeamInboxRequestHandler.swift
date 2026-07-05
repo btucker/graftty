@@ -38,9 +38,6 @@ public final class TeamInboxRequestHandler {
     private let inbox: TeamInbox
     private let dispatcher: TeamEventDispatcher
     private let sessionPromptRenderer: ((TeamView, TeamMember) -> String?)?
-    private let onStop: (@Sendable (_ team: String, _ worktree: String, _ runtime: String, _ paneSessionName: String?) -> Void)?
-    private let onSessionStart: (@Sendable (_ team: String, _ worktree: String, _ runtime: String, _ paneSessionName: String?) -> Void)?
-    private let onPostToolUse: (@Sendable (_ team: String, _ worktree: String, _ runtime: String, _ paneSessionName: String?) -> Void)?
     private let automaticDeliveryOwner: (@Sendable (
         _ teamID: String,
         _ worktree: String,
@@ -52,9 +49,6 @@ public final class TeamInboxRequestHandler {
         inbox: TeamInbox,
         dispatcher: TeamEventDispatcher,
         sessionPromptRenderer: ((TeamView, TeamMember) -> String?)? = nil,
-        onStop: (@Sendable (String, String, String, String?) -> Void)? = nil,
-        onSessionStart: (@Sendable (String, String, String, String?) -> Void)? = nil,
-        onPostToolUse: (@Sendable (String, String, String, String?) -> Void)? = nil,
         automaticDeliveryOwner: (@Sendable (
             _ teamID: String,
             _ worktree: String,
@@ -65,9 +59,6 @@ public final class TeamInboxRequestHandler {
         self.inbox = inbox
         self.dispatcher = dispatcher
         self.sessionPromptRenderer = sessionPromptRenderer
-        self.onStop = onStop
-        self.onSessionStart = onSessionStart
-        self.onPostToolUse = onPostToolUse
         self.automaticDeliveryOwner = automaticDeliveryOwner
     }
 
@@ -195,7 +186,6 @@ public final class TeamInboxRequestHandler {
 
         switch event {
         case .sessionStart:
-            onSessionStart?(teamID, context.sender.worktreePath, runtime.rawValue, paneSessionName)
             if runtime == .claude {
                 _ = try cursorForHook(
                     teamID: teamID,
@@ -210,7 +200,6 @@ public final class TeamInboxRequestHandler {
             }
             return try TeamHookRenderer.sessionStart(runtime: runtime, teamContext: text)
         case .postToolUse:
-            onPostToolUse?(teamID, context.sender.worktreePath, runtime.rawValue, paneSessionName)
             guard runtime != .codex else {
                 return try TeamHookRenderer.postToolUse(runtime: runtime, messages: [])
             }
@@ -253,7 +242,6 @@ public final class TeamInboxRequestHandler {
             // and bury them past the next real delivery path. The
             // Claude side picks them up via the asyncRewake watcher;
             // Codex hook delivery is intentionally disabled.
-            onStop?(teamID, context.sender.worktreePath, runtime.rawValue, paneSessionName)
             return try TeamHookRenderer.stop(runtime: runtime, messages: [])
         }
     }
