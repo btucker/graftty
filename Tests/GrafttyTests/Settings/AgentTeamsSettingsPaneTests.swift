@@ -6,21 +6,20 @@ import GrafttyKit
 @Suite("AgentTeamsSettingsPane Tests")
 struct AgentTeamsSettingsPaneTests {
 
-    @Test func defaultSessionPromptIsEmptyAndEventPromptIsNonEmpty() {
-        #expect(DefaultPrompts.sessionPrompt.isEmpty)
+    @Test func defaultPromptsAreNonEmpty() {
+        #expect(!DefaultPrompts.sessionPrompt.isEmpty)
         #expect(!DefaultPrompts.eventPrompt.isEmpty)
     }
 
-    /// The generated team primer already names the branch, worktree, commands,
-    /// and routing model. The default session template stays empty so it does
-    /// not add a second role/policy paragraph at session start.
-    @Test func defaultSessionPromptDoesNotDuplicateGeneratedPrimer() {
-        let p = DefaultPrompts.sessionPrompt
-        #expect(p.isEmpty)
-        #expect(!p.contains("agent.branch"))
-        #expect(!p.contains("agent.lead"))
-        #expect(!p.contains("coworker"))
-        #expect(!p.contains("team's lead"))
+    /// Session prompt runs at session start, before any event has arrived,
+    /// so the event-scoped fields are always `false`. The default template
+    /// must not lean on them — and the UI's variable list intentionally
+    /// hides them.
+    @Test func sessionPromptOmitsEventScopedVariables() {
+        #expect(DefaultPrompts.sessionPrompt.contains("agent.branch"))
+        #expect(DefaultPrompts.sessionPrompt.contains("agent.lead"))
+        #expect(!DefaultPrompts.sessionPrompt.contains("agent.this_worktree"))
+        #expect(!DefaultPrompts.sessionPrompt.contains("agent.other_worktree"))
     }
 
     /// Per-event prompt runs per delivery and should react to whether the
@@ -30,9 +29,9 @@ struct AgentTeamsSettingsPaneTests {
         #expect(p.contains("agent.this_worktree") || p.contains("agent.other_worktree"))
     }
 
-    /// Catches Stencil syntax errors in the per-event default across the four
-    /// agent shapes a real delivery could produce. The default session prompt
-    /// is intentionally empty and therefore renders to nil.
+    /// Catches Stencil syntax errors in the defaults across the four agent
+    /// shapes a real delivery could produce: lead vs coworker × event-about-
+    /// self vs event-about-peer vs no-event-yet.
     @Test func defaultPromptsRenderUnderEveryAgentContext() {
         let shapes: [(lead: Bool, thisWorktree: Bool, otherWorktree: Bool)] = [
             (true,  false, false),
@@ -47,7 +46,7 @@ struct AgentTeamsSettingsPaneTests {
                 thisWorktree: s.thisWorktree,
                 otherWorktree: s.otherWorktree
             )
-            #expect(EventBodyRenderer.renderAgentTemplate(DefaultPrompts.sessionPrompt, agent: ctx) == nil)
+            #expect(EventBodyRenderer.renderAgentTemplate(DefaultPrompts.sessionPrompt, agent: ctx) != nil)
             #expect(EventBodyRenderer.renderAgentTemplate(DefaultPrompts.eventPrompt,   agent: ctx) != nil)
         }
     }
