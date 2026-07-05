@@ -142,7 +142,6 @@ public struct CodexAppServerClient: CodexAppServerClienting, Sendable {
                 method: "turn/start"
             )
 
-            try? stdin.fileHandleForWriting.close()
             return CodexAppServerDeliveryResult(threadID: threadID)
         } catch let error as CodexAppServerClientError {
             throw error.appendingProxyStderr(stderrCapture?.contents())
