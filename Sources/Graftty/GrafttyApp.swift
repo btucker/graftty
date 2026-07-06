@@ -1372,20 +1372,32 @@ struct GrafttyApp: App {
         let worktreeMonitor = services.worktreeMonitor
         let dispatcherForWeb = services.teamEventDispatcher
         webController.setDefaultBranchPuller { req in
-            let repo = await MainActor.run {
-                appStateBinding.wrappedValue.repos.first(where: { $0.path == req.repoPath })
+            let pullTarget = await MainActor.run {
+                guard let repo = appStateBinding.wrappedValue.repos.first(where: { $0.path == req.repoPath }) else {
+                    return (tracked: false, status: nil as WebServer.RepoInfo.DefaultBranchStatus?)
+                }
+                return (tracked: true, status: defaultBranchStatus(
+                    for: repo,
+                    stats: statsStore.stats[repo.path]
+                ))
             }
-            guard let repo else {
+            guard pullTarget.tracked else {
                 return .invalid("repository not tracked")
             }
+            guard let status = pullTarget.status else {
+                return .invalid("default checkout is not behind origin")
+            }
             do {
-                try await GitDefaultBranchPull.pull(repoPath: req.repoPath)
+                try await GitDefaultBranchPull.pull(repoPath: req.repoPath, branchName: status.branchName)
             } catch GitDefaultBranchPull.Error.gitFailed(_, let stderr) {
                 return .gitFailed(stderr)
             } catch {
                 return .internalFailure("\(error)")
             }
             await MainActor.run {
+                guard let repo = appStateBinding.wrappedValue.repos.first(where: { $0.path == req.repoPath }) else {
+                    return
+                }
                 let branch = repo.worktrees.first(where: { $0.path == repo.path })?.branch ?? ""
                 statsStore.refresh(worktreePath: repo.path, repoPath: repo.path, branch: branch)
             }

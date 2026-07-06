@@ -195,6 +195,49 @@ test('new worktree form offers to pull a stale default checkout before creating'
   }]);
 });
 
+test('new worktree form creates immediately when declining the default-branch pull offer', async () => {
+  const user = userEvent.setup();
+  const postedBodies: unknown[] = [];
+  installFetch({
+    repos: [{
+      path: '/repo/alpha',
+      displayName: 'alpha',
+      defaultBranchStatus: {
+        branchName: 'main',
+        remoteRef: 'origin/main',
+        behindCount: 1,
+      },
+    }],
+    post: async (init) => {
+      postedBodies.push(JSON.parse(String(init?.body)));
+      return jsonResponse({
+        sessionName: 'graftty-create-anyway',
+        worktreePath: '/repo/alpha/.worktrees/feature-y',
+      });
+    },
+  });
+
+  render(<NewWorktreePage />);
+
+  await user.type(await screen.findByLabelText('Worktree name'), 'feature-y');
+  await user.click(screen.getByRole('button', { name: 'Create' }));
+
+  expect(await screen.findByText(/main is 1 commit behind origin\/main/)).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Create Anyway' }));
+
+  await waitFor(() => {
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: '/session/$name',
+      params: { name: 'graftty-create-anyway' },
+    });
+  });
+  expect(postedBodies).toEqual([{
+    repoPath: '/repo/alpha',
+    worktreeName: 'feature-y',
+    branchName: 'feature-y',
+  }]);
+});
+
 // @spec WEB-7.7: When `AppState.repos` is empty (no repositories tracked yet), the `/new` route shall render an empty-state message directing the user to open a repository in the native Graftty app first, with a back-link to `/`. The web client shall not implement repository-adding (the Mac-side file dialog + security-scoped bookmark mint has no web equivalent in Phase 2).
 test('new worktree route renders empty state when no repos are tracked', async () => {
   installFetch({ repos: [] });

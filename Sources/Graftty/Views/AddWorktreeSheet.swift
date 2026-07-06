@@ -133,7 +133,7 @@ struct AddWorktreeSheet: View {
                             defaultBranchOfferDismissed = true
                             Task { await submit() }
                         }
-                        .disabled(isPullingDefaultBranch || isSubmitting)
+                        .disabled(isPullingDefaultBranch || isSubmitting || !controller.canSubmit)
                     }
                 }
                 .padding(10)
@@ -192,7 +192,8 @@ struct AddWorktreeSheet: View {
 
     private var shouldOfferDefaultBranchPull: Bool {
         guard controller.branchMode == .newBranch,
-              defaultBranchStatus != nil,
+              let defaultBranchStatus,
+              defaultBranchStatus.behindCount > 0,
               !defaultBranchOfferDismissed else {
             return false
         }

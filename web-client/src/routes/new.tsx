@@ -97,49 +97,8 @@ export function NewWorktreePage() {
       !defaultBranchDecisionRepos.has(selectedRepo);
   }, [defaultBranchDecisionRepos, selectedRepo, selectedRepoInfo]);
 
-  const handlePullDefaultBranch = async () => {
-    if (!selectedRepo) return;
+  const submitWorktree = async () => {
     setErrorMessage(null);
-    setPullingDefaultBranch(true);
-    try {
-      const res = await fetch('/repos/default-branch/pull', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repoPath: selectedRepo }),
-      });
-      if (!res.ok) {
-        let msg = `request failed (${res.status})`;
-        try {
-          const err = (await res.json()) as { error?: string };
-          if (err.error) msg = err.error;
-        } catch { /* keep fallback */ }
-        setErrorMessage(msg);
-        return;
-      }
-      setDefaultBranchDecisionRepos((prev) => new Set(prev).add(selectedRepo));
-      setPullOfferVisible(false);
-    } catch (err) {
-      setErrorMessage(err instanceof Error ? err.message : String(err));
-    } finally {
-      setPullingDefaultBranch(false);
-    }
-  };
-
-  const createAnyway = async () => {
-    if (!selectedRepo) return;
-    setDefaultBranchDecisionRepos((prev) => new Set(prev).add(selectedRepo));
-    setPullOfferVisible(false);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!canSubmit) return;
-    setErrorMessage(null);
-    if (shouldOfferDefaultBranchPull) {
-      setPullOfferVisible(true);
-      return;
-    }
     setSubmitting(true);
     try {
       const body = {
@@ -175,6 +134,53 @@ export function NewWorktreePage() {
       setErrorMessage(err instanceof Error ? err.message : String(err));
       setSubmitting(false);
     }
+  };
+
+  const handlePullDefaultBranch = async () => {
+    if (!selectedRepo) return;
+    setErrorMessage(null);
+    setPullingDefaultBranch(true);
+    try {
+      const res = await fetch('/repos/default-branch/pull', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repoPath: selectedRepo }),
+      });
+      if (!res.ok) {
+        let msg = `request failed (${res.status})`;
+        try {
+          const err = (await res.json()) as { error?: string };
+          if (err.error) msg = err.error;
+        } catch { /* keep fallback */ }
+        setErrorMessage(msg);
+        return;
+      }
+      setDefaultBranchDecisionRepos((prev) => new Set(prev).add(selectedRepo));
+      setPullOfferVisible(false);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPullingDefaultBranch(false);
+    }
+  };
+
+  const createAnyway = async () => {
+    if (!canSubmit) return;
+    setDefaultBranchDecisionRepos((prev) => new Set(prev).add(selectedRepo));
+    setPullOfferVisible(false);
+    await submitWorktree();
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setErrorMessage(null);
+    if (shouldOfferDefaultBranchPull) {
+      setPullOfferVisible(true);
+      return;
+    }
+    await submitWorktree();
   };
 
   if (reposState.kind === 'loading') {

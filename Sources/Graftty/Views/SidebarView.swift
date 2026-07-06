@@ -125,8 +125,14 @@ struct SidebarView: View {
     }
 
     private func pullDefaultBranch(for repo: RepoEntry) async -> String? {
+        guard let status = defaultBranchStatus(
+            for: repo,
+            stats: statsStore.stats[repo.path]
+        ) else {
+            return nil
+        }
         do {
-            try await GitDefaultBranchPull.pull(repoPath: repo.path)
+            try await GitDefaultBranchPull.pull(repoPath: repo.path, branchName: status.branchName)
         } catch GitDefaultBranchPull.Error.gitFailed(_, let stderr) {
             return stderr
         } catch {

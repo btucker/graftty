@@ -197,6 +197,77 @@ struct WebServerWorktreeEndpointTests {
         #expect(pulled == ["/tmp/repo"])
     }
 
+    @Test func defaultBranchPullEndpointReturns503WhenUnwired() async throws {
+        if skipInCI() { return }
+
+        let (server, port) = try Self.startServer(config: Self.makeConfig())
+        defer { server.stop() }
+
+        let body = try JSONEncoder().encode(WebServer.PullDefaultBranchRequest(repoPath: "/tmp/repo"))
+        var req = URLRequest(url: URL(string: "https://localhost:\(port)/repos/default-branch/pull")!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+
+        let (data, response) = try await trustAllData(for: req)
+        let http = response as! HTTPURLResponse
+        #expect(http.statusCode == 503)
+        struct ErrEnv: Codable { let error: String }
+        let decoded = try JSONDecoder().decode(ErrEnv.self, from: data)
+        #expect(decoded.error.contains("not available"))
+    }
+
+    @Test func defaultBranchPullEndpointGitFailureReturns409WithError() async throws {
+        if skipInCI() { return }
+
+        let puller: @Sendable (WebServer.PullDefaultBranchRequest) async -> WebServer.PullDefaultBranchOutcome = { _ in
+            .gitFailed("fatal: Not possible to fast-forward")
+        }
+        let (server, port) = try Self.startServer(config: Self.makeConfig(defaultBranchPuller: puller))
+        defer { server.stop() }
+
+        let body = try JSONEncoder().encode(WebServer.PullDefaultBranchRequest(repoPath: "/tmp/repo"))
+        var req = URLRequest(url: URL(string: "https://localhost:\(port)/repos/default-branch/pull")!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+
+        let (data, response) = try await trustAllData(for: req)
+        let http = response as! HTTPURLResponse
+        #expect(http.statusCode == 409)
+        struct ErrEnv: Codable { let error: String }
+        let decoded = try JSONDecoder().decode(ErrEnv.self, from: data)
+        #expect(decoded.error.contains("fast-forward"))
+    }
+
+    @Test func defaultBranchPullEndpointInvalidInputReturns400WithoutInvokingPuller() async throws {
+        if skipInCI() { return }
+
+        let puller: @Sendable (WebServer.PullDefaultBranchRequest) async -> WebServer.PullDefaultBranchOutcome = { _ in
+            Issue.record("puller should not run on invalid input")
+            return .internalFailure("should not reach")
+        }
+        let (server, port) = try Self.startServer(config: Self.makeConfig(defaultBranchPuller: puller))
+        defer { server.stop() }
+
+        var invalidJSON = URLRequest(url: URL(string: "https://localhost:\(port)/repos/default-branch/pull")!)
+        invalidJSON.httpMethod = "POST"
+        invalidJSON.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        invalidJSON.httpBody = Data("not json".utf8)
+
+        let (_, invalidJSONResponse) = try await trustAllData(for: invalidJSON)
+        #expect((invalidJSONResponse as! HTTPURLResponse).statusCode == 400)
+
+        let body = try JSONEncoder().encode(WebServer.PullDefaultBranchRequest(repoPath: "   "))
+        var emptyPath = URLRequest(url: URL(string: "https://localhost:\(port)/repos/default-branch/pull")!)
+        emptyPath.httpMethod = "POST"
+        emptyPath.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        emptyPath.httpBody = body
+
+        let (_, emptyPathResponse) = try await trustAllData(for: emptyPath)
+        #expect((emptyPathResponse as! HTTPURLResponse).statusCode == 400)
+    }
+
     @Test func worktreesPostGitFailureReturns409WithError() async throws {
         if skipInCI() { return }
 
