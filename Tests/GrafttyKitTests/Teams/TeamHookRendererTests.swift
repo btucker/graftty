@@ -12,12 +12,12 @@ struct TeamHookRendererTests {
         #expect(context.contains("Graftty Agent Team session context"))
     }
 
-    @Test func codexPostToolUseRendersUrgentMessagesAsUnrelatedToToolResult() throws {
+    @Test func claudePostToolUseRendersUrgentMessagesAsUnrelatedToToolResult() throws {
         let messages = [
             message(id: "m1", priority: .urgent, body: "CI is blocking you"),
         ]
 
-        let json = try TeamHookRenderer.codexPostToolUse(messages: messages)
+        let json = try TeamHookRenderer.claudePostToolUse(messages: messages)
         let context = try additionalContext(from: json)
 
         #expect(context.contains("unrelated to the tool result"))
@@ -26,20 +26,24 @@ struct TeamHookRendererTests {
         #expect(context.contains("CI is blocking you"))
     }
 
-    @Test("Stop hook emits an empty object regardless of inbox contents — neither runtime accepts hookSpecificOutput on Stop, so any payload would fail the runtime's JSON-schema validation.")
-    func codexStopAlwaysEmitsEmptyObject() throws {
-        #expect(try TeamHookRenderer.codexStop(messages: []) == "{}")
-        #expect(try TeamHookRenderer.codexStop(messages: [
-            message(id: "m1", priority: .normal, body: "Please review my diff."),
-            message(id: "m2", priority: .urgent, body: "CI is blocking you"),
+    @Test("Codex PostToolUse is a no-op because Codex delivery uses the app-server path.")
+    func codexPostToolUseAlwaysEmitsEmptyObject() throws {
+        #expect(try TeamHookRenderer.postToolUse(runtime: .codex, messages: []) == "{}")
+        #expect(try TeamHookRenderer.postToolUse(runtime: .codex, messages: [
+            message(id: "m1", priority: .urgent, body: "CI is blocking you"),
         ]) == "{}")
-        #expect(try TeamHookRenderer.claudeStop(messages: [
+    }
+
+    @Test("Stop hook emits an empty object regardless of inbox contents.")
+    func stopAlwaysEmitsEmptyObject() throws {
+        #expect(try TeamHookRenderer.stop(runtime: .codex, messages: []) == "{}")
+        #expect(try TeamHookRenderer.stop(runtime: .claude, messages: [
             message(id: "m1", priority: .normal, body: "anything"),
         ]) == "{}")
     }
 
     @Test func emptyMessagePostToolUseRendersEmptyObject() throws {
-        #expect(try TeamHookRenderer.codexPostToolUse(messages: []) == "{}")
+        #expect(try TeamHookRenderer.claudePostToolUse(messages: []) == "{}")
     }
 
     @Test("@spec TEAM-PRESENCE-1.1: When an agent session starts, the application shall inject a team protocol primer in the SessionStart additionalContext.")
@@ -48,9 +52,11 @@ struct TeamHookRendererTests {
         let context = try additionalContext(from: json)
 
         #expect(context.contains("graftty team inbox"))
-        #expect(context.contains("graftty team send"))
-        #expect(context.contains("graftty team status"))
+        #expect(context.contains("graftty team msg"))
+        #expect(context.contains("graftty team list"))
         #expect(context.contains("team data here"))
+        #expect(!context.lowercased().contains("coworker"))
+        #expect(!context.lowercased().contains("lead"))
 
         // TEAM-PRESENCE-1.3: registration is handled by the wrapper, not
         // typed by the model. The primer must not instruct it — that's the
@@ -120,4 +126,3 @@ struct TeamHookRendererTests {
         return try #require(hookSpecificOutput["additionalContext"] as? String)
     }
 }
-

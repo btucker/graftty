@@ -58,9 +58,7 @@ struct FlowStateAppRequestDispatchTests {
         ))
         let cooldownAt = Date(timeIntervalSince1970: 85)
         try activityStore.recordStatusRequest(worktreeRef: worktreeRef, at: cooldownAt)
-        let inputRegistry = PaneInputActivityRegistry(now: { Date(timeIntervalSince1970: 70) })
         let paneID = UUID(uuidString: "00000000-0000-0000-0000-000000000111")!
-        inputRegistry.recordKeystroke(paneID: paneID)
         var withPane = worktree
         withPane.setAttention(
             Attention(text: "Codex needs input", timestamp: Date(timeIntervalSince1970: 75), source: .agentStop),
@@ -79,8 +77,6 @@ struct FlowStateAppRequestDispatchTests {
             statsStore: statsStore,
             prStatusStore: prStatusStore,
             claudeSessionRegistry: nil,
-            agentStateRegistry: nil,
-            inputActivityRegistry: inputRegistry,
             statusProvider: nil,
             now: { Date(timeIntervalSince1970: 100) }
         )
@@ -97,7 +93,7 @@ struct FlowStateAppRequestDispatchTests {
             #expect(snapshot.scoring.riskUrgency == .critical)
             #expect(snapshot.agentPresence?.waiting == true)
             #expect(snapshot.lastFlowMessageAt == cooldownAt)
-            #expect(snapshot.lastUserActivityAt == Date(timeIntervalSince1970: 70))
+            #expect(snapshot.lastUserActivityAt == nil)
         } else {
             Issue.record("Expected flowContext response")
         }

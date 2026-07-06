@@ -12,22 +12,22 @@ struct TeamInstructionsRendererTests {
         return TeamView.team(for: repo.worktrees[0], in: [repo], teamsEnabled: true)!
     }
 
-    @Test func leadVariantNamesItself() {
+    @Test func mainWorktreeVariantNamesItself() {
         let view = makeView()
         let prompt = TeamInstructionsRenderer.render(team: view, viewer: view.lead)
         #expect(prompt.contains("\"main\""))
-        #expect(prompt.contains("LEAD"))
+        #expect(prompt.contains("main worktree"))
         #expect(prompt.contains("acme-web"))
     }
 
-    @Test func leadVariantListsAllCoworkers() {
+    @Test func mainWorktreeVariantListsOtherWorktrees() {
         let view = makeView()
         let prompt = TeamInstructionsRenderer.render(team: view, viewer: view.lead)
         #expect(prompt.contains("\"feature/login\""))
         #expect(prompt.contains("\"feature/signup\""))
     }
 
-    @Test func leadVariantDocumentsTeamEvents() {
+    @Test func mainWorktreeVariantDocumentsTeamEvents() {
         let view = makeView()
         let prompt = TeamInstructionsRenderer.render(team: view, viewer: view.lead)
         #expect(prompt.contains("team_member_joined"))
@@ -39,28 +39,36 @@ struct TeamInstructionsRendererTests {
         #expect(!prompt.contains("team_pr_merged"))
     }
 
-    @Test func coworkerVariantNamesLead() {
+    @Test func nonMainVariantNamesMainWorktree() {
         let view = makeView()
         let me = view.members.first(where: { $0.name == "feature/login" })!
         let prompt = TeamInstructionsRenderer.render(team: view, viewer: me)
         #expect(prompt.contains("\"feature/login\""))
-        #expect(prompt.contains("\"main\""))    // lead is named
-        #expect(prompt.contains("coworker"))
+        #expect(prompt.contains("\"main\""))
+        #expect(prompt.contains("main worktree"))
     }
 
-    @Test func coworkerVariantListsPeerCoworkers() {
+    @Test func nonMainVariantListsOtherWorktrees() {
         let view = makeView()
         let me = view.members.first(where: { $0.name == "feature/login" })!
         let prompt = TeamInstructionsRenderer.render(team: view, viewer: me)
-        // Peer coworkers (not me, not lead) should be named:
         #expect(prompt.contains("\"feature/signup\""))
     }
 
-    @Test func coworkerVariantStatesItDoesNotReceiveStatusEvents() {
+    @Test func nonMainVariantStatesStatusEventsRouteToMainWorktree() {
         let view = makeView()
         let me = view.members.first(where: { $0.name == "feature/login" })!
         let prompt = TeamInstructionsRenderer.render(team: view, viewer: me)
-        #expect(prompt.contains("do NOT receive status events"))
+        #expect(prompt.contains("Status events route to the main worktree"))
+    }
+
+    @Test func promptsAvoidLeadCoworkerTerminology() {
+        let view = makeView()
+        let prompts = view.members.map { TeamInstructionsRenderer.render(team: view, viewer: $0).lowercased() }
+        for prompt in prompts {
+            #expect(!prompt.contains("lead"))
+            #expect(!prompt.contains("coworker"))
+        }
     }
 
     @Test func neitherVariantPrescribesPolicy() {

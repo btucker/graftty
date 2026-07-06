@@ -9,8 +9,6 @@ enum FlowStateSignalBuilder {
         statsStore: WorktreeStatsStore? = nil,
         prStatusStore: PRStatusStore? = nil,
         claudeSessionRegistry: ClaudeSessionRegistry? = nil,
-        agentStateRegistry: WorktreeAgentStateRegistry? = nil,
-        inputActivityRegistry: PaneInputActivityRegistry? = nil,
         activityStore: FlowStateActivityStore? = nil
     ) -> FlowExternalSignals {
         var signals = FlowExternalSignals.empty
@@ -29,8 +27,7 @@ enum FlowStateSignalBuilder {
                 }
                 if let presence = agentPresence(
                     for: worktree,
-                    claudeSessionRegistry: claudeSessionRegistry,
-                    agentStateRegistry: agentStateRegistry
+                    claudeSessionRegistry: claudeSessionRegistry
                 ) {
                     signals.agentPresenceByWorktreeRef[identity.ref] = presence
                     signals.agentPresenceByWorktreeKey[identity.key] = presence
@@ -38,7 +35,6 @@ enum FlowStateSignalBuilder {
                 if let activity = activitySnapshot(
                     for: worktree,
                     worktreeRef: identity.ref,
-                    inputActivityRegistry: inputActivityRegistry,
                     activityStore: activityStore
                 ) {
                     signals.activityByWorktreeRef[identity.ref] = activity
@@ -95,8 +91,7 @@ enum FlowStateSignalBuilder {
 
     private static func agentPresence(
         for worktree: WorktreeEntry,
-        claudeSessionRegistry: ClaudeSessionRegistry?,
-        agentStateRegistry: WorktreeAgentStateRegistry?
+        claudeSessionRegistry: ClaudeSessionRegistry?
     ) -> FlowAgentPresenceSnapshot? {
         let claudeLiveness = worktree.paneSessions.values.compactMap { sessionID -> AgentLiveness? in
             let sessionName = ZmxLauncher.sessionName(for: sessionID)
@@ -109,24 +104,10 @@ enum FlowStateSignalBuilder {
             return FlowAgentPresenceSnapshot(runtime: "claude", present: true, busy: false, waiting: true)
         }
 
-        guard let agentStateRegistry else {
-            if hasAgentStopAttention(worktree) {
-                return FlowAgentPresenceSnapshot(runtime: nil, present: true, busy: false, waiting: true)
-            }
-            return nil
+        if hasAgentStopAttention(worktree) {
+            return FlowAgentPresenceSnapshot(runtime: nil, present: true, busy: false, waiting: true)
         }
-        let codex = agentStateRegistry.state(worktree: worktree.path, runtime: "codex")
-        let claude = agentStateRegistry.state(worktree: worktree.path, runtime: "claude")
-        let states = [("codex", codex), ("claude", claude)].filter { $0.1 != .unknown }
-        guard let first = states.first else {
-            if hasAgentStopAttention(worktree) {
-                return FlowAgentPresenceSnapshot(runtime: nil, present: true, busy: false, waiting: true)
-            }
-            return nil
-        }
-        let busy = states.contains { $0.1 == .active }
-        let waiting = states.contains { $0.1 == .idle || $0.1 == .user_engaged } || hasAgentStopAttention(worktree)
-        return FlowAgentPresenceSnapshot(runtime: first.0, present: true, busy: busy, waiting: waiting)
+        return nil
     }
 
     private static func hasAgentStopAttention(_ worktree: WorktreeEntry) -> Bool {
@@ -136,25 +117,13 @@ enum FlowStateSignalBuilder {
     private static func activitySnapshot(
         for worktree: WorktreeEntry,
         worktreeRef: String,
-        inputActivityRegistry: PaneInputActivityRegistry?,
         activityStore: FlowStateActivityStore?
     ) -> FlowActivitySnapshot? {
-        let lastInput = latestInput(in: worktree, inputActivityRegistry: inputActivityRegistry)
         let lastActivityMessage = latestFlowMessage(worktreeRef: worktreeRef, activityStore: activityStore)
         let lastCooldown = try? activityStore?.lastStatusRequestAt(worktreeRef: worktreeRef)
         let lastFlow = [lastActivityMessage, lastCooldown].compactMap { $0 }.max()
-        guard lastInput != nil || lastFlow != nil else { return nil }
-        return FlowActivitySnapshot(lastUserActivityAt: lastInput, lastAgentActivityAt: nil, lastFlowMessageAt: lastFlow)
-    }
-
-    private static func latestInput(
-        in worktree: WorktreeEntry,
-        inputActivityRegistry: PaneInputActivityRegistry?
-    ) -> Date? {
-        guard let inputActivityRegistry else { return nil }
-        return worktree.paneSessions.keys.compactMap { slot in
-            inputActivityRegistry.lastInputAt(paneID: slot.id)
-        }.max()
+        guard lastFlow != nil else { return nil }
+        return FlowActivitySnapshot(lastUserActivityAt: nil, lastAgentActivityAt: nil, lastFlowMessageAt: lastFlow)
     }
 
     private static func latestFlowMessage(
@@ -193,8 +162,6 @@ enum FlowStateAppRequestDispatcher {
         statsStore: WorktreeStatsStore? = nil,
         prStatusStore: PRStatusStore? = nil,
         claudeSessionRegistry: ClaudeSessionRegistry? = nil,
-        agentStateRegistry: WorktreeAgentStateRegistry? = nil,
-        inputActivityRegistry: PaneInputActivityRegistry? = nil,
         statusProvider: (() -> FlowStatus)? = nil,
         now: @escaping () -> Date = Date.init
     ) -> ResponseMessage? {
@@ -227,8 +194,6 @@ enum FlowStateAppRequestDispatcher {
             statsStore: statsStore,
             prStatusStore: prStatusStore,
             claudeSessionRegistry: claudeSessionRegistry,
-            agentStateRegistry: agentStateRegistry,
-            inputActivityRegistry: inputActivityRegistry,
             activityStore: activityStore
         )
         let handler = FlowStateRequestHandler(
