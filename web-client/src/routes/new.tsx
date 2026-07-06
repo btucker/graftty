@@ -5,6 +5,11 @@ import { sanitizeWorktreeName, trimForSubmit } from '../sanitizeWorktreeName';
 interface RepoInfo {
   path: string;
   displayName: string;
+  defaultBranchStatus?: {
+    branchName: string;
+    remoteRef: string;
+    behindCount: number;
+  } | null;
 }
 
 interface CreateResponse {
@@ -34,6 +39,9 @@ export function NewWorktreePage() {
   const [branchName, setBranchName] = useState<string>('');
   const [branchMirrors, setBranchMirrors] = useState<boolean>(true);
   const [submitting, setSubmitting] = useState<boolean>(false);
+  const [pullingDefaultBranch, setPullingDefaultBranch] = useState<boolean>(false);
+  const [pullOfferVisible, setPullOfferVisible] = useState<boolean>(false);
+  const [defaultBranchDecisionRepos, setDefaultBranchDecisionRepos] = useState<Set<string>>(() => new Set());
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -71,21 +79,67 @@ export function NewWorktreePage() {
   };
 
   const canSubmit = useMemo(() => {
-    if (submitting) return false;
+    if (submitting || pullingDefaultBranch) return false;
     if (!selectedRepo) return false;
     return trimForSubmit(worktreeName).length > 0 &&
            trimForSubmit(branchName).length > 0;
-  }, [submitting, selectedRepo, worktreeName, branchName]);
+  }, [submitting, pullingDefaultBranch, selectedRepo, worktreeName, branchName]);
 
   const selectedRepoInfo = useMemo(() => {
     if (reposState.kind !== 'ready') return null;
     return reposState.repos.find((r) => r.path === selectedRepo) ?? null;
   }, [reposState, selectedRepo]);
 
+  const shouldOfferDefaultBranchPull = useMemo(() => {
+    const status = selectedRepoInfo?.defaultBranchStatus;
+    return !!status &&
+      status.behindCount > 0 &&
+      !defaultBranchDecisionRepos.has(selectedRepo);
+  }, [defaultBranchDecisionRepos, selectedRepo, selectedRepoInfo]);
+
+  const handlePullDefaultBranch = async () => {
+    if (!selectedRepo) return;
+    setErrorMessage(null);
+    setPullingDefaultBranch(true);
+    try {
+      const res = await fetch('/repos/default-branch/pull', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repoPath: selectedRepo }),
+      });
+      if (!res.ok) {
+        let msg = `request failed (${res.status})`;
+        try {
+          const err = (await res.json()) as { error?: string };
+          if (err.error) msg = err.error;
+        } catch { /* keep fallback */ }
+        setErrorMessage(msg);
+        return;
+      }
+      setDefaultBranchDecisionRepos((prev) => new Set(prev).add(selectedRepo));
+      setPullOfferVisible(false);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPullingDefaultBranch(false);
+    }
+  };
+
+  const createAnyway = async () => {
+    if (!selectedRepo) return;
+    setDefaultBranchDecisionRepos((prev) => new Set(prev).add(selectedRepo));
+    setPullOfferVisible(false);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
     setErrorMessage(null);
+    if (shouldOfferDefaultBranchPull) {
+      setPullOfferVisible(true);
+      return;
+    }
     setSubmitting(true);
     try {
       const body = {
@@ -153,7 +207,10 @@ export function NewWorktreePage() {
             <span>Repository</span>
             <select
               value={selectedRepo}
-              onChange={(e) => setSelectedRepo(e.target.value)}
+              onChange={(e) => {
+                setSelectedRepo(e.target.value);
+                setPullOfferVisible(false);
+              }}
               disabled={submitting}
             >
               {reposState.repos.map((r) => (
@@ -191,6 +248,33 @@ export function NewWorktreePage() {
             onChange={(e) => handleBranchNameChange(e.target.value)}
           />
         </label>
+        {pullOfferVisible && shouldOfferDefaultBranchPull && selectedRepoInfo?.defaultBranchStatus && (
+          <div className="new-worktree-warning">
+            <div>
+              {selectedRepoInfo.defaultBranchStatus.branchName} is {selectedRepoInfo.defaultBranchStatus.behindCount}{' '}
+              {selectedRepoInfo.defaultBranchStatus.behindCount === 1 ? 'commit' : 'commits'} behind{' '}
+              {selectedRepoInfo.defaultBranchStatus.remoteRef}.
+            </div>
+            <div className="new-worktree-warning-actions">
+              <button
+                type="button"
+                className="new-worktree-secondary"
+                disabled={pullingDefaultBranch || submitting}
+                onClick={() => void handlePullDefaultBranch()}
+              >
+                {pullingDefaultBranch ? 'Pulling…' : 'Pull First'}
+              </button>
+              <button
+                type="button"
+                className="new-worktree-secondary"
+                disabled={pullingDefaultBranch || submitting}
+                onClick={() => void createAnyway()}
+              >
+                Create Anyway
+              </button>
+            </div>
+          </div>
+        )}
         {errorMessage && (
           <div className="new-worktree-error">{errorMessage}</div>
         )}

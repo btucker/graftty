@@ -87,6 +87,13 @@ struct SidebarView: View {
                 repoDisplayName: request.repo.displayName,
                 initialWorktreeName: request.prefill,
                 branchEntries: currentBranchEntries(forRepo: request.repo),
+                defaultBranchStatus: defaultBranchStatus(
+                    for: request.repo,
+                    stats: statsStore.stats[request.repo.path]
+                ),
+                onPullDefaultBranch: {
+                    await pullDefaultBranch(for: request.repo)
+                },
                 onSubmit: { worktreeName, branch in
                     let err = await onAddWorktree(request.repo, worktreeName, branch)
                     if err == nil { pendingAddWorktree = nil }
@@ -115,6 +122,19 @@ struct SidebarView: View {
             prsByBranch: prs,
             filterText: ""
         )
+    }
+
+    private func pullDefaultBranch(for repo: RepoEntry) async -> String? {
+        do {
+            try await GitDefaultBranchPull.pull(repoPath: repo.path)
+        } catch GitDefaultBranchPull.Error.gitFailed(_, let stderr) {
+            return stderr
+        } catch {
+            return "\(error)"
+        }
+        let branch = repo.worktrees.first(where: { $0.path == repo.path })?.branch ?? ""
+        statsStore.refresh(worktreePath: repo.path, repoPath: repo.path, branch: branch)
+        return nil
     }
 
     /// Title + destination for the repo's "Open on <forge>…"

@@ -44,4 +44,36 @@ struct GrafttyAppPaneLifecycleTests {
         #expect(movedTarget.paneSessions[slot] == session)
         #expect(movedTarget.splitTree.containsLeaf(slot))
     }
+
+    @Test func defaultBranchStatusRequiresBehindDefaultCheckout() {
+        let main = WorktreeEntry(path: "/repo", branch: "main")
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [main])
+        let stats = WorktreeStats(
+            ahead: 0,
+            behind: 2,
+            insertions: 0,
+            deletions: 0,
+            upstreamRefs: UpstreamRefs(defaultRef: "origin/main")
+        )
+
+        let status = defaultBranchStatus(for: repo, stats: stats)
+
+        #expect(status?.branchName == "main")
+        #expect(status?.remoteRef == "origin/main")
+        #expect(status?.behindCount == 2)
+    }
+
+    @Test func defaultBranchStatusIgnoresNonDefaultMainCheckout() {
+        let current = WorktreeEntry(path: "/repo", branch: "release")
+        let repo = RepoEntry(path: "/repo", displayName: "repo", worktrees: [current])
+        let stats = WorktreeStats(
+            ahead: 0,
+            behind: 2,
+            insertions: 0,
+            deletions: 0,
+            upstreamRefs: UpstreamRefs(defaultRef: "origin/main")
+        )
+
+        #expect(defaultBranchStatus(for: repo, stats: stats) == nil)
+    }
 }

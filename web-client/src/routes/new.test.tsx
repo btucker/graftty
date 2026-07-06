@@ -16,11 +16,17 @@ vi.mock('@tanstack/react-router', () => ({
 interface RepoInfo {
   path: string;
   displayName: string;
+  defaultBranchStatus?: {
+    branchName: string;
+    remoteRef: string;
+    behindCount: number;
+  } | null;
 }
 
 interface FetchSetup {
   repos: RepoInfo[];
   post?: (init?: RequestInit) => Promise<Response>;
+  pull?: (init?: RequestInit) => Promise<Response>;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -31,7 +37,7 @@ function jsonResponse(body: unknown, status = 200): Response {
   } as Response;
 }
 
-function installFetch({ repos, post }: FetchSetup) {
+function installFetch({ repos, post, pull }: FetchSetup) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string'
       ? input
@@ -39,6 +45,7 @@ function installFetch({ repos, post }: FetchSetup) {
         ? input.pathname
         : input.url;
     if (url === '/repos') return jsonResponse(repos);
+    if (url === '/repos/default-branch/pull' && pull) return pull(init);
     if (url === '/worktrees' && post) return post(init);
     throw new Error(`unexpected fetch ${url}`);
   });
@@ -131,6 +138,61 @@ test('new worktree form renders server errors inline', async () => {
 
   expect(await screen.findByText('fatal: branch already exists')).toBeTruthy();
   expect(navigateMock).not.toHaveBeenCalled();
+});
+
+// @spec WEB-7.11: When `/new` is creating a new branch and the selected repository's default checkout is behind its origin default branch, the web client shall offer to pull the default checkout before posting `POST /worktrees`; accepting the offer shall call `POST /repos/default-branch/pull` with `{repoPath}` and shall leave worktree creation pending until the user submits again after the pull succeeds.
+test('new worktree form offers to pull a stale default checkout before creating', async () => {
+  const user = userEvent.setup();
+  const postedBodies: unknown[] = [];
+  const pullBodies: unknown[] = [];
+  installFetch({
+    repos: [{
+      path: '/repo/alpha',
+      displayName: 'alpha',
+      defaultBranchStatus: {
+        branchName: 'main',
+        remoteRef: 'origin/main',
+        behindCount: 2,
+      },
+    }],
+    pull: async (init) => {
+      pullBodies.push(JSON.parse(String(init?.body)));
+      return jsonResponse({ ok: true });
+    },
+    post: async (init) => {
+      postedBodies.push(JSON.parse(String(init?.body)));
+      return jsonResponse({
+        sessionName: 'graftty-after-pull',
+        worktreePath: '/repo/alpha/.worktrees/feature-x',
+      });
+    },
+  });
+
+  render(<NewWorktreePage />);
+
+  await user.type(await screen.findByLabelText('Worktree name'), 'feature-x');
+  await user.click(screen.getByRole('button', { name: 'Create' }));
+
+  expect(await screen.findByText(/main is 2 commits behind origin\/main/)).toBeTruthy();
+  expect(postedBodies).toEqual([]);
+
+  await user.click(screen.getByRole('button', { name: 'Pull First' }));
+  await waitFor(() => expect(pullBodies).toEqual([{ repoPath: '/repo/alpha' }]));
+  expect(screen.queryByText(/main is 2 commits behind origin\/main/)).toBeNull();
+
+  await user.click(screen.getByRole('button', { name: 'Create' }));
+
+  await waitFor(() => {
+    expect(navigateMock).toHaveBeenCalledWith({
+      to: '/session/$name',
+      params: { name: 'graftty-after-pull' },
+    });
+  });
+  expect(postedBodies).toEqual([{
+    repoPath: '/repo/alpha',
+    worktreeName: 'feature-x',
+    branchName: 'feature-x',
+  }]);
 });
 
 // @spec WEB-7.7: When `AppState.repos` is empty (no repositories tracked yet), the `/new` route shall render an empty-state message directing the user to open a repository in the native Graftty app first, with a back-link to `/`. The web client shall not implement repository-adding (the Mac-side file dialog + security-scoped bookmark mint has no web equivalent in Phase 2).

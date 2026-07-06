@@ -25,14 +25,16 @@ struct WebServerWorktreeEndpointTests {
 
     private static func makeConfig(
         repos: [WebServer.RepoInfo] = [],
-        creator: (@Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome)? = nil
+        creator: (@Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome)? = nil,
+        defaultBranchPuller: (@Sendable (WebServer.PullDefaultBranchRequest) async -> WebServer.PullDefaultBranchOutcome)? = nil
     ) -> WebServer.Config {
         WebServer.Config(
             port: 0,
             zmxExecutable: URL(fileURLWithPath: "/dev/null"),
             zmxDir: URL(fileURLWithPath: "/tmp"),
             reposProvider: { repos },
-            worktreeCreator: creator
+            worktreeCreator: creator,
+            defaultBranchPuller: defaultBranchPuller
         )
     }
 
@@ -54,13 +56,21 @@ struct WebServerWorktreeEndpointTests {
     }
 
     @Test("""
-    @spec WEB-7.1: When a client requests `GET /repos`, the application shall respond with a JSON array of the currently-tracked repositories (one entry per top-level `RepoEntry` in `AppState.repos`) with fields `path` (opaque absolute path round-tripped on `POST /worktrees`) and `displayName` (matching the native sidebar's top-level label). Access is gated by the same Tailscale-whois authorization (`WEB-2.1` / `WEB-2.2`).
+    @spec WEB-7.1: When a client requests `GET /repos`, the application shall respond with a JSON array of the currently-tracked repositories (one entry per top-level `RepoEntry` in `AppState.repos`) with fields `path` (opaque absolute path round-tripped on `POST /worktrees`), `displayName` (matching the native sidebar's top-level label), and optional `defaultBranchStatus` (`branchName`, `remoteRef`, `behindCount`) when the default checkout is behind its origin default branch. Access is gated by the same Tailscale-whois authorization (`WEB-2.1` / `WEB-2.2`).
     """)
     func reposEndpointEncodesProviderOutput() async throws {
         if skipInCI() { return }
 
         let (server, port) = try Self.startServer(config: Self.makeConfig(repos: [
-            WebServer.RepoInfo(path: "/tmp/alpha", displayName: "alpha"),
+            WebServer.RepoInfo(
+                path: "/tmp/alpha",
+                displayName: "alpha",
+                defaultBranchStatus: .init(
+                    branchName: "main",
+                    remoteRef: "origin/main",
+                    behindCount: 2
+                )
+            ),
             WebServer.RepoInfo(path: "/tmp/beta", displayName: "beta"),
         ]))
         defer { server.stop() }
@@ -74,7 +84,11 @@ struct WebServerWorktreeEndpointTests {
         let decoded = try JSONDecoder().decode([WebServer.RepoInfo].self, from: data)
         #expect(decoded.count == 2)
         #expect(decoded[0].displayName == "alpha")
+        #expect(decoded[0].defaultBranchStatus?.branchName == "main")
+        #expect(decoded[0].defaultBranchStatus?.remoteRef == "origin/main")
+        #expect(decoded[0].defaultBranchStatus?.behindCount == 2)
         #expect(decoded[1].path == "/tmp/beta")
+        #expect(decoded[1].defaultBranchStatus == nil)
     }
 
     @Test func deniedReposRequestReturns403WithoutCallingProvider() async throws {
@@ -153,6 +167,34 @@ struct WebServerWorktreeEndpointTests {
         let decoded = try JSONDecoder().decode(WebServer.CreateWorktreeResponse.self, from: data)
         #expect(decoded.sessionName == "graftty-abcdef")
         #expect(decoded.worktreePath == "/tmp/repo/.worktrees/feature-x")
+    }
+
+    @Test("""
+    @spec WEB-7.12: When a client sends `POST /repos/default-branch/pull` with `{repoPath}`, the application shall run the injected default-branch puller for that repository and respond `200` with `{ok: true}` on success, `409` with `{error}` when git rejects the pull, and `503` when the puller is not wired.
+    """)
+    func defaultBranchPullEndpointReturnsSuccess() async throws {
+        if skipInCI() { return }
+
+        nonisolated(unsafe) var pulled: [String] = []
+        let puller: @Sendable (WebServer.PullDefaultBranchRequest) async -> WebServer.PullDefaultBranchOutcome = { req in
+            pulled.append(req.repoPath)
+            return .success(WebServer.PullDefaultBranchResponse(ok: true))
+        }
+        let (server, port) = try Self.startServer(config: Self.makeConfig(defaultBranchPuller: puller))
+        defer { server.stop() }
+
+        let body = try JSONEncoder().encode(WebServer.PullDefaultBranchRequest(repoPath: "/tmp/repo"))
+        var req = URLRequest(url: URL(string: "https://localhost:\(port)/repos/default-branch/pull")!)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = body
+
+        let (data, response) = try await trustAllData(for: req)
+        let http = response as! HTTPURLResponse
+        #expect(http.statusCode == 200)
+        let decoded = try JSONDecoder().decode(WebServer.PullDefaultBranchResponse.self, from: data)
+        #expect(decoded.ok)
+        #expect(pulled == ["/tmp/repo"])
     }
 
     @Test func worktreesPostGitFailureReturns409WithError() async throws {

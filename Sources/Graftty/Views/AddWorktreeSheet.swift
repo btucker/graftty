@@ -15,11 +15,15 @@ struct AddWorktreeSheet: View {
     let repoDisplayName: String
     let initialWorktreeName: String
     let branchEntries: [BranchPickerEntry]
+    let defaultBranchStatus: WebServer.RepoInfo.DefaultBranchStatus?
+    let onPullDefaultBranch: () async -> String?
     let onSubmit: (String, BranchSelection) async -> String?
     let onCancel: () -> Void
 
     @State private var controller: AddWorktreeFormController
     @State private var isSubmitting: Bool = false
+    @State private var isPullingDefaultBranch: Bool = false
+    @State private var defaultBranchOfferDismissed: Bool = false
     @State private var errorMessage: String?
 
     @FocusState private var worktreeFieldFocused: Bool
@@ -28,12 +32,16 @@ struct AddWorktreeSheet: View {
         repoDisplayName: String,
         initialWorktreeName: String = "",
         branchEntries: [BranchPickerEntry] = [],
+        defaultBranchStatus: WebServer.RepoInfo.DefaultBranchStatus? = nil,
+        onPullDefaultBranch: @escaping () async -> String? = { nil },
         onSubmit: @escaping (String, BranchSelection) async -> String?,
         onCancel: @escaping () -> Void
     ) {
         self.repoDisplayName = repoDisplayName
         self.initialWorktreeName = initialWorktreeName
         self.branchEntries = branchEntries
+        self.defaultBranchStatus = defaultBranchStatus
+        self.onPullDefaultBranch = onPullDefaultBranch
         self.onSubmit = onSubmit
         self.onCancel = onCancel
         _controller = State(initialValue: AddWorktreeFormController(initialWorktreeName: initialWorktreeName))
@@ -111,6 +119,28 @@ struct AddWorktreeSheet: View {
                 }
             }
 
+            if shouldOfferDefaultBranchPull, let status = defaultBranchStatus {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("\(status.branchName) is \(status.behindCount) \(status.behindCount == 1 ? "commit" : "commits") behind \(status.remoteRef).")
+                        .font(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Button("Pull First") {
+                            Task { await pullDefaultBranch() }
+                        }
+                        .disabled(isPullingDefaultBranch || isSubmitting)
+                        Button("Create Anyway") {
+                            defaultBranchOfferDismissed = true
+                            Task { await submit() }
+                        }
+                        .disabled(isPullingDefaultBranch || isSubmitting)
+                    }
+                }
+                .padding(10)
+                .background(Color.yellow.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+
             if let errorMessage {
                 Text(errorMessage)
                     .font(.callout)
@@ -132,7 +162,7 @@ struct AddWorktreeSheet: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(!controller.canSubmit || isSubmitting)
+                .disabled(!controller.canSubmit || isSubmitting || isPullingDefaultBranch || shouldOfferDefaultBranchPull)
             }
         }
         .padding(20)
@@ -149,6 +179,7 @@ struct AddWorktreeSheet: View {
 
     private func submit() async {
         guard let selection = controller.selectedSelection else { return }
+        guard !shouldOfferDefaultBranchPull else { return }
         errorMessage = nil
         isSubmitting = true
         defer { isSubmitting = false }
@@ -156,6 +187,26 @@ struct AddWorktreeSheet: View {
         let wt = WorktreeNameSanitizer.trimForSubmit(controller.worktreeName)
         if let err = await onSubmit(wt, selection) {
             errorMessage = err
+        }
+    }
+
+    private var shouldOfferDefaultBranchPull: Bool {
+        guard controller.branchMode == .newBranch,
+              defaultBranchStatus != nil,
+              !defaultBranchOfferDismissed else {
+            return false
+        }
+        return true
+    }
+
+    private func pullDefaultBranch() async {
+        errorMessage = nil
+        isPullingDefaultBranch = true
+        defer { isPullingDefaultBranch = false }
+        if let err = await onPullDefaultBranch() {
+            errorMessage = err
+        } else {
+            defaultBranchOfferDismissed = true
         }
     }
 }
