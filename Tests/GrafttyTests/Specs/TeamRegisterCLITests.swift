@@ -183,6 +183,57 @@ struct TeamRegisterCLITests {
         #expect(record.realBinaryPath == native.path)
     }
 
+    @Test("App-server register stores the native Codex binary from the in-package vendor fallback layout.")
+    func codexAppServerRegisterStoresNativeCodexBinaryForInPackageVendorLayout() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-codex-app-server-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let shimBinDir = dir.appendingPathComponent("bin", isDirectory: true)
+        let packageRoot = dir
+            .appendingPathComponent("node_modules", isDirectory: true)
+            .appendingPathComponent("@openai", isDirectory: true)
+            .appendingPathComponent("codex", isDirectory: true)
+        let scriptDir = packageRoot.appendingPathComponent("bin", isDirectory: true)
+        let script = scriptDir.appendingPathComponent("codex.js")
+        let native = packageRoot
+            .appendingPathComponent("vendor", isDirectory: true)
+            .appendingPathComponent(CodexDeliveryBinaryResolver.targetTriple, isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent("codex")
+        let shim = shimBinDir.appendingPathComponent("codex")
+
+        try FileManager.default.createDirectory(at: shimBinDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: scriptDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: native.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try "#!/usr/bin/env node\n".write(to: script, atomically: true, encoding: .utf8)
+        try "#!/bin/sh\n".write(to: native, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: native.path)
+        try FileManager.default.createSymbolicLink(
+            atPath: shim.path,
+            withDestinationPath: "../node_modules/@openai/codex/bin/codex.js"
+        )
+
+        let storage = CodexAppServerSessionStorage(rootDirectory: dir.appendingPathComponent("records"))
+        let record = try TeamCodexAppServerCore.register(
+            storage: storage,
+            teamID: "/repo",
+            worktree: "/repo/.worktrees/alice",
+            paneSessionName: "graftty-aaaaaaaa",
+            socketPath: "/tmp/codex.sock",
+            realBinaryPath: shim.path,
+            appServerPID: 42,
+            appServerProcessStartTimeMicroseconds: 1_700_000_123_456_789,
+            registeredAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+
+        #expect(record.realBinaryPath == native.path)
+    }
+
     @Test("App-server unregister deletes only the exact team/worktree/pane record.")
     func codexAppServerUnregisterDeletesExactRecord() throws {
         let dir = FileManager.default.temporaryDirectory

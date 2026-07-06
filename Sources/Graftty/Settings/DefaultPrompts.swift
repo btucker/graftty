@@ -7,20 +7,11 @@ import Foundation
 enum DefaultPrompts {
 
     /// Rendered once at hook session start and appended to the auto-generated
-    /// team-aware instructions. Only `agent.branch` and `agent.lead` are
-    /// meaningful at session start, so the default deliberately does not
-    /// reference event-scoped fields. Tags use `{%- ... -%}` whitespace
-    /// stripping so the multi-line readable source produces the same flat
-    /// output the previous one-line form did.
-    static let sessionPrompt: String = """
-    You are an agent in a Graftty team on branch `{{ agent.branch }}`.
-
-    {% if agent.lead -%}
-    You are the team's lead — coordinate the other worktrees in this repo and surface their state to the user.
-    {%- else -%}
-    You are a coworker — focus on your branch's work and react to direct messages or automated team events only when they affect your current task.
-    {%- endif %}
-    """
+    /// team-aware instructions. The generated instructions already name the
+    /// team, current worktree, commands, and routing model, so the default is
+    /// empty to avoid repeating that context. Users can still add their own
+    /// session-level policy in Settings.
+    static let sessionPrompt = ""
 
     /// Rendered fresh for each automated event delivery and prepended to the
     /// event body. Branches on `agent.this_worktree` / `agent.other_worktree`
