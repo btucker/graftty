@@ -58,6 +58,13 @@ struct TerminalPaneViewTests {
         #expect(container.inputProxy.canBecomeFirstResponder)
     }
 
+    @Test("@spec IOS-6.15: While a terminal pane is rendered on iPad with a trackpad, indirect pointer scroll gestures shall reach libghostty's terminal scroll/input recognizers rather than being blocked by GrafttyMobile's keyboard proxy or selection overlay.")
+    func terminalPanRecognizersAllowIndirectScrolling() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+
+        #expect(container.terminalPanRecognizersAllowIndirectScrollingForTesting)
+    }
+
     @Test
     func dismantleUIViewDoesNotCaptureLayerSnapshotDuringTeardown() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))

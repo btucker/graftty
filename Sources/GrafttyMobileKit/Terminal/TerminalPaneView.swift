@@ -181,6 +181,8 @@ public final class TerminalInputContainerView: UIView {
             inputProxy.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
+        configureTerminalPanRecognizersForIndirectScrolling()
+
         let tap = UITapGestureRecognizer(target: self, action: #selector(focusKeyboardInput))
         tap.cancelsTouchesInView = false
         addGestureRecognizer(tap)
@@ -189,6 +191,14 @@ public final class TerminalInputContainerView: UIView {
         addInteraction(selectionMenu)
         addGestureRecognizer(longPressRecognizer)
         addGestureRecognizer(selectionPanRecognizer)
+    }
+
+    private func configureTerminalPanRecognizersForIndirectScrolling() {
+        terminalView.gestureRecognizers?
+            .compactMap { $0 as? UIPanGestureRecognizer }
+            .forEach { recognizer in
+                recognizer.allowedScrollTypesMask = [.continuous, .discrete]
+            }
     }
 
     @objc func focusKeyboardInput() {
@@ -274,6 +284,17 @@ public final class TerminalInputContainerView: UIView {
     /// pinch belongs to libghostty's local zoom handling, not takeover.
     var hasOwnershipClaimGestureHookForTesting: Bool {
         false
+    }
+
+    /// Internal-visibility access for unit tests: terminal pan recognizers
+    /// accept indirect pointer scroll input while selection gestures remain
+    /// owned by `selectionPanRecognizer`.
+    var terminalPanRecognizersAllowIndirectScrollingForTesting: Bool {
+        let pans = terminalView.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer } ?? []
+        return !pans.isEmpty && pans.allSatisfy {
+            $0.allowedScrollTypesMask.contains(.continuous)
+                && $0.allowedScrollTypesMask.contains(.discrete)
+        }
     }
 
     /// Internal-visibility access for unit tests: invokes `enterSelectionMode`.
