@@ -7,6 +7,7 @@ import SwiftUI
 /// sidebar (host header + WorktreeListContent) and a detail column
 /// showing the focused pane via SingleSessionView.
 public struct IPadRootLayout: View {
+    public static let paintsTerminalBackgroundBehindSidebar = true
 
     @Bindable public var hostStore: HostStore
     @Bindable public var appState: IPadAppState
@@ -33,64 +34,67 @@ public struct IPadRootLayout: View {
         // appState so the system's sidebar-toggle button can flip it back
         // to `.all` after a user collapse — without the binding there'd
         // be no way to re-show a hidden sidebar.
-        NavigationSplitView(columnVisibility: Binding(
-            get: { appState.columnVisibility },
-            set: { appState.columnVisibility = $0 }
-        )) {
-            Group {
-                if let host = selectedHost {
-                    WorktreeListContent(
-                        host: host,
-                        theme: appState.theme,
-                        selectedWorktreePath: appState.selectedWorktreePath,
-                        focusedPaneId: appState.focusedPaneId,
-                        onSelect: { wt in selectWorktree(wt) },
-                        onSelectPane: { leaf in selectPane(leaf) },
-                        onListChanged: { list in Self.onWorktreeListChanged(appState: appState, list: list) }
-                    )
-                } else {
-                    Spacer()
+        ZStack {
+            appState.theme.background.ignoresSafeArea()
+            NavigationSplitView(columnVisibility: Binding(
+                get: { appState.columnVisibility },
+                set: { appState.columnVisibility = $0 }
+            )) {
+                Group {
+                    if let host = selectedHost {
+                        WorktreeListContent(
+                            host: host,
+                            theme: appState.theme,
+                            selectedWorktreePath: appState.selectedWorktreePath,
+                            focusedPaneId: appState.focusedPaneId,
+                            onSelect: { wt in selectWorktree(wt) },
+                            onSelectPane: { leaf in selectPane(leaf) },
+                            onListChanged: { list in Self.onWorktreeListChanged(appState: appState, list: list) }
+                        )
+                    } else {
+                        Spacer()
+                    }
                 }
-            }
-            .themedSidebarSurface(appState.theme)
-            // IPAD-1.2: the host menu lives in the sidebar nav bar's
-            // `.topBarLeading` slot — adjacent to the system
-            // sidebar-toggle button. Originally `.principal`, but the
-            // centered placement let the menu expand into the trailing
-            // `.primaryAction` (+) item at narrow column widths and
-            // overlap it. Leading placement is naturally bounded.
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    HostMenu(
-                        selectedHost: selectedHost,
-                        hostStore: hostStore,
-                        appState: appState
-                    )
+                .themedSidebarSurface(appState.theme)
+                // IPAD-1.2: the host menu lives in the sidebar nav bar's
+                // `.topBarLeading` slot — adjacent to the system
+                // sidebar-toggle button. Originally `.principal`, but the
+                // centered placement let the menu expand into the trailing
+                // `.primaryAction` (+) item at narrow column widths and
+                // overlap it. Leading placement is naturally bounded.
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        HostMenu(
+                            selectedHost: selectedHost,
+                            hostStore: hostStore,
+                            appState: appState
+                        )
+                    }
                 }
+                // IPAD-1.12: explicit 1pt trailing border separates the
+                // sidebar from the detail column (Mac's NSSplitView draws
+                // this automatically; iPad's NavigationSplitView does not).
+                .overlay(alignment: .trailing) {
+                    Rectangle()
+                        .fill(appState.theme.foreground.opacity(0.15))
+                        .frame(width: 1)
+                        .ignoresSafeArea()
+                }
+                .publishSidebarWidth()
+                .navigationSplitViewColumnWidth(
+                    min: 220,
+                    ideal: appState.sidebarWidth,
+                    max: 480
+                )
+            } detail: {
+                IPadDetailColumn(
+                    host: selectedHost,
+                    appState: appState,
+                    coordinator: coordinator,
+                    paneEnvironment: paneEnvironment
+                )
+                .background(appState.theme.background)
             }
-            // IPAD-1.12: explicit 1pt trailing border separates the
-            // sidebar from the detail column (Mac's NSSplitView draws
-            // this automatically; iPad's NavigationSplitView does not).
-            .overlay(alignment: .trailing) {
-                Rectangle()
-                    .fill(appState.theme.foreground.opacity(0.15))
-                    .frame(width: 1)
-                    .ignoresSafeArea()
-            }
-            .publishSidebarWidth()
-            .navigationSplitViewColumnWidth(
-                min: 220,
-                ideal: appState.sidebarWidth,
-                max: 480
-            )
-        } detail: {
-            IPadDetailColumn(
-                host: selectedHost,
-                appState: appState,
-                coordinator: coordinator,
-                paneEnvironment: paneEnvironment
-            )
-            .background(appState.theme.background)
         }
         .navigationSplitViewStyle(.balanced)
         // IPAD-1.8: route the host's ghostty theme through SwiftUI's

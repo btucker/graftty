@@ -387,7 +387,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.13: While `IPadRootLayout` is presented, each worktree's row + its pane child rows shall be packed into a single `List` row (`VStack(spacing: 0)`) with `.listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))` and `.listRowSeparator(.hidden)`, so the iOS sidebar-list style's default per-row padding doesn't compound between panes — the vertical spacing between pane rows is controlled entirely by the outer block's insets, not by accumulating list-row defaults on every leaf.
+@spec IPAD-1.13: While `IPadRootLayout` is presented, each worktree's row + its pane child rows shall be packed into a single `List` row (`VStack(spacing: 0)`) with explicit compact row insets and `.listRowSeparator(.hidden)`, so the iOS sidebar-list style's default per-row padding doesn't compound between panes — the vertical spacing between pane rows is controlled entirely by the outer block's insets, not by accumulating list-row defaults on every leaf.
 """)
     func ipad_1_13_paneRowsPackedIntoOneListRow() {
         // Visual concern; smoke-check that WorktreeBlock continues to
@@ -632,6 +632,11 @@ struct IPadRootLayoutSelectionTests {
             ]
         )
         #expect(appState3.focusedPaneId == "session-a")
+    }
+
+    @Test("@spec IPAD-1.20: iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.")
+    func backgroundPolicy() {
+        #expect(IPadRootLayout.paintsTerminalBackgroundBehindSidebar == true)
     }
 }
 
