@@ -41,6 +41,9 @@ public final class IPadAppState {
 
     public var selectedWorktreePath: String?
     public var focusedPaneId: String?
+    public var latestWorktrees: [WorktreePanes] = []
+    public private(set) var focusRequestCount: Int = 0
+    public private(set) var ownershipRequestCount: Int = 0
 
     /// Sidebar/detail visibility for the iPad NavigationSplitView.
     /// In-memory only — a fresh launch always lands on both columns
@@ -85,6 +88,11 @@ public final class IPadAppState {
         self.sidebarWidth = savedWidth > 0 ? savedWidth : 320
 
         self.theme = .fallback
+    }
+
+    public func requestActiveTerminal() {
+        focusRequestCount &+= 1
+        ownershipRequestCount &+= 1
     }
 
     private enum Keys {

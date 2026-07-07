@@ -100,6 +100,17 @@ public struct IPadRootLayout: View {
             get: { appState.sidebarWidth },
             set: { appState.sidebarWidth = $0 }
         ))
+        .overlay {
+            Group {
+                Button("Next Worktree") { navigateWorktree(forward: true) }
+                    .keyboardShortcut(.tab, modifiers: [.control])
+                Button("Previous Worktree") { navigateWorktree(forward: false) }
+                    .keyboardShortcut(.tab, modifiers: [.control, .shift])
+            }
+            .opacity(0)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
         .task(id: selectedHost?.id) {
             await refreshTheme()
         }
@@ -119,6 +130,8 @@ public struct IPadRootLayout: View {
     }
 
     static func onWorktreeListChanged(appState: IPadAppState, list: [WorktreePanes]) {
+        appState.latestWorktrees = list
+
         // Clear a stale selection whose path vanished server-side.
         if let path = appState.selectedWorktreePath,
            !list.contains(where: { $0.path == path }) {
@@ -152,16 +165,47 @@ public struct IPadRootLayout: View {
         }
     }
 
+    static func applyWorktreeSelection(appState: IPadAppState, worktree: WorktreePanes) {
+        guard !worktree.state.isInFlight else { return }
+        appState.selectedWorktreePath = worktree.path
+        appState.focusedPaneId = worktree.layout?.leaves.first?.sessionName
+        appState.requestActiveTerminal()
+    }
+
+    static func applyPaneSelection(appState: IPadAppState, leaf: PaneLayoutNode.Leaf) {
+        if let worktree = appState.latestWorktrees.first(where: { wt in
+            wt.layout?.leaves.contains { $0.sessionName == leaf.sessionName } ?? false
+        }) {
+            appState.selectedWorktreePath = worktree.path
+        }
+        appState.focusedPaneId = leaf.sessionName
+        appState.requestActiveTerminal()
+    }
+
     // MARK: - Side-effecting selection (callbacks from WorktreeListContent)
 
     private func selectWorktree(_ wt: WorktreePanes) {
-        guard !wt.state.isInFlight else { return }
-        appState.selectedWorktreePath = wt.path
-        appState.focusedPaneId = wt.layout?.leaves.first?.sessionName
+        Self.applyWorktreeSelection(appState: appState, worktree: wt)
     }
 
     private func selectPane(_ leaf: PaneLayoutNode.Leaf) {
-        appState.focusedPaneId = leaf.sessionName
+        Self.applyPaneSelection(appState: appState, leaf: leaf)
+    }
+
+    private func selectWorktree(path: String) {
+        guard let wt = appState.latestWorktrees.first(where: { $0.path == path }) else { return }
+        selectWorktree(wt)
+    }
+
+    private func navigateWorktree(forward: Bool) {
+        guard let path = IPadWorktreeNavigation.nextPath(
+            in: appState.latestWorktrees,
+            selectedPath: appState.selectedWorktreePath,
+            forward: forward
+        ) else {
+            return
+        }
+        selectWorktree(path: path)
     }
 
     @MainActor
@@ -290,7 +334,9 @@ private struct IPadDetailColumn: View {
                 step: SessionStep(host: host, sessionName: pane, title: pane),
                 navigationPath: .constant(NavigationPath()),
                 isFullScreen: false,
-                coordinator: coordinator
+                coordinator: coordinator,
+                externalFocusRequestCount: appState.focusRequestCount,
+                autoTakeControlRequestCount: appState.ownershipRequestCount
             )
             .id("\(host.id)-\(path)-\(pane)")
         } else {

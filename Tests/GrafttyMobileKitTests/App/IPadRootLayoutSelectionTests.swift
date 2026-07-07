@@ -83,6 +83,75 @@ struct IPadRootLayoutSelectionTests {
         #expect(appState.focusedPaneId == "session-xyz")
     }
 
+    @Test("pane row selection derives the selected worktree from the latest snapshot")
+    func paneRowSelectionDerivesWorktreePath() {
+        let appState = freshAppState()
+        let layout = PaneLayoutNode.split(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: .leaf(sessionName: "session-a", title: "shell A", attentionText: nil, isBusy: false, attentionSource: nil),
+            right: .leaf(sessionName: "session-b", title: "shell B", attentionText: nil, isBusy: false, attentionSource: nil)
+        )
+        let target = WorktreePanes(
+            path: "/repo/feat",
+            displayName: "feat",
+            repoDisplayName: "repo",
+            displayBranch: "feat",
+            state: .running,
+            isMainCheckout: false,
+            prBadge: nil,
+            stats: nil,
+            attentionText: nil,
+            layout: layout
+        )
+        IPadRootLayout.onWorktreeListChanged(appState: appState, list: [
+            .init(
+                path: "/repo/other",
+                displayName: "other",
+                repoDisplayName: "repo",
+                displayBranch: "other",
+                state: .running,
+                isMainCheckout: false,
+                prBadge: nil,
+                stats: nil,
+                attentionText: nil,
+                layout: .leaf(sessionName: "session-other", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil)
+            ),
+            target
+        ])
+
+        IPadRootLayout.applyPaneSelection(appState: appState, leaf: layout.leaves[1])
+
+        #expect(appState.selectedWorktreePath == "/repo/feat")
+        #expect(appState.focusedPaneId == "session-b")
+        #expect(appState.focusRequestCount == 1)
+        #expect(appState.ownershipRequestCount == 1)
+    }
+
+    @Test("worktree row selection updates active pane and requests terminal activation")
+    func worktreeRowSelectionRequestsActiveTerminal() {
+        let appState = freshAppState()
+        let worktree = WorktreePanes(
+            path: "/repo/feat",
+            displayName: "feat",
+            repoDisplayName: "repo",
+            displayBranch: "feat",
+            state: .running,
+            isMainCheckout: false,
+            prBadge: nil,
+            stats: nil,
+            attentionText: nil,
+            layout: .leaf(sessionName: "session-a", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil)
+        )
+
+        IPadRootLayout.applyWorktreeSelection(appState: appState, worktree: worktree)
+
+        #expect(appState.selectedWorktreePath == "/repo/feat")
+        #expect(appState.focusedPaneId == "session-a")
+        #expect(appState.focusRequestCount == 1)
+        #expect(appState.ownershipRequestCount == 1)
+    }
+
     @Test("""
 @spec IPAD-6.1: When the user selects a different host from the host-switcher menu, the application shall reset `selectedWorktreePath` and `focusedPaneId`, dismiss the menu, and re-fetch worktrees and theme for the new host.
 """)
@@ -171,6 +240,23 @@ struct IPadRootLayoutSelectionTests {
             navigationPath: .constant(NavigationPath())
         )
         #expect(compact.isFullScreen == true)
+    }
+
+    @Test("iPad detail session can receive external focus and ownership requests")
+    func ipadDetailSessionReceivesActiveRequests() {
+        let host = sampleHost()
+        let step = SessionStep(host: host, sessionName: "s", title: "s")
+        let view = SingleSessionView(
+            step: step,
+            navigationPath: .constant(NavigationPath()),
+            isFullScreen: false,
+            coordinator: nil,
+            externalFocusRequestCount: 3,
+            autoTakeControlRequestCount: 4
+        )
+
+        #expect(view.externalFocusRequestCount == 3)
+        #expect(view.autoTakeControlRequestCount == 4)
     }
 
     @Test("""
@@ -453,6 +539,7 @@ struct IPadRootLayoutSelectionTests {
 
         #expect(appState.selectedWorktreePath == nil)
         #expect(appState.focusedPaneId == nil)
+        #expect(appState.latestWorktrees.map(\.path) == ["/repo/branch-other"])
     }
 
     @Test("""
@@ -594,6 +681,46 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
     func testKeyboardProxyRequiresDisplayOwnership() {
         XCTAssertFalse(SingleSessionView.shouldInstallKeyboardProxy(clientIsOwner: false))
         XCTAssertTrue(SingleSessionView.shouldInstallKeyboardProxy(clientIsOwner: true))
+    }
+
+    /// @spec IPAD-8.5: iPad auto-ownership shall remain pending until the live
+    /// session becomes takeable, but an already-owned pane shall fulfill the
+    /// request as a no-op so stale selection requests cannot steal ownership
+    /// back later.
+    func testAutoOwnershipRetriesWhenSessionBecomesTakeable() {
+        var policy = SingleSessionView.AutoTakeControlPolicy()
+        XCTAssertFalse(policy.shouldTakeControl(
+            requestCount: 1,
+            isOwner: false,
+            canTakeControl: false
+        ))
+        XCTAssertTrue(policy.shouldTakeControl(
+            requestCount: 1,
+            isOwner: false,
+            canTakeControl: true
+        ))
+        XCTAssertFalse(policy.shouldTakeControl(
+            requestCount: 1,
+            isOwner: false,
+            canTakeControl: true
+        ))
+        XCTAssertTrue(policy.shouldTakeControl(
+            requestCount: 2,
+            isOwner: false,
+            canTakeControl: true
+        ))
+
+        var alreadyOwnerPolicy = SingleSessionView.AutoTakeControlPolicy()
+        XCTAssertFalse(alreadyOwnerPolicy.shouldTakeControl(
+            requestCount: 1,
+            isOwner: true,
+            canTakeControl: false
+        ))
+        XCTAssertFalse(alreadyOwnerPolicy.shouldTakeControl(
+            requestCount: 1,
+            isOwner: false,
+            canTakeControl: true
+        ))
     }
 }
 #endif

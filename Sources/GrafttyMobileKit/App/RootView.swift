@@ -192,6 +192,8 @@ struct SingleSessionView: View {
     /// coordinator is absent, returns nil (host isn't paired), or
     /// negotiation fails.
     let coordinator: RemoteConnectionCoordinator?
+    let externalFocusRequestCount: Int
+    let autoTakeControlRequestCount: Int
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -231,6 +233,7 @@ struct SingleSessionView: View {
     /// avoid pointlessly rebuilding the controller config on every layout
     /// tick. Set to nil while the base config is in effect.
     @State private var liveFontOverride: Float?
+    @State private var autoTakeControlPolicy = AutoTakeControlPolicy()
 
     private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
 
@@ -254,6 +257,29 @@ struct SingleSessionView: View {
         clientIsOwner
     }
 
+    struct AutoTakeControlPolicy {
+        private var fulfilledRequestCount: Int = 0
+
+        init() {}
+
+        mutating func shouldTakeControl(
+            requestCount: Int,
+            isOwner: Bool,
+            canTakeControl: Bool
+        ) -> Bool {
+            guard requestCount > fulfilledRequestCount else { return false }
+            if isOwner {
+                fulfilledRequestCount = requestCount
+                return false
+            }
+            if canTakeControl {
+                fulfilledRequestCount = requestCount
+                return true
+            }
+            return false
+        }
+    }
+
     /// Terminal theme background, parsed from the Mac-resolved ghostty config.
     /// Painted behind the whole session so the control-bar row and the strip
     /// revealed during keyboard transitions match the terminal's background
@@ -275,12 +301,16 @@ struct SingleSessionView: View {
         step: SessionStep,
         navigationPath: Binding<NavigationPath>,
         isFullScreen: Bool = true,
-        coordinator: RemoteConnectionCoordinator? = nil
+        coordinator: RemoteConnectionCoordinator? = nil,
+        externalFocusRequestCount: Int = 0,
+        autoTakeControlRequestCount: Int = 0
     ) {
         self.step = step
         self._navigationPath = navigationPath
         self.isFullScreen = isFullScreen
         self.coordinator = coordinator
+        self.externalFocusRequestCount = externalFocusRequestCount
+        self.autoTakeControlRequestCount = autoTakeControlRequestCount
     }
 
     var body: some View {
@@ -408,6 +438,15 @@ struct SingleSessionView: View {
                 client?.stop()
                 client = nil
             }
+            .onChange(of: autoTakeControlRequestCount) { _, _ in
+                attemptAutoTakeControl()
+            }
+            .onChange(of: client?.canTakeControl) { _, _ in
+                attemptAutoTakeControl()
+            }
+            .onChange(of: client?.isOwner) { _, _ in
+                attemptAutoTakeControl()
+            }
     }
 
     private var dialKey: DialKey {
@@ -496,6 +535,7 @@ struct SingleSessionView: View {
         new.start()
         client = new
         connection = .live
+        attemptAutoTakeControl()
     }
 
     private var loadingPlaceholder: some View {
@@ -639,6 +679,17 @@ struct SingleSessionView: View {
         .accessibilityLabel("Take Control")
     }
 
+    private func attemptAutoTakeControl() {
+        guard let client else { return }
+        if autoTakeControlPolicy.shouldTakeControl(
+            requestCount: autoTakeControlRequestCount,
+            isOwner: client.isOwner,
+            canTakeControl: client.canTakeControl
+        ) {
+            client.takeControl()
+        }
+    }
+
     private var terminalControlBar: some View {
         // Bar is only mounted when `connection == .live`, where
         // `client != nil` — the optional-chaining is purely to satisfy
@@ -732,7 +783,7 @@ struct SingleSessionView: View {
         let pane = TerminalPaneView(
             session: client.session,
             controller: controller,
-            focusRequestCount: focusRequestCount,
+            focusRequestCount: focusRequestCount + externalFocusRequestCount,
             softwareKeyboardInput: Self.shouldInstallKeyboardProxy(clientIsOwner: client.isOwner) ? .init(
                 insertText: { text in client.sendSoftwareKeyboardText(text) },
                 deleteBackward: { client.deleteBackward() }

@@ -22,6 +22,9 @@ struct IPadAppStateTests {
         #expect(state.selectedHostId == nil)
         #expect(state.selectedWorktreePath == nil)
         #expect(state.focusedPaneId == nil)
+        #expect(state.latestWorktrees.isEmpty)
+        #expect(state.focusRequestCount == 0)
+        #expect(state.ownershipRequestCount == 0)
         #expect(state.sidebarWidth == 320)
         #expect(state.theme == GhosttyThemeColors.fallback)
     }
@@ -73,6 +76,18 @@ struct IPadAppStateTests {
 
         let b = IPadAppState(defaults: defaults)
         #expect(b.selectedHostId == nil)
+    }
+
+    @Test("requesting active terminal focus and ownership increments separate counters")
+    func activeRequestCounters() {
+        let state = IPadAppState(defaults: freshDefaults())
+        #expect(state.focusRequestCount == 0)
+        #expect(state.ownershipRequestCount == 0)
+
+        state.requestActiveTerminal()
+
+        #expect(state.focusRequestCount == 1)
+        #expect(state.ownershipRequestCount == 1)
     }
 }
 #endif
