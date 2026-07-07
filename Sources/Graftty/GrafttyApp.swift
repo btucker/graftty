@@ -6,6 +6,27 @@ import GrafttyKit
 import GrafttyProtocol
 import WebRTC
 
+func defaultBranchStatus(
+    for repo: RepoEntry,
+    stats: WorktreeStats?
+) -> WebServer.RepoInfo.DefaultBranchStatus? {
+    guard let stats, stats.behind > 0,
+          let defaultRef = stats.upstreamRefs?.defaultRef,
+          defaultRef.hasPrefix("origin/") else {
+        return nil
+    }
+    let branchName = String(defaultRef.dropFirst("origin/".count))
+    guard !branchName.isEmpty,
+          repo.worktrees.first(where: { $0.path == repo.path })?.branch == branchName else {
+        return nil
+    }
+    return WebServer.RepoInfo.DefaultBranchStatus(
+        branchName: branchName,
+        remoteRef: defaultRef,
+        behindCount: stats.behind
+    )
+}
+
 protocol CodexAppServerDeliveryTrigger: Sendable {
     func onMessageArrival(team: String, worktree: String) async
 }
@@ -1322,13 +1343,22 @@ struct GrafttyApp: App {
             await MainActor.run { buildWorktreePanesSnapshot() }
         }
 
+        let statsStore = services.statsStore
+
         // WEB-7.1: feed the web server the repo list for the "Add
         // Worktree" picker. Mirrors the native sidebar's top-level
         // repos.
         webController.setReposProvider {
             await MainActor.run { () -> [WebServer.RepoInfo] in
                 appStateBinding.wrappedValue.repos.map { repo in
-                    WebServer.RepoInfo(path: repo.path, displayName: repo.displayName)
+                    WebServer.RepoInfo(
+                        path: repo.path,
+                        displayName: repo.displayName,
+                        defaultBranchStatus: defaultBranchStatus(
+                            for: repo,
+                            stats: statsStore.stats[repo.path]
+                        )
+                    )
                 }
             }
         }
@@ -1340,8 +1370,39 @@ struct GrafttyApp: App {
         // terminal-surface creation happens on the main actor — same
         // isolation as the native sidebar's "+" button.
         let worktreeMonitor = services.worktreeMonitor
-        let statsStore = services.statsStore
         let dispatcherForWeb = services.teamEventDispatcher
+        webController.setDefaultBranchPuller { req in
+            let pullTarget = await MainActor.run {
+                guard let repo = appStateBinding.wrappedValue.repos.first(where: { $0.path == req.repoPath }) else {
+                    return (tracked: false, status: nil as WebServer.RepoInfo.DefaultBranchStatus?)
+                }
+                return (tracked: true, status: defaultBranchStatus(
+                    for: repo,
+                    stats: statsStore.stats[repo.path]
+                ))
+            }
+            guard pullTarget.tracked else {
+                return .invalid("repository not tracked")
+            }
+            guard let status = pullTarget.status else {
+                return .invalid("default checkout is not behind origin")
+            }
+            do {
+                try await GitDefaultBranchPull.pull(repoPath: req.repoPath, branchName: status.branchName)
+            } catch GitDefaultBranchPull.Error.gitFailed(_, let stderr) {
+                return .gitFailed(stderr)
+            } catch {
+                return .internalFailure("\(error)")
+            }
+            await MainActor.run {
+                guard let repo = appStateBinding.wrappedValue.repos.first(where: { $0.path == req.repoPath }) else {
+                    return
+                }
+                let branch = repo.worktrees.first(where: { $0.path == repo.path })?.branch ?? ""
+                statsStore.refresh(worktreePath: repo.path, repoPath: repo.path, branch: branch)
+            }
+            return .success(WebServer.PullDefaultBranchResponse(ok: true))
+        }
         webController.setWorktreeCreator { req in
             let branch: BranchSelection
             if req.existing {

@@ -34,12 +34,30 @@ public final class WebServer {
     /// doesn't have to re-derive it from a display name (which could
     /// collide when two repos share a basename).
     public struct RepoInfo: Codable, Sendable, Equatable {
+        public struct DefaultBranchStatus: Codable, Sendable, Equatable {
+            public let branchName: String
+            public let remoteRef: String
+            public let behindCount: Int
+
+            public init(branchName: String, remoteRef: String, behindCount: Int) {
+                self.branchName = branchName
+                self.remoteRef = remoteRef
+                self.behindCount = behindCount
+            }
+        }
+
         public let path: String
         public let displayName: String
+        public let defaultBranchStatus: DefaultBranchStatus?
 
-        public init(path: String, displayName: String) {
+        public init(
+            path: String,
+            displayName: String,
+            defaultBranchStatus: DefaultBranchStatus? = nil
+        ) {
             self.path = path
             self.displayName = displayName
+            self.defaultBranchStatus = defaultBranchStatus
         }
     }
 
@@ -103,6 +121,32 @@ public final class WebServer {
         case gitFailed(String)     // 409 — `git worktree add` rejected the request
         case conflict(message: String) // 409 — semantic conflict (e.g. branch already mounted)
         case internalFailure(String) // 500 — post-success discovery or spawn broke
+    }
+
+    /// JSON body accepted by `POST /repos/default-branch/pull`.
+    public struct PullDefaultBranchRequest: Codable, Sendable, Equatable {
+        public let repoPath: String
+
+        public init(repoPath: String) {
+            self.repoPath = repoPath
+        }
+    }
+
+    /// JSON body returned by `POST /repos/default-branch/pull` on success.
+    public struct PullDefaultBranchResponse: Codable, Sendable, Equatable {
+        public let ok: Bool
+
+        public init(ok: Bool) {
+            self.ok = ok
+        }
+    }
+
+    /// Outcome a default-branch puller reports back.
+    public enum PullDefaultBranchOutcome: Sendable {
+        case success(PullDefaultBranchResponse)
+        case invalid(String)
+        case gitFailed(String)
+        case internalFailure(String)
     }
 
     /// JSON body accepted by `POST /worktrees/delete`. `force` mirrors
@@ -171,6 +215,9 @@ public final class WebServer {
         /// creator; the default exists for tests and early-boot states
         /// where `AppState` isn't wired yet.
         public let worktreeCreator: (@Sendable (CreateWorktreeRequest) async -> CreateWorktreeOutcome)?
+        /// Executes `POST /repos/default-branch/pull`. Nil (default)
+        /// means the endpoint responds `503`.
+        public let defaultBranchPuller: (@Sendable (PullDefaultBranchRequest) async -> PullDefaultBranchOutcome)?
         /// Executes `POST /worktrees/delete`. Nil disables the endpoint
         /// (503), same contract as `worktreeCreator`. Production wires
         /// this to `DeleteWorktreeFlow.delete` via `GrafttyApp.startup()`.
@@ -211,6 +258,7 @@ public final class WebServer {
             sessionWorktreeProvider: @escaping @Sendable (String) async -> String? = { _ in nil },
             reposProvider: @escaping @Sendable () async -> [RepoInfo] = { [] },
             worktreeCreator: (@Sendable (CreateWorktreeRequest) async -> CreateWorktreeOutcome)? = nil,
+            defaultBranchPuller: (@Sendable (PullDefaultBranchRequest) async -> PullDefaultBranchOutcome)? = nil,
             worktreeRemover: (@Sendable (DeleteWorktreeRequest) async -> DeleteWorktreeOutcome)? = nil,
             ghosttyConfigProvider: @escaping @Sendable () async -> String = { "" },
             worktreePanesProvider: @escaping @Sendable () async -> [WorktreePanes] = { [] },
@@ -225,6 +273,7 @@ public final class WebServer {
             self.sessionWorktreeProvider = sessionWorktreeProvider
             self.reposProvider = reposProvider
             self.worktreeCreator = worktreeCreator
+            self.defaultBranchPuller = defaultBranchPuller
             self.worktreeRemover = worktreeRemover
             self.ghosttyConfigProvider = ghosttyConfigProvider
             self.worktreePanesProvider = worktreePanesProvider
@@ -632,6 +681,20 @@ public final class WebServer {
                 handleCreateWorktree(context: context, body: body)
                 return
             }
+            // WEB-7.12: optional pull of the repo's default checkout
+            // before creating a new branch from the default branch.
+            if path == "/repos/default-branch/pull" {
+                guard head.method == .POST else {
+                    Self.respondJSON(
+                        context: context,
+                        status: .methodNotAllowed,
+                        error: "only POST is supported"
+                    )
+                    return
+                }
+                handlePullDefaultBranch(context: context, body: body)
+                return
+            }
             // POST /v1/rtc/offer — WebRTC signaling exchange (M1.2).
             // POST-only; other verbs get 405 so caching proxies and curl
             // probes don't surprise the client.
@@ -754,6 +817,71 @@ public final class WebServer {
             }
             Task {
                 promise.succeed(await creator(decoded))
+            }
+        }
+
+        /// Decode `{repoPath}`, invoke the injected default-branch
+        /// puller, and map the result to JSON.
+        private func handlePullDefaultBranch(context: ChannelHandlerContext, body: Data) {
+            guard let puller = config.defaultBranchPuller else {
+                Self.respondJSON(
+                    context: context,
+                    status: .serviceUnavailable,
+                    error: "default branch pull not available"
+                )
+                return
+            }
+            let decoded: PullDefaultBranchRequest
+            do {
+                decoded = try JSONDecoder().decode(PullDefaultBranchRequest.self, from: body)
+            } catch {
+                Self.respondJSON(
+                    context: context,
+                    status: .badRequest,
+                    error: "invalid JSON body: \(error)"
+                )
+                return
+            }
+            let trimmedPath = decoded.repoPath.trimmingCharacters(in: .whitespaces)
+            if trimmedPath.isEmpty {
+                Self.respondJSON(
+                    context: context,
+                    status: .badRequest,
+                    error: "repoPath is required"
+                )
+                return
+            }
+
+            let promise = context.eventLoop.makePromise(of: PullDefaultBranchOutcome.self)
+            promise.futureResult.whenComplete { result in
+                let outcome = (try? result.get()) ?? .internalFailure("puller dispatch failed")
+                switch outcome {
+                case .success(let resp):
+                    do {
+                        let data = try JSONEncoder().encode(resp)
+                        Self.respond(
+                            context: context,
+                            status: .ok,
+                            body: data,
+                            contentType: "application/json; charset=utf-8"
+                        )
+                    } catch {
+                        Self.respondJSON(
+                            context: context,
+                            status: .internalServerError,
+                            error: "encoding error"
+                        )
+                    }
+                case .invalid(let msg):
+                    Self.respondJSON(context: context, status: .badRequest, error: msg)
+                case .gitFailed(let msg):
+                    Self.respondJSON(context: context, status: .conflict, error: msg)
+                case .internalFailure(let msg):
+                    Self.respondJSON(context: context, status: .internalServerError, error: msg)
+                }
+            }
+            Task {
+                promise.succeed(await puller(decoded))
             }
         }
 

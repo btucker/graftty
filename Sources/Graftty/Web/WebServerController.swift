@@ -47,6 +47,9 @@ final class WebServerController: ObservableObject {
     /// `AddWorktreeFlow.add` on the main actor. Nil before injection
     /// causes the endpoint to respond `503 service unavailable`.
     private var worktreeCreator: (@Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome)?
+    /// Executes `POST /repos/default-branch/pull` (`WEB-7.12`).
+    /// Routes into `GitDefaultBranchPull` from `GrafttyApp`.
+    private var defaultBranchPuller: (@Sendable (WebServer.PullDefaultBranchRequest) async -> WebServer.PullDefaultBranchOutcome)?
     /// Executes `POST /worktrees/delete` (`WEB-7.8` / `WEB-7.9` /
     /// `WEB-7.10`). Routes into `DeleteWorktreeFlow.delete` on the
     /// main actor. Nil before injection causes the endpoint to respond
@@ -150,6 +153,14 @@ final class WebServerController: ObservableObject {
         _ creator: @escaping @Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome
     ) {
         worktreeCreator = creator
+        rebuildIfRunning()
+    }
+
+    /// Install the puller used for `POST /repos/default-branch/pull`.
+    func setDefaultBranchPuller(
+        _ puller: @escaping @Sendable (WebServer.PullDefaultBranchRequest) async -> WebServer.PullDefaultBranchOutcome
+    ) {
+        defaultBranchPuller = puller
         rebuildIfRunning()
     }
 
@@ -402,6 +413,7 @@ final class WebServerController: ObservableObject {
         let sessionWorktreeProvider = self.sessionWorktreeProvider ?? { _ in nil }
         let repos = reposProvider ?? { [] }
         let creator = worktreeCreator
+        let puller = defaultBranchPuller
         let remover = worktreeRemover
         let signalingHandler = self.signalingHandler
         let s = WebServer(
@@ -413,6 +425,7 @@ final class WebServerController: ObservableObject {
                 sessionWorktreeProvider: sessionWorktreeProvider,
                 reposProvider: repos,
                 worktreeCreator: creator,
+                defaultBranchPuller: puller,
                 worktreeRemover: remover,
                 ghosttyConfigProvider: { GhosttyConfigReader.resolvedConfig() },
                 worktreePanesProvider: worktreePanesProvider ?? { [] },
