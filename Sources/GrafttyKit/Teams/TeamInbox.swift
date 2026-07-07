@@ -125,6 +125,9 @@ public struct TeamInboxWorktreeWatermark: Codable, Sendable, Equatable {
 }
 
 public final class TeamInbox {
+    private static let worktreeWatermarkProcessLocksGuard = NSLock()
+    private static var worktreeWatermarkProcessLocks: [String: NSLock] = [:]
+
     public let rootDirectory: URL
     private let idGenerator: () -> String
     private let now: () -> Date
@@ -251,10 +254,16 @@ public final class TeamInbox {
         _ watermark: TeamInboxWorktreeWatermark,
         teamID: String
     ) throws {
-        let url = watermarkURL(teamID: teamID, worktree: watermark.worktree)
-        try ensureParentDirectory(for: url)
-        let data = try encoder.encode(watermark)
-        try data.write(to: url, options: .atomic)
+        try withWorktreeWatermarkLock(teamID: teamID, worktree: watermark.worktree) {
+            if try shouldWriteWorktreeWatermarkUnlocked(
+                teamID: teamID,
+                worktree: watermark.worktree,
+                proposedID: watermark.lastDeliveredToAnySessionID,
+                allowUnknownProposedID: true
+            ) {
+                try writeWorktreeWatermarkUnlocked(watermark, teamID: teamID)
+            }
+        }
     }
 
     public func worktreeWatermark(
@@ -264,6 +273,72 @@ public final class TeamInbox {
         let url = watermarkURL(teamID: teamID, worktree: worktree)
         guard let data = try dataIfFileExists(at: url) else { return nil }
         return try decoder.decode(TeamInboxWorktreeWatermark.self, from: data)
+    }
+
+    @discardableResult
+    public func compareAndAdvanceWorktreeWatermark(
+        teamID: String,
+        worktree: String,
+        to proposedMessageID: String
+    ) throws -> Bool {
+        try withWorktreeWatermarkLock(teamID: teamID, worktree: worktree) {
+            if try shouldWriteWorktreeWatermarkUnlocked(
+                teamID: teamID,
+                worktree: worktree,
+                proposedID: proposedMessageID,
+                allowUnknownProposedID: false
+            ) {
+                try writeWorktreeWatermarkUnlocked(
+                    TeamInboxWorktreeWatermark(
+                        worktree: worktree,
+                        lastDeliveredToAnySessionID: proposedMessageID
+                    ),
+                    teamID: teamID
+                )
+                return true
+            }
+            return false
+        }
+    }
+
+    private func shouldWriteWorktreeWatermarkUnlocked(
+        teamID: String,
+        worktree: String,
+        proposedID: String?,
+        allowUnknownProposedID: Bool
+    ) throws -> Bool {
+        let currentID = try worktreeWatermark(
+            teamID: teamID,
+            worktree: worktree
+        )?.lastDeliveredToAnySessionID
+        guard currentID != proposedID else {
+            return false
+        }
+        guard let currentID else {
+            return true
+        }
+        guard let proposedID else {
+            return false
+        }
+
+        let messages = try messages(teamID: teamID)
+        guard let proposedIndex = messages.lastIndex(where: { $0.id == proposedID }) else {
+            return allowUnknownProposedID
+        }
+        guard let currentIndex = messages.lastIndex(where: { $0.id == currentID }) else {
+            return true
+        }
+        return proposedIndex > currentIndex
+    }
+
+    private func writeWorktreeWatermarkUnlocked(
+        _ watermark: TeamInboxWorktreeWatermark,
+        teamID: String
+    ) throws {
+        let url = watermarkURL(teamID: teamID, worktree: watermark.worktree)
+        try ensureParentDirectory(for: url)
+        let data = try encoder.encode(watermark)
+        try data.write(to: url, options: .atomic)
     }
 
     private func append(_ message: TeamInboxMessage, teamID: String) throws {
@@ -297,6 +372,50 @@ public final class TeamInbox {
         #endif
         guard fd >= 0 else { throw currentPOSIXError() }
         return fd
+    }
+
+    private func withWorktreeWatermarkLock<T>(
+        teamID: String,
+        worktree: String,
+        _ body: () throws -> T
+    ) throws -> T {
+        let url = worktreeWatermarkLockURL(teamID: teamID, worktree: worktree)
+        let processLock = Self.worktreeWatermarkProcessLock(for: url)
+        processLock.lock()
+        defer { processLock.unlock() }
+
+        try ensureParentDirectory(for: url)
+        let permissions = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH
+        #if canImport(Darwin)
+        let fd = Darwin.open(url.path, O_RDWR | O_CREAT, permissions)
+        #elseif canImport(Glibc)
+        let fd = Glibc.open(url.path, O_RDWR | O_CREAT, mode_t(permissions))
+        #else
+        #error("Unsupported platform")
+        #endif
+        guard fd >= 0 else { throw currentPOSIXError() }
+        defer { close(fd) }
+
+        #if canImport(Darwin)
+        guard Darwin.lockf(fd, F_LOCK, 0) == 0 else { throw currentPOSIXError() }
+        defer { _ = Darwin.lockf(fd, F_ULOCK, 0) }
+        #elseif canImport(Glibc)
+        guard Glibc.lockf(fd, F_LOCK, 0) == 0 else { throw currentPOSIXError() }
+        defer { _ = Glibc.lockf(fd, F_ULOCK, 0) }
+        #endif
+        return try body()
+    }
+
+    private static func worktreeWatermarkProcessLock(for url: URL) -> NSLock {
+        let key = url.standardizedFileURL.path
+        worktreeWatermarkProcessLocksGuard.lock()
+        defer { worktreeWatermarkProcessLocksGuard.unlock() }
+        if let lock = worktreeWatermarkProcessLocks[key] {
+            return lock
+        }
+        let lock = NSLock()
+        worktreeWatermarkProcessLocks[key] = lock
+        return lock
     }
 
     private func writeAll(_ data: Data, to fd: Int32) throws {
@@ -349,30 +468,10 @@ public final class TeamInbox {
             .appendingPathComponent(Self.fileComponent(worktree) + ".json")
     }
 
-    /// @spec TEAM-IDLE-2.6
-    /// Per-(team, worktree, runtime) cursor advanced after a successful
-    /// zmx-send delivery. Distinct from the per-session `cursor` (advanced
-    /// on hook delivery) and the per-worktree read watermark (advanced when
-    /// the user runs `graftty team inbox`). Three watermarks because each
-    /// tracks a different "the agent has seen this" semantic.
-    public func zmxWatermark(teamID: String, worktree: String, runtime: String) throws -> String? {
-        let url = zmxWatermarkURL(teamID: teamID, worktree: worktree, runtime: runtime)
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        let data = try Data(contentsOf: url)
-        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    public func advanceZmxWatermark(teamID: String, worktree: String, runtime: String, to messageID: String) throws {
-        let url = zmxWatermarkURL(teamID: teamID, worktree: worktree, runtime: runtime)
-        try ensureParentDirectory(for: url)
-        try messageID.write(to: url, atomically: true, encoding: .utf8)
-    }
-
-    private func zmxWatermarkURL(teamID: String, worktree: String, runtime: String) -> URL {
-        rootDirectory
-            .appendingPathComponent(Self.fileComponent(teamID), isDirectory: true)
-            .appendingPathComponent("zmx-watermarks", isDirectory: true)
-            .appendingPathComponent("\(Self.fileComponent(worktree)).\(runtime)")
+    private func worktreeWatermarkLockURL(teamID: String, worktree: String) -> URL {
+        teamDirectory(teamID: teamID)
+            .appendingPathComponent("worktrees", isDirectory: true)
+            .appendingPathComponent(Self.fileComponent(worktree) + ".lock")
     }
 
     private func teamDirectory(teamID: String) -> URL {

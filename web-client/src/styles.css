@@ -187,6 +187,38 @@ html, body, #root, #app {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+.new-worktree-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 205, 100, 0.28);
+  background: rgba(255, 205, 100, 0.1);
+  color: #f0d38a;
+  font: 13px -apple-system, system-ui, sans-serif;
+}
+.new-worktree-warning-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.new-worktree-secondary {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--term-foreground);
+  font: 500 12px -apple-system, system-ui, sans-serif;
+  cursor: pointer;
+}
+.new-worktree-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+.new-worktree-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .new-worktree-actions {
   display: flex;
   justify-content: flex-end;

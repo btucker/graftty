@@ -3,7 +3,7 @@ import Foundation
 /// @spec TEAM-IDLE-1.1
 /// Synthesizes a CODEX_HOME directory that mirrors the user's `~/.codex/`
 /// via symlinks, with `hooks.json` and `config.toml` overridden by graftty's
-/// versions (union-merged with user's). Idempotent — runs on every wrapper
+/// versions (union-merged with user's). Idempotent - runs on every wrapper
 /// invocation via `graftty internal sync-codex-home`.
 public struct CodexHomeMirror: Sendable {
     public static let grafttyCommandPrefix = "graftty team hook codex"
@@ -79,11 +79,14 @@ public struct CodexHomeMirror: Sendable {
             let existing = (hooks[key] as? [[String: Any]]) ?? []
             let stripped = existing.filter { group in
                 let handlers = (group["hooks"] as? [[String: Any]]) ?? []
-                return !handlers.contains(where: {
-                    ($0["command"] as? String)?.hasPrefix(Self.grafttyCommandPrefix) == true
+                return !handlers.contains(where: { handler in
+                    guard let command = handler["command"] as? String else { return false }
+                    return Self.isGrafttyCodexHookCommand(command)
                 })
             }
-            hooks[key] = stripped + [grafttyMatcherGroup(event: event)]
+            hooks[key] = event == .sessionStart
+                ? stripped + [grafttyMatcherGroup(event: event)]
+                : stripped
         }
         root["hooks"] = hooks
 
@@ -101,6 +104,10 @@ public struct CodexHomeMirror: Sendable {
                 ],
             ],
         ]
+    }
+
+    private static func isGrafttyCodexHookCommand(_ command: String) -> Bool {
+        command.hasPrefix(grafttyCommandPrefix) || command.contains(" team hook codex ")
     }
 
     /// Read user's config.toml (if any), ensure [features].hooks = true,

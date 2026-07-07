@@ -351,6 +351,37 @@ public struct AgentHookInstaller: Sendable {
         \(shellCommandToken(grafttyCLIPath)) team register --runtime \(runtime.rawValue) --pid "$$" >/dev/null 2>&1 || true
         """
 
+        let codexCleanupBlock: String
+        if runtime == .codex {
+            codexCleanupBlock = """
+              if [ -n "${_graftty_codex_socket:-}" ] && [ -n "${_graftty_codex_app_server_pid:-}" ]; then
+                \(shellCommandToken(grafttyCLIPath)) team codex-app-server unregister --socket "$_graftty_codex_socket" --app-server-pid "$_graftty_codex_app_server_pid" >/dev/null 2>&1 || true
+              fi
+              if [ -n "${_graftty_codex_app_server_pid:-}" ]; then
+                kill "$_graftty_codex_app_server_pid" 2>/dev/null || true
+                _graftty_codex_shutdown_wait_count=0
+                while kill -0 "$_graftty_codex_app_server_pid" 2>/dev/null; do
+                  if [ "$_graftty_codex_shutdown_wait_count" -ge 20 ]; then
+                    kill -KILL "$_graftty_codex_app_server_pid" 2>/dev/null || true
+                    break
+                  fi
+                  sleep 0.1
+                  _graftty_codex_shutdown_wait_count=$((_graftty_codex_shutdown_wait_count + 1))
+                done
+                wait "$_graftty_codex_app_server_pid" 2>/dev/null || true
+                unset _graftty_codex_shutdown_wait_count
+              fi
+              if [ -n "${_graftty_codex_socket:-}" ]; then
+                rm -f "$_graftty_codex_socket"
+              fi
+              if [ -z "${_graftty_preserve_codex_app_server_log:-}" ] && [ -n "${_graftty_codex_app_server_log:-}" ]; then
+                rm -f "$_graftty_codex_app_server_log"
+              fi
+            """
+        } else {
+            codexCleanupBlock = ""
+        }
+
         let cleanupBlock = """
         cleanup_after_runtime() {
           # Some TUIs issue terminal capability queries during startup/shutdown.
@@ -365,6 +396,7 @@ public struct AgentHookInstaller: Sendable {
             fi
           fi
           \(shellCommandToken(grafttyCLIPath)) team unregister --runtime \(runtime.rawValue) 2>/dev/null || true
+        \(codexCleanupBlock)
         }
         """
 
@@ -385,7 +417,77 @@ public struct AgentHookInstaller: Sendable {
             runtimeBlock = """
             if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
               \(shellCommandToken(grafttyCLIPath)) internal sync-codex-home
-              env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@"
+              _graftty_codex_should_use_app_server() {
+                while [ "$#" -gt 0 ]; do
+                  case "$1" in
+                    --help|-h|--version|-V)
+                      return 1
+                      ;;
+                    -c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote|--remote-auth-token-env|--local-provider|--add-dir|-i|--image)
+                      shift
+                      [ "$#" -gt 0 ] && shift
+                      continue
+                      ;;
+                    --config=*|--enable=*|--disable=*|--model=*|--profile=*|--sandbox=*|--ask-for-approval=*|--approval-policy=*|--cwd=*|--cd=*|--color=*|--output-schema=*|--origin=*|--settings=*|--remote=*|--remote-auth-token-env=*|--local-provider=*|--add-dir=*|--image=*)
+                      shift
+                      continue
+                      ;;
+                    --)
+                      shift
+                      ;;
+                    --oss|--strict-config|--dangerously-bypass-approvals-and-sandbox|--dangerously-bypass-hook-trust|--search|--no-alt-screen)
+                      shift
+                      continue
+                      ;;
+                    -*)
+                      return 1
+                      ;;
+                    app-server|remote-control|exec|e|review|login|logout|mcp|plugin|mcp-server|app|completion|update|doctor|sandbox|debug|apply|a|archive|delete|unarchive|cloud|exec-server|features|help)
+                      return 1
+                      ;;
+                    *)
+                      return 0
+                      ;;
+                  esac
+                done
+                return 0
+              }
+              if ! _graftty_codex_should_use_app_server "$@"; then
+                env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@"
+              else
+              _graftty_codex_socket_dir="${TMPDIR:-/tmp}/graftty-codex-app-server"
+              mkdir -p "$_graftty_codex_socket_dir"
+              _graftty_codex_socket="$_graftty_codex_socket_dir/$$.sock"
+              _graftty_codex_app_server_log="$_graftty_codex_socket_dir/$$.log"
+              rm -f "$_graftty_codex_socket"
+              env CODEX_HOME=\(codexHomeLiteral) "$real_binary" app-server --listen "unix://$_graftty_codex_socket" </dev/null >>"$_graftty_codex_app_server_log" 2>&1 &
+              _graftty_codex_app_server_pid=$!
+              _graftty_wait_for_codex_socket() {
+                _graftty_wait_count=0
+                while [ "$_graftty_wait_count" -lt 50 ]; do
+                  if [ -S "$_graftty_codex_socket" ]; then
+                    return 0
+                  fi
+                  if ! kill -0 "$_graftty_codex_app_server_pid" 2>/dev/null; then
+                    return 1
+                  fi
+                  sleep 0.1
+                  _graftty_wait_count=$((_graftty_wait_count + 1))
+                done
+                return 1
+              }
+              if ! _graftty_wait_for_codex_socket; then
+                printf '%s\\n' "graftty: codex app-server failed to start; see $_graftty_codex_app_server_log" >&2
+                kill "$_graftty_codex_app_server_pid" 2>/dev/null || true
+                wait "$_graftty_codex_app_server_pid" 2>/dev/null || true
+                rm -f "$_graftty_codex_socket"
+                _graftty_preserve_codex_app_server_log=1
+                cleanup_after_runtime
+                exit 1
+              fi
+              \(shellCommandToken(grafttyCLIPath)) team codex-app-server register --socket "$_graftty_codex_socket" --real-binary "$real_binary" --app-server-pid "$_graftty_codex_app_server_pid" >/dev/null 2>&1 || true
+              env CODEX_HOME=\(codexHomeLiteral) "$real_binary" --remote "unix://$_graftty_codex_socket" "$@"
+              fi
             else
               "$real_binary" "$@"
             fi
@@ -523,12 +625,6 @@ public struct AgentHookInstaller: Sendable {
     }
 
     private static func shellCommandToken(_ value: String) -> String {
-        guard value.rangeOfCharacter(from: .whitespacesAndNewlines) != nil ||
-              value.contains("'") ||
-              value.contains("\"")
-        else {
-            return value
-        }
         return shellLiteral(value)
     }
 
