@@ -661,6 +661,102 @@ struct SessionClientTests {
         ))
     }
 
+    @Test("""
+    @spec IOS-6.15: When a fullscreen iOS session reconnects after it was the display owner before suspension and the server reports the session as ownerless, the application shall automatically send `takeControl` with the current iOS viewport. It shall not auto-claim when another client owns the session, so foregrounding the phone does not steal control from a Mac/web owner that took over while the phone was away.
+    """)
+    func reconnectingPreviousOwnerAutomaticallyReclaimsOwnerlessSession() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(
+            sessionName: "s",
+            webSocketFactory: { ws },
+            reclaimControlOnOwnerlessConnect: true
+        )
+        client.start()
+        defer { client.stop() }
+        primeViewport(client, columns: 90, rows: 28)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let clientID = try #require(firstHelloClientID(ws))
+        ws.clearSent()
+
+        let ownerless = try ownershipSnapshot(
+            ownerClientID: nil,
+            ownerKind: nil,
+            cols: 120,
+            rows: 40,
+            epoch: 3
+        )
+        client.handleTextFrame(WebControlEnvelope.ownership(ownerless).encoded())
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let takeover = envelopes(ws).first {
+            if case .takeControl = $0 { return true }
+            return false
+        }
+        #expect(takeover == .takeControl(clientID: clientID, kind: .ios, cols: 90, rows: 28))
+    }
+
+    @Test
+    func reconnectingPreviousOwnerDoesNotStealFromAnotherOwner() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(
+            sessionName: "s",
+            webSocketFactory: { ws },
+            reclaimControlOnOwnerlessConnect: true
+        )
+        client.start()
+        defer { client.stop() }
+        primeViewport(client, columns: 90, rows: 28)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        _ = try #require(firstHelloClientID(ws))
+        ws.clearSent()
+
+        try confirmFollower(client, cols: 120, rows: 40, epoch: 3)
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        let takeoverCount = envelopes(ws).filter {
+            if case .takeControl = $0 { return true }
+            return false
+        }.count
+        #expect(takeoverCount == 0)
+    }
+
+    @Test
+    func reconnectReclaimWaitsForViewportBeforeTakingControl() async throws {
+        let ws = FakeWS()
+        let client = SessionClient(
+            sessionName: "s",
+            webSocketFactory: { ws },
+            reclaimControlOnOwnerlessConnect: true
+        )
+        client.start()
+        defer { client.stop() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let clientID = try #require(firstHelloClientID(ws))
+        ws.clearSent()
+
+        let ownerless = try ownershipSnapshot(
+            ownerClientID: nil,
+            ownerKind: nil,
+            cols: 120,
+            rows: 40,
+            epoch: 3
+        )
+        client.handleTextFrame(WebControlEnvelope.ownership(ownerless).encoded())
+        try await Task.sleep(nanoseconds: 100_000_000)
+        #expect(envelopes(ws).filter {
+            if case .takeControl = $0 { return true }
+            return false
+        }.isEmpty)
+
+        primeViewport(client, columns: 90, rows: 28)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let takeover = envelopes(ws).first {
+            if case .takeControl = $0 { return true }
+            return false
+        }
+        #expect(takeover == .takeControl(clientID: clientID, kind: .ios, cols: 90, rows: 28))
+    }
+
     @Test
     func ownerResizeSendsOwnerResizeWithCurrentEpoch() async throws {
         let ws = FakeWS()

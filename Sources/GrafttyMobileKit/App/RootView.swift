@@ -231,6 +231,11 @@ struct SingleSessionView: View {
     /// avoid pointlessly rebuilding the controller config on every layout
     /// tick. Set to nil while the base config is in effect.
     @State private var liveFontOverride: Float?
+    /// Scene-suspension memory only: if this fullscreen pane was the display
+    /// owner before iOS forced the live session down, the next dial may reclaim
+    /// an ownerless session. It deliberately does not apply to navigation-away
+    /// teardown, where the user intentionally left the pane.
+    @State private var reclaimControlOnNextDial = false
 
     private var isKeyboardVisible: Bool { keyboardBottomInset > 0 }
 
@@ -252,6 +257,14 @@ struct SingleSessionView: View {
 
     static func shouldInstallKeyboardProxy(clientIsOwner: Bool) -> Bool {
         clientIsOwner
+    }
+
+    static func shouldFocusKeyboardOnOwnerTransition(
+        wasOwner: Bool,
+        isOwner: Bool,
+        keyboardAllowed: Bool
+    ) -> Bool {
+        !wasOwner && isOwner && keyboardAllowed
     }
 
     /// Terminal theme background, parsed from the Mac-resolved ghostty config.
@@ -421,6 +434,9 @@ struct SingleSessionView: View {
 
     private func driveConnection() async {
         if LiveSessionReadiness.shouldTearDown(scene: scenePhase) {
+            if client?.isOwner == true {
+                reclaimControlOnNextDial = true
+            }
             client?.stop()
             client = nil
             if connection != .ended { connection = .suspended }
@@ -485,7 +501,8 @@ struct SingleSessionView: View {
                 coordinator: coordinator,
                 host: step.host,
                 sessionName: step.sessionName
-            )
+            ),
+            reclaimControlOnOwnerlessConnect: reclaimControlOnNextDial
         )
         if Task.isCancelled || connection == .ended {
             // Re-backgrounded (or ended) between WS construction and
@@ -496,6 +513,7 @@ struct SingleSessionView: View {
         new.start()
         client = new
         connection = .live
+        reclaimControlOnNextDial = false
     }
 
     private var loadingPlaceholder: some View {
@@ -763,6 +781,15 @@ struct SingleSessionView: View {
                     controller: controller,
                     containerWidth: containerSize.width
                 )
+            }
+            .onChange(of: client.isOwner) { wasOwner, isOwner in
+                if Self.shouldFocusKeyboardOnOwnerTransition(
+                    wasOwner: wasOwner,
+                    isOwner: isOwner,
+                    keyboardAllowed: keyboardAllowed
+                ) {
+                    focusRequestCount += 1
+                }
             }
     }
 

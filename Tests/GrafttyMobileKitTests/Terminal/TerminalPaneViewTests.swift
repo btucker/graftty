@@ -74,6 +74,21 @@ struct TerminalPaneViewTests {
         #expect(didNotifyUnmount)
         #expect(receivedSnapshot == nil)
     }
+
+    @Test("""
+@spec IOS-11.12: When the user taps Paste from the terminal long-press edit menu, the application shall forward the clipboard paste request and then re-focus GrafttyMobile's software-keyboard proxy when it is eligible, so dismissing the UIKit edit menu does not leave the user without terminal keyboard control.
+""")
+    func pasteMenuRefocusesKeyboardProxyAfterForwardingPaste() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        container.inputProxy.softwareKeyboardInputEnabled = true
+        var didRequestPaste = false
+        container.onPasteRequested = { didRequestPaste = true }
+
+        container.performPasteForTesting()
+
+        #expect(didRequestPaste)
+        #expect(container.keyboardRefocusRequestCountForTesting == 1)
+    }
 }
 
 @Suite("Terminal gestures do not claim ownership")
