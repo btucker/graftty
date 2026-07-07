@@ -12,9 +12,18 @@ struct PaneControlClientTests {
         let fake = FakeDriver(response: .ok)
         let client = PaneControlClient(driver: fake)
         try await client.open()
-        let response = try await client.split(target: "s1", direction: .vertical)
+        let response = try await client.split(target: "s1", direction: .right)
         #expect(response == .ok)
-        #expect(fake.lastRequest == .split(target: "s1", direction: .vertical))
+        #expect(fake.lastRequest == .split(target: "s1", direction: .right))
+    }
+
+    @Test func splitLeftForwardsAndReturnsOk() async throws {
+        let fake = FakeDriver(response: .ok)
+        let client = PaneControlClient(driver: fake)
+        try await client.open()
+        let response = try await client.split(target: "s-left", direction: .left)
+        #expect(response == .ok)
+        #expect(fake.lastRequest == .split(target: "s-left", direction: .left))
     }
 
     @Test func closeForwardsAndReturnsOk() async throws {
@@ -39,7 +48,7 @@ struct PaneControlClientTests {
         let fake = FakeDriver(response: .error(code: "conflict", message: "busy"))
         let client = PaneControlClient(driver: fake)
         try await client.open()
-        let response = try await client.split(target: "s3", direction: .horizontal)
+        let response = try await client.split(target: "s3", direction: .right)
         guard case let .error(code, _) = response else {
             Issue.record("expected error response, got \(response)")
             return

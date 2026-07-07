@@ -1569,12 +1569,17 @@ struct GrafttyApp: App {
                                 message: "no pane with session name '\(target)'"
                             )
                         }
-                        // Mobile sends a coarse axis; we pick the "natural"
-                        // direction on each axis (right / down) so the new
-                        // pane appears after the target, matching what the
-                        // Mac sidebar context menu's "Split Right" / "Split
-                        // Down" defaults produce.
-                        let split: PaneSplit = direction == .horizontal ? .right : .down
+                        let split: PaneSplit
+                        switch direction {
+                        case .right:
+                            split = .right
+                        case .down:
+                            split = .down
+                        case .left:
+                            split = .left
+                        case .up:
+                            split = .up
+                        }
                         let slot = PaneSlotID(id: paneID)
                         guard Self.splitPane(
                             appState: appStateBinding,

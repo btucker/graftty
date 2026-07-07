@@ -17,7 +17,7 @@ import XCTest
 /// until the handler's deferred write lands — no busy-poll, no race.
 final class PaneControlChannelHandlerTests: XCTestCase {
 
-    /// @spec REMOTE-7.2: When the host receives a `pane_control` request `{"type":"split","target":<sessionName>,"direction":<axis>}`, the host shall replace the leaf whose `sessionName == target` with a new split node of the requested `direction` whose left/top child is the original leaf and whose right/bottom child is a freshly-spawned leaf, applied on the main actor, and reply `{"ok":true}` on success.
+    /// @spec REMOTE-7.2: When the host receives a `pane_control` request `{"type":"split","target":<sessionName>,"direction":<right|down|left|up>}`, the host shall replace the leaf whose `sessionName == target` with a new split node placed to the requested side of the original leaf, applied on the main actor, and reply `{"ok":true}` on success.
     func testDecodesAndDispatchesSplitRequest() async throws {
         let recorder = MutatorRecorder()
         let handler = PaneControlChannelHandler(mutator: { [recorder] req in
@@ -26,7 +26,27 @@ final class PaneControlChannelHandlerTests: XCTestCase {
 
         let channel = try await Self.channel(with: handler)
 
-        let request: PaneControlRequest = .split(target: "session-a", direction: .vertical)
+        let request: PaneControlRequest = .split(target: "session-a", direction: .down)
+        try await channel.writeInbound(Self.frame(request))
+
+        let responseBuf = try await channel.waitForOutboundWrite(as: ByteBuffer.self)
+        let resp = try JSONDecoder().decode(
+            PaneControlResponse.self,
+            from: Data(responseBuf.readableBytesView)
+        )
+        XCTAssertEqual(resp, .ok)
+        XCTAssertEqual(recorder.lastRequest, request)
+    }
+
+    func testDecodesAndDispatchesSplitUpRequest() async throws {
+        let recorder = MutatorRecorder()
+        let handler = PaneControlChannelHandler(mutator: { [recorder] req in
+            await recorder.handle(req)
+        })
+
+        let channel = try await Self.channel(with: handler)
+
+        let request: PaneControlRequest = .split(target: "session-a", direction: .up)
         try await channel.writeInbound(Self.frame(request))
 
         let responseBuf = try await channel.waitForOutboundWrite(as: ByteBuffer.self)
@@ -91,7 +111,7 @@ final class PaneControlChannelHandlerTests: XCTestCase {
         let channel = try await Self.channel(with: handler)
 
         try await channel.writeInbound(
-            Self.frame(.split(target: "session-x", direction: .horizontal))
+            Self.frame(.split(target: "session-x", direction: .right))
         )
 
         let responseBuf = try await channel.waitForOutboundWrite(as: ByteBuffer.self)

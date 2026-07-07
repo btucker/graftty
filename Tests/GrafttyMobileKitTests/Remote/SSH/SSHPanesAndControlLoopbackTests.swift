@@ -86,7 +86,7 @@ struct SSHPanesAndControlLoopbackTests {
             expectedHostFingerprint: Self.fingerprint(of: serverKey),
             subscribe: subscribe,
             mutator: mutator,
-            request: .split(target: "session-a", direction: .vertical)
+            request: .split(target: "session-a", direction: .down)
         )
 
         #expect(response == .ok)

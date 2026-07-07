@@ -2,15 +2,37 @@ import Foundation
 import Testing
 @testable import GrafttyProtocol
 
-@Suite("PaneControlRequest/Response — encode/decode round-trip for every variant.")
+@Suite("PaneControlRequest wire format")
 struct PaneControlEnvelopeTests {
 
     @Test
     func splitRoundTrips() throws {
-        let req: PaneControlRequest = .split(target: "session-a", direction: .horizontal)
+        let req: PaneControlRequest = .split(target: "session-a", direction: .right)
         let data = try JSONEncoder().encode(req)
         let decoded = try JSONDecoder().decode(PaneControlRequest.self, from: data)
         #expect(decoded == req)
+    }
+
+    @Test("@spec REMOTE-7.7: Pane-control split requests shall encode semantic directions right/down/left/up, and legacy horizontal/vertical split directions shall decode as right/down for compatibility.")
+    func semanticDirectionsAndLegacyAxes() throws {
+        let request = PaneControlRequest.split(target: "s", direction: .left)
+        let encoded = try JSONEncoder().encode(request)
+        let object = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        #expect(object["direction"] as? String == "left")
+
+        let legacyHorizontal = Data(#"{"type":"split","target":"s","direction":"horizontal"}"#.utf8)
+        let legacyVertical = Data(#"{"type":"split","target":"s","direction":"vertical"}"#.utf8)
+        #expect(try JSONDecoder().decode(PaneControlRequest.self, from: legacyHorizontal) == .split(target: "s", direction: .right))
+        #expect(try JSONDecoder().decode(PaneControlRequest.self, from: legacyVertical) == .split(target: "s", direction: .down))
+    }
+
+    @Test
+    func allSemanticDirectionsRoundTrip() throws {
+        for direction in PaneControlRequest.SplitDirection.allCases {
+            let original = PaneControlRequest.split(target: "session", direction: direction)
+            let data = try JSONEncoder().encode(original)
+            #expect(try JSONDecoder().decode(PaneControlRequest.self, from: data) == original)
+        }
     }
 
     @Test
