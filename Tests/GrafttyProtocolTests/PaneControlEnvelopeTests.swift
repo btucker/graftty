@@ -13,7 +13,9 @@ struct PaneControlEnvelopeTests {
         #expect(decoded == req)
     }
 
-    @Test("@spec REMOTE-7.7: Pane-control split requests shall encode semantic directions right/down/left/up, and legacy horizontal/vertical split directions shall decode as right/down for compatibility.")
+    @Test("""
+@spec REMOTE-7.7: Pane-control split requests shall encode semantic directions right/down/left/up, and legacy horizontal/vertical split directions shall decode as right/down for compatibility.
+""")
     func semanticDirectionsAndLegacyAxes() throws {
         let request = PaneControlRequest.split(target: "s", direction: .left)
         let encoded = try JSONEncoder().encode(request)

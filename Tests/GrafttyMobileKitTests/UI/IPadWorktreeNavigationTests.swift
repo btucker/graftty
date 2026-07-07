@@ -24,7 +24,9 @@ struct IPadWorktreeNavigationTests {
         )
     }
 
-    @Test("@spec IPAD-8.1: When the user presses next_tab on iPad and another selectable worktree has attention, the application shall select the next attention-carrying worktree in cyclic sidebar order.")
+    @Test("""
+@spec IPAD-8.1: When the user presses next_tab on iPad and another selectable worktree has attention, the application shall select the next attention-carrying worktree in cyclic sidebar order.
+""")
     func nextTabPrefersAttention() {
         #expect(IPadWorktreeNavigation.nextPath(
             in: [wt("/a"), wt("/b"), wt("/c", attention: true)],
@@ -33,14 +35,18 @@ struct IPadWorktreeNavigationTests {
         ) == "/c")
     }
 
-    @Test("@spec IPAD-8.2: When no other iPad worktree has attention, next_tab and previous_tab shall cycle through selectable worktrees in sidebar order.")
+    @Test("""
+@spec IPAD-8.2: When no other iPad worktree has attention, next_tab and previous_tab shall cycle through selectable worktrees in sidebar order.
+""")
     func cyclesWhenNoAttention() {
         let list = [wt("/a"), wt("/b"), wt("/c")]
         #expect(IPadWorktreeNavigation.nextPath(in: list, selectedPath: "/a", forward: true) == "/b")
         #expect(IPadWorktreeNavigation.nextPath(in: list, selectedPath: "/a", forward: false) == "/c")
     }
 
-    @Test("@spec IPAD-8.3: iPad worktree navigation shall skip stale, creating, and deleting worktrees even when they carry attention.")
+    @Test("""
+@spec IPAD-8.3: iPad worktree navigation shall skip stale, creating, and deleting worktrees even when they carry attention.
+""")
     func skipsNonSelectable() {
         let list = [
             wt("/a"),
@@ -52,14 +58,18 @@ struct IPadWorktreeNavigationTests {
         #expect(IPadWorktreeNavigation.nextPath(in: list, selectedPath: "/a", forward: true) == "/c")
     }
 
-    @Test("@spec IPAD-8.6: When no current iPad worktree is selected, forward Ctrl+Tab shall start before the first selectable worktree and reverse Ctrl+Shift+Tab shall start after the last selectable worktree.")
+    @Test("""
+@spec IPAD-8.6: When no current iPad worktree is selected, forward Ctrl+Tab shall start before the first selectable worktree and reverse Ctrl+Shift+Tab shall start after the last selectable worktree.
+""")
     func startsAtEdgesWhenNothingSelected() {
         let list = [wt("/a"), wt("/b"), wt("/c")]
         #expect(IPadWorktreeNavigation.nextPath(in: list, selectedPath: nil, forward: true) == "/a")
         #expect(IPadWorktreeNavigation.nextPath(in: list, selectedPath: nil, forward: false) == "/c")
     }
 
-    @Test("@spec IPAD-8.4: Pane-scoped attention shall count for iPad attention-first worktree navigation, excluding the currently selected worktree.")
+    @Test("""
+@spec IPAD-8.4: Pane-scoped attention shall count for iPad attention-first worktree navigation, excluding the currently selected worktree.
+""")
     func paneAttentionCountsAndCurrentExcluded() {
         let paneAttention = WorktreePanes(
             path: "/b",

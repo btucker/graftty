@@ -55,7 +55,9 @@ struct WorktreeListContentTests {
         #expect(wrapper.host.id == h.id)
     }
 
-    @Test("@spec IPAD-1.19: iPad sidebar worktree rows shall use a tight trailing inset so git divergence stats sit near the sidebar edge.")
+    @Test("""
+@spec IPAD-1.19: iPad sidebar worktree rows shall use a tight trailing inset so git divergence stats sit near the sidebar edge.
+""")
     func tightTrailingInset() {
         #expect(WorktreeListContent.iPadRowTrailingInset <= 4)
     }

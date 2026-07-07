@@ -1396,6 +1396,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.14** The terminal view shall install GrafttyMobile's `UIKeyInput` proxy only for an owner. Non-owner taps should still reach libghostty gestures, but they must not summon the software keyboard.
 
+**IOS-6.15** While a terminal pane is rendered on iPad with a trackpad, indirect pointer scroll gestures shall reach libghostty's terminal scroll/input recognizers rather than being blocked by GrafttyMobile's keyboard proxy or selection overlay.
+
 ### IOS-7.x — Lifecycle
 
 **IOS-7.1** When the application enters the background, it shall close every active `URLSessionWebSocketTask` with WebSocket close code 1000 (normal closure) and tear down every `InMemoryTerminalSession`. The server's response (SIGTERM to each `zmx attach` child per `WEB-4.5`) leaves the zmx daemon alive per `ZMX-4.4`, so reconnect picks up the same session.
@@ -1435,6 +1437,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-9.8** If `POST /worktrees/delete` returns 409 with `forceAllowed: true`, then the application shall present a Force Delete confirmation surfacing the `shortStatus` field as the dialog body, and shall retry the request with `force: true` only on user confirmation. A 409 with `forceAllowed: false` (or 4xx/5xx of any other shape) shall present a non-retryable error toast and shall not loop.
 
 **IOS-9.9** While rendering grouped worktrees in `WorktreePickerView`, the application shall preserve the order of `repoDisplayName` first-occurrences in the `GET /worktrees/panes` response rather than sort the group keys alphabetically, so the mobile picker's repo order matches the user's Mac sidebar order.
+
+**IOS-9.10** While the mobile Add Worktree sheet is valid and not submitting, pressing Return on a hardware keyboard shall submit Create; invalid or already-submitting forms shall ignore Return.
 
 ### IOS-10.x
 
@@ -1504,7 +1508,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.12** While `IPadRootLayout` is presented, the sidebar shall render a 1pt trailing border at `appState.theme.foreground.opacity(0.15)` along its leading-of-detail edge so the column boundary reads as a thin divider, matching the Mac sidebar's automatic `NSSplitView` divider. The overlay ignores safe areas so the border runs the full sidebar height including under the nav bar and home indicator.
 
-**IPAD-1.13** While `IPadRootLayout` is presented, each worktree's row + its pane child rows shall be packed into a single `List` row (`VStack(spacing: 0)`) with `.listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))` and `.listRowSeparator(.hidden)`, so the iOS sidebar-list style's default per-row padding doesn't compound between panes — the vertical spacing between pane rows is controlled entirely by the outer block's insets, not by accumulating list-row defaults on every leaf.
+**IPAD-1.13** While `IPadRootLayout` is presented, each worktree's row + its pane child rows shall be packed into a single `List` row (`VStack(spacing: 0)`) with explicit compact row insets and `.listRowSeparator(.hidden)`, so the iOS sidebar-list style's default per-row padding doesn't compound between panes — the vertical spacing between pane rows is controlled entirely by the outer block's insets, not by accumulating list-row defaults on every leaf.
 
 **IPAD-1.14** While `IPadRootLayout` renders a worktree's pane rows, the worktree-scoped `attentionText` (from `graftty notify`) shall be displayed on the worktree's first pane row when that leaf has no pane-scoped `attentionText` of its own; the worktree title row never displays an attention pill on iPad. Pane-scoped `attentionText` (from shell-integration `COMMAND_FINISHED` events) stays on its own pane row as before.
 
@@ -1515,6 +1519,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IPAD-1.17** When a `GET /worktrees/panes` snapshot still contains the selected worktree but its layout no longer includes `IPadAppState.focusedPaneId`'s session name, the application shall reset `focusedPaneId` to the first leaf of the worktree's current layout (or nil if the worktree has no panes).
 
 **IPAD-1.18** While an iPad detail `SingleSessionView` renders with `isFullScreen == false` to preserve the split-view sidebar toggle, ownership controls shall remain independent of that visual mode. A fullscreen-role mobile client that is currently a follower or ownerless shall still expose Take Control in the detail column.
+
+**IPAD-1.19** iPad sidebar worktree rows shall use a tight trailing inset so git divergence stats sit near the sidebar edge.
+
+**IPAD-1.20** iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.
 
 ### IPAD-2.x — Multi-Pane Detail View
 
@@ -1534,17 +1542,19 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IPAD-3.x — Focused-Pane Toolbar
 
-**IPAD-3.1** When `MultiPaneDetailView` has a focused leaf and the soft keyboard is hidden, the application shall overlay a `FocusedPaneToolbar` on the focused leaf containing Split Right, Split Down, Swap, and Close icons.
+**IPAD-3.1** When `MultiPaneDetailView` has a focused leaf and the soft keyboard is hidden, the application shall expose a focused-pane toolbar containing Split Right, Split Down, Split Left, Split Up, Swap, and Close controls.
 
 **IPAD-3.2** When the soft keyboard becomes visible, the application shall hide the `FocusedPaneToolbar` and yield its position to the terminal control bar.
 
-**IPAD-3.3** When the user taps Split Right or Split Down in the toolbar, the application shall send a `pane_control` RPC with `type: "split"`, `target` set to the focused leaf's `sessionName`, and `direction` set to `"horizontal"` or `"vertical"` respectively.
+**IPAD-3.3** When the user taps Split Right, Split Down, Split Left, or Split Up in the toolbar, the application shall send a `pane_control` RPC with `type: "split"`, `target` set to the focused leaf's `sessionName`, and `direction` set to `"right"`, `"down"`, `"left"`, or `"up"` respectively.
 
 **IPAD-3.4** When the user taps Close in the toolbar, the application shall send a `pane_control` RPC with `type: "close"` and `target` set to the focused leaf's `sessionName`.
 
 **IPAD-3.5** When the user taps Swap in the toolbar, the application shall send a `pane_control` RPC with `type: "swap"`, `source` set to the focused leaf's `sessionName`, and `target` selected per the swap-target policy resolved in milestone M7 (see design doc §12 Open Question #3).
 
 **IPAD-3.6** When a `pane_control` RPC returns `409 Conflict`, the application shall not present an error toast and shall rely on the next `panes_state` snapshot to reflect actual server state.
+
+**IPAD-3.7** While an iPad focused pane is available, the detail toolbar shall expose split actions for right, down, left, and up; when no pane is focused, split actions shall be disabled.
 
 ### IPAD-4.x — Live-Channel Budget
 
@@ -1577,6 +1587,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IPAD-7.1** When `horizontalSizeClass == .compact`, the application shall render the existing compact `RootView` flow (NavigationStack: HostPicker → WorktreePicker → SingleSessionView) without any iPad layout components.
 
 **IPAD-7.2** When `horizontalSizeClass` transitions between `.regular` and `.compact`, the application shall preserve `selectedHostId`, `selectedWorktreePath`, and `focusedPaneId` so the user lands on the equivalent leaf in the new layout.
+
+### IPAD-8.x
+
+**IPAD-8.1** When the user presses next_tab on iPad and another selectable worktree has attention, the application shall select the next attention-carrying worktree in cyclic sidebar order.
+
+**IPAD-8.2** When no other iPad worktree has attention, next_tab and previous_tab shall cycle through selectable worktrees in sidebar order.
+
+**IPAD-8.3** iPad worktree navigation shall skip stale, creating, and deleting worktrees even when they carry attention.
+
+**IPAD-8.4** Pane-scoped attention shall count for iPad attention-first worktree navigation, excluding the currently selected worktree.
+
+**IPAD-8.5** iPad auto-ownership shall remain pending until the live session becomes takeable, but an already-owned pane shall fulfill the request as a no-op so stale selection requests cannot steal ownership back later.
+
+**IPAD-8.6** When no current iPad worktree is selected, forward Ctrl+Tab shall start before the first selectable worktree and reverse Ctrl+Shift+Tab shall start after the last selectable worktree.
 
 ## TEAM — Agent Teams
 
@@ -1758,7 +1782,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-7.1** When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability. (Enforced at userauth: a peer with `terminalControl: .disabled` is rejected.)
 
-**REMOTE-7.2** When the host receives a `pane_control` request `{"type":"split","target":<sessionName>,"direction":<axis>}`, the host shall replace the leaf whose `sessionName == target` with a new split node of the requested `direction` whose left/top child is the original leaf and whose right/bottom child is a freshly-spawned leaf, applied on the main actor, and reply `{"ok":true}` on success.
+**REMOTE-7.2** When the host receives a `pane_control` request `{"type":"split","target":<sessionName>,"direction":<right|down|left|up>}`, the host shall replace the leaf whose `sessionName == target` with a new split node placed to the requested side of the original leaf, applied on the main actor, and reply `{"ok":true}` on success.
 
 **REMOTE-7.3** When the host receives a `pane_control` request `{"type":"close","target":<sessionName>}`, the host shall destroy the surface for the leaf whose `sessionName == target` and reply `{"ok":true}` on success.
 
@@ -1767,6 +1791,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-7.5** While the host services `pane_control` requests, the application shall route mutations through an injected mutator callback without giving `PaneControlHandler` a reference to `AppState`, enforcing per-client focus sovereignty by construction.
 
 **REMOTE-7.6** If a trusted peer is revoked while a `pane_control` channel is open, the channel shall close and subsequent open requests from the revoked peer shall be rejected.
+
+**REMOTE-7.7** Pane-control split requests shall encode semantic directions right/down/left/up, and legacy horizontal/vertical split directions shall decode as right/down for compatibility.
 
 ### REMOTE-8.x — SSH session layer
 

@@ -513,7 +513,9 @@ struct IPadRootLayoutSelectionTests {
         )
     }
 
-    @Test("@spec IPAD-3.7: While an iPad focused pane is available, the detail toolbar shall expose split actions for right, down, left, and up; when no pane is focused, split actions shall be disabled.")
+    @Test("""
+@spec IPAD-3.7: While an iPad focused pane is available, the detail toolbar shall expose split actions for right, down, left, and up; when no pane is focused, split actions shall be disabled.
+""")
     func splitToolbarPolicy() {
         #expect(IPadRootLayout.availableSplitDirections(focusedPaneId: nil).isEmpty)
         #expect(IPadRootLayout.availableSplitDirections(focusedPaneId: "s") == [.right, .down, .left, .up])
@@ -634,7 +636,9 @@ struct IPadRootLayoutSelectionTests {
         #expect(appState3.focusedPaneId == "session-a")
     }
 
-    @Test("@spec IPAD-1.20: iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.")
+    @Test("""
+@spec IPAD-1.20: iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.
+""")
     func backgroundPolicy() {
         #expect(IPadRootLayout.paintsTerminalBackgroundBehindSidebar == true)
     }
