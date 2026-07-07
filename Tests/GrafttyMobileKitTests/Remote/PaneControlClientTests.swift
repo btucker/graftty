@@ -17,7 +17,7 @@ struct PaneControlClientTests {
         #expect(fake.lastRequest == .split(target: "s1", direction: .right))
     }
 
-    @Test func splitLeftForwardsAndReturnsOk() async throws {
+    @Test func splitLeftForwardsSemanticDirection() async throws {
         let fake = FakeDriver(response: .ok)
         let client = PaneControlClient(driver: fake)
         try await client.open()

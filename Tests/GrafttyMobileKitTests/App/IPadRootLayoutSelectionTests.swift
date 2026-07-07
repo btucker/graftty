@@ -513,6 +513,12 @@ struct IPadRootLayoutSelectionTests {
         )
     }
 
+    @Test("@spec IPAD-3.7: While an iPad focused pane is available, the detail toolbar shall expose split actions for right, down, left, and up; when no pane is focused, split actions shall be disabled.")
+    func splitToolbarPolicy() {
+        #expect(IPadRootLayout.availableSplitDirections(focusedPaneId: nil).isEmpty)
+        #expect(IPadRootLayout.availableSplitDirections(focusedPaneId: "s") == [.right, .down, .left, .up])
+    }
+
     @Test("stale-selectedWorktreePath is cleared when onListChanged fires without the path")
     func stalePathCleanup() {
         let appState = freshAppState()

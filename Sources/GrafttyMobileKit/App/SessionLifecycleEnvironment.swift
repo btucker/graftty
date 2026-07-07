@@ -176,18 +176,10 @@ func makeRemoteConnectionProvider(
 /// the host (unpaired, or negotiation failed) — same fallback trigger as
 /// the fullscreen/preview `/ws` paths.
 ///
-/// No UI surfaces consume these yet, and W3 Task 3 (wiring
-/// `RemoteConnectionCoordinator` into `RootView`/`IPadRootLayout`/
-/// `WorktreeDetailView`) re-checked this before threading a call site
-/// through: `WorktreeListContent`'s sidebar still polls `GET
-/// /worktrees/panes` over HTTP, and there is no pane-control (split/close/
-/// swap) UI anywhere yet. Constructing a `PaneEnvironment` today with no
-/// reader would just be a second flavor of dead plumbing (an
-/// `EnvironmentKey` nothing reads, instead of a function nothing calls),
-/// so the call site stays deferred to whichever future task adds the
-/// sidebar/pane-control UI that actually reads `worktreePanesStore` /
-/// `paneControlClient` — this remains infrastructure only, single-sourced
-/// for that consumer to read from once it exists.
+/// iPad's detail toolbar consumes `paneControlClient` for split actions.
+/// `WorktreeListContent` still polls `GET /worktrees/panes` over HTTP, so
+/// `worktreePanesStore` remains infrastructure for a future live snapshot
+/// consumer rather than the sidebar's current data source.
 public struct PaneEnvironment: Sendable {
     public let worktreePanesStore: WorktreePanesStore?
     public let paneControlClient: PaneControlClient?

@@ -14,6 +14,7 @@ public struct IPadRootLayout: View {
     /// `RootView` level so a host negotiated from either surface is
     /// cached for the other (W3 Task 3).
     public let coordinator: RemoteConnectionCoordinator
+    @State private var paneEnvironment: PaneEnvironment = .empty
 
     public init(hostStore: HostStore, appState: IPadAppState, coordinator: RemoteConnectionCoordinator) {
         self.hostStore = hostStore
@@ -86,7 +87,8 @@ public struct IPadRootLayout: View {
             IPadDetailColumn(
                 host: selectedHost,
                 appState: appState,
-                coordinator: coordinator
+                coordinator: coordinator,
+                paneEnvironment: paneEnvironment
             )
             .background(appState.theme.background)
         }
@@ -113,6 +115,9 @@ public struct IPadRootLayout: View {
         }
         .task(id: selectedHost?.id) {
             await refreshTheme()
+        }
+        .task(id: selectedHost?.id) {
+            await refreshPaneEnvironment()
         }
     }
 
@@ -182,6 +187,11 @@ public struct IPadRootLayout: View {
         appState.requestActiveTerminal()
     }
 
+    public static func availableSplitDirections(focusedPaneId: String?) -> [PaneControlRequest.SplitDirection] {
+        guard focusedPaneId != nil else { return [] }
+        return [.right, .down, .left, .up]
+    }
+
     // MARK: - Side-effecting selection (callbacks from WorktreeListContent)
 
     private func selectWorktree(_ wt: WorktreePanes) {
@@ -219,6 +229,24 @@ public struct IPadRootLayout: View {
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
         appState.theme = text.map(GhosttyThemeColors.init(parsingConfigText:)) ?? .fallback
+    }
+
+    @MainActor
+    private func refreshPaneEnvironment() async {
+        guard let host = selectedHost else {
+            paneEnvironment = .empty
+            return
+        }
+
+        paneEnvironment = .empty
+        let capturedHostID = host.id
+        let remoteHost = await coordinator.connection(for: host)
+        guard !Task.isCancelled else { return }
+        guard capturedHostID == appState.selectedHostId else { return }
+        let environment = await buildPaneEnvironment(remoteHost: remoteHost)
+        guard !Task.isCancelled else { return }
+        guard capturedHostID == appState.selectedHostId else { return }
+        paneEnvironment = environment
     }
 }
 
@@ -301,6 +329,7 @@ private struct IPadDetailColumn: View {
     let host: Host?
     @Bindable var appState: IPadAppState
     let coordinator: RemoteConnectionCoordinator
+    let paneEnvironment: PaneEnvironment
 
     var body: some View {
         content
@@ -314,6 +343,30 @@ private struct IPadDetailColumn: View {
                             .fill(Color.red)
                             .frame(width: 8, height: 8)
                             .accessibilityLabel("Attention needed in sidebar")
+                    }
+                }
+                if shouldShowSplitControls {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button {
+                            Task { await splitFocusedPane(.right) }
+                        } label: {
+                            Label("Split Right", systemImage: "rectangle.split.2x1")
+                        }
+                        Button {
+                            Task { await splitFocusedPane(.down) }
+                        } label: {
+                            Label("Split Down", systemImage: "rectangle.split.1x2")
+                        }
+                        Button {
+                            Task { await splitFocusedPane(.left) }
+                        } label: {
+                            Label("Split Left", systemImage: "rectangle.split.2x1")
+                        }
+                        Button {
+                            Task { await splitFocusedPane(.up) }
+                        } label: {
+                            Label("Split Up", systemImage: "rectangle.split.1x2")
+                        }
                     }
                 }
             }
@@ -349,6 +402,25 @@ private struct IPadDetailColumn: View {
 
     private var shouldShowAttentionDot: Bool {
         appState.columnVisibility != .all && appState.anyWorktreeHasAttention
+    }
+
+    private var shouldShowSplitControls: Bool {
+        host != nil
+            && appState.selectedWorktreePath != nil
+            && !IPadRootLayout.availableSplitDirections(focusedPaneId: appState.focusedPaneId).isEmpty
+    }
+
+    private func splitFocusedPane(_ direction: PaneControlRequest.SplitDirection) async {
+        guard let target = appState.focusedPaneId,
+              let client = paneEnvironment.paneControlClient else {
+            return
+        }
+        do {
+            _ = try await client.split(target: target, direction: direction)
+        } catch {
+            // Conflict and transport errors stay silent for v1; the next
+            // panes_state snapshot remains authoritative.
+        }
     }
 }
 #endif
