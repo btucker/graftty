@@ -1520,9 +1520,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.18** While an iPad detail `SingleSessionView` renders with `isFullScreen == false` to preserve the split-view sidebar toggle, ownership controls shall remain independent of that visual mode. A fullscreen-role mobile client that is currently a follower or ownerless shall still expose Take Control in the detail column.
 
-**IPAD-1.19** iPad sidebar worktree rows shall use a tight trailing inset so git divergence stats sit near the sidebar edge.
+**IPAD-1.19** While rendering iPad sidebar worktree rows, the application shall use a tight trailing inset so git divergence stats sit near the sidebar edge.
 
-**IPAD-1.20** iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.
+**IPAD-1.20** While `IPadRootLayout` is presented, iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.
 
 ### IPAD-2.x — Multi-Pane Detail View
 
@@ -1594,11 +1594,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-8.2** When no other iPad worktree has attention, next_tab and previous_tab shall cycle through selectable worktrees in sidebar order.
 
-**IPAD-8.3** iPad worktree navigation shall skip stale, creating, and deleting worktrees even when they carry attention.
+**IPAD-8.3** When resolving iPad worktree navigation, the application shall skip stale, creating, and deleting worktrees even when they carry attention.
 
-**IPAD-8.4** Pane-scoped attention shall count for iPad attention-first worktree navigation, excluding the currently selected worktree.
+**IPAD-8.4** When resolving iPad attention-first worktree navigation, the application shall count pane-scoped attention while excluding the currently selected worktree.
 
-**IPAD-8.5** iPad auto-ownership shall remain pending until the live session becomes takeable, but an already-owned pane shall fulfill the request as a no-op so stale selection requests cannot steal ownership back later.
+**IPAD-8.5** While processing an iPad auto-ownership request, the application shall keep the request pending until the live session becomes takeable, but an already-owned pane shall fulfill the request as a no-op so stale selection requests cannot steal ownership back later.
 
 **IPAD-8.6** When no current iPad worktree is selected, forward Ctrl+Tab shall start before the first selectable worktree and reverse Ctrl+Shift+Tab shall start after the last selectable worktree.
 
@@ -1792,7 +1792,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-7.6** If a trusted peer is revoked while a `pane_control` channel is open, the channel shall close and subsequent open requests from the revoked peer shall be rejected.
 
-**REMOTE-7.7** Pane-control split requests shall encode semantic directions right/down/left/up, and legacy horizontal/vertical split directions shall decode as right/down for compatibility.
+**REMOTE-7.7** When pane-control split requests are encoded, they shall use semantic directions right/down/left/up, and when legacy horizontal/vertical split directions are decoded, they shall decode as right/down for compatibility.
 
 ### REMOTE-8.x — SSH session layer
 

@@ -9,7 +9,11 @@ public enum IPadWorktreeNavigation {
     ) -> String? {
         let selectable = list.filter { $0.state.hasOnDiskWorktree }
         let count = selectable.count
-        guard count > 1 else { return nil }
+        guard count > 0 else { return nil }
+        if count == 1 {
+            let onlyPath = selectable[0].path
+            return onlyPath == selectedPath ? nil : onlyPath
+        }
 
         let selectedIndex = selectedPath.flatMap { path in
             selectable.firstIndex { $0.path == path }

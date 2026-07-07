@@ -27,6 +27,7 @@ struct WorktreeListContentTests {
             onSelectPane: { _ in }
         )
         #expect(view.host.id == h.id)
+        #expect(view.externalRefreshToken == 0)
         // No-op default doesn't crash when invoked.
         view.onListChanged([])
     }
@@ -38,10 +39,12 @@ struct WorktreeListContentTests {
             host: sampleHost(),
             onSelect: { _ in },
             onSelectPane: { _ in },
-            onListChanged: { list in received = list }
+            onListChanged: { list in received = list },
+            externalRefreshToken: 3
         )
         view.onListChanged([])
         #expect(received != nil && received?.isEmpty == true)
+        #expect(view.externalRefreshToken == 3)
     }
 
     @Test("WorktreePickerView wrapper delegates to WorktreeListContent")
@@ -56,7 +59,7 @@ struct WorktreeListContentTests {
     }
 
     @Test("""
-@spec IPAD-1.19: iPad sidebar worktree rows shall use a tight trailing inset so git divergence stats sit near the sidebar edge.
+@spec IPAD-1.19: While rendering iPad sidebar worktree rows, the application shall use a tight trailing inset so git divergence stats sit near the sidebar edge.
 """)
     func tightTrailingInset() {
         #expect(WorktreeListContent.iPadRowTrailingInset <= 4)

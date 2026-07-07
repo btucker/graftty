@@ -77,6 +77,16 @@ public struct TerminalPaneView: UIViewRepresentable {
     public final class Coordinator {
         var lastFocusRequest: Int = 0
         var onWillUnmount: ((UIImage?) -> Void)?
+
+        func applyFocusRequest(_ focusRequestCount: Int, to view: TerminalInputContainerView) {
+            guard lastFocusRequest != focusRequestCount else { return }
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self, let view else { return }
+                if view.focusKeyboardInput() {
+                    self.lastFocusRequest = focusRequestCount
+                }
+            }
+        }
     }
 
     public func makeUIView(context: Context) -> TerminalInputContainerView {
@@ -88,9 +98,9 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
         view.onPasteRequested = onPasteRequested
-        context.coordinator.lastFocusRequest = focusRequestCount
         context.coordinator.onWillUnmount = onWillUnmount
         captureContainer?(view)
+        context.coordinator.applyFocusRequest(focusRequestCount, to: view)
         return view
     }
 
@@ -102,12 +112,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
         view.onPasteRequested = onPasteRequested
         context.coordinator.onWillUnmount = onWillUnmount
-        if context.coordinator.lastFocusRequest != focusRequestCount {
-            context.coordinator.lastFocusRequest = focusRequestCount
-            DispatchQueue.main.async {
-                view.focusKeyboardInput()
-            }
-        }
+        context.coordinator.applyFocusRequest(focusRequestCount, to: view)
     }
 
     public static func dismantleUIView(_: TerminalInputContainerView, coordinator: Coordinator) {
@@ -183,7 +188,7 @@ public final class TerminalInputContainerView: UIView {
 
         configureTerminalPanRecognizersForIndirectScrolling()
 
-        let tap = UITapGestureRecognizer(target: self, action: #selector(focusKeyboardInput))
+        let tap = UITapGestureRecognizer(target: self, action: #selector(handleFocusKeyboardInputTap))
         tap.cancelsTouchesInView = false
         addGestureRecognizer(tap)
 
@@ -201,8 +206,13 @@ public final class TerminalInputContainerView: UIView {
             }
     }
 
-    @objc func focusKeyboardInput() {
-        _ = inputProxy.becomeFirstResponder()
+    @objc private func handleFocusKeyboardInputTap() {
+        _ = focusKeyboardInput()
+    }
+
+    @discardableResult
+    func focusKeyboardInput() -> Bool {
+        inputProxy.becomeFirstResponder()
     }
 
     /// @spec IOS-11.1: When the user long-presses a focused terminal pane, the application shall present a `UIEditMenuInteraction` menu at the touch point containing **Select**, **Select All**, and (when `UIPasteboard.general.hasStrings` is true at menu-build time) **Paste**.
@@ -229,7 +239,13 @@ public final class TerminalInputContainerView: UIView {
     /// @spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and libghostty's built-in pan-to-scroll recognizer on the underlying `UITerminalView` shall be disabled until selection mode exits.
     private func enterSelectionMode() {
         selectionPanRecognizer.isEnabled = true
-        terminalView.gestureRecognizers?.forEach { $0.isEnabled = false }
+        terminalView.gestureRecognizers?.forEach { recognizer in
+            if let pan = recognizer as? UIPanGestureRecognizer,
+               !pan.allowedScrollTypesMask.isEmpty {
+                return
+            }
+            recognizer.isEnabled = false
+        }
     }
 
     private func exitSelectionMode() {

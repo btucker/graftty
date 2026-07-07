@@ -193,6 +193,11 @@ public struct PaneEnvironment: Sendable {
         self.worktreePanesStore = worktreePanesStore
         self.paneControlClient = paneControlClient
     }
+
+    public func close() async {
+        await worktreePanesStore?.unsubscribe()
+        await paneControlClient?.close()
+    }
 }
 
 /// Constructs a `PaneEnvironment` over the supplied per-host
@@ -212,6 +217,8 @@ public struct PaneEnvironment: Sendable {
 /// one chain.
 public func buildPaneEnvironment(remoteHost: RemoteHostConnection?) async -> PaneEnvironment {
     guard let remoteHost else { return .empty }
+    var openedWorktreePanesStore: WorktreePanesStore?
+    var openedPaneControlClient: PaneControlClient?
     do {
         // Build panes-state side: client first (with no-op callbacks),
         // then store, then backfill callbacks pointing at the store,
@@ -230,18 +237,22 @@ public func buildPaneEnvironment(remoteHost: RemoteHostConnection?) async -> Pan
             }
         )
         try await worktreePanesStore.subscribe()
+        openedWorktreePanesStore = worktreePanesStore
 
         // Build pane-control side: build client, wrap, open via the
         // PaneControlClient façade (which forwards to driver.open()).
         let controlChannel = try await remoteHost.makePaneControlClient()
         let paneControlClient = PaneControlClient(driver: controlChannel)
         try await paneControlClient.open()
+        openedPaneControlClient = paneControlClient
 
         return PaneEnvironment(
             worktreePanesStore: worktreePanesStore,
             paneControlClient: paneControlClient
         )
     } catch {
+        await openedPaneControlClient?.close()
+        await openedWorktreePanesStore?.unsubscribe()
         return .empty
     }
 }

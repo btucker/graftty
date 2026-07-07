@@ -14,7 +14,7 @@ struct PaneControlEnvelopeTests {
     }
 
     @Test("""
-@spec REMOTE-7.7: Pane-control split requests shall encode semantic directions right/down/left/up, and legacy horizontal/vertical split directions shall decode as right/down for compatibility.
+@spec REMOTE-7.7: When pane-control split requests are encoded, they shall use semantic directions right/down/left/up, and when legacy horizontal/vertical split directions are decoded, they shall decode as right/down for compatibility.
 """)
     func semanticDirectionsAndLegacyAxes() throws {
         let request = PaneControlRequest.split(target: "s", direction: .left)

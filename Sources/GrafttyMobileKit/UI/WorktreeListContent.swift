@@ -44,6 +44,7 @@ public struct WorktreeListContent: View {
     public let onSelect: (WorktreePanes) -> Void
     public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
     public let onListChanged: ([WorktreePanes]) -> Void
+    public let externalRefreshToken: Int
 
     public init(
         host: Host,
@@ -52,7 +53,8 @@ public struct WorktreeListContent: View {
         focusedPaneId: String? = nil,
         onSelect: @escaping (WorktreePanes) -> Void,
         onSelectPane: @escaping (PaneLayoutNode.Leaf) -> Void,
-        onListChanged: @escaping ([WorktreePanes]) -> Void = { _ in }
+        onListChanged: @escaping ([WorktreePanes]) -> Void = { _ in },
+        externalRefreshToken: Int = 0
     ) {
         self.host = host
         self.theme = theme
@@ -61,6 +63,7 @@ public struct WorktreeListContent: View {
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
         self.onListChanged = onListChanged
+        self.externalRefreshToken = externalRefreshToken
     }
 
     private enum LoadState {
@@ -194,6 +197,10 @@ public struct WorktreeListContent: View {
         // tears down the previous fetch and re-runs `load()` for the new
         // host, refreshing worktrees and theme.
         .task(id: host.id) { await load() }
+        .task(id: externalRefreshToken) {
+            guard externalRefreshToken != 0 else { return }
+            await refresh()
+        }
         .onDisappear { errorToastTask?.cancel() }
     }
 

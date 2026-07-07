@@ -67,6 +67,29 @@ struct TerminalPaneViewTests {
         #expect(container.terminalPanRecognizersAllowIndirectScrollingForTesting)
     }
 
+    @Test("selection mode keeps indirect terminal pan recognizers enabled")
+    func selectionModeKeepsIndirectScrollingEnabled() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+
+        container.enterSelectionModeForTesting()
+
+        let pans = container.terminalView.gestureRecognizers?.compactMap { $0 as? UIPanGestureRecognizer } ?? []
+        #expect(!pans.isEmpty)
+        #expect(pans.allSatisfy { $0.isEnabled })
+    }
+
+    @Test("focus requests remain pending until the keyboard proxy can become first responder")
+    func focusRequestNotConsumedWhenProxyCannotFocus() async {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let coordinator = TerminalPaneView.Coordinator()
+        container.inputProxy.softwareKeyboardInputEnabled = false
+
+        coordinator.applyFocusRequest(1, to: container)
+        try? await Task.sleep(nanoseconds: 10_000_000)
+
+        #expect(coordinator.lastFocusRequest == 0)
+    }
+
     @Test
     func dismantleUIViewDoesNotCaptureLayerSnapshotDuringTeardown() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))

@@ -162,12 +162,29 @@ struct IPadRootLayoutSelectionTests {
         appState.selectedHostId = hostA.id
         appState.selectedWorktreePath = "/repo/branch-a"
         appState.focusedPaneId = "session-a"
+        appState.latestWorktrees = [
+            .init(
+                path: "/repo/branch-a",
+                displayName: "branch-a",
+                repoDisplayName: "repo",
+                displayBranch: "branch-a",
+                state: .running,
+                isMainCheckout: false,
+                prBadge: nil,
+                stats: nil,
+                attentionText: "old host",
+                layout: .leaf(sessionName: "session-a", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil)
+            )
+        ]
+        appState.anyWorktreeHasAttention = true
 
         IPadRootLayout.applyHostSwitch(appState: appState, to: hostB.id)
 
         #expect(appState.selectedHostId == hostB.id)
         #expect(appState.selectedWorktreePath == nil)
         #expect(appState.focusedPaneId == nil)
+        #expect(appState.latestWorktrees.isEmpty)
+        #expect(!appState.anyWorktreeHasAttention)
         // The "re-fetch worktrees and theme for the new host" clause is
         // enforced by `WorktreeListContent`'s `.task(id: host.id)` —
         // not directly testable from a unit test.
@@ -519,6 +536,10 @@ struct IPadRootLayoutSelectionTests {
     func splitToolbarPolicy() {
         #expect(IPadRootLayout.availableSplitDirections(focusedPaneId: nil).isEmpty)
         #expect(IPadRootLayout.availableSplitDirections(focusedPaneId: "s") == [.right, .down, .left, .up])
+        #expect(IPadRootLayout.availableSplitDirections(
+            focusedPaneId: "s",
+            paneControlAvailable: false
+        ).isEmpty)
     }
 
     @Test("stale-selectedWorktreePath is cleared when onListChanged fires without the path")
@@ -637,7 +658,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.20: iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.
+@spec IPAD-1.20: While `IPadRootLayout` is presented, iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.
 """)
     func backgroundPolicy() {
         #expect(IPadRootLayout.paintsTerminalBackgroundBehindSidebar == true)
@@ -698,10 +719,10 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
         XCTAssertTrue(SingleSessionView.shouldInstallKeyboardProxy(clientIsOwner: true))
     }
 
-    /// @spec IPAD-8.5: iPad auto-ownership shall remain pending until the live
-    /// session becomes takeable, but an already-owned pane shall fulfill the
-    /// request as a no-op so stale selection requests cannot steal ownership
-    /// back later.
+    /// @spec IPAD-8.5: While processing an iPad auto-ownership request, the
+    /// application shall keep the request pending until the live session becomes
+    /// takeable, but an already-owned pane shall fulfill the request as a no-op
+    /// so stale selection requests cannot steal ownership back later.
     func testAutoOwnershipRetriesWhenSessionBecomesTakeable() {
         var policy = SingleSessionView.AutoTakeControlPolicy()
         XCTAssertFalse(policy.shouldTakeControl(

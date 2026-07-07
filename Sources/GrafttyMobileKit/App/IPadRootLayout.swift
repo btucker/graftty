@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import Foundation
 import GrafttyProtocol
 import SwiftUI
 
@@ -15,7 +16,10 @@ public struct IPadRootLayout: View {
     /// `RootView` level so a host negotiated from either surface is
     /// cached for the other (W3 Task 3).
     public let coordinator: RemoteConnectionCoordinator
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.biometricGate) private var gate
     @State private var paneEnvironment: PaneEnvironment = .empty
+    @State private var worktreeListRefreshToken: Int = 0
 
     public init(hostStore: HostStore, appState: IPadAppState, coordinator: RemoteConnectionCoordinator) {
         self.hostStore = hostStore
@@ -49,7 +53,8 @@ public struct IPadRootLayout: View {
                             focusedPaneId: appState.focusedPaneId,
                             onSelect: { wt in selectWorktree(wt) },
                             onSelectPane: { leaf in selectPane(leaf) },
-                            onListChanged: { list in Self.onWorktreeListChanged(appState: appState, list: list) }
+                            onListChanged: { list in Self.onWorktreeListChanged(appState: appState, list: list) },
+                            externalRefreshToken: worktreeListRefreshToken
                         )
                     } else {
                         Spacer()
@@ -91,7 +96,10 @@ public struct IPadRootLayout: View {
                     host: selectedHost,
                     appState: appState,
                     coordinator: coordinator,
-                    paneEnvironment: paneEnvironment
+                    paneEnvironment: paneEnvironment,
+                    onPaneTreeChanged: {
+                        worktreeListRefreshToken &+= 1
+                    }
                 )
                 .background(appState.theme.background)
             }
@@ -120,8 +128,19 @@ public struct IPadRootLayout: View {
         .task(id: selectedHost?.id) {
             await refreshTheme()
         }
-        .task(id: selectedHost?.id) {
+        .task(id: PaneEnvironmentRefreshKey(
+            hostID: selectedHost?.id,
+            isReady: LiveSessionReadiness.isActive(
+                scene: scenePhase,
+                gateUnlocked: gate.isUnlocked
+            )
+        )) {
             await refreshPaneEnvironment()
+        }
+        .onDisappear {
+            Task {
+                await paneEnvironment.close()
+            }
         }
     }
 
@@ -136,6 +155,8 @@ public struct IPadRootLayout: View {
         appState.selectedHostId = newHostId
         appState.selectedWorktreePath = nil
         appState.focusedPaneId = nil
+        appState.latestWorktrees = []
+        appState.anyWorktreeHasAttention = false
     }
 
     static func onWorktreeListChanged(appState: IPadAppState, list: [WorktreePanes]) {
@@ -191,8 +212,11 @@ public struct IPadRootLayout: View {
         appState.requestActiveTerminal()
     }
 
-    public static func availableSplitDirections(focusedPaneId: String?) -> [PaneControlRequest.SplitDirection] {
-        guard focusedPaneId != nil else { return [] }
+    public static func availableSplitDirections(
+        focusedPaneId: String?,
+        paneControlAvailable: Bool = true
+    ) -> [PaneControlRequest.SplitDirection] {
+        guard focusedPaneId != nil, paneControlAvailable else { return [] }
         return [.right, .down, .left, .up]
     }
 
@@ -237,21 +261,40 @@ public struct IPadRootLayout: View {
 
     @MainActor
     private func refreshPaneEnvironment() async {
+        guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else {
+            await paneEnvironment.close()
+            paneEnvironment = .empty
+            return
+        }
         guard let host = selectedHost else {
+            await paneEnvironment.close()
             paneEnvironment = .empty
             return
         }
 
+        await paneEnvironment.close()
         paneEnvironment = .empty
         let capturedHostID = host.id
         let remoteHost = await coordinator.connection(for: host)
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
         let environment = await buildPaneEnvironment(remoteHost: remoteHost)
-        guard !Task.isCancelled else { return }
-        guard capturedHostID == appState.selectedHostId else { return }
+        guard !Task.isCancelled else {
+            await environment.close()
+            return
+        }
+        guard capturedHostID == appState.selectedHostId else {
+            await environment.close()
+            return
+        }
+        await paneEnvironment.close()
         paneEnvironment = environment
     }
+}
+
+private struct PaneEnvironmentRefreshKey: Hashable {
+    let hostID: UUID?
+    let isReady: Bool
 }
 
 // MARK: - HostMenu (private)
@@ -334,6 +377,7 @@ private struct IPadDetailColumn: View {
     @Bindable var appState: IPadAppState
     let coordinator: RemoteConnectionCoordinator
     let paneEnvironment: PaneEnvironment
+    let onPaneTreeChanged: () -> Void
 
     var body: some View {
         content
@@ -411,7 +455,10 @@ private struct IPadDetailColumn: View {
     private var shouldShowSplitControls: Bool {
         host != nil
             && appState.selectedWorktreePath != nil
-            && !IPadRootLayout.availableSplitDirections(focusedPaneId: appState.focusedPaneId).isEmpty
+            && !IPadRootLayout.availableSplitDirections(
+                focusedPaneId: appState.focusedPaneId,
+                paneControlAvailable: paneEnvironment.paneControlClient != nil
+            ).isEmpty
     }
 
     private func splitFocusedPane(_ direction: PaneControlRequest.SplitDirection) async {
@@ -420,7 +467,10 @@ private struct IPadDetailColumn: View {
             return
         }
         do {
-            _ = try await client.split(target: target, direction: direction)
+            let response = try await client.split(target: target, direction: direction)
+            if response == .ok {
+                onPaneTreeChanged()
+            }
         } catch {
             // Conflict and transport errors stay silent for v1; the next
             // panes_state snapshot remains authoritative.

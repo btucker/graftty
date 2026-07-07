@@ -45,7 +45,7 @@ struct IPadWorktreeNavigationTests {
     }
 
     @Test("""
-@spec IPAD-8.3: iPad worktree navigation shall skip stale, creating, and deleting worktrees even when they carry attention.
+@spec IPAD-8.3: When resolving iPad worktree navigation, the application shall skip stale, creating, and deleting worktrees even when they carry attention.
 """)
     func skipsNonSelectable() {
         let list = [
@@ -67,8 +67,15 @@ struct IPadWorktreeNavigationTests {
         #expect(IPadWorktreeNavigation.nextPath(in: list, selectedPath: nil, forward: false) == "/c")
     }
 
+    @Test("single selectable worktree can be selected from no current selection")
+    func singleSelectableStartsFromNoSelection() {
+        let list = [wt("/a")]
+        #expect(IPadWorktreeNavigation.nextPath(in: list, selectedPath: nil, forward: true) == "/a")
+        #expect(IPadWorktreeNavigation.nextPath(in: list, selectedPath: "/a", forward: true) == nil)
+    }
+
     @Test("""
-@spec IPAD-8.4: Pane-scoped attention shall count for iPad attention-first worktree navigation, excluding the currently selected worktree.
+@spec IPAD-8.4: When resolving iPad attention-first worktree navigation, the application shall count pane-scoped attention while excluding the currently selected worktree.
 """)
     func paneAttentionCountsAndCurrentExcluded() {
         let paneAttention = WorktreePanes(
