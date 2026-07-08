@@ -94,11 +94,9 @@ struct AgentHookInstallerWrapperTests {
         #expect(script.contains(#"_graftty_codex_should_use_app_server() {"#))
         #expect(script.contains(#"while [ "$#" -gt 0 ]; do"#))
         #expect(script.contains(#"--help|-h|--version|-V)"#))
-        #expect(script.contains(#"-c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote|--remote-auth-token-env|--local-provider|--add-dir|-i|--image)"#))
-        #expect(script.contains(#"--config=*|--enable=*|--disable=*|--model=*|--profile=*|--sandbox=*|--ask-for-approval=*|--approval-policy=*|--cwd=*|--cd=*|--color=*|--output-schema=*|--origin=*|--settings=*|--remote=*|--remote-auth-token-env=*|--local-provider=*|--add-dir=*|--image=*)"#))
+        #expect(script.contains(#"--remote|--remote=*)"#))
+        #expect(script.contains(#"-c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote-auth-token-env|--local-provider|--add-dir|-i|--image)"#))
         #expect(script.contains(#"app-server|remote-control|exec|e|review|login|logout|mcp|plugin|mcp-server|app|completion|update|doctor|sandbox|debug|apply|a|archive|delete|unarchive|cloud|exec-server|features|help)"#))
-        #expect(script.contains(#"-*)"#))
-        #expect(script.contains("return 1"))
         #expect(script.contains(#"if ! _graftty_codex_should_use_app_server "$@"; then"#))
         #expect(script.contains(#"env CODEX_HOME='/Users/x/agent-hooks/codex-home' "$real_binary" "$@""#))
         #expect(script.contains(#"env CODEX_HOME='/Users/x/agent-hooks/codex-home' "$real_binary" app-server --listen "unix://$_graftty_codex_socket" </dev/null >>"$_graftty_codex_app_server_log" 2>&1 &"#))
@@ -341,60 +339,12 @@ struct AgentHookInstallerWrapperTests {
         #expect(output.contains("GRAFTTY_STDIN_TTY:yes"), "runtime child lost terminal stdin; output: \(output)")
     }
 
-    @Test("Generated Codex wrapper bypasses app-server for exec after global option value.")
-    func codexWrapperBypassesAppServerForExecAfterGlobalOptionValue() throws {
-        let root = try makeTempDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
-        let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
-        try FileManager.default.createDirectory(at: wrapperDirectory, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: realDirectory, withIntermediateDirectories: true)
-
-        let fakeGraftty = root.appendingPathComponent("graftty")
-        try writeExecutable("#!/bin/sh\nexit 0\n", to: fakeGraftty)
-
-        let modeFile = root.appendingPathComponent("mode")
-        let argsFile = root.appendingPathComponent("args")
-        try writeExecutable(
-            fakeCodexScript(remoteBody: """
-            printf '%s\\n' "$GRAFTTY_FAKE_CODEX_MODE" > "$GRAFTTY_TEST_MODE_FILE"
-            printf '%s\\n' "$*" > "$GRAFTTY_TEST_ARGS_FILE"
-            exit 0
-            """),
-            to: realDirectory.appendingPathComponent("codex")
-        )
-
-        let wrapper = wrapperDirectory.appendingPathComponent("codex")
-        try writeExecutable(
-            AgentHookInstaller.wrapperScript(
-                runtime: .codex,
-                wrapperDirectory: wrapperDirectory.path,
-                realCommandName: "codex",
-                grafttyCLIPath: fakeGraftty.path,
-                codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
-            ),
-            to: wrapper
-        )
-
-        let process = Process()
-        process.executableURL = wrapper
-        process.arguments = ["-c", "model=gpt-5", "exec", "prompt"]
-        process.environment = [
-            "PATH": "\(wrapperDirectory.path):\(realDirectory.path):/bin:/usr/bin",
-            "GRAFTTY_TEST_MODE_FILE": modeFile.path,
-            "GRAFTTY_TEST_ARGS_FILE": argsFile.path,
-        ]
-        try process.run()
-        process.waitUntilExit()
-
-        #expect(process.terminationStatus == 0)
-        #expect(try String(contentsOf: modeFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) == "direct")
-        #expect(try String(contentsOf: argsFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) == "-c model=gpt-5 exec prompt")
-    }
-
     @Test(
-        "Generated Codex wrapper bypasses app-server for non-interactive subcommands and aliases.",
+        """
+        @spec TEAM-10.2: If a codex invocation names a non-interactive subcommand, requests help or version output, or supplies its own `--remote` endpoint, then the generated wrapper shall run codex directly without starting an app-server.
+        """,
         arguments: [
+            ["-c", "model=gpt-5", "exec", "prompt"],
             ["-C", "/repo", "exec", "prompt"],
             ["-a", "never", "exec", "prompt"],
             ["--enable", "some-feature", "review"],
@@ -402,7 +352,10 @@ struct AgentHookInstallerWrapperTests {
             ["--remote-auth-token-env", "TOKEN", "doctor"],
             ["--add-dir", "/tmp/extra", "apply"],
             ["--image", "/tmp/image.png", "review"],
-            ["--unknown-option"],
+            ["--help"],
+            ["--version"],
+            ["--remote", "unix:///tmp/external.sock"],
+            ["--remote=unix:///tmp/external.sock"],
             ["review"],
             ["e", "prompt"],
             ["mcp", "list"],
@@ -425,104 +378,30 @@ struct AgentHookInstallerWrapperTests {
         ]
     )
     func codexWrapperBypassesAppServerForNonInteractiveSubcommands(arguments: [String]) throws {
-        let root = try makeTempDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
-        let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
-        try FileManager.default.createDirectory(at: wrapperDirectory, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: realDirectory, withIntermediateDirectories: true)
-
-        let fakeGraftty = root.appendingPathComponent("graftty")
-        try writeExecutable("#!/bin/sh\nexit 0\n", to: fakeGraftty)
-
-        let modeFile = root.appendingPathComponent("mode")
-        let argsFile = root.appendingPathComponent("args")
-        try writeExecutable(
-            fakeCodexScript(remoteBody: """
-            printf '%s\\n' "$GRAFTTY_FAKE_CODEX_MODE" > "$GRAFTTY_TEST_MODE_FILE"
-            printf '%s\\n' "$*" > "$GRAFTTY_TEST_ARGS_FILE"
-            exit 0
-            """),
-            to: realDirectory.appendingPathComponent("codex")
-        )
-
-        let wrapper = wrapperDirectory.appendingPathComponent("codex")
-        try writeExecutable(
-            AgentHookInstaller.wrapperScript(
-                runtime: .codex,
-                wrapperDirectory: wrapperDirectory.path,
-                realCommandName: "codex",
-                grafttyCLIPath: fakeGraftty.path,
-                codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
-            ),
-            to: wrapper
-        )
-
-        let process = Process()
-        process.executableURL = wrapper
-        process.arguments = arguments
-        process.environment = [
-            "PATH": "\(wrapperDirectory.path):\(realDirectory.path):/bin:/usr/bin",
-            "GRAFTTY_TEST_MODE_FILE": modeFile.path,
-            "GRAFTTY_TEST_ARGS_FILE": argsFile.path,
-        ]
-        try process.run()
-        process.waitUntilExit()
-
-        #expect(process.terminationStatus == 0)
-        #expect(try String(contentsOf: modeFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) == "direct")
-        #expect(try String(contentsOf: argsFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) == arguments.joined(separator: " "))
+        let run = try runCodexWrapperClassifier(arguments)
+        #expect(run.terminationStatus == 0)
+        #expect(run.mode == "direct")
+        #expect(run.forwardedArgs == arguments)
     }
 
-    @Test("Generated Codex wrapper uses app-server for option-only interactive invocation.")
-    func codexWrapperUsesAppServerForOptionOnlyInteractiveInvocation() throws {
-        let root = try makeTempDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
-        let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
-        try FileManager.default.createDirectory(at: wrapperDirectory, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: realDirectory, withIntermediateDirectories: true)
-
-        let fakeGraftty = root.appendingPathComponent("graftty")
-        try writeExecutable("#!/bin/sh\nexit 0\n", to: fakeGraftty)
-
-        let modeFile = root.appendingPathComponent("mode")
-        let argsFile = root.appendingPathComponent("args")
-        try writeExecutable(
-            fakeCodexScript(remoteBody: """
-            printf '%s\\n' "$GRAFTTY_FAKE_CODEX_MODE" > "$GRAFTTY_TEST_MODE_FILE"
-            printf '%s\\n' "$*" > "$GRAFTTY_TEST_ARGS_FILE"
-            exit 0
-            """),
-            to: realDirectory.appendingPathComponent("codex")
-        )
-
-        let wrapper = wrapperDirectory.appendingPathComponent("codex")
-        try writeExecutable(
-            AgentHookInstaller.wrapperScript(
-                runtime: .codex,
-                wrapperDirectory: wrapperDirectory.path,
-                realCommandName: "codex",
-                grafttyCLIPath: fakeGraftty.path,
-                codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
-            ),
-            to: wrapper
-        )
-
-        let process = Process()
-        process.executableURL = wrapper
-        process.arguments = ["--model", "gpt-5"]
-        process.environment = [
-            "PATH": "\(wrapperDirectory.path):\(realDirectory.path):/bin:/usr/bin",
-            "GRAFTTY_TEST_MODE_FILE": modeFile.path,
-            "GRAFTTY_TEST_ARGS_FILE": argsFile.path,
+    @Test(
+        """
+        @spec TEAM-10.1: When codex is invoked interactively — any option flags (known or unknown to the wrapper), a prompt, or arguments after `--` — the generated wrapper shall start a codex app-server and connect the TUI to it via `--remote`, so team-message delivery has a live app-server for the session.
+        """,
+        arguments: [
+            ["--model", "gpt-5"],
+            ["--yolo"],
+            ["--full-auto"],
+            ["--unknown-option"],
+            ["--yolo", "--unknown-option", "a prompt"],
+            ["--", "review"],
         ]
-        try process.run()
-        process.waitUntilExit()
-
-        #expect(process.terminationStatus == 0)
-        #expect(try String(contentsOf: modeFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) == "remote")
-        #expect(try String(contentsOf: argsFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) == "--model gpt-5")
+    )
+    func codexWrapperUsesAppServerForFlagLedInteractiveInvocations(arguments: [String]) throws {
+        let run = try runCodexWrapperClassifier(arguments)
+        #expect(run.terminationStatus == 0)
+        #expect(run.mode == "remote")
+        #expect(run.forwardedArgs == arguments)
     }
 
     @Test(
@@ -533,53 +412,10 @@ struct AgentHookInstallerWrapperTests {
         ]
     )
     func codexWrapperUsesAppServerForInteractiveSubcommands(arguments: [String]) throws {
-        let root = try makeTempDirectory()
-        defer { try? FileManager.default.removeItem(at: root) }
-        let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
-        let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
-        try FileManager.default.createDirectory(at: wrapperDirectory, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: realDirectory, withIntermediateDirectories: true)
-
-        let fakeGraftty = root.appendingPathComponent("graftty")
-        try writeExecutable("#!/bin/sh\nexit 0\n", to: fakeGraftty)
-
-        let modeFile = root.appendingPathComponent("mode")
-        let argsFile = root.appendingPathComponent("args")
-        try writeExecutable(
-            fakeCodexScript(remoteBody: """
-            printf '%s\\n' "$GRAFTTY_FAKE_CODEX_MODE" > "$GRAFTTY_TEST_MODE_FILE"
-            printf '%s\\n' "$*" > "$GRAFTTY_TEST_ARGS_FILE"
-            exit 0
-            """),
-            to: realDirectory.appendingPathComponent("codex")
-        )
-
-        let wrapper = wrapperDirectory.appendingPathComponent("codex")
-        try writeExecutable(
-            AgentHookInstaller.wrapperScript(
-                runtime: .codex,
-                wrapperDirectory: wrapperDirectory.path,
-                realCommandName: "codex",
-                grafttyCLIPath: fakeGraftty.path,
-                codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
-            ),
-            to: wrapper
-        )
-
-        let process = Process()
-        process.executableURL = wrapper
-        process.arguments = arguments
-        process.environment = [
-            "PATH": "\(wrapperDirectory.path):\(realDirectory.path):/bin:/usr/bin",
-            "GRAFTTY_TEST_MODE_FILE": modeFile.path,
-            "GRAFTTY_TEST_ARGS_FILE": argsFile.path,
-        ]
-        try process.run()
-        process.waitUntilExit()
-
-        #expect(process.terminationStatus == 0)
-        #expect(try String(contentsOf: modeFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) == "remote")
-        #expect(try String(contentsOf: argsFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines) == arguments.joined(separator: " "))
+        let run = try runCodexWrapperClassifier(arguments)
+        #expect(run.terminationStatus == 0)
+        #expect(run.mode == "remote")
+        #expect(run.forwardedArgs == arguments)
     }
 
     @Test("Generated wrapper preserves runtime exit status after cleanup.")
@@ -641,6 +477,71 @@ struct AgentHookInstallerWrapperTests {
         try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o755))], ofItemAtPath: url.path)
     }
 
+    /// Shared harness for the classifier tests: installs a generated codex
+    /// wrapper alongside a fake codex, runs the wrapper with `arguments`,
+    /// and returns the mode the fake recorded ("remote" when the wrapper
+    /// injected its own app-server `--remote`, "direct" otherwise) plus the
+    /// argv the fake received. Args are recorded one per line so a
+    /// word-splitting regression is visible even for arguments containing
+    /// spaces.
+    private func runCodexWrapperClassifier(
+        _ arguments: [String]
+    ) throws -> (terminationStatus: Int32, mode: String, forwardedArgs: [String]) {
+        let root = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let wrapperDirectory = root.appendingPathComponent("wrapper-bin", isDirectory: true)
+        let realDirectory = root.appendingPathComponent("real-bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: wrapperDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: realDirectory, withIntermediateDirectories: true)
+
+        let fakeGraftty = root.appendingPathComponent("graftty")
+        try writeExecutable("#!/bin/sh\nexit 0\n", to: fakeGraftty)
+
+        let modeFile = root.appendingPathComponent("mode")
+        let argsFile = root.appendingPathComponent("args")
+        try writeExecutable(
+            fakeCodexScript(remoteBody: """
+            printf '%s\\n' "$GRAFTTY_FAKE_CODEX_MODE" > "$GRAFTTY_TEST_MODE_FILE"
+            printf '%s\\n' "$@" > "$GRAFTTY_TEST_ARGS_FILE"
+            exit 0
+            """),
+            to: realDirectory.appendingPathComponent("codex")
+        )
+
+        let wrapper = wrapperDirectory.appendingPathComponent("codex")
+        try writeExecutable(
+            AgentHookInstaller.wrapperScript(
+                runtime: .codex,
+                wrapperDirectory: wrapperDirectory.path,
+                realCommandName: "codex",
+                grafttyCLIPath: fakeGraftty.path,
+                codexHomeDirectory: root.appendingPathComponent("codex-home", isDirectory: true).path
+            ),
+            to: wrapper
+        )
+
+        let process = Process()
+        process.executableURL = wrapper
+        process.arguments = arguments
+        process.environment = [
+            "PATH": "\(wrapperDirectory.path):\(realDirectory.path):/bin:/usr/bin",
+            "GRAFTTY_TEST_MODE_FILE": modeFile.path,
+            "GRAFTTY_TEST_ARGS_FILE": argsFile.path,
+        ]
+        try process.run()
+        process.waitUntilExit()
+
+        let mode = try String(contentsOf: modeFile, encoding: .utf8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var forwardedArgs = try String(contentsOf: argsFile, encoding: .utf8)
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+        if forwardedArgs.last == "" {
+            forwardedArgs.removeLast()
+        }
+        return (process.terminationStatus, mode, forwardedArgs)
+    }
+
     private func fakeCodexScript(remoteBody: String) -> String {
         """
         #!/bin/sh
@@ -660,11 +561,14 @@ struct AgentHookInstallerWrapperTests {
           wait "$nc_pid"
           exit $?
         fi
+        GRAFTTY_FAKE_CODEX_MODE=direct
         if [ "$1" = "--remote" ]; then
-          shift 2
-          GRAFTTY_FAKE_CODEX_MODE=remote
-        else
-          GRAFTTY_FAKE_CODEX_MODE=direct
+          case "$2" in
+            unix://*graftty-codex-app-server*)
+              shift 2
+              GRAFTTY_FAKE_CODEX_MODE=remote
+              ;;
+          esac
         fi
         export GRAFTTY_FAKE_CODEX_MODE
         \(remoteBody)
