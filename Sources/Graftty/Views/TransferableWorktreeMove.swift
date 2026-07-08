@@ -44,20 +44,18 @@ enum WorktreeDropReorder {
             return false
         }
         let worktrees = appState.repos[repoIndex].worktrees
-        guard let source = worktrees.first(where: { $0.id == payload.worktreeID }),
+        guard let sourceIndex = worktrees.firstIndex(where: { $0.id == payload.worktreeID }),
               let targetIndex = worktrees.firstIndex(where: { $0.id == targetWorktreeID })
         else {
             return false
         }
-        guard !source.state.isInFlight, !worktrees[targetIndex].state.isInFlight else {
-            return false
-        }
 
         let destination = placement == .before ? targetIndex : targetIndex + 1
-        return appState.moveWorktrees(
+        return applyListMove(
             inRepoID: payload.repoID,
-            movingWorktreeIDs: [payload.worktreeID],
-            toIndex: destination
+            fromOffsets: IndexSet(integer: sourceIndex),
+            toOffset: destination,
+            to: &appState
         )
     }
 
