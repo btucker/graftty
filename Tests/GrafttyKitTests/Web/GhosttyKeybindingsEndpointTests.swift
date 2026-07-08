@@ -22,7 +22,10 @@ struct GhosttyKeybindingsEndpointTests {
         return (server, port)
     }
 
-    @Test func ghosttyKeybindingsEndpointEncodesResolvedChords() async throws {
+    @Test("""
+    @spec WEB-9.9: When Web Access receives GET /ghostty-keybindings, the server shall return a JSON object whose bindings map Ghostty action raw names to the host-resolved ShortcutChord values so remote clients can install the same app-level command shortcuts as the host.
+    """)
+    func ghosttyKeybindingsEndpointEncodesResolvedChords() async throws {
         if skipInCI() { return }
 
         let expected: [GhosttyAction: ShortcutChord] = [

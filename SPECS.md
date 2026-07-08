@@ -1078,6 +1078,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-9.8** While at compact width, the application shall navigate worktree list to overview to fullscreen as a push flow.
 
+**WEB-9.9** When Web Access receives GET /ghostty-keybindings, the server shall return a JSON object whose bindings map Ghostty action raw names to the host-resolved ShortcutChord values so remote clients can install the same app-level command shortcuts as the host.
+
 ## OWN — Display Ownership
 
 ### OWN-1.x — Follower Convergence
