@@ -1616,6 +1616,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-8.7** iPad worktree navigation keyboard commands shall be registered at the SwiftUI scene-command layer and enabled only when at least two selectable worktrees exist, so hardware keyboard shortcuts remain active when UIKit terminal content has focus and are released when navigation would be a no-op.
 
+### IPAD-9.x
+
+**IPAD-9.1** When iPad selects or refreshes a host, it shall fetch the host-resolved Ghostty keybindings from GET /ghostty-keybindings, decode raw action-name keys for forward compatibility, and expose only known GhosttyAction chords through GhosttyKeybindBridge.
+
 ## TEAM — Agent Teams
 
 ### TEAM-1.x — Settings & Enablement

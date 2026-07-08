@@ -20,6 +20,7 @@ public struct IPadRootLayout: View {
     @Environment(\.biometricGate) private var gate
     @State private var paneEnvironment: PaneEnvironment = .empty
     @State private var worktreeListRefreshToken: Int = 0
+    @State private var keybindBridge = GhosttyKeybindBridge { _ in nil }
 
     public init(hostStore: HostStore, appState: IPadAppState, coordinator: RemoteConnectionCoordinator) {
         self.hostStore = hostStore
@@ -116,7 +117,7 @@ public struct IPadRootLayout: View {
         ))
         .focusedSceneValue(\.mobileWorktreeNavAction, worktreeNavAction)
         .task(id: selectedHost?.id) {
-            await refreshTheme()
+            await refreshHostPresentationState()
         }
         .task(id: PaneEnvironmentRefreshKey(
             hostID: selectedHost?.id,
@@ -248,16 +249,19 @@ public struct IPadRootLayout: View {
     }
 
     @MainActor
-    private func refreshTheme() async {
+    private func refreshHostPresentationState() async {
         guard let host = selectedHost else {
             appState.theme = .fallback
+            keybindBridge = GhosttyKeybindBridge { _ in nil }
             return
         }
         let capturedHostID = host.id
         let text = await GhosttyConfigFetcher.fetch(baseURL: host.baseURL)
+        let bridge = await GhosttyKeybindingsFetcher.fetch(baseURL: host.baseURL)
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
         appState.theme = text.map(GhosttyThemeColors.init(parsingConfigText:)) ?? .fallback
+        keybindBridge = bridge
     }
 
     @MainActor
