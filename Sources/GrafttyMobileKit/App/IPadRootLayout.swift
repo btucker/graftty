@@ -114,17 +114,7 @@ public struct IPadRootLayout: View {
             get: { appState.sidebarWidth },
             set: { appState.sidebarWidth = $0 }
         ))
-        .overlay {
-            Group {
-                Button("Next Worktree") { navigateWorktree(forward: true) }
-                    .keyboardShortcut(.tab, modifiers: [.control])
-                Button("Previous Worktree") { navigateWorktree(forward: false) }
-                    .keyboardShortcut(.tab, modifiers: [.control, .shift])
-            }
-            .opacity(0)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-        }
+        .focusedSceneValue(\.mobileWorktreeNavAction, worktreeNavAction)
         .task(id: selectedHost?.id) {
             await refreshTheme()
         }
@@ -220,6 +210,10 @@ public struct IPadRootLayout: View {
         return [.right, .down, .left, .up]
     }
 
+    public static func canNavigateWorktreesFromCommand(in list: [WorktreePanes]) -> Bool {
+        IPadWorktreeNavigation.canNavigate(in: list)
+    }
+
     // MARK: - Side-effecting selection (callbacks from WorktreeListContent)
 
     private func selectWorktree(_ wt: WorktreePanes) {
@@ -233,6 +227,13 @@ public struct IPadRootLayout: View {
     private func selectWorktree(path: String) {
         guard let wt = appState.latestWorktrees.first(where: { $0.path == path }) else { return }
         selectWorktree(wt)
+    }
+
+    private var worktreeNavAction: ((Bool) -> Void)? {
+        guard Self.canNavigateWorktreesFromCommand(in: appState.latestWorktrees) else { return nil }
+        return { forward in
+            navigateWorktree(forward: forward)
+        }
     }
 
     private func navigateWorktree(forward: Bool) {

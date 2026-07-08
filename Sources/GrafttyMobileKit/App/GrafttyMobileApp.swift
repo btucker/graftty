@@ -11,6 +11,11 @@ public struct GrafttyMobileApp: App {
         WindowGroup {
             RootView()
         }
+        .commands {
+            CommandGroup(after: .textEditing) {
+                MobileWorktreeNavCommandButtons()
+            }
+        }
     }
 }
 #endif

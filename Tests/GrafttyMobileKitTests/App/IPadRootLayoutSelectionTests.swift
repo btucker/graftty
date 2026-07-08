@@ -83,6 +83,36 @@ struct IPadRootLayoutSelectionTests {
         #expect(appState.focusedPaneId == "session-xyz")
     }
 
+    @Test("""
+@spec IPAD-8.7: iPad worktree navigation keyboard commands shall be registered at the SwiftUI scene-command layer and enabled only when at least two selectable worktrees exist, so hardware keyboard shortcuts remain active when UIKit terminal content has focus and are released when navigation would be a no-op.
+""")
+    func worktreeCommandAvailabilityRequiresTwoSelectableWorktrees() {
+        func wt(_ path: String, state: WorktreeWireState = .running) -> WorktreePanes {
+            WorktreePanes(
+                path: path,
+                displayName: path,
+                repoDisplayName: "repo",
+                displayBranch: path,
+                state: state,
+                isMainCheckout: false,
+                prBadge: nil,
+                stats: nil,
+                attentionText: nil,
+                layout: nil
+            )
+        }
+
+        #expect(IPadRootLayout.canNavigateWorktreesFromCommand(in: []) == false)
+        #expect(IPadRootLayout.canNavigateWorktreesFromCommand(in: [
+            wt("/a"),
+            wt("/creating", state: .creating),
+        ]) == false)
+        #expect(IPadRootLayout.canNavigateWorktreesFromCommand(in: [
+            wt("/a"),
+            wt("/b"),
+        ]) == true)
+    }
+
     @Test("pane row selection derives the selected worktree from the latest snapshot")
     func paneRowSelectionDerivesWorktreePath() {
         let appState = freshAppState()

@@ -1612,6 +1612,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-8.6** When no current iPad worktree is selected, forward Ctrl+Tab shall start before the first selectable worktree and reverse Ctrl+Shift+Tab shall start after the last selectable worktree.
 
+**IPAD-8.7** iPad worktree navigation keyboard commands shall be registered at the SwiftUI scene-command layer and enabled only when at least two selectable worktrees exist, so hardware keyboard shortcuts remain active when UIKit terminal content has focus and are released when navigation would be a no-op.
+
 ## TEAM — Agent Teams
 
 ### TEAM-1.x — Settings & Enablement
