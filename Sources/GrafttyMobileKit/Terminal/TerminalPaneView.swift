@@ -151,6 +151,7 @@ public final class TerminalInputContainerView: UIView {
     /// `Select` action can word-select at the original touch point even
     /// after the gesture has ended. Updated on `.began`.
     private var lastLongPressPoint: CGPoint = .zero
+    private(set) var keyboardRefocusRequestCountForTesting = 0
 
     override public init(frame: CGRect) {
         super.init(frame: frame)
@@ -268,6 +269,7 @@ public final class TerminalInputContainerView: UIView {
 
     fileprivate func performPaste() {
         onPasteRequested?()
+        refocusKeyboardAfterEditMenuAction()
     }
 
     fileprivate func performCopy() {
@@ -331,6 +333,20 @@ public final class TerminalInputContainerView: UIView {
     /// Internal-visibility access for unit tests: simulates the
     /// long-press handler's `.began` branch without presenting UIKit UI.
     func simulateLongPressBeganForTesting() {
+    }
+
+    /// Internal-visibility access for unit tests: invokes the paste menu
+    /// action without presenting UIKit's edit menu.
+    func performPasteForTesting() {
+        performPaste()
+    }
+
+    private func refocusKeyboardAfterEditMenuAction() {
+        guard inputProxy.canBecomeFirstResponder else { return }
+        keyboardRefocusRequestCountForTesting += 1
+        DispatchQueue.main.async { [weak self] in
+            self?.focusKeyboardInput()
+        }
     }
 }
 

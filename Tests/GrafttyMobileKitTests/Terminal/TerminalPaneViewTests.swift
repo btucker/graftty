@@ -59,7 +59,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-6.15: While a terminal pane is rendered on iPad with a trackpad, indirect pointer scroll gestures shall reach libghostty's terminal scroll/input recognizers rather than being blocked by GrafttyMobile's keyboard proxy or selection overlay.
+@spec IOS-6.17: While a terminal pane is rendered on iPad with a trackpad, indirect pointer scroll gestures shall reach libghostty's terminal scroll/input recognizers rather than being blocked by GrafttyMobile's keyboard proxy or selection overlay.
 """)
     func terminalPanRecognizersAllowIndirectScrolling() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -105,6 +105,21 @@ struct TerminalPaneViewTests {
 
         #expect(didNotifyUnmount)
         #expect(receivedSnapshot == nil)
+    }
+
+    @Test("""
+@spec IOS-11.12: When the user taps Paste from the terminal long-press edit menu, the application shall forward the clipboard paste request and then re-focus GrafttyMobile's software-keyboard proxy when it is eligible, so dismissing the UIKit edit menu does not leave the user without terminal keyboard control.
+""")
+    func pasteMenuRefocusesKeyboardProxyAfterForwardingPaste() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        container.inputProxy.softwareKeyboardInputEnabled = true
+        var didRequestPaste = false
+        container.onPasteRequested = { didRequestPaste = true }
+
+        container.performPasteForTesting()
+
+        #expect(didRequestPaste)
+        #expect(container.keyboardRefocusRequestCountForTesting == 1)
     }
 }
 

@@ -68,6 +68,7 @@ extension SessionClient {
         sessionName: String,
         role: Role = .fullscreen,
         remoteConnectionProvider: (@Sendable () async -> RemoteHostConnection?)? = nil,
+        reclaimControlOnOwnerlessConnect: Bool = false,
         clock: any Clock = SessionClient.productionClock(),
         backoffSchedule: [TimeInterval] = SessionClient.productionBackoffSchedule()
     ) -> SessionClient {
@@ -83,7 +84,8 @@ extension SessionClient {
             clock: clock,
             backoffSchedule: backoffSchedule,
             idleThreshold: role == .preview ? previewIdleThreshold : fullscreenIdleThreshold,
-            role: role
+            role: role,
+            reclaimControlOnOwnerlessConnect: reclaimControlOnOwnerlessConnect
         )
     }
 }

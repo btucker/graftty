@@ -758,5 +758,33 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
             canTakeControl: true
         ))
     }
+
+    /// @spec IOS-6.16: When a fullscreen mobile client transitions from
+    /// non-owner to owner while keyboard input is allowed, the application
+    /// shall request keyboard focus for the terminal input proxy. This covers
+    /// takeovers initiated by Paste or Take Control, where the proxy was not
+    /// eligible before ownership was confirmed.
+    func testOwnerTransitionRequestsKeyboardFocusWhenAllowed() {
+        XCTAssertTrue(SingleSessionView.shouldFocusKeyboardOnOwnerTransition(
+            wasOwner: false,
+            isOwner: true,
+            keyboardAllowed: true
+        ))
+        XCTAssertFalse(SingleSessionView.shouldFocusKeyboardOnOwnerTransition(
+            wasOwner: true,
+            isOwner: true,
+            keyboardAllowed: true
+        ))
+        XCTAssertFalse(SingleSessionView.shouldFocusKeyboardOnOwnerTransition(
+            wasOwner: false,
+            isOwner: true,
+            keyboardAllowed: false
+        ))
+        XCTAssertFalse(SingleSessionView.shouldFocusKeyboardOnOwnerTransition(
+            wasOwner: false,
+            isOwner: false,
+            keyboardAllowed: true
+        ))
+    }
 }
 #endif
