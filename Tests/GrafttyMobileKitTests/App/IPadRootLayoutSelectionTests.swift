@@ -3,6 +3,7 @@ import Testing
 import Foundation
 import SwiftUI
 import XCTest
+import GrafttyCommandUI
 import GrafttyProtocol
 @testable import GrafttyMobileKit
 
@@ -22,6 +23,12 @@ struct IPadRootLayoutSelectionTests {
             addedAt: Date(),
             lastUsedAt: nil
         )
+    }
+
+    @Test("shared Ghostty shortcut converter is visible to mobile Xcode tests")
+    func sharedGhosttyShortcutConverterIsVisible() {
+        #expect(KeyboardShortcutFromChord.shortcut(from: .init(key: "tab", modifiers: [.control])) != nil)
+        #expect(KeyboardShortcutFromChord.shortcut(from: .init(key: "f13", modifiers: [.command])) == nil)
     }
 
     @Test("""
