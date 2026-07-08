@@ -98,6 +98,42 @@ struct GhosttyKeybindingsFetcherTests {
         #expect(SharedURLProtocolStub.requestCount == 2)
     }
 
+    @Test
+    @MainActor
+    func invalidateWhileFetchIsInflightForcesNextFetchToRefetch() async {
+        SharedURLProtocolStub.install(
+            responses: [
+                .init(
+                    statusCode: 200,
+                    body: #"""
+                    {"bindings":{"new_split:right":{"key":"d","modifiers":8}}}
+                    """#,
+                    holdUntilReleased: true
+                ),
+                .init(statusCode: 200, body: #"""
+                {"bindings":{"new_split:right":{"key":"x","modifiers":8}}}
+                """#),
+            ]
+        )
+        defer {
+            GhosttyKeybindingsFetcher.invalidateCache(for: baseURL)
+            SharedURLProtocolStub.uninstall()
+        }
+
+        let inflight = Task {
+            await GhosttyKeybindingsFetcher.fetch(baseURL: baseURL)
+        }
+        await SharedURLProtocolStub.waitForRequestCount(1)
+        GhosttyKeybindingsFetcher.invalidateCache(for: baseURL)
+        SharedURLProtocolStub.releaseHeldResponses()
+        _ = await inflight.value
+
+        let refetched = await GhosttyKeybindingsFetcher.fetch(baseURL: baseURL)
+
+        #expect(refetched[.newSplitRight] == ShortcutChord(key: "x", modifiers: [.command]))
+        #expect(SharedURLProtocolStub.requestCount == 2)
+    }
+
     private static func session(statusCode: Int, body: String) -> URLSession {
         URLProtocolStub.install(responses: [.init(statusCode: statusCode, body: body)])
         let configuration = URLSessionConfiguration.ephemeral
@@ -109,6 +145,7 @@ struct GhosttyKeybindingsFetcherTests {
 private struct StubResponse {
     let statusCode: Int
     let body: String
+    var holdUntilReleased = false
 }
 
 private final class URLProtocolStub: URLProtocol, @unchecked Sendable {
@@ -157,12 +194,14 @@ private final class SharedURLProtocolStub: URLProtocol, @unchecked Sendable {
     private static let lock = NSLock()
     private static var responses: [StubResponse] = []
     private static var installed = false
+    private static var heldResponseSemaphore = DispatchSemaphore(value: 0)
     private(set) static var requestCount = 0
 
     static func install(responses: [StubResponse]) {
         lock.withLock {
             self.responses = responses
             requestCount = 0
+            heldResponseSemaphore = DispatchSemaphore(value: 0)
             if !installed {
                 URLProtocol.registerClass(Self.self)
                 installed = true
@@ -181,6 +220,16 @@ private final class SharedURLProtocolStub: URLProtocol, @unchecked Sendable {
         }
     }
 
+    static func waitForRequestCount(_ expected: Int) async {
+        while lock.withLock({ requestCount }) < expected {
+            try? await Task.sleep(nanoseconds: 1_000_000)
+        }
+    }
+
+    static func releaseHeldResponses() {
+        heldResponseSemaphore.signal()
+    }
+
     override class func canInit(with request: URLRequest) -> Bool {
         request.url?.host == "keybindings.test"
     }
@@ -195,6 +244,9 @@ private final class SharedURLProtocolStub: URLProtocol, @unchecked Sendable {
             return Self.responses.isEmpty
                 ? StubResponse(statusCode: 500, body: "")
                 : Self.responses.removeFirst()
+        }
+        if response.holdUntilReleased {
+            Self.heldResponseSemaphore.wait()
         }
         let http = HTTPURLResponse(
             url: request.url!,

@@ -256,11 +256,17 @@ public struct IPadRootLayout: View {
             return
         }
         let capturedHostID = host.id
-        let text = await GhosttyConfigFetcher.fetch(baseURL: host.baseURL)
-        let bridge = await GhosttyKeybindingsFetcher.fetch(baseURL: host.baseURL)
+        async let configText = GhosttyConfigFetcher.fetch(baseURL: host.baseURL)
+        async let keybindings = GhosttyKeybindingsFetcher.fetch(baseURL: host.baseURL)
+
+        let text = await configText
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
         appState.theme = text.map(GhosttyThemeColors.init(parsingConfigText:)) ?? .fallback
+
+        let bridge = await keybindings
+        guard !Task.isCancelled else { return }
+        guard capturedHostID == appState.selectedHostId else { return }
         keybindBridge = bridge
     }
 

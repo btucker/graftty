@@ -6,25 +6,34 @@ import GrafttyProtocol
 private final class GhosttyKeybindingsCache {
     static let shared = GhosttyKeybindingsCache()
     private var byBaseURL: [URL: GhosttyKeybindBridge] = [:]
-    private var inflight: [URL: Task<GhosttyKeybindBridge?, Never>] = [:]
+    private var generations: [URL: Int] = [:]
+    private var inflight: [URL: (generation: Int, task: Task<GhosttyKeybindBridge?, Never>)] = [:]
 
     func bridge(for baseURL: URL) async -> GhosttyKeybindBridge {
         if let cached = byBaseURL[baseURL] { return cached }
         if let existing = inflight[baseURL] {
-            return await existing.value ?? emptyGhosttyKeybindBridge()
+            return await existing.task.value ?? emptyGhosttyKeybindBridge()
         }
+        let generation = generations[baseURL, default: 0]
         let task = Task<GhosttyKeybindBridge?, Never> { [baseURL] in
             await GhosttyKeybindingsFetcher.fetchDecodedUncached(baseURL: baseURL)
         }
-        inflight[baseURL] = task
+        inflight[baseURL] = (generation: generation, task: task)
         let result = await task.value
-        inflight[baseURL] = nil
-        if let result { byBaseURL[baseURL] = result }
+        if let current = inflight[baseURL],
+           current.generation == generation {
+            inflight[baseURL] = nil
+            if !task.isCancelled, let result {
+                byBaseURL[baseURL] = result
+            }
+        }
         return result ?? emptyGhosttyKeybindBridge()
     }
 
     func invalidate(baseURL: URL) {
+        generations[baseURL, default: 0] += 1
         byBaseURL.removeValue(forKey: baseURL)
+        inflight.removeValue(forKey: baseURL)?.task.cancel()
     }
 }
 
