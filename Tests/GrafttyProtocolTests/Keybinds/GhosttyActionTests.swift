@@ -1,5 +1,5 @@
 import Testing
-@testable import GrafttyKit
+@testable import GrafttyProtocol
 
 @Suite("GhosttyAction — action-name contract")
 struct GhosttyActionTests {

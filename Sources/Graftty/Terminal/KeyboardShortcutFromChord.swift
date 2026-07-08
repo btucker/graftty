@@ -1,5 +1,5 @@
 import SwiftUI
-import GrafttyKit
+import GrafttyProtocol
 
 /// Translates `ShortcutChord` into SwiftUI's `KeyboardShortcut`. Unmapped
 /// keys return nil — caller gracefully skips the `.keyboardShortcut(...)`

@@ -18,6 +18,8 @@ public struct GhosttyKeybindBridge: Sendable {
 
     private let chords: [GhosttyAction: ShortcutChord]
 
+    public var allChords: [GhosttyAction: ShortcutChord] { chords }
+
     public init(resolver: Resolver) {
         var map: [GhosttyAction: ShortcutChord] = [:]
         for action in GhosttyAction.allCases {

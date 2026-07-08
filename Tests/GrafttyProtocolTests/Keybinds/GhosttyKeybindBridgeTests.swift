@@ -1,5 +1,5 @@
 import Testing
-@testable import GrafttyKit
+@testable import GrafttyProtocol
 
 @Suite("GhosttyKeybindBridge")
 struct GhosttyKeybindBridgeTests {
