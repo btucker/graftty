@@ -1,5 +1,5 @@
 {
-  "intro": "Requirements for a macOS worktree-aware terminal multiplexer built on libghostty.\n\nThis file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do not edit manually \u2014 run `scripts/generate-specs.py` to regenerate.",
+  "intro": "Requirements for a macOS worktree-aware terminal multiplexer built on libghostty.\n\nThis file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do not edit manually — run `scripts/generate-specs.py` to regenerate.",
   "section_order": [
     "LAYOUT",
     "STATE",
@@ -60,7 +60,7 @@
   },
   "subsections": {
     "LAYOUT.1": "Window Structure",
-    "LAYOUT.2": "Sidebar \u2014 Repository List",
+    "LAYOUT.2": "Sidebar — Repository List",
     "LAYOUT.3": "Adding Repositories",
     "LAYOUT.4": "Removing & Relocating Repositories",
     "LAYOUT.5": "Window Lifecycle",
@@ -165,6 +165,7 @@
     "REMOTE.5": "Web Terminal Endpoint (`/ws`)",
     "REMOTE.6": "panes_state Channel",
     "REMOTE.7": "pane_control Channel",
-    "REMOTE.8": "SSH session layer"
+    "REMOTE.8": "SSH session layer",
+    "TEAM.10": "Codex Wrapper App-Server Routing"
   }
 }
