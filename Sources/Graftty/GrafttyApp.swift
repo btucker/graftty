@@ -1227,6 +1227,10 @@ struct GrafttyApp: App {
         // shared registry so Mac pane backends can see web-client attaches.
         webController.setRemoteAttachmentRegistry(services.remoteAttachmentRegistry)
 
+        webController.setGhosttyKeybindingsProvider { [tm = terminalManager] in
+            await MainActor.run { tm.keybindBridge.allChords }
+        }
+
         // WEB-5.4: feed the web server a snapshot of running sessions on
         // each GET /sessions request. Binding snapshot is read on the
         // main actor; worktree names are routed through

@@ -64,6 +64,9 @@ final class WebServerController: ObservableObject {
     /// `WebServer.Config` default disables tracking. Injected by
     /// `GrafttyApp.startup()` alongside the other providers.
     private var remoteAttachmentRegistry: RemoteAttachmentRegistry?
+    /// Supplies `GET /ghostty-keybindings` with the Mac-resolved
+    /// Ghostty action-to-shortcut map.
+    private var ghosttyKeybindingsProvider: (@Sendable () async -> [GhosttyAction: ShortcutChord])?
     /// Shared display-ownership gate for web/iOS sockets. Production
     /// injects the process-wide store from `GrafttyApp`; tests and
     /// early construction fall back to a controller-owned store.
@@ -143,6 +146,15 @@ final class WebServerController: ObservableObject {
         _ provider: @escaping @Sendable () async -> [WorktreePanes]
     ) {
         worktreePanesProvider = provider
+        rebuildIfRunning()
+    }
+
+    /// Install the provider used for `GET /ghostty-keybindings`. Same
+    /// rebuild contract as the other snapshot providers.
+    func setGhosttyKeybindingsProvider(
+        _ provider: @escaping @Sendable () async -> [GhosttyAction: ShortcutChord]
+    ) {
+        ghosttyKeybindingsProvider = provider
         rebuildIfRunning()
     }
 
@@ -415,6 +427,7 @@ final class WebServerController: ObservableObject {
         let creator = worktreeCreator
         let puller = defaultBranchPuller
         let remover = worktreeRemover
+        let ghosttyKeybindingsProvider = self.ghosttyKeybindingsProvider ?? { [:] }
         let signalingHandler = self.signalingHandler
         let s = WebServer(
             config: .init(
@@ -428,6 +441,7 @@ final class WebServerController: ObservableObject {
                 defaultBranchPuller: puller,
                 worktreeRemover: remover,
                 ghosttyConfigProvider: { GhosttyConfigReader.resolvedConfig() },
+                ghosttyKeybindingsProvider: ghosttyKeybindingsProvider,
                 worktreePanesProvider: worktreePanesProvider ?? { [] },
                 signalingHandler: signalingHandler,
                 remoteAttachmentRegistry: remoteAttachmentRegistry,
