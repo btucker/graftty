@@ -225,6 +225,10 @@ public struct IPadRootLayout: View {
         return entry.kind
     }
 
+    static func keybindBridgeForStartingHostRefresh() -> GhosttyKeybindBridge {
+        GhosttyKeybindBridge { _ in nil }
+    }
+
     // MARK: - Side-effecting selection (callbacks from WorktreeListContent)
 
     private func selectWorktree(_ wt: WorktreePanes) {
@@ -412,10 +416,11 @@ public struct IPadRootLayout: View {
     private func refreshHostPresentationState() async {
         guard let host = selectedHost else {
             appState.theme = .fallback
-            keybindBridge = GhosttyKeybindBridge { _ in nil }
+            keybindBridge = Self.keybindBridgeForStartingHostRefresh()
             return
         }
         let capturedHostID = host.id
+        keybindBridge = Self.keybindBridgeForStartingHostRefresh()
         async let configText = GhosttyConfigFetcher.fetch(baseURL: host.baseURL)
         async let keybindings = GhosttyKeybindingsFetcher.fetch(baseURL: host.baseURL)
 

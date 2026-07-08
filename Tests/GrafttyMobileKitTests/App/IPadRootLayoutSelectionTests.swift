@@ -620,6 +620,21 @@ struct IPadRootLayoutSelectionTests {
         #expect(commands.contains { $0.action == .nextTab } == false)
     }
 
+    @Test("host refresh starts from an empty Ghostty keybind bridge")
+    func hostRefreshStartsFromEmptyGhosttyKeybindBridge() {
+        let staleBridge = GhosttyKeybindBridge { rawAction in
+            GhosttyAction(rawValue: rawAction) == .newSplitRight
+                ? ShortcutChord(key: "d", modifiers: [.command])
+                : nil
+        }
+        #expect(MobileGhosttyCommandButtons.renderableCommands(for: staleBridge).map(\.action) == [.newSplitRight])
+
+        let clearedBridge = IPadRootLayout.keybindBridgeForStartingHostRefresh()
+
+        #expect(clearedBridge[.newSplitRight] == nil)
+        #expect(MobileGhosttyCommandButtons.renderableCommands(for: clearedBridge).isEmpty)
+    }
+
     @Test("""
 @spec IPAD-9.4: Directional iPad pane-focus commands shall use the same spatial split-tree semantics as Mac TERM-7.3: nearest matching-axis ancestor, opposite subtree near-edge descent, and no wrapping for unrelated directions.
 """)
