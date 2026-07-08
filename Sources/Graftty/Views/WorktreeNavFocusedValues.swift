@@ -1,4 +1,5 @@
 import SwiftUI
+import GrafttyProtocol
 
 /// Scene-scoped command exposed by `MainWindow` so the `.commands` block in
 /// `GrafttyApp` (which can't reach view-local state) can drive worktree
@@ -19,13 +20,20 @@ extension FocusedValues {
 
 struct WorktreeNavCommandButtons: View {
     @FocusedValue(\.worktreeNavAction) private var action: ((Bool) -> Void)?
-    let nextShortcut: KeyboardShortcut?
-    let previousShortcut: KeyboardShortcut?
+    let commands: [GhosttyCommandRegistry.Entry]
+    let shortcutsByAction: [GhosttyAction: KeyboardShortcut]
 
     var body: some View {
         Group {
-            button("Next Worktree", forward: true, shortcut: nextShortcut)
-            button("Previous Worktree", forward: false, shortcut: previousShortcut)
+            ForEach(commands, id: \.action) { command in
+                if case let .navigateWorktree(forward) = command.kind {
+                    button(
+                        command.label,
+                        forward: forward,
+                        shortcut: shortcutsByAction[command.action]
+                    )
+                }
+            }
         }
     }
 
@@ -33,7 +41,7 @@ struct WorktreeNavCommandButtons: View {
     // `AddWorktreeCommandButton`, so a nil action both greys the menu item
     // and releases its key equivalent rather than leaving a live no-op chord.
     @ViewBuilder
-    private func button(_ label: LocalizedStringKey, forward: Bool, shortcut: KeyboardShortcut?) -> some View {
+    private func button(_ label: String, forward: Bool, shortcut: KeyboardShortcut?) -> some View {
         Group {
             if let shortcut {
                 Button(label) { action?(forward) }.keyboardShortcut(shortcut)

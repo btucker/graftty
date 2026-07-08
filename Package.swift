@@ -27,6 +27,7 @@ let package = Package(
         .executable(name: "graftty-cli", targets: ["GrafttyCLI"]),
         .executable(name: "appcast-updater", targets: ["appcast-updater"]),
         .library(name: "GrafttyKit", targets: ["GrafttyKit"]),
+        .library(name: "GrafttyCommandUI", targets: ["GrafttyCommandUI"]),
         .library(name: "GrafttyMobileKit", targets: ["GrafttyMobileKit"]),
     ],
     dependencies: [
@@ -43,6 +44,11 @@ let package = Package(
     targets: [
         .target(
             name: "GrafttyProtocol",
+            swiftSettings: strictWarnings
+        ),
+        .target(
+            name: "GrafttyCommandUI",
+            dependencies: ["GrafttyProtocol"],
             swiftSettings: strictWarnings
         ),
         .target(
@@ -90,6 +96,7 @@ let package = Package(
                 "GrafttyKit",
                 "GrafttyHostAgent",
                 "GrafttyProtocol",
+                "GrafttyCommandUI",
                 .product(name: "GhosttyKit", package: "libghostty-spm"),
                 .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "Stencil", package: "Stencil"),
@@ -115,6 +122,11 @@ let package = Package(
             swiftSettings: strictWarnings
         ),
         .testTarget(
+            name: "GrafttyCommandUITests",
+            dependencies: ["GrafttyCommandUI"],
+            swiftSettings: strictWarnings
+        ),
+        .testTarget(
             name: "AppcastUpdaterTests",
             dependencies: ["AppcastUpdater"],
             resources: [
@@ -135,6 +147,7 @@ let package = Package(
             name: "GrafttyMobileKit",
             dependencies: [
                 "GrafttyProtocol",
+                "GrafttyCommandUI",
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "NIOExtras", package: "swift-nio-extras"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
