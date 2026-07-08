@@ -115,7 +115,7 @@ public struct IPadRootLayout: View {
             get: { appState.sidebarWidth },
             set: { appState.sidebarWidth = $0 }
         ))
-        .focusedSceneValue(\.mobileWorktreeNavAction, worktreeNavAction)
+        .focusedSceneValue(\.mobileGhosttyCommandContext, ghosttyCommandContext)
         .task(id: selectedHost?.id) {
             await refreshHostPresentationState()
         }
@@ -215,6 +215,16 @@ public struct IPadRootLayout: View {
         IPadWorktreeNavigation.canNavigate(in: list)
     }
 
+    public static func commandKind(for action: GhosttyAction) -> GhosttyCommandKind? {
+        guard GhosttyCommandRegistry.iPadSupportedActions.contains(action),
+              let entry = GhosttyCommandRegistry[action],
+              entry.isSupportedOniPad,
+              entry.kind != .unsupported else {
+            return nil
+        }
+        return entry.kind
+    }
+
     // MARK: - Side-effecting selection (callbacks from WorktreeListContent)
 
     private func selectWorktree(_ wt: WorktreePanes) {
@@ -230,13 +240,6 @@ public struct IPadRootLayout: View {
         selectWorktree(wt)
     }
 
-    private var worktreeNavAction: ((Bool) -> Void)? {
-        guard Self.canNavigateWorktreesFromCommand(in: appState.latestWorktrees) else { return nil }
-        return { forward in
-            navigateWorktree(forward: forward)
-        }
-    }
-
     private func navigateWorktree(forward: Bool) {
         guard let path = IPadWorktreeNavigation.nextPath(
             in: appState.latestWorktrees,
@@ -246,6 +249,163 @@ public struct IPadRootLayout: View {
             return
         }
         selectWorktree(path: path)
+    }
+
+    private var ghosttyCommandContext: MobileGhosttyCommandContext {
+        MobileGhosttyCommandContext(
+            keybindBridge: keybindBridge,
+            perform: { action in
+                performGhosttyCommand(action)
+            },
+            isEnabled: { action in
+                isGhosttyCommandEnabled(action)
+            }
+        )
+    }
+
+    private var selectedWorktreeLayout: PaneLayoutNode? {
+        guard let path = appState.selectedWorktreePath else { return nil }
+        return appState.latestWorktrees.first { $0.path == path }?.layout
+    }
+
+    private func performGhosttyCommand(_ action: GhosttyAction) {
+        guard let kind = Self.commandKind(for: action) else { return }
+        switch kind {
+        case let .split(direction):
+            Task { await splitFocusedPane(Self.paneControlSplitDirection(for: direction)) }
+        case .closePane:
+            Task { await closeFocusedPane() }
+        case let .focusPane(direction):
+            focusPane(Self.paneLayoutDirection(for: direction))
+        case let .focusPaneByOrder(forward):
+            focusPaneInOrder(forward: forward)
+        case let .navigateWorktree(forward):
+            navigateWorktree(forward: forward)
+        case .unsupported:
+            break
+        }
+    }
+
+    private func isGhosttyCommandEnabled(_ action: GhosttyAction) -> Bool {
+        guard let kind = Self.commandKind(for: action) else { return false }
+        switch kind {
+        case .split, .closePane:
+            return appState.focusedPaneId != nil && paneEnvironment.paneControlClient != nil
+        case let .focusPane(direction):
+            guard let layout = selectedWorktreeLayout,
+                  let pane = appState.focusedPaneId else {
+                return false
+            }
+            return PaneLayoutNavigation.spatialNeighbor(
+                in: layout,
+                of: pane,
+                direction: Self.paneLayoutDirection(for: direction)
+            ) != nil
+        case let .focusPaneByOrder(forward):
+            guard let layout = selectedWorktreeLayout,
+                  let pane = appState.focusedPaneId else {
+                return false
+            }
+            return PaneLayoutNavigation.nextInOrder(
+                in: layout,
+                from: pane,
+                forward: forward
+            ) != nil
+        case .navigateWorktree:
+            return Self.canNavigateWorktreesFromCommand(in: appState.latestWorktrees)
+        case .unsupported:
+            return false
+        }
+    }
+
+    private func focusPane(_ direction: PaneLayoutNavigation.Direction) {
+        guard let layout = selectedWorktreeLayout,
+              let pane = appState.focusedPaneId,
+              let next = PaneLayoutNavigation.spatialNeighbor(
+                in: layout,
+                of: pane,
+                direction: direction
+              ) else {
+            return
+        }
+        appState.focusedPaneId = next
+        appState.requestActiveTerminal()
+    }
+
+    private func focusPaneInOrder(forward: Bool) {
+        guard let layout = selectedWorktreeLayout,
+              let pane = appState.focusedPaneId,
+              let next = PaneLayoutNavigation.nextInOrder(
+                in: layout,
+                from: pane,
+                forward: forward
+              ) else {
+            return
+        }
+        appState.focusedPaneId = next
+        appState.requestActiveTerminal()
+    }
+
+    private func splitFocusedPane(_ direction: PaneControlRequest.SplitDirection) async {
+        guard let target = appState.focusedPaneId,
+              let client = paneEnvironment.paneControlClient else {
+            return
+        }
+        do {
+            let response = try await client.split(target: target, direction: direction)
+            if response == .ok {
+                worktreeListRefreshToken &+= 1
+            }
+        } catch {
+            // Conflict and transport errors stay silent for v1; the next
+            // panes_state snapshot remains authoritative.
+        }
+    }
+
+    private func closeFocusedPane() async {
+        guard let target = appState.focusedPaneId,
+              let client = paneEnvironment.paneControlClient else {
+            return
+        }
+        do {
+            let response = try await client.close(target: target)
+            if response == .ok {
+                worktreeListRefreshToken &+= 1
+            }
+        } catch {
+            // Conflict and transport errors stay silent for v1; the next
+            // panes_state snapshot remains authoritative.
+        }
+    }
+
+    private static func paneControlSplitDirection(
+        for direction: GhosttySplitDirection
+    ) -> PaneControlRequest.SplitDirection {
+        switch direction {
+        case .left:
+            return .left
+        case .right:
+            return .right
+        case .up:
+            return .up
+        case .down:
+            return .down
+        }
+    }
+
+    private static func paneLayoutDirection(
+        for direction: GhosttyPaneFocusDirection
+    ) -> PaneLayoutNavigation.Direction {
+        switch direction {
+        case .left:
+            return .left
+        case .right:
+            return .right
+        case .up:
+            return .up
+        case .down:
+            return .down
+        }
     }
 
     @MainActor

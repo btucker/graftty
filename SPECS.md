@@ -1620,6 +1620,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-9.1** When iPad selects or refreshes a host, it shall fetch the host-resolved Ghostty keybindings from GET /ghostty-keybindings, decode raw action-name keys for forward compatibility, and expose only known GhosttyAction chords through GhosttyKeybindBridge.
 
+**IPAD-9.2** iPad command routing shall map only GhosttyCommandRegistry.iPadSupportedActions to executable iPad command kinds; unsupported Ghostty actions such as toggle_split_zoom shall not be routed or registered.
+
+**IPAD-9.3** iPad scene commands shall be rendered only for host-resolved Ghostty chords that translate to SwiftUI KeyboardShortcut values; actions with missing or untranslatable chords shall be omitted rather than registered with fallback shortcuts.
+
+**IPAD-9.4** Directional iPad pane-focus commands shall use the same spatial split-tree semantics as Mac TERM-7.3: nearest matching-axis ancestor, opposite subtree near-edge descent, and no wrapping for unrelated directions.
+
+**IPAD-9.5** Previous-pane and next-pane iPad commands shall traverse PaneLayoutNode leaves in stable in-order layout order with wrapping; a single pane or unknown current pane shall be a no-op.
+
 ## TEAM — Agent Teams
 
 ### TEAM-1.x — Settings & Enablement

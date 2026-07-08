@@ -13,7 +13,7 @@ public struct GrafttyMobileApp: App {
         }
         .commands {
             CommandGroup(after: .textEditing) {
-                MobileWorktreeNavCommandButtons()
+                MobileGhosttyCommandButtons()
             }
         }
     }

@@ -579,6 +579,168 @@ struct IPadRootLayoutSelectionTests {
         ).isEmpty)
     }
 
+    @Test("""
+@spec IPAD-9.2: iPad command routing shall map only GhosttyCommandRegistry.iPadSupportedActions to executable iPad command kinds; unsupported Ghostty actions such as toggle_split_zoom shall not be routed or registered.
+""")
+    func ipad_9_2_commandKindOnlyRoutesSupportedIPadActions() {
+        #expect(IPadRootLayout.commandKind(for: .newSplitRight) == .split(.right))
+        #expect(IPadRootLayout.commandKind(for: .newSplitDown) == .split(.down))
+        #expect(IPadRootLayout.commandKind(for: .newSplitLeft) == .split(.left))
+        #expect(IPadRootLayout.commandKind(for: .newSplitUp) == .split(.up))
+        #expect(IPadRootLayout.commandKind(for: .closeSurface) == .closePane)
+        #expect(IPadRootLayout.commandKind(for: .gotoSplitLeft) == .focusPane(.left))
+        #expect(IPadRootLayout.commandKind(for: .gotoSplitNext) == .focusPaneByOrder(forward: true))
+        #expect(IPadRootLayout.commandKind(for: .gotoSplitPrevious) == .focusPaneByOrder(forward: false))
+        #expect(IPadRootLayout.commandKind(for: .nextTab) == .navigateWorktree(forward: true))
+        #expect(IPadRootLayout.commandKind(for: .previousTab) == .navigateWorktree(forward: false))
+        #expect(IPadRootLayout.commandKind(for: .toggleSplitZoom) == nil)
+    }
+
+    @Test("""
+@spec IPAD-9.3: iPad scene commands shall be rendered only for host-resolved Ghostty chords that translate to SwiftUI KeyboardShortcut values; actions with missing or untranslatable chords shall be omitted rather than registered with fallback shortcuts.
+""")
+    func ipad_9_3_commandRenderingOmitsMissingAndUntranslatableChords() {
+        let bridge = GhosttyKeybindBridge { rawAction in
+            switch GhosttyAction(rawValue: rawAction) {
+            case .newSplitRight:
+                return ShortcutChord(key: "d", modifiers: [.command])
+            case .newSplitDown:
+                return ShortcutChord(key: "f13", modifiers: [.command])
+            case .previousTab:
+                return ShortcutChord(key: "tab", modifiers: [.control, .shift])
+            default:
+                return nil
+            }
+        }
+
+        let commands = MobileGhosttyCommandButtons.renderableCommands(for: bridge)
+
+        #expect(commands.map(\.action) == [.newSplitRight, .previousTab])
+        #expect(commands.contains { $0.action == .newSplitDown } == false)
+        #expect(commands.contains { $0.action == .nextTab } == false)
+    }
+
+    @Test("""
+@spec IPAD-9.4: Directional iPad pane-focus commands shall use the same spatial split-tree semantics as Mac TERM-7.3: nearest matching-axis ancestor, opposite subtree near-edge descent, and no wrapping for unrelated directions.
+""")
+    func ipad_9_4_spatialNavigationHorizontalSplit() {
+        let layout = PaneLayoutNode.split(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: leaf("A"),
+            right: leaf("B")
+        )
+
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .right) == "B")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .left) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .up) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .down) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .left) == "A")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .right) == nil)
+    }
+
+    @Test("IPAD-9.4 vertical split case")
+    func ipad_9_4_spatialNavigationVerticalSplit() {
+        let layout = PaneLayoutNode.split(
+            direction: .vertical,
+            ratio: 0.5,
+            left: leaf("A"),
+            right: leaf("B")
+        )
+
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .down) == "B")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .up) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .left) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .right) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .up) == "A")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .down) == nil)
+    }
+
+    @Test("IPAD-9.4 nested right vertical split case")
+    func ipad_9_4_spatialNavigationNestedRightVerticalSplit() {
+        let layout = PaneLayoutNode.split(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: leaf("A"),
+            right: .split(
+                direction: .vertical,
+                ratio: 0.5,
+                left: leaf("B"),
+                right: leaf("C")
+            )
+        )
+
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .right) == "B")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .up) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .down) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .left) == "A")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "C", direction: .left) == "A")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .down) == "C")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "C", direction: .up) == "B")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .up) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "C", direction: .down) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .right) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "C", direction: .right) == nil)
+    }
+
+    @Test("IPAD-9.4 mixed top horizontal split case")
+    func ipad_9_4_spatialNavigationMixedTopHorizontalSplit() {
+        let layout = PaneLayoutNode.split(
+            direction: .vertical,
+            ratio: 0.5,
+            left: .split(
+                direction: .horizontal,
+                ratio: 0.5,
+                left: leaf("A"),
+                right: leaf("B")
+            ),
+            right: leaf("C")
+        )
+
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .right) == "B")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .left) == "A")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .down) == "C")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .down) == "C")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "C", direction: .up) == "A")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "C", direction: .left) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "C", direction: .right) == nil)
+    }
+
+    @Test("IPAD-9.4 single leaf case")
+    func ipad_9_4_singleLeafHasNoSpatialNeighbors() {
+        let layout = leaf("A")
+
+        for direction in PaneLayoutNavigation.Direction.allCases {
+            #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: direction) == nil)
+        }
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "unknown", direction: .right) == nil)
+    }
+
+    @Test("""
+@spec IPAD-9.5: Previous-pane and next-pane iPad commands shall traverse PaneLayoutNode leaves in stable in-order layout order with wrapping; a single pane or unknown current pane shall be a no-op.
+""")
+    func ipad_9_5_nextAndPreviousPaneInOrderWraps() {
+        let layout = PaneLayoutNode.split(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: leaf("A"),
+            right: .split(
+                direction: .vertical,
+                ratio: 0.5,
+                left: leaf("B"),
+                right: leaf("C")
+            )
+        )
+
+        #expect(PaneLayoutNavigation.nextInOrder(in: layout, from: "A", forward: true) == "B")
+        #expect(PaneLayoutNavigation.nextInOrder(in: layout, from: "B", forward: true) == "C")
+        #expect(PaneLayoutNavigation.nextInOrder(in: layout, from: "C", forward: true) == "A")
+        #expect(PaneLayoutNavigation.nextInOrder(in: layout, from: "A", forward: false) == "C")
+        #expect(PaneLayoutNavigation.nextInOrder(in: layout, from: "C", forward: false) == "B")
+        #expect(PaneLayoutNavigation.nextInOrder(in: leaf("A"), from: "A", forward: true) == nil)
+        #expect(PaneLayoutNavigation.nextInOrder(in: layout, from: "unknown", forward: true) == nil)
+    }
+
     @Test("stale-selectedWorktreePath is cleared when onListChanged fires without the path")
     func stalePathCleanup() {
         let appState = freshAppState()
@@ -699,6 +861,16 @@ struct IPadRootLayoutSelectionTests {
 """)
     func backgroundPolicy() {
         #expect(IPadRootLayout.paintsTerminalBackgroundBehindSidebar == true)
+    }
+
+    private func leaf(_ sessionName: String) -> PaneLayoutNode {
+        .leaf(
+            sessionName: sessionName,
+            title: "shell \(sessionName)",
+            attentionText: nil,
+            isBusy: false,
+            attentionSource: nil
+        )
     }
 }
 
