@@ -136,7 +136,11 @@ focused pane and pane-control client. Pane navigation requires a valid target.
 Worktree navigation requires at least two selectable worktrees.
 
 Published app commands take precedence over terminal input for exact input and
-modifier matches. Disabled or absent commands are not published, leaving the
+modifier matches. On iOS 15 and later, each proxy-published `UIKeyCommand` sets
+`wantsPriorityOverSystemBehavior` to `true`; otherwise UIKit may route the
+physical key event to focus or text-input system behavior first. This applies
+only to enabled app commands in the published table, not ordinary Ghostty
+terminal input. Disabled or absent commands are not published, leaving the
 chord available to the rest of the responder chain and terminal.
 
 ## Data Flow
@@ -190,6 +194,8 @@ chord available to the rest of the responder chain and terminal.
 - Validation rejects stale cached `UIKeyCommand` senders while accepting a
   current exact match; nullable and non-command senders continue through
   superclass validation.
+- Every proxy-published app command requests priority over conflicting focus
+  and text-input system behavior.
 
 The rebuild request will be exposed through a narrow test observation seam,
 because simulator unit tests cannot make UIKit disclose its private command
@@ -219,6 +225,9 @@ calling a parent computed property.
   paths.
 - Package tests cover any pure shortcut-alias representation introduced in the
   shared protocol target.
+- Physical-device arbitration between app commands, focus movement, text
+  input, and ordinary Ghostty terminal input remains a smoke-test residual
+  risk because simulator unit tests cannot reproduce hardware event routing.
 
 ## Specification Changes
 
@@ -226,7 +235,8 @@ calling a parent computed property.
 untranslatable, unsupported, and loading-state candidates.
 
 `IPAD-9.9` will be tightened to require the actual terminal input responder to
-publish commands and synchronously request a UIKit menu-system rebuild when the
+publish commands with priority over conflicting focus and text-input system
+behavior and synchronously request a UIKit menu-system rebuild when the
 effective command set changes.
 
 `IPAD-9.10` will require mobile keybinding fetch/cache results to retain

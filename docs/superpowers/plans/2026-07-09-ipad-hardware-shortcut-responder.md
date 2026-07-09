@@ -4,7 +4,7 @@
 
 **Goal:** Make iPad app-level hardware keyboard shortcuts publish from the active terminal input responder, refresh dynamically, and support Ghostty's `Ctrl+Tab` worktree-navigation defaults.
 
-**Architecture:** Preserve the existing semantic command registry and terminal input routing. Add explicit mobile keybinding provenance so only bundled fallback bindings gain aliases, expand enabled bindings into one deduplicated candidate table shared by SwiftUI scene commands and active-terminal responder commands, and publish `UIKeyCommand` values from the actual `UIKeyInput` first responder with a synchronous request for a UIKit main-menu-system rebuild when its effective table changes.
+**Architecture:** Preserve the existing semantic command registry and terminal input routing. Add explicit mobile keybinding provenance so only bundled fallback bindings gain aliases, expand enabled bindings into one deduplicated candidate table shared by SwiftUI scene commands and active-terminal responder commands, and publish `UIKeyCommand` values from the actual `UIKeyInput` first responder with priority over conflicting focus and text-input system behavior and a synchronous request for a UIKit main-menu-system rebuild when its effective table changes.
 
 **Tech Stack:** Swift 6, SwiftUI, UIKit `UIKeyCommand`/`UIKeyInput`, Swift Testing, Swift Package Manager, Xcode iOS simulator tests, `scripts/generate-specs.py`.
 
@@ -294,7 +294,8 @@ removal requests a rebuild and returns nil; proxy dispatch requires an exact
 normalized chord; stale cached `UIKeyCommand` senders are rejected by
 `canPerformAction` during deferred menu rebuilding; nullable and non-command
 senders delegate to `UIResponder`; and the container no longer owns the
-command table. Do not assert raw key replay after rejection. Title
+command table. Assert that every published app command requests priority over
+system behavior. Do not assert raw key replay after rejection. Title
 participates in the effective signature because UIKit displays it as both
 `title` and `discoverabilityTitle`.
 
@@ -319,6 +320,12 @@ public var hardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] 
 ```
 
 Move UIKeyCommand construction, selector dispatch, exact-match lookup, and normalized modifier handling to `TerminalSoftwareKeyboardProxyView`.
+
+Set `wantsPriorityOverSystemBehavior` to `true` on every proxy-published
+`UIKeyCommand`. On iOS 15 and later, UIKit may otherwise send the physical key
+event to focus or text-input system behavior before the app command. This
+applies only to enabled app commands in the proxy's table; ordinary Ghostty
+terminal input remains on libghostty's existing path.
 
 Override `canPerformAction(_:withSender:)` narrowly for the proxy's hardware
 command selector when the sender is a `UIKeyCommand`: return true only for an
@@ -395,6 +402,11 @@ xcodebuild -quiet -project Apps/GrafttyMobile/GrafttyMobile.xcodeproj -scheme Gr
 ```
 
 Expected: `** TEST SUCCEEDED **` with no failing mobile tests.
+
+Physical-device arbitration among app commands, focus movement, text input,
+and ordinary Ghostty terminal input remains a smoke-test residual risk; the
+simulator suite verifies the published priority flag but cannot reproduce
+hardware event routing.
 
 - [ ] **Step 5: Verify generated specs and status**
 
