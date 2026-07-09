@@ -12,7 +12,7 @@ private final class GhosttyKeybindingsCache {
     func bridge(for baseURL: URL) async -> GhosttyKeybindBridge {
         if let cached = byBaseURL[baseURL] { return cached }
         if let existing = inflight[baseURL] {
-            return await existing.task.value ?? emptyGhosttyKeybindBridge()
+            return await existing.task.value ?? GhosttyDefaultKeybinds.bridge
         }
         let generation = generations[baseURL, default: 0]
         let task = Task<GhosttyKeybindBridge?, Never> { [baseURL] in
@@ -27,7 +27,7 @@ private final class GhosttyKeybindingsCache {
                 byBaseURL[baseURL] = result
             }
         }
-        return result ?? emptyGhosttyKeybindBridge()
+        return result ?? GhosttyDefaultKeybinds.bridge
     }
 
     func invalidate(baseURL: URL) {
@@ -35,10 +35,6 @@ private final class GhosttyKeybindingsCache {
         byBaseURL.removeValue(forKey: baseURL)
         inflight.removeValue(forKey: baseURL)?.task.cancel()
     }
-}
-
-private func emptyGhosttyKeybindBridge() -> GhosttyKeybindBridge {
-    GhosttyKeybindBridge { _ in nil }
 }
 
 /// Pulls the Mac server's resolved Ghostty keybindings from
@@ -55,12 +51,16 @@ public enum GhosttyKeybindingsFetcher {
         GhosttyKeybindingsCache.shared.invalidate(baseURL: baseURL)
     }
 
+    /// If the fetch fails (missing endpoint on older hosts, non-2xx status,
+    /// a transport failure, or an undecodable body), falls back to the
+    /// bundled Ghostty default keybindings so shortcuts keep working
+    /// (IPAD-9.7).
     static func fetchUncached(
         baseURL: URL,
         session: URLSession = .shared
     ) async -> GhosttyKeybindBridge {
         await fetchDecodedUncached(baseURL: baseURL, session: session)
-            ?? emptyGhosttyKeybindBridge()
+            ?? GhosttyDefaultKeybinds.bridge
     }
 
     static func fetchDecodedUncached(
@@ -91,10 +91,7 @@ public enum GhosttyKeybindingsFetcher {
             guard let action = GhosttyAction(rawValue: rawAction) else { continue }
             known[action] = chord
         }
-        return GhosttyKeybindBridge { rawAction in
-            guard let action = GhosttyAction(rawValue: rawAction) else { return nil }
-            return known[action]
-        }
+        return GhosttyKeybindBridge(chords: known)
     }
 }
 #endif

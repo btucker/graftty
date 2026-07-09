@@ -1628,6 +1628,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-9.5** Previous-pane and next-pane iPad commands shall traverse PaneLayoutNode leaves in stable in-order layout order with wrapping; a single pane or unknown current pane shall be a no-op.
 
+**IPAD-9.6** iPad shall install host-resolved Ghostty command chords as responder-chain `UIKeyCommand`s for the active terminal, filtering disabled actions so UIKit does not dispatch no-op shortcuts.
+
+**IPAD-9.7** If fetching the host-resolved Ghostty keybindings fails (missing endpoint on older hosts, non-2xx status, a transport failure, or an undecodable body), then the application shall fall back to the bundled Ghostty default keybindings instead of an empty bridge.
+
+**IPAD-9.8** The bundled Ghostty default keybinding table shall mirror the defaults reported by ghostty +list-keybinds --default for every iPad-supported action, leaving new_split:left and new_split:up chordless because Ghostty ships no default binding for them.
+
+**IPAD-9.9** The active iPad terminal responder shall publish app-level Ghostty shortcuts as `UIKeyCommand`s so hardware-keyboard commands still dispatch while UIKit terminal input owns first responder status.
+
 ## TEAM — Agent Teams
 
 ### TEAM-1.x — Settings & Enablement

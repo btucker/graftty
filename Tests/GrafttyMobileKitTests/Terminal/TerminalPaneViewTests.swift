@@ -68,7 +68,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IPAD-9.6: The active iPad terminal responder shall publish app-level Ghostty shortcuts as `UIKeyCommand`s so hardware-keyboard commands still dispatch while UIKit terminal input owns first responder status.
+@spec IPAD-9.9: The active iPad terminal responder shall publish app-level Ghostty shortcuts as `UIKeyCommand`s so hardware-keyboard commands still dispatch while UIKit terminal input owns first responder status.
 """)
     func activeTerminalPublishesAndDispatchesHardwareKeyboardCommands() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))

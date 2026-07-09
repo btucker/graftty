@@ -20,7 +20,7 @@ public struct IPadRootLayout: View {
     @Environment(\.biometricGate) private var gate
     @State private var paneEnvironment: PaneEnvironment = .empty
     @State private var worktreeListRefreshToken: Int = 0
-    @State private var keybindBridge = GhosttyKeybindBridge { _ in nil }
+    @State private var keybindBridge = GhosttyKeybindBridge.empty
 
     public init(hostStore: HostStore, appState: IPadAppState, coordinator: RemoteConnectionCoordinator) {
         self.hostStore = hostStore
@@ -227,7 +227,7 @@ public struct IPadRootLayout: View {
     }
 
     static func keybindBridgeForStartingHostRefresh() -> GhosttyKeybindBridge {
-        GhosttyKeybindBridge { _ in nil }
+        .empty
     }
 
     // MARK: - Side-effecting selection (callbacks from WorktreeListContent)

@@ -27,22 +27,33 @@ struct GhosttyKeybindingsFetcherTests {
         #expect(bridge.allChords.count == 1)
     }
 
-    @Test
-    func non2xxReturnsEmptyBridge() async {
-        let session = Self.session(statusCode: 500, body: #"{"bindings":{}}"#)
+    @Test("""
+    @spec IPAD-9.7: If fetching the host-resolved Ghostty keybindings fails (missing endpoint on older hosts, non-2xx status, a transport failure, or an undecodable body), then the application shall fall back to the bundled Ghostty default keybindings instead of an empty bridge.
+    """)
+    func missingEndpointFallsBackToGhosttyDefaults() async {
+        let session = Self.session(statusCode: 404, body: "Not Found")
 
         let bridge = await GhosttyKeybindingsFetcher.fetchUncached(baseURL: baseURL, session: session)
 
-        #expect(bridge.allChords.isEmpty)
+        #expect(bridge.allChords == GhosttyDefaultKeybinds.chords)
     }
 
     @Test
-    func malformedJSONReturnsEmptyBridge() async {
+    func transportFailureFallsBackToGhosttyDefaults() async {
+        let session = Self.failingSession()
+
+        let bridge = await GhosttyKeybindingsFetcher.fetchUncached(baseURL: baseURL, session: session)
+
+        #expect(bridge.allChords == GhosttyDefaultKeybinds.chords)
+    }
+
+    @Test
+    func malformedJSONFallsBackToGhosttyDefaults() async {
         let session = Self.session(statusCode: 200, body: #"{"bindings":"nope"}"#)
 
         let bridge = await GhosttyKeybindingsFetcher.fetchUncached(baseURL: baseURL, session: session)
 
-        #expect(bridge.allChords.isEmpty)
+        #expect(bridge.allChords == GhosttyDefaultKeybinds.chords)
     }
 
     @Test
@@ -69,6 +80,30 @@ struct GhosttyKeybindingsFetcherTests {
         #expect(first[.newSplitRight] == ShortcutChord(key: "d", modifiers: [.command]))
         #expect(second[.newSplitRight] == ShortcutChord(key: "d", modifiers: [.command]))
         #expect(SharedURLProtocolStub.requestCount == 1)
+    }
+
+    @Test
+    @MainActor
+    func failedFetchReturnsGhosttyDefaultsWithoutCachingThem() async {
+        SharedURLProtocolStub.install(
+            responses: [
+                .init(statusCode: 404, body: "Not Found"),
+                .init(statusCode: 200, body: #"""
+                {"bindings":{"new_split:right":{"key":"x","modifiers":8}}}
+                """#),
+            ]
+        )
+        defer {
+            GhosttyKeybindingsFetcher.invalidateCache(for: baseURL)
+            SharedURLProtocolStub.uninstall()
+        }
+
+        let failed = await GhosttyKeybindingsFetcher.fetch(baseURL: baseURL)
+        let refetched = await GhosttyKeybindingsFetcher.fetch(baseURL: baseURL)
+
+        #expect(failed.allChords == GhosttyDefaultKeybinds.chords)
+        #expect(refetched[.newSplitRight] == ShortcutChord(key: "x", modifiers: [.command]))
+        #expect(SharedURLProtocolStub.requestCount == 2)
     }
 
     @Test
@@ -140,6 +175,12 @@ struct GhosttyKeybindingsFetcherTests {
         configuration.protocolClasses = [URLProtocolStub.self]
         return URLSession(configuration: configuration)
     }
+
+    private static func failingSession() -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolFailingStub.self]
+        return URLSession(configuration: configuration)
+    }
 }
 
 private struct StubResponse {
@@ -188,6 +229,24 @@ private final class URLProtocolStub: URLProtocol, @unchecked Sendable {
         client?.urlProtocol(self, didLoad: Data(stub.body.utf8))
         client?.urlProtocolDidFinishLoading(self)
     }
+}
+
+/// Fails every request with a connection error, simulating an offline
+/// or unreachable host for the IPAD-9.7 transport-failure branch.
+private final class URLProtocolFailingStub: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "keybindings.test"
+    }
+
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest {
+        request
+    }
+
+    override func startLoading() {
+        client?.urlProtocol(self, didFailWithError: URLError(.cannotConnectToHost))
+    }
+
+    override func stopLoading() {}
 }
 
 private final class SharedURLProtocolStub: URLProtocol, @unchecked Sendable {
