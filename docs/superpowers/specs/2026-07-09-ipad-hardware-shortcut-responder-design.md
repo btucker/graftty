@@ -61,11 +61,11 @@ Command assignment is main-actor isolated. Assigning a command list to the
 proxy will first replace the backing descriptor list, then compare the new
 command identities, titles, inputs, and normalized modifiers with the
 previously published list. When the effective table changes, the proxy will
-synchronously call `UIMenuSystem.main.setNeedsRebuild()` after the backing
-descriptors and effective signature are updated. Current UIKit exposes no
-responder-level key-command invalidation API; rebuilding the main menu system
-is the supported way to make UIKit query the responder's `keyCommands` again.
-This covers:
+synchronously request a main-menu-system rebuild by calling
+`UIMenuSystem.main.setNeedsRebuild()` after the backing descriptors and
+effective signature are updated. Current UIKit exposes no responder-level
+key-command invalidation API; the rebuild request is the supported way to make
+UIKit query the responder's `keyCommands` again. This covers:
 
 - the initial empty-to-populated transition after host keybindings load;
 - pane-control availability changing Split and Close enablement;
@@ -76,8 +76,8 @@ This covers:
 Command closures are updated even when the effective signature is unchanged,
 so dispatch always observes the current iPad selection and environment. Title
 participates in that signature because UIKit displays it through both `title`
-and `discoverabilityTitle`. A menu-system rebuild is needed only when the
-effective key-command table changes.
+and `discoverabilityTitle`. A menu-system rebuild request is needed only when
+the effective key-command table changes.
 
 ### Multiple Chords Per Action
 
@@ -167,8 +167,8 @@ chord available to the rest of the responder chain and terminal.
 - Installing `Cmd+D` after initialization marks the command table for update
   and publishes Split Right from the first responder.
 - Reassigning an equivalent table does not request an unnecessary rebuild.
-- Changing identity, title, input, modifiers, or enablement rebuilds and
-  replaces the table.
+- Changing identity, title, input, modifiers, or enablement synchronously
+  requests a rebuild for the replacement table.
 - Dispatch from the proxy invokes only the exact normalized chord match.
 
 The rebuild request will be exposed through a narrow test observation seam,

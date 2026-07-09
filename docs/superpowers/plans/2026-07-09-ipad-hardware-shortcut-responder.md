@@ -4,7 +4,7 @@
 
 **Goal:** Make iPad app-level hardware keyboard shortcuts publish from the active terminal input responder, refresh dynamically, and support Ghostty's `Ctrl+Tab` worktree-navigation defaults.
 
-**Architecture:** Preserve the existing semantic command registry and terminal input routing. Add explicit mobile keybinding provenance so only bundled fallback bindings gain aliases, expand those bindings into deduplicated command descriptors, and move `UIKeyCommand` publication to the actual `UIKeyInput` first responder with a synchronous UIKit main-menu-system rebuild when its effective table changes.
+**Architecture:** Preserve the existing semantic command registry and terminal input routing. Add explicit mobile keybinding provenance so only bundled fallback bindings gain aliases, expand those bindings into deduplicated command descriptors, and move `UIKeyCommand` publication to the actual `UIKeyInput` first responder with a synchronous request for a UIKit main-menu-system rebuild when its effective table changes.
 
 **Tech Stack:** Swift 6, SwiftUI, UIKit `UIKeyCommand`/`UIKeyInput`, Swift Testing, Swift Package Manager, Xcode iOS simulator tests, `scripts/generate-specs.py`.
 
@@ -22,7 +22,7 @@
 | `Tests/GrafttyProtocolTests/Keybinds/GhosttyDefaultKeybindsTests.swift` | Pure default coverage | Pin ordered `Ctrl+Tab` aliases and primary-before-alias behavior. |
 | `Tests/GrafttyMobileKitTests/Session/GhosttyKeybindingsFetcherTests.swift` | Fetch/cache coverage | Verify provenance for success, empty success, failure, cache hit, and invalidation. |
 | `Tests/GrafttyMobileKitTests/App/IPadRootLayoutSelectionTests.swift` | Command construction | Verify loading state, host-only chords, fallback aliases, enablement, stable IDs, and collision precedence. |
-| `Tests/GrafttyMobileKitTests/Terminal/TerminalPaneViewTests.swift` | UIKit responder behavior | Verify late install, menu rebuilds, removal, and exact dispatch from the proxy. |
+| `Tests/GrafttyMobileKitTests/Terminal/TerminalPaneViewTests.swift` | UIKit responder behavior | Verify late install, menu-rebuild requests, removal, and exact dispatch from the proxy. |
 | `SPECS.md` | Generated requirement inventory | Regenerate for tightened `IPAD-9.9` and new `IPAD-9.10`. |
 
 No new production files are needed. The provenance type stays mobile-specific beside the fetch/cache owner; aliases stay protocol-level without importing UIKit.
@@ -288,12 +288,12 @@ func activeInputResponderPublishesLateInstalledCommands() {
 }
 ```
 
-Add tests that equivalent descriptors update closures without a rebuild;
-changed identity, title, input, or modifiers request a rebuild; removal requests
-a rebuild and returns nil; proxy dispatch requires an exact normalized chord;
-and the container no longer owns the command table. Title participates in the
-effective signature because UIKit displays it as both `title` and
-`discoverabilityTitle`.
+Add tests that equivalent descriptors update closures without a rebuild
+request; changed identity, title, input, or modifiers request a rebuild;
+removal requests a rebuild and returns nil; proxy dispatch requires an exact
+normalized chord; and the container no longer owns the command table. Title
+participates in the effective signature because UIKit displays it as both
+`title` and `discoverabilityTitle`.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -301,7 +301,8 @@ effective signature because UIKit displays it as both `title` and
 xcodebuild -quiet -project Apps/GrafttyMobile/GrafttyMobile.xcodeproj -scheme GrafttyMobile -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)' test -only-testing:GrafttyMobileKitTests/TerminalPaneViewTests
 ```
 
-Expected: failure because the proxy does not publish commands or expose menu-rebuild observation.
+Expected: failure because the proxy does not publish commands or expose
+menu-rebuild-request observation.
 
 - [ ] **Step 3: Forward assignments to the proxy**
 
@@ -319,14 +320,14 @@ Move UIKeyCommand construction, selector dispatch, exact-match lookup, and norma
 - [ ] **Step 4: Add effective-table rebuild requests**
 
 On the main-actor proxy, replace the backing descriptors and recompute the
-effective signature before synchronously calling
-`UIMenuSystem.main.setNeedsRebuild()`. Current UIKit does not expose
-responder-level key-command invalidation; rebuilding the main menu system is
-the supported way to make UIKit query the responder's `keyCommands` again.
+effective signature before synchronously requesting a main-menu-system rebuild
+through `UIMenuSystem.main.setNeedsRebuild()`. Current UIKit does not expose
+responder-level key-command invalidation; requesting a main-menu-system rebuild
+is the supported way to make UIKit query the responder's `keyCommands` again.
 Compare a private `Equatable` signature containing ID, title, input, and
 normalized modifiers; ignore closures for equality. Increment
 `keyCommandUpdateRequestCountForTesting` immediately before the UIKit call. Do
-not defer the rebuild asynchronously.
+not defer the rebuild request asynchronously.
 
 - [ ] **Step 5: Run tests and verify GREEN**
 
