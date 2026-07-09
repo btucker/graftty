@@ -44,6 +44,15 @@ action and currently selects the `Cmd+Shift+]` and `Cmd+Shift+[` aliases.
 
 ### Command Ownership
 
+`MobileGhosttyCommandButtons` builds one source-aware table of currently
+enabled command candidates. SwiftUI scene commands and active-terminal
+responder commands are projections of that same table, so they use identical
+provenance, alias, translation, deduplication, and enablement rules. The scene
+path keeps fallback aliases such as `Ctrl+Tab` available when the terminal
+software-keyboard proxy is not first responder. Its `ForEach` uses stable
+action/input/normalized-modifier chord IDs, and disabled commands are omitted
+rather than registered as disabled buttons.
+
 `TerminalSoftwareKeyboardProxyView`, the actual first responder, will publish
 the active app-level `UIKeyCommand` table. `TerminalInputContainerView` remains
 the integration boundary used by `TerminalPaneView`, but forwards command
@@ -94,11 +103,12 @@ The cache stores and returns the full set rather than only its bridge, and
 `IPadRootLayout` passes the full set into `MobileGhosttyCommandContext`. No code
 will infer provenance by comparing chord dictionaries.
 
-The command construction boundary will allow more than one hardware command
-descriptor to invoke the same `GhosttyAction`. A `.hostResolved` set publishes
-only its authoritative configured chord for each action. A
-`.bundledFallback` set may add known Ghostty aliases for the same action. A
-`.loading` set publishes no commands.
+The shared command construction boundary will allow more than one candidate to
+invoke the same `GhosttyAction`. A `.hostResolved` set publishes only its
+authoritative configured chord for each action. A `.bundledFallback` set may
+add known Ghostty aliases for the same action. A `.loading` set publishes no
+commands. Both the SwiftUI scene and active-terminal proxy projections consume
+this same source-aware candidate table.
 
 For the initial fix, the fallback table will expose:
 
@@ -137,9 +147,11 @@ chord available to the rest of the responder chain and terminal.
    response or `.bundledFallback` on failure.
 3. `IPadRootLayout` creates a semantic command context containing the full
    keybinding set, execution closure, and current enablement closure.
-4. `MobileGhosttyCommandButtons` expands the context into hardware command
-   descriptors, including fallback aliases when applicable.
-5. `TerminalPaneView.updateUIView` assigns the descriptors through
+4. `MobileGhosttyCommandButtons` expands the context into one enabled,
+   source-aware candidate table, including fallback aliases when applicable.
+   It projects that table into stable-ID SwiftUI scene commands and
+   active-terminal responder descriptors.
+5. `TerminalPaneView.updateUIView` assigns the responder descriptors through
    `TerminalInputContainerView` to the active keyboard proxy.
 6. The proxy detects table changes, requests a main-menu-system rebuild, and
    publishes fresh `UIKeyCommand` objects from its `keyCommands` override.
@@ -154,6 +166,11 @@ chord available to the rest of the responder chain and terminal.
   not receive ambiguous commands.
 - A dispatched command that no longer matches the current descriptor table is
   ignored.
+- During a deferred UIKit menu rebuild, `canPerformAction` defensively rejects
+  a cached `UIKeyCommand` sender for the proxy's command selector unless its
+  input and normalized modifiers exactly match the current table. Nullable and
+  non-`UIKeyCommand` senders, and unrelated selectors, delegate to
+  `UIResponder`'s normal validation.
 - Pane-control failures retain the current behavior: the host snapshot remains
   authoritative and the command does not mutate local layout optimistically.
 - If the host keybinding fetch fails, bundled defaults and aliases remain
@@ -170,6 +187,9 @@ chord available to the rest of the responder chain and terminal.
 - Changing identity, title, input, modifiers, or enablement synchronously
   requests a rebuild for the replacement table.
 - Dispatch from the proxy invokes only the exact normalized chord match.
+- Validation rejects stale cached `UIKeyCommand` senders while accepting a
+  current exact match; nullable and non-command senders continue through
+  superclass validation.
 
 The rebuild request will be exposed through a narrow test observation seam,
 because simulator unit tests cannot make UIKit disclose its private command
@@ -188,7 +208,8 @@ calling a parent computed property.
   does not gain fallback aliases.
 - Fetch failures return `.bundledFallback`, while host refresh begins with
   `.loading`; cache hits retain their original provenance.
-- Disabled commands produce no responder command.
+- Scene and responder projections contain the same fallback aliases, with
+  stable chord IDs, and disabled commands are omitted from both.
 
 ### Regression Coverage
 
@@ -201,6 +222,9 @@ calling a parent computed property.
 
 ## Specification Changes
 
+`IPAD-9.3` will require scene commands to omit disabled, missing,
+untranslatable, unsupported, and loading-state candidates.
+
 `IPAD-9.9` will be tightened to require the actual terminal input responder to
 publish commands and synchronously request a UIKit menu-system rebuild when the
 effective command set changes.
@@ -208,4 +232,9 @@ effective command set changes.
 `IPAD-9.10` will require mobile keybinding fetch/cache results to retain
 `.loading`, `.hostResolved`, or `.bundledFallback` provenance and will require
 the bundled fallback to retain the standard `Ctrl+Tab` and `Ctrl+Shift+Tab`
-worktree-navigation aliases in addition to the Command-bracket aliases.
+worktree-navigation aliases in addition to the Command-bracket aliases through
+both scene and active-terminal responder commands.
+
+This design does not promise raw key replay when a cached or otherwise stale
+app command is rejected. It prevents stale semantic action dispatch and leaves
+subsequent responder handling to UIKit.

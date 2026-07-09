@@ -4,7 +4,7 @@
 
 **Goal:** Make iPad app-level hardware keyboard shortcuts publish from the active terminal input responder, refresh dynamically, and support Ghostty's `Ctrl+Tab` worktree-navigation defaults.
 
-**Architecture:** Preserve the existing semantic command registry and terminal input routing. Add explicit mobile keybinding provenance so only bundled fallback bindings gain aliases, expand those bindings into deduplicated command descriptors, and move `UIKeyCommand` publication to the actual `UIKeyInput` first responder with a synchronous request for a UIKit main-menu-system rebuild when its effective table changes.
+**Architecture:** Preserve the existing semantic command registry and terminal input routing. Add explicit mobile keybinding provenance so only bundled fallback bindings gain aliases, expand enabled bindings into one deduplicated candidate table shared by SwiftUI scene commands and active-terminal responder commands, and publish `UIKeyCommand` values from the actual `UIKeyInput` first responder with a synchronous request for a UIKit main-menu-system rebuild when its effective table changes.
 
 **Tech Stack:** Swift 6, SwiftUI, UIKit `UIKeyCommand`/`UIKeyInput`, Swift Testing, Swift Package Manager, Xcode iOS simulator tests, `scripts/generate-specs.py`.
 
@@ -17,8 +17,8 @@
 | `Sources/GrafttyProtocol/Keybinds/GhosttyDefaultKeybinds.swift` | UI-free bundled Ghostty shortcut snapshot | Preserve the primary bridge and add ordered default aliases for next/previous worktree. |
 | `Sources/GrafttyMobileKit/Session/GhosttyKeybindingsFetcher.swift` | Fetch and cache host-resolved keybindings | Return a bridge plus explicit `.loading`, `.hostResolved`, or `.bundledFallback` source. |
 | `Sources/GrafttyMobileKit/App/IPadRootLayout.swift` | Own host presentation and semantic command context | Store/pass the provenance-bearing set and clear it to `.loading` during host refresh. |
-| `Sources/GrafttyMobileKit/App/MobileGhosttyCommandFocusedValues.swift` | Convert semantic actions/chords to UI commands | Expand fallback aliases, preserve host authority, deduplicate chords, and create stable IDs. |
-| `Sources/GrafttyMobileKit/Terminal/TerminalPaneView.swift` | Bridge terminal UI and keyboard responder | Publish commands from `TerminalSoftwareKeyboardProxyView` and request a UIKit main-menu-system rebuild on effective changes. |
+| `Sources/GrafttyMobileKit/App/MobileGhosttyCommandFocusedValues.swift` | Convert semantic actions/chords to UI commands | Build a source-aware enabled candidate table for scene and responder projections, expand fallback aliases, preserve host authority, deduplicate chords, and create stable chord IDs. |
+| `Sources/GrafttyMobileKit/Terminal/TerminalPaneView.swift` | Bridge terminal UI and keyboard responder | Publish commands from `TerminalSoftwareKeyboardProxyView`, request a UIKit main-menu-system rebuild on effective changes, and reject stale cached command senders. |
 | `Tests/GrafttyProtocolTests/Keybinds/GhosttyDefaultKeybindsTests.swift` | Pure default coverage | Pin ordered `Ctrl+Tab` aliases and primary-before-alias behavior. |
 | `Tests/GrafttyMobileKitTests/Session/GhosttyKeybindingsFetcherTests.swift` | Fetch/cache coverage | Verify provenance for success, empty success, failure, cache hit, and invalidation. |
 | `Tests/GrafttyMobileKitTests/App/IPadRootLayoutSelectionTests.swift` | Command construction | Verify loading state, host-only chords, fallback aliases, enablement, stable IDs, and collision precedence. |
@@ -181,7 +181,7 @@ Change `byBaseURL`, inflight tasks, `bridge(for:)` (rename to `keybindingSet(for
 
 Replace `@State private var keybindBridge` with a set initialized to `.loading`. Rename `keybindBridgeForStartingHostRefresh()` to `keybindingSetForStartingHostRefresh()`, assign `.loading` before each fetch, and assign the returned set afterward.
 
-Change `MobileGhosttyCommandContext.keybindBridge` to `keybindingSet`. Use `context.keybindingSet.bridge` for existing scene and single-chord hardware rendering so this task does not yet change aliases.
+Change `MobileGhosttyCommandContext.keybindBridge` to `keybindingSet`. Route scene and responder rendering through the same source-aware candidate construction boundary so later alias expansion and enablement filtering cannot diverge between the two outputs.
 
 - [ ] **Step 6: Run focused tests and verify GREEN**
 
@@ -196,7 +196,7 @@ git add Sources/GrafttyMobileKit/Session/GhosttyKeybindingsFetcher.swift Sources
 git commit -m "refactor(ipad): retain keybinding source provenance"
 ```
 
-### Task 3: Expand and Deduplicate Hardware Command Aliases
+### Task 3: Expand and Deduplicate Scene and Responder Command Aliases
 
 **Files:**
 - Modify: `Tests/GrafttyMobileKitTests/App/IPadRootLayoutSelectionTests.swift`
@@ -232,13 +232,13 @@ Also test `Cmd+D`, host-resolved custom chord without aliases, host-resolved emp
 xcodebuild -quiet -project Apps/GrafttyMobile/GrafttyMobile.xcodeproj -scheme GrafttyMobile -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)' test -only-testing:GrafttyMobileKitTests/IPadRootLayoutSelectionTests
 ```
 
-Expected: alias assertions fail because hardware construction still reads one bridge chord per action.
+Expected: alias assertions fail because shared command construction still reads one bridge chord per action.
 
 - [ ] **Step 3: Implement source-aware expansion**
 
-For each enabled action: emit none for `.loading`; use only `bridge[action]` for `.hostResolved`; use `GhosttyDefaultKeybinds.hardwareChords(for:)` for `.bundledFallback`.
+For each enabled action: emit none for `.loading`; use only `bridge[action]` for `.hostResolved`; and add `GhosttyDefaultKeybinds.aliases[action]` after the bridge primary for `.bundledFallback`. Feed both SwiftUI scene commands and active-terminal responder commands from this candidate table. Omit disabled commands entirely from both projections so scene commands never register disabled buttons.
 
-Convert with `UIKeyCommandInputFromChord`. Create stable IDs from semantic action, input, and normalized modifier raw value; do not use randomized `hashValue`.
+Convert each candidate through both `KeyboardShortcutFromChord` and `UIKeyCommandInputFromChord`. Create stable IDs from semantic action, input, and normalized modifier raw value; use those chord IDs for the scene `ForEach` and responder descriptors, and do not use randomized `hashValue`.
 
 - [ ] **Step 4: Deduplicate with global primary precedence**
 
@@ -255,7 +255,7 @@ primary survives.
 
 Run the Step 2 command again.
 
-Expected: the suite passes, including `Cmd+D`, Control-Tab aliases, host authority, and collisions.
+Expected: the suite passes, including `Cmd+D`, Control-Tab aliases in both projections, stable scene IDs, disabled-command omission, host authority, and collisions.
 
 - [ ] **Step 6: Commit**
 
@@ -291,7 +291,10 @@ func activeInputResponderPublishesLateInstalledCommands() {
 Add tests that equivalent descriptors update closures without a rebuild
 request; changed identity, title, input, or modifiers request a rebuild;
 removal requests a rebuild and returns nil; proxy dispatch requires an exact
-normalized chord; and the container no longer owns the command table. Title
+normalized chord; stale cached `UIKeyCommand` senders are rejected by
+`canPerformAction` during deferred menu rebuilding; nullable and non-command
+senders delegate to `UIResponder`; and the container no longer owns the
+command table. Do not assert raw key replay after rejection. Title
 participates in the effective signature because UIKit displays it as both
 `title` and `discoverabilityTitle`.
 
@@ -316,6 +319,11 @@ public var hardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] 
 ```
 
 Move UIKeyCommand construction, selector dispatch, exact-match lookup, and normalized modifier handling to `TerminalSoftwareKeyboardProxyView`.
+
+Override `canPerformAction(_:withSender:)` narrowly for the proxy's hardware
+command selector when the sender is a `UIKeyCommand`: return true only for an
+exact current input/normalized-modifier match. Delegate nullable or
+non-`UIKeyCommand` senders and unrelated selectors to `super`.
 
 - [ ] **Step 4: Add effective-table rebuild requests**
 
