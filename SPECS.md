@@ -1634,7 +1634,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-9.8** The bundled Ghostty default keybinding table shall mirror the defaults reported by ghostty +list-keybinds --default for every iPad-supported action, leaving new_split:left and new_split:up chordless because Ghostty ships no default binding for them.
 
-**IPAD-9.9** The active iPad terminal input responder shall publish app-level Ghostty shortcuts as UIKeyCommands and synchronously request a UIKit menu-system rebuild whenever the effective command identities, titles, inputs, or modifiers change, so hardware-keyboard commands remain current while terminal input owns first responder status.
+**IPAD-9.9** The active iPad terminal input responder shall publish app-level Ghostty shortcuts as UIKeyCommands that take priority over conflicting focus and text-input system behavior, and synchronously request a UIKit menu-system rebuild whenever the effective command identities, titles, inputs, or modifiers change, so hardware-keyboard commands remain current while terminal input owns first responder status.
 
 **IPAD-9.10** Mobile keybinding fetch and cache results shall retain loading, host-resolved, or bundled-fallback provenance; bundled fallback Ctrl+Tab and Ctrl+Shift+Tab worktree-navigation aliases shall be published through both SwiftUI scene commands and active-terminal responder commands so Ctrl+Tab remains available when the terminal software-keyboard proxy is not first responder, while host-resolved commands shall use only host chords without fallback aliases and disabled scene commands shall be omitted rather than registered.
 

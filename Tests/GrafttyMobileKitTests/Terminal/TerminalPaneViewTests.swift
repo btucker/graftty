@@ -72,7 +72,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IPAD-9.9: The active iPad terminal input responder shall publish app-level Ghostty shortcuts as UIKeyCommands and synchronously request a UIKit menu-system rebuild whenever the effective command identities, titles, inputs, or modifiers change, so hardware-keyboard commands remain current while terminal input owns first responder status.
+@spec IPAD-9.9: The active iPad terminal input responder shall publish app-level Ghostty shortcuts as UIKeyCommands that take priority over conflicting focus and text-input system behavior, and synchronously request a UIKit menu-system rebuild whenever the effective command identities, titles, inputs, or modifiers change, so hardware-keyboard commands remain current while terminal input owns first responder status.
 """)
     func activeTerminalInputResponderRefreshesPublishedHardwareKeyboardCommands() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -90,12 +90,25 @@ struct TerminalPaneViewTests {
                 modifierFlags: [.command],
                 perform: {}
             ),
+            .init(
+                id: "next-worktree",
+                title: "Next Worktree",
+                input: "\t",
+                modifierFlags: [.control],
+                perform: {}
+            ),
         ]
 
         #expect(proxy.keyCommandUpdateRequestCountForTesting == 1)
-        #expect(proxy.keyCommands?.count == 1)
-        #expect(proxy.keyCommands?.first?.input == "d")
-        #expect(proxy.keyCommands?.first?.modifierFlags == [.command])
+        let publishedCommands = try! #require(proxy.keyCommands)
+        #expect(publishedCommands.count == 2)
+        #expect(publishedCommands[0].input == "d")
+        #expect(publishedCommands[0].modifierFlags == [.command])
+        #expect(publishedCommands[1].input == "\t")
+        #expect(publishedCommands[1].modifierFlags == [.control])
+        for command in publishedCommands {
+            #expect(command.wantsPriorityOverSystemBehavior)
+        }
         #expect(container.keyCommands == nil)
 
         container.hardwareKeyboardCommands = [

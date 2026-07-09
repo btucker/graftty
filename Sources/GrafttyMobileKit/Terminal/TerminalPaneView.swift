@@ -455,6 +455,7 @@ final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTr
                 modifierFlags: command.modifierFlags.appCommandModifiers
             )
             keyCommand.discoverabilityTitle = command.title
+            keyCommand.wantsPriorityOverSystemBehavior = true
             return keyCommand
         }
     }
