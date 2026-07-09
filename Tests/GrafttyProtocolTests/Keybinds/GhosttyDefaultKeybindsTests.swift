@@ -32,4 +32,28 @@ struct GhosttyDefaultKeybindsTests {
     @Test func bridgeExposesExactlyTheDefaultTable() {
         #expect(GhosttyDefaultKeybinds.bridge.allChords == GhosttyDefaultKeybinds.chords)
     }
+
+    @Test func nextTabHardwareChordsPutPrimaryBeforeAlias() {
+        #expect(GhosttyDefaultKeybinds.hardwareChords(for: .nextTab) == [
+            ShortcutChord(key: "bracketright", modifiers: [.command, .shift]),
+            ShortcutChord(key: "tab", modifiers: [.control]),
+        ])
+    }
+
+    @Test func previousTabHardwareChordsPutPrimaryBeforeAlias() {
+        #expect(GhosttyDefaultKeybinds.hardwareChords(for: .previousTab) == [
+            ShortcutChord(key: "bracketleft", modifiers: [.command, .shift]),
+            ShortcutChord(key: "tab", modifiers: [.control, .shift]),
+        ])
+    }
+
+    @Test func hardwareChordsReturnOnlyPrimaryWhenNoAliasesExist() {
+        #expect(GhosttyDefaultKeybinds.hardwareChords(for: .newSplitRight) == [
+            ShortcutChord(key: "d", modifiers: [.command]),
+        ])
+    }
+
+    @Test func hardwareChordsAreEmptyForUnboundActions() {
+        #expect(GhosttyDefaultKeybinds.hardwareChords(for: .newSplitLeft).isEmpty)
+    }
 }
