@@ -1622,7 +1622,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-9.2** iPad command routing shall map only GhosttyCommandRegistry.iPadSupportedActions to executable iPad command kinds; unsupported Ghostty actions such as toggle_split_zoom shall not be routed or registered.
 
-**IPAD-9.3** iPad scene commands shall be rendered only for host-resolved Ghostty chords that translate to SwiftUI KeyboardShortcut values; actions with missing or untranslatable chords shall be omitted rather than registered with fallback shortcuts.
+**IPAD-9.3** iPad scene commands shall be emitted only for enabled, supported Ghostty command chords that translate to SwiftUI KeyboardShortcut values; loading, missing, untranslatable, unsupported, and disabled commands shall be omitted.
 
 **IPAD-9.4** Directional iPad pane-focus commands shall use the same spatial split-tree semantics as Mac TERM-7.3: nearest matching-axis ancestor, opposite subtree near-edge descent, and no wrapping for unrelated directions.
 
@@ -1636,7 +1636,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-9.9** The active iPad terminal input responder shall publish app-level Ghostty shortcuts as UIKeyCommands and synchronously request a UIKit menu-system rebuild whenever the effective command identities, titles, inputs, or modifiers change, so hardware-keyboard commands remain current while terminal input owns first responder status.
 
-**IPAD-9.10** Mobile keybinding fetch and cache results shall retain loading, host-resolved, or bundled-fallback provenance; bundled fallback hardware commands shall retain Ghostty's Ctrl+Tab and Ctrl+Shift+Tab worktree-navigation aliases in addition to the Command-bracket aliases, while host-resolved commands shall not gain fallback aliases.
+**IPAD-9.10** Mobile keybinding fetch and cache results shall retain loading, host-resolved, or bundled-fallback provenance; bundled fallback Ctrl+Tab and Ctrl+Shift+Tab worktree-navigation aliases shall be published through both SwiftUI scene commands and active-terminal responder commands so Ctrl+Tab remains available when the terminal software-keyboard proxy is not first responder, while host-resolved commands shall use only host chords without fallback aliases and disabled scene commands shall be omitted rather than registered.
 
 ## TEAM — Agent Teams
 

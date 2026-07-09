@@ -597,7 +597,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-9.3: iPad scene commands shall be rendered only for host-resolved Ghostty chords that translate to SwiftUI KeyboardShortcut values; actions with missing or untranslatable chords shall be omitted rather than registered with fallback shortcuts.
+@spec IPAD-9.3: iPad scene commands shall be emitted only for enabled, supported Ghostty command chords that translate to SwiftUI KeyboardShortcut values; loading, missing, untranslatable, unsupported, and disabled commands shall be omitted.
 """)
     func ipad_9_3_commandRenderingOmitsMissingAndUntranslatableChords() {
         let bridge = GhosttyKeybindBridge { rawAction in
@@ -625,7 +625,9 @@ struct IPadRootLayoutSelectionTests {
         #expect(commands.contains { $0.action == .nextTab } == false)
     }
 
-    @Test("scene command descriptors respect keybinding provenance and enabled actions")
+    @Test("""
+@spec IPAD-9.10: Mobile keybinding fetch and cache results shall retain loading, host-resolved, or bundled-fallback provenance; bundled fallback Ctrl+Tab and Ctrl+Shift+Tab worktree-navigation aliases shall be published through both SwiftUI scene commands and active-terminal responder commands so Ctrl+Tab remains available when the terminal software-keyboard proxy is not first responder, while host-resolved commands shall use only host chords without fallback aliases and disabled scene commands shall be omitted rather than registered.
+""")
     func sceneCommandDescriptorsRespectKeybindingProvenance() {
         func commands(
             bridge: GhosttyKeybindBridge,
@@ -739,9 +741,7 @@ struct IPadRootLayoutSelectionTests {
         #expect(performed == [.nextTab])
     }
 
-    @Test("""
-@spec IPAD-9.10: Mobile keybinding fetch and cache results shall retain loading, host-resolved, or bundled-fallback provenance; bundled fallback hardware commands shall retain Ghostty's Ctrl+Tab and Ctrl+Shift+Tab worktree-navigation aliases in addition to the Command-bracket aliases, while host-resolved commands shall not gain fallback aliases.
-""")
+    @Test("hardware keyboard commands respect keybinding provenance")
     func ipad_9_10_hardwareKeyboardCommandsRespectKeybindingProvenance() {
         func commands(
             bridge: GhosttyKeybindBridge,
