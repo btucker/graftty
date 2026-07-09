@@ -21,11 +21,9 @@ private struct MobileGhosttyHardwareCommandCandidate {
     let label: String
     let input: String
     let modifierFlags: UIKeyModifierFlags
-    let isAlias: Bool
 
     var id: String {
-        guard isAlias else { return action.rawValue }
-        return "\(action.rawValue)|\(input)|\(modifierFlags.rawValue)"
+        "\(action.rawValue)|\(input)|\(modifierFlags.rawValue)"
     }
 }
 
@@ -114,13 +112,13 @@ struct MobileGhosttyCommandButtons: View {
         let primaryCandidates: [MobileGhosttyHardwareCommandCandidate] =
             enabledEntries.compactMap { entry in
                 guard let chord = context.keybindingSet.bridge[entry.action] else { return nil }
-                return hardwareKeyboardCommandCandidate(entry: entry, chord: chord, isAlias: false)
+                return hardwareKeyboardCommandCandidate(entry: entry, chord: chord)
             }
         let aliasCandidates: [MobileGhosttyHardwareCommandCandidate]
         if context.keybindingSet.source == .bundledFallback {
             aliasCandidates = enabledEntries.flatMap { entry in
                 GhosttyDefaultKeybinds.aliases[entry.action, default: []].compactMap { chord in
-                    hardwareKeyboardCommandCandidate(entry: entry, chord: chord, isAlias: true)
+                    hardwareKeyboardCommandCandidate(entry: entry, chord: chord)
                 }
             }
         } else {
@@ -138,16 +136,14 @@ struct MobileGhosttyCommandButtons: View {
 
     private static func hardwareKeyboardCommandCandidate(
         entry: GhosttyCommandRegistry.Entry,
-        chord: ShortcutChord,
-        isAlias: Bool
+        chord: ShortcutChord
     ) -> MobileGhosttyHardwareCommandCandidate? {
         guard let input = UIKeyCommandInputFromChord.input(from: chord) else { return nil }
         return MobileGhosttyHardwareCommandCandidate(
             action: entry.action,
             label: entry.label,
             input: input,
-            modifierFlags: UIKeyModifierFlags(chord.modifiers).normalizedAppCommandModifiers,
-            isAlias: isAlias
+            modifierFlags: UIKeyModifierFlags(chord.modifiers).normalizedAppCommandModifiers
         )
     }
 }

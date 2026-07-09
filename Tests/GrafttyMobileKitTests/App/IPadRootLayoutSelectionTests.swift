@@ -646,7 +646,10 @@ struct IPadRootLayoutSelectionTests {
 
         let commands = MobileGhosttyCommandButtons.hardwareKeyboardCommands(for: context)
 
-        #expect(commands.map(\.id) == [GhosttyAction.nextTab.rawValue, GhosttyAction.previousTab.rawValue])
+        #expect(commands.map(\.id) == [
+            "\(GhosttyAction.nextTab.rawValue)|\t|\(UIKeyModifierFlags.control.rawValue)",
+            "\(GhosttyAction.previousTab.rawValue)|\t|\((UIKeyModifierFlags.control.union(.shift)).rawValue)",
+        ])
         #expect(commands[0].input == "\t")
         #expect(commands[0].modifierFlags.contains(.control))
         #expect(!commands[0].modifierFlags.contains(.shift))
@@ -687,20 +690,28 @@ struct IPadRootLayoutSelectionTests {
 
         #expect(nextTab.count == 2)
         #expect(nextTab.contains {
-            $0.input == "]" && $0.modifierFlags == [.command, .shift]
+            $0.id == "\(GhosttyAction.nextTab.rawValue)|]|\((UIKeyModifierFlags.command.union(.shift)).rawValue)"
+                && $0.input == "]"
+                && $0.modifierFlags == [.command, .shift]
         })
         #expect(nextTab.contains {
-            $0.input == "\t" && $0.modifierFlags == .control
+            $0.id == "\(GhosttyAction.nextTab.rawValue)|\t|\(UIKeyModifierFlags.control.rawValue)"
+                && $0.input == "\t"
+                && $0.modifierFlags == .control
         })
         #expect(previousTab.count == 2)
         #expect(previousTab.contains {
-            $0.input == "[" && $0.modifierFlags == [.command, .shift]
+            $0.id == "\(GhosttyAction.previousTab.rawValue)|[|\((UIKeyModifierFlags.command.union(.shift)).rawValue)"
+                && $0.input == "["
+                && $0.modifierFlags == [.command, .shift]
         })
         #expect(previousTab.contains {
-            $0.input == "\t" && $0.modifierFlags == [.control, .shift]
+            $0.id == "\(GhosttyAction.previousTab.rawValue)|\t|\((UIKeyModifierFlags.control.union(.shift)).rawValue)"
+                && $0.input == "\t"
+                && $0.modifierFlags == [.control, .shift]
         })
         #expect(fallback.contains {
-            $0.id == GhosttyAction.newSplitRight.rawValue
+            $0.id == "\(GhosttyAction.newSplitRight.rawValue)|d|\(UIKeyModifierFlags.command.rawValue)"
                 && $0.input == "d"
                 && $0.modifierFlags == .command
         })
@@ -712,9 +723,6 @@ struct IPadRootLayoutSelectionTests {
         ).map(\.id)
         #expect(Set(fallbackIDs).count == fallbackIDs.count)
         #expect(repeatedFallbackIDs == fallbackIDs)
-        #expect(nextTab.contains {
-            $0.id == "\(GhosttyAction.nextTab.rawValue)|\t|\(UIKeyModifierFlags.control.rawValue)"
-        })
 
         var performed: [GhosttyAction] = []
         let performableFallback = commands(
@@ -742,7 +750,9 @@ struct IPadRootLayoutSelectionTests {
         }
         let hostResolved = commands(bridge: customHostBridge, source: .hostResolved)
         #expect(hostResolved.count == 1)
-        #expect(hostResolved[0].id == GhosttyAction.nextTab.rawValue)
+        #expect(hostResolved[0].id ==
+            "\(GhosttyAction.nextTab.rawValue)|.|\((UIKeyModifierFlags.command.union(.alternate)).rawValue)"
+        )
         #expect(hostResolved[0].input == ".")
         #expect(hostResolved[0].modifierFlags == [.command, .alternate])
         #expect(commands(bridge: .empty, source: .hostResolved).isEmpty)
@@ -768,7 +778,7 @@ struct IPadRootLayoutSelectionTests {
             $0.input == "\t" && $0.modifierFlags == .control
         }
         #expect(controlTab.count == 1)
-        #expect(controlTab[0].id == GhosttyAction.previousTab.rawValue)
+        #expect(controlTab[0].id == "\(GhosttyAction.previousTab.rawValue)|\t|\(UIKeyModifierFlags.control.rawValue)")
         controlTab[0].perform()
         #expect(collisionPerformed == [.previousTab])
     }
