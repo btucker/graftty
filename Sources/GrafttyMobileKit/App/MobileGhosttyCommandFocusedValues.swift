@@ -11,14 +11,18 @@ struct MobileGhosttyCommandContext {
 }
 
 struct MobileGhosttyCommandDescriptor {
+    let id: String
     let action: GhosttyAction
     let label: String
     let shortcut: KeyboardShortcut
+    let input: String
+    let modifierFlags: UIKeyModifierFlags
 }
 
-private struct MobileGhosttyHardwareCommandCandidate {
+private struct MobileGhosttyCommandCandidate {
     let action: GhosttyAction
     let label: String
+    let shortcut: KeyboardShortcut
     let input: String
     let modifierFlags: UIKeyModifierFlags
 
@@ -27,7 +31,7 @@ private struct MobileGhosttyHardwareCommandCandidate {
     }
 }
 
-private struct MobileGhosttyHardwareChord: Hashable {
+private struct MobileGhosttyCommandChord: Hashable {
     let input: String
     let modifierRawValue: UIKeyModifierFlags.RawValue
 }
@@ -49,32 +53,27 @@ struct MobileGhosttyCommandButtons: View {
     var body: some View {
         Group {
             if let context {
-                ForEach(Self.renderableCommands(for: context.keybindingSet), id: \.action) { command in
+                ForEach(Self.renderableCommands(for: context), id: \.id) { command in
                     Button(command.label) {
                         context.perform(command.action)
                     }
                     .keyboardShortcut(command.shortcut)
-                    .disabled(!context.isEnabled(command.action))
                 }
             }
         }
     }
 
     static func renderableCommands(
-        for keybindingSet: MobileGhosttyKeybindingSet
+        for context: MobileGhosttyCommandContext
     ) -> [MobileGhosttyCommandDescriptor] {
-        GhosttyCommandRegistry.iPadSupportedActions.compactMap { action in
-            guard let entry = GhosttyCommandRegistry[action],
-                  entry.isSupportedOniPad,
-                  entry.kind != .unsupported,
-                  let chord = keybindingSet.bridge[action],
-                  let shortcut = KeyboardShortcutFromChord.shortcut(from: chord) else {
-                return nil
-            }
+        commandCandidates(for: context).map { candidate in
             return MobileGhosttyCommandDescriptor(
-                action: action,
-                label: entry.label,
-                shortcut: shortcut
+                id: candidate.id,
+                action: candidate.action,
+                label: candidate.label,
+                shortcut: candidate.shortcut,
+                input: candidate.input,
+                modifierFlags: candidate.modifierFlags
             )
         }
     }
@@ -82,7 +81,7 @@ struct MobileGhosttyCommandButtons: View {
     static func hardwareKeyboardCommands(
         for context: MobileGhosttyCommandContext
     ) -> [TerminalPaneView.HardwareKeyboardCommand] {
-        hardwareKeyboardCommandCandidates(for: context).map { candidate in
+        commandCandidates(for: context).map { candidate in
             return TerminalPaneView.HardwareKeyboardCommand(
                 id: candidate.id,
                 title: candidate.label,
@@ -93,9 +92,9 @@ struct MobileGhosttyCommandButtons: View {
         }
     }
 
-    private static func hardwareKeyboardCommandCandidates(
+    private static func commandCandidates(
         for context: MobileGhosttyCommandContext
-    ) -> [MobileGhosttyHardwareCommandCandidate] {
+    ) -> [MobileGhosttyCommandCandidate] {
         guard context.keybindingSet.source != .loading else { return [] }
 
         let enabledEntries: [GhosttyCommandRegistry.Entry] =
@@ -109,39 +108,43 @@ struct MobileGhosttyCommandButtons: View {
                 return entry
             }
 
-        let primaryCandidates: [MobileGhosttyHardwareCommandCandidate] =
+        let primaryCandidates: [MobileGhosttyCommandCandidate] =
             enabledEntries.compactMap { entry in
                 guard let chord = context.keybindingSet.bridge[entry.action] else { return nil }
-                return hardwareKeyboardCommandCandidate(entry: entry, chord: chord)
+                return commandCandidate(entry: entry, chord: chord)
             }
-        let aliasCandidates: [MobileGhosttyHardwareCommandCandidate]
+        let aliasCandidates: [MobileGhosttyCommandCandidate]
         if context.keybindingSet.source == .bundledFallback {
             aliasCandidates = enabledEntries.flatMap { entry in
                 GhosttyDefaultKeybinds.aliases[entry.action, default: []].compactMap { chord in
-                    hardwareKeyboardCommandCandidate(entry: entry, chord: chord)
+                    commandCandidate(entry: entry, chord: chord)
                 }
             }
         } else {
             aliasCandidates = []
         }
 
-        var seenChords: Set<MobileGhosttyHardwareChord> = []
+        var seenChords: Set<MobileGhosttyCommandChord> = []
         return (primaryCandidates + aliasCandidates).filter { candidate in
-            seenChords.insert(MobileGhosttyHardwareChord(
+            seenChords.insert(MobileGhosttyCommandChord(
                 input: candidate.input,
                 modifierRawValue: candidate.modifierFlags.rawValue
             )).inserted
         }
     }
 
-    private static func hardwareKeyboardCommandCandidate(
+    private static func commandCandidate(
         entry: GhosttyCommandRegistry.Entry,
         chord: ShortcutChord
-    ) -> MobileGhosttyHardwareCommandCandidate? {
-        guard let input = UIKeyCommandInputFromChord.input(from: chord) else { return nil }
-        return MobileGhosttyHardwareCommandCandidate(
+    ) -> MobileGhosttyCommandCandidate? {
+        guard let shortcut = KeyboardShortcutFromChord.shortcut(from: chord),
+              let input = UIKeyCommandInputFromChord.input(from: chord) else {
+            return nil
+        }
+        return MobileGhosttyCommandCandidate(
             action: entry.action,
             label: entry.label,
+            shortcut: shortcut,
             input: input,
             modifierFlags: UIKeyModifierFlags(chord.modifiers).normalizedAppCommandModifiers
         )
