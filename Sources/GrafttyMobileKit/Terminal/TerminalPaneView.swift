@@ -158,20 +158,9 @@ public final class TerminalInputContainerView: UIView {
     /// Called when the user taps the Paste action in the long-press
     /// menu — the SwiftUI layer wires this to `SessionClient.sendPaste`.
     public var onPasteRequested: (() -> Void)?
-    public var hardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] = []
-
-    override public var keyCommands: [UIKeyCommand]? {
-        guard !hardwareKeyboardCommands.isEmpty else { return nil }
-        return hardwareKeyboardCommands.map { command in
-            let keyCommand = UIKeyCommand(
-                title: command.title,
-                action: #selector(handleHardwareKeyboardCommand(_:)),
-                input: command.input,
-                modifierFlags: command.modifierFlags
-            )
-            keyCommand.discoverabilityTitle = command.title
-            return keyCommand
-        }
+    public var hardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] {
+        get { inputProxy.hardwareKeyboardCommands }
+        set { inputProxy.hardwareKeyboardCommands = newValue }
     }
 
     private lazy var longPressMenu = UIEditMenuInteraction(delegate: self)
@@ -256,21 +245,6 @@ public final class TerminalInputContainerView: UIView {
     @discardableResult
     func focusKeyboardInput() -> Bool {
         inputProxy.becomeFirstResponder()
-    }
-
-    @objc private func handleHardwareKeyboardCommand(_ command: UIKeyCommand) {
-        performHardwareKeyboardCommand(input: command.input, modifierFlags: command.modifierFlags)
-    }
-
-    private func performHardwareKeyboardCommand(input: String?, modifierFlags: UIKeyModifierFlags) {
-        guard let input else { return }
-        let normalizedFlags = modifierFlags.appCommandModifiers
-        guard let command = hardwareKeyboardCommands.first(where: {
-            $0.input == input && $0.modifierFlags.appCommandModifiers == normalizedFlags
-        }) else {
-            return
-        }
-        command.perform()
     }
 
     /// @spec IOS-11.1: When the user long-presses a focused terminal pane, the application shall present a `UIEditMenuInteraction` menu at the touch point containing **Select**, **Select All**, and (when `UIPasteboard.general.hasStrings` is true at menu-build time) **Paste**.
@@ -398,10 +372,6 @@ public final class TerminalInputContainerView: UIView {
         performPaste()
     }
 
-    func performHardwareKeyboardCommandForTesting(input: String, modifierFlags: UIKeyModifierFlags) {
-        performHardwareKeyboardCommand(input: input, modifierFlags: modifierFlags)
-    }
-
     private func refocusKeyboardAfterEditMenuAction() {
         guard inputProxy.canBecomeFirstResponder else { return }
         keyboardRefocusRequestCountForTesting += 1
@@ -451,9 +421,52 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
 }
 
 final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTraits {
+    private struct HardwareKeyboardCommandSignature: Equatable {
+        let id: String
+        let input: String
+        let modifierFlags: UIKeyModifierFlags
+    }
+
     var softwareKeyboardInputEnabled = false
     var insertTextHandler: ((String) -> Void)?
     var deleteBackwardHandler: (() -> Void)?
+    private var storedHardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] = []
+    private(set) var keyCommandUpdateRequestCountForTesting = 0
+
+    var hardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] {
+        get { storedHardwareKeyboardCommands }
+        set {
+            let previousSignature = effectiveHardwareKeyboardCommandSignature
+            storedHardwareKeyboardCommands = newValue
+            guard previousSignature != effectiveHardwareKeyboardCommandSignature else { return }
+            keyCommandUpdateRequestCountForTesting += 1
+            UIMenuSystem.main.setNeedsRebuild()
+        }
+    }
+
+    override var keyCommands: [UIKeyCommand]? {
+        guard !hardwareKeyboardCommands.isEmpty else { return nil }
+        return hardwareKeyboardCommands.map { command in
+            let keyCommand = UIKeyCommand(
+                title: command.title,
+                action: #selector(handleHardwareKeyboardCommand(_:)),
+                input: command.input,
+                modifierFlags: command.modifierFlags.appCommandModifiers
+            )
+            keyCommand.discoverabilityTitle = command.title
+            return keyCommand
+        }
+    }
+
+    private var effectiveHardwareKeyboardCommandSignature: [HardwareKeyboardCommandSignature] {
+        hardwareKeyboardCommands.map {
+            HardwareKeyboardCommandSignature(
+                id: $0.id,
+                input: $0.input,
+                modifierFlags: $0.modifierFlags.appCommandModifiers
+            )
+        }
+    }
 
     override var canBecomeFirstResponder: Bool { softwareKeyboardInputEnabled }
     var hasText: Bool { true }
@@ -478,6 +491,25 @@ final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTr
 
     func deleteBackward() {
         deleteBackwardHandler?()
+    }
+
+    @objc private func handleHardwareKeyboardCommand(_ command: UIKeyCommand) {
+        performHardwareKeyboardCommand(input: command.input, modifierFlags: command.modifierFlags)
+    }
+
+    private func performHardwareKeyboardCommand(input: String?, modifierFlags: UIKeyModifierFlags) {
+        guard let input else { return }
+        let normalizedFlags = modifierFlags.appCommandModifiers
+        guard let command = hardwareKeyboardCommands.first(where: {
+            $0.input == input && $0.modifierFlags.appCommandModifiers == normalizedFlags
+        }) else {
+            return
+        }
+        command.perform()
+    }
+
+    func performHardwareKeyboardCommandForTesting(input: String, modifierFlags: UIKeyModifierFlags) {
+        performHardwareKeyboardCommand(input: input, modifierFlags: modifierFlags)
     }
 
     var autocorrectionType: UITextAutocorrectionType {

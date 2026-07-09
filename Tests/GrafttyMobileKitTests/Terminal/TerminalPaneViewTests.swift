@@ -68,10 +68,77 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IPAD-9.9: The active iPad terminal responder shall publish app-level Ghostty shortcuts as `UIKeyCommand`s so hardware-keyboard commands still dispatch while UIKit terminal input owns first responder status.
+@spec IPAD-9.9: The active iPad terminal input responder shall publish app-level Ghostty shortcuts as UIKeyCommands and synchronously request a UIKit menu-system rebuild whenever the effective command identities, inputs, or modifiers change, so hardware-keyboard commands remain current while terminal input owns first responder status.
 """)
-    func activeTerminalPublishesAndDispatchesHardwareKeyboardCommands() {
+    func activeTerminalInputResponderRefreshesPublishedHardwareKeyboardCommands() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let proxy = container.inputProxy
+
+        #expect(proxy.keyCommands == nil)
+        #expect(proxy.keyCommandUpdateRequestCountForTesting == 0)
+        #expect(container.keyCommands == nil)
+
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-right",
+                title: "Split Right",
+                input: "d",
+                modifierFlags: [.command],
+                perform: {}
+            ),
+        ]
+
+        #expect(proxy.keyCommandUpdateRequestCountForTesting == 1)
+        #expect(proxy.keyCommands?.count == 1)
+        #expect(proxy.keyCommands?.first?.input == "d")
+        #expect(proxy.keyCommands?.first?.modifierFlags == [.command])
+        #expect(container.keyCommands == nil)
+
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-down",
+                title: "Split Down",
+                input: "d",
+                modifierFlags: [.command],
+                perform: {}
+            ),
+        ]
+        #expect(proxy.keyCommandUpdateRequestCountForTesting == 2)
+
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-down",
+                title: "Split Down",
+                input: "j",
+                modifierFlags: [.command],
+                perform: {}
+            ),
+        ]
+        #expect(proxy.keyCommandUpdateRequestCountForTesting == 3)
+        #expect(proxy.keyCommands?.first?.input == "j")
+
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-down",
+                title: "Split Down",
+                input: "j",
+                modifierFlags: [.command, .shift],
+                perform: {}
+            ),
+        ]
+        #expect(proxy.keyCommandUpdateRequestCountForTesting == 4)
+        #expect(proxy.keyCommands?.first?.modifierFlags == [.command, .shift])
+
+        container.hardwareKeyboardCommands = []
+        #expect(proxy.keyCommandUpdateRequestCountForTesting == 5)
+        #expect(proxy.keyCommands == nil)
+        #expect(container.keyCommands == nil)
+    }
+
+    @Test("equivalent hardware command signatures retain UIKit's table and replace dispatch closures")
+    func equivalentHardwareCommandSignatureUsesReplacementClosureWithoutInvalidation() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let proxy = container.inputProxy
         var performed: [String] = []
         container.hardwareKeyboardCommands = [
             .init(
@@ -79,19 +146,54 @@ struct TerminalPaneViewTests {
                 title: "Split Right",
                 input: "d",
                 modifierFlags: [.command],
-                perform: { performed.append("split-right") }
+                perform: { performed.append("old") }
             ),
         ]
 
-        let commands = container.keyCommands ?? []
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-right",
+                title: "Updated title is not part of the effective signature",
+                input: "d",
+                modifierFlags: [.command, .numericPad],
+                perform: { performed.append("new") }
+            ),
+        ]
 
-        #expect(commands.count == 1)
-        #expect(commands.first?.input == "d")
-        #expect(commands.first?.modifierFlags.contains(.command) == true)
+        #expect(proxy.keyCommandUpdateRequestCountForTesting == 1)
+        #expect(proxy.keyCommands?.first?.modifierFlags == [.command])
+        proxy.performHardwareKeyboardCommandForTesting(
+            input: "d",
+            modifierFlags: [.command, .numericPad]
+        )
+        #expect(performed == ["new"])
+    }
 
-        container.performHardwareKeyboardCommandForTesting(input: "d", modifierFlags: [.command])
+    @Test("hardware command dispatch requires an exact normalized input and modifier match")
+    func hardwareCommandDispatchUsesExactNormalizedMatch() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let proxy = container.inputProxy
+        var performed = 0
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-right",
+                title: "Split Right",
+                input: "d",
+                modifierFlags: [.command],
+                perform: { performed += 1 }
+            ),
+        ]
 
-        #expect(performed == ["split-right"])
+        proxy.performHardwareKeyboardCommandForTesting(input: "D", modifierFlags: [.command])
+        proxy.performHardwareKeyboardCommandForTesting(input: "d", modifierFlags: [.command, .shift])
+        #expect(performed == 0)
+
+        proxy.performHardwareKeyboardCommandForTesting(
+            input: "d",
+            modifierFlags: [.command, .numericPad]
+        )
+        #expect(performed == 1)
+        #expect(container.keyCommands == nil)
     }
 
     @Test("selection mode keeps indirect terminal pan recognizers enabled")
