@@ -26,10 +26,33 @@ public struct TerminalPaneView: UIViewRepresentable {
         }
     }
 
+    public struct HardwareKeyboardCommand {
+        public let id: String
+        public let title: String
+        public let input: String
+        public let modifierFlags: UIKeyModifierFlags
+        public let perform: () -> Void
+
+        public init(
+            id: String,
+            title: String,
+            input: String,
+            modifierFlags: UIKeyModifierFlags,
+            perform: @escaping () -> Void
+        ) {
+            self.id = id
+            self.title = title
+            self.input = input
+            self.modifierFlags = modifierFlags
+            self.perform = perform
+        }
+    }
+
     public let session: InMemoryTerminalSession
     public let controller: TerminalController
     public let focusRequestCount: Int
     public let softwareKeyboardInput: SoftwareKeyboardInput?
+    public let hardwareKeyboardCommands: [HardwareKeyboardCommand]
     /// Forces the terminal view's color-scheme appearance, overriding the
     /// iOS system appearance. Use `.dark` or `.light` when the Ghostty
     /// config specifies an explicit single theme so that libghostty's
@@ -57,6 +80,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         controller: TerminalController,
         focusRequestCount: Int = 0,
         softwareKeyboardInput: SoftwareKeyboardInput? = nil,
+        hardwareKeyboardCommands: [HardwareKeyboardCommand] = [],
         preferredInterfaceStyle: UIUserInterfaceStyle = .unspecified,
         onWillUnmount: ((UIImage?) -> Void)? = nil,
         onPasteRequested: (() -> Void)? = nil,
@@ -66,6 +90,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.controller = controller
         self.focusRequestCount = focusRequestCount
         self.softwareKeyboardInput = softwareKeyboardInput
+        self.hardwareKeyboardCommands = hardwareKeyboardCommands
         self.preferredInterfaceStyle = preferredInterfaceStyle
         self.onWillUnmount = onWillUnmount
         self.onPasteRequested = onPasteRequested
@@ -97,6 +122,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.inputProxy.softwareKeyboardInputEnabled = softwareKeyboardInput != nil
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
+        view.hardwareKeyboardCommands = hardwareKeyboardCommands
         view.onPasteRequested = onPasteRequested
         context.coordinator.onWillUnmount = onWillUnmount
         captureContainer?(view)
@@ -110,6 +136,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.inputProxy.softwareKeyboardInputEnabled = softwareKeyboardInput != nil
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
+        view.hardwareKeyboardCommands = hardwareKeyboardCommands
         view.onPasteRequested = onPasteRequested
         context.coordinator.onWillUnmount = onWillUnmount
         context.coordinator.applyFocusRequest(focusRequestCount, to: view)
@@ -131,6 +158,21 @@ public final class TerminalInputContainerView: UIView {
     /// Called when the user taps the Paste action in the long-press
     /// menu — the SwiftUI layer wires this to `SessionClient.sendPaste`.
     public var onPasteRequested: (() -> Void)?
+    public var hardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] = []
+
+    override public var keyCommands: [UIKeyCommand]? {
+        guard !hardwareKeyboardCommands.isEmpty else { return nil }
+        return hardwareKeyboardCommands.map { command in
+            let keyCommand = UIKeyCommand(
+                title: command.title,
+                action: #selector(handleHardwareKeyboardCommand(_:)),
+                input: command.input,
+                modifierFlags: command.modifierFlags
+            )
+            keyCommand.discoverabilityTitle = command.title
+            return keyCommand
+        }
+    }
 
     private lazy var longPressMenu = UIEditMenuInteraction(delegate: self)
     private lazy var selectionMenu = UIEditMenuInteraction(delegate: self)
@@ -214,6 +256,21 @@ public final class TerminalInputContainerView: UIView {
     @discardableResult
     func focusKeyboardInput() -> Bool {
         inputProxy.becomeFirstResponder()
+    }
+
+    @objc private func handleHardwareKeyboardCommand(_ command: UIKeyCommand) {
+        performHardwareKeyboardCommand(input: command.input, modifierFlags: command.modifierFlags)
+    }
+
+    private func performHardwareKeyboardCommand(input: String?, modifierFlags: UIKeyModifierFlags) {
+        guard let input else { return }
+        let normalizedFlags = modifierFlags.appCommandModifiers
+        guard let command = hardwareKeyboardCommands.first(where: {
+            $0.input == input && $0.modifierFlags.appCommandModifiers == normalizedFlags
+        }) else {
+            return
+        }
+        command.perform()
     }
 
     /// @spec IOS-11.1: When the user long-presses a focused terminal pane, the application shall present a `UIEditMenuInteraction` menu at the touch point containing **Select**, **Select All**, and (when `UIPasteboard.general.hasStrings` is true at menu-build time) **Paste**.
@@ -341,12 +398,22 @@ public final class TerminalInputContainerView: UIView {
         performPaste()
     }
 
+    func performHardwareKeyboardCommandForTesting(input: String, modifierFlags: UIKeyModifierFlags) {
+        performHardwareKeyboardCommand(input: input, modifierFlags: modifierFlags)
+    }
+
     private func refocusKeyboardAfterEditMenuAction() {
         guard inputProxy.canBecomeFirstResponder else { return }
         keyboardRefocusRequestCountForTesting += 1
         DispatchQueue.main.async { [weak self] in
             self?.focusKeyboardInput()
         }
+    }
+}
+
+private extension UIKeyModifierFlags {
+    var appCommandModifiers: UIKeyModifierFlags {
+        intersection([.shift, .control, .alternate, .command])
     }
 }
 

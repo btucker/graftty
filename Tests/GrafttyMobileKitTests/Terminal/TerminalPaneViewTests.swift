@@ -67,6 +67,33 @@ struct TerminalPaneViewTests {
         #expect(container.terminalPanRecognizersAllowIndirectScrollingForTesting)
     }
 
+    @Test("""
+@spec IPAD-9.6: The active iPad terminal responder shall publish app-level Ghostty shortcuts as `UIKeyCommand`s so hardware-keyboard commands still dispatch while UIKit terminal input owns first responder status.
+""")
+    func activeTerminalPublishesAndDispatchesHardwareKeyboardCommands() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        var performed: [String] = []
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-right",
+                title: "Split Right",
+                input: "d",
+                modifierFlags: [.command],
+                perform: { performed.append("split-right") }
+            ),
+        ]
+
+        let commands = container.keyCommands ?? []
+
+        #expect(commands.count == 1)
+        #expect(commands.first?.input == "d")
+        #expect(commands.first?.modifierFlags.contains(.command) == true)
+
+        container.performHardwareKeyboardCommandForTesting(input: "d", modifierFlags: [.command])
+
+        #expect(performed == ["split-right"])
+    }
+
     @Test("selection mode keeps indirect terminal pan recognizers enabled")
     func selectionModeKeepsIndirectScrollingEnabled() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))

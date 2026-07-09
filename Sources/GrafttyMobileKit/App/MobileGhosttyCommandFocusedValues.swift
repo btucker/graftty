@@ -2,6 +2,7 @@
 import GrafttyCommandUI
 import GrafttyProtocol
 import SwiftUI
+import UIKit
 
 struct MobileGhosttyCommandContext {
     let keybindBridge: GhosttyKeybindBridge
@@ -57,6 +58,108 @@ struct MobileGhosttyCommandButtons: View {
                 label: entry.label,
                 shortcut: shortcut
             )
+        }
+    }
+
+    static func hardwareKeyboardCommands(
+        for context: MobileGhosttyCommandContext
+    ) -> [TerminalPaneView.HardwareKeyboardCommand] {
+        GhosttyCommandRegistry.iPadSupportedActions.compactMap { action in
+            guard context.isEnabled(action),
+                  let entry = GhosttyCommandRegistry[action],
+                  entry.isSupportedOniPad,
+                  entry.kind != .unsupported,
+                  let chord = context.keybindBridge[action],
+                  let input = UIKeyCommandInputFromChord.input(from: chord) else {
+                return nil
+            }
+            return TerminalPaneView.HardwareKeyboardCommand(
+                id: action.rawValue,
+                title: entry.label,
+                input: input,
+                modifierFlags: UIKeyModifierFlags(chord.modifiers),
+                perform: { context.perform(action) }
+            )
+        }
+    }
+}
+
+private enum UIKeyCommandInputFromChord {
+    static func input(from chord: ShortcutChord) -> String? {
+        if chord.key.count == 1 {
+            return chord.key
+        }
+        switch chord.key {
+        case "arrowleft":
+            return UIKeyCommand.inputLeftArrow
+        case "arrowright":
+            return UIKeyCommand.inputRightArrow
+        case "arrowup":
+            return UIKeyCommand.inputUpArrow
+        case "arrowdown":
+            return UIKeyCommand.inputDownArrow
+        case "return":
+            return "\r"
+        case "tab":
+            return "\t"
+        case "space":
+            return " "
+        case "escape":
+            return UIKeyCommand.inputEscape
+        case "delete":
+            return UIKeyCommand.inputDelete
+        case "backspace":
+            return "\u{8}"
+        case "home":
+            return UIKeyCommand.inputHome
+        case "end":
+            return UIKeyCommand.inputEnd
+        case "pageup":
+            return UIKeyCommand.inputPageUp
+        case "pagedown":
+            return UIKeyCommand.inputPageDown
+        case "comma":
+            return ","
+        case "minus":
+            return "-"
+        case "period":
+            return "."
+        case "slash":
+            return "/"
+        case "semicolon":
+            return ";"
+        case "equal":
+            return "="
+        case "quote":
+            return "'"
+        case "bracketleft":
+            return "["
+        case "backslash":
+            return "\\"
+        case "bracketright":
+            return "]"
+        case "backquote":
+            return "`"
+        default:
+            return nil
+        }
+    }
+}
+
+private extension UIKeyModifierFlags {
+    init(_ modifiers: ShortcutModifiers) {
+        self.init()
+        if modifiers.contains(.shift) {
+            insert(.shift)
+        }
+        if modifiers.contains(.control) {
+            insert(.control)
+        }
+        if modifiers.contains(.option) {
+            insert(.alternate)
+        }
+        if modifiers.contains(.command) {
+            insert(.command)
         }
     }
 }

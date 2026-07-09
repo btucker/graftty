@@ -98,6 +98,7 @@ public struct IPadRootLayout: View {
                     appState: appState,
                     coordinator: coordinator,
                     paneEnvironment: paneEnvironment,
+                    ghosttyCommandContext: ghosttyCommandContext,
                     onPaneTreeChanged: {
                         worktreeListRefreshToken &+= 1
                     }
@@ -553,6 +554,7 @@ private struct IPadDetailColumn: View {
     @Bindable var appState: IPadAppState
     let coordinator: RemoteConnectionCoordinator
     let paneEnvironment: PaneEnvironment
+    let ghosttyCommandContext: MobileGhosttyCommandContext
     let onPaneTreeChanged: () -> Void
 
     var body: some View {
@@ -613,7 +615,8 @@ private struct IPadDetailColumn: View {
                 isFullScreen: false,
                 coordinator: coordinator,
                 externalFocusRequestCount: appState.focusRequestCount,
-                autoTakeControlRequestCount: appState.ownershipRequestCount
+                autoTakeControlRequestCount: appState.ownershipRequestCount,
+                ghosttyCommandContext: ghosttyCommandContext
             )
             .id("\(host.id)-\(path)-\(pane)")
         } else {

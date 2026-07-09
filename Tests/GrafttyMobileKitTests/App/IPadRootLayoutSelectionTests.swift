@@ -620,6 +620,44 @@ struct IPadRootLayoutSelectionTests {
         #expect(commands.contains { $0.action == .nextTab } == false)
     }
 
+    @Test("""
+@spec IPAD-9.6: iPad shall install host-resolved Ghostty command chords as responder-chain `UIKeyCommand`s for the active terminal, filtering disabled actions so UIKit does not dispatch no-op shortcuts.
+""")
+    func ipad_9_6_hardwareKeyboardCommandsUseHostResolvedChords() {
+        let bridge = GhosttyKeybindBridge { rawAction in
+            switch GhosttyAction(rawValue: rawAction) {
+            case .nextTab:
+                return ShortcutChord(key: "tab", modifiers: [.control])
+            case .previousTab:
+                return ShortcutChord(key: "tab", modifiers: [.control, .shift])
+            case .newSplitRight:
+                return ShortcutChord(key: "d", modifiers: [.command])
+            default:
+                return nil
+            }
+        }
+        var performed: [GhosttyAction] = []
+        let context = MobileGhosttyCommandContext(
+            keybindBridge: bridge,
+            perform: { performed.append($0) },
+            isEnabled: { $0 != .newSplitRight }
+        )
+
+        let commands = MobileGhosttyCommandButtons.hardwareKeyboardCommands(for: context)
+
+        #expect(commands.map(\.id) == [GhosttyAction.nextTab.rawValue, GhosttyAction.previousTab.rawValue])
+        #expect(commands[0].input == "\t")
+        #expect(commands[0].modifierFlags.contains(.control))
+        #expect(!commands[0].modifierFlags.contains(.shift))
+        #expect(commands[1].input == "\t")
+        #expect(commands[1].modifierFlags.contains(.control))
+        #expect(commands[1].modifierFlags.contains(.shift))
+
+        commands[0].perform()
+
+        #expect(performed == [.nextTab])
+    }
+
     @Test("host refresh starts from an empty Ghostty keybind bridge")
     func hostRefreshStartsFromEmptyGhosttyKeybindBridge() {
         let staleBridge = GhosttyKeybindBridge { rawAction in

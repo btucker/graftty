@@ -194,6 +194,7 @@ struct SingleSessionView: View {
     let coordinator: RemoteConnectionCoordinator?
     let externalFocusRequestCount: Int
     let autoTakeControlRequestCount: Int
+    let ghosttyCommandContext: MobileGhosttyCommandContext?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -316,7 +317,8 @@ struct SingleSessionView: View {
         isFullScreen: Bool = true,
         coordinator: RemoteConnectionCoordinator? = nil,
         externalFocusRequestCount: Int = 0,
-        autoTakeControlRequestCount: Int = 0
+        autoTakeControlRequestCount: Int = 0,
+        ghosttyCommandContext: MobileGhosttyCommandContext? = nil
     ) {
         self.step = step
         self._navigationPath = navigationPath
@@ -324,6 +326,7 @@ struct SingleSessionView: View {
         self.coordinator = coordinator
         self.externalFocusRequestCount = externalFocusRequestCount
         self.autoTakeControlRequestCount = autoTakeControlRequestCount
+        self.ghosttyCommandContext = ghosttyCommandContext
     }
 
     var body: some View {
@@ -806,6 +809,9 @@ struct SingleSessionView: View {
                 insertText: { text in client.sendSoftwareKeyboardText(text) },
                 deleteBackward: { client.deleteBackward() }
             ) : nil,
+            hardwareKeyboardCommands: ghosttyCommandContext.map {
+                MobileGhosttyCommandButtons.hardwareKeyboardCommands(for: $0)
+            } ?? [],
             preferredInterfaceStyle: preferredStyle,
             onWillUnmount: { snapshot in client.setIdleSnapshot(snapshot) },
             // @spec IOS-11.8: When the user taps **Paste** in the long-press menu,
