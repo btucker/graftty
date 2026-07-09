@@ -68,7 +68,7 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IPAD-9.9: The active iPad terminal input responder shall publish app-level Ghostty shortcuts as UIKeyCommands and synchronously request a UIKit menu-system rebuild whenever the effective command identities, inputs, or modifiers change, so hardware-keyboard commands remain current while terminal input owns first responder status.
+@spec IPAD-9.9: The active iPad terminal input responder shall publish app-level Ghostty shortcuts as UIKeyCommands and synchronously request a UIKit menu-system rebuild whenever the effective command identities, titles, inputs, or modifiers change, so hardware-keyboard commands remain current while terminal input owns first responder status.
 """)
     func activeTerminalInputResponderRefreshesPublishedHardwareKeyboardCommands() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -153,7 +153,7 @@ struct TerminalPaneViewTests {
         container.hardwareKeyboardCommands = [
             .init(
                 id: "split-right",
-                title: "Updated title is not part of the effective signature",
+                title: "Split Right",
                 input: "d",
                 modifierFlags: [.command, .numericPad],
                 perform: { performed.append("new") }
@@ -167,6 +167,35 @@ struct TerminalPaneViewTests {
             modifierFlags: [.command, .numericPad]
         )
         #expect(performed == ["new"])
+    }
+
+    @Test("changed hardware command titles request a menu rebuild")
+    func changedHardwareCommandTitleRequestsMenuRebuild() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let proxy = container.inputProxy
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-right",
+                title: "Split Right",
+                input: "d",
+                modifierFlags: [.command],
+                perform: {}
+            ),
+        ]
+
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-right",
+                title: "Split Pane Right",
+                input: "d",
+                modifierFlags: [.command],
+                perform: {}
+            ),
+        ]
+
+        #expect(proxy.keyCommandUpdateRequestCountForTesting == 2)
+        #expect(proxy.keyCommands?.first?.title == "Split Pane Right")
+        #expect(proxy.keyCommands?.first?.discoverabilityTitle == "Split Pane Right")
     }
 
     @Test("hardware command dispatch requires an exact normalized input and modifier match")

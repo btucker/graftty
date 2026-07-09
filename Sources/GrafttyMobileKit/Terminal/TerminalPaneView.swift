@@ -423,6 +423,7 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
 final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTraits {
     private struct HardwareKeyboardCommandSignature: Equatable {
         let id: String
+        let title: String
         let input: String
         let modifierFlags: UIKeyModifierFlags
     }
@@ -462,6 +463,7 @@ final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTr
         hardwareKeyboardCommands.map {
             HardwareKeyboardCommandSignature(
                 id: $0.id,
+                title: $0.title,
                 input: $0.input,
                 modifierFlags: $0.modifierFlags.appCommandModifiers
             )
