@@ -23,8 +23,8 @@ public enum GhosttyDefaultKeybinds {
         .gotoSplitDown: ShortcutChord(key: "arrowdown", modifiers: [.command, .option]),
         .gotoSplitPrevious: ShortcutChord(key: "bracketleft", modifiers: [.command]),
         .gotoSplitNext: ShortcutChord(key: "bracketright", modifiers: [.command]),
-        // Ghostty also binds ctrl+shift+tab / ctrl+tab for tab navigation;
-        // Graftty mirrors the super+shift+bracket variants.
+        // The super+shift+bracket variants remain the primary chords;
+        // Ghostty's control+tab variants are retained below as hardware aliases.
         .previousTab: ShortcutChord(key: "bracketleft", modifiers: [.command, .shift]),
         .nextTab: ShortcutChord(key: "bracketright", modifiers: [.command, .shift]),
     ]
