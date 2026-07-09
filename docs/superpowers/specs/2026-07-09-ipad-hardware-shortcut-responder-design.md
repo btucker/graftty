@@ -10,9 +10,9 @@ The active terminal uses `TerminalSoftwareKeyboardProxyView`, a `UIKeyInput`
 child view, as first responder. App-level `UIKeyCommand` values currently live
 on its parent `TerminalInputContainerView`. The command list is populated and
 filtered after asynchronous host, pane-control, and worktree state changes,
-but replacing the backing array does not invalidate UIKit's cached key-command
-table. Existing tests read the computed `keyCommands` property directly, so
-they do not exercise this lifecycle.
+but replacing the backing array does not prompt UIKit to rebuild its
+key-command table. Existing tests read the computed `keyCommands` property
+directly, so they do not exercise this lifecycle.
 
 There is a separate shortcut-model gap for worktree navigation. Ghostty has
 multiple default chords for next and previous tab, including `Ctrl+Tab` and
@@ -59,9 +59,13 @@ terminal path.
 
 Command assignment is main-actor isolated. Assigning a command list to the
 proxy will first replace the backing descriptor list, then compare the new
-command identities, inputs, and normalized modifiers with the previously
-published list. When the effective table changes, the proxy will synchronously
-call `setNeedsUpdateOfKeyCommands()`. This covers:
+command identities, titles, inputs, and normalized modifiers with the
+previously published list. When the effective table changes, the proxy will
+synchronously call `UIMenuSystem.main.setNeedsRebuild()` after the backing
+descriptors and effective signature are updated. Current UIKit exposes no
+responder-level key-command invalidation API; rebuilding the main menu system
+is the supported way to make UIKit query the responder's `keyCommands` again.
+This covers:
 
 - the initial empty-to-populated transition after host keybindings load;
 - pane-control availability changing Split and Close enablement;
@@ -69,9 +73,11 @@ call `setNeedsUpdateOfKeyCommands()`. This covers:
 - host switching or refreshed host bindings replacing chords; and
 - commands becoming disabled and being removed.
 
-Command closures are updated even when shortcut identity is unchanged, so
-dispatch always observes the current iPad selection and environment. Cache
-invalidation is needed only when the effective key-command table changes.
+Command closures are updated even when the effective signature is unchanged,
+so dispatch always observes the current iPad selection and environment. Title
+participates in that signature because UIKit displays it through both `title`
+and `discoverabilityTitle`. A menu-system rebuild is needed only when the
+effective key-command table changes.
 
 ### Multiple Chords Per Action
 
@@ -135,7 +141,7 @@ chord available to the rest of the responder chain and terminal.
    descriptors, including fallback aliases when applicable.
 5. `TerminalPaneView.updateUIView` assigns the descriptors through
    `TerminalInputContainerView` to the active keyboard proxy.
-6. The proxy detects table changes, invalidates UIKit's key-command cache, and
+6. The proxy detects table changes, requests a main-menu-system rebuild, and
    publishes fresh `UIKeyCommand` objects from its `keyCommands` override.
 7. UIKit invokes the proxy action for a matching hardware chord. The proxy
    resolves the descriptor by input and normalized modifiers and calls its
@@ -160,13 +166,14 @@ chord available to the rest of the responder chain and terminal.
 - A proxy starting with no commands publishes no key commands.
 - Installing `Cmd+D` after initialization marks the command table for update
   and publishes Split Right from the first responder.
-- Reassigning an equivalent table does not produce unnecessary invalidation.
-- Changing input, modifiers, or enablement invalidates and replaces the table.
+- Reassigning an equivalent table does not request an unnecessary rebuild.
+- Changing identity, title, input, modifiers, or enablement rebuilds and
+  replaces the table.
 - Dispatch from the proxy invokes only the exact normalized chord match.
 
-The invalidation call will be exposed through a narrow test observation seam,
+The rebuild request will be exposed through a narrow test observation seam,
 because simulator unit tests cannot make UIKit disclose its private command
-cache directly. The test must exercise assignment on the responder rather than
+table directly. The test must exercise assignment on the responder rather than
 calling a parent computed property.
 
 ### Command Construction
@@ -195,8 +202,8 @@ calling a parent computed property.
 ## Specification Changes
 
 `IPAD-9.9` will be tightened to require the actual terminal input responder to
-publish commands and invalidate the UIKit key-command table when the effective
-command set changes.
+publish commands and synchronously request a UIKit menu-system rebuild when the
+effective command set changes.
 
 `IPAD-9.10` will require mobile keybinding fetch/cache results to retain
 `.loading`, `.hostResolved`, or `.bundledFallback` provenance and will require

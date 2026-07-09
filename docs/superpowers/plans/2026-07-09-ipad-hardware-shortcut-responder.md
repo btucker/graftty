@@ -4,7 +4,7 @@
 
 **Goal:** Make iPad app-level hardware keyboard shortcuts publish from the active terminal input responder, refresh dynamically, and support Ghostty's `Ctrl+Tab` worktree-navigation defaults.
 
-**Architecture:** Preserve the existing semantic command registry and terminal input routing. Add explicit mobile keybinding provenance so only bundled fallback bindings gain aliases, expand those bindings into deduplicated command descriptors, and move `UIKeyCommand` publication to the actual `UIKeyInput` first responder with synchronous UIKit cache invalidation when its effective table changes.
+**Architecture:** Preserve the existing semantic command registry and terminal input routing. Add explicit mobile keybinding provenance so only bundled fallback bindings gain aliases, expand those bindings into deduplicated command descriptors, and move `UIKeyCommand` publication to the actual `UIKeyInput` first responder with a synchronous UIKit main-menu-system rebuild when its effective table changes.
 
 **Tech Stack:** Swift 6, SwiftUI, UIKit `UIKeyCommand`/`UIKeyInput`, Swift Testing, Swift Package Manager, Xcode iOS simulator tests, `scripts/generate-specs.py`.
 
@@ -18,11 +18,11 @@
 | `Sources/GrafttyMobileKit/Session/GhosttyKeybindingsFetcher.swift` | Fetch and cache host-resolved keybindings | Return a bridge plus explicit `.loading`, `.hostResolved`, or `.bundledFallback` source. |
 | `Sources/GrafttyMobileKit/App/IPadRootLayout.swift` | Own host presentation and semantic command context | Store/pass the provenance-bearing set and clear it to `.loading` during host refresh. |
 | `Sources/GrafttyMobileKit/App/MobileGhosttyCommandFocusedValues.swift` | Convert semantic actions/chords to UI commands | Expand fallback aliases, preserve host authority, deduplicate chords, and create stable IDs. |
-| `Sources/GrafttyMobileKit/Terminal/TerminalPaneView.swift` | Bridge terminal UI and keyboard responder | Publish commands from `TerminalSoftwareKeyboardProxyView` and invalidate UIKit's command cache on effective changes. |
+| `Sources/GrafttyMobileKit/Terminal/TerminalPaneView.swift` | Bridge terminal UI and keyboard responder | Publish commands from `TerminalSoftwareKeyboardProxyView` and request a UIKit main-menu-system rebuild on effective changes. |
 | `Tests/GrafttyProtocolTests/Keybinds/GhosttyDefaultKeybindsTests.swift` | Pure default coverage | Pin ordered `Ctrl+Tab` aliases and primary-before-alias behavior. |
 | `Tests/GrafttyMobileKitTests/Session/GhosttyKeybindingsFetcherTests.swift` | Fetch/cache coverage | Verify provenance for success, empty success, failure, cache hit, and invalidation. |
 | `Tests/GrafttyMobileKitTests/App/IPadRootLayoutSelectionTests.swift` | Command construction | Verify loading state, host-only chords, fallback aliases, enablement, stable IDs, and collision precedence. |
-| `Tests/GrafttyMobileKitTests/Terminal/TerminalPaneViewTests.swift` | UIKit responder behavior | Verify late install, invalidation, removal, and exact dispatch from the proxy. |
+| `Tests/GrafttyMobileKitTests/Terminal/TerminalPaneViewTests.swift` | UIKit responder behavior | Verify late install, menu rebuilds, removal, and exact dispatch from the proxy. |
 | `SPECS.md` | Generated requirement inventory | Regenerate for tightened `IPAD-9.9` and new `IPAD-9.10`. |
 
 No new production files are needed. The provenance type stays mobile-specific beside the fetch/cache owner; aliases stay protocol-level without importing UIKit.
@@ -276,7 +276,7 @@ Replace parent-only assertions with proxy assertions:
 
 ```swift
 @Test("""
-@spec IPAD-9.9: The active iPad terminal input responder shall publish app-level Ghostty shortcuts as UIKeyCommands and synchronously invalidate UIKit's key-command table whenever the effective command identities, inputs, or modifiers change, so hardware-keyboard commands remain current while terminal input owns first responder status.
+@spec IPAD-9.9: The active iPad terminal input responder shall publish app-level Ghostty shortcuts as UIKeyCommands and synchronously request a UIKit menu-system rebuild whenever the effective command identities, titles, inputs, or modifiers change, so hardware-keyboard commands remain current while terminal input owns first responder status.
 """)
 func activeInputResponderPublishesLateInstalledCommands() {
     let container = TerminalInputContainerView(frame: .zero)
@@ -288,7 +288,12 @@ func activeInputResponderPublishesLateInstalledCommands() {
 }
 ```
 
-Add tests that equivalent descriptors update closures without invalidation; changed input/modifiers invalidate; removal invalidates and returns nil; proxy dispatch requires an exact normalized chord; and the container no longer owns the command table.
+Add tests that equivalent descriptors update closures without a rebuild;
+changed identity, title, input, or modifiers request a rebuild; removal requests
+a rebuild and returns nil; proxy dispatch requires an exact normalized chord;
+and the container no longer owns the command table. Title participates in the
+effective signature because UIKit displays it as both `title` and
+`discoverabilityTitle`.
 
 - [ ] **Step 2: Run tests and verify RED**
 
@@ -296,7 +301,7 @@ Add tests that equivalent descriptors update closures without invalidation; chan
 xcodebuild -quiet -project Apps/GrafttyMobile/GrafttyMobile.xcodeproj -scheme GrafttyMobile -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)' test -only-testing:GrafttyMobileKitTests/TerminalPaneViewTests
 ```
 
-Expected: failure because the proxy does not publish commands or expose invalidation observation.
+Expected: failure because the proxy does not publish commands or expose menu-rebuild observation.
 
 - [ ] **Step 3: Forward assignments to the proxy**
 
@@ -311,9 +316,17 @@ public var hardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] 
 
 Move UIKeyCommand construction, selector dispatch, exact-match lookup, and normalized modifier handling to `TerminalSoftwareKeyboardProxyView`.
 
-- [ ] **Step 4: Add effective-table invalidation**
+- [ ] **Step 4: Add effective-table rebuild requests**
 
-On the main-actor proxy, replace backing descriptors before synchronously calling `setNeedsUpdateOfKeyCommands()`. Compare a private `Equatable` signature containing ID, input, and normalized modifiers; ignore closures for equality. Increment `keyCommandUpdateRequestCountForTesting` immediately before the UIKit call. Do not defer invalidation asynchronously.
+On the main-actor proxy, replace the backing descriptors and recompute the
+effective signature before synchronously calling
+`UIMenuSystem.main.setNeedsRebuild()`. Current UIKit does not expose
+responder-level key-command invalidation; rebuilding the main menu system is
+the supported way to make UIKit query the responder's `keyCommands` again.
+Compare a private `Equatable` signature containing ID, title, input, and
+normalized modifiers; ignore closures for equality. Increment
+`keyCommandUpdateRequestCountForTesting` immediately before the UIKit call. Do
+not defer the rebuild asynchronously.
 
 - [ ] **Step 5: Run tests and verify GREEN**
 
@@ -383,19 +396,20 @@ git status --short
 
 Expected: spec check exits zero and status contains only intended changes.
 
-- [ ] **Step 6: Commit specs**
+- [ ] **Step 6: Commit documentation and specs**
 
 ```bash
-git add SPECS.md
+git add SPECS.md docs/superpowers/specs/2026-07-09-ipad-hardware-shortcut-responder-design.md docs/superpowers/plans/2026-07-09-ipad-hardware-shortcut-responder.md
 git commit -m "docs: specify ipad hardware shortcut lifecycle"
 ```
 
 - [ ] **Step 7: Inspect final history**
 
 ```bash
-git log --oneline -7
-git diff HEAD~5..HEAD --check
+git log --oneline -8
+git diff HEAD~1..HEAD --check
 git status --short
 ```
 
-Expected: focused task commits after design/plan commits and a clean worktree.
+Expected: the focused documentation commit follows the implementation commits
+and the worktree is clean.
