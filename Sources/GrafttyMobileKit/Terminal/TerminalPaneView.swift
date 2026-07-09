@@ -473,6 +473,14 @@ final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTr
     override var canBecomeFirstResponder: Bool { softwareKeyboardInputEnabled }
     var hasText: Bool { true }
 
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(handleHardwareKeyboardCommand(_:)),
+           let command = sender as? UIKeyCommand {
+            return matchingHardwareKeyboardCommand(for: command) != nil
+        }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
     override var inputAccessoryView: UIView? {
         nil
     }
@@ -496,22 +504,27 @@ final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTr
     }
 
     @objc private func handleHardwareKeyboardCommand(_ command: UIKeyCommand) {
-        performHardwareKeyboardCommand(input: command.input, modifierFlags: command.modifierFlags)
+        matchingHardwareKeyboardCommand(for: command)?.perform()
     }
 
-    private func performHardwareKeyboardCommand(input: String?, modifierFlags: UIKeyModifierFlags) {
-        guard let input else { return }
-        let normalizedFlags = modifierFlags.appCommandModifiers
-        guard let command = hardwareKeyboardCommands.first(where: {
-            $0.input == input && $0.modifierFlags.appCommandModifiers == normalizedFlags
-        }) else {
-            return
+    private func matchingHardwareKeyboardCommand(
+        for keyCommand: UIKeyCommand
+    ) -> TerminalPaneView.HardwareKeyboardCommand? {
+        guard let input = keyCommand.input else { return nil }
+        let modifierFlags = keyCommand.modifierFlags.appCommandModifiers
+        return hardwareKeyboardCommands.first {
+            $0.input == input && $0.modifierFlags.appCommandModifiers == modifierFlags
         }
-        command.perform()
     }
 
     func performHardwareKeyboardCommandForTesting(input: String, modifierFlags: UIKeyModifierFlags) {
-        performHardwareKeyboardCommand(input: input, modifierFlags: modifierFlags)
+        handleHardwareKeyboardCommand(
+            UIKeyCommand(
+                action: #selector(handleHardwareKeyboardCommand(_:)),
+                input: input,
+                modifierFlags: modifierFlags
+            )
+        )
     }
 
     var autocorrectionType: UITextAutocorrectionType {

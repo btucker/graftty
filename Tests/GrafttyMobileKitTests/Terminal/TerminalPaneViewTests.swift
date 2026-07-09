@@ -4,6 +4,10 @@ import Testing
 @testable import GrafttyMobileKit
 import UIKit
 
+private final class NilInputKeyCommand: UIKeyCommand {
+    override var input: String? { nil }
+}
+
 @Suite
 @MainActor
 struct TerminalPaneViewTests {
@@ -223,6 +227,93 @@ struct TerminalPaneViewTests {
         )
         #expect(performed == 1)
         #expect(container.keyCommands == nil)
+    }
+
+    @Test("stale cached hardware commands are rejected while current commands remain dispatchable")
+    func staleCachedHardwareCommandIsRejected() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let proxy = container.inputProxy
+        var performed: [String] = []
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-right",
+                title: "Split Right",
+                input: "d",
+                modifierFlags: [.command],
+                perform: { performed.append("old") }
+            ),
+        ]
+        let staleCommand = try! #require(proxy.keyCommands?.first)
+
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-down",
+                title: "Split Down",
+                input: "j",
+                modifierFlags: [.command],
+                perform: { performed.append("current") }
+            ),
+        ]
+        let currentCommand = try! #require(proxy.keyCommands?.first)
+        let commandAction = try! #require(currentCommand.action)
+
+        #expect(!proxy.canPerformAction(commandAction, withSender: staleCommand))
+        #expect(proxy.canPerformAction(commandAction, withSender: currentCommand))
+
+        proxy.perform(commandAction, with: currentCommand)
+        #expect(performed == ["current"])
+    }
+
+    @Test("hardware command validation rejects nil input and mismatched modifiers")
+    func hardwareCommandValidationRequiresExactNormalizedMatch() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let proxy = container.inputProxy
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-down",
+                title: "Split Down",
+                input: "j",
+                modifierFlags: [.command],
+                perform: {}
+            ),
+        ]
+        let currentCommand = try! #require(proxy.keyCommands?.first)
+        let commandAction = try! #require(currentCommand.action)
+        let nilInputCommand = NilInputKeyCommand(
+            title: "Missing Input",
+            action: commandAction,
+            input: "j",
+            modifierFlags: [.command]
+        )
+        let mismatchedModifierCommand = UIKeyCommand(
+            title: "Wrong Modifiers",
+            action: commandAction,
+            input: "j",
+            modifierFlags: [.command, .shift]
+        )
+
+        #expect(!proxy.canPerformAction(commandAction, withSender: nilInputCommand))
+        #expect(!proxy.canPerformAction(commandAction, withSender: mismatchedModifierCommand))
+    }
+
+    @Test("hardware command changes do not alter unrelated action validation")
+    func unrelatedActionValidationIsUnchanged() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let proxy = container.inputProxy
+        let action = #selector(UIResponderStandardEditActions.copy(_:))
+        let resultBeforeCommand = proxy.canPerformAction(action, withSender: nil)
+
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-down",
+                title: "Split Down",
+                input: "j",
+                modifierFlags: [.command],
+                perform: {}
+            ),
+        ]
+
+        #expect(proxy.canPerformAction(action, withSender: nil) == resultBeforeCommand)
     }
 
     @Test("selection mode keeps indirect terminal pan recognizers enabled")
