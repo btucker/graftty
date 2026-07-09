@@ -2,32 +2,53 @@
 import Foundation
 import GrafttyProtocol
 
+public enum MobileGhosttyKeybindingSource: Sendable, Equatable {
+    case loading
+    case hostResolved
+    case bundledFallback
+}
+
+public struct MobileGhosttyKeybindingSet: Sendable {
+    public let bridge: GhosttyKeybindBridge
+    public let source: MobileGhosttyKeybindingSource
+
+    static let loading = MobileGhosttyKeybindingSet(
+        bridge: .empty,
+        source: .loading
+    )
+
+    static let bundledFallback = MobileGhosttyKeybindingSet(
+        bridge: GhosttyDefaultKeybinds.bridge,
+        source: .bundledFallback
+    )
+}
+
 @MainActor
 private final class GhosttyKeybindingsCache {
     static let shared = GhosttyKeybindingsCache()
-    private var byBaseURL: [URL: GhosttyKeybindBridge] = [:]
+    private var byBaseURL: [URL: MobileGhosttyKeybindingSet] = [:]
     private var generations: [URL: Int] = [:]
-    private var inflight: [URL: (generation: Int, task: Task<GhosttyKeybindBridge?, Never>)] = [:]
+    private var inflight: [URL: (generation: Int, task: Task<MobileGhosttyKeybindingSet, Never>)] = [:]
 
-    func bridge(for baseURL: URL) async -> GhosttyKeybindBridge {
+    func keybindingSet(for baseURL: URL) async -> MobileGhosttyKeybindingSet {
         if let cached = byBaseURL[baseURL] { return cached }
         if let existing = inflight[baseURL] {
-            return await existing.task.value ?? GhosttyDefaultKeybinds.bridge
+            return await existing.task.value
         }
         let generation = generations[baseURL, default: 0]
-        let task = Task<GhosttyKeybindBridge?, Never> { [baseURL] in
-            await GhosttyKeybindingsFetcher.fetchDecodedUncached(baseURL: baseURL)
+        let task = Task<MobileGhosttyKeybindingSet, Never> { [baseURL] in
+            await GhosttyKeybindingsFetcher.fetchUncached(baseURL: baseURL)
         }
         inflight[baseURL] = (generation: generation, task: task)
         let result = await task.value
         if let current = inflight[baseURL],
            current.generation == generation {
             inflight[baseURL] = nil
-            if !task.isCancelled, let result {
+            if !task.isCancelled, result.source == .hostResolved {
                 byBaseURL[baseURL] = result
             }
         }
-        return result ?? GhosttyDefaultKeybinds.bridge
+        return result
     }
 
     func invalidate(baseURL: URL) {
@@ -42,8 +63,8 @@ private final class GhosttyKeybindingsCache {
 /// shortcuts after the focused command context is wired.
 public enum GhosttyKeybindingsFetcher {
     @MainActor
-    public static func fetch(baseURL: URL) async -> GhosttyKeybindBridge {
-        await GhosttyKeybindingsCache.shared.bridge(for: baseURL)
+    public static func fetch(baseURL: URL) async -> MobileGhosttyKeybindingSet {
+        await GhosttyKeybindingsCache.shared.keybindingSet(for: baseURL)
     }
 
     @MainActor
@@ -58,16 +79,10 @@ public enum GhosttyKeybindingsFetcher {
     static func fetchUncached(
         baseURL: URL,
         session: URLSession = .shared
-    ) async -> GhosttyKeybindBridge {
-        await fetchDecodedUncached(baseURL: baseURL, session: session)
-            ?? GhosttyDefaultKeybinds.bridge
-    }
-
-    static func fetchDecodedUncached(
-        baseURL: URL,
-        session: URLSession = .shared
-    ) async -> GhosttyKeybindBridge? {
-        guard let url = baseURL.appendingAPIPath("ghostty-keybindings") else { return nil }
+    ) async -> MobileGhosttyKeybindingSet {
+        guard let url = baseURL.appendingAPIPath("ghostty-keybindings") else {
+            return .bundledFallback
+        }
 
         var req = URLRequest(url: url)
         req.httpMethod = "GET"
@@ -76,12 +91,15 @@ public enum GhosttyKeybindingsFetcher {
         do {
             let (data, response) = try await session.data(for: req)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-                return nil
+                return .bundledFallback
             }
             let decoded = try JSONDecoder().decode(GhosttyKeybindingsResponse.self, from: data)
-            return bridge(from: decoded)
+            return MobileGhosttyKeybindingSet(
+                bridge: bridge(from: decoded),
+                source: .hostResolved
+            )
         } catch {
-            return nil
+            return .bundledFallback
         }
     }
 

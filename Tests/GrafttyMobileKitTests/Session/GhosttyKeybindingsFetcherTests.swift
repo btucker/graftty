@@ -21,10 +21,21 @@ struct GhosttyKeybindingsFetcherTests {
         }
         """#)
 
-        let bridge = await GhosttyKeybindingsFetcher.fetchUncached(baseURL: baseURL, session: session)
+        let keybindingSet = await GhosttyKeybindingsFetcher.fetchUncached(baseURL: baseURL, session: session)
 
-        #expect(bridge[.newSplitRight] == ShortcutChord(key: "d", modifiers: [.command]))
-        #expect(bridge.allChords.count == 1)
+        #expect(keybindingSet.source == .hostResolved)
+        #expect(keybindingSet.bridge[.newSplitRight] == ShortcutChord(key: "d", modifiers: [.command]))
+        #expect(keybindingSet.bridge.allChords.count == 1)
+    }
+
+    @Test("a successfully decoded empty response remains host-resolved")
+    func emptyResponseIsHostResolvedWithoutBundledDefaults() async {
+        let session = Self.session(statusCode: 200, body: #"{"bindings":{}}"#)
+
+        let keybindingSet = await GhosttyKeybindingsFetcher.fetchUncached(baseURL: baseURL, session: session)
+
+        #expect(keybindingSet.source == .hostResolved)
+        #expect(keybindingSet.bridge.allChords.isEmpty)
     }
 
     @Test("""
@@ -33,27 +44,30 @@ struct GhosttyKeybindingsFetcherTests {
     func missingEndpointFallsBackToGhosttyDefaults() async {
         let session = Self.session(statusCode: 404, body: "Not Found")
 
-        let bridge = await GhosttyKeybindingsFetcher.fetchUncached(baseURL: baseURL, session: session)
+        let keybindingSet = await GhosttyKeybindingsFetcher.fetchUncached(baseURL: baseURL, session: session)
 
-        #expect(bridge.allChords == GhosttyDefaultKeybinds.chords)
+        #expect(keybindingSet.source == .bundledFallback)
+        #expect(keybindingSet.bridge.allChords == GhosttyDefaultKeybinds.chords)
     }
 
     @Test
     func transportFailureFallsBackToGhosttyDefaults() async {
         let session = Self.failingSession()
 
-        let bridge = await GhosttyKeybindingsFetcher.fetchUncached(baseURL: baseURL, session: session)
+        let keybindingSet = await GhosttyKeybindingsFetcher.fetchUncached(baseURL: baseURL, session: session)
 
-        #expect(bridge.allChords == GhosttyDefaultKeybinds.chords)
+        #expect(keybindingSet.source == .bundledFallback)
+        #expect(keybindingSet.bridge.allChords == GhosttyDefaultKeybinds.chords)
     }
 
     @Test
     func malformedJSONFallsBackToGhosttyDefaults() async {
         let session = Self.session(statusCode: 200, body: #"{"bindings":"nope"}"#)
 
-        let bridge = await GhosttyKeybindingsFetcher.fetchUncached(baseURL: baseURL, session: session)
+        let keybindingSet = await GhosttyKeybindingsFetcher.fetchUncached(baseURL: baseURL, session: session)
 
-        #expect(bridge.allChords == GhosttyDefaultKeybinds.chords)
+        #expect(keybindingSet.source == .bundledFallback)
+        #expect(keybindingSet.bridge.allChords == GhosttyDefaultKeybinds.chords)
     }
 
     @Test
@@ -77,8 +91,10 @@ struct GhosttyKeybindingsFetcherTests {
         let first = await GhosttyKeybindingsFetcher.fetch(baseURL: baseURL)
         let second = await GhosttyKeybindingsFetcher.fetch(baseURL: baseURL)
 
-        #expect(first[.newSplitRight] == ShortcutChord(key: "d", modifiers: [.command]))
-        #expect(second[.newSplitRight] == ShortcutChord(key: "d", modifiers: [.command]))
+        #expect(first.source == .hostResolved)
+        #expect(second.source == .hostResolved)
+        #expect(first.bridge[.newSplitRight] == ShortcutChord(key: "d", modifiers: [.command]))
+        #expect(second.bridge[.newSplitRight] == ShortcutChord(key: "d", modifiers: [.command]))
         #expect(SharedURLProtocolStub.requestCount == 1)
     }
 
@@ -101,8 +117,10 @@ struct GhosttyKeybindingsFetcherTests {
         let failed = await GhosttyKeybindingsFetcher.fetch(baseURL: baseURL)
         let refetched = await GhosttyKeybindingsFetcher.fetch(baseURL: baseURL)
 
-        #expect(failed.allChords == GhosttyDefaultKeybinds.chords)
-        #expect(refetched[.newSplitRight] == ShortcutChord(key: "x", modifiers: [.command]))
+        #expect(failed.source == .bundledFallback)
+        #expect(failed.bridge.allChords == GhosttyDefaultKeybinds.chords)
+        #expect(refetched.source == .hostResolved)
+        #expect(refetched.bridge[.newSplitRight] == ShortcutChord(key: "x", modifiers: [.command]))
         #expect(SharedURLProtocolStub.requestCount == 2)
     }
 
@@ -128,8 +146,10 @@ struct GhosttyKeybindingsFetcherTests {
         GhosttyKeybindingsFetcher.invalidateCache(for: baseURL)
         let second = await GhosttyKeybindingsFetcher.fetch(baseURL: baseURL)
 
-        #expect(first[.newSplitRight] == ShortcutChord(key: "d", modifiers: [.command]))
-        #expect(second[.newSplitRight] == ShortcutChord(key: "x", modifiers: [.command]))
+        #expect(first.source == .hostResolved)
+        #expect(second.source == .hostResolved)
+        #expect(first.bridge[.newSplitRight] == ShortcutChord(key: "d", modifiers: [.command]))
+        #expect(second.bridge[.newSplitRight] == ShortcutChord(key: "x", modifiers: [.command]))
         #expect(SharedURLProtocolStub.requestCount == 2)
     }
 
@@ -165,7 +185,8 @@ struct GhosttyKeybindingsFetcherTests {
 
         let refetched = await GhosttyKeybindingsFetcher.fetch(baseURL: baseURL)
 
-        #expect(refetched[.newSplitRight] == ShortcutChord(key: "x", modifiers: [.command]))
+        #expect(refetched.source == .hostResolved)
+        #expect(refetched.bridge[.newSplitRight] == ShortcutChord(key: "x", modifiers: [.command]))
         #expect(SharedURLProtocolStub.requestCount == 2)
     }
 

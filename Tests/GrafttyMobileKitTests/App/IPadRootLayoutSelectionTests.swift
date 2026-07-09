@@ -613,7 +613,8 @@ struct IPadRootLayoutSelectionTests {
             }
         }
 
-        let commands = MobileGhosttyCommandButtons.renderableCommands(for: bridge)
+        let keybindingSet = MobileGhosttyKeybindingSet(bridge: bridge, source: .hostResolved)
+        let commands = MobileGhosttyCommandButtons.renderableCommands(for: keybindingSet)
 
         #expect(commands.map(\.action) == [.newSplitRight, .previousTab])
         #expect(commands.contains { $0.action == .newSplitDown } == false)
@@ -638,7 +639,7 @@ struct IPadRootLayoutSelectionTests {
         }
         var performed: [GhosttyAction] = []
         let context = MobileGhosttyCommandContext(
-            keybindBridge: bridge,
+            keybindingSet: MobileGhosttyKeybindingSet(bridge: bridge, source: .hostResolved),
             perform: { performed.append($0) },
             isEnabled: { $0 != .newSplitRight }
         )
@@ -658,19 +659,21 @@ struct IPadRootLayoutSelectionTests {
         #expect(performed == [.nextTab])
     }
 
-    @Test("host refresh starts from an empty Ghostty keybind bridge")
-    func hostRefreshStartsFromEmptyGhosttyKeybindBridge() {
+    @Test("host refresh starts from an empty loading Ghostty keybinding set")
+    func hostRefreshStartsFromEmptyLoadingGhosttyKeybindingSet() {
         let staleBridge = GhosttyKeybindBridge { rawAction in
             GhosttyAction(rawValue: rawAction) == .newSplitRight
                 ? ShortcutChord(key: "d", modifiers: [.command])
                 : nil
         }
-        #expect(MobileGhosttyCommandButtons.renderableCommands(for: staleBridge).map(\.action) == [.newSplitRight])
+        let staleSet = MobileGhosttyKeybindingSet(bridge: staleBridge, source: .hostResolved)
+        #expect(MobileGhosttyCommandButtons.renderableCommands(for: staleSet).map(\.action) == [.newSplitRight])
 
-        let clearedBridge = IPadRootLayout.keybindBridgeForStartingHostRefresh()
+        let loadingSet = IPadRootLayout.keybindingSetForStartingHostRefresh()
 
-        #expect(clearedBridge[.newSplitRight] == nil)
-        #expect(MobileGhosttyCommandButtons.renderableCommands(for: clearedBridge).isEmpty)
+        #expect(loadingSet.source == .loading)
+        #expect(loadingSet.bridge[.newSplitRight] == nil)
+        #expect(MobileGhosttyCommandButtons.renderableCommands(for: loadingSet).isEmpty)
     }
 
     @Test("""

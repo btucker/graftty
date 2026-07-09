@@ -5,7 +5,7 @@ import SwiftUI
 import UIKit
 
 struct MobileGhosttyCommandContext {
-    let keybindBridge: GhosttyKeybindBridge
+    let keybindingSet: MobileGhosttyKeybindingSet
     let perform: (GhosttyAction) -> Void
     let isEnabled: (GhosttyAction) -> Bool
 }
@@ -33,7 +33,7 @@ struct MobileGhosttyCommandButtons: View {
     var body: some View {
         Group {
             if let context {
-                ForEach(Self.renderableCommands(for: context.keybindBridge), id: \.action) { command in
+                ForEach(Self.renderableCommands(for: context.keybindingSet), id: \.action) { command in
                     Button(command.label) {
                         context.perform(command.action)
                     }
@@ -44,12 +44,14 @@ struct MobileGhosttyCommandButtons: View {
         }
     }
 
-    static func renderableCommands(for bridge: GhosttyKeybindBridge) -> [MobileGhosttyCommandDescriptor] {
+    static func renderableCommands(
+        for keybindingSet: MobileGhosttyKeybindingSet
+    ) -> [MobileGhosttyCommandDescriptor] {
         GhosttyCommandRegistry.iPadSupportedActions.compactMap { action in
             guard let entry = GhosttyCommandRegistry[action],
                   entry.isSupportedOniPad,
                   entry.kind != .unsupported,
-                  let chord = bridge[action],
+                  let chord = keybindingSet.bridge[action],
                   let shortcut = KeyboardShortcutFromChord.shortcut(from: chord) else {
                 return nil
             }
@@ -69,7 +71,7 @@ struct MobileGhosttyCommandButtons: View {
                   let entry = GhosttyCommandRegistry[action],
                   entry.isSupportedOniPad,
                   entry.kind != .unsupported,
-                  let chord = context.keybindBridge[action],
+                  let chord = context.keybindingSet.bridge[action],
                   let input = UIKeyCommandInputFromChord.input(from: chord) else {
                 return nil
             }

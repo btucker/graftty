@@ -20,7 +20,7 @@ public struct IPadRootLayout: View {
     @Environment(\.biometricGate) private var gate
     @State private var paneEnvironment: PaneEnvironment = .empty
     @State private var worktreeListRefreshToken: Int = 0
-    @State private var keybindBridge = GhosttyKeybindBridge.empty
+    @State private var keybindingSet = MobileGhosttyKeybindingSet.loading
 
     public init(hostStore: HostStore, appState: IPadAppState, coordinator: RemoteConnectionCoordinator) {
         self.hostStore = hostStore
@@ -226,8 +226,8 @@ public struct IPadRootLayout: View {
         return entry.kind
     }
 
-    static func keybindBridgeForStartingHostRefresh() -> GhosttyKeybindBridge {
-        .empty
+    static func keybindingSetForStartingHostRefresh() -> MobileGhosttyKeybindingSet {
+        .loading
     }
 
     // MARK: - Side-effecting selection (callbacks from WorktreeListContent)
@@ -258,7 +258,7 @@ public struct IPadRootLayout: View {
 
     private var ghosttyCommandContext: MobileGhosttyCommandContext {
         MobileGhosttyCommandContext(
-            keybindBridge: keybindBridge,
+            keybindingSet: keybindingSet,
             perform: { action in
                 performGhosttyCommand(action)
             },
@@ -417,11 +417,11 @@ public struct IPadRootLayout: View {
     private func refreshHostPresentationState() async {
         guard let host = selectedHost else {
             appState.theme = .fallback
-            keybindBridge = Self.keybindBridgeForStartingHostRefresh()
+            keybindingSet = Self.keybindingSetForStartingHostRefresh()
             return
         }
         let capturedHostID = host.id
-        keybindBridge = Self.keybindBridgeForStartingHostRefresh()
+        keybindingSet = Self.keybindingSetForStartingHostRefresh()
         async let configText = GhosttyConfigFetcher.fetch(baseURL: host.baseURL)
         async let keybindings = GhosttyKeybindingsFetcher.fetch(baseURL: host.baseURL)
 
@@ -430,10 +430,10 @@ public struct IPadRootLayout: View {
         guard capturedHostID == appState.selectedHostId else { return }
         appState.theme = text.map(GhosttyThemeColors.init(parsingConfigText:)) ?? .fallback
 
-        let bridge = await keybindings
+        let resolvedKeybindingSet = await keybindings
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
-        keybindBridge = bridge
+        keybindingSet = resolvedKeybindingSet
     }
 
     @MainActor
