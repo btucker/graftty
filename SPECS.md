@@ -1152,17 +1152,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### KBD-5.x
 
-**KBD-5.1** When another on-disk worktree has attention, next_tab shall select the next attention-carrying worktree in cyclic sidebar order (skipping non-attention worktrees between), flattening worktrees across repos in sidebar order.
+**KBD-5.1** When another on-disk worktree has attention, Ctrl+Option+Tab shall select the next attention-carrying worktree in cyclic sidebar order (skipping non-attention worktrees between), flattening worktrees across repos in sidebar order.
 
-**KBD-5.2** When no other worktree has attention, next_tab shall select the immediate next on-disk worktree in cyclic sidebar order, wrapping from the last back to the first.
+**KBD-5.2** When no other worktree has attention, Ctrl+Option+Tab shall select the immediate next on-disk worktree in cyclic sidebar order, wrapping from the last back to the first.
 
-**KBD-5.3** When the user presses previous_tab, the application shall apply attention-first selection in reverse cyclic order, and select the immediate previous on-disk worktree (wrapping) when no worktree has attention.
+**KBD-5.3** When the user presses Ctrl+Option+Shift+Tab, the application shall apply attention-first selection in reverse cyclic order, and select the immediate previous on-disk worktree (wrapping) when no worktree has attention.
 
 **KBD-5.4** When a worktree carries attention from any source (agent-stop, user notify, command-finished) at worktree or pane scope, the application shall count it as a navigation target, while excluding the currently-selected worktree from the attention subset so its own attention does not trap navigation on itself.
 
-**KBD-5.5** When zero or one on-disk worktree is selectable, next_tab and previous_tab shall be a no-op (return nil); non-on-disk worktrees (.stale/.creating/.deleting) shall never be navigation targets even when they carry attention.
+**KBD-5.5** When zero or one on-disk worktree is selectable, Ctrl+Option+Tab and Ctrl+Option+Shift+Tab shall be no-ops (return nil) while their chords remain reserved; non-on-disk worktrees (.stale/.creating/.deleting) shall never be navigation targets even when they carry attention.
 
-**KBD-5.6** When no worktree is selected, next_tab shall select the first attention worktree else the first on-disk worktree, and previous_tab shall select the first attention worktree scanning backward from the end else the last on-disk worktree.
+**KBD-5.6** When no worktree is selected, Ctrl+Option+Tab shall select the first attention worktree else the first on-disk worktree, and Ctrl+Option+Shift+Tab shall select the first attention worktree scanning backward from the end else the last on-disk worktree.
 
 ## PR — PR/MR Status Display
 
@@ -1608,9 +1608,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IPAD-8.x
 
-**IPAD-8.1** When the user presses next_tab on iPad and another selectable worktree has attention, the application shall select the next attention-carrying worktree in cyclic sidebar order.
+**IPAD-8.1** When the user presses Ctrl+Option+Tab on iPad and another selectable worktree has attention, the application shall select the next attention-carrying worktree in cyclic sidebar order.
 
-**IPAD-8.2** When no other iPad worktree has attention, next_tab and previous_tab shall cycle through selectable worktrees in sidebar order.
+**IPAD-8.2** When no other iPad worktree has attention, Ctrl+Option+Tab and Ctrl+Option+Shift+Tab shall cycle through selectable worktrees in sidebar order.
 
 **IPAD-8.3** When resolving iPad worktree navigation, the application shall skip stale, creating, and deleting worktrees even when they carry attention.
 
@@ -1618,9 +1618,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-8.5** While processing an iPad auto-ownership request, the application shall keep the request pending until the live session becomes takeable, but an already-owned pane shall fulfill the request as a no-op so stale selection requests cannot steal ownership back later.
 
-**IPAD-8.6** When no current iPad worktree is selected, forward Ctrl+Tab shall start before the first selectable worktree and reverse Ctrl+Shift+Tab shall start after the last selectable worktree.
+**IPAD-8.6** When no current iPad worktree is selected, forward Ctrl+Option+Tab shall start before the first selectable worktree and reverse Ctrl+Option+Shift+Tab shall start after the last selectable worktree.
 
-**IPAD-8.7** iPad worktree navigation keyboard commands shall be registered at the SwiftUI scene-command layer and enabled only when at least two selectable worktrees exist, so hardware keyboard shortcuts remain active when UIKit terminal content has focus and are released when navigation would be a no-op.
+**IPAD-8.7** iPad fixed worktree navigation commands shall be registered in both command projections even when zero or one target exists, reserving their chords while execution is a no-op.
 
 ### IPAD-9.x
 
@@ -1628,13 +1628,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-9.2** iPad command routing shall map only GhosttyCommandRegistry.iPadSupportedActions to executable iPad command kinds; unsupported Ghostty actions such as toggle_split_zoom shall not be routed or registered.
 
-**IPAD-9.3** iPad scene commands shall be emitted only for enabled, supported Ghostty command chords that translate to SwiftUI KeyboardShortcut values; loading, missing, untranslatable, unsupported, and disabled commands shall be omitted.
+**IPAD-9.3** iPad shall always reserve fixed pane and worktree navigation chords; host tab-action chords remain reserved when their bridge is available, while disabled split, close, and directional commands are omitted.
 
 **IPAD-9.4** Directional iPad pane-focus commands shall use the same spatial split-tree semantics as Mac TERM-7.3: nearest matching-axis ancestor, opposite subtree near-edge descent, and no wrapping for unrelated directions.
 
 **IPAD-9.5** Previous-pane and next-pane iPad commands shall traverse PaneLayoutNode leaves in stable in-order layout order with wrapping; a single pane or unknown current pane shall be a no-op.
 
-**IPAD-9.6** iPad shall install host-resolved Ghostty command chords as responder-chain `UIKeyCommand`s for the active terminal, filtering disabled actions so UIKit does not dispatch no-op shortcuts.
+**IPAD-9.6** iPad shall project every winning app-level navigation candidate to responder-chain UIKeyCommands with the same stable identities and semantic execution as scene commands.
 
 **IPAD-9.7** If fetching the host-resolved Ghostty keybindings fails (missing endpoint on older hosts, non-2xx status, a transport failure, or an undecodable body), then the application shall fall back to the bundled Ghostty default keybindings instead of an empty bridge.
 
@@ -1642,7 +1642,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-9.9** The active iPad terminal input responder shall publish app-level Ghostty shortcuts as UIKeyCommands that take priority over conflicting focus and text-input system behavior, and synchronously request a UIKit menu-system rebuild whenever the effective command identities, titles, inputs, or modifiers change, so hardware-keyboard commands remain current while terminal input owns first responder status.
 
-**IPAD-9.10** Mobile keybinding fetch and cache results shall retain loading, host-resolved, or bundled-fallback provenance; bundled fallback Ctrl+Tab and Ctrl+Shift+Tab worktree-navigation aliases shall be published through both SwiftUI scene commands and active-terminal responder commands so Ctrl+Tab remains available when the terminal software-keyboard proxy is not first responder, while host-resolved commands shall use only host chords without fallback aliases and disabled scene commands shall be omitted rather than registered.
+**IPAD-9.10** Fixed Graftty pane and worktree chords shall be provenance-independent, host tab-action chords shall be additional when noncolliding, and both SwiftUI and responder projections shall use the same normalized input-and-modifier collision winners with precedence fixed worktree over fixed pane over host.
 
 ## TEAM — Agent Teams
 

@@ -91,33 +91,19 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-8.7: iPad worktree navigation keyboard commands shall be registered at the SwiftUI scene-command layer and enabled only when at least two selectable worktrees exist, so hardware keyboard shortcuts remain active when UIKit terminal content has focus and are released when navigation would be a no-op.
+@spec IPAD-8.7: iPad fixed worktree navigation commands shall be registered in both command projections even when zero or one target exists, reserving their chords while execution is a no-op.
 """)
-    func worktreeCommandAvailabilityRequiresTwoSelectableWorktrees() {
-        func wt(_ path: String, state: WorktreeWireState = .running) -> WorktreePanes {
-            WorktreePanes(
-                path: path,
-                displayName: path,
-                repoDisplayName: "repo",
-                displayBranch: path,
-                state: state,
-                isMainCheckout: false,
-                prBadge: nil,
-                stats: nil,
-                attentionText: nil,
-                layout: nil
-            )
-        }
+    func worktreeCommandsRemainReservedInNoOpStates() {
+        let context = MobileGhosttyCommandContext(
+            keybindingSet: .loading,
+            perform: { _ in },
+            isEnabled: { _ in false }
+        )
 
-        #expect(IPadRootLayout.canNavigateWorktreesFromCommand(in: []) == false)
-        #expect(IPadRootLayout.canNavigateWorktreesFromCommand(in: [
-            wt("/a"),
-            wt("/creating", state: .creating),
-        ]) == false)
-        #expect(IPadRootLayout.canNavigateWorktreesFromCommand(in: [
-            wt("/a"),
-            wt("/b"),
-        ]) == true)
+        #expect(MobileGhosttyCommandButtons.renderableCommands(for: context).prefix(2).map(\.semantic) == [
+            .navigateWorktree(forward: true),
+            .navigateWorktree(forward: false),
+        ])
     }
 
     @Test("pane row selection derives the selected worktree from the latest snapshot")
@@ -591,277 +577,137 @@ struct IPadRootLayoutSelectionTests {
         #expect(IPadRootLayout.commandKind(for: .gotoSplitLeft) == .focusPane(.left))
         #expect(IPadRootLayout.commandKind(for: .gotoSplitNext) == .focusPaneByOrder(forward: true))
         #expect(IPadRootLayout.commandKind(for: .gotoSplitPrevious) == .focusPaneByOrder(forward: false))
-        #expect(IPadRootLayout.commandKind(for: .nextTab) == .navigateWorktree(forward: true))
-        #expect(IPadRootLayout.commandKind(for: .previousTab) == .navigateWorktree(forward: false))
+        #expect(IPadRootLayout.commandKind(for: .nextTab) == .focusPaneByOrder(forward: true))
+        #expect(IPadRootLayout.commandKind(for: .previousTab) == .focusPaneByOrder(forward: false))
         #expect(IPadRootLayout.commandKind(for: .toggleSplitZoom) == nil)
     }
 
     @Test("""
-@spec IPAD-9.3: iPad scene commands shall be emitted only for enabled, supported Ghostty command chords that translate to SwiftUI KeyboardShortcut values; loading, missing, untranslatable, unsupported, and disabled commands shall be omitted.
+@spec IPAD-9.3: iPad shall always reserve fixed pane and worktree navigation chords; host tab-action chords remain reserved when their bridge is available, while disabled split, close, and directional commands are omitted.
 """)
-    func ipad_9_3_commandRenderingOmitsMissingAndUntranslatableChords() {
-        let bridge = GhosttyKeybindBridge { rawAction in
-            switch GhosttyAction(rawValue: rawAction) {
-            case .newSplitRight:
-                return ShortcutChord(key: "d", modifiers: [.command])
-            case .newSplitDown:
-                return ShortcutChord(key: "f13", modifiers: [.command])
-            case .previousTab:
-                return ShortcutChord(key: "tab", modifiers: [.control, .shift])
-            default:
-                return nil
-            }
-        }
-
+    func ipad_9_3_commandRenderingSeparatesReservationFromExecutionEnablement() {
+        let bridge = GhosttyKeybindBridge(chords: [
+            .newSplitRight: ShortcutChord(key: "d", modifiers: [.command]),
+            .newSplitDown: ShortcutChord(key: "f13", modifiers: [.command]),
+            .previousTab: ShortcutChord(key: "tab", modifiers: [.control, .shift]),
+        ])
         let context = MobileGhosttyCommandContext(
             keybindingSet: MobileGhosttyKeybindingSet(bridge: bridge, source: .hostResolved),
             perform: { _ in },
-            isEnabled: { _ in true }
+            isEnabled: { $0 == .newSplitRight }
         )
+
         let commands = MobileGhosttyCommandButtons.renderableCommands(for: context)
 
-        #expect(commands.map(\.action) == [.newSplitRight, .previousTab])
-        #expect(commands.contains { $0.action == .newSplitDown } == false)
-        #expect(commands.contains { $0.action == .nextTab } == false)
+        #expect(commands.map(\.semantic) == [
+            .navigateWorktree(forward: true),
+            .navigateWorktree(forward: false),
+            .ghostty(.nextTab),
+            .ghostty(.previousTab),
+            .ghostty(.newSplitRight),
+        ])
+        #expect(commands.contains { $0.semantic == .ghostty(.newSplitDown) } == false)
     }
 
     @Test("""
-@spec IPAD-9.10: Mobile keybinding fetch and cache results shall retain loading, host-resolved, or bundled-fallback provenance; bundled fallback Ctrl+Tab and Ctrl+Shift+Tab worktree-navigation aliases shall be published through both SwiftUI scene commands and active-terminal responder commands so Ctrl+Tab remains available when the terminal software-keyboard proxy is not first responder, while host-resolved commands shall use only host chords without fallback aliases and disabled scene commands shall be omitted rather than registered.
+@spec IPAD-9.10: Fixed Graftty pane and worktree chords shall be provenance-independent, host tab-action chords shall be additional when noncolliding, and both SwiftUI and responder projections shall use the same normalized input-and-modifier collision winners with precedence fixed worktree over fixed pane over host.
 """)
-    func sceneCommandDescriptorsRespectKeybindingProvenance() {
-        func commands(
+    func navigationDescriptorsRespectProvenanceAndCollisionPolicy() {
+        func context(
             bridge: GhosttyKeybindBridge,
             source: MobileGhosttyKeybindingSource,
-            enabled: @escaping (GhosttyAction) -> Bool = { _ in true }
-        ) -> [MobileGhosttyCommandDescriptor] {
-            MobileGhosttyCommandButtons.renderableCommands(
-                for: MobileGhosttyCommandContext(
-                    keybindingSet: MobileGhosttyKeybindingSet(bridge: bridge, source: source),
-                    perform: { _ in },
-                    isEnabled: enabled
-                )
+            enabled: @escaping (GhosttyAction) -> Bool = { _ in false },
+            perform: @escaping (MobileGhosttyCommandSemantic) -> Void = { _ in }
+        ) -> MobileGhosttyCommandContext {
+            MobileGhosttyCommandContext(
+                keybindingSet: MobileGhosttyKeybindingSet(bridge: bridge, source: source),
+                perform: perform,
+                isEnabled: enabled
             )
         }
 
-        let fallback = commands(
-            bridge: GhosttyDefaultKeybinds.bridge,
-            source: .bundledFallback
-        )
-        let nextTab = fallback.filter { $0.action == .nextTab }
-        let previousTab = fallback.filter { $0.action == .previousTab }
-
-        #expect(nextTab.map(\.id) == [
-            "\(GhosttyAction.nextTab.rawValue)|]|\((UIKeyModifierFlags.command.union(.shift)).rawValue)",
-            "\(GhosttyAction.nextTab.rawValue)|\t|\(UIKeyModifierFlags.control.rawValue)",
-        ])
-        #expect(previousTab.map(\.id) == [
-            "\(GhosttyAction.previousTab.rawValue)|[|\((UIKeyModifierFlags.command.union(.shift)).rawValue)",
-            "\(GhosttyAction.previousTab.rawValue)|\t|\((UIKeyModifierFlags.control.union(.shift)).rawValue)",
-        ])
-        #expect(fallback.contains {
-            $0.action == .newSplitRight
-                && $0.input == "d"
-                && $0.modifierFlags == .command
-        })
-        #expect(fallback.suffix(2).map(\.id) == [
-            "\(GhosttyAction.nextTab.rawValue)|\t|\(UIKeyModifierFlags.control.rawValue)",
-            "\(GhosttyAction.previousTab.rawValue)|\t|\((UIKeyModifierFlags.control.union(.shift)).rawValue)",
-        ])
-
-        let fallbackIDs = fallback.map(\.id)
-        let repeatedFallbackIDs = commands(
-            bridge: GhosttyDefaultKeybinds.bridge,
-            source: .bundledFallback
-        ).map(\.id)
-        #expect(Set(fallbackIDs).count == fallbackIDs.count)
-        #expect(repeatedFallbackIDs == fallbackIDs)
-
-        let disabledFallback = commands(
-            bridge: GhosttyDefaultKeybinds.bridge,
-            source: .bundledFallback,
-            enabled: { $0 != .nextTab && $0 != .newSplitRight }
-        )
-        #expect(disabledFallback.contains { $0.action == .nextTab } == false)
-        #expect(disabledFallback.contains { $0.action == .newSplitRight } == false)
-
-        let customHostBridge = GhosttyKeybindBridge { rawAction in
-            GhosttyAction(rawValue: rawAction) == .nextTab
-                ? ShortcutChord(key: "period", modifiers: [.command, .option])
-                : nil
+        let fixedSemantics: [MobileGhosttyCommandSemantic] = [
+            .navigateWorktree(forward: true),
+            .navigateWorktree(forward: false),
+            .ghostty(.nextTab),
+            .ghostty(.previousTab),
+        ]
+        for source in [
+            MobileGhosttyKeybindingSource.loading,
+            .hostResolved,
+            .bundledFallback,
+        ] {
+            let commands = MobileGhosttyCommandButtons.renderableCommands(
+                for: context(bridge: .empty, source: source)
+            )
+            #expect(commands.map(\.semantic) == fixedSemantics)
         }
-        let hostResolved = commands(bridge: customHostBridge, source: .hostResolved)
-        #expect(hostResolved.count == 1)
-        #expect(hostResolved[0].id ==
-            "\(GhosttyAction.nextTab.rawValue)|.|\((UIKeyModifierFlags.command.union(.alternate)).rawValue)"
+
+        let fallback = MobileGhosttyCommandButtons.renderableCommands(for: context(
+            bridge: GhosttyDefaultKeybinds.bridge,
+            source: .bundledFallback
+        ))
+        #expect(fallback.map(\.semantic) == fixedSemantics + [
+            .ghostty(.nextTab),
+            .ghostty(.previousTab),
+        ])
+        #expect(fallback.suffix(2).map(\.input) == ["]", "["])
+
+        let hostBridge = GhosttyKeybindBridge(chords: [
+            .nextTab: ShortcutChord(key: "period", modifiers: [.command]),
+            .previousTab: ShortcutChord(key: "tab", modifiers: [.control, .option]),
+            .newSplitRight: ShortcutChord(key: "tab", modifiers: [.control, .shift]),
+        ])
+        let commandContext = context(
+            bridge: hostBridge,
+            source: .hostResolved,
+            enabled: { _ in true }
         )
-        #expect(hostResolved[0].input == ".")
-        #expect(hostResolved[0].modifierFlags == [.command, .alternate])
-        #expect(commands(bridge: .empty, source: .hostResolved).isEmpty)
-        #expect(commands(bridge: GhosttyDefaultKeybinds.bridge, source: .loading).isEmpty)
+        let scene = MobileGhosttyCommandButtons.renderableCommands(for: commandContext)
+        let responder = MobileGhosttyCommandButtons.hardwareKeyboardCommands(for: commandContext)
+        let repeatedScene = MobileGhosttyCommandButtons.renderableCommands(for: commandContext)
+
+        #expect(scene.map(\.id) == responder.map(\.id))
+        #expect(scene.map(\.id) == repeatedScene.map(\.id))
+        #expect(Set(scene.map(\.id)).count == scene.count)
+        #expect(scene.map(\.semantic) == fixedSemantics + [.ghostty(.nextTab)])
+        #expect(scene.last?.input == ".")
+        #expect(scene.contains {
+            $0.semantic == .ghostty(.previousTab) && $0.modifierFlags.contains(.alternate)
+        } == false)
+        #expect(scene.contains { $0.semantic == .ghostty(.newSplitRight) } == false)
     }
 
     @Test("""
-@spec IPAD-9.6: iPad shall install host-resolved Ghostty command chords as responder-chain `UIKeyCommand`s for the active terminal, filtering disabled actions so UIKit does not dispatch no-op shortcuts.
+@spec IPAD-9.6: iPad shall project every winning app-level navigation candidate to responder-chain UIKeyCommands with the same stable identities and semantic execution as scene commands.
 """)
-    func ipad_9_6_hardwareKeyboardCommandsUseHostResolvedChords() {
-        let bridge = GhosttyKeybindBridge { rawAction in
-            switch GhosttyAction(rawValue: rawAction) {
-            case .nextTab:
-                return ShortcutChord(key: "tab", modifiers: [.control])
-            case .previousTab:
-                return ShortcutChord(key: "tab", modifiers: [.control, .shift])
-            case .newSplitRight:
-                return ShortcutChord(key: "d", modifiers: [.command])
-            default:
-                return nil
-            }
-        }
-        var performed: [GhosttyAction] = []
+    func hardwareKeyboardCommandsUseWinningSemanticCandidates() {
+        var performed: [MobileGhosttyCommandSemantic] = []
         let context = MobileGhosttyCommandContext(
-            keybindingSet: MobileGhosttyKeybindingSet(bridge: bridge, source: .hostResolved),
+            keybindingSet: .loading,
             perform: { performed.append($0) },
-            isEnabled: { $0 != .newSplitRight }
+            isEnabled: { _ in false }
         )
 
         let commands = MobileGhosttyCommandButtons.hardwareKeyboardCommands(for: context)
+        commands.forEach { $0.perform() }
 
-        #expect(commands.map(\.id) == [
-            "\(GhosttyAction.nextTab.rawValue)|\t|\(UIKeyModifierFlags.control.rawValue)",
-            "\(GhosttyAction.previousTab.rawValue)|\t|\((UIKeyModifierFlags.control.union(.shift)).rawValue)",
+        #expect(performed == [
+            .navigateWorktree(forward: true),
+            .navigateWorktree(forward: false),
+            .ghostty(.nextTab),
+            .ghostty(.previousTab),
         ])
-        #expect(commands[0].input == "\t")
-        #expect(commands[0].modifierFlags.contains(.control))
-        #expect(!commands[0].modifierFlags.contains(.shift))
-        #expect(commands[1].input == "\t")
-        #expect(commands[1].modifierFlags.contains(.control))
-        #expect(commands[1].modifierFlags.contains(.shift))
-
-        commands[0].perform()
-
-        #expect(performed == [.nextTab])
+        #expect(commands.map(\.modifierFlags) == [
+            [.control, .alternate],
+            [.control, .alternate, .shift],
+            [.control],
+            [.control, .shift],
+        ])
     }
 
-    @Test("hardware keyboard commands respect keybinding provenance")
-    func ipad_9_10_hardwareKeyboardCommandsRespectKeybindingProvenance() {
-        func commands(
-            bridge: GhosttyKeybindBridge,
-            source: MobileGhosttyKeybindingSource,
-            enabled: @escaping (GhosttyAction) -> Bool = { _ in true },
-            perform: @escaping (GhosttyAction) -> Void = { _ in }
-        ) -> [TerminalPaneView.HardwareKeyboardCommand] {
-            MobileGhosttyCommandButtons.hardwareKeyboardCommands(
-                for: MobileGhosttyCommandContext(
-                    keybindingSet: MobileGhosttyKeybindingSet(bridge: bridge, source: source),
-                    perform: perform,
-                    isEnabled: enabled
-                )
-            )
-        }
-
-        let fallback = commands(
-            bridge: GhosttyDefaultKeybinds.bridge,
-            source: .bundledFallback
-        )
-        let nextTab = fallback.filter { $0.id.hasPrefix(GhosttyAction.nextTab.rawValue) }
-        let previousTab = fallback.filter { $0.id.hasPrefix(GhosttyAction.previousTab.rawValue) }
-
-        #expect(nextTab.count == 2)
-        #expect(nextTab.contains {
-            $0.id == "\(GhosttyAction.nextTab.rawValue)|]|\((UIKeyModifierFlags.command.union(.shift)).rawValue)"
-                && $0.input == "]"
-                && $0.modifierFlags == [.command, .shift]
-        })
-        #expect(nextTab.contains {
-            $0.id == "\(GhosttyAction.nextTab.rawValue)|\t|\(UIKeyModifierFlags.control.rawValue)"
-                && $0.input == "\t"
-                && $0.modifierFlags == .control
-        })
-        #expect(previousTab.count == 2)
-        #expect(previousTab.contains {
-            $0.id == "\(GhosttyAction.previousTab.rawValue)|[|\((UIKeyModifierFlags.command.union(.shift)).rawValue)"
-                && $0.input == "["
-                && $0.modifierFlags == [.command, .shift]
-        })
-        #expect(previousTab.contains {
-            $0.id == "\(GhosttyAction.previousTab.rawValue)|\t|\((UIKeyModifierFlags.control.union(.shift)).rawValue)"
-                && $0.input == "\t"
-                && $0.modifierFlags == [.control, .shift]
-        })
-        #expect(fallback.contains {
-            $0.id == "\(GhosttyAction.newSplitRight.rawValue)|d|\(UIKeyModifierFlags.command.rawValue)"
-                && $0.input == "d"
-                && $0.modifierFlags == .command
-        })
-
-        let fallbackIDs = fallback.map(\.id)
-        let repeatedFallbackIDs = commands(
-            bridge: GhosttyDefaultKeybinds.bridge,
-            source: .bundledFallback
-        ).map(\.id)
-        #expect(Set(fallbackIDs).count == fallbackIDs.count)
-        #expect(repeatedFallbackIDs == fallbackIDs)
-
-        var performed: [GhosttyAction] = []
-        let performableFallback = commands(
-            bridge: GhosttyDefaultKeybinds.bridge,
-            source: .bundledFallback,
-            perform: { performed.append($0) }
-        )
-        performableFallback.first {
-            $0.input == "\t" && $0.modifierFlags == .control
-        }?.perform()
-        #expect(performed == [.nextTab])
-
-        let disabledFallback = commands(
-            bridge: GhosttyDefaultKeybinds.bridge,
-            source: .bundledFallback,
-            enabled: { $0 != .nextTab && $0 != .newSplitRight }
-        )
-        #expect(disabledFallback.contains { $0.id.hasPrefix(GhosttyAction.nextTab.rawValue) } == false)
-        #expect(disabledFallback.contains { $0.id.hasPrefix(GhosttyAction.newSplitRight.rawValue) } == false)
-
-        let customHostBridge = GhosttyKeybindBridge { rawAction in
-            GhosttyAction(rawValue: rawAction) == .nextTab
-                ? ShortcutChord(key: "period", modifiers: [.command, .option])
-                : nil
-        }
-        let hostResolved = commands(bridge: customHostBridge, source: .hostResolved)
-        #expect(hostResolved.count == 1)
-        #expect(hostResolved[0].id ==
-            "\(GhosttyAction.nextTab.rawValue)|.|\((UIKeyModifierFlags.command.union(.alternate)).rawValue)"
-        )
-        #expect(hostResolved[0].input == ".")
-        #expect(hostResolved[0].modifierFlags == [.command, .alternate])
-        #expect(commands(bridge: .empty, source: .hostResolved).isEmpty)
-        #expect(commands(bridge: GhosttyDefaultKeybinds.bridge, source: .loading).isEmpty)
-
-        let collidingFallbackBridge = GhosttyKeybindBridge { rawAction in
-            switch GhosttyAction(rawValue: rawAction) {
-            case .nextTab:
-                return ShortcutChord(key: "bracketright", modifiers: [.command, .shift])
-            case .previousTab:
-                return ShortcutChord(key: "tab", modifiers: [.control])
-            default:
-                return nil
-            }
-        }
-        var collisionPerformed: [GhosttyAction] = []
-        let collisionCommands = commands(
-            bridge: collidingFallbackBridge,
-            source: .bundledFallback,
-            perform: { collisionPerformed.append($0) }
-        )
-        let controlTab = collisionCommands.filter {
-            $0.input == "\t" && $0.modifierFlags == .control
-        }
-        #expect(controlTab.count == 1)
-        #expect(controlTab[0].id == "\(GhosttyAction.previousTab.rawValue)|\t|\(UIKeyModifierFlags.control.rawValue)")
-        controlTab[0].perform()
-        #expect(collisionPerformed == [.previousTab])
-    }
-
-    @Test("host refresh starts from an empty loading Ghostty keybinding set")
-    func hostRefreshStartsFromEmptyLoadingGhosttyKeybindingSet() {
+    @Test("host refresh clears host chords without releasing fixed navigation")
+    func hostRefreshPreservesFixedNavigationReservations() {
         let staleBridge = GhosttyKeybindBridge { rawAction in
             GhosttyAction(rawValue: rawAction) == .newSplitRight
                 ? ShortcutChord(key: "d", modifiers: [.command])
@@ -872,7 +718,13 @@ struct IPadRootLayoutSelectionTests {
             perform: { _ in },
             isEnabled: { _ in true }
         )
-        #expect(MobileGhosttyCommandButtons.renderableCommands(for: staleContext).map(\.action) == [.newSplitRight])
+        #expect(MobileGhosttyCommandButtons.renderableCommands(for: staleContext).map(\.semantic) == [
+            .navigateWorktree(forward: true),
+            .navigateWorktree(forward: false),
+            .ghostty(.nextTab),
+            .ghostty(.previousTab),
+            .ghostty(.newSplitRight),
+        ])
 
         let loadingSet = IPadRootLayout.keybindingSetForStartingHostRefresh()
 
@@ -883,7 +735,12 @@ struct IPadRootLayoutSelectionTests {
             perform: { _ in },
             isEnabled: { _ in true }
         )
-        #expect(MobileGhosttyCommandButtons.renderableCommands(for: loadingContext).isEmpty)
+        #expect(MobileGhosttyCommandButtons.renderableCommands(for: loadingContext).map(\.semantic) == [
+            .navigateWorktree(forward: true),
+            .navigateWorktree(forward: false),
+            .ghostty(.nextTab),
+            .ghostty(.previousTab),
+        ])
     }
 
     @Test("""

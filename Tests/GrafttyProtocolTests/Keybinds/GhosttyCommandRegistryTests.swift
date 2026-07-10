@@ -31,8 +31,10 @@ struct GhosttyCommandRegistryTests {
         #expect(GhosttyCommandRegistry[.gotoSplitLeft]?.kind == .focusPane(.left))
         #expect(GhosttyCommandRegistry[.gotoSplitNext]?.kind == .focusPaneByOrder(forward: true))
         #expect(GhosttyCommandRegistry[.gotoSplitPrevious]?.kind == .focusPaneByOrder(forward: false))
-        #expect(GhosttyCommandRegistry[.nextTab]?.kind == .navigateWorktree(forward: true))
-        #expect(GhosttyCommandRegistry[.previousTab]?.kind == .navigateWorktree(forward: false))
+        #expect(GhosttyCommandRegistry[.nextTab]?.label == "Next Pane")
+        #expect(GhosttyCommandRegistry[.nextTab]?.kind == .focusPaneByOrder(forward: true))
+        #expect(GhosttyCommandRegistry[.previousTab]?.label == "Previous Pane")
+        #expect(GhosttyCommandRegistry[.previousTab]?.kind == .focusPaneByOrder(forward: false))
         #expect(GhosttyCommandRegistry[.toggleSplitZoom]?.kind == .unsupported)
     }
 
@@ -52,10 +54,7 @@ struct GhosttyCommandRegistryTests {
         ])
         #expect(GhosttyCommandRegistry.macPaneFocusActions.map(\.action) == [
             .gotoSplitLeft, .gotoSplitRight, .gotoSplitUp, .gotoSplitDown,
-            .gotoSplitPrevious, .gotoSplitNext,
-        ])
-        #expect(GhosttyCommandRegistry.macWorktreeNavigationActions.map(\.action) == [
-            .nextTab, .previousTab,
+            .gotoSplitPrevious, .gotoSplitNext, .nextTab, .previousTab,
         ])
         #expect(GhosttyCommandRegistry.macPaneLayoutActions.map(\.action) == [
             .toggleSplitZoom, .equalizeSplits,

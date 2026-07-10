@@ -25,7 +25,7 @@ struct IPadWorktreeNavigationTests {
     }
 
     @Test("""
-@spec IPAD-8.1: When the user presses next_tab on iPad and another selectable worktree has attention, the application shall select the next attention-carrying worktree in cyclic sidebar order.
+@spec IPAD-8.1: When the user presses Ctrl+Option+Tab on iPad and another selectable worktree has attention, the application shall select the next attention-carrying worktree in cyclic sidebar order.
 """)
     func nextTabPrefersAttention() {
         #expect(IPadWorktreeNavigation.nextPath(
@@ -36,7 +36,7 @@ struct IPadWorktreeNavigationTests {
     }
 
     @Test("""
-@spec IPAD-8.2: When no other iPad worktree has attention, next_tab and previous_tab shall cycle through selectable worktrees in sidebar order.
+@spec IPAD-8.2: When no other iPad worktree has attention, Ctrl+Option+Tab and Ctrl+Option+Shift+Tab shall cycle through selectable worktrees in sidebar order.
 """)
     func cyclesWhenNoAttention() {
         let list = [wt("/a"), wt("/b"), wt("/c")]
@@ -59,7 +59,7 @@ struct IPadWorktreeNavigationTests {
     }
 
     @Test("""
-@spec IPAD-8.6: When no current iPad worktree is selected, forward Ctrl+Tab shall start before the first selectable worktree and reverse Ctrl+Shift+Tab shall start after the last selectable worktree.
+@spec IPAD-8.6: When no current iPad worktree is selected, forward Ctrl+Option+Tab shall start before the first selectable worktree and reverse Ctrl+Option+Shift+Tab shall start after the last selectable worktree.
 """)
     func startsAtEdgesWhenNothingSelected() {
         let list = [wt("/a"), wt("/b"), wt("/c")]
@@ -74,8 +74,8 @@ struct IPadWorktreeNavigationTests {
         #expect(IPadWorktreeNavigation.nextPath(in: list, selectedPath: "/a", forward: true) == nil)
     }
 
-    @Test("scene command availability follows selectable worktree count")
-    func sceneCommandAvailabilityFollowsSelectableWorktreeCount() {
+    @Test("execution capability follows selectable worktree count")
+    func executionCapabilityFollowsSelectableWorktreeCount() {
         #expect(IPadWorktreeNavigation.canNavigate(in: []) == false)
         #expect(IPadWorktreeNavigation.canNavigate(in: [
             wt("/a"),

@@ -23,20 +23,9 @@ public enum GhosttyDefaultKeybinds {
         .gotoSplitDown: ShortcutChord(key: "arrowdown", modifiers: [.command, .option]),
         .gotoSplitPrevious: ShortcutChord(key: "bracketleft", modifiers: [.command]),
         .gotoSplitNext: ShortcutChord(key: "bracketright", modifiers: [.command]),
-        // The super+shift+bracket variants remain the primary chords;
-        // Ghostty's control+tab variants are retained below as hardware aliases.
         .previousTab: ShortcutChord(key: "bracketleft", modifiers: [.command, .shift]),
         .nextTab: ShortcutChord(key: "bracketright", modifiers: [.command, .shift]),
     ]
-
-    public static let aliases: [GhosttyAction: [ShortcutChord]] = [
-        .nextTab: [ShortcutChord(key: "tab", modifiers: [.control])],
-        .previousTab: [ShortcutChord(key: "tab", modifiers: [.control, .shift])],
-    ]
-
-    public static func hardwareChords(for action: GhosttyAction) -> [ShortcutChord] {
-        [chords[action]].compactMap { $0 } + aliases[action, default: []]
-    }
 
     /// A bridge resolving each action to its bundled Ghostty default chord.
     public static let bridge = GhosttyKeybindBridge(chords: chords)

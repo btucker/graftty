@@ -4,15 +4,20 @@ import GrafttyProtocol
 import SwiftUI
 import UIKit
 
+enum MobileGhosttyCommandSemantic: Sendable, Hashable {
+    case ghostty(GhosttyAction)
+    case navigateWorktree(forward: Bool)
+}
+
 struct MobileGhosttyCommandContext {
     let keybindingSet: MobileGhosttyKeybindingSet
-    let perform: (GhosttyAction) -> Void
+    let perform: (MobileGhosttyCommandSemantic) -> Void
     let isEnabled: (GhosttyAction) -> Bool
 }
 
 struct MobileGhosttyCommandDescriptor {
     let id: String
-    let action: GhosttyAction
+    let semantic: MobileGhosttyCommandSemantic
     let label: String
     let shortcut: KeyboardShortcut
     let input: String
@@ -20,14 +25,25 @@ struct MobileGhosttyCommandDescriptor {
 }
 
 private struct MobileGhosttyCommandCandidate {
-    let action: GhosttyAction
+    let semantic: MobileGhosttyCommandSemantic
     let label: String
     let shortcut: KeyboardShortcut
     let input: String
     let modifierFlags: UIKeyModifierFlags
 
     var id: String {
-        "\(action.rawValue)|\(input)|\(modifierFlags.rawValue)"
+        "\(semantic.idComponent)|\(input)|\(modifierFlags.rawValue)"
+    }
+}
+
+private extension MobileGhosttyCommandSemantic {
+    var idComponent: String {
+        switch self {
+        case let .ghostty(action):
+            return action.rawValue
+        case let .navigateWorktree(forward):
+            return forward ? "next_worktree" : "previous_worktree"
+        }
     }
 }
 
@@ -55,7 +71,7 @@ struct MobileGhosttyCommandButtons: View {
             if let context {
                 ForEach(Self.renderableCommands(for: context), id: \.id) { command in
                     Button(command.label) {
-                        context.perform(command.action)
+                        context.perform(command.semantic)
                     }
                     .keyboardShortcut(command.shortcut)
                 }
@@ -69,7 +85,7 @@ struct MobileGhosttyCommandButtons: View {
         commandCandidates(for: context).map { candidate in
             return MobileGhosttyCommandDescriptor(
                 id: candidate.id,
-                action: candidate.action,
+                semantic: candidate.semantic,
                 label: candidate.label,
                 shortcut: candidate.shortcut,
                 input: candidate.input,
@@ -87,7 +103,7 @@ struct MobileGhosttyCommandButtons: View {
                 title: candidate.label,
                 input: candidate.input,
                 modifierFlags: candidate.modifierFlags,
-                perform: { context.perform(candidate.action) }
+                perform: { context.perform(candidate.semantic) }
             )
         }
     }
@@ -95,59 +111,91 @@ struct MobileGhosttyCommandButtons: View {
     private static func commandCandidates(
         for context: MobileGhosttyCommandContext
     ) -> [MobileGhosttyCommandCandidate] {
-        guard context.keybindingSet.source != .loading else { return [] }
+        let fixedCandidates = [
+            commandCandidate(
+                semantic: .navigateWorktree(forward: true),
+                label: "Next Worktree",
+                chord: GrafttyNavigationShortcuts.nextWorktree,
+                source: .fixedWorktree
+            ),
+            commandCandidate(
+                semantic: .navigateWorktree(forward: false),
+                label: "Previous Worktree",
+                chord: GrafttyNavigationShortcuts.previousWorktree,
+                source: .fixedWorktree
+            ),
+            commandCandidate(
+                semantic: .ghostty(.nextTab),
+                label: "Next Pane",
+                chord: GrafttyNavigationShortcuts.nextPane,
+                source: .fixedPane
+            ),
+            commandCandidate(
+                semantic: .ghostty(.previousTab),
+                label: "Previous Pane",
+                chord: GrafttyNavigationShortcuts.previousPane,
+                source: .fixedPane
+            ),
+        ].compactMap { $0 }
 
-        let enabledEntries: [GhosttyCommandRegistry.Entry] =
-            GhosttyCommandRegistry.iPadSupportedActions.compactMap { action in
-                guard context.isEnabled(action),
-                      let entry = GhosttyCommandRegistry[action],
+        let hostCandidates: [GrafttyNavigationShortcuts.SourcedCandidate<MobileGhosttyCommandCandidate>]
+        if context.keybindingSet.source == .loading {
+            hostCandidates = []
+        } else {
+            hostCandidates = GhosttyCommandRegistry.iPadSupportedActions.compactMap { action in
+                guard let entry = GhosttyCommandRegistry[action],
                       entry.isSupportedOniPad,
-                      entry.kind != .unsupported else {
+                      entry.kind != .unsupported,
+                      isReservableHostAction(action, context: context),
+                      let chord = context.keybindingSet.bridge[action] else {
                     return nil
                 }
-                return entry
+                return commandCandidate(
+                    semantic: .ghostty(action),
+                    label: entry.label,
+                    chord: chord,
+                    source: .host
+                )
             }
-
-        let primaryCandidates: [MobileGhosttyCommandCandidate] =
-            enabledEntries.compactMap { entry in
-                guard let chord = context.keybindingSet.bridge[entry.action] else { return nil }
-                return commandCandidate(entry: entry, chord: chord)
-            }
-        let aliasCandidates: [MobileGhosttyCommandCandidate]
-        if context.keybindingSet.source == .bundledFallback {
-            aliasCandidates = enabledEntries.flatMap { entry in
-                GhosttyDefaultKeybinds.aliases[entry.action, default: []].compactMap { chord in
-                    commandCandidate(entry: entry, chord: chord)
-                }
-            }
-        } else {
-            aliasCandidates = []
         }
 
-        var seenChords: Set<MobileGhosttyCommandChord> = []
-        return (primaryCandidates + aliasCandidates).filter { candidate in
-            seenChords.insert(MobileGhosttyCommandChord(
-                input: candidate.input,
-                modifierRawValue: candidate.modifierFlags.rawValue
-            )).inserted
-        }
+        let sourced = fixedCandidates + hostCandidates
+        return GrafttyNavigationShortcuts.collisionWinners(
+            from: sourced,
+            identifiedBy: { candidate in
+                MobileGhosttyCommandChord(
+                    input: candidate.input,
+                    modifierRawValue: candidate.modifierFlags.rawValue
+                )
+            }
+        ).map(\.value)
+    }
+
+    private static func isReservableHostAction(
+        _ action: GhosttyAction,
+        context: MobileGhosttyCommandContext
+    ) -> Bool {
+        action == .nextTab || action == .previousTab || context.isEnabled(action)
     }
 
     private static func commandCandidate(
-        entry: GhosttyCommandRegistry.Entry,
-        chord: ShortcutChord
-    ) -> MobileGhosttyCommandCandidate? {
+        semantic: MobileGhosttyCommandSemantic,
+        label: String,
+        chord: ShortcutChord,
+        source: GrafttyNavigationShortcuts.CandidateSource
+    ) -> GrafttyNavigationShortcuts.SourcedCandidate<MobileGhosttyCommandCandidate>? {
         guard let shortcut = KeyboardShortcutFromChord.shortcut(from: chord),
               let input = UIKeyCommandInputFromChord.input(from: chord) else {
             return nil
         }
-        return MobileGhosttyCommandCandidate(
-            action: entry.action,
-            label: entry.label,
+        let candidate = MobileGhosttyCommandCandidate(
+            semantic: semantic,
+            label: label,
             shortcut: shortcut,
             input: input,
             modifierFlags: UIKeyModifierFlags(chord.modifiers).normalizedAppCommandModifiers
         )
+        return GrafttyNavigationShortcuts.SourcedCandidate(source: source, value: candidate)
     }
 }
 

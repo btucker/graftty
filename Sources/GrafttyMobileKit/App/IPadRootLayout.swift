@@ -212,10 +212,6 @@ public struct IPadRootLayout: View {
         return [.right, .down, .left, .up]
     }
 
-    public static func canNavigateWorktreesFromCommand(in list: [WorktreePanes]) -> Bool {
-        IPadWorktreeNavigation.canNavigate(in: list)
-    }
-
     public static func commandKind(for action: GhosttyAction) -> GhosttyCommandKind? {
         guard GhosttyCommandRegistry.iPadSupportedActions.contains(action),
               let entry = GhosttyCommandRegistry[action],
@@ -259,13 +255,22 @@ public struct IPadRootLayout: View {
     private var ghosttyCommandContext: MobileGhosttyCommandContext {
         MobileGhosttyCommandContext(
             keybindingSet: keybindingSet,
-            perform: { action in
-                performGhosttyCommand(action)
+            perform: { semantic in
+                performMobileCommand(semantic)
             },
             isEnabled: { action in
                 isGhosttyCommandEnabled(action)
             }
         )
+    }
+
+    private func performMobileCommand(_ semantic: MobileGhosttyCommandSemantic) {
+        switch semantic {
+        case let .ghostty(action):
+            performGhosttyCommand(action)
+        case let .navigateWorktree(forward):
+            navigateWorktree(forward: forward)
+        }
     }
 
     private var selectedWorktreeLayout: PaneLayoutNode? {
@@ -284,8 +289,6 @@ public struct IPadRootLayout: View {
             focusPane(Self.paneLayoutDirection(for: direction))
         case let .focusPaneByOrder(forward):
             focusPaneInOrder(forward: forward)
-        case let .navigateWorktree(forward):
-            navigateWorktree(forward: forward)
         case .unsupported:
             break
         }
@@ -316,8 +319,6 @@ public struct IPadRootLayout: View {
                 from: pane,
                 forward: forward
             ) != nil
-        case .navigateWorktree:
-            return Self.canNavigateWorktreesFromCommand(in: appState.latestWorktrees)
         case .unsupported:
             return false
         }

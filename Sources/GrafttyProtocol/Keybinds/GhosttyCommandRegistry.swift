@@ -5,7 +5,6 @@ public enum GhosttyCommandKind: Sendable, Hashable {
     case closePane
     case focusPane(GhosttyPaneFocusDirection)
     case focusPaneByOrder(forward: Bool)
-    case navigateWorktree(forward: Bool)
     case unsupported
 }
 
@@ -58,8 +57,8 @@ public struct GhosttyCommandRegistry: Sendable {
         .init(action: .gotoSplitDown, label: "Focus Pane Down", kind: .focusPane(.down), isSupportedOnMac: true, isSupportedOniPad: true),
         .init(action: .gotoSplitPrevious, label: "Previous Pane", kind: .focusPaneByOrder(forward: false), isSupportedOnMac: true, isSupportedOniPad: true),
         .init(action: .gotoSplitNext, label: "Next Pane", kind: .focusPaneByOrder(forward: true), isSupportedOnMac: true, isSupportedOniPad: true),
-        .init(action: .nextTab, label: "Next Worktree", kind: .navigateWorktree(forward: true), isSupportedOnMac: true, isSupportedOniPad: true),
-        .init(action: .previousTab, label: "Previous Worktree", kind: .navigateWorktree(forward: false), isSupportedOnMac: true, isSupportedOniPad: true),
+        .init(action: .nextTab, label: "Next Pane", kind: .focusPaneByOrder(forward: true), isSupportedOnMac: true, isSupportedOniPad: true),
+        .init(action: .previousTab, label: "Previous Pane", kind: .focusPaneByOrder(forward: false), isSupportedOnMac: true, isSupportedOniPad: true),
         .init(action: .toggleSplitZoom, label: "Zoom Split", kind: .unsupported, isSupportedOnMac: true, isSupportedOniPad: false),
         .init(action: .equalizeSplits, label: "Equalize Splits", kind: .unsupported, isSupportedOnMac: true, isSupportedOniPad: false),
         .init(action: .reloadConfig, label: "Reload Ghostty Config", kind: .unsupported, isSupportedOnMac: true, isSupportedOniPad: false),
@@ -100,9 +99,6 @@ public struct GhosttyCommandRegistry: Sendable {
         .gotoSplitDown,
         .gotoSplitPrevious,
         .gotoSplitNext,
-    ])
-
-    public static let macWorktreeNavigationActions: [Entry] = entries(for: [
         .nextTab,
         .previousTab,
     ])

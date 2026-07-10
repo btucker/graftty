@@ -542,16 +542,26 @@ struct GrafttyApp: App {
 
                 Divider()
 
+                ForEach(NavigationCommandShortcutPolicy.fixedPaneCommands, id: \.label) { command in
+                    if let shortcut = KeyboardShortcutFromChord.shortcut(from: command.chord) {
+                        Button(command.label) {
+                            handleNavigateTreeOrder(forward: command.forward)
+                        }
+                        .keyboardShortcut(shortcut)
+                    } else {
+                        Button(command.label) {
+                            handleNavigateTreeOrder(forward: command.forward)
+                        }
+                    }
+                }
+
                 ForEach(GhosttyCommandRegistry.macPaneFocusActions, id: \.action) { command in
                     bridgedButton(command) { handleGhosttyCommand(command) }
                 }
 
                 Divider()
 
-                WorktreeNavCommandButtons(
-                    commands: GhosttyCommandRegistry.macWorktreeNavigationActions,
-                    shortcutsByAction: shortcutsByAction(for: GhosttyCommandRegistry.macWorktreeNavigationActions)
-                )
+                WorktreeNavCommandButtons()
 
                 Divider()
 
@@ -3143,10 +3153,9 @@ struct GrafttyApp: App {
     /// DFS order regardless of the spatial layout — that's what the menu
     /// items promise. Kept separate from the spatial `navigatePane` so
     /// TERM-7.3 (arrow-key spatial nav) doesn't silently change the
-    /// semantics of Cmd+[ / Cmd+] on users who rely on the plain
-    /// round-robin sequence.
+    /// round-robin semantics shared by fixed and host tab-action chords.
     @MainActor
-    fileprivate static func navigatePaneInTreeOrder(
+    static func navigatePaneInTreeOrder(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         from terminalID: PaneSlotID,
@@ -3419,8 +3428,6 @@ struct GrafttyApp: App {
             handleNavigate(navigationDirection(for: direction))
         case let .focusPaneByOrder(forward):
             handleNavigateTreeOrder(forward: forward)
-        case .navigateWorktree:
-            break
         case .unsupported:
             handleUnsupportedGhosttyAction(command.action)
         }
@@ -3538,17 +3545,11 @@ struct GrafttyApp: App {
     /// the main-actor-isolated `terminalManager.keybindBridge`.
     @MainActor
     private func shortcut(for action: GhosttyAction) -> KeyboardShortcut? {
-        guard let chord = terminalManager.keybindBridge[action] else { return nil }
-        return KeyboardShortcutFromChord.shortcut(from: chord)
-    }
-
-    @MainActor
-    private func shortcutsByAction(
-        for commands: [GhosttyCommandRegistry.Entry]
-    ) -> [GhosttyAction: KeyboardShortcut] {
-        commands.reduce(into: [:]) { shortcuts, command in
-            shortcuts[command.action] = shortcut(for: command.action)
+        guard let configured = terminalManager.keybindBridge[action],
+              let chord = NavigationCommandShortcutPolicy.hostChordIfNoncolliding(configured) else {
+            return nil
         }
+        return KeyboardShortcutFromChord.shortcut(from: chord)
     }
 
     /// Wraps a menu button so its keyboard shortcut is derived from the

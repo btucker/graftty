@@ -1,12 +1,49 @@
 import SwiftUI
+import GrafttyCommandUI
 import GrafttyProtocol
+
+struct NavigationCommandShortcutPolicy {
+    struct FixedCommand: Sendable, Hashable {
+        let label: String
+        let forward: Bool
+        let chord: ShortcutChord
+    }
+
+    static let fixedPaneCommands = [
+        FixedCommand(label: "Next Pane", forward: true, chord: GrafttyNavigationShortcuts.nextPane),
+        FixedCommand(label: "Previous Pane", forward: false, chord: GrafttyNavigationShortcuts.previousPane),
+    ]
+
+    static let fixedWorktreeCommands = [
+        FixedCommand(label: "Next Worktree", forward: true, chord: GrafttyNavigationShortcuts.nextWorktree),
+        FixedCommand(label: "Previous Worktree", forward: false, chord: GrafttyNavigationShortcuts.previousWorktree),
+    ]
+
+    static func hostChordIfNoncolliding(_ chord: ShortcutChord) -> ShortcutChord? {
+        guard KeyboardShortcutFromChord.shortcut(from: chord) != nil else { return nil }
+        let candidates = fixedWorktreeCommands.map {
+            GrafttyNavigationShortcuts.SourcedCandidate(source: .fixedWorktree, value: $0.chord)
+        } + fixedPaneCommands.map {
+            GrafttyNavigationShortcuts.SourcedCandidate(source: .fixedPane, value: $0.chord)
+        } + [
+            GrafttyNavigationShortcuts.SourcedCandidate(source: .host, value: chord),
+        ]
+        let winners = GrafttyNavigationShortcuts.collisionWinners(
+            from: candidates,
+            identifiedBy: { KeyboardShortcutFromChord.shortcut(from: $0) }
+        )
+        return winners.contains { $0.source == .host } ? chord : nil
+    }
+
+    static func perform(action: ((Bool) -> Void)?, forward: Bool) {
+        action?(forward)
+    }
+}
 
 /// Scene-scoped command exposed by `MainWindow` so the `.commands` block in
 /// `GrafttyApp` (which can't reach view-local state) can drive worktree
-/// navigation. The `Bool` is `forward` — `true` for `next_tab`
-/// (ctrl+tab), `false` for `previous_tab` (ctrl+shift+tab). A `nil` value
-/// means there is nothing to navigate (0/1 selectable worktree), so the
-/// menu items are disabled.
+/// navigation. The `Bool` is `forward`. A nil value is a valid no-op state;
+/// fixed worktree chords remain reserved so they cannot leak to the terminal.
 struct WorktreeNavActionKey: FocusedValueKey {
     typealias Value = (_ forward: Bool) -> Void
 }
@@ -20,35 +57,26 @@ extension FocusedValues {
 
 struct WorktreeNavCommandButtons: View {
     @FocusedValue(\.worktreeNavAction) private var action: ((Bool) -> Void)?
-    let commands: [GhosttyCommandRegistry.Entry]
-    let shortcutsByAction: [GhosttyAction: KeyboardShortcut]
 
     var body: some View {
         Group {
-            ForEach(commands, id: \.action) { command in
-                if case let .navigateWorktree(forward) = command.kind {
-                    button(
-                        command.label,
-                        forward: forward,
-                        shortcut: shortcutsByAction[command.action]
-                    )
-                }
+            ForEach(NavigationCommandShortcutPolicy.fixedWorktreeCommands, id: \.label) { command in
+                button(command)
             }
         }
     }
 
-    // `.disabled` is applied OUTERMOST (after `.keyboardShortcut`), matching
-    // `AddWorktreeCommandButton`, so a nil action both greys the menu item
-    // and releases its key equivalent rather than leaving a live no-op chord.
     @ViewBuilder
-    private func button(_ label: String, forward: Bool, shortcut: KeyboardShortcut?) -> some View {
-        Group {
-            if let shortcut {
-                Button(label) { action?(forward) }.keyboardShortcut(shortcut)
-            } else {
-                Button(label) { action?(forward) }
+    private func button(_ command: NavigationCommandShortcutPolicy.FixedCommand) -> some View {
+        if let shortcut = KeyboardShortcutFromChord.shortcut(from: command.chord) {
+            Button(command.label) {
+                NavigationCommandShortcutPolicy.perform(action: action, forward: command.forward)
+            }
+            .keyboardShortcut(shortcut)
+        } else {
+            Button(command.label) {
+                NavigationCommandShortcutPolicy.perform(action: action, forward: command.forward)
             }
         }
-        .disabled(action == nil)
     }
 }
