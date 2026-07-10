@@ -41,6 +41,15 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
     /// `"https://hostname.local:8800/v1/pairing"`).
     public let pairingURL: URL
 
+    /// The host's durable web base URL (wss/https over Tailscale),
+    /// carried in the QR so the mobile side can create a usable `Host`
+    /// record after pairing. Optional: `nil` when the host has no web
+    /// server running, and absent from payload JSON generated before
+    /// this field existed (synthesized Codable decodes it with
+    /// `decodeIfPresent` and omits the key when encoding `nil`, so the
+    /// wire shape stays version-1 compatible in both directions).
+    public let webBaseURL: URL?
+
     // MARK: Init
 
     public init(
@@ -51,7 +60,8 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
         hostPublicKeyFingerprint: RemoteIdentityFingerprint,
         nonce: RemotePairingNonce,
         expiry: Date,
-        pairingURL: URL
+        pairingURL: URL,
+        webBaseURL: URL? = nil
     ) {
         self.version = version
         self.hostDeviceID = hostDeviceID
@@ -61,6 +71,7 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
         self.nonce = nonce
         self.expiry = expiry
         self.pairingURL = pairingURL
+        self.webBaseURL = webBaseURL
     }
 
     // MARK: - QR encoding / decoding
@@ -121,8 +132,23 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
             throw DecodeError.unsupportedVersion(payload.version)
         }
 
-        guard payload.pairingURL.scheme == "https" else {
+        // Accept http or https. Plaintext HTTP is safe because the pairing
+        // exchange is authenticated by the QR-pinned fingerprint, single-use
+        // nonce, and verification code. Any other scheme (file:, javascript:,
+        // ftp:, nil, etc.) is rejected.
+        let scheme = payload.pairingURL.scheme?.lowercased()
+        guard scheme == "http" || scheme == "https" else {
             throw DecodeError.insecureURL
+        }
+
+        // `webBaseURL` gets the same scheme check as `pairingURL` when
+        // present: production only ever populates it via `WebURLComposer`
+        // (always https), so a non-http(s) value here can only come from a
+        // malicious or malformed QR payload.
+        if let webBaseURLScheme = payload.webBaseURL?.scheme?.lowercased() {
+            guard webBaseURLScheme == "http" || webBaseURLScheme == "https" else {
+                throw DecodeError.insecureURL
+            }
         }
 
         return payload
@@ -135,8 +161,9 @@ public struct PairingPayload: Codable, Sendable, Equatable, Hashable {
         case malformedBase64
         case malformedJSON
         case unsupportedVersion(Int)
-        /// The `pairingURL` in the QR payload uses a non-https scheme. Only
-        /// `https://` endpoints are accepted to prevent plaintext interception.
+        /// The `pairingURL` in the QR payload uses a scheme other than http or https.
+        /// Only `http://` and `https://` endpoints are accepted; other schemes (file:,
+        /// javascript:, ftp:, nil, etc.) are rejected.
         case insecureURL
     }
 }

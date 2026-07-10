@@ -130,6 +130,91 @@ struct TeamInboxTests {
         )
     }
 
+    @Test func compareAndAdvanceWorktreeWatermarkRefusesToRegress() throws {
+        let inbox = TeamInbox(
+            rootDirectory: try temporaryDirectory(),
+            idGenerator: IncrementingIDGenerator(prefix: "m").next,
+            now: { Date(timeIntervalSince1970: 4_000) }
+        )
+        let sender = TeamInboxEndpoint(member: "main", worktree: "/repo/acme", runtime: "claude")
+        let feature = TeamInboxEndpoint(member: "feature-auth", worktree: "/repo/acme/.worktrees/feature-auth", runtime: nil)
+
+        let older = try inbox.appendMessage(teamID: "acme", teamName: "acme-web", repoPath: "/repo/acme", from: sender, to: feature, priority: .normal, body: "older")
+        let newer = try inbox.appendMessage(teamID: "acme", teamName: "acme-web", repoPath: "/repo/acme", from: sender, to: feature, priority: .normal, body: "newer")
+        try inbox.writeWorktreeWatermark(
+            TeamInboxWorktreeWatermark(worktree: feature.worktree, lastDeliveredToAnySessionID: newer.id),
+            teamID: "acme"
+        )
+
+        let advanced = try inbox.compareAndAdvanceWorktreeWatermark(
+            teamID: "acme",
+            worktree: feature.worktree,
+            to: older.id
+        )
+
+        #expect(!advanced)
+        #expect(try inbox.worktreeWatermark(
+            teamID: "acme",
+            worktree: feature.worktree
+        )?.lastDeliveredToAnySessionID == newer.id)
+    }
+
+    @Test func writeWorktreeWatermarkRefusesToRegress() throws {
+        let inbox = TeamInbox(
+            rootDirectory: try temporaryDirectory(),
+            idGenerator: IncrementingIDGenerator(prefix: "m").next,
+            now: { Date(timeIntervalSince1970: 4_050) }
+        )
+        let sender = TeamInboxEndpoint(member: "main", worktree: "/repo/acme", runtime: "claude")
+        let feature = TeamInboxEndpoint(member: "feature-auth", worktree: "/repo/acme/.worktrees/feature-auth", runtime: nil)
+
+        let older = try inbox.appendMessage(teamID: "acme", teamName: "acme-web", repoPath: "/repo/acme", from: sender, to: feature, priority: .normal, body: "older")
+        let newer = try inbox.appendMessage(teamID: "acme", teamName: "acme-web", repoPath: "/repo/acme", from: sender, to: feature, priority: .normal, body: "newer")
+        try inbox.writeWorktreeWatermark(
+            TeamInboxWorktreeWatermark(worktree: feature.worktree, lastDeliveredToAnySessionID: newer.id),
+            teamID: "acme"
+        )
+
+        try inbox.writeWorktreeWatermark(
+            TeamInboxWorktreeWatermark(worktree: feature.worktree, lastDeliveredToAnySessionID: older.id),
+            teamID: "acme"
+        )
+
+        #expect(try inbox.worktreeWatermark(
+            teamID: "acme",
+            worktree: feature.worktree
+        )?.lastDeliveredToAnySessionID == newer.id)
+    }
+
+    @Test func compareAndAdvanceWorktreeWatermarkAdvancesWhenNewer() throws {
+        let inbox = TeamInbox(
+            rootDirectory: try temporaryDirectory(),
+            idGenerator: IncrementingIDGenerator(prefix: "m").next,
+            now: { Date(timeIntervalSince1970: 4_100) }
+        )
+        let sender = TeamInboxEndpoint(member: "main", worktree: "/repo/acme", runtime: "claude")
+        let feature = TeamInboxEndpoint(member: "feature-auth", worktree: "/repo/acme/.worktrees/feature-auth", runtime: nil)
+
+        let older = try inbox.appendMessage(teamID: "acme", teamName: "acme-web", repoPath: "/repo/acme", from: sender, to: feature, priority: .normal, body: "older")
+        let newer = try inbox.appendMessage(teamID: "acme", teamName: "acme-web", repoPath: "/repo/acme", from: sender, to: feature, priority: .normal, body: "newer")
+        try inbox.writeWorktreeWatermark(
+            TeamInboxWorktreeWatermark(worktree: feature.worktree, lastDeliveredToAnySessionID: older.id),
+            teamID: "acme"
+        )
+
+        let advanced = try inbox.compareAndAdvanceWorktreeWatermark(
+            teamID: "acme",
+            worktree: feature.worktree,
+            to: newer.id
+        )
+
+        #expect(advanced)
+        #expect(try inbox.worktreeWatermark(
+            teamID: "acme",
+            worktree: feature.worktree
+        )?.lastDeliveredToAnySessionID == newer.id)
+    }
+
     private func temporaryDirectory() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("GrafttyTeamInboxTests-\(UUID().uuidString)", isDirectory: true)

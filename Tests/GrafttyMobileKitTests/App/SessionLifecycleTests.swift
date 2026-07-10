@@ -54,6 +54,32 @@ struct LivePreviewIdleThresholdTests {
         #expect(preview.idleThreshold == SessionClient.previewIdleThreshold)
     }
 }
+
+@Suite("shouldLogFallbackLoudly — W3 review wave B2 /ws fallback log-level wiring")
+struct FallbackLoggingSeverityTests {
+
+    @Test("""
+Paired host (remoteDeviceID set) but the coordinator still returned nil — negotiation failed, a regression from the expected path — logs loudly.
+""")
+    func pairedHostWithNoConnectionIsLoud() {
+        #expect(shouldLogFallbackLoudly(hasCoordinator: true, hostIsPaired: true))
+    }
+
+    @Test("""
+Unpaired host with a coordinator present fast-nils by design — routine /ws usage, stays quiet.
+""")
+    func unpairedHostWithCoordinatorIsQuiet() {
+        #expect(!shouldLogFallbackLoudly(hasCoordinator: true, hostIsPaired: false))
+    }
+
+    @Test("""
+No coordinator at all (a context that bypassed RootView, e.g. a preview/test construction) stays quiet regardless of pairing — there's nothing to have negotiated with, and this path now logs a `.debug` line every fallback dial instead of being silent (the preview pool's previously-silent fallback path).
+""")
+    func noCoordinatorIsAlwaysQuiet() {
+        #expect(!shouldLogFallbackLoudly(hasCoordinator: false, hostIsPaired: true))
+        #expect(!shouldLogFallbackLoudly(hasCoordinator: false, hostIsPaired: false))
+    }
+}
 #endif
 
 @Suite

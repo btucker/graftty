@@ -63,11 +63,13 @@ struct TerminalContentView: View {
             return AnyView(
                 SurfaceViewWrapper(nsView: nsView)
                     .paneFocusDimming(fill: theme.unfocusedSplitFill, style: dimmingStyle)
-                    // Mirror the iOS "Take Control" affordance: when another
-                    // display client (iOS/web) owns this pane, the Mac is a
-                    // follower, so offer a button to reclaim ownership without
-                    // typing. Visibility tracks ownership changes reactively
-                    // via TerminalManager's store observer.
+                    // Mirror the iOS "Take Control" affordance (OWN-2.1):
+                    // offered when another display client (iOS/web) owns this
+                    // pane, and when the session is ownerless after a prior
+                    // takeover (the remote owner disconnected) — in both
+                    // states the Mac can reclaim without typing. Visibility
+                    // tracks ownership changes reactively via
+                    // TerminalManager's store observer.
                     .overlay(alignment: .top) {
                         if tm.canTakeDisplayControl(for: terminalID) {
                             takeControlButton {

@@ -16,10 +16,10 @@ final class SSHUserAuthCapabilityTests: XCTestCase {
     func testTrustedPeerWithCapAuthenticates() throws {
         let key = Curve25519.Signing.PrivateKey()
         let store = makeStore()
-        try store.add(makePeer(key: key, terminalControl: .allowed))
+        try store.add(SSHUserAuthTestSupport.makePeer(key: key, terminalControl: .allowed))
 
-        let outcome = try runUserAuth(key: key, store: store)
-        XCTAssertTrue(isSuccess(outcome), "expected .success, got \(outcome)")
+        let outcome = try SSHUserAuthTestSupport.runUserAuth(key: key, store: store)
+        XCTAssertTrue(SSHUserAuthTestSupport.isSuccess(outcome), "expected .success, got \(outcome)")
     }
 
     func testTrustedPeerWithCapRegistersActivePeer() throws {
@@ -42,10 +42,10 @@ final class SSHUserAuthCapabilityTests: XCTestCase {
     func testTrustedPeerWithoutCapRejected() throws {
         let key = Curve25519.Signing.PrivateKey()
         let store = makeStore()
-        try store.add(makePeer(key: key, terminalControl: .disabled))
+        try store.add(SSHUserAuthTestSupport.makePeer(key: key, terminalControl: .disabled))
 
-        let outcome = try runUserAuth(key: key, store: store)
-        XCTAssertTrue(isFailure(outcome), "expected .failure, got \(outcome)")
+        let outcome = try SSHUserAuthTestSupport.runUserAuth(key: key, store: store)
+        XCTAssertTrue(SSHUserAuthTestSupport.isFailure(outcome), "expected .failure, got \(outcome)")
     }
 
     func testTrustedPeerWithoutCapDoesNotRegisterActivePeer() throws {
@@ -67,8 +67,8 @@ final class SSHUserAuthCapabilityTests: XCTestCase {
         let store = makeStore()
         // No add — store is empty.
 
-        let outcome = try runUserAuth(key: key, store: store)
-        XCTAssertTrue(isFailure(outcome), "expected .failure, got \(outcome)")
+        let outcome = try SSHUserAuthTestSupport.runUserAuth(key: key, store: store)
+        XCTAssertTrue(SSHUserAuthTestSupport.isFailure(outcome), "expected .failure, got \(outcome)")
     }
 
     func testUnpairedKeyDoesNotRegisterActivePeer() throws {
@@ -86,14 +86,7 @@ final class SSHUserAuthCapabilityTests: XCTestCase {
     // MARK: - helpers
 
     private func makeStore() -> TrustedPeerStore {
-        TrustedPeerStore(directory: tempDir())
-    }
-
-    private func tempDir() -> URL {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("graftty-r5-userauth-\(UUID().uuidString)")
-        try! FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+        SSHUserAuthTestSupport.makeStore(prefix: "graftty-r5-userauth")
     }
 
     private func makePeer(

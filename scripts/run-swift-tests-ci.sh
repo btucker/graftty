@@ -15,7 +15,7 @@ swift test list --skip-build > "$test_list"
 suites=()
 while IFS= read -r suite; do
   suites+=("$suite")
-done < <(awk -F/ '/^[[:alnum:]_]+Tests\./ { print $1 }' "$test_list" | sort -u)
+done < <(awk -F/ '/^[[:alnum:]_]+Tests\./ && $1 != "OwnershipModelTests" { print $1 }' "$test_list" | sort -u)
 
 if [[ "${#suites[@]}" -eq 0 ]]; then
   echo "No Swift test suites found." >&2

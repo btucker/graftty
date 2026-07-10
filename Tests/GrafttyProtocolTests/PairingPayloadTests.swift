@@ -14,7 +14,8 @@ struct PairingPayloadTests {
 
     private func makePayload(
         version: Int = 1,
-        expiry: Date = Date(timeIntervalSince1970: 1_800_000_300)  // fixed whole-second date for deterministic round-trips
+        expiry: Date = Date(timeIntervalSince1970: 1_800_000_300),  // fixed whole-second date for deterministic round-trips
+        webBaseURL: URL? = nil
     ) -> PairingPayload {
         let pubKey = makePublicKey()
         let fingerprint = RemoteIdentityFingerprint(of: pubKey)
@@ -26,7 +27,8 @@ struct PairingPayloadTests {
             hostPublicKeyFingerprint: fingerprint,
             nonce: RemotePairingNonce(bytes: Data(repeating: 0xAB, count: 16)),
             expiry: expiry,
-            pairingURL: URL(string: "https://hostname.local:8800/v1/pairing")!
+            pairingURL: URL(string: "https://hostname.local:8800/v1/pairing")!,
+            webBaseURL: webBaseURL
         )
     }
 
@@ -111,13 +113,13 @@ struct PairingPayloadTests {
         }
     }
 
-    // MARK: - Fix 2: decodeQR must reject non-https URLs
+    // MARK: - Fix 2: decodeQR must accept http(s), reject others
 
-    @Test("decodeQR rejects http:// pairingURL with insecureURL error")
-    func decodeQRRejectsHttpURL() throws {
+    @Test("decodeQR accepts http:// pairingURL (plaintext LAN pairing is authenticated by QR-pinned fingerprint + verification code)")
+    func decodeQRAcceptsHttpURL() throws {
         let pubKey = makePublicKey()
         let fingerprint = RemoteIdentityFingerprint(of: pubKey)
-        let insecurePayload = PairingPayload(
+        let plainTextPayload = PairingPayload(
             version: 1,
             hostDeviceID: RemoteDeviceID(value: "test-host-id"),
             hostKind: .mac,
@@ -125,20 +127,103 @@ struct PairingPayloadTests {
             hostPublicKeyFingerprint: fingerprint,
             nonce: RemotePairingNonce(bytes: Data(repeating: 0xAB, count: 16)),
             expiry: Date(timeIntervalSince1970: 1_800_000_300),
-            pairingURL: URL(string: "http://attacker.local:8800/v1/pairing")!
+            pairingURL: URL(string: "http://hostname.local:8800/v1/pairing")!
         )
-        let qr = try insecurePayload.qrEncoded()
-        #expect(throws: PairingPayload.DecodeError.insecureURL) {
-            try PairingPayload.decodeQR(qr)
-        }
+        let qr = try plainTextPayload.qrEncoded()
+        let decoded = try PairingPayload.decodeQR(qr)
+        #expect(decoded == plainTextPayload)
     }
 
-    @Test("decodeQR accepts https:// pairingURL (regression: scheme check must not break happy path)")
+    @Test("decodeQR accepts https:// pairingURL")
     func decodeQRAcceptsHttpsURL() throws {
         let payload = makePayload()  // makePayload already uses https://
         let qr = try payload.qrEncoded()
         let decoded = try PairingPayload.decodeQR(qr)
         #expect(decoded == payload)
+    }
+
+    @Test("decodeQR rejects non-http(s) schemes like ftp:// with insecureURL error")
+    func decodeQRRejectsNonHttpScheme() throws {
+        let pubKey = makePublicKey()
+        let fingerprint = RemoteIdentityFingerprint(of: pubKey)
+        let ftpPayload = PairingPayload(
+            version: 1,
+            hostDeviceID: RemoteDeviceID(value: "test-host-id"),
+            hostKind: .mac,
+            hostDisplayName: "Test Mac",
+            hostPublicKeyFingerprint: fingerprint,
+            nonce: RemotePairingNonce(bytes: Data(repeating: 0xAB, count: 16)),
+            expiry: Date(timeIntervalSince1970: 1_800_000_300),
+            pairingURL: URL(string: "ftp://attacker.local:21/v1/pairing")!
+        )
+        let qr = try ftpPayload.qrEncoded()
+        #expect(throws: PairingPayload.DecodeError.insecureURL) {
+            try PairingPayload.decodeQR(qr)
+        }
+    }
+
+    // MARK: - webBaseURL
+
+    @Test("QR encode → decodeQR preserves webBaseURL")
+    func roundTripPreservesWebBaseURL() throws {
+        // https, not wss: decodeQR now validates webBaseURL's scheme the
+        // same way it validates pairingURL's, and production
+        // (`WebURLComposer.baseURL`) only ever emits https.
+        let webBaseURL = URL(string: "https://mac.tail1234.ts.net:8799")!
+        let original = makePayload(webBaseURL: webBaseURL)
+        let qr = try original.qrEncoded()
+        let decoded = try PairingPayload.decodeQR(qr)
+        #expect(decoded == original)
+        #expect(decoded.webBaseURL == webBaseURL)
+    }
+
+    @Test("decodeQR rejects a wss:// webBaseURL with insecureURL error")
+    func decodeQRRejectsWssWebBaseURL() throws {
+        let webBaseURL = URL(string: "wss://mac.tail1234.ts.net:8799")!
+        let payload = makePayload(webBaseURL: webBaseURL)
+        let qr = try payload.qrEncoded()
+        #expect(throws: PairingPayload.DecodeError.insecureURL) {
+            try PairingPayload.decodeQR(qr)
+        }
+    }
+
+    @Test("decodeQR rejects a file:// webBaseURL with insecureURL error")
+    func decodeQRRejectsFileWebBaseURL() throws {
+        let webBaseURL = URL(string: "file:///etc/passwd")!
+        let payload = makePayload(webBaseURL: webBaseURL)
+        let qr = try payload.qrEncoded()
+        #expect(throws: PairingPayload.DecodeError.insecureURL) {
+            try PairingPayload.decodeQR(qr)
+        }
+    }
+
+    @Test("decodeQR rejects a javascript:// webBaseURL with insecureURL error")
+    func decodeQRRejectsJavascriptWebBaseURL() throws {
+        let webBaseURL = URL(string: "javascript://alert(1)")!
+        let payload = makePayload(webBaseURL: webBaseURL)
+        let qr = try payload.qrEncoded()
+        #expect(throws: PairingPayload.DecodeError.insecureURL) {
+            try PairingPayload.decodeQR(qr)
+        }
+    }
+
+    @Test("legacy payload JSON without a webBaseURL key decodes with webBaseURL == nil")
+    func legacyPayloadWithoutWebBaseURLDecodes() throws {
+        // A payload encoded with webBaseURL == nil omits the key entirely,
+        // producing byte-identical JSON to a payload generated before the
+        // field existed — so this exercises the true legacy shape.
+        let qr = try makePayload().qrEncoded()
+        let b64url = String(qr.dropFirst("GRAFTTY1:".count))
+        var b64 = b64url
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        b64 += String(repeating: "=", count: (4 - b64.count % 4) % 4)
+        let json = String(data: Data(base64Encoded: b64)!, encoding: .utf8)!
+        #expect(!json.contains("webBaseURL"), "nil webBaseURL must be omitted so old payload JSON stays representable")
+
+        let decoded = try PairingPayload.decodeQR(qr)
+        #expect(decoded.webBaseURL == nil)
+        #expect(decoded == makePayload())
     }
 
     // MARK: - Codable (JSON)

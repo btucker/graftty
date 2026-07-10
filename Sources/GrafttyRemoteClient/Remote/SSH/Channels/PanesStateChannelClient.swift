@@ -85,27 +85,28 @@ public final class PanesStateChannelClient: @unchecked Sendable {
     /// Opens the SSH child channel. Resolves when the subsystem request has
     /// been written to the wire (wantReply: false — no server acknowledgement).
     public func open() async throws {
-        let promise = parentChannel.eventLoop.makePromise(of: Channel.self)
-        parentHandler.createChannel(promise, channelType: .session) { [weak self] child, _ in
-            guard let self else {
-                return child.eventLoop.makeFailedFuture(ClientError.channelClosed)
-            }
-            do {
-                // SSHChannelDataCodec bridges SSHChannelData ↔ ByteBuffer
-                // so the downstream framing handlers operate on raw bytes.
-                try child.pipeline.syncOperations.addHandler(SSHChannelDataCodec())
-                try child.pipeline.syncOperations.addHandler(LengthPrefixedFraming.makeFrameDecoder())
-                try child.pipeline.syncOperations.addHandler(LengthPrefixedFraming.makeFramePrepender())
-                try child.pipeline.syncOperations.addHandler(
-                    InboundSnapshotRelay(owner: self)
-                )
-                return child.eventLoop.makeSucceededVoidFuture()
-            } catch {
-                return child.eventLoop.makeFailedFuture(error)
-            }
-        }
         do {
-            let child = try await promise.futureResult.get()
+            let child = try await openChildChannel(
+                parentChannel: parentChannel,
+                parentHandler: parentHandler
+            ) { [weak self] child, _ in
+                guard let self else {
+                    return child.eventLoop.makeFailedFuture(ClientError.channelClosed)
+                }
+                do {
+                    // SSHChannelDataCodec bridges SSHChannelData ↔ ByteBuffer
+                    // so the downstream framing handlers operate on raw bytes.
+                    try child.pipeline.syncOperations.addHandler(SSHChannelDataCodec())
+                    try child.pipeline.syncOperations.addHandler(LengthPrefixedFraming.makeFrameDecoder())
+                    try child.pipeline.syncOperations.addHandler(LengthPrefixedFraming.makeFramePrepender())
+                    try child.pipeline.syncOperations.addHandler(
+                        InboundSnapshotRelay(owner: self)
+                    )
+                    return child.eventLoop.makeSucceededVoidFuture()
+                } catch {
+                    return child.eventLoop.makeFailedFuture(error)
+                }
+            }
             lock.withLock { self.childChannel = child }
             // Register the close handler IMMEDIATELY — before the subsystem
             // request — so that a partial-open failure still propagates

@@ -92,7 +92,7 @@ struct PrTodo {
     // PR-7.1 (per-state cadence tiers) and PR-7.2 (per-state
     // exponential backoff) were superseded by PR-8.19 — per-repo
     // batched fetching collapses the cadence model to a single
-    // 5-second base with a 60-second backoff cap.
+    // 60-second base with a 300-second backoff cap (GraphQL quota).
 
     @Test("""
 @spec PR-7.3: The application shall not poll worktrees whose branch is a git sentinel value (`(detached)`, `(bare)`, `(unknown)`, any other parenthesized value, or empty / whitespace-only), since none of these correspond to a real ref that a hosting provider can associate with a PR.

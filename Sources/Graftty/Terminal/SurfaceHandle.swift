@@ -2,6 +2,7 @@ import AppKit
 import GhosttyKit
 import GrafttyKit
 import GrafttyProtocol
+import IOKit.hidsystem
 import os
 
 /// Wraps a single `ghostty_surface_t` and its backing `NSView`.
@@ -160,7 +161,6 @@ final class SurfaceHandle {
         zmxSpawnConfiguration: ZmxSpawnConfiguration? = nil,
         extraInitialInput: String? = nil,
         terminalManager: TerminalManager? = nil,
-        inputActivityObserver: PaneInputActivityObserver? = nil,
         remoteAttachmentRegistry: RemoteAttachmentRegistry? = nil,
         displayOwnershipStore: SessionDisplayOwnershipStore? = nil,
         displayClientID: DisplayClientID? = nil,
@@ -219,7 +219,6 @@ final class SurfaceHandle {
         self.view = surfaceView
         surfaceView.terminalID = terminalID
         surfaceView.terminalManager = terminalManager
-        surfaceView.inputActivityObserver = inputActivityObserver
         if let backend {
             surfaceView.hostManagedInputWriter = { [weak backend] data in
                 try? backend?.write(data)
@@ -386,6 +385,11 @@ final class SurfaceHandle {
             surfaceView.takeDisplayControlNotifier = { [weak self] in
                 self?.takeDisplayControl() ?? false
             }
+            // OWN-2.2: consulted by the keyDown reclaim — see
+            // `reclaimDisplayControlForUserInputIfNeeded` for the rationale.
+            surfaceView.canTakeDisplayControlNotifier = { [weak self] in
+                self?.canTakeDisplayControl() ?? false
+            }
             // TERM-11.10: spawn-time injection rides along with the
             // deferred start.
             pendingZmxStart = PendingZmxStart(extraInitialInput: extraInitialInput)
@@ -535,18 +539,48 @@ final class SurfaceHandle {
         zmxBackend?.takeControl() ?? false
     }
 
-    /// True when this pane's zmx session is currently owned by a *different*
-    /// display client (e.g. iOS or web took control), so the Mac should offer
-    /// a "Take Control" affordance to reclaim it. False for direct-shell panes,
-    /// while this Mac pane already owns the session, or while it is ownerless.
-    /// Mac startup performs an explicit ownerless/current claim before this UI
-    /// path is relevant.
+    /// @spec OWN-2.1
+    /// True when this pane's zmx session is owned by a *different* display
+    /// client (e.g. iOS or web took control) OR is ownerless after a prior
+    /// ownership change (epoch > 0 — e.g. the remote owner disconnected and
+    /// its detach cleared the owner without anyone reclaiming). In both
+    /// states the Mac should offer a "Take Control" affordance. False for
+    /// direct-shell panes, while this Mac pane already owns the session, and
+    /// for a session with no ownership history (pre-attach; the backend's
+    /// start() claim resolves that state within the first layout). A pane
+    /// attaching to a session that already carries history (epoch > 0, e.g.
+    /// after an app relaunch onto a previously-remote-owned session) may
+    /// report true for the sub-layout moment before start()'s ownerless
+    /// claim runs — accepted: takeControl() fails closed until the backend
+    /// is running, and the claim flips this false immediately after.
     func canTakeDisplayControl() -> Bool {
         guard let displayOwnershipStore,
               let displayClientID,
               let zmxSessionName else { return false }
         let snapshot = displayOwnershipStore.snapshot(sessionName: zmxSessionName)
-        return snapshot.ownerClientID != nil && snapshot.ownerClientID != displayClientID
+        guard snapshot.ownerClientID != displayClientID else { return false }
+        return !snapshot.isOwnerless || snapshot.epoch > 0
+    }
+
+    /// @spec OWN-2.3
+    /// Reclaim display ownership at paste delivery. Every Mac paste path
+    /// (Cmd+V and the context menu's Paste both trigger libghostty's
+    /// `paste_from_clipboard` binding) completes through the bridge's
+    /// `read_clipboard_cb`, which hops to the main queue before calling
+    /// `ghostty_surface_complete_clipboard_request` — so the paste bytes
+    /// are emitted after the triggering event, outside any user-input
+    /// scope, and neither the OWN-2.2 key-event reclaim (Cmd chords are
+    /// excluded) nor the emitted-bytes classification can claim for them.
+    /// A paste is always an intentional input event, so it may claim.
+    ///
+    /// Known limit: under the non-default `clipboard-read = allow` config,
+    /// OSC 52 clipboard reads reach the same callback and would also
+    /// reclaim — accepted, since that config is an explicit opt-in to
+    /// program-initiated clipboard access (the default `ask` drops OSC 52
+    /// before the callback).
+    func reclaimDisplayControlForPasteIfNeeded() {
+        guard canTakeDisplayControl() else { return }
+        _ = takeDisplayControl()
     }
 
     var needsConfirmQuit: Bool {
@@ -583,16 +617,15 @@ final class SurfaceHandle {
     /// Synthesize a Return keypress (press + release) via
     /// `ghostty_surface_key`, mirroring what `SurfaceNSView.keyDown`
     /// does for a real Enter key event but constructed without an
-    /// `NSEvent`. Used by the agent-teams idle-delivery nudge and the
-    /// send-pane IPC to commit a typed-in message: `typeText` alone
-    /// leaves a `\r` byte in the PTY that TUI receivers (Codex /
-    /// Claude in raw mode) don't treat as a submit trigger.
+    /// `NSEvent`. Used by send-pane IPC to commit typed-in messages:
+    /// `typeText` alone leaves a `\r` byte in the PTY that TUI receivers
+    /// (Codex / Claude in raw mode) don't treat as a submit trigger.
     ///
     /// - Parameter claimEngagement: When `true` (default), the bytes
     ///   libghostty emits for the synthesized key are classified like a
-    ///   human Return keypress. Automation paths (split-with-command,
-    ///   send-pane IPC, agent nudges) pass `false`; display ownership
-    ///   still decides whether zmx receives the bytes.
+    ///   human Return keypress. Automation paths such as split-with-command
+    ///   and send-pane IPC pass `false`; display ownership still decides
+    ///   whether zmx receives the bytes.
     func pressReturn(claimEngagement: Bool = true) {
         guard let zmxBackend else {
             performPressReturn()
@@ -695,11 +728,6 @@ final class SurfaceNSView: NSView {
     /// libghostty owns authoritative state; this is our UI shadow.
     var isReadonly: Bool = false
 
-    /// Passive keystroke tap wired by the app at startup. Set by
-    /// `SurfaceHandle` after construction from the shared
-    /// `PaneInputActivityRegistry`. Nil-safe — missing observer is a no-op.
-    var inputActivityObserver: PaneInputActivityObserver?
-
     /// Direct PTY-input path for host-managed backends. Ghostty's own
     /// host-managed AppKit frontend bypasses `ghostty_surface_key` for
     /// hardware control keys (Backspace, arrows, etc.) and writes their byte
@@ -718,6 +746,9 @@ final class SurfaceNSView: NSView {
     var hostManagedLayoutNotifier: (() -> Void)?
     var visibleForInputNotifier: (() -> Void)?
     var takeDisplayControlNotifier: (() -> Bool)?
+    /// Whether this pane's session can currently be reclaimed for the Mac —
+    /// see `reclaimDisplayControlForUserInputIfNeeded` (OWN-2.2).
+    var canTakeDisplayControlNotifier: (() -> Bool)?
 
     /// Cursor to display when the mouse is over this surface. libghostty
     /// drives this via `GHOSTTY_ACTION_MOUSE_SHAPE` (e.g., pointer when
@@ -764,6 +795,7 @@ final class SurfaceNSView: NSView {
         }
         let options: NSTrackingArea.Options = [
             .activeInKeyWindow,
+            .mouseEnteredAndExited,
             .mouseMoved,
             .inVisibleRect,
             .cursorUpdate,
@@ -890,6 +922,31 @@ final class SurfaceNSView: NSView {
         sendMousePos(event, to: surface)
     }
 
+    /// Reset libghostty's cached cursor position on re-entry — mouseExited
+    /// set it to the (-1,-1) out-of-viewport sentinel, and mouse-report /
+    /// link logic needs an in-viewport position again (upstream parity).
+    override func mouseEntered(with event: NSEvent) {
+        guard let surface else { return }
+        sendMousePos(event, to: surface)
+    }
+
+    /// Report an out-of-viewport position so libghostty clears link hover
+    /// state (ported from Ghostty upstream). Without this, a modifier
+    /// press (`flagsChanged`, KEY-1.4) refreshes hover at the stale last
+    /// in-pane position while the pointer is actually elsewhere.
+    override func mouseExited(with event: NSEvent) {
+        guard let surface else { return }
+        // Mid-drag we still receive mouseDragged outside the viewport, so
+        // don't clear the position while a button is held (upstream parity).
+        if NSEvent.pressedMouseButtons != 0 { return }
+        ghostty_surface_mouse_pos(
+            surface,
+            -1,
+            -1,
+            Self.ghosttyMods(from: event.modifierFlags)
+        )
+    }
+
     override func otherMouseDown(with event: NSEvent) {
         guard let surface else { return }
         _ = ghostty_surface_mouse_button(
@@ -972,10 +1029,8 @@ final class SurfaceNSView: NSView {
             super.keyDown(with: event)
             return
         }
-        if let paneID = terminalID?.id {
-            inputActivityObserver?.recordKeystroke(paneID: paneID)
-        }
         markVisibleForInput()
+        reclaimDisplayControlForUserInputIfNeeded(event)
         if let directInput = Self.hostManagedDirectInput(
             forKeyCode: event.keyCode,
             modifierFlags: event.modifierFlags
@@ -1001,6 +1056,34 @@ final class SurfaceNSView: NSView {
         }
     }
 
+    /// @spec OWN-2.2
+    /// Reclaim display ownership on a real (non-command) key press when the
+    /// pane is a follower or its session is ownerless. This runs on the main
+    /// thread inside the key event, BEFORE the key is dispatched, so the
+    /// resulting bytes are written as the owner. It cannot be left to the
+    /// emitted-bytes `claimEngagement` path: libghostty's host-managed
+    /// backend emits key bytes on its IO thread after `ghostty_surface_key`
+    /// returns (resize-trace shows the write callbacks on a non-main
+    /// thread), so the TERM-11.8 user-input scope has already exited and
+    /// those bytes always arrive classified as non-engaging.
+    ///
+    /// Key repeats are skipped: a repeat can never be the ownership-
+    /// transition press (its initiating non-repeat keyDown already
+    /// reclaimed), so gating on it keeps the per-event store snapshot off
+    /// the highest-frequency key events.
+    ///
+    /// Command-modified chords (Cmd+C copy, Cmd+V paste, …) are excluded:
+    /// like KEY-1.4's modifier-only transitions, an app-level shortcut must
+    /// not steal display ownership from a remote owner. Paste reclaims at
+    /// clipboard delivery instead — see
+    /// `reclaimDisplayControlForPasteIfNeeded` (OWN-2.3).
+    func reclaimDisplayControlForUserInputIfNeeded(_ event: NSEvent) {
+        guard !event.isARepeat,
+              !event.modifierFlags.contains(.command),
+              canTakeDisplayControlNotifier?() == true else { return }
+        _ = takeDisplayControlNotifier?()
+    }
+
     override func keyUp(with event: NSEvent) {
         guard surface != nil else {
             super.keyUp(with: event)
@@ -1010,6 +1093,74 @@ final class SurfaceNSView: NSView {
             return
         }
         _ = sendKeyEvent(event, action: GHOSTTY_ACTION_RELEASE)
+    }
+
+    /// KEY-1.4: forward modifier-only key transitions to libghostty.
+    ///
+    /// libghostty recomputes link hover state (`mouse.over_link`) only on
+    /// mouse movement or a modifier change delivered via
+    /// `ghostty_surface_key` — and its click handler opens a link only if
+    /// `over_link` is already true. Without this override, pressing ⌘ over
+    /// an already-hovered file path is invisible to libghostty (the click's
+    /// own mouse-pos event is deduped by cell), so cmd+click silently does
+    /// nothing unless the mouse crosses a cell boundary with ⌘ held.
+    /// Ported from Ghostty upstream `SurfaceView_AppKit.flagsChanged`.
+    override func flagsChanged(with event: NSEvent) {
+        guard surface != nil,
+              let action = Self.modifierKeyAction(
+                  keyCode: event.keyCode,
+                  modifierFlags: event.modifierFlags
+              )
+        else {
+            super.flagsChanged(with: event)
+            return
+        }
+        // claimEngagement: false — a bare modifier press is often the
+        // prelude to an app-level shortcut (⌘W, ⌘Tab) and must not steal
+        // zmx display ownership from a remote owner. Under kitty
+        // report-all-keys the emitted modifier-report bytes still reach
+        // owner panes; follower panes drop them until a real keystroke
+        // or click claims engagement.
+        _ = sendKeyEvent(event, action: action, claimEngagement: false)
+    }
+
+    /// Classify a `flagsChanged` event as a modifier press or release.
+    /// Returns nil for non-modifier keycodes.
+    ///
+    /// A set modifier bit alone doesn't mean "press": releasing right-⌘
+    /// while left-⌘ is still held keeps `.command` set. For right-side
+    /// keycodes, the device-side bits in `modifierFlags.rawValue` (IOKit
+    /// `NX_DEVICER*KEYMASK`) disambiguate which physical key changed;
+    /// left-side keycodes default to press, matching Ghostty upstream
+    /// (synthetic events from remapping/accessibility tools often lack
+    /// device-side bits, and press is the safe default for them).
+    static func modifierKeyAction(
+        keyCode: UInt16,
+        modifierFlags flags: NSEvent.ModifierFlags
+    ) -> ghostty_input_action_e? {
+        // Each modifier keycode's facts in one row: the flag reporting it
+        // active, plus — for right-side keys — the device bit separating
+        // "this side pressed" from "other side still held".
+        let mod: NSEvent.ModifierFlags
+        let rightSideMask: UInt?
+        switch keyCode {
+        case 0x39: (mod, rightSideMask) = (.capsLock, nil)
+        case 0x38: (mod, rightSideMask) = (.shift, nil)
+        case 0x3C: (mod, rightSideMask) = (.shift, UInt(NX_DEVICERSHIFTKEYMASK))
+        case 0x3B: (mod, rightSideMask) = (.control, nil)
+        case 0x3E: (mod, rightSideMask) = (.control, UInt(NX_DEVICERCTLKEYMASK))
+        case 0x3A: (mod, rightSideMask) = (.option, nil)
+        case 0x3D: (mod, rightSideMask) = (.option, UInt(NX_DEVICERALTKEYMASK))
+        case 0x37: (mod, rightSideMask) = (.command, nil)
+        case 0x36: (mod, rightSideMask) = (.command, UInt(NX_DEVICERCMDKEYMASK))
+        default: return nil
+        }
+
+        guard flags.contains(mod) else { return GHOSTTY_ACTION_RELEASE }
+        guard let rightSideMask else { return GHOSTTY_ACTION_PRESS }
+        return flags.rawValue & rightSideMask != 0
+            ? GHOSTTY_ACTION_PRESS
+            : GHOSTTY_ACTION_RELEASE
     }
 
     /// Build a `ghostty_input_key_s` from an NSEvent and dispatch it.
@@ -1031,8 +1182,17 @@ final class SurfaceNSView: NSView {
     ///
     /// `consumed_mods` heuristic: control and command never contribute
     /// to text translation; everything else (shift, option, capsLock) did.
+    ///
+    /// `claimEngagement`: when false, the dispatch skips the zmx backend's
+    /// user-input scope so any bytes libghostty emits cannot claim display
+    /// ownership (KEY-1.4 modifier-only transitions). Real keystrokes keep
+    /// the default `true` (TERM-11.8 classification).
     @discardableResult
-    private func sendKeyEvent(_ event: NSEvent, action: ghostty_input_action_e) -> Bool {
+    private func sendKeyEvent(
+        _ event: NSEvent,
+        action: ghostty_input_action_e,
+        claimEngagement: Bool = true
+    ) -> Bool {
         guard let surface else { return false }
 
         let flags = event.modifierFlags
@@ -1062,9 +1222,13 @@ final class SurfaceNSView: NSView {
         keyEvent.composing = false
 
         // TERM-11.8: dispatch inside the backend's user-input scope so
-        // the bytes libghostty emits for this key are classified as real
-        // user input. Synchronous: libghostty encodes and emits via the
-        // receive-buffer callback within ghostty_surface_key.
+        // bytes emitted during the dispatch are classified as real user
+        // input. NOTE: with the real libghostty the emission is queued to
+        // its IO thread and usually lands after this scope exits (the
+        // resize-trace shows write callbacks on a non-main thread), so the
+        // scope is a best-effort legacy annotation — it must not carry
+        // ownership decisions. Ownership reclaim happens at the key event
+        // itself (OWN-2.2) and at paste delivery (OWN-2.3).
         var handled = false
         let textForPTY = Self.ghosttyTextField(for: event)
         let dispatch: () -> Void
@@ -1079,7 +1243,7 @@ final class SurfaceNSView: NSView {
             keyEvent.text = nil
             dispatch = { handled = ghostty_surface_key(surface, keyEvent) }
         }
-        if let hostManagedUserInputScope {
+        if claimEngagement, let hostManagedUserInputScope {
             hostManagedUserInputScope(dispatch)
         } else {
             dispatch()
@@ -1092,6 +1256,10 @@ final class SurfaceNSView: NSView {
     /// events that should be encoded from keycode alone (control chars,
     /// arrow/function PUA range).
     private static func ghosttyTextField(for event: NSEvent) -> String? {
+        // `NSEvent.characters` throws an ObjC exception for non-key events
+        // (e.g. the flagsChanged events KEY-1.4 routes through here);
+        // modifier transitions carry no text anyway.
+        guard event.type == .keyDown || event.type == .keyUp else { return nil }
         guard let chars = event.characters, !chars.isEmpty else { return nil }
         if chars.count == 1, let scalar = chars.unicodeScalars.first {
             let v = scalar.value

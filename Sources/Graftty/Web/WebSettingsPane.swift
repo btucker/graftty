@@ -1,9 +1,12 @@
 import SwiftUI
 import GrafttyKit
+import GrafttyHostAgent
 
 struct WebSettingsPane: View {
     @StateObject private var settings = WebAccessSettings.shared
     @EnvironmentObject private var controller: WebServerController
+    let trustedPeerStore: TrustedPeerStore
+    let sshConnectionRegistry: SSHConnectionRegistry
 
     private static let tailscaleAdminDNSURL = URL(string: "https://login.tailscale.com/admin/dns")!
 
@@ -25,6 +28,8 @@ struct WebSettingsPane: View {
                     .foregroundStyle(.secondary)
                     .font(.caption)
             }
+
+            PairedDevicesSection(trustedPeerStore: trustedPeerStore, sshConnectionRegistry: sshConnectionRegistry)
         }
         .formStyle(.grouped)
         .frame(minWidth: 420, minHeight: 440)

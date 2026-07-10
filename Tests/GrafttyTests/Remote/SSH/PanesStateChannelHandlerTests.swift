@@ -7,31 +7,33 @@ import NIOCore
 import NIOEmbedded
 import XCTest
 
+/// `PanesStateChannelHandler.startSubscription` spawns a `Task` that runs the
+/// injected `subscribe` callback on the Swift-concurrency global executor and
+/// marshals each snapshot write back via `loop.execute`. `EmbeddedChannel`/
+/// `EmbeddedEventLoop` are single-thread-only, so polling
+/// `embeddedEventLoop.run()` from the test thread while that background `Task`
+/// calls `loop.execute` is a data race (NIO logs "EmbeddedEventLoop is not
+/// thread-safe" and the process intermittently crashes). These tests use
+/// `NIOAsyncTestingChannel`, whose loop *is* thread-safe: `waitForOutboundWrite`
+/// drives the loop until a deferred snapshot write lands, and `waitUntil` drives
+/// it while polling subscription state — no busy-poll on a single-thread loop,
+/// no race.
 final class PanesStateChannelHandlerTests: XCTestCase {
 
     /// @spec REMOTE-6.2: Immediately after accepting a `panes-state@graftty.dev`
     /// channel, the host shall send a `{"type":"snapshot","worktrees":[…]}`
     /// frame containing the current `[WorktreePanes]` array.
-    func testEmitsInitialSnapshotOnChannelActive() throws {
+    func testEmitsInitialSnapshotOnChannelActive() async throws {
         let initial = makeWorktrees(count: 1)
         let subscription = FakeSubscription(initialSnapshot: initial)
         let handler = PanesStateChannelHandler(subscribe: { [subscription] cb in
             await subscription.subscribe(cb)
         })
 
-        let channel = EmbeddedChannel()
-        try channel.pipeline.syncOperations.addHandler(handler)
-        try channel.connect(to: .init(unixDomainSocketPath: "/tmp/test")).wait()
-        // Drain the async subscribe → onChange → loop.execute → writeAndFlush path.
-        var outboundBuf: ByteBuffer?
-        runLoopUntil(channel: channel) {
-            outboundBuf = try? channel.readOutbound(as: ByteBuffer.self)
-            return outboundBuf != nil
-        }
+        let channel = try await Self.channel(with: handler)
+        // Drive the async subscribe → onChange → loop.execute → writeAndFlush path.
+        let buf = try await channel.waitForOutboundWrite(as: ByteBuffer.self)
 
-        guard let buf = outboundBuf else {
-            return XCTFail("expected one outbound frame after channelActive")
-        }
         let decoded = try JSONDecoder().decode(PanesStateMessage.self, from: Data(buf.readableBytesView))
         XCTAssertEqual(decoded, .snapshot(initial))
     }
@@ -40,32 +42,21 @@ final class PanesStateChannelHandlerTests: XCTestCase {
     /// on any change to the host's `AppState.repos[*].worktrees`,
     /// splittree, attention state, or PR status, the host shall send a
     /// fresh `{"type":"snapshot","worktrees":[…]}` frame.
-    func testReemitsOnFurtherSubscribeFires() throws {
+    func testReemitsOnFurtherSubscribeFires() async throws {
         let initial = makeWorktrees(count: 0)
         let subscription = FakeSubscription(initialSnapshot: initial)
         let handler = PanesStateChannelHandler(subscribe: { [subscription] cb in
             await subscription.subscribe(cb)
         })
 
-        let channel = EmbeddedChannel()
-        try channel.pipeline.syncOperations.addHandler(handler)
-        try channel.connect(to: .init(unixDomainSocketPath: "/tmp/test")).wait()
-        // Wait for initial snapshot, then discard it.
-        runLoopUntil(channel: channel) {
-            (try? channel.readOutbound(as: ByteBuffer.self)) != nil
-        }
+        let channel = try await Self.channel(with: handler)
+        // Wait for the initial snapshot, then discard it.
+        _ = try await channel.waitForOutboundWrite(as: ByteBuffer.self)
 
         let next = makeWorktrees(count: 2)
-        Task { await subscription.fire(next) }
-        var secondBuf: ByteBuffer?
-        runLoopUntil(channel: channel) {
-            secondBuf = try? channel.readOutbound(as: ByteBuffer.self)
-            return secondBuf != nil
-        }
+        await subscription.fire(next)
+        let buf = try await channel.waitForOutboundWrite(as: ByteBuffer.self)
 
-        guard let buf = secondBuf else {
-            return XCTFail("expected second frame on fire()")
-        }
         let decoded = try JSONDecoder().decode(PanesStateMessage.self, from: Data(buf.readableBytesView))
         XCTAssertEqual(decoded, .snapshot(next))
     }
@@ -73,20 +64,18 @@ final class PanesStateChannelHandlerTests: XCTestCase {
     /// @spec REMOTE-6.4: When the channel closes (channelInactive), the
     /// handler shall cancel the subscription so the snapshot pipeline
     /// stops firing.
-    func testCancelsSubscriptionOnClose() throws {
+    func testCancelsSubscriptionOnClose() async throws {
         let initial = makeWorktrees(count: 0)
         let subscription = FakeSubscription(initialSnapshot: initial)
         let handler = PanesStateChannelHandler(subscribe: { [subscription] cb in
             await subscription.subscribe(cb)
         })
 
-        let channel = EmbeddedChannel()
-        try channel.pipeline.syncOperations.addHandler(handler)
-        try channel.connect(to: .init(unixDomainSocketPath: "/tmp/test")).wait()
-        runLoopUntil(channel: channel) { subscription.subscribed }
+        let channel = try await Self.channel(with: handler)
+        try await waitUntil(on: channel) { subscription.subscribed }
 
-        _ = try channel.finish()
-        runLoopUntil(channel: channel) { subscription.cancelled }
+        _ = try await channel.finish()
+        try await waitUntil(on: channel) { subscription.cancelled }
 
         XCTAssertTrue(subscription.cancelled)
     }
@@ -94,25 +83,22 @@ final class PanesStateChannelHandlerTests: XCTestCase {
     /// The race: subscribe() suspends, the channel closes before
     /// storeCancellable runs, the suspended subscribe then resumes — its
     /// Cancellable must still be cancelled, not silently leaked.
-    func testCancelsSubscriptionIfChannelClosesWhileSubscribeIsSuspended() throws {
+    func testCancelsSubscriptionIfChannelClosesWhileSubscribeIsSuspended() async throws {
         let initial = makeWorktrees(count: 0)
         let subscription = SuspendingFakeSubscription(initialSnapshot: initial)
         let handler = PanesStateChannelHandler(subscribe: { [subscription] cb in
             await subscription.subscribe(cb)
         })
 
-        let channel = EmbeddedChannel()
-        try channel.pipeline.syncOperations.addHandler(handler)
-        try channel.connect(to: .init(unixDomainSocketPath: "/tmp/test")).wait()
+        let channel = try await Self.channel(with: handler)
         // Wait until subscribe() has suspended (continuation stored) so the
         // race scenario is properly set up: subscribe is mid-flight.
-        runLoopUntil(channel: channel) { subscription.suspended }
+        try await waitUntil(on: channel) { subscription.suspended }
         // Close the channel while subscribe() is still suspended.
-        _ = try channel.finish()
-        channel.embeddedEventLoop.run()
+        _ = try await channel.finish()
         // Now release the suspended subscribe and let it return a Cancellable.
         subscription.release()
-        runLoopUntil(channel: channel) { subscription.cancelled }
+        try await waitUntil(on: channel) { subscription.cancelled }
 
         XCTAssertTrue(subscription.cancelled)
     }
@@ -136,15 +122,36 @@ final class PanesStateChannelHandlerTests: XCTestCase {
         }
     }
 
-    /// EmbeddedChannel polling helper. Tasks spawned by the handler run
-    /// on the global executor and schedule writes back via
-    /// `loop.execute`. Spinning `RunLoop.main` lets those Tasks complete,
-    /// then `embeddedEventLoop.run()` drains the pending writes.
-    private func runLoopUntil(channel: EmbeddedChannel, condition: () -> Bool) {
-        let deadline = Date().addingTimeInterval(2.0)
-        while !condition() && Date() < deadline {
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-            channel.embeddedEventLoop.run()
+    /// A `NIOAsyncTestingChannel` with `handler` installed on its (thread-safe)
+    /// loop and connected so `channelActive` fires the subscription — the safe
+    /// substitute for `EmbeddedChannel` when the handler bounces through Swift
+    /// concurrency.
+    private static func channel(
+        with handler: PanesStateChannelHandler
+    ) async throws -> NIOAsyncTestingChannel {
+        let channel = NIOAsyncTestingChannel()
+        try await channel.pipeline.addHandler(handler).get()
+        try await channel.connect(to: .init(unixDomainSocketPath: "/tmp/test")).get()
+        return channel
+    }
+
+    /// Drives the (thread-safe) testing loop while polling `condition`, letting
+    /// the handler's background `Task` make progress. Replaces the old
+    /// single-thread `runLoopUntil` busy-poll for assertions that observe
+    /// subscription state rather than an outbound frame.
+    private func waitUntil(
+        on channel: NIOAsyncTestingChannel,
+        timeout: TimeInterval = 2.0,
+        _ condition: @escaping @Sendable () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            if Date() >= deadline {
+                return XCTFail("waitUntil timed out")
+            }
+            await channel.testingEventLoop.run()
+            await Task.yield()
+            try await Task.sleep(nanoseconds: 1_000_000)
         }
     }
 }

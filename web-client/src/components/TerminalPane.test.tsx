@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { TerminalPane } from './TerminalPane';
 
 const ghosttyMock = vi.hoisted(() => {
@@ -161,7 +161,7 @@ async function renderReady(sessionName = 'demo session') {
   return {
     term: ghosttyMock.instances[0],
     ws: MockWebSocket.instances[0],
-    host: document.getElementById('term') as HTMLDivElement,
+    host: document.querySelector('.term-host') as HTMLDivElement,
   };
 }
 
@@ -198,6 +198,7 @@ function ownershipFrame(
   cols = 150,
   rows = 50,
   epoch = 2,
+  revision = 0,
 ) {
   return JSON.stringify({
     type: 'ownership',
@@ -207,6 +208,7 @@ function ownershipFrame(
       ownerKind,
       grid: { cols, rows },
       epoch,
+      revision,
       ownerless: ownerClientID == null,
     },
   });
@@ -251,7 +253,7 @@ test('terminal pane constructs ghostty-web and connects to the encoded session w
     rows: 24,
     scrollback: 10000,
   }));
-  expect(term.open).toHaveBeenCalledWith(document.getElementById('term'));
+  expect(term.open).toHaveBeenCalledWith(document.querySelector('.term-host'));
   expect(ws.url).toBe('ws://localhost:3000/ws?session=demo%20session');
   expect(ws.binaryType).toBe('arraybuffer');
 });
@@ -376,6 +378,27 @@ test('ignores an out-of-order lower-epoch ownership snapshot', async () => {
   expect(screen.queryByRole('button', { name: /take control/i })).toBeNull();
 });
 
+// @spec WEB-5.10: The client shall ignore a same-epoch ownership snapshot whose revision is lower than the latest applied, so a reordered same-epoch owner resize cannot roll the owner/grid back to a stale state. A same-epoch snapshot with an equal or higher revision is still applied.
+test('ignores a same-epoch lower-revision ownership snapshot', async () => {
+  const { term, ws } = await renderReady();
+
+  await act(async () => ws.open());
+  const clientID = textFrames(ws)[0].clientID;
+  // Become owner at epoch 7, revision 10.
+  await act(async () => ws.receive(ownershipFrame(clientID, 'web', 150, 50, 7, 10)));
+  ws.sent.length = 0;
+
+  // A reordered SAME-epoch broadcast with a LOWER revision names a different owner.
+  await act(async () => ws.receive(ownershipFrame('other-client', 'web', 150, 50, 7, 8)));
+
+  // The stale frame was dropped — this client is still owner, so its keystroke is forwarded.
+  term.dataHandler?.('ok');
+  const payload = ws.sent.at(-1);
+  expect(ArrayBuffer.isView(payload)).toBe(true);
+  expect(Array.from(payload as Uint8Array)).toEqual([111, 107]);
+  expect(screen.queryByRole('button', { name: /take control/i })).toBeNull();
+});
+
 test('follower terminal resize changes local presentation without sending ownerResize', async () => {
   const { term, ws } = await renderReady();
 
@@ -488,8 +511,8 @@ test('terminal host follows visual viewport and maps touch drag to scrollback', 
 test('terminal host CSS disables browser touch panning and overscroll', async () => {
   const css = readFileSync('src/styles.css', 'utf8');
 
-  expect(css).toMatch(/#term\s*{[^}]*touch-action:\s*none;/s);
-  expect(css).toMatch(/#term\s*{[^}]*overscroll-behavior:\s*none;/s);
+  expect(css).toMatch(/\.term-host\s*{[^}]*touch-action:\s*none;/s);
+  expect(css).toMatch(/\.term-host\s*{[^}]*overscroll-behavior:\s*none;/s);
 });
 
 // @spec WEB-5.8: While the user is viewing scrollback on the normal screen (i.e., `term.viewportY > 0`), incoming PTY output shall not move the viewport: the client shall capture `viewportY` and scrollback length immediately before each `term.write()` call and, after the write, re-apply `viewportY` shifted by the number of lines that scrolled into scrollback so the viewport stays pinned to the same absolute content rather than the same offset-from-bottom. While the alternate screen is active on either side of the write, the viewport shall be left at the library-default bottom position. Rationale: ghostty-web's `Terminal.writeInternal` unconditionally calls `scrollToBottom()` whenever `viewportY !== 0` at write time, so without this wrapper the viewport snaps to the newest output on every WebSocket data frame — making wheel/touch scrollback unusable on any session that is actively producing output. Pinning to absolute content (not offset) is what lets the user read older lines while the shell continues to print.
@@ -522,4 +545,45 @@ test('server text status frames are rendered without writing terminal bytes', as
 
   expect(await screen.findByText('done')).toBeTruthy();
   expect(term.write).not.toHaveBeenCalled();
+});
+
+// @spec WEB-9.5: When role is preview, the client shall send hello with role:preview and shall not send takeControl or ownerResize frames, even after receiving an ownership snapshot naming another owner.
+describe('preview role', () => {
+  test('sends a preview-role hello and never a takeControl or ownerResize frame', async () => {
+    render(<TerminalPane sessionName="s1" role="preview" fit="container" autoFocus={false} />);
+    await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
+    const ws = MockWebSocket.instances[0];
+    await act(async () => ws.open());
+
+    const hello = textFrames(ws).find((m) => m.type === 'hello');
+    expect(hello).toBeDefined();
+    expect(hello!.role).toBe('preview');
+
+    // Wait for the terminal to finish initializing so dataHandler is wired up.
+    await waitFor(() => {
+      expect(ghosttyMock.instances.length).toBe(1);
+      expect(ghosttyMock.instances[0].dataHandler).toBeTruthy();
+    });
+    const term = ghosttyMock.instances[0];
+
+    // Even after a simulated ownership snapshot naming another (mac) owner, no claim is sent.
+    await act(async () => ws.receive(JSON.stringify({
+      type: 'ownership',
+      snapshot: {
+        sessionName: 's1',
+        ownerClientID: 'mac-1',
+        ownerKind: 'mac',
+        grid: { cols: 80, rows: 24 },
+        epoch: 1,
+        ownerless: false,
+      },
+    })));
+
+    expect(textFrames(ws).some((m) => m.type === 'takeControl' || m.type === 'ownerResize')).toBe(false);
+
+    // Keystroke input on a preview pane must be a no-op — no binary frame sent.
+    ws.sent.length = 0;
+    term.dataHandler?.('k');
+    expect(ws.sent.some((payload) => ArrayBuffer.isView(payload))).toBe(false);
+  });
 });

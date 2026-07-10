@@ -2,10 +2,9 @@ import Foundation
 
 /// Thread-safe dictionary wrapper using `NSLock`. Used by registries
 /// that need synchronous reads and writes from arbitrary contexts —
-/// hook callbacks (off main), SwiftUI input observers (on main),
-/// idle-delivery tasks. An `actor` would force the call sites async;
-/// the underlying contention is microscopic, so a non-reentrant lock
-/// is the lightest fit.
+/// hook callbacks (off main), SwiftUI observers (on main), and delivery
+/// tasks. An `actor` would force the call sites async; the underlying
+/// contention is microscopic, so a non-reentrant lock is the lightest fit.
 public final class LockedDictionary<K: Hashable, V>: @unchecked Sendable {
     private let lock = NSLock()
     private var storage: [K: V] = [:]

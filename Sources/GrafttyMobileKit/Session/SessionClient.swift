@@ -103,6 +103,8 @@ public final class SessionClient {
     private var legacyEngaged = false
     @ObservationIgnored
     private var pendingInput = PendingInput()
+    @ObservationIgnored
+    private var reclaimControlOnOwnerlessConnect: Bool
 
     private struct PendingInput: Sendable {
         private static let maxBytes = 1_048_576
@@ -230,14 +232,31 @@ public final class SessionClient {
     @ObservationIgnored
     private var idleWatchdogTask: Task<Void, Never>?
 
+    /// Single source for the production `clock` default — also consulted
+    /// by `SessionClient.live`'s own `clock` default
+    /// (`SessionLifecycleEnvironment.swift`) so the two never drift
+    /// independently. Tests inject their own `Clock` (e.g. `VirtualClock`)
+    /// and never touch this.
+    public nonisolated static func productionClock() -> any Clock {
+        SystemClock()
+    }
+
+    /// Single source for the production `backoffSchedule` default — see
+    /// `productionClock()`'s doc comment; same duplication concern, same
+    /// fix shape.
+    public nonisolated static func productionBackoffSchedule() -> [TimeInterval] {
+        HostController.backoffSchedule(attempts: 6)
+    }
+
     public init(
         sessionName: String,
         webSocketFactory: @Sendable @escaping () async throws -> WebSocketClient,
-        clock: any Clock = SystemClock(),
-        backoffSchedule: [TimeInterval] = HostController.backoffSchedule(attempts: 6),
+        clock: any Clock = SessionClient.productionClock(),
+        backoffSchedule: [TimeInterval] = SessionClient.productionBackoffSchedule(),
         idleThreshold: TimeInterval = SessionClient.fullscreenIdleThreshold,
         idleCheckInterval: TimeInterval = 5,
-        role: Role = .fullscreen
+        role: Role = .fullscreen,
+        reclaimControlOnOwnerlessConnect: Bool = false
     ) {
         self.sessionName = sessionName
         self.webSocketFactory = webSocketFactory
@@ -246,6 +265,7 @@ public final class SessionClient {
         self.idleThreshold = idleThreshold
         self.idleCheckInterval = idleCheckInterval
         self.role = role
+        self.reclaimControlOnOwnerlessConnect = reclaimControlOnOwnerlessConnect
         self.lastActivityAt = clock.now
 
         final class Box {
@@ -301,7 +321,9 @@ public final class SessionClient {
             sendOwnerResizeToServer(cols: cols, rows: rows, epoch: epoch)
         case .legacy where legacyEngaged:
             sendLegacyResizeToServer(cols: cols, rows: rows)
-        case .pending, .webControl, .legacy:
+        case .webControl:
+            reclaimOwnerlessControlIfReady()
+        case .pending, .legacy:
             break
         }
     }
@@ -736,13 +758,17 @@ public final class SessionClient {
             // Client never receives resize; ignore.
             break
         case let .ownership(snapshot):
-            // IOS-4.23: ignore reordered, stale broadcasts. The server enqueues
-            // sends across threads without ordering, so an older-epoch snapshot
-            // can arrive after a newer one on the same socket; applying it would
-            // revert the owner/grid we already advanced past. Strict `<` — owner
-            // resizes keep the same epoch, so same-epoch grid updates must apply.
-            if let last = ownershipSnapshot, snapshot.epoch < last.epoch {
-                break
+            // IOS-4.23 / IOS-4.27: ignore reordered, stale broadcasts. The server
+            // enqueues sends across threads without ordering, so a superseded
+            // snapshot can arrive after a newer one on the same socket; applying it
+            // would revert the owner/grid we already advanced past. Reject when the
+            // epoch regressed, or — within the same ownership tenure, where owner
+            // resizes keep the epoch fixed — when the monotonic `revision` regressed
+            // (a reordered same-epoch grid). revision advances on every store
+            // mutation, so it orders same-epoch resizes that epoch alone cannot.
+            if let last = ownershipSnapshot {
+                if snapshot.epoch < last.epoch { break }
+                if snapshot.epoch == last.epoch, snapshot.revision < last.revision { break }
             }
             let wasOwner = isOwner
             ownershipSnapshot = snapshot
@@ -756,10 +782,24 @@ public final class SessionClient {
                 }
             } else if let baseEpoch = pendingInput.takeoverBaseEpoch, snapshot.epoch > baseEpoch {
                 clearPendingInput()
+            } else if role == .fullscreen, reclaimControlOnOwnerlessConnect, snapshot.isOwnerless {
+                reclaimOwnerlessControlIfReady()
+            } else if reclaimControlOnOwnerlessConnect, !snapshot.isOwnerless {
+                reclaimControlOnOwnerlessConnect = false
             }
         case .hello, .takeControl, .ownerResize:
             break
         }
+    }
+
+    private func reclaimOwnerlessControlIfReady() {
+        guard role == .fullscreen,
+              reclaimControlOnOwnerlessConnect,
+              ownershipSnapshot?.isOwnerless == true,
+              lastIOSViewport != nil
+        else { return }
+        reclaimControlOnOwnerlessConnect = false
+        requestTakeControl()
     }
 }
 #endif

@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import GrafttyKit
+import GrafttyProtocol
 import NIO
 import NIOSSH
 
@@ -24,6 +25,7 @@ public enum SSHServerSetup {
         closeActiveTransport: (@Sendable () async -> Void)? = nil,
         onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)? = nil,
         allocator: ByteBufferAllocator,
+        onAuthenticated: (@Sendable (RemoteDeviceID) -> Void)? = nil,
         inboundChildChannelInitializer: @escaping @Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>
     ) -> NIOSSHHandler {
         let config = SSHServerConfiguration(
@@ -32,7 +34,8 @@ public enum SSHServerSetup {
                 store: trustedPeerStore,
                 activePeerRegistry: activePeerRegistry,
                 closeActiveTransport: closeActiveTransport,
-                onActivePeerRegistered: onActivePeerRegistered
+                onActivePeerRegistered: onActivePeerRegistered,
+                onAuthenticated: onAuthenticated
             )
         )
         // REMOTE-8.5: transportProtectionSchemes is intentionally left at

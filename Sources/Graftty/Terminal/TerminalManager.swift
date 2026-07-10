@@ -292,16 +292,9 @@ final class TerminalManager: ObservableObject {
     /// sets it via `GrafttyApp`.
     var editorPreference: EditorPreference?
 
-    /// Passive keystroke tap for the idle-delivery pipeline. Set by
-    /// `GrafttyApp.startup()` after the pipeline is constructed; nil
-    /// before that, which is safe — `SurfaceNSView.keyDown` nil-checks it.
-    var inputActivityObserver: PaneInputActivityObserver?
-
-    /// Fires once per surface destruction so the idle-delivery pipeline
-    /// can evict per-pane registry entries (PaneInputActivityRegistry
-    /// stamps, WorktreeAgentStateRegistry states, and TeamPresenceStorage
-    /// records keyed off the pane's session name). Wired by
-    /// `GrafttyApp.startup()` after the pipeline is constructed.
+    /// Fires once per surface destruction so the team-presence pipeline can
+    /// evict records keyed off the pane's session name. Wired by
+    /// `GrafttyApp.startup()` after presence monitoring is constructed.
     var paneClosed: ((PaneSlotID, String?) -> Void)?
 
     /// Fired when cmd-click resolves to a CLI editor; owner spawns a new
@@ -525,7 +518,6 @@ final class TerminalManager: ObservableObject {
                 socketPath: socketPath,
                 zmxSpawnConfiguration: zmxSpawnConfiguration,
                 terminalManager: self,
-                inputActivityObserver: inputActivityObserver,
                 remoteAttachmentRegistry: remoteAttachmentRegistry,
                 displayOwnershipStore: displayOwnershipStore,
                 displayClientID: displayClientID,
@@ -582,7 +574,6 @@ final class TerminalManager: ObservableObject {
             zmxSpawnConfiguration: zmxSpawnConfiguration,
             extraInitialInput: extraInitialInput,
             terminalManager: self,
-            inputActivityObserver: inputActivityObserver,
             remoteAttachmentRegistry: remoteAttachmentRegistry,
             displayOwnershipStore: displayOwnershipStore,
             displayClientID: displayClientID,

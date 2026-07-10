@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import GrafttyProtocol
 import SwiftUI
 
 public struct AddHostView: View {
@@ -7,6 +8,7 @@ public struct AddHostView: View {
     @State private var label: String = ""
     @State private var scanError: String?
     @State private var isScanning = true
+    @State private var pairingPayload: PairingPayload?
 
     public let onSave: (Host) throws -> Void
 
@@ -16,7 +18,16 @@ public struct AddHostView: View {
 
     public var body: some View {
         NavigationStack {
-            if isScanning {
+            if let pairingPayload {
+                PairDeviceFlowView(
+                    payload: pairingPayload,
+                    onSave: onSave,
+                    onRetry: {
+                        scanError = nil
+                        self.pairingPayload = nil
+                    }
+                )
+            } else if isScanning {
                 scanner
                     .toolbar { toolbarItems(showManualEntry: true) }
             } else {
@@ -69,23 +80,57 @@ public struct AddHostView: View {
         }
     }
 
-    private func handle(rawURL: String) {
+    // MARK: - Routing (unit-testable, no SwiftUI/View state)
+
+    /// What `handle(rawURL:)` should do with a scanned/typed string.
+    enum Route: Equatable {
+        /// A valid pairing QR payload — switch to the pairing ceremony.
+        case pairing(PairingPayload)
+        /// A plain `http(s)://` URL with a host — the existing manual/URL path.
+        case url(URL)
+        /// Neither a pairing payload nor a usable URL.
+        case invalid
+    }
+
+    /// Pure classification of a scanned/typed string, tried in this order:
+    /// 1. `PairingPayload.decodeQR` — any `DecodeError` falls through.
+    /// 2. The pre-existing http(s)+host URL check.
+    static func route(for rawURL: String) -> Route {
+        if let payload = try? PairingPayload.decodeQR(rawURL) {
+            return .pairing(payload)
+        }
         guard let url = URL(string: rawURL),
               let scheme = url.scheme?.lowercased(),
               scheme == "http" || scheme == "https",
               let urlHost = url.host, !urlHost.isEmpty else {
-            scanError = "QR did not contain a Graftty URL"
-            return
+            return .invalid
         }
-        let host = Host(
-            label: label.isEmpty ? urlHost : label,
-            baseURL: url
-        )
-        do {
-            try onSave(host)
-            dismiss()
-        } catch {
-            scanError = "Couldn't save: \(error)"
+        return .url(url)
+    }
+
+    private func handle(rawURL: String) {
+        switch Self.route(for: rawURL) {
+        case .pairing(let payload):
+            // A prior scan's error (e.g. "QR did not contain a Graftty
+            // URL") must not linger behind the pairing sheet — if that
+            // ceremony's Retry bounces back to the scanner (via `onRetry`
+            // above), a stale error from before this successful scan would
+            // otherwise still be showing.
+            scanError = nil
+            pairingPayload = payload
+        case .url(let url):
+            let host = Host(
+                label: label.isEmpty ? (url.host ?? "") : label,
+                baseURL: url
+            )
+            do {
+                try onSave(host)
+                dismiss()
+            } catch {
+                scanError = "Couldn't save: \(error)"
+            }
+        case .invalid:
+            scanError = "QR did not contain a Graftty URL"
         }
     }
 }

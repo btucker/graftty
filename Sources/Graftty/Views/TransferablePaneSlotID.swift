@@ -3,14 +3,15 @@ import Foundation
 import UniformTypeIdentifiers
 
 /// Drag-payload for moving a pane between worktrees in the sidebar
-/// (PWD-1.4). In-app only — uses `.data` so we don't need a registered
-/// UTType in the bundle Info.plist; SwiftUI's type-safe `Transferable`
-/// matching keeps unrelated `Codable` Data drops from being decoded as
-/// panes.
+/// (PWD-1.4). In-app only — uses a pane-specific UTType so worktree
+/// reorder drops and pane move drops never compete for the same generic
+/// `public.data` provider.
 struct TransferablePaneSlotID: Codable, Transferable {
+    static let contentType = UTType(exportedAs: "com.graftty.sidebar-pane-slot-id")
+
     let id: UUID
 
     static var transferRepresentation: some TransferRepresentation {
-        CodableRepresentation(contentType: .data)
+        CodableRepresentation(contentType: contentType)
     }
 }

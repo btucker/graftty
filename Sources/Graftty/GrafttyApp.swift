@@ -8,28 +8,56 @@ import GrafttyProtocol
 import GrafttyRemoteClient
 import WebRTC
 
-/// Callbacks injected into `TeamInboxRequestHandler` from the app's
-/// idle-delivery pipeline. Constructed once in `GrafttyApp.startup()` and
-/// stored on `AppServices` so the static `handleTeamHook` path can pick
-/// them up without requiring an instance reference.
-struct TeamHookCallbacks {
-    let onStop: @Sendable (String, String, String, String?) -> Void
-    let onSessionStart: @Sendable (String, String, String, String?) -> Void
-    let onPostToolUse: @Sendable (String, String, String, String?) -> Void
+func defaultBranchStatus(
+    for repo: RepoEntry,
+    stats: WorktreeStats?
+) -> WebServer.RepoInfo.DefaultBranchStatus? {
+    guard let stats, stats.behind > 0,
+          let defaultRef = stats.upstreamRefs?.defaultRef,
+          defaultRef.hasPrefix("origin/") else {
+        return nil
+    }
+    let branchName = String(defaultRef.dropFirst("origin/".count))
+    guard !branchName.isEmpty,
+          repo.worktrees.first(where: { $0.path == repo.path })?.branch == branchName else {
+        return nil
+    }
+    return WebServer.RepoInfo.DefaultBranchStatus(
+        branchName: branchName,
+        remoteRef: defaultRef,
+        behindCount: stats.behind
+    )
 }
 
-struct CodexStopDeliveryPlan: Equatable {
-    let shouldUpdateState: Bool
-    let liveSessionName: String?
-    let deliverySessionNames: [String]
+protocol CodexAppServerDeliveryTrigger: Sendable {
+    func onMessageArrival(team: String, worktree: String) async
+}
+
+extension CodexAppServerDeliveryService: CodexAppServerDeliveryTrigger {}
+
+private final class LivePaneSessionNames: @unchecked Sendable {
+    private let lock = NSLock()
+    private var names: Set<String> = []
+
+    func replace(with names: Set<String>) {
+        lock.lock()
+        self.names = names
+        lock.unlock()
+    }
+
+    func contains(_ name: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return names.contains(name)
+    }
 }
 
 private struct AppTeamDeliveryLiveness: TeamDeliveryLivenessChecking {
-    let liveSessionNames: Set<String>
+    let livePaneSession: @Sendable (String) -> Bool
     let processStartTimeMicroseconds: @Sendable (Int32) -> Int64?
 
     func isLivePaneSession(_ sessionName: String) -> Bool {
-        liveSessionNames.contains(sessionName)
+        livePaneSession(sessionName)
     }
 
     func processStartTimeMicroseconds(ofPID pid: Int32) -> Int64? {
@@ -174,15 +202,10 @@ final class AppServices {
     /// Set in GrafttyApp.startup() once @State is accessible (TEAM-5.4).
     var appStateProvider: (() -> AppState)?
 
-    // MARK: - Idle Delivery Pipeline (TEAM-IDLE-2.x)
-    /// Hook callbacks wired to the idle-delivery pipeline. Set in
-    /// `GrafttyApp.startup()` after the pipeline is constructed.
-    var teamHookCallbacks: TeamHookCallbacks?
-    /// Retained so the idle pipeline stays alive for the app's lifetime.
-    var idleDeliveryService: IdleDeliveryService?
-    var agentStateRegistry: WorktreeAgentStateRegistry?
-    var inputActivityRegistry: PaneInputActivityRegistry?
-    var graceScheduler: EngagedGraceScheduler?
+    // MARK: - Codex App-Server Delivery
+    /// Retained so inbox arrivals can reach Codex app-server delivery for
+    /// the app's lifetime.
+    var codexAppServerDeliveryService: CodexAppServerDeliveryService?
     /// Holds the `TeamInboxObserver` cancellables so the observers stay
     /// active for the lifetime of the app (one observer per team-ID started
     /// at launch for each known repo).
@@ -205,7 +228,7 @@ final class AppServices {
     /// Host-side LAN pairing consent coordinator. Later remote-Mac startup
     /// wiring can route `/v1/pairing/*` through this same instance so the
     /// presented sheet and HTTP long-poll state share one session.
-    let hostPairingCoordinator: HostPairingCoordinator
+    let hostPairingCoordinator: RemoteMacHostPairingCoordinator
     let remoteMacsModel: RemoteMacsModel
     let remoteMacPairingDriverFactory: @MainActor () -> AddRemoteMacPairingDriving
     let remoteMacAccessEnabled: Bool
@@ -299,7 +322,7 @@ final class AppServices {
         }
     }
 
-    private static func makeHostPairingCoordinator() -> HostPairingCoordinator {
+    private static func makeHostPairingCoordinator() -> RemoteMacHostPairingCoordinator {
         let identityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
         let peerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
         do {
@@ -315,7 +338,7 @@ final class AppServices {
             hostDisplayName: localHostDisplayName(),
             pairingURLProvider: { URL(string: "http://0.0.0.0/v1/pairing")! }
         )
-        return HostPairingCoordinator(server: HostPairingServer(session: session))
+        return RemoteMacHostPairingCoordinator(server: HostPairingServer(session: session))
     }
 
     func startRemoteMacAccessServices(hostAgent: WebRTCHostAgent?) throws {
@@ -474,7 +497,20 @@ struct GrafttyApp: App {
     @StateObject private var terminalManager: TerminalManager
     @StateObject private var webController: WebServerController
     @StateObject private var updaterController: UpdaterController
+    @StateObject private var hostPairingCoordinator: HostPairingCoordinator
     private let services: AppServices
+    /// Same `TrustedPeerStore` instance the coordinator and
+    /// `WebRTCHostAgent` share — `PairedDevicesSection` reads it directly
+    /// (list/remove) since the coordinator doesn't expose it publicly.
+    private let trustedPeerStore: TrustedPeerStore
+    /// Same `SSHConnectionRegistry` instance `WebRTCHostAgent` registers
+    /// its live SSH connection into (REMOTE-3.1 revocation, W4). Exposed
+    /// alongside `trustedPeerStore` so `PairedDevicesSection`'s "Remove"
+    /// action can call `registry.revoke(deviceID:)` right after removing
+    /// the peer from `trustedPeerStore` — closing the live connection
+    /// immediately rather than waiting for the peer's next userauth
+    /// attempt to fail.
+    private let sshConnectionRegistry: SSHConnectionRegistry
 
     /// Observable proxy for per-pane port bindings. Mutated by the
     /// `PortScanner` `onChange` callback; injected into the SwiftUI
@@ -552,12 +588,13 @@ struct GrafttyApp: App {
             .appendingPathComponent("zmx", isDirectory: true)
         let zmxExe = Bundle.main.bundleURL
             .appendingPathComponent("Contents/Helpers/zmx")
-        _webController = StateObject(wrappedValue: WebServerController(
+        let webController = WebServerController(
             settings: WebAccessSettings.shared,
             zmxExecutable: zmxExe,
             zmxDir: zmxDir,
             displayOwnershipStore: appServices.displayOwnershipStore
-        ))
+        )
+        _webController = StateObject(wrappedValue: webController)
         _updaterController = StateObject(wrappedValue: UpdaterController())
 
         // R4: Construct the Mac-side WebRTC host agent. The agent accepts
@@ -567,23 +604,44 @@ struct GrafttyApp: App {
         // `webController.setSignalingHandler(_:)` once @State is accessible.
         let hostIdentityStore = HostIdentityStore(directory: HostIdentityStore.defaultDirectory)
         let trustedPeerStore = TrustedPeerStore(directory: TrustedPeerStore.defaultDirectory)
+        self.trustedPeerStore = trustedPeerStore
+        let sshConnectionRegistry = SSHConnectionRegistry()
+        self.sshConnectionRegistry = sshConnectionRegistry
+
+        // Task 3: the Mac settings UI's "Device Pairing" section binds to
+        // this coordinator. Reuses the SAME identity/trusted-peer stores as
+        // `WebRTCHostAgent` above — a peer confirmed through the pairing UI
+        // must be the same peer `WebRTCHostAgent.acceptOffer` later trusts.
+        // `webBaseURLProvider` is `@MainActor`-isolated (see
+        // `HostPairingCoordinator`) so it can read `webController`'s
+        // published state directly instead of needing a `Sendable` bridge.
+        _hostPairingCoordinator = StateObject(wrappedValue: HostPairingCoordinator(
+            identityStore: hostIdentityStore,
+            trustedPeerStore: trustedPeerStore,
+            deviceIDStore: HostDeviceIDStore(directory: HostDeviceIDStore.defaultDirectory),
+            hostDisplayName: Host.current().localizedName ?? "Mac",
+            webBaseURLProvider: { [weak webController] in
+                guard let webController,
+                      case let .listening(_, port) = webController.status,
+                      let host = webController.serverHostname else { return nil }
+                return URL(string: WebURLComposer.baseURL(host: host, port: port))
+            }
+        ))
+
         do {
             appServices.hostAgent = WebRTCHostAgent(
                 hostKey: try hostIdentityStore.loadOrGenerateAndPersist(),
                 trustedPeerStore: trustedPeerStore,
                 streamFactory: { [registry = appServices.remoteAttachmentRegistry] sessionName in
-                    // Task 3: SSH-over-WebRTC terminal sessions are still
-                    // raw TerminalByteStream participants. Until Task 4+
-                    // adds explicit display-owner protocol handling on this
-                    // path, the shared store is not consulted here; the
-                    // registry remains connection accounting only.
-                    try ZmxAttachStream(
+                    let engine = ZmxAttachEngine(config: ZmxAttachEngine.Config(
                         zmxExecutable: zmxExe,
                         zmxDir: zmxDir,
                         sessionName: sessionName,
-                        workingDirectory: nil,
-                        attachmentRegistry: registry
-                    )
+                        workingDirectory: nil
+                    ))
+                    engine.attachmentRegistry = registry
+                    try engine.start()
+                    return engine
                 },
                 // R5 Task 11: init-time placeholder closures. The host
                 // agent is constructed in `init()` (before SwiftUI `@State`
@@ -598,7 +656,9 @@ struct GrafttyApp: App {
                 },
                 paneControlMutator: { _ in
                     .error(code: "starting", message: "host not yet wired (startup did not run)")
-                }
+                },
+                displayOwnershipStore: appServices.displayOwnershipStore,
+                sshConnectionRegistry: sshConnectionRegistry
             )
         } catch {
             // Identity-store I/O failure leaves hostAgent nil; the signaling
@@ -706,6 +766,13 @@ struct GrafttyApp: App {
 
                 Divider()
 
+                WorktreeNavCommandButtons(
+                    nextShortcut: shortcut(for: .nextTab),
+                    previousShortcut: shortcut(for: .previousTab)
+                )
+
+                Divider()
+
                 bridgedButton("Zoom Split",      action: .toggleSplitZoom) { handleToggleZoom() }
                 bridgedButton("Equalize Splits", action: .equalizeSplits)  { handleEqualizeSplits() }
 
@@ -757,8 +824,9 @@ struct GrafttyApp: App {
                     editorPreference: terminalManager.editorPreference
                 )
                     .tabItem { Label("General", systemImage: "gear") }
-                WebSettingsPane()
+                WebSettingsPane(trustedPeerStore: trustedPeerStore, sshConnectionRegistry: sshConnectionRegistry)
                     .environmentObject(webController)
+                    .environmentObject(hostPairingCoordinator)
                     .tabItem { Label("Web Access", systemImage: "network") }
                 AgentTeamsSettingsPane()
                     .tabItem { Label("Agent Teams", systemImage: "person.2.fill") }
@@ -1117,10 +1185,6 @@ struct GrafttyApp: App {
         }
         let teamInbox = services.teamInbox
         let teamEventDispatcher = services.teamEventDispatcher
-        // hookCallbacks is set below in the idle-pipeline wiring; capture
-        // by reference through AppServices so the closure sees the value
-        // once it is assigned.
-        let appServicesRef = services
         services.socketServer.onRequest = { message in
             MainActor.assumeIsolated {
                 Self.handlePaneRequest(
@@ -1128,8 +1192,7 @@ struct GrafttyApp: App {
                     appState: binding,
                     terminalManager: tm,
                     teamInbox: teamInbox,
-                    teamEventDispatcher: teamEventDispatcher,
-                    hookCallbacks: appServicesRef.teamHookCallbacks
+                    teamEventDispatcher: teamEventDispatcher
                 )
             }
         }
@@ -1197,14 +1260,20 @@ struct GrafttyApp: App {
             services.remoteBranchStore.refresh(repoPath: repo.path)
         }
 
-        // Same reasoning for the PR poller: open→merged transitions
-        // happen on GitHub while Graftty is backgrounded, and the only
-        // signal channel is `gh pr list`. Previously we paused unless
-        // CI was pending, which meant a PR that merged after CI went
-        // green (the common case) stayed visibly "open" in the sidebar
-        // until the user clicked back into the app.
+        // The PR poller drives `gh pr list`, a GraphQL call metered
+        // against a separate 5,000-point/hour budget. Unlike the stats
+        // poller's local `git fetch`, every tick here costs API quota,
+        // so the per-repo cadence gate is 60s (see
+        // `PRStatusStore.cadenceFor`) — a 5s cadence exhausted the
+        // entire GraphQL budget on a single repo. The ticker keeps
+        // firing while Graftty is backgrounded (PR-7.6): `gh pr list`
+        // is the only channel for an open→merged transition that
+        // happens on GitHub without a local `git fetch`, and at 60s the
+        // background cost is genuinely negligible. The 30s wake stays
+        // below the 60s gate so cadence jitter can't stretch the
+        // effective interval toward 120s.
         let prTicker = PollingTicker(
-            interval: .seconds(5),
+            interval: .seconds(30),
             pauseWhenInactive: { false }
         )
         services.prStatusStore.start(
@@ -1245,150 +1314,55 @@ struct GrafttyApp: App {
         let presenceIndex = TeamPresenceIndex(
             records: (try? presenceStorage.listAll()) ?? []
         )
-        func refreshPresenceIndex() {
-            presenceIndex.replace(with: (try? presenceStorage.listAll()) ?? [])
+        func refreshPresenceIndex() -> [TeamPresenceRecord] {
+            let records = (try? presenceStorage.listAll()) ?? []
+            presenceIndex.replace(with: records)
+            return records
         }
+
+        let livePaneSessionNames = LivePaneSessionNames()
+        func refreshDeliveryLiveness(records: [TeamPresenceRecord]? = nil) {
+            let records = records ?? refreshPresenceIndex()
+            let names = Set(records.compactMap { record -> String? in
+                guard let sessionName = record.paneSessionName,
+                      tm.handle(forSessionName: sessionName) != nil else {
+                    return nil
+                }
+                return sessionName
+            })
+            livePaneSessionNames.replace(with: names)
+        }
+        refreshDeliveryLiveness(records: presenceIndex.allRecords())
+
+        let codexAppServerDeliveryService = CodexAppServerDeliveryService(
+            inbox: services.teamInbox,
+            presenceRecords: { (try? presenceStorage.listAll()) ?? [] },
+            sessionStorage: CodexAppServerSessionStorage(rootDirectory: TeamPresenceStorage.defaultRoot()),
+            liveness: AppTeamDeliveryLiveness(
+                livePaneSession: { livePaneSessionNames.contains($0) },
+                processStartTimeMicroseconds: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
+            ),
+            client: CodexAppServerClient()
+        )
         presenceTicker.start {
             TeamPresenceMonitor.cleanupStale(storage: presenceStorage)
-            refreshPresenceIndex()
+            let records = refreshPresenceIndex()
+            refreshDeliveryLiveness(records: records)
+            await Self.retryCodexAppServerDeliveryForPresenceWorktrees(
+                inbox: services.teamInbox,
+                records: records,
+                delivery: codexAppServerDeliveryService
+            )
+        }
+        Task {
+            await Self.retryCodexAppServerDeliveryForPresenceWorktrees(
+                inbox: services.teamInbox,
+                records: presenceIndex.allRecords(),
+                delivery: codexAppServerDeliveryService
+            )
         }
 
-        // TEAM-IDLE-2.1 / TEAM-IDLE-2.2 / TEAM-IDLE-2.4 / TEAM-IDLE-2.5:
-        // Build and wire the event-driven idle-delivery pipeline.
-
-        let stateRegistry = WorktreeAgentStateRegistry()
-        let inputRegistry = PaneInputActivityRegistry()
-        let idleService = IdleDeliveryService(
-            inbox: services.teamInbox,
-            state: stateRegistry,
-            nudgeSender: ZmxNudgeSender(writer: AppZmxWriter(terminalManager: terminalManager))
-        )
-
-        // Resolve registered codex zmx sessions for a worktree. Presence
-        // records carry the authoritative session names; TerminalManager
-        // proves the pane session is current, and the recorded PID proves
-        // the registered runtime is still running.
-        let codexSessionNamesIn: @Sendable (String, String) -> [String] = { [tm] teamID, worktreePath in
-            MainActor.assumeIsolated {
-                refreshPresenceIndex()
-                let records = presenceIndex.allRecords()
-                let liveSessions = Set(records.compactMap { record -> String? in
-                    guard let sessionName = record.paneSessionName,
-                          tm.handle(forSessionName: sessionName) != nil else {
-                        return nil
-                    }
-                    return sessionName
-                })
-                return TeamDeliverySessionResolution.codexSessionNames(
-                    teamID: teamID,
-                    in: worktreePath,
-                    records: records,
-                    isLiveSession: { liveSessions.contains($0) },
-                    processStartTimeMicroseconds: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
-                )
-            }
-        }
-
-        // Build the engaged-grace scheduler. Its onElapsed fires after
-        // 60s of no keystrokes and triggers onMessageArrival so any
-        // pending messages drain once the user stops typing.
-        let graceScheduler = EngagedGraceScheduler(
-            state: stateRegistry,
-            onElapsed: { [weak idleService] worktree, _ in
-                // onElapsed is @MainActor, so binding.wrappedValue is
-                // accessible directly — no MainActor.assumeIsolated dance.
-                guard let service = idleService else { return }
-                guard let teamID = binding.wrappedValue.repos.first(where: {
-                    $0.worktrees.contains(where: { $0.path == worktree })
-                })?.path else { return }
-                let sessionNames = codexSessionNamesIn(teamID, worktree)
-                Task {
-                    await service.onMessageArrival(
-                        team: teamID, worktree: worktree, sessionNames: sessionNames
-                    )
-                }
-            }
-        )
-
-        // Wire the keystroke observer. The callback stays memory-only:
-        // presence files are indexed at event/ticker boundaries so keyDown
-        // never scans disk.
-        let inputObserver = PaneInputActivityObserver(
-            registry: inputRegistry,
-            onKeystroke: { [weak graceScheduler, tm = terminalManager] paneID in
-                // SurfaceNSView.keyDown fires on main thread. Use
-                // assumeIsolated so we can read MainActor-isolated state.
-                MainActor.assumeIsolated {
-                    guard let sessionName = tm.zmxSessionName(for: PaneSlotID(id: paneID)) else {
-                        return
-                    }
-                    for agent in presenceIndex.records(forPaneSessionName: sessionName) {
-                        stateRegistry.handleKeystroke(worktree: agent.worktree, runtime: agent.runtime.rawValue)
-                        graceScheduler?.bump(worktree: agent.worktree, runtime: agent.runtime.rawValue)
-                    }
-                }
-            }
-        )
-
-        // Wire the three hook callbacks.
-        // These fire from handleTeamHook, which runs inside MainActor.assumeIsolated.
-        // Registration is owned by `graftty team register`; hooks are pure
-        // event signals that update the state machine.
-        let hookCallbacks = TeamHookCallbacks(
-            onStop: { [weak idleService, tm] team, worktree, runtime, paneSessionName in
-                MainActor.assumeIsolated { refreshPresenceIndex() }
-                let plan = MainActor.assumeIsolated {
-                    Self.codexStopDeliveryPlan(
-                        team: team,
-                        worktree: worktree,
-                        runtime: runtime,
-                        paneSessionName: paneSessionName,
-                        isLiveSession: { tm.handle(forSessionName: $0) != nil },
-                        codexSessionNamesIn: codexSessionNamesIn
-                    )
-                }
-                guard plan.shouldUpdateState else { return }
-                let paneID: UUID? = MainActor.assumeIsolated {
-                    plan.liveSessionName.flatMap { tm.paneID(forSessionName: $0) }
-                }
-                // Flip the state machine before the delivery evaluator runs.
-                // Without this, state stays `.active` from the prior
-                // SessionStart and `IdleDeliveryService.maybeDeliver` skips.
-                let lastInputAt = paneID.flatMap { inputRegistry.lastInputAt(paneID: $0) }
-                stateRegistry.handleStop(worktree: worktree, runtime: runtime, lastInputAt: lastInputAt)
-                // TEAM-IDLE-2.14: only codex's Stop event drives idle delivery.
-                // Claude's Stop is fired even when the pane isn't accepting
-                // keystrokes (Plan-mode review screens), so it must not arm
-                // the inbox-drain pipeline.
-                guard runtime == TeamHookRuntime.codex.rawValue else { return }
-                guard let service = idleService else { return }
-                Task { await service.onStop(team: team, worktree: worktree, sessionNames: plan.deliverySessionNames) }
-            },
-            onSessionStart: { team, worktree, runtime, paneSessionName in
-                MainActor.assumeIsolated { refreshPresenceIndex() }
-                guard Self.shouldUpdateDeliveryStateForHook(
-                    team: team,
-                    worktree: worktree,
-                    runtime: runtime,
-                    paneSessionName: paneSessionName,
-                    codexSessionNamesIn: codexSessionNamesIn
-                ) else { return }
-                stateRegistry.handleSessionStart(worktree: worktree, runtime: runtime)
-            },
-            onPostToolUse: { team, worktree, runtime, paneSessionName in
-                MainActor.assumeIsolated { refreshPresenceIndex() }
-                guard Self.shouldUpdateDeliveryStateForHook(
-                    team: team,
-                    worktree: worktree,
-                    runtime: runtime,
-                    paneSessionName: paneSessionName,
-                    codexSessionNamesIn: codexSessionNamesIn
-                ) else { return }
-                stateRegistry.handlePostToolUse(worktree: worktree, runtime: runtime)
-            }
-        )
-
-        // Subscribe the idle service to inbox file-system events.
+        // Subscribe Codex app-server delivery to inbox file-system events.
         // TeamInboxObserver fires with the full message list on every
         // append. We track the previous count and fire onMessageArrival
         // only when new messages arrive, to avoid redundant delivers.
@@ -1400,62 +1374,45 @@ struct GrafttyApp: App {
         for repo in binding.wrappedValue.repos {
             let teamID = repo.path
             let observer = TeamInboxObserver(rootDirectory: inboxRoot, teamID: teamID)
-            // Per-observer counter: each observer's queue serializes its
-            // own callback, so no synchronization is needed for this Int.
+            // Per-observer state claims message ranges before awaiting
+            // app-server delivery. `TeamInboxObserver` callbacks can overlap
+            // once they hop through Task/MainActor, so the actor owns the
+            // count update.
             // (A previous version used a shared `[String: Int]` map across
             // all observer closures and crashed under concurrent mutation
             // by multiple observer queues — Swift Dictionary is not
             // thread-safe.)
-            var lastSeenCount = 0
-            let cancellable = observer.start { [weak idleService] messages in
-                let prev = lastSeenCount
-                let curr = messages.count
-                guard curr > prev else {
-                    lastSeenCount = curr
-                    return
-                }
-                lastSeenCount = curr
-                let newMessages = Array(messages[prev..<curr])
-                let byWorktree = Dictionary(grouping: newMessages, by: { $0.to.worktree })
-                guard let service = idleService else { return }
-                for (recipientWorktree, _) in byWorktree {
-                    Task { @MainActor in
-                        let sessionNames = codexSessionNamesIn(teamID, recipientWorktree)
-                        await service.onMessageArrival(
-                            team: teamID,
-                            worktree: recipientWorktree,
-                            sessionNames: sessionNames
-                        )
+            let deliveryState = CodexAppServerInboxObserverDeliveryState(skipInitialSnapshot: true)
+            let cancellable = observer.start { [weak codexAppServerDeliveryService] messages in
+                Task { @MainActor in
+                    refreshDeliveryLiveness()
+                    guard let service = codexAppServerDeliveryService else {
+                        await deliveryState.markSeen(messages)
+                        return
                     }
+                    let recipientWorktrees = await deliveryState.claimRecipientWorktrees(in: messages)
+                    await Self.deliverCodexAppServerMessages(
+                        teamID: teamID,
+                        recipientWorktrees: recipientWorktrees,
+                        delivery: service
+                    )
                 }
             }
             services.inboxObserverCancellables.append(cancellable)
             services.inboxObservers.append(observer)
         }
 
-        // Persist pipeline components on AppServices so they outlive startup().
-        services.agentStateRegistry = stateRegistry
-        services.inputActivityRegistry = inputRegistry
-        services.idleDeliveryService = idleService
-        services.graceScheduler = graceScheduler
-        services.teamHookCallbacks = hookCallbacks
+        // Persist the delivery service on AppServices so it outlives startup().
+        services.codexAppServerDeliveryService = codexAppServerDeliveryService
 
-        // Inject the input observer into future SurfaceHandle constructions.
-        // The terminalManager holds a reference and passes it at surface
-        // creation time.
-        terminalManager.inputActivityObserver = inputObserver
-
-        // TEAM-IDLE-2.15: when a pane is destroyed, sweep any
-        // TeamPresenceRecord whose paneSessionName matches the closing pane
-        // and clear the matching agent-state entry. The agent's own
+        // When a pane is destroyed, sweep any TeamPresenceRecord whose
+        // paneSessionName matches the closing pane. The agent's own
         // `team unregister` cleanup hook is the primary path; this fallback
         // covers the SIGKILL / hard-quit case where the pane went away
         // without the registered process getting a chance to clean up.
-        // input-stamp eviction stays on the same trigger so the per-pane
-        // registries don't grow unbounded across the app's lifetime.
-        terminalManager.paneClosed = { [stateRegistry, inputRegistry, presenceStorage] paneSlotID, sessionName in
-            inputRegistry.removeStamp(paneID: paneSlotID.id)
+        tm.paneClosed = { [presenceStorage] _, sessionName in
             guard let sessionName else { return }
+            _ = refreshPresenceIndex()
             for record in presenceIndex.records(forPaneSessionName: sessionName) {
                 try? presenceStorage.delete(
                     teamID: record.teamID,
@@ -1469,7 +1426,15 @@ struct GrafttyApp: App {
                     runtime: record.runtime,
                     paneSessionName: record.paneSessionName
                 )
-                stateRegistry.removeState(worktree: record.worktree, runtime: record.runtime.rawValue)
+            }
+            let records = presenceIndex.allRecords()
+            refreshDeliveryLiveness(records: records)
+            Task {
+                await Self.retryCodexAppServerDeliveryForPresenceWorktrees(
+                    inbox: services.teamInbox,
+                    records: records,
+                    delivery: codexAppServerDeliveryService
+                )
             }
         }
 
@@ -1596,13 +1561,22 @@ struct GrafttyApp: App {
             await MainActor.run { buildWorktreePanesSnapshot() }
         }
 
+        let statsStore = services.statsStore
+
         // WEB-7.1: feed the web server the repo list for the "Add
         // Worktree" picker. Mirrors the native sidebar's top-level
         // repos.
         webController.setReposProvider {
             await MainActor.run { () -> [WebServer.RepoInfo] in
                 appStateBinding.wrappedValue.repos.map { repo in
-                    WebServer.RepoInfo(path: repo.path, displayName: repo.displayName)
+                    WebServer.RepoInfo(
+                        path: repo.path,
+                        displayName: repo.displayName,
+                        defaultBranchStatus: defaultBranchStatus(
+                            for: repo,
+                            stats: statsStore.stats[repo.path]
+                        )
+                    )
                 }
             }
         }
@@ -1614,8 +1588,39 @@ struct GrafttyApp: App {
         // terminal-surface creation happens on the main actor — same
         // isolation as the native sidebar's "+" button.
         let worktreeMonitor = services.worktreeMonitor
-        let statsStore = services.statsStore
         let dispatcherForWeb = services.teamEventDispatcher
+        webController.setDefaultBranchPuller { req in
+            let pullTarget = await MainActor.run {
+                guard let repo = appStateBinding.wrappedValue.repos.first(where: { $0.path == req.repoPath }) else {
+                    return (tracked: false, status: nil as WebServer.RepoInfo.DefaultBranchStatus?)
+                }
+                return (tracked: true, status: defaultBranchStatus(
+                    for: repo,
+                    stats: statsStore.stats[repo.path]
+                ))
+            }
+            guard pullTarget.tracked else {
+                return .invalid("repository not tracked")
+            }
+            guard let status = pullTarget.status else {
+                return .invalid("default checkout is not behind origin")
+            }
+            do {
+                try await GitDefaultBranchPull.pull(repoPath: req.repoPath, branchName: status.branchName)
+            } catch GitDefaultBranchPull.Error.gitFailed(_, let stderr) {
+                return .gitFailed(stderr)
+            } catch {
+                return .internalFailure("\(error)")
+            }
+            await MainActor.run {
+                guard let repo = appStateBinding.wrappedValue.repos.first(where: { $0.path == req.repoPath }) else {
+                    return
+                }
+                let branch = repo.worktrees.first(where: { $0.path == repo.path })?.branch ?? ""
+                statsStore.refresh(worktreePath: repo.path, repoPath: repo.path, branch: branch)
+            }
+            return .success(WebServer.PullDefaultBranchResponse(ok: true))
+        }
         webController.setWorktreeCreator { req in
             let branch: BranchSelection
             if req.existing {
@@ -1810,7 +1815,7 @@ struct GrafttyApp: App {
                         return .unavailable("host is already handling an offer")
                     } catch {
                         NSLog("[Graftty] WebRTCHostAgent.acceptOffer failed: %@", String(describing: error))
-                        return .internalFailure("acceptOffer failed: \(error)")
+                        return Self.signalingOutcome(forAcceptOfferFailure: error)
                     }
                 }
                 do {
@@ -1852,58 +1857,120 @@ struct GrafttyApp: App {
         }
     }
 
-    nonisolated static func codexStopDeliveryPlan(
-        team: String,
-        worktree: String,
-        runtime: String,
-        paneSessionName: String?,
-        isLiveSession: (String) -> Bool,
-        codexSessionNamesIn: (String, String) -> [String]
-    ) -> CodexStopDeliveryPlan {
-        let liveSessionName = TeamDeliverySessionResolution.stopSessionName(
-            runtime: runtime,
-            paneSessionName: paneSessionName,
-            isLiveSession: isLiveSession
-        )
-        guard runtime == TeamHookRuntime.codex.rawValue else {
-            return CodexStopDeliveryPlan(
-                shouldUpdateState: true,
-                liveSessionName: liveSessionName,
-                deliverySessionNames: []
-            )
+    /// Maps an error thrown by `WebRTCHostAgent.acceptOffer` to the HTTP
+    /// outcome the `/v1/rtc/offer` signaling endpoint returns. Extracted
+    /// from the `setSignalingHandler` closure in `startup()` so the
+    /// mapping is unit-testable without booting the whole app.
+    ///
+    /// `WebRTCHostAgent.HostError.busy` — thrown when a second offer
+    /// arrives while a prior negotiation is still in flight — maps to
+    /// `.unavailable` (503) rather than the `.internalFailure` (500)
+    /// catch-all: a busy host is a transient, retryable condition, and
+    /// `RemoteConnectionCoordinator` treats a 503 as "fall back to /ws,
+    /// try again later" without marking the host permanently bad. Every
+    /// other `acceptOffer` failure stays `.internalFailure`.
+    nonisolated static func signalingOutcome(forAcceptOfferFailure error: Error) -> WebServer.SignalingHandlerOutcome {
+        if case WebRTCHostAgent.HostError.busy = error {
+            return .unavailable("host is busy with another remote connection")
         }
-        guard let liveSessionName else {
-            return CodexStopDeliveryPlan(
-                shouldUpdateState: false,
-                liveSessionName: nil,
-                deliverySessionNames: []
-            )
-        }
-        let deliverySessionNames = codexSessionNamesIn(team, worktree)
-        guard deliverySessionNames.contains(liveSessionName) else {
-            return CodexStopDeliveryPlan(
-                shouldUpdateState: false,
-                liveSessionName: liveSessionName,
-                deliverySessionNames: []
-            )
-        }
-        return CodexStopDeliveryPlan(
-            shouldUpdateState: true,
-            liveSessionName: liveSessionName,
-            deliverySessionNames: deliverySessionNames
-        )
+        return .internalFailure("acceptOffer failed: \(error)")
     }
 
-    nonisolated static func shouldUpdateDeliveryStateForHook(
-        team: String,
-        worktree: String,
-        runtime: String,
-        paneSessionName: String?,
-        codexSessionNamesIn: (String, String) -> [String]
+    actor CodexAppServerInboxObserverDeliveryState {
+        private var lastSeenCount: Int
+        private var skipInitialSnapshot: Bool
+
+        init(lastSeenCount: Int = 0, skipInitialSnapshot: Bool = false) {
+            self.lastSeenCount = lastSeenCount
+            self.skipInitialSnapshot = skipInitialSnapshot
+        }
+
+        func markSeen(_ messages: [TeamInboxMessage]) {
+            lastSeenCount = messages.count
+            skipInitialSnapshot = false
+        }
+
+        func claimRecipientWorktrees(in messages: [TeamInboxMessage]) -> [String] {
+            if skipInitialSnapshot {
+                skipInitialSnapshot = false
+                lastSeenCount = messages.count
+                return []
+            }
+
+            let previousCount = lastSeenCount
+            let currentCount = messages.count
+            lastSeenCount = currentCount
+            guard currentCount > previousCount else { return [] }
+
+            var seenWorktrees: Set<String> = []
+            var recipientWorktrees: [String] = []
+            for message in messages[previousCount..<currentCount] where seenWorktrees.insert(message.to.worktree).inserted {
+                recipientWorktrees.append(message.to.worktree)
+            }
+            return recipientWorktrees
+        }
+    }
+
+    nonisolated static func deliverCodexAppServerMessages(
+        teamID: String,
+        recipientWorktrees: [String],
+        delivery: CodexAppServerDeliveryTrigger
+    ) async {
+        await withTaskGroup(of: Void.self) { group in
+            for recipientWorktree in recipientWorktrees {
+                group.addTask {
+                    await delivery.onMessageArrival(team: teamID, worktree: recipientWorktree)
+                }
+            }
+        }
+    }
+
+    nonisolated static func retryCodexAppServerDeliveryForPresenceWorktrees(
+        inbox: TeamInbox,
+        records: [TeamPresenceRecord],
+        delivery: CodexAppServerDeliveryTrigger
+    ) async {
+        var seen: Set<TeamDeliveryPresenceWorktreeKey> = []
+        var keys: [TeamDeliveryPresenceWorktreeKey] = []
+        for record in records where record.runtime == .codex {
+            let key = TeamDeliveryPresenceWorktreeKey(teamID: record.teamID, worktree: record.worktree)
+            guard seen.insert(key).inserted else { continue }
+            if Self.hasPendingUnreadMessage(inbox: inbox, key: key) {
+                keys.append(key)
+            }
+        }
+
+        await withTaskGroup(of: Void.self) { group in
+            for key in keys {
+                group.addTask {
+                    await delivery.onMessageArrival(team: key.teamID, worktree: key.worktree)
+                }
+            }
+        }
+    }
+
+    private nonisolated static func hasPendingUnreadMessage(
+        inbox: TeamInbox,
+        key: TeamDeliveryPresenceWorktreeKey
     ) -> Bool {
-        guard runtime == TeamHookRuntime.codex.rawValue else { return true }
-        guard let paneSessionName else { return false }
-        return codexSessionNamesIn(team, worktree).contains(paneSessionName)
+        do {
+            let watermark = try inbox.worktreeWatermark(
+                teamID: key.teamID,
+                worktree: key.worktree
+            )?.lastDeliveredToAnySessionID
+            return try !inbox.unreadMessages(
+                teamID: key.teamID,
+                recipientWorktree: key.worktree,
+                after: watermark
+            ).isEmpty
+        } catch {
+            return false
+        }
+    }
+
+    private struct TeamDeliveryPresenceWorktreeKey: Hashable, Sendable {
+        let teamID: String
+        let worktree: String
     }
 
     /// Pre-pass for `reconcileOnLaunch` implementing LAYOUT-4.6 (bookmark
@@ -2433,8 +2500,7 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         teamInbox: TeamInbox,
-        teamEventDispatcher: TeamEventDispatcher,
-        hookCallbacks: TeamHookCallbacks? = nil
+        teamEventDispatcher: TeamEventDispatcher
     ) -> ResponseMessage? {
         switch message {
         case .listPanes(let path):
@@ -2499,8 +2565,7 @@ struct GrafttyApp: App {
                 appState: appState,
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher,
-                terminalManager: terminalManager,
-                hookCallbacks: hookCallbacks
+                terminalManager: terminalManager
             )
         case .teamInbox(let callerPath, let worktree, let repo, let member, let unread, let all):
             return handleTeamInbox(
@@ -2602,8 +2667,7 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         teamInbox: TeamInbox,
         teamEventDispatcher: TeamEventDispatcher,
-        terminalManager: TerminalManager,
-        hookCallbacks: TeamHookCallbacks? = nil
+        terminalManager: TerminalManager
     ) -> ResponseMessage {
         do {
             let presenceRecords = (try? TeamPresenceStorage(
@@ -2619,13 +2683,12 @@ struct GrafttyApp: App {
             let output = try teamInboxRequestHandler(
                 inbox: teamInbox,
                 dispatcher: teamEventDispatcher,
-                hookCallbacks: hookCallbacks,
                 automaticDeliveryOwner: { teamID, worktree, runtime, paneSessionName in
                     guard let paneSessionName else { return false }
                     let resolver = TeamDeliveryOwnershipResolver(
                         records: { presenceRecords },
                         liveness: AppTeamDeliveryLiveness(
-                            liveSessionNames: liveSessionNames,
+                            livePaneSession: { liveSessionNames.contains($0) },
                             processStartTimeMicroseconds: { ProcessIdentityReader.startTimeMicroseconds(ofPID: $0) }
                         )
                     )
@@ -2795,7 +2858,6 @@ struct GrafttyApp: App {
     private static func teamInboxRequestHandler(
         inbox: TeamInbox,
         dispatcher: TeamEventDispatcher,
-        hookCallbacks: TeamHookCallbacks? = nil,
         automaticDeliveryOwner: (@Sendable (
             _ teamID: String,
             _ worktree: String,
@@ -2807,9 +2869,6 @@ struct GrafttyApp: App {
             inbox: inbox,
             dispatcher: dispatcher,
             sessionPromptRenderer: renderTeamSessionPrompt(team:viewer:),
-            onStop: hookCallbacks?.onStop,
-            onSessionStart: hookCallbacks?.onSessionStart,
-            onPostToolUse: hookCallbacks?.onPostToolUse,
             automaticDeliveryOwner: automaticDeliveryOwner
         )
     }
@@ -3637,6 +3696,16 @@ struct GrafttyApp: App {
 
     // MARK: - View builder for bridge-shortcutted menu buttons
 
+    /// Resolve a `GhosttyAction`'s configured chord to a SwiftUI shortcut,
+    /// or nil if unbound — shared by `bridgedButton` and command views that
+    /// need the shortcut value directly. `@MainActor` to match its access of
+    /// the main-actor-isolated `terminalManager.keybindBridge`.
+    @MainActor
+    private func shortcut(for action: GhosttyAction) -> KeyboardShortcut? {
+        guard let chord = terminalManager.keybindBridge[action] else { return nil }
+        return KeyboardShortcutFromChord.shortcut(from: chord)
+    }
+
     /// Wraps a menu button so its keyboard shortcut is derived from the
     /// keybind bridge at runtime, not hardcoded. If the action has no
     /// configured binding (or the key can't be translated to a
@@ -3648,11 +3717,12 @@ struct GrafttyApp: App {
         action: GhosttyAction,
         onTap: @escaping () -> Void
     ) -> some View {
-        if let chord = terminalManager.keybindBridge[action],
-           let shortcut = KeyboardShortcutFromChord.shortcut(from: chord) {
-            Button(label, action: onTap).keyboardShortcut(shortcut)
-        } else {
-            Button(label, action: onTap)
+        Group {
+            if let shortcut = shortcut(for: action) {
+                Button(label, action: onTap).keyboardShortcut(shortcut)
+            } else {
+                Button(label, action: onTap)
+            }
         }
     }
 

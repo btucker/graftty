@@ -13,7 +13,7 @@ html, body, #root, #app {
   overflow: hidden;
 }
 
-#term {
+.term-host {
   width: 100vw;
   height: 100vh;
   /* Mobile: don't let the browser interpret single-finger drag as
@@ -25,8 +25,15 @@ html, body, #root, #app {
   overscroll-behavior: none;
 }
 
-#status {
-  position: fixed;
+/* In fit='container' mode the host fills its parent element rather than
+   the full viewport, so override the 100vw/100vh defaults. */
+.term-host-container {
+  width: 100%;
+  height: 100%;
+}
+
+.term-status {
+  position: absolute;
   top: 4px;
   right: 8px;
   color: #888;
@@ -35,8 +42,8 @@ html, body, #root, #app {
   z-index: 1;
 }
 
-#take-control {
-  position: fixed;
+.term-take-control {
+  position: absolute;
   top: 24px;
   right: 8px;
   z-index: 2;
@@ -49,7 +56,7 @@ html, body, #root, #app {
   cursor: pointer;
 }
 
-#take-control:hover {
+.term-take-control:hover {
   background: rgba(31, 52, 78, 0.96);
 }
 
@@ -180,6 +187,38 @@ html, body, #root, #app {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+.new-worktree-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 205, 100, 0.28);
+  background: rgba(255, 205, 100, 0.1);
+  color: #f0d38a;
+  font: 13px -apple-system, system-ui, sans-serif;
+}
+.new-worktree-warning-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.new-worktree-secondary {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--term-foreground);
+  font: 500 12px -apple-system, system-ui, sans-serif;
+  cursor: pointer;
+}
+.new-worktree-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+.new-worktree-secondary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 .new-worktree-actions {
   display: flex;
   justify-content: flex-end;
@@ -221,4 +260,271 @@ html, body, #root, #app {
 }
 .new-worktree-back:hover {
   color: var(--term-foreground);
+}
+
+/* ── Desktop shell layout ───────────────────────────────────────── */
+
+.desktop-shell {
+  display: flex;
+  flex-direction: row;
+  height: 100%;
+  overflow: hidden;
+}
+
+.sidebar-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 260px;
+  width: 260px;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+
+.sidebar-add-worktree {
+  display: block;
+  width: 100%;
+  padding: 8px 14px;
+  border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
+  color: #aaa;
+  text-align: left;
+  cursor: pointer;
+  font: 500 12px -apple-system, system-ui, sans-serif;
+  flex-shrink: 0;
+}
+
+.sidebar-add-worktree:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--term-foreground);
+}
+
+.sidebar {
+  flex: 1;
+  background: #111;
+  overflow-y: auto;
+}
+
+.desktop-content {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.desktop-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #555;
+  font: 13px Menlo, monospace;
+}
+
+/* ── Sidebar repo groups ─────────────────────────────────────────── */
+
+.sidebar-repo h2 {
+  font: 600 11px -apple-system, system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #666;
+  margin: 0;
+  padding: 12px 14px 4px;
+}
+
+/* ── Worktree rows ───────────────────────────────────────────────── */
+
+.wt-row {
+  display: block;
+  width: 100%;
+  padding: 6px 14px;
+  border: none;
+  background: transparent;
+  color: var(--term-foreground);
+  text-align: left;
+  cursor: pointer;
+  font: 13px -apple-system, system-ui, sans-serif;
+}
+
+.wt-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.wt-block[data-active="true"] .wt-row,
+.wt-row[data-active="true"] {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.wt-branch {
+  font: 11px Menlo, monospace;
+  color: #666;
+  display: block;
+}
+
+.wt-pr,
+.wt-divergence,
+.wt-attention {
+  display: inline-block;
+  font: 10px -apple-system, system-ui, sans-serif;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #999;
+  margin-top: 2px;
+}
+
+.wt-attention {
+  border-color: rgba(255, 200, 100, 0.25);
+  color: #c8a;
+}
+
+/* ── Pane rows ───────────────────────────────────────────────────── */
+
+.pane-row {
+  display: block;
+  width: 100%;
+  padding: 4px 14px 4px 24px;
+  border: none;
+  background: transparent;
+  color: #aaa;
+  text-align: left;
+  cursor: pointer;
+  font: 12px Menlo, monospace;
+}
+
+.pane-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--term-foreground);
+}
+
+.pane-row[data-focused="true"] {
+  color: var(--term-foreground);
+  font-style: italic;
+}
+
+.pane-row[data-busy="true"] {
+  color: #555;
+  font-style: italic;
+}
+
+.wt-name {
+  font-weight: normal;
+  display: block;
+}
+
+.pane-glyph {
+  color: #666;
+  margin-right: 4px;
+}
+
+.pane-title {
+  color: inherit;
+}
+
+.pane-attention {
+  display: inline-block;
+  font: 10px -apple-system, system-ui, sans-serif;
+  padding: 1px 5px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 200, 100, 0.25);
+  color: #c8a;
+  margin-top: 2px;
+}
+
+/* ── Split layout ────────────────────────────────────────────────── */
+
+.split-container {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.split-container[data-direction="column"] {
+  flex-direction: column;
+}
+
+.split-container[data-direction="row"] {
+  flex-direction: row;
+}
+
+.split-child {
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+
+.split-divider {
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.split-container[data-direction="row"] > .split-divider {
+  width: 1px;
+  height: 100%;
+}
+
+.split-container[data-direction="column"] > .split-divider {
+  width: 100%;
+  height: 1px;
+}
+
+/* ── Pane tiles ──────────────────────────────────────────────────── */
+
+.pane-slot {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.pane-tile {
+  width: 100%;
+  height: 100%;
+  border: 1px solid transparent;
+  box-sizing: border-box;
+}
+
+.pane-tile[data-focused="true"] {
+  border-color: rgba(120, 170, 255, 0.35);
+}
+
+/* ── Pane overview ───────────────────────────────────────────────── */
+
+.pane-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  height: 100%;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+.pane-overview-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #555;
+  font: 13px Menlo, monospace;
+}
+
+.pane-preview {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #0a0a0a;
+}
+
+.pane-preview-terminal {
+  height: 120px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.pane-preview-title {
+  padding: 6px 10px;
+  font: 11px Menlo, monospace;
+  color: #888;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.02);
 }

@@ -1,4 +1,5 @@
 import Foundation
+import GrafttyProtocol
 import NIOCore
 import NIOConcurrencyHelpers
 import NIOSSH
@@ -12,12 +13,30 @@ import NIOSSH
 ///      `pty-req`, `shell`. Resolves when shell is accepted.
 ///   2. `send(.binary(data))` writes the bytes as `SSHChannelData` to
 ///      the channel.
-///   3. `receive()` returns the next `.binary(Data)` from an internal
-///      buffer (populated by the inbound handler).
+///   3. `receive()` returns the next frame from an internal buffer
+///      (populated by the inbound handler): `.binary` for `.channel`
+///      terminal bytes, `.text` for a decoded `.stdErr` control
+///      envelope (see REMOTE-9 below).
 ///   4. `resize(cols:rows:)` sends an SSH `window-change` channel
-///      request.
+///      request. Kept unconditionally (not gated on ownership) — it's
+///      what makes the PTY actually resize server-side for legacy
+///      (pre-`.hello`) servers, and is harmless once the control
+///      carrier is active (the server owner-gates it the same way it
+///      gates the web transport's legacy `resize` frame).
 ///   5. `close()` closes the SSH child channel; the server-side handler
 ///      sees `channelInactive` and tears down the stream.
+///
+/// REMOTE-9 / `supportsWebControlTextFrames = true`: display ownership
+/// (`hello`/`takeControl`/`ownerResize`) rides the SAME session channel
+/// as terminal bytes, multiplexed by `SSHChannelData.type` exactly like
+/// `GrafttyHostAgent`'s `TerminalSessionHandler` — `.channel` carries
+/// raw PTY bytes (unchanged), `.stdErr` carries length-prefixed
+/// (`<u32 BE length><UTF-8 JSON>`) `WebControlEnvelope` frames in both
+/// directions. `sendHello`/`takeControl`/`ownerResize` encode+frame+write
+/// a `.stdErr` frame; `InboundRelay` deframes inbound `.stdErr` bytes and
+/// surfaces each complete envelope's JSON as `WebSocketFrame.text(_:)`,
+/// which `SessionClient.handleTextFrame` consumes unmodified — the same
+/// contract `URLSessionWebSocketClient` provides over `/ws`.
 public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     public enum ClientError: Error, Sendable {
         case notConnected
@@ -30,10 +49,12 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     private let sessionName: String
     private let lock = NIOLock()
     private var childChannel: Channel?
-    private var receiveBuffer: [Data] = []
+    private var receiveBuffer: [WebSocketFrame] = []
     private var pendingReceivers: [CheckedContinuation<WebSocketFrame, Error>] = []
     private var didFailReceive: (any Error)?
     private var closed = false
+
+    public var supportsWebControlTextFrames: Bool { true }
 
     public init(parentChannel: Channel, parentHandler: NIOSSHHandler, sessionName: String) {
         self.parentChannel = parentChannel
@@ -46,13 +67,14 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     /// (ChannelSuccessEvent), ensuring the server-side stream is attached
     /// before the caller sends any terminal bytes.
     public func connect() async throws {
-        let promise = parentChannel.eventLoop.makePromise(of: Channel.self)
-        parentHandler.createChannel(promise, channelType: .session) { [self] child, _ in
-            child.pipeline.addHandler(InboundRelay(owner: self))
-        }
         let child: Channel
         do {
-            child = try await promise.futureResult.get()
+            child = try await openChildChannel(
+                parentChannel: parentChannel,
+                parentHandler: parentHandler
+            ) { [self] child, _ in
+                child.pipeline.addHandler(InboundRelay(owner: self))
+            }
         } catch {
             throw ClientError.openFailed(error)
         }
@@ -97,16 +119,22 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
     }
 
     public func send(_ frame: WebSocketFrame) async throws {
-        let child = lock.withLock { childChannel }
-        guard let child else { throw ClientError.notConnected }
-        let bytes: Data
         switch frame {
-        case .binary(let data): bytes = data
-        case .text(let s): bytes = Data(s.utf8)
+        case .binary(let data):
+            let child = lock.withLock { childChannel }
+            guard let child else { throw ClientError.notConnected }
+            let buffer = child.allocator.buffer(bytes: data)
+            let channelData = SSHChannelData(type: .channel, data: .byteBuffer(buffer))
+            try await child.writeAndFlush(channelData).get()
+        case .text(let payload):
+            // Route through the same `.stdErr` control carrier `receive()`
+            // surfaces `.text` from — `URLSessionWebSocketClient` treats
+            // `.text` as its native control encoding, so any polymorphic
+            // caller sending `.text` through this client must land on the
+            // control carrier too, not as `.channel` PTY bytes (which
+            // would corrupt terminal output on the wire).
+            try await sendRawControlFrame(payload)
         }
-        let buffer = child.allocator.buffer(bytes: bytes)
-        let data = SSHChannelData(type: .channel, data: .byteBuffer(buffer))
-        try await child.writeAndFlush(data).get()
     }
 
     public func receive() async throws -> WebSocketFrame {
@@ -118,7 +146,7 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
                 }
                 if !receiveBuffer.isEmpty {
                     let next = receiveBuffer.removeFirst()
-                    cont.resume(returning: .binary(next))
+                    cont.resume(returning: next)
                     return
                 }
                 if closed {
@@ -156,15 +184,108 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
         try? await child.triggerUserOutboundEvent(event).get()
     }
 
+    // MARK: - REMOTE-9 control-envelope senders
+
+    public func sendHello(
+        clientID: DisplayClientID,
+        kind: DisplayClientKind,
+        role: DisplayClientRole,
+        visible: Bool,
+        cols: Int,
+        rows: Int
+    ) async {
+        await sendControlEnvelope(.hello(
+            clientID: clientID,
+            kind: kind,
+            role: role,
+            visible: visible,
+            cols: Self.gridDimension(cols),
+            rows: Self.gridDimension(rows)
+        ))
+    }
+
+    public func takeControl(clientID: DisplayClientID, kind: DisplayClientKind, cols: Int, rows: Int) async {
+        await sendControlEnvelope(.takeControl(
+            clientID: clientID,
+            kind: kind,
+            cols: Self.gridDimension(cols),
+            rows: Self.gridDimension(rows)
+        ))
+    }
+
+    public func ownerResize(clientID: DisplayClientID, epoch: UInt64, cols: Int, rows: Int) async {
+        await sendControlEnvelope(.ownerResize(
+            clientID: clientID,
+            epoch: epoch,
+            cols: Self.gridDimension(cols),
+            rows: Self.gridDimension(rows)
+        ))
+    }
+
+    /// Every current caller (`SessionClient`) derives cols/rows from
+    /// `UInt16`-typed grids, so this is a no-op today — but these are
+    /// public `Int`-taking API and a trapping `UInt16(_:)` conversion
+    /// would crash the app on a transient out-of-range layout value.
+    /// Clamp into the valid grid range instead (floor 1 keeps the
+    /// envelope parseable), AND cap at `WebControlEnvelope.maxGridDimension`
+    /// — the same shared bound the server's parser and pty-req/window-change
+    /// clamping use (`WebControlEnvelope.clampedGridDimension`). Without the
+    /// upper cap here, a transient out-of-range layout value could still be
+    /// encoded into a hello/takeControl/ownerResize envelope that the
+    /// server-side parser rejects — pre-lenient-hello, that could
+    /// permanently strand the connection; even with the server's lenient
+    /// fallback, sending an envelope this client itself would reject on
+    /// the way in is never correct.
+    private static func gridDimension(_ value: Int) -> UInt16 {
+        WebControlEnvelope.clampedGridDimension(max(1, value))
+    }
+
+    /// Fire-and-forget wrapper around `sendRawControlFrame` for the
+    /// internal REMOTE-9 senders (hello/takeControl/ownerResize). Silent
+    /// no-op if the channel isn't open yet or the write fails; callers
+    /// (`SessionClient`) treat these as fire-and-forget, exactly like
+    /// `URLSessionWebSocketClient`'s `try? await send(.text(...))`.
+    private func sendControlEnvelope(_ envelope: WebControlEnvelope) async {
+        try? await sendRawControlFrame(envelope.encoded())
+    }
+
+    /// Length-prefixes `payload` (`<u32 BE length><UTF-8 JSON>`) and writes
+    /// it as a `.stdErr`-typed `SSHChannelData` on the session channel — the
+    /// same wire shape `StdErrControlFraming.encode` produces server-side
+    /// via `TerminalSessionHandler`. Shared by `sendControlEnvelope` (the
+    /// fire-and-forget internal senders) and `send(.text)` (the
+    /// `WebSocketClient` conformance surface) so both routes land on the
+    /// SAME `.stdErr` control carrier `receive()` reads back from, rather
+    /// than `send(.text)` writing `.channel` PTY bytes as it did before —
+    /// asymmetric with `receive()` and with `URLSessionWebSocketClient`,
+    /// where `.text` IS the control encoding.
+    private func sendRawControlFrame(_ payload: String) async throws {
+        let child = lock.withLock { childChannel }
+        guard let child else { throw ClientError.notConnected }
+        guard let framed = StdErrControlFraming.encode(payload) else { return }
+        var buffer = child.allocator.buffer(capacity: framed.count)
+        buffer.writeBytes(framed)
+        let data = SSHChannelData(type: .stdErr, data: .byteBuffer(buffer))
+        try await child.writeAndFlush(data).get()
+    }
+
     // MARK: - Inbound bytes from the SSH channel
 
-    fileprivate func deliverInbound(_ data: Data) {
+    fileprivate func deliverInboundBinary(_ data: Data) {
+        deliverInbound(.binary(data))
+    }
+
+    fileprivate func deliverInboundText(_ text: String) {
+        deliverInbound(.text(text))
+    }
+
+    private func deliverInbound(_ frame: WebSocketFrame) {
         lock.withLock {
             if let next = pendingReceivers.first {
                 pendingReceivers.removeFirst()
-                next.resume(returning: .binary(data))
+                next.resume(returning: frame)
             } else {
-                receiveBuffer.append(data)
+                receiveBuffer.append(frame)
             }
         }
     }
@@ -218,7 +339,11 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
 }
 
 /// Inbound relay installed on the SSH child channel. Forwards inbound
-/// `SSHChannelData` to the owning `TerminalSessionClient`.
+/// `SSHChannelData` to the owning `TerminalSessionClient`, demultiplexed
+/// by `SSHChannelData.type` exactly like `TerminalSessionHandler` does
+/// server-side: `.channel` is raw terminal bytes (unchanged), `.stdErr`
+/// is the REMOTE-9 control carrier and is deframed here before being
+/// surfaced as a `.text` frame.
 ///
 /// Holds a **strong** reference to `owner`. The retain cycle
 /// (TerminalSessionClient → child pipeline → InboundRelay → owner) is
@@ -226,10 +351,38 @@ public final class TerminalSessionClient: WebSocketClient, @unchecked Sendable {
 /// channel closes, breaking the cycle at that point. Using a weak ref
 /// here would silently drop bytes if the caller releases its strong
 /// reference to TerminalSessionClient while the channel is still alive.
+///
+/// `InboundRelay` runs exclusively on the child channel's event loop
+/// (NIO's single-threaded-per-channel guarantee), so `stdErrDecoder`
+/// / `stdErrPoisoned` need no lock — unlike
+/// `TerminalSessionHandler.helloLock`, which exists there because that
+/// state is also read from a different SSH connection's broadcaster
+/// fan-out thread. Nothing analogous touches this client's accumulator
+/// off-loop.
 private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
     typealias InboundIn = SSHChannelData
 
     let owner: TerminalSessionClient
+    /// Accumulates/drains the `.stdErr` control carrier's
+    /// `<u32 BE length><UTF-8 JSON>` frames — see
+    /// `StdErrControlFraming` for the wire format and cap this shares
+    /// with `TerminalSessionHandler` on the server side.
+    private var stdErrDecoder = StdErrControlFraming.Decoder()
+    /// Set once a `.stdErr` frame header claims a length above
+    /// `StdErrControlFraming.maxFrameLength`, or undrained accumulation
+    /// exceeds that same bound with no complete frame in sight. Framing
+    /// is unrecoverable at that point (we can't tell where the next frame
+    /// starts) — a single malformed frame's bytes failing UTF-8 decoding
+    /// is handled separately and does NOT poison the carrier (framing
+    /// stays intact; see `ingestControlBytes`). Mirrors the server
+    /// (`TerminalSessionHandler.poisonStdErr`): a poisoned-but-alive
+    /// client would be a frozen-ownership black hole — no more
+    /// take-control/ownerResize requests could ever be parsed, and (if
+    /// this client isn't the owner) inbound ownership updates would stop
+    /// too — so closing the child channel here routes into
+    /// `SessionClient`'s existing reconnect/backoff and self-heals
+    /// instead of hanging silently forever.
+    private var stdErrPoisoned = false
 
     init(owner: TerminalSessionClient) {
         self.owner = owner
@@ -240,7 +393,53 @@ private final class InboundRelay: ChannelInboundHandler, @unchecked Sendable {
         guard case let .byteBuffer(buf) = channelData.data else { return }
         var view = buf
         guard let bytes = view.readBytes(length: view.readableBytes) else { return }
-        owner.deliverInbound(Data(bytes))
+        switch channelData.type {
+        case .stdErr:
+            ingestControlBytes(Data(bytes), context: context)
+        default:
+            owner.deliverInboundBinary(Data(bytes))
+        }
+    }
+
+    /// Accumulates inbound `.stdErr` bytes and drains every complete
+    /// `<u32 BE length><UTF-8 JSON>` frame via the shared
+    /// `StdErrControlFraming.Decoder`, mirroring
+    /// `TerminalSessionHandler.ingestStdErr`/`drainControlFrames`. A frame
+    /// whose bytes aren't valid UTF-8 is dropped individually (framing is
+    /// still intact — we know exactly where the next frame starts) rather
+    /// than poisoning the whole carrier; only a length-prefix overflow
+    /// (unrecoverable framing) poisons it.
+    private func ingestControlBytes(_ data: Data, context: ChannelHandlerContext) {
+        guard !stdErrPoisoned else { return }
+        stdErrDecoder.append(data)
+        let (frames, oversized) = stdErrDecoder.drain()
+        for payload in frames {
+            guard let text = String(data: payload, encoding: .utf8) else { continue }
+            owner.deliverInboundText(text)
+        }
+        if oversized {
+            poisonAndClose(context: context)
+            return
+        }
+        // Bound undrained accumulation the same way the server does:
+        // more than one max-size frame's worth of bytes past the cursor
+        // with no complete frame in sight is itself a protocol violation.
+        if stdErrDecoder.isOverAccumulated {
+            poisonAndClose(context: context)
+        }
+    }
+
+    /// Marks the carrier unrecoverably framed and closes the child
+    /// channel. `channelInactive` (via `TerminalSessionClient`'s
+    /// `closeFuture` observer / `handleChildClose`) then fails any
+    /// pending/future `receive()` calls with `.channelClosed`, which
+    /// `SessionClient` treats like any other transport drop — it
+    /// reconnects with backoff rather than being stuck forever behind a
+    /// carrier that can never surface another control envelope.
+    private func poisonAndClose(context: ChannelHandlerContext) {
+        stdErrPoisoned = true
+        stdErrDecoder.reset()
+        context.close(promise: nil)
     }
 }
 

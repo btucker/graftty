@@ -424,6 +424,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-4.19** When the user invokes a delete-flow confirmation dialog (GIT-4.2 Delete Worktree, GIT-4.4 force-delete recovery, GIT-4.11 final failure, or the GIT-3.6 Remove Repository menu item), the application shall present it as a window-attached sheet via `NSAlert.beginSheetModal(for:)` rather than `NSAlert.runModal()`. Extends GIT-4.14's policy from the auto-triggered offer dialog to every user-initiated delete dialog — otherwise the nested-event-loop `runModal()` freezes libghostty's PTY callbacks for every embedded terminal pane while the dialog awaits a click.
 
+**GIT-4.20** `PRStatusStore.onPRResolved` fires the resolved edge exactly once (the idempotent-refetch guard in GIT-4.7 forbids re-firing for the same terminal PR). So when the "delete worktree?" offer can't present at that moment — no `NSApp.mainWindow`, because the app is backgrounded or Settings / the Team Activity Log is foregrounded — the offer would be lost forever. The application shall instead queue such an offer and retry it when a window becomes available, keyed by worktree so a newer resolution supersedes an older one for the same worktree.
+
 ### GIT-5.x — Creating a Worktree
 
 **GIT-5.1** When the user types or pastes into the "Worktree name" or "Branch" field of the Add Worktree sheet, the application shall replace any character outside the set `A-Z a-z 0-9 . _ - /` with `-`, and shall collapse any run of consecutive `-` (including dashes the user typed directly) into a single `-`. `/` is permitted so branch names can use the conventional namespace separator (`feature/foo`); the resulting worktree path becomes a nested `.worktrees/<ns>/<leaf>` directory that `git worktree add` creates. Ref-format rules git already enforces (`//`, leading/trailing `/`, components beginning with `.`) are not duplicated here — git reports them at submit time. The replacement shall apply live on every edit so the field shows only sanitized content.
@@ -635,6 +637,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **KEY-1.2** When libghostty reports that a key was not handled, the application shall allow the event to continue up the responder chain.
 
 **KEY-1.3** Application-level menu keyboard shortcuts (Cmd+D split, Cmd+W close pane, Cmd+O add repository, and pane navigation shortcuts) shall be matched by AppKit's menu `keyEquivalent` interception before the keyDown event reaches the terminal, so menu shortcuts override any conflicting libghostty keybinding.
+
+**KEY-1.4** When a modifier key is pressed or released over a terminal pane (AppKit `flagsChanged`), the application shall forward the modifier transition to libghostty as a modifier-only key event, so link hover state refreshes and a cmd+click on an already-hovered file path opens the editor without requiring mouse movement.
+
+**KEY-1.5** When a modifier key is pressed while the pointer hovers a terminal pane that is not first responder, the application shall refresh that pane's link hover state, so cmd+click on a file path in an unfocused pane opens the editor without first moving the mouse. (AppKit delivers `flagsChanged` only to the first responder, so KEY-1.4's forwarding does not reach the hovered pane, and the click's own mouse-pos event is cell-deduped inside libghostty.)
 
 ### KEY-2.x — Clipboard
 
@@ -936,6 +942,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-1.13** While the server is listening, the Settings pane shall render a 160 pt QR code inline beneath the Base URL row, encoding the Base URL so that an iOS client can scan it on first run to add a saved host. Alongside the QR, the pane shall render a one-sentence usage hint ("Scan with Graftty") so a reader who has never onboarded a phone before knows what the code is for. Hiding it behind a disclosure is rejected on discoverability grounds: a user who has Web Access on has almost certainly enabled it to onboard a phone, and the QR is the payoff for that action. When the server is not listening, the Base URL row (and therefore the QR) is not rendered at all, per the existing status-gated layout.
 
+**WEB-1.14** While web access is enabled and the latest server bring-up attempt failed with a transient dependency error (Tailscale daemon unreachable, MagicDNS name not yet published, or certificate not yet mintable), the application shall automatically retry bring-up with capped exponential backoff until it succeeds or web access is disabled.
+
 ### WEB-2.x — Authorization
 
 **WEB-2.1** The application shall resolve each incoming peer IP via Tailscale LocalAPI `whois` before serving any content at any path.
@@ -1002,6 +1010,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-5.9** The client shall ignore an ownership snapshot whose epoch is older than the latest applied snapshot, so a reordered broadcast cannot revert the owner/grid the client already advanced past.
 
+**WEB-5.10** The client shall ignore a same-epoch ownership snapshot whose revision is lower than the latest applied, so a reordered same-epoch owner resize cannot roll the owner/grid back to a stale state. A same-epoch snapshot with an equal or higher revision is still applied.
+
 ### WEB-6.x — Security and non-goals
 
 **WEB-6.1** The web server shall bind HTTPS only, using a cert+key pair fetched from Tailscale LocalAPI for the machine's MagicDNS name (WEB-8.2). The application shall not bind any HTTP listener; clients with old `http://` bookmarks will fail to connect until they update the URL.
@@ -1012,7 +1022,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### WEB-7.x — Adding worktrees from the web client
 
-**WEB-7.1** When a client requests `GET /repos`, the application shall respond with a JSON array of the currently-tracked repositories (one entry per top-level `RepoEntry` in `AppState.repos`) with fields `path` (opaque absolute path round-tripped on `POST /worktrees`) and `displayName` (matching the native sidebar's top-level label). Access is gated by the same Tailscale-whois authorization (`WEB-2.1` / `WEB-2.2`).
+**WEB-7.1** When a client requests `GET /repos`, the application shall respond with a JSON array of the currently-tracked repositories (one entry per top-level `RepoEntry` in `AppState.repos`) with fields `path` (opaque absolute path round-tripped on `POST /worktrees`), `displayName` (matching the native sidebar's top-level label), and optional `defaultBranchStatus` (`branchName`, `remoteRef`, `behindCount`) when the default checkout is behind its origin default branch. Access is gated by the same Tailscale-whois authorization (`WEB-2.1` / `WEB-2.2`).
 
 **WEB-7.2** When a client sends `POST /worktrees` with a JSON body `{repoPath, worktreeName, branchName}`, the application shall create a new worktree under `<repoPath>/.worktrees/<worktreeName>` on a fresh branch named `<branchName>`, starting from the repo's resolved default branch (same `GitOriginDefaultBranch` resolution the native sheet uses); discover the new worktree into `AppState.repos` so it appears in the sidebar immediately; spawn its first ghostty surface via the same `TerminalManager.createSurfaces` path the native sheet uses; and respond with `200` and `{sessionName, worktreePath}`. The `sessionName` is the `ZMX-2.1`-derived name of the first leaf, suitable for use as `/session/<sessionName>`.
 
@@ -1032,6 +1042,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-7.10** If the server's `worktreeRemover` closure is not injected, then `POST /worktrees/delete` shall respond `503 Service Unavailable` with `{ "error": "worktree deletion not available" }`. This matches the create endpoint's pre-injection contract (WEB-7.4 sibling) so a mobile or web client can distinguish "not supported yet" from "wrong URL".
 
+**WEB-7.11** When `/new` is creating a new branch and the selected repository's default checkout is behind its origin default branch, the web client shall offer to pull the default checkout before posting `POST /worktrees`; accepting the offer shall call `POST /repos/default-branch/pull` with `{repoPath}` and shall leave worktree creation pending until the user submits again after the pull succeeds.
+
+**WEB-7.12** When a client sends `POST /repos/default-branch/pull` with `{repoPath}`, the application shall run the injected default-branch puller for that repository and respond `200` with `{ok: true}` on success, `409` with `{error}` when git rejects the pull, and `503` when the puller is not wired.
+
 ### WEB-8.x — Web TLS (HTTPS)
 
 **WEB-8.1** When binding the HTTPS server, the application shall read `Self.DNSName` from Tailscale LocalAPI `/status`, strip the trailing dot, and use the resulting FQDN as the TLS SNI name and as the hostname in every composed Base URL / session URL. If `DNSName` is absent or empty, the application shall enter `.magicDNSDisabled` status and not bind. Settings shall render a "MagicDNS must be enabled on your tailnet" message plus a link to `https://login.tailscale.com/admin/dns`.
@@ -1045,6 +1059,38 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **WEB-8.5** While reading a `/localapi/v0/cert/<fqdn>` response, the application shall use a recv timeout sized for first-time Let's Encrypt minting (≥60s), distinct from the 2s timeout used for `whois`/`status`, so a slow ACME exchange does not surface as `.certFetchFailed("malformedResponse")`.
 
 **WEB-8.6** While the cert pair fetch is in flight on "Enable web access", the application shall hold a `.provisioningCert` status, render a `ProgressView` plus "Provisioning certificate from Tailscale…" message in the Settings pane, and shall not block the MainActor for the duration of the fetch. On completion the status shall transition to `.listening` (success), `.httpsCertsNotEnabled` (tailnet-disabled), or `.certFetchFailed(<message>)` (any other error) without leaving the pane stuck on `.provisioningCert`.
+
+### WEB-9.x
+
+**WEB-9.1** While the web viewport is at desktop width, the application shall present a persistent worktree sidebar alongside the pane content.
+
+**WEB-9.2** When rendering a worktree pane tree, the application shall lay panes out in nested proportional splits mirroring the host split ratios.
+
+**WEB-9.3** While showing a pane overview, the application shall render each pane as a live read-only terminal preview.
+
+**WEB-9.4** When a worktree has exactly one pane, the application shall open that pane fullscreen instead of showing an overview.
+
+**WEB-9.5** When role is preview, the client shall send hello with role:preview and shall not send takeControl or ownerResize frames, even after receiving an ownership snapshot naming another owner.
+
+**WEB-9.6** When listing worktrees, the application shall group panes under their worktree rather than listing each pane separately.
+
+**WEB-9.7** While at desktop width, the application shall render the selected worktree panes as fully interactive terminals with click-to-focus keyboard routing.
+
+**WEB-9.8** While at compact width, the application shall navigate worktree list to overview to fullscreen as a push flow.
+
+## OWN — Display Ownership
+
+### OWN-1.x — Follower Convergence
+
+**OWN-1.1** When a display follower receives an ownership snapshot whose revision is lower than one already applied, the application shall discard the superseded delivery and preserve the current ownership and grid state.
+
+### OWN-2.x — Mac Take-Control Affordance and Reclaim
+
+**OWN-2.1** While a zmx-backed Mac pane's session is owned by another display client, or is ownerless after a prior ownership change, the application shall offer the pane's Take Control affordance (`canTakeDisplayControl()` true); while the Mac pane itself owns the session — including the automatic ownerless claim at first attach — or the session has no ownership history, the affordance shall be hidden.
+
+**OWN-2.2** When a non-command key press reaches a zmx-backed Mac pane that can take display control (OWN-2.1), the application shall reclaim display ownership at the key event itself — synchronously, before dispatching the key — rather than relying on the asynchronous emitted-bytes classification, which runs on libghostty's IO thread after the user-input scope has already exited.
+
+**OWN-2.3** When a clipboard paste is delivered to a zmx-backed Mac pane that can take display control (OWN-2.1), the application shall reclaim display ownership before completing the clipboard request — the clipboard read completes asynchronously on the main queue after the triggering key or menu event, so neither the OWN-2.2 key-event reclaim (command chords are excluded) nor the emitted-bytes classification can claim ownership for the paste bytes.
 
 ## UPDATE — Self-Update
 
@@ -1101,6 +1147,20 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### KBD-4.x
 
 **KBD-4.1** When `reload_config` fires, the application shall rebuild
+
+### KBD-5.x
+
+**KBD-5.1** When another on-disk worktree has attention, next_tab shall select the next attention-carrying worktree in cyclic sidebar order (skipping non-attention worktrees between), flattening worktrees across repos in sidebar order.
+
+**KBD-5.2** When no other worktree has attention, next_tab shall select the immediate next on-disk worktree in cyclic sidebar order, wrapping from the last back to the first.
+
+**KBD-5.3** When the user presses previous_tab, the application shall apply attention-first selection in reverse cyclic order, and select the immediate previous on-disk worktree (wrapping) when no worktree has attention.
+
+**KBD-5.4** When a worktree carries attention from any source (agent-stop, user notify, command-finished) at worktree or pane scope, the application shall count it as a navigation target, while excluding the currently-selected worktree from the attention subset so its own attention does not trap navigation on itself.
+
+**KBD-5.5** When zero or one on-disk worktree is selectable, next_tab and previous_tab shall be a no-op (return nil); non-on-disk worktrees (.stale/.creating/.deleting) shall never be navigation targets even when they carry attention.
+
+**KBD-5.6** When no worktree is selected, next_tab shall select the first attention worktree else the first on-disk worktree, and previous_tab shall select the first attention worktree scanning backward from the end else the last on-disk worktree.
 
 ## PR — PR/MR Status Display
 
@@ -1172,7 +1232,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PR-7.11** When host detection (`GitOriginHost.detect` or equivalent) throws for a repository — process launch failure, git binary missing from PATH, etc. — the application shall not cache the failure in the `hostByRepo` map. Only successful detections (whether returning a resolved `HostingOrigin` or a legitimate "no origin remote" nil) shall be cached. Otherwise a transient environment glitch at first fetch poisons the repo's PR tracking for the whole session, since the poll tick skips cached-nil repos and no code path re-attempts detection.
 
-**PR-7.12** When the user selects a worktree in the sidebar, the application shall call `PRStatusStore.refresh`, bypassing the per-repo polling cadence. Even with the 60-second cap, a worst-case 60-second wait for a freshly-merged PR to appear in the breadcrumb is longer than the click-to-feedback loop a user expects on selection. Sidebar selection is a strong "user cares about this worktree now" signal, and the existing `refresh` path already short-circuits cadence and resets `failureStreak` on success — wiring it to selection closes the stale-UI escape hatch without any new mechanism.
+**PR-7.12** When the user selects a worktree in the sidebar, the application shall call `PRStatusStore.refresh`, bypassing the per-repo polling cadence. A 60-second base cadence — stretching to 300 seconds after repeated failures — is a worse wait for a freshly-merged PR to appear in the breadcrumb than the click-to-feedback loop a user expects on selection. Sidebar selection is a strong "user cares about this worktree now" signal, and the existing `refresh` path already short-circuits cadence and resets `failureStreak` on success — wiring it to selection closes the stale-UI escape hatch without any new mechanism.
 
 **PR-7.13** `PRStatusStore` shall time-bound its per-repo `inFlight` refresh guard so a hung `gh pr list` / `glab mr list` subprocess cannot permanently lock out subsequent polls and user-triggered refreshes. A dispatch whose start timestamp is within the inFlight cap (30 seconds) shall suppress a fresh refresh; beyond that cap, the prior dispatch shall be treated as abandoned and superseded, with the per-repo `generation` counter bumped so the abandoned Task's late write is dropped if it ever returns. Without this, a single stuck subprocess (network flake, rate-limit back-off, expired gh auth refresh loop) freezes that repo's worktrees' sidebar badges and breadcrumb PR buttons at their last-cached state until the app is relaunched — the user-observable shape "PR status only updates when I click between worktrees". Mirrors `WorktreeStatsStore`'s `DIVERGE-4.4` recovery pattern for the equivalent stats-store bug.
 
@@ -1209,6 +1269,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **PR-8.22**
 
 **PR-8.23** When a worktree's local branch name differs from the remote branch it tracks (via `branch.<name>.merge` / `git push -u`), the application shall associate the worktree with the PR/MR whose head ref equals the tracked remote branch name, not the local branch name. PR fetchers key snapshots by the remote-side head ref (`headRefName` for GitHub, `source_branch` for GitLab), so the previous `prsByBranch[localBranch]` lookup silently dropped the badge whenever the worktree's branch was renamed locally only or its upstream was bound to a differently-named ref.
+
+**PR-8.24** The `checks == .none` and `mergeable == .unknown` values denote *absence of a signal* (an empty / all-neutral `statusCheckRollup`, or GitHub's transient "still recomputing" mergeability), not a settled conclusion. When a CI-conclusion or mergeability transition's destination is one of those absence values, the application shall NOT fire a change notification — a blip toward "no signal" is not something an agent should be woken for. Transitions INTO a real value (`.success` / `.failure`, `.mergeable` / `.conflicting`) still fire.
+
+**PR-8.25** When a pulse is requested, the application shall force the next poll past the per-repo cadence gate so an explicit refresh signal (window focus, add-worktree picker, newly-pushed branch) fetches fresh PR data even while the background cadence is in a long backoff.
 
 ## IOS — iOS App
 
@@ -1290,13 +1354,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-4.22** When the iOS app opens its session WebSocket, the URL shall advertise the display-client kind via a `client=ios` query parameter so the daemon classifies the connection as `.ios` and the ownership store stamps `ownerKind=.ios`. Without it the connection defaults to `.web`, and `SessionClient.isOwner` (which requires `ownerKind == .ios`) can never be true — the phone cannot confirm ownership after Take Control or terminal-input takeover.
 
-**IOS-4.23** When an ownership snapshot arrives whose epoch is older than the most recently applied snapshot, the application shall ignore it, so a reordered broadcast cannot revert the owner or grid the client already advanced past. Owner resizes keep the same epoch, so equal-epoch snapshots are still applied.
+**IOS-4.23** When an ownership snapshot arrives whose epoch is older than the most recently applied snapshot, the application shall ignore it, so a reordered broadcast cannot revert the owner or grid the client already advanced past. Owner resizes keep the same epoch; an equal-epoch snapshot is applied only when its revision is not lower than the last applied (see IOS-4.27).
 
 **IOS-4.24** When an ownership snapshot promotes this client from non-owner to display owner, the application shall immediately send an `ownerResize` carrying its current iOS viewport, so the remote PTY adopts the iOS grid at the moment of takeover rather than retaining the previous owner's grid until the next layout tick.
 
 **IOS-4.25** Attaching an interactive iOS client to an ownerless session shall not implicitly make the phone the display owner. Mobile ownership changes require a `takeControl` frame, sent either by the Take Control button or by intentional terminal input; passive attach alone shall leave the session ownerless.
 
 **IOS-4.26** On an ownerless session, an iOS WebSocket `hello` shall attach the client and return an ownerless ownership snapshot rather than implicitly claiming ownership. This is the transport-level state that lets GrafttyMobile show Take Control before sending the explicit `takeControl` frame.
+
+**IOS-4.27** When an ownership snapshot arrives with the same epoch as the last applied snapshot but a lower revision, the application shall ignore it, so a reordered same-epoch owner resize cannot roll the grid back to a stale size. A same-epoch snapshot with an equal or higher revision is still applied.
 
 ### IOS-5.x — Multi-pane layout
 
@@ -1324,7 +1390,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.9** While the iOS software keyboard is visible, the application shall raise the fullscreen terminal layout so its bottom edge sits at or above the keyboard's top edge rather than under it. SwiftUI's automatic `.keyboard` safe-area avoidance does not engage reliably while the first responder is the `UIViewRepresentable`-wrapped `UIKeyInput` proxy from `IOS-6.6` — SwiftUI's focus system is unaware of the proxy, so the avoidance machinery skips the layout. The application shall instead observe `UIResponder.keyboardWillChangeFrameNotification`, compute the keyboard end-frame's vertical intersection with the screen, and apply that height as an explicit `.padding(.bottom, …)` on the fullscreen layout so the terminal — and the `IOS-6.1` control bar overlaid at the bottom — both ride above the keyboard's top edge.
 
-**IOS-6.10** When the iOS client becomes the explicit display owner, the font size currently applied to the terminal controller shall remain in effect as the new baseline — including any active auto-fit override from `IOS-5.6` / `IPAD-2.5`. The application shall stop driving the font from `TerminalWidthLayout.decide` while it remains owner; libghostty's pinch-to-zoom (`IOS-6.8`) shall mutate font from this baseline without implicitly changing ownership.
+**IOS-6.10** When the iOS client becomes the explicit display owner while a non-owner auto-fit font override (`IOS-5.6` / `IPAD-2.5`) is active, the application shall restore the base config font so the pane re-lays out at the configured iOS font size and the resulting owner resize adopts an iOS-natural grid — rather than keeping the follower-fitted font (and therefore the previous owner's width) until the next incidental layout tick. libghostty's pinch-to-zoom (`IOS-6.8`) shall adjust font from that restored baseline without implicitly changing ownership.
 
 **IOS-6.11** While mobile terminal chrome is overlaid at the bottom of a fullscreen session, the terminal viewport used for rendering and font-fit decisions shall reserve that measured chrome height. The visual overlay placement remains bottom-aligned; only the terminal content size is reduced.
 
@@ -1333,6 +1399,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IOS-6.13** GrafttyMobile shall expose software-keyboard chrome and keyboard responder wiring only while the mobile client is the current display owner. Followers and ownerless clients can take control, but showing a keyboard before ownership is confirmed sends no useful input and implies authority the client does not have.
 
 **IOS-6.14** The terminal view shall install GrafttyMobile's `UIKeyInput` proxy only for an owner. Non-owner taps should still reach libghostty gestures, but they must not summon the software keyboard.
+
+**IOS-6.15** When a fullscreen iOS session reconnects after it was the display owner before suspension and the server reports the session as ownerless, the application shall automatically send `takeControl` with the current iOS viewport. It shall not auto-claim when another client owns the session, so foregrounding the phone does not steal control from a Mac/web owner that took over while the phone was away.
+
+**IOS-6.16** When a fullscreen mobile client transitions from non-owner to owner while keyboard input is allowed, the application shall request keyboard focus for the terminal input proxy. This covers takeovers initiated by Paste or Take Control, where the proxy was not eligible before ownership was confirmed.
 
 ### IOS-7.x — Lifecycle
 
@@ -1414,6 +1484,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-11.11** While a pane is rendered as a worktree-detail preview tile (`IOS-4.10`), the long-press selection menu shall not be installed; tapping the tile shall continue to open the fullscreen pane per `IOS-4.21`. Guaranteed by `.allowsHitTesting(false)` applied to the inner `TerminalPaneView` in `paneContent` — `TerminalInputContainerView`'s long-press gesture recogniser never receives touches. The `onPasteRequested` closure is also left `nil` at the `TerminalPaneView` call site.
 
+**IOS-11.12** When the user taps Paste from the terminal long-press edit menu, the application shall forward the clipboard paste request and then re-focus GrafttyMobile's software-keyboard proxy when it is eligible, so dismissing the UIKit edit menu does not leave the user without terminal keyboard control.
+
 ## IPAD — iPad Layout
 
 ### IPAD-1.x — Root Layout and Sidebar
@@ -1462,7 +1534,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-2.3** When `MultiPaneDetailView` renders a `.split(.vertical, ratio, left, right)`, the application shall render a `VStack` with the two children proportionally sized by `ratio` and a draggable `Divider` between them.
 
-**IPAD-2.4** When `MultiPaneDetailView` renders a `.leaf(sessionName, …)`, the application shall render a `PaneLeafView` that owns its own `terminal` channel via `TerminalChannelPool`.
+**IPAD-2.4** When `MultiPaneDetailView` renders a `.leaf(sessionName, …)`, the application shall render a `PaneLeafView` that owns its own SSH terminal session channel (one `TerminalSessionClient` per visible leaf over the shared `RemoteHostConnection`).
 
 **IPAD-2.5** While an iPad pane-layout leaf is not the display owner and the authoritative grid's column count exceeds the leaf's allotted width at the configured (iOS-scaled) font size, the application shall apply the same font-fit policy as `IOS-5.6` (per-leaf), rendering each leaf's pane at the full leaf width with no horizontal `ScrollView`.
 
@@ -1498,7 +1570,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-5.1** When the application enters the background, the application shall close all `terminal` channels, close the `panes_state` channel, close the DataChannel, and tear down the `RemoteHostConnection`.
 
-**IPAD-5.2** When the application foregrounds and the biometric gate is satisfied, the application shall rebuild the `RemoteHostConnection` from signaling onward, completing a fresh Noise handshake before opening any channel.
+**IPAD-5.2** When the application foregrounds and the biometric gate is satisfied, the application shall rebuild the RemoteHostConnection from signaling onward, completing a fresh SSH userauth before opening any channel.
 
 **IPAD-5.3** When the application foregrounds, the application shall re-open the `panes_state` channel before re-opening any `terminal` channel, so the splittree shape is current before deciding which leaves to attach.
 
@@ -1526,7 +1598,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-1.5** `agentTeamsEnabled` plus the `teamEventRoutingPreferences` JSON struct (see TEAM-1.8) supersede the previous coupled `teamPRNotificationsEnabled` flag. Inbox events are written only when `agentTeamsEnabled` is true; per-event recipient sets are taken from the matrix in `teamEventRoutingPreferences`.
 
-**TEAM-1.6** The Agent Teams Settings pane shall expose **two** user-editable Stencil-templated text areas, each pre-populated with a non-empty default (`DefaultPrompts.sessionPrompt` and `DefaultPrompts.eventPrompt`) registered into `UserDefaults.standard` at app startup so non-binding readers see the same default until the user overrides. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt` (`@AppStorage("teamSessionPrompt")`, String) — rendered once at session start against the `agent` context; only `agent.branch` and `agent.lead` are meaningful at session start (`agent.this_worktree` and `agent.other_worktree` are always `false`), and the pane's variable-list disclosure deliberately omits the latter two. The rendered text is appended after a blank line to the auto-generated team-aware instructions text returned by `graftty team hook`. The second, `teamPrompt` (`@AppStorage("teamPrompt")`, String) — rendered per inbox-row write against the full four-field `agent` context evaluated against the recipient agent, plus a top-level `body` variable carrying the original event body and a top-level `event` object exposing `event.type` (the wire-format event-type string, e.g. `"merge_state_changed"`), `event.attrs` (the event's attribute dictionary), and `event.body` (a duplicate of the top-level `body`). The rendered output is stored in the inbox row's `agent_prompt` field. If the template does not reference `{{ body }}` the renderer appends `\n\n{{ body }}` to the template before rendering, so templates that pre-date the `body` variable continue to surface the event content to the agent. Hook-context delivery (via `TeamHookRenderer.format`) emits `agent_prompt` when present and falls through to `body` otherwise; the inbox row's `body` field stores the event content unchanged so consumers other than the agent (activity log, `graftty team inbox`, watcher wake summaries) read it without the template prelude. Both templates use the same `agent` struct shape: `branch` (String), `lead` (Bool), `this_worktree` (Bool), `other_worktree` (Bool). The previously-defined `teamLeadPrompt` and `teamCoworkerPrompt` AppStorage keys are removed.
+**TEAM-1.6** The Agent Teams Settings pane shall expose **two** user-editable Stencil-templated text areas registered into `UserDefaults.standard` at app startup so non-binding readers see the same defaults until the user overrides. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt` (`@AppStorage("teamSessionPrompt")`, String), defaults to empty because the auto-generated team-aware instructions already include stable session context; when non-empty, it is rendered once at session start against the `agent` context. Only `agent.branch` and `agent.lead` are meaningful at session start (`agent.this_worktree` and `agent.other_worktree` are always `false`), and the pane's variable-list disclosure deliberately omits the latter two. The rendered text is appended after a blank line to the auto-generated team-aware instructions text returned by `graftty team hook`. The second, `teamPrompt` (`@AppStorage("teamPrompt")`, String), is pre-populated with a non-empty default (`DefaultPrompts.eventPrompt`) and rendered per inbox-row write against the full four-field `agent` context evaluated against the recipient agent, plus a top-level `body` variable carrying the original event body and a top-level `event` object exposing `event.type` (the wire-format event-type string, e.g. `"merge_state_changed"`), `event.attrs` (the event's attribute dictionary), and `event.body` (a duplicate of the top-level `body`). The rendered output is stored in the inbox row's `agent_prompt` field. If the template does not reference `{{ body }}` the renderer appends `\n\n{{ body }}` to the template before rendering, so templates that pre-date the `body` variable continue to surface the event content to the agent. Hook-context delivery (via `TeamHookRenderer.format`) emits `agent_prompt` when present and falls through to `body` otherwise; the inbox row's `body` field stores the event content unchanged so consumers other than the agent (activity log, `graftty team inbox`, watcher wake summaries) read it without the template prelude. Both templates use the same `agent` struct shape: `branch` (String), `lead` (Bool), `this_worktree` (Bool), `other_worktree` (Bool). The previously-defined `teamLeadPrompt` and `teamCoworkerPrompt` AppStorage keys are removed.
 
 **TEAM-1.8** The Agent Teams Settings pane shall render a 4×3 matrix of toggles (rows: PR state changed / PR merged / CI conclusion changed / Mergability changed; columns: Root agent / Worktree agent / Other worktree agents). Each cell binds to one bit of a `RecipientSet` field on the persisted `TeamEventRoutingPreferences` `Codable` struct. Defaults: state-changed/CI/mergability → worktree only; merged → root only. The matrix is rendered as its own Section between the main toggle and the prompt sections.
 
@@ -1596,7 +1668,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-7.3** While the Team Activity Log window is open for a team, the application shall display every `TeamInboxMessage` for that team in chronological order, refreshing live as new rows land in the inbox.
 
-**TEAM-7.4** When the messages.jsonl file appended-to is the team's inbox, the application shall emit the parsed message list to the registered observer callback within one second of the append, including when the file is created after the observer started watching.
+**TEAM-7.4** When the messages.jsonl file appended-to is the team's inbox, the application shall emit the parsed message list to the registered observer callback within one second of the append, including when the file is created after the observer started watching. The observer shall stay correct even if the kqueue file-system event is dropped or its queue is briefly starved, by re-reading on a periodic change-gated poll. When the watched file is deleted (a present→absent transition), the observer shall not emit an empty list — so delta-tracking consumers keep their watermark — and shall resume emitting when the file is recreated.
 
 **TEAM-7.6** While the Team Activity Log window is open, the application shall expose a "Reveal in Finder" affordance whose target is the team's `messages.jsonl` file.
 
@@ -1613,6 +1685,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### TEAM-9.x — Stop Hook Filtering
 
 **TEAM-9.1** When a Stop-event hook command (`graftty team hook <runtime> stop` or the async `graftty team watch-inbox <runtime>`) is invoked and the JSON the runtime wrote to the hook's stdin contains an `agent_id` string — Claude Code's marker that this Stop fired inside a Task subagent context rather than for a top-level agent turn — the CLI shall short-circuit before doing any per-Stop work: no `teamHook` socket message is sent, no `InboxWatcher` is spawned, and neither the worktree's `"<Agent> needs input"` attention overlay nor the macOS user notification fires. Without this filter, every Task subagent end both produces a spurious 'needs attention' alert and leaks a long-running watcher process while the top-level agent is still working.
+
+### TEAM-10.x — Codex Wrapper App-Server Routing
+
+**TEAM-10.1** When codex is invoked interactively — any option flags (known or unknown to the wrapper), a prompt, or arguments after `--` — the generated wrapper shall start a codex app-server and connect the TUI to it via `--remote`, so team-message delivery has a live app-server for the session.
+
+**TEAM-10.2** If a codex invocation names a non-interactive subcommand, requests help or version output, or supplies its own `--remote` endpoint, then the generated wrapper shall run codex directly without starting an app-server.
 
 ## EDITOR — Editor Integration
 
@@ -1642,6 +1720,22 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-1.2** When a client pairs with a host, the application shall require a matching verification code and host-side confirmation before storing the client as a trusted peer.
 
+**REMOTE-1.3** When the host user confirms an introduced pairing, the application shall persist the introduced peer in the trusted peer store.
+
+**REMOTE-1.4** While no pairing session is active, the host shall not accept connections on the pairing endpoint; the pairing listener runs only for the lifetime of an active pairing session.
+
+**REMOTE-1.5** When a pairing completes with host confirmation, the client shall pin the host identity and record the host device identifier on the saved host entry.
+
+**REMOTE-1.6** When the user cancels a pairing ceremony while it is parked in .awaitingConfirmation, the client shall tear down the in-flight await-outcome request and pin nothing, even if a host confirmation for that ceremony arrives afterward.
+
+**REMOTE-1.7** When `HostStore.add` merges a newly-paired host into an existing same-URL entry, the store shall adopt the incoming `remoteDeviceID` rather than discarding it.
+
+**REMOTE-1.8** When `HostStore.add` merges a same-URL host whose incoming record has no `remoteDeviceID`, the store shall preserve the existing entry's `remoteDeviceID`.
+
+**REMOTE-1.9** While a pairing ceremony has already been cancelled, the client shall present .cancelled for any subsequent pairing failure rather than the failure's raw error message.
+
+**REMOTE-1.10** When `ClientDeviceIDStore` cannot read or persist a client device identity, `PairDeviceFlowView.buildModel` shall return nil so the view can present a failed state whose Retry re-attempts model construction, rather than an indefinite connecting spinner.
+
 ### REMOTE-2.x — Authenticated Attach
 
 **REMOTE-2.1** When a remote transport reconnects, the host shall require a fresh authenticated attach handshake before writing any bytes to the PTY.
@@ -1650,15 +1744,21 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-3.1** If a trusted peer is revoked on the host, then all active secure channels from that peer shall close and future attach requests from that peer shall be rejected.
 
+**REMOTE-3.2** When a superseded SSH connection's teardown completes after a newer connection for the same peer has already registered, the host shall not remove the newer registration.
+
+**REMOTE-3.3** When a host operator removes a paired device from Settings, the application shall close that device's live session immediately rather than waiting for its next attach attempt to fail, and shall not close any session if the device could not be removed from the trust store.
+
 ### REMOTE-4.x — Port Tunnels
 
 **REMOTE-4.1** If a client requests a port tunnel without host approval under the default ask-each-time policy, then the host shall reject the channel open request before connecting to the target port.
 
 **REMOTE-4.2** If a client requests a port tunnel to a non-loopback target under the default policy, then the host shall reject the channel open request.
 
-### REMOTE-5.x — Retired Endpoints
+### REMOTE-5.x — Web Terminal Endpoint (`/ws`)
 
-**REMOTE-5.1** When a client attempts to use the retired `/ws` terminal endpoint, the host shall reject the request without attaching to a PTY.
+**REMOTE-5.1** When a client requests a WebSocket upgrade to `/ws`, the application shall gate the upgrade on the same `AuthPolicy` (Tailscale-whois) check applied to every other path, rejecting the upgrade for a disallowed peer without attaching it to a terminal.
+
+**REMOTE-5.2** While a session terminal is served over `/ws`, the application shall route its terminal and ownership traffic through the same `SessionDisplayOwnershipStore` instance used by SSH-attached clients, so a take-control transition originating from either transport is visible identically to the other.
 
 ### REMOTE-6.x — panes_state Channel
 
@@ -1695,6 +1795,30 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-8.4** When the client receives a host key during SSH KEX, the client shall verify the key against `PinnedHostStore` and abort the connection on mismatch.
 
 **REMOTE-8.5** While accepting a remote attach, the host shall negotiate SSH transport protection from swift-nio-ssh's bundled AEAD ciphers (`aes256-gcm@openssh.com`, `aes128-gcm@openssh.com`) and shall not negotiate any weak or legacy cipher.
+
+### REMOTE-9.x
+
+**REMOTE-9.1** When an SSH terminal session attaches via the control carrier, the host shall register the client in the display-ownership store with kind ios and the authenticated device identity.
+
+**REMOTE-9.2** While an SSH terminal client is not the display owner, the host shall discard its terminal input bytes and rebroadcast the current ownership snapshot.
+
+**REMOTE-9.3** When an SSH terminal client issues a take-control request, the host shall apply the same owner-eligibility rules as the web transport.
+
+**REMOTE-9.4** When the PTY size changes, the host shall push grid and ownership envelopes to SSH terminal clients over the control carrier.
+
+**REMOTE-9.5** When two SSH clients attach to one session over the control carrier, the application shall grant display ownership to the first client that sends hello and takeControl — localized to that client's own clientID in its ownership envelopes — attach the second hello client as a follower whose envelopes never name it as owner, and answer a follower's terminal bytes with an ownership rebroadcast instead of a PTY echo.
+
+**REMOTE-9.6** When an owner-eligible follower SSH client sends takeControl, the application shall transfer display ownership to it and bump the session epoch, observable by the new owner as a self-owned snapshot and by the former owner as a non-self owner in their next ownership envelopes.
+
+**REMOTE-9.7** If an SSH client that is not the current display owner sends ownerResize, then the application shall reject it and leave the broadcast grid unchanged; while the current owner sends ownerResize at the current epoch, the application shall update the broadcast grid without bumping the epoch.
+
+### REMOTE-10.x
+
+**REMOTE-10.1** When an engine's callback surface (`onPTYData`) is installed before `start()`, the application shall not yield PTY output chunks into `inboundBytes` — the unselected delivery surface must not retain bytes nobody will ever drain.
+
+### REMOTE-11.x
+
+**REMOTE-11.1** If the host receives a signaling offer while another remote connection is active, then the application shall respond with a retryable unavailable status and shall not tear down the active connection.
 
 ## URL — Worktree URL Handler
 
@@ -1759,6 +1883,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **AGENT-4.3** When `graftty notify` is given no target and `$ZMX_SESSION` is unset, the application shall target the current worktree (unchanged behavior).
 
 **AGENT-4.4** If `graftty notify` is given both `--session` and `--worktree`, then the application shall reject the invocation with a validation error.
+
+## CLI — CLI
+
+### CLI-1.x
+
+**CLI-1.1** When a subprocess pipe's read fd is closed out from under the in-flight readability handler (process/pipe teardown after a timeout SIGTERM, where the per-stream EOF wait lapsed under load), the application shall treat the read as EOF rather than crash. The legacy `NSFileHandle.availableData` raises an *uncatchable* `NSFileHandleOperationException` ("Bad file descriptor") on a closed fd, SIGABRT-ing the whole process; the crash-safe drain returns `nil`.
 
 ## MEM — MEM
 

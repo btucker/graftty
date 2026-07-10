@@ -14,8 +14,12 @@ PRStatusStore polling tick liveness
 """)
 struct PRStatusStorePollTickHangTests {
 
+    // The 1-minute limit is a coarse backstop for the *regression* case only
+    // (a tick that awaits the fetch never returns); it is not a latency
+    // threshold. The pass path returns immediately regardless of load.
     @MainActor
-    @Test func tickReturnsWithoutWaitingForHungFetch() async throws {
+    @Test(.timeLimit(.minutes(1)))
+    func tickReturnsWithoutWaitingForHungFetch() async throws {
         let ticker = CapturingTicker()
         let hang = AsyncStream<Void>.makeStream()
         let fetcher = HangingPRFetcher(stream: hang.stream)
@@ -39,33 +43,15 @@ struct PRStatusStorePollTickHangTests {
             store.stop()
         }
 
-        let returned = await returnsWithin(.milliseconds(200)) {
-            await ticker.fire()
-        }
-
-        #expect(
-            returned,
-            "poll ticks must schedule PR fetches and return; a hung fetch must not stop future polling"
-        )
-    }
-
-    private func returnsWithin(
-        _ duration: Duration,
-        operation: @escaping @Sendable () async -> Void
-    ) async -> Bool {
-        await withTaskGroup(of: Bool.self) { group in
-            group.addTask {
-                await operation()
-                return true
-            }
-            group.addTask {
-                try? await Task.sleep(for: duration)
-                return false
-            }
-            let result = await group.next() ?? false
-            group.cancelAll()
-            return result
-        }
+        // The fetcher hangs forever (until the defer's `finish()`), so if the
+        // tick awaited it this call would never return. Awaiting `fire()` to
+        // completion — rather than racing it against a wall-clock deadline —
+        // proves the tick dispatched-and-returned: a real regression hangs here
+        // and the time limit fails the test, while correct behavior returns at
+        // once. A deadline race instead false-failed under the shared-MainActor
+        // contention of parallel suites (a busy MainActor delays even the hop to
+        // this instant tick — the PollingHeart starvation artifact).
+        await ticker.fire()
     }
 }
 

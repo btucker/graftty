@@ -5,361 +5,6 @@ import NIOSSL
 import NIOWebSocket
 import GrafttyProtocol
 
-internal final class WebDisplayOwnershipBroadcaster: @unchecked Sendable {
-    internal final class Registration: @unchecked Sendable {
-        private let onCancel: () -> Void
-        private let lock = NSLock()
-        private var cancelled = false
-
-        init(onCancel: @escaping () -> Void) {
-            self.onCancel = onCancel
-        }
-
-        func cancel() {
-            lock.lock()
-            if cancelled {
-                lock.unlock()
-                return
-            }
-            cancelled = true
-            lock.unlock()
-            onCancel()
-        }
-
-        deinit {
-            cancel()
-        }
-    }
-
-    private struct Subscriber {
-        let clientID: DisplayClientID
-        let send: @Sendable (DisplayOwnershipSnapshot) -> Void
-    }
-
-    private let lock = NSLock()
-    private var subscribers: [String: [UUID: Subscriber]] = [:]
-    /// Held for the broadcaster's lifetime so it stays subscribed to the
-    /// shared ownership store; cancels (unsubscribes) when this broadcaster
-    /// is torn down.
-    private var storeObserverToken: SessionDisplayOwnershipStore.ObserverToken?
-
-    /// When `store` is provided, the broadcaster subscribes to every owner
-    /// mutation on it and re-broadcasts the snapshot to connected clients.
-    /// This is what propagates *Mac-host* ownership changes — those mutate the
-    /// shared store directly (via `HostManagedZmxOwnership`) and never pass
-    /// through this bridge's own broadcast calls, so without this subscription
-    /// web/iOS followers never learn the Mac took or released the display.
-    init(store: SessionDisplayOwnershipStore? = nil) {
-        if let store {
-            storeObserverToken = store.addObserver { [weak self] snapshot in
-                self?.broadcast(snapshot)
-            }
-        }
-    }
-
-    func register(
-        sessionName: String,
-        clientID: DisplayClientID,
-        send: @escaping @Sendable (DisplayOwnershipSnapshot) -> Void
-    ) -> Registration {
-        let id = UUID()
-        lock.lock()
-        var sessionSubscribers = subscribers[sessionName] ?? [:]
-        sessionSubscribers[id] = Subscriber(clientID: clientID, send: send)
-        subscribers[sessionName] = sessionSubscribers
-        lock.unlock()
-
-        return Registration { [weak self] in
-            self?.unregister(sessionName: sessionName, id: id)
-        }
-    }
-
-    func broadcast(_ snapshot: DisplayOwnershipSnapshot) {
-        lock.lock()
-        let sends = subscribers[snapshot.sessionName]?.values.map(\.send) ?? []
-        lock.unlock()
-
-        for send in sends {
-            send(snapshot)
-        }
-    }
-
-    private func unregister(sessionName: String, id: UUID) {
-        lock.lock()
-        if var sessionSubscribers = subscribers[sessionName] {
-            sessionSubscribers.removeValue(forKey: id)
-            subscribers[sessionName] = sessionSubscribers.isEmpty ? nil : sessionSubscribers
-        }
-        lock.unlock()
-    }
-}
-
-internal final class WebSocketBridgeCoordinator: @unchecked Sendable {
-    private let sessionName: String
-    private let clientID: DisplayClientID
-    private let defaultKind: DisplayClientKind
-    private let ownershipStore: SessionDisplayOwnershipStore
-    private let broadcaster: WebDisplayOwnershipBroadcaster
-    private let sendText: @Sendable (String) -> Void
-    private let resize: @Sendable (UInt16, UInt16) -> Void
-    private let write: @Sendable (Data) -> Void
-    private let lock = NSLock()
-
-    private var registration: WebDisplayOwnershipBroadcaster.Registration?
-    private var boundProtocolClientID: DisplayClientID?
-    private var attachedKind: DisplayClientKind?
-    private var attached = false
-    private var detached = false
-    private var lastAcceptedOwnerGrid: DisplayGrid?
-
-    init(
-        sessionName: String,
-        clientID: DisplayClientID,
-        defaultKind: DisplayClientKind,
-        ownershipStore: SessionDisplayOwnershipStore,
-        broadcaster: WebDisplayOwnershipBroadcaster,
-        sendText: @escaping @Sendable (String) -> Void,
-        resize: @escaping @Sendable (UInt16, UInt16) -> Void,
-        write: @escaping @Sendable (Data) -> Void
-    ) {
-        self.sessionName = sessionName
-        self.clientID = clientID
-        self.defaultKind = defaultKind
-        self.ownershipStore = ownershipStore
-        self.broadcaster = broadcaster
-        self.sendText = sendText
-        self.resize = resize
-        self.write = write
-        self.registration = broadcaster.register(sessionName: sessionName, clientID: clientID) { [weak self] snapshot in
-            self?.sendOwnershipSnapshot(snapshot)
-        }
-    }
-
-    deinit {
-        detach()
-    }
-
-    func handleControl(_ envelope: WebControlEnvelope) {
-        switch envelope {
-        case let .hello(protocolClientID, _, role, visible, cols, rows):
-            guard bindOrVerify(protocolClientID: protocolClientID) else { return }
-            let kind = defaultKind
-            let grid = try! DisplayGrid(cols: cols, rows: rows)
-            lock.lock()
-            attached = true
-            attachedKind = kind
-            lock.unlock()
-            let snapshot = ownershipStore.attachClient(
-                sessionName: sessionName,
-                clientID: clientID,
-                kind: kind,
-                role: role,
-                visible: visible,
-                grid: grid
-            )
-            noteAcceptedOwnerGridIfCurrentOwner(snapshot: snapshot)
-            broadcaster.broadcast(snapshot)
-
-        case let .takeControl(protocolClientID, _, cols, rows):
-            guard bindOrVerify(protocolClientID: protocolClientID) else { return }
-            let kind = currentKind() ?? defaultKind
-            ensureAttached(kind: kind, grid: try! DisplayGrid(cols: cols, rows: rows))
-            let grid = try! DisplayGrid(cols: cols, rows: rows)
-            let result = ownershipStore.claimOwner(
-                sessionName: sessionName,
-                clientID: clientID,
-                kind: kind,
-                grid: grid,
-                fallbackGrid: grid
-            )
-            if result.accepted {
-                acceptOwnerGrid(grid)
-                resize(cols, rows)
-            }
-            broadcaster.broadcast(result.snapshot)
-
-        case let .ownerResize(protocolClientID, epoch, cols, rows):
-            guard bindOrVerify(protocolClientID: protocolClientID) else { return }
-            let grid = try! DisplayGrid(cols: cols, rows: rows)
-            let result = ownershipStore.ownerResize(
-                sessionName: sessionName,
-                clientID: clientID,
-                epoch: epoch,
-                grid: grid
-            )
-            if result.accepted {
-                acceptOwnerGrid(grid)
-                resize(cols, rows)
-            }
-            broadcaster.broadcast(result.snapshot)
-
-        case let .resize(cols, rows):
-            handleLegacyResize(cols: cols, rows: rows)
-
-        case .grid, .ownership:
-            break
-        }
-    }
-
-    func handleBinary(_ data: Data) {
-        if isCurrentOwner() {
-            write(data)
-            return
-        }
-
-        let snapshot = ownershipStore.snapshot(sessionName: sessionName)
-        broadcaster.broadcast(snapshot)
-    }
-
-    func handlePTYSize(cols: UInt16, rows: UInt16) {
-        guard let grid = try? DisplayGrid(cols: cols, rows: rows) else { return }
-        sendText(WebControlEnvelope.grid(cols: cols, rows: rows).encoded())
-        let snapshot = ownershipStore.snapshot(sessionName: sessionName, fallbackGrid: grid)
-        if isCurrentOwner(), currentLastAcceptedOwnerGrid() == grid {
-            broadcaster.broadcast(snapshot)
-        } else {
-            sendOwnershipSnapshot(snapshot)
-        }
-    }
-
-    func detach() {
-        lock.lock()
-        if detached {
-            lock.unlock()
-            return
-        }
-        detached = true
-        let wasAttached = attached
-        let fallbackGrid = lastAcceptedOwnerGrid
-        let registration = self.registration
-        self.registration = nil
-        lock.unlock()
-
-        registration?.cancel()
-        guard wasAttached else { return }
-        let snapshot = ownershipStore.detachClient(
-            sessionName: sessionName,
-            clientID: clientID,
-            fallbackGrid: fallbackGrid ?? .daemonFallback
-        )
-        broadcaster.broadcast(snapshot)
-    }
-
-    private func handleLegacyResize(cols: UInt16, rows: UInt16) {
-        let grid = try! DisplayGrid(cols: cols, rows: rows)
-        let kind = currentKind() ?? defaultKind
-        ensureAttached(kind: kind, grid: grid)
-
-        let snapshot = ownershipStore.snapshot(sessionName: sessionName, fallbackGrid: grid)
-        if snapshot.ownerClientID == clientID {
-            let result = ownershipStore.ownerResize(
-                sessionName: sessionName,
-                clientID: clientID,
-                epoch: snapshot.epoch,
-                grid: grid
-            )
-            if result.accepted {
-                acceptOwnerGrid(grid)
-                resize(cols, rows)
-            }
-            broadcaster.broadcast(result.snapshot)
-            return
-        }
-
-        broadcaster.broadcast(snapshot)
-    }
-
-    private func ensureAttached(kind: DisplayClientKind, grid: DisplayGrid) {
-        lock.lock()
-        if attached {
-            lock.unlock()
-            return
-        }
-        attached = true
-        attachedKind = kind
-        lock.unlock()
-        let snapshot = ownershipStore.attachClient(
-            sessionName: sessionName,
-            clientID: clientID,
-            kind: kind,
-            role: .interactive,
-            visible: true,
-            grid: grid
-        )
-        noteAcceptedOwnerGridIfCurrentOwner(snapshot: snapshot)
-        broadcaster.broadcast(snapshot)
-    }
-
-    private func bindOrVerify(protocolClientID: DisplayClientID) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        if protocolClientID == clientID { return true }
-        if let boundProtocolClientID {
-            return boundProtocolClientID == protocolClientID
-        }
-        boundProtocolClientID = protocolClientID
-        return true
-    }
-
-    private func currentKind() -> DisplayClientKind? {
-        lock.lock()
-        defer { lock.unlock() }
-        return attachedKind
-    }
-
-    private func isCurrentOwner() -> Bool {
-        ownershipStore.snapshot(sessionName: sessionName).ownerClientID == clientID
-    }
-
-    private func acceptOwnerGrid(_ grid: DisplayGrid) {
-        lock.lock()
-        lastAcceptedOwnerGrid = grid
-        lock.unlock()
-    }
-
-    private func currentLastAcceptedOwnerGrid() -> DisplayGrid? {
-        lock.lock()
-        defer { lock.unlock() }
-        return lastAcceptedOwnerGrid
-    }
-
-    private func noteAcceptedOwnerGridIfCurrentOwner(snapshot: DisplayOwnershipSnapshot) {
-        guard snapshot.ownerClientID == clientID else { return }
-        acceptOwnerGrid(snapshot.grid)
-    }
-
-    private func sendOwnershipSnapshot(_ snapshot: DisplayOwnershipSnapshot) {
-        sendText(WebControlEnvelope.ownership(localizedSnapshot(snapshot)).encoded())
-    }
-
-    private func localizedSnapshot(_ snapshot: DisplayOwnershipSnapshot) -> DisplayOwnershipSnapshot {
-        guard let ownerClientID = snapshot.ownerClientID else { return snapshot }
-        let protocolClientID = currentProtocolClientID()
-        let localizedOwnerID: DisplayClientID
-        if ownerClientID == clientID {
-            localizedOwnerID = protocolClientID ?? ownerClientID
-        } else if ownerClientID == protocolClientID {
-            localizedOwnerID = DisplayClientID("remote-owner:\(ownerClientID.rawValue)")
-        } else {
-            localizedOwnerID = ownerClientID
-        }
-
-        return try! DisplayOwnershipSnapshot(
-            sessionName: snapshot.sessionName,
-            ownerClientID: localizedOwnerID,
-            ownerKind: snapshot.ownerKind,
-            grid: snapshot.grid,
-            epoch: snapshot.epoch
-        )
-    }
-
-    private func currentProtocolClientID() -> DisplayClientID? {
-        lock.lock()
-        defer { lock.unlock() }
-        return boundProtocolClientID
-    }
-}
-
 /// HTTP + WebSocket server for Phase 2 web access. Binds to each
 /// Tailscale IP (plus 127.0.0.1), serves static assets at `/`,
 /// upgrades `/ws?session=<name>` to WebSocket, and gates both
@@ -389,12 +34,30 @@ public final class WebServer {
     /// doesn't have to re-derive it from a display name (which could
     /// collide when two repos share a basename).
     public struct RepoInfo: Codable, Sendable, Equatable {
+        public struct DefaultBranchStatus: Codable, Sendable, Equatable {
+            public let branchName: String
+            public let remoteRef: String
+            public let behindCount: Int
+
+            public init(branchName: String, remoteRef: String, behindCount: Int) {
+                self.branchName = branchName
+                self.remoteRef = remoteRef
+                self.behindCount = behindCount
+            }
+        }
+
         public let path: String
         public let displayName: String
+        public let defaultBranchStatus: DefaultBranchStatus?
 
-        public init(path: String, displayName: String) {
+        public init(
+            path: String,
+            displayName: String,
+            defaultBranchStatus: DefaultBranchStatus? = nil
+        ) {
             self.path = path
             self.displayName = displayName
+            self.defaultBranchStatus = defaultBranchStatus
         }
     }
 
@@ -458,6 +121,32 @@ public final class WebServer {
         case gitFailed(String)     // 409 — `git worktree add` rejected the request
         case conflict(message: String) // 409 — semantic conflict (e.g. branch already mounted)
         case internalFailure(String) // 500 — post-success discovery or spawn broke
+    }
+
+    /// JSON body accepted by `POST /repos/default-branch/pull`.
+    public struct PullDefaultBranchRequest: Codable, Sendable, Equatable {
+        public let repoPath: String
+
+        public init(repoPath: String) {
+            self.repoPath = repoPath
+        }
+    }
+
+    /// JSON body returned by `POST /repos/default-branch/pull` on success.
+    public struct PullDefaultBranchResponse: Codable, Sendable, Equatable {
+        public let ok: Bool
+
+        public init(ok: Bool) {
+            self.ok = ok
+        }
+    }
+
+    /// Outcome a default-branch puller reports back.
+    public enum PullDefaultBranchOutcome: Sendable {
+        case success(PullDefaultBranchResponse)
+        case invalid(String)
+        case gitFailed(String)
+        case internalFailure(String)
     }
 
     /// JSON body accepted by `POST /worktrees/delete`. `force` mirrors
@@ -526,6 +215,9 @@ public final class WebServer {
         /// creator; the default exists for tests and early-boot states
         /// where `AppState` isn't wired yet.
         public let worktreeCreator: (@Sendable (CreateWorktreeRequest) async -> CreateWorktreeOutcome)?
+        /// Executes `POST /repos/default-branch/pull`. Nil (default)
+        /// means the endpoint responds `503`.
+        public let defaultBranchPuller: (@Sendable (PullDefaultBranchRequest) async -> PullDefaultBranchOutcome)?
         /// Executes `POST /worktrees/delete`. Nil disables the endpoint
         /// (503), same contract as `worktreeCreator`. Production wires
         /// this to `DeleteWorktreeFlow.delete` via `GrafttyApp.startup()`.
@@ -556,7 +248,7 @@ public final class WebServer {
         /// injects the process-wide store so WebSocket bridges do not
         /// split ownership state from native panes once those are wired.
         public let displayOwnershipStore: SessionDisplayOwnershipStore
-        internal let ownershipBroadcaster: WebDisplayOwnershipBroadcaster
+        internal let ownershipBroadcaster: DisplayOwnershipBroadcaster
 
         public init(
             port: Int,
@@ -566,6 +258,7 @@ public final class WebServer {
             sessionWorktreeProvider: @escaping @Sendable (String) async -> String? = { _ in nil },
             reposProvider: @escaping @Sendable () async -> [RepoInfo] = { [] },
             worktreeCreator: (@Sendable (CreateWorktreeRequest) async -> CreateWorktreeOutcome)? = nil,
+            defaultBranchPuller: (@Sendable (PullDefaultBranchRequest) async -> PullDefaultBranchOutcome)? = nil,
             worktreeRemover: (@Sendable (DeleteWorktreeRequest) async -> DeleteWorktreeOutcome)? = nil,
             ghosttyConfigProvider: @escaping @Sendable () async -> String = { "" },
             worktreePanesProvider: @escaping @Sendable () async -> [WorktreePanes] = { [] },
@@ -580,13 +273,14 @@ public final class WebServer {
             self.sessionWorktreeProvider = sessionWorktreeProvider
             self.reposProvider = reposProvider
             self.worktreeCreator = worktreeCreator
+            self.defaultBranchPuller = defaultBranchPuller
             self.worktreeRemover = worktreeRemover
             self.ghosttyConfigProvider = ghosttyConfigProvider
             self.worktreePanesProvider = worktreePanesProvider
             self.signalingHandler = signalingHandler
             self.remoteAttachmentRegistry = remoteAttachmentRegistry
             self.displayOwnershipStore = displayOwnershipStore
-            self.ownershipBroadcaster = WebDisplayOwnershipBroadcaster(store: displayOwnershipStore)
+            self.ownershipBroadcaster = DisplayOwnershipBroadcaster(store: displayOwnershipStore)
         }
 
         /// Accepts the range NIO's `bootstrap.bind(host:port:)` will accept
@@ -987,6 +681,20 @@ public final class WebServer {
                 handleCreateWorktree(context: context, body: body)
                 return
             }
+            // WEB-7.12: optional pull of the repo's default checkout
+            // before creating a new branch from the default branch.
+            if path == "/repos/default-branch/pull" {
+                guard head.method == .POST else {
+                    Self.respondJSON(
+                        context: context,
+                        status: .methodNotAllowed,
+                        error: "only POST is supported"
+                    )
+                    return
+                }
+                handlePullDefaultBranch(context: context, body: body)
+                return
+            }
             // POST /v1/rtc/offer — WebRTC signaling exchange (M1.2).
             // POST-only; other verbs get 405 so caching proxies and curl
             // probes don't surprise the client.
@@ -1109,6 +817,71 @@ public final class WebServer {
             }
             Task {
                 promise.succeed(await creator(decoded))
+            }
+        }
+
+        /// Decode `{repoPath}`, invoke the injected default-branch
+        /// puller, and map the result to JSON.
+        private func handlePullDefaultBranch(context: ChannelHandlerContext, body: Data) {
+            guard let puller = config.defaultBranchPuller else {
+                Self.respondJSON(
+                    context: context,
+                    status: .serviceUnavailable,
+                    error: "default branch pull not available"
+                )
+                return
+            }
+            let decoded: PullDefaultBranchRequest
+            do {
+                decoded = try JSONDecoder().decode(PullDefaultBranchRequest.self, from: body)
+            } catch {
+                Self.respondJSON(
+                    context: context,
+                    status: .badRequest,
+                    error: "invalid JSON body: \(error)"
+                )
+                return
+            }
+            let trimmedPath = decoded.repoPath.trimmingCharacters(in: .whitespaces)
+            if trimmedPath.isEmpty {
+                Self.respondJSON(
+                    context: context,
+                    status: .badRequest,
+                    error: "repoPath is required"
+                )
+                return
+            }
+
+            let promise = context.eventLoop.makePromise(of: PullDefaultBranchOutcome.self)
+            promise.futureResult.whenComplete { result in
+                let outcome = (try? result.get()) ?? .internalFailure("puller dispatch failed")
+                switch outcome {
+                case .success(let resp):
+                    do {
+                        let data = try JSONEncoder().encode(resp)
+                        Self.respond(
+                            context: context,
+                            status: .ok,
+                            body: data,
+                            contentType: "application/json; charset=utf-8"
+                        )
+                    } catch {
+                        Self.respondJSON(
+                            context: context,
+                            status: .internalServerError,
+                            error: "encoding error"
+                        )
+                    }
+                case .invalid(let msg):
+                    Self.respondJSON(context: context, status: .badRequest, error: msg)
+                case .gitFailed(let msg):
+                    Self.respondJSON(context: context, status: .conflict, error: msg)
+                case .internalFailure(let msg):
+                    Self.respondJSON(context: context, status: .internalServerError, error: msg)
+                }
+            }
+            Task {
+                promise.succeed(await puller(decoded))
             }
         }
 
@@ -1307,28 +1080,7 @@ public final class WebServer {
         }
 
         static func respond(context: ChannelHandlerContext, status: HTTPResponseStatus, body: Data, contentType: String) {
-            var headers = HTTPHeaders()
-            headers.add(name: "Content-Type", value: contentType)
-            headers.add(name: "Content-Length", value: "\(body.count)")
-            headers.add(name: "Connection", value: "close")
-            let head = HTTPResponseHead(version: .init(major: 1, minor: 1), status: status, headers: headers)
-            context.write(NIOAny(HTTPServerResponsePart.head(head)), promise: nil)
-            var buf = context.channel.allocator.buffer(capacity: body.count)
-            buf.writeBytes(body)
-            context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buf))), promise: nil)
-            // Chain `close` off the end-of-response flush promise. NIO's
-            // `close0(mode: .all)` cancels any writes still pending in
-            // `PendingWritesManager` *after* closing the socket fd, so
-            // closing synchronously after `writeAndFlush(..., promise: nil)`
-            // truncates the body whenever the kernel's TCP send buffer
-            // can't absorb the whole response in one pass — which is the
-            // normal case on Tailscale's `utun` (MTU ~1280) and the root
-            // cause of `ERR_CONTENT_LENGTH_MISMATCH` on `/app.js`.
-            let donePromise = context.eventLoop.makePromise(of: Void.self)
-            context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil)), promise: donePromise)
-            donePromise.futureResult.whenComplete { _ in
-                context.close(promise: nil)
-            }
+            writeHTTPResponse(context: context, status: status, body: body, contentType: contentType)
         }
     }
 
@@ -1346,12 +1098,12 @@ public final class WebServer {
         /// session registers its zmx attach (and deregisters on close).
         let remoteAttachmentRegistry: RemoteAttachmentRegistry?
         let ownershipStore: SessionDisplayOwnershipStore
-        let ownershipBroadcaster: WebDisplayOwnershipBroadcaster
+        let ownershipBroadcaster: DisplayOwnershipBroadcaster
         let defaultKind: DisplayClientKind
         let clientID: DisplayClientID
         private var session: WebSession?
         private weak var channel: Channel?
-        private var coordinator: WebSocketBridgeCoordinator?
+        private var coordinator: TerminalAttachCoordinator?
 
         init(
             sessionName: String,
@@ -1360,7 +1112,7 @@ public final class WebServer {
             workingDirectory: URL?,
             remoteAttachmentRegistry: RemoteAttachmentRegistry?,
             ownershipStore: SessionDisplayOwnershipStore,
-            ownershipBroadcaster: WebDisplayOwnershipBroadcaster,
+            ownershipBroadcaster: DisplayOwnershipBroadcaster,
             defaultKind: DisplayClientKind
         ) {
             self.sessionName = sessionName
@@ -1376,7 +1128,7 @@ public final class WebServer {
 
         func handlerAdded(context: ChannelHandlerContext) {
             channel = context.channel
-            let bridge = WebSocketBridgeCoordinator(
+            let bridge = TerminalAttachCoordinator(
                 sessionName: sessionName,
                 clientID: clientID,
                 defaultKind: defaultKind,

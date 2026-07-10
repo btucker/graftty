@@ -343,35 +343,61 @@ public struct AgentHookInstaller: Sendable {
             wrapperDirectory: wrapperDirectory,
             realCommandName: realCommandName
         )
-        let trapBlock = """
-        agent_pid=""
-        cleanup() { \(shellCommandToken(grafttyCLIPath)) team unregister --runtime \(runtime.rawValue) 2>/dev/null || true; }
-        forward_signal() {
-          sig="$1"
-          status="$2"
-          if [ -n "${agent_pid:-}" ]; then
-            kill -"$sig" "$agent_pid" 2>/dev/null || true
-            fallback_pid=""
-            if [ "$sig" = "INT" ]; then
-              # Some /bin/sh implementations keep SIGINT ignored for
-              # asynchronous children even when the child subshell resets
-              # traps before exec. Keep forwarding INT first, but do not
-              # let the wrapper block forever if the child inherited ignore.
-              ( sleep 1; kill -0 "$agent_pid" 2>/dev/null && kill -TERM "$agent_pid" 2>/dev/null || true ) &
-              fallback_pid=$!
-            fi
-            wait "$agent_pid" 2>/dev/null || true
-            if [ -n "${fallback_pid:-}" ]; then
-              kill "$fallback_pid" 2>/dev/null || true
-              wait "$fallback_pid" 2>/dev/null || true
+        let registerBlock = """
+        # Register this wrapper PID before launching the runtime. The runtime
+        # remains a foreground child in the same process group so TUIs keep
+        # normal terminal semantics, while the wrapper gets a short teardown
+        # phase after the runtime exits.
+        \(shellCommandToken(grafttyCLIPath)) team register --runtime \(runtime.rawValue) --pid "$$" >/dev/null 2>&1 || true
+        """
+
+        let codexCleanupBlock: String
+        if runtime == .codex {
+            codexCleanupBlock = """
+              if [ -n "${_graftty_codex_socket:-}" ] && [ -n "${_graftty_codex_app_server_pid:-}" ]; then
+                \(shellCommandToken(grafttyCLIPath)) team codex-app-server unregister --socket "$_graftty_codex_socket" --app-server-pid "$_graftty_codex_app_server_pid" >/dev/null 2>&1 || true
+              fi
+              if [ -n "${_graftty_codex_app_server_pid:-}" ]; then
+                kill "$_graftty_codex_app_server_pid" 2>/dev/null || true
+                _graftty_codex_shutdown_wait_count=0
+                while kill -0 "$_graftty_codex_app_server_pid" 2>/dev/null; do
+                  if [ "$_graftty_codex_shutdown_wait_count" -ge 20 ]; then
+                    kill -KILL "$_graftty_codex_app_server_pid" 2>/dev/null || true
+                    break
+                  fi
+                  sleep 0.1
+                  _graftty_codex_shutdown_wait_count=$((_graftty_codex_shutdown_wait_count + 1))
+                done
+                wait "$_graftty_codex_app_server_pid" 2>/dev/null || true
+                unset _graftty_codex_shutdown_wait_count
+              fi
+              if [ -n "${_graftty_codex_socket:-}" ]; then
+                rm -f "$_graftty_codex_socket"
+              fi
+              if [ -z "${_graftty_preserve_codex_app_server_log:-}" ] && [ -n "${_graftty_codex_app_server_log:-}" ]; then
+                rm -f "$_graftty_codex_app_server_log"
+              fi
+            """
+        } else {
+            codexCleanupBlock = ""
+        }
+
+        let cleanupBlock = """
+        cleanup_after_runtime() {
+          # Some TUIs issue terminal capability queries during startup/shutdown.
+          # A late reply can otherwise land in the parent shell after the TUI
+          # exits (for example Kitty keyboard protocol replies like CSI ? ... u).
+          # Drain only a tiny, immediately-pending window and restore tty state.
+          if [ -t 0 ] && command -v stty >/dev/null 2>&1 && command -v dd >/dev/null 2>&1; then
+            _graftty_stty="$(stty -g 2>/dev/null)" || _graftty_stty=""
+            if [ -n "$_graftty_stty" ] && stty -icanon -echo min 0 time 1 2>/dev/null; then
+              dd bs=1024 count=1 of=/dev/null 2>/dev/null || true
+              stty "$_graftty_stty" 2>/dev/null || true
             fi
           fi
-          exit "$status"
+          \(shellCommandToken(grafttyCLIPath)) team unregister --runtime \(runtime.rawValue) 2>/dev/null || true
+        \(codexCleanupBlock)
         }
-        trap cleanup EXIT
-        trap 'forward_signal TERM 143' TERM
-        trap 'forward_signal INT 130' INT
-        trap 'forward_signal HUP 129' HUP
         """
 
         let runtimeBlock: String
@@ -381,9 +407,9 @@ public struct AgentHookInstaller: Sendable {
             let escapedJSON = shellLiteral(inlineJSON)
             runtimeBlock = """
             if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
-              ( trap - INT TERM HUP; exec "$real_binary" --settings \(escapedJSON) "$@" ) &
+              "$real_binary" --settings \(escapedJSON) "$@"
             else
-              ( trap - INT TERM HUP; exec "$real_binary" "$@" ) &
+              "$real_binary" "$@"
             fi
             """
         case .codex:
@@ -391,9 +417,75 @@ public struct AgentHookInstaller: Sendable {
             runtimeBlock = """
             if [ "${GRAFTTY_DISABLE_AGENT_HOOKS:-}" != "1" ]; then
               \(shellCommandToken(grafttyCLIPath)) internal sync-codex-home
-              ( trap - INT TERM HUP; exec env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@" ) &
+              _graftty_codex_should_use_app_server() {
+                while [ "$#" -gt 0 ]; do
+                  case "$1" in
+                    --help|-h|--version|-V)
+                      return 1
+                      ;;
+                    --remote|--remote=*)
+                      return 1
+                      ;;
+                    -c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote-auth-token-env|--local-provider|--add-dir|-i|--image)
+                      shift
+                      [ "$#" -gt 0 ] && shift
+                      continue
+                      ;;
+                    --)
+                      return 0
+                      ;;
+                    -*)
+                      shift
+                      continue
+                      ;;
+                    app-server|remote-control|exec|e|review|login|logout|mcp|plugin|mcp-server|app|completion|update|doctor|sandbox|debug|apply|a|archive|delete|unarchive|cloud|exec-server|features|help)
+                      return 1
+                      ;;
+                    *)
+                      return 0
+                      ;;
+                  esac
+                done
+                return 0
+              }
+              if ! _graftty_codex_should_use_app_server "$@"; then
+                env CODEX_HOME=\(codexHomeLiteral) "$real_binary" "$@"
+              else
+              _graftty_codex_socket_dir="${TMPDIR:-/tmp}/graftty-codex-app-server"
+              mkdir -p "$_graftty_codex_socket_dir"
+              _graftty_codex_socket="$_graftty_codex_socket_dir/$$.sock"
+              _graftty_codex_app_server_log="$_graftty_codex_socket_dir/$$.log"
+              rm -f "$_graftty_codex_socket" "$_graftty_codex_app_server_log"
+              env CODEX_HOME=\(codexHomeLiteral) "$real_binary" app-server --listen "unix://$_graftty_codex_socket" </dev/null >>"$_graftty_codex_app_server_log" 2>&1 &
+              _graftty_codex_app_server_pid=$!
+              _graftty_wait_for_codex_socket() {
+                _graftty_wait_count=0
+                while [ "$_graftty_wait_count" -lt 50 ]; do
+                  if [ -S "$_graftty_codex_socket" ]; then
+                    return 0
+                  fi
+                  if ! kill -0 "$_graftty_codex_app_server_pid" 2>/dev/null; then
+                    return 1
+                  fi
+                  sleep 0.1
+                  _graftty_wait_count=$((_graftty_wait_count + 1))
+                done
+                return 1
+              }
+              if ! _graftty_wait_for_codex_socket; then
+                printf '%s\\n' "graftty: codex app-server failed to start; see $_graftty_codex_app_server_log" >&2
+                kill "$_graftty_codex_app_server_pid" 2>/dev/null || true
+                wait "$_graftty_codex_app_server_pid" 2>/dev/null || true
+                rm -f "$_graftty_codex_socket"
+                _graftty_preserve_codex_app_server_log=1
+                cleanup_after_runtime
+                exit 1
+              fi
+              \(shellCommandToken(grafttyCLIPath)) team codex-app-server register --socket "$_graftty_codex_socket" --real-binary "$real_binary" --app-server-pid "$_graftty_codex_app_server_pid" >/dev/null 2>&1 || true
+              env CODEX_HOME=\(codexHomeLiteral) "$real_binary" --remote "unix://$_graftty_codex_socket" "$@"
+              fi
             else
-              ( trap - INT TERM HUP; exec "$real_binary" "$@" ) &
+              "$real_binary" "$@"
             fi
             """
         }
@@ -404,19 +496,14 @@ public struct AgentHookInstaller: Sendable {
         # Hooks run: \(grafttyCLIPath) team hook \(runtime.rawValue)
         \(resolveBlock)
 
-        \(trapBlock)
+        \(registerBlock)
+
+        \(cleanupBlock)
 
         \(runtimeBlock)
-        agent_pid=$!
-
-        # TEAM-PRESENCE-1.3: register the long-running runtime child, not
-        # the short-lived registration helper. The CLI silently no-ops
-        # outside a team-tracked worktree, so the unconditional call is safe.
-        \(shellCommandToken(grafttyCLIPath)) team register --runtime \(runtime.rawValue) --pid "$agent_pid" >/dev/null 2>&1 || true
-
-        wait "$agent_pid"
-        agent_status=$?
-        exit "$agent_status"
+        runtime_status=$?
+        cleanup_after_runtime
+        exit "$runtime_status"
         """
     }
 
@@ -534,12 +621,6 @@ public struct AgentHookInstaller: Sendable {
     }
 
     private static func shellCommandToken(_ value: String) -> String {
-        guard value.rangeOfCharacter(from: .whitespacesAndNewlines) != nil ||
-              value.contains("'") ||
-              value.contains("\"")
-        else {
-            return value
-        }
         return shellLiteral(value)
     }
 

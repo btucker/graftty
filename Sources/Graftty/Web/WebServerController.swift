@@ -18,6 +18,16 @@ final class WebServerController: ObservableObject {
     /// step gated on `Task.isCancelled` so a stale completion can't
     /// race a fresh status onto the pane. WEB-8.6.
     private var reconcileTask: Task<Void, Never>?
+    /// Pending automatic retry after a transient cold-boot failure. A Mac
+    /// restart relaunches Graftty during session-restore *before* `tailscaled`
+    /// has finished coming up, so the first bring-up commonly fails with a
+    /// transient dependency error and — without this — the server never comes
+    /// online until the user manually toggles Web Access. Cancelled by stop(),
+    /// a fresh reconcile, or a successful bring-up. WEB-1.14.
+    private var retryTask: Task<Void, Never>?
+    /// Consecutive transient-failure count; drives the backoff schedule and
+    /// resets to 0 on a successful bring-up or stop(). WEB-1.14.
+    private var retryAttempt = 0
     private let settings: WebAccessSettings
     private let zmxExecutable: URL
     private let zmxDir: URL
@@ -37,6 +47,9 @@ final class WebServerController: ObservableObject {
     /// `AddWorktreeFlow.add` on the main actor. Nil before injection
     /// causes the endpoint to respond `503 service unavailable`.
     private var worktreeCreator: (@Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome)?
+    /// Executes `POST /repos/default-branch/pull` (`WEB-7.12`).
+    /// Routes into `GitDefaultBranchPull` from `GrafttyApp`.
+    private var defaultBranchPuller: (@Sendable (WebServer.PullDefaultBranchRequest) async -> WebServer.PullDefaultBranchOutcome)?
     /// Executes `POST /worktrees/delete` (`WEB-7.8` / `WEB-7.9` /
     /// `WEB-7.10`). Routes into `DeleteWorktreeFlow.delete` on the
     /// main actor. Nil before injection causes the endpoint to respond
@@ -82,6 +95,9 @@ final class WebServerController: ObservableObject {
     func stop() {
         reconcileTask?.cancel()
         reconcileTask = nil
+        retryTask?.cancel()
+        retryTask = nil
+        retryAttempt = 0
         renewer?.stop()
         renewer = nil
         server?.stop()
@@ -137,6 +153,14 @@ final class WebServerController: ObservableObject {
         _ creator: @escaping @Sendable (WebServer.CreateWorktreeRequest) async -> WebServer.CreateWorktreeOutcome
     ) {
         worktreeCreator = creator
+        rebuildIfRunning()
+    }
+
+    /// Install the puller used for `POST /repos/default-branch/pull`.
+    func setDefaultBranchPuller(
+        _ puller: @escaping @Sendable (WebServer.PullDefaultBranchRequest) async -> WebServer.PullDefaultBranchOutcome
+    ) {
+        defaultBranchPuller = puller
         rebuildIfRunning()
     }
 
@@ -202,6 +226,73 @@ final class WebServerController: ObservableObject {
         guard !Task.isCancelled else { return }
         status = s
         lastApplied = nil
+        scheduleRetry(after: s)
+    }
+
+    /// Cold-boot dependency failures that warrant an automatic retry: the
+    /// Tailscale daemon isn't up yet, MagicDNS hasn't published our name, or
+    /// the cert isn't mintable yet. A Mac restart relaunches Graftty during
+    /// session-restore *before* `tailscaled` finishes coming up, so the first
+    /// bring-up attempt commonly lands here. Terminal statuses
+    /// (`portUnavailable`, `httpsCertsNotEnabled`, `.error`) are excluded —
+    /// retrying can't fix a misconfiguration or a port owned by another app.
+    /// WEB-1.14.
+    nonisolated static func isTransientStartupFailure(_ status: WebServer.Status) -> Bool {
+        switch status {
+        case .tailscaleUnavailable, .magicDNSDisabled, .certFetchFailed:
+            return true
+        case .stopped, .listening, .httpsCertsNotEnabled, .provisioningCert,
+             .portUnavailable, .error:
+            return false
+        }
+    }
+
+    /// Delay before the next automatic reconcile retry, or `nil` when `status`
+    /// is a success/terminal status that retrying can't advance. `attempt` is
+    /// 1-based. Capped exponential via the shared `ExponentialBackoff`: 2, 4, 8,
+    /// 16, 30, 30… seconds — so a tailnet that never recovers re-probes every
+    /// 30s rather than backing off to hours. WEB-1.14.
+    nonisolated static func retryDelay(
+        afterTransientFailure status: WebServer.Status,
+        attempt: Int
+    ) -> Duration? {
+        guard isTransientStartupFailure(status) else { return nil }
+        return ExponentialBackoff.scale(
+            base: .seconds(2), streak: max(1, attempt) - 1, cap: .seconds(30)
+        )
+    }
+
+    /// Schedule an automatic reconcile retry when `status` is a transient
+    /// cold-boot failure and web access is still enabled. No-ops (and resets
+    /// the backoff) for terminal/success statuses. WEB-1.14.
+    private func scheduleRetry(after status: WebServer.Status) {
+        retryTask?.cancel()
+        retryTask = nil
+        guard settings.isEnabled,
+              let delay = Self.retryDelay(
+                afterTransientFailure: status, attempt: retryAttempt + 1
+              )
+        else {
+            retryAttempt = 0
+            return
+        }
+        retryAttempt += 1
+        retryTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard let self, !Task.isCancelled else { return }
+            // Detach our own handle BEFORE reconcile(): its top-of-function
+            // `retryTask?.cancel()` would otherwise cancel *this* running Task,
+            // and that self-cancel poisons `Task.isCancelled` for the rest of
+            // the synchronous reconcile — so a `failReconcile(.magicDNSDisabled)`
+            // would hit its `guard !Task.isCancelled` and no-op, silently killing
+            // the magicDNS retry chain and wedging `lastApplied`. WEB-1.14.
+            self.retryTask = nil
+            // The desired (enabled, port) tuple is unchanged from the failed
+            // attempt, so clear `lastApplied` too or reconcile()'s no-op guard
+            // would early-return and the retry would do nothing.
+            self.lastApplied = nil
+            self.reconcile()
+        }
     }
 
     private func reconcile() {
@@ -209,6 +300,11 @@ final class WebServerController: ObservableObject {
         if let last = lastApplied, last == desired { return }
         lastApplied = desired
 
+        // A fresh attempt supersedes any pending retry; scheduleRetry will
+        // re-arm one (with the incremented backoff) if this attempt also
+        // fails transiently. WEB-1.14.
+        retryTask?.cancel()
+        retryTask = nil
         reconcileTask?.cancel()
         reconcileTask = nil
         renewer?.stop()
@@ -217,7 +313,13 @@ final class WebServerController: ObservableObject {
         server = nil
         status = .stopped
         serverHostname = nil
-        guard desired.enabled else { return }
+        guard desired.enabled else {
+            // Disabling web access ends the bring-up campaign — reset the
+            // backoff so a later re-enable starts fresh at 2s rather than
+            // inheriting the elevated attempt count from before. WEB-1.14.
+            retryAttempt = 0
+            return
+        }
         // Validate port BEFORE reaching into Tailscale / NIO. An
         // out-of-range `WebAccessSettings.port` (e.g. the user typed
         // "99999" into the Settings TextField, which has no clamp of
@@ -225,6 +327,7 @@ final class WebServerController: ObservableObject {
         // in the status row — opaque to the user. `WEB-1.5`.
         guard WebServer.Config.isValidListenablePort(desired.port) else {
             status = .error("Port must be 0–65535 (got \(desired.port))")
+            retryAttempt = 0  // terminal status ends the retry campaign. WEB-1.14
             return
         }
         let api: TailscaleLocalAPI
@@ -233,16 +336,23 @@ final class WebServerController: ObservableObject {
             api = try TailscaleLocalAPI.autoDetected()
             tailscaleStatus = try runBlocking { try await api.status() }
         } catch TailscaleLocalAPI.Error.socketUnreachable {
-            status = .tailscaleUnavailable
+            // Cold-boot race: `tailscaled` hasn't published its LocalAPI socket
+            // yet. failReconcile clears lastApplied + arms a backoff retry so we
+            // self-heal without waiting for the user to toggle Web Access —
+            // routed through the same helper as the MagicDNS branch below so both
+            // transient failures recover identically. WEB-1.14.
+            failReconcile(.tailscaleUnavailable)
             return
         } catch {
             status = .error("\(error)")
+            retryAttempt = 0  // terminal status ends the retry campaign. WEB-1.14
             return
         }
         guard let fqdn = tailscaleStatus.dnsName else {
-            // Clear lastApplied so the next settings pulse re-probes;
-            // otherwise the user has to toggle web access off + on to
-            // recover after enabling MagicDNS in the admin console.
+            // MagicDNS name not yet published — transient at cold boot, or the
+            // user just enabled MagicDNS in the admin console. failReconcile
+            // clears lastApplied and arms a backoff retry (WEB-1.14), so the
+            // server self-heals without a manual Web Access toggle.
             failReconcile(.magicDNSDisabled)
             return
         }
@@ -303,6 +413,7 @@ final class WebServerController: ObservableObject {
         let sessionWorktreeProvider = self.sessionWorktreeProvider ?? { _ in nil }
         let repos = reposProvider ?? { [] }
         let creator = worktreeCreator
+        let puller = defaultBranchPuller
         let remover = worktreeRemover
         let signalingHandler = self.signalingHandler
         let s = WebServer(
@@ -314,6 +425,7 @@ final class WebServerController: ObservableObject {
                 sessionWorktreeProvider: sessionWorktreeProvider,
                 reposProvider: repos,
                 worktreeCreator: creator,
+                defaultBranchPuller: puller,
                 worktreeRemover: remover,
                 ghosttyConfigProvider: { GhosttyConfigReader.resolvedConfig() },
                 worktreePanesProvider: worktreePanesProvider ?? { [] },
@@ -337,6 +449,11 @@ final class WebServerController: ObservableObject {
         server = s
         status = s.status
         serverHostname = fqdn
+        // Bring-up succeeded — clear any armed cold-boot retry and reset the
+        // backoff so a future transient failure starts fresh. WEB-1.14.
+        retryTask?.cancel()
+        retryTask = nil
+        retryAttempt = 0
 
         // Kick off the 24h renewal loop. Fresh bytes were just fetched
         // above — no need for an immediate renewNow here. Re-auto-detect

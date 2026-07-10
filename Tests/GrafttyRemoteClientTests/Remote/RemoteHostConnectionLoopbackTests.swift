@@ -76,6 +76,161 @@ struct RemoteHostConnectionLoopbackTests {
         await client.close()
         await answererPeer.close()
     }
+
+    // MARK: - Task 1 (W3): terminal-state observability
+    //
+    // These reuse the M1.1 `TestAnswerer` (raw WebRTC, no SSH) rather
+    // than a full SSH-speaking peer. That's sufficient here because
+    // `RemoteHostConnection.installSSHHandlerAndResume`'s success path
+    // (the one that sets `.connected`) only waits for the LOCAL
+    // DataChannel to reach `.open` and the local SSH handler to be
+    // installed — it does not wait for the remote peer to complete a
+    // real SSH handshake. `TestAnswerer` not speaking SSH is exactly
+    // why `twoConnectionsExchangeBytesOverDataChannel` above is
+    // disabled (its raw ping/pong assertions relied on
+    // `RemoteHostConnection`'s own `dataChannelDelegate.onMessage`,
+    // which `SSHNIOTransport` now steals by re-assigning
+    // `dataChannel.delegate`) — but that breakage is orthogonal to
+    // `.connected` firing, which these tests confirm still happens.
+
+    /// @spec-less regression test (Task 1 has no @spec ID — see the task
+    /// brief): a normal offer/answer/ICE negotiation must fire the
+    /// observer with `.connected` once the DataChannel opens and the SSH
+    /// handler installs successfully.
+    @Test(.timeLimit(.minutes(1)))
+    func connectedTransitionFiresDuringNormalNegotiation() async throws {
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let hostFingerprint = RemoteIdentityFingerprint(
+            of: try RemoteIdentityPublicKey(rawRepresentation: hostKey.publicKey.rawRepresentation)
+        )
+        let client = RemoteHostConnection(
+            clientKey: clientKey,
+            expectedHostFingerprint: hostFingerprint
+        )
+        let recorder = StateChangeRecorder()
+        // Set BEFORE createOffer — see `RemoteHostConnection.onStateChange`'s
+        // doc comment for the race this ordering avoids.
+        await client.setOnStateChange { recorder.record($0) }
+        let answererPeer = TestAnswerer()
+
+        let offer = try await client.createOffer()
+        let answer = try await answererPeer.accept(offer: offer)
+        await client.bindIceCandidates(to: answererPeer)
+        await answererPeer.bindIceCandidates(to: client)
+        try await client.applyAnswer(answer)
+
+        #expect(
+            recorder.recorded.contains(.connected),
+            "expected a .connected transition, observed \(recorder.recorded)"
+        )
+
+        await client.close()
+        await answererPeer.close()
+    }
+
+    /// Killing the answerer out from under an established connection must
+    /// land the client on exactly one terminal transition — never zero,
+    /// never two. Both an ICE `.failed` report and the DataChannel
+    /// closing (RTCDataChannelState `.closing`/`.closed`) can plausibly
+    /// fire for this one underlying event; `RemoteHostConnection`'s
+    /// `setState` must gate on whichever lands first.
+    @Test(.timeLimit(.minutes(1)))
+    func killingAnswererFiresExactlyOneTerminalTransition() async throws {
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let hostFingerprint = RemoteIdentityFingerprint(
+            of: try RemoteIdentityPublicKey(rawRepresentation: hostKey.publicKey.rawRepresentation)
+        )
+        let client = RemoteHostConnection(
+            clientKey: clientKey,
+            expectedHostFingerprint: hostFingerprint
+        )
+        let recorder = StateChangeRecorder()
+        await client.setOnStateChange { recorder.record($0) }
+        let answererPeer = TestAnswerer()
+
+        let offer = try await client.createOffer()
+        let answer = try await answererPeer.accept(offer: offer)
+        await client.bindIceCandidates(to: answererPeer)
+        await answererPeer.bindIceCandidates(to: client)
+        try await client.applyAnswer(answer)
+
+        // Kill both the answerer's DataChannel and its RTCPeerConnection.
+        // The client observes this as its own DataChannel closing
+        // (SCTP-level teardown, fast) and/or its ICE connection failing
+        // (potentially much slower) — either is a valid terminal trigger;
+        // the assertion below is that only one ever lands.
+        await answererPeer.close()
+
+        try await pollUntil(timeout: .seconds(15)) {
+            recorder.recorded.contains { $0.isTerminal }
+        }
+
+        let terminalTransitions = recorder.recorded.filter { $0.isTerminal }
+        #expect(
+            terminalTransitions.count == 1,
+            "expected exactly one terminal transition, observed \(recorder.recorded)"
+        )
+
+        await client.close()
+    }
+
+    /// `close()` must be idempotent: the second call is a no-op, so the
+    /// observer only ever sees one `.closed`.
+    @Test(.timeLimit(.minutes(1)))
+    func explicitCloseFiresClosedExactlyOnce() async throws {
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let hostFingerprint = RemoteIdentityFingerprint(
+            of: try RemoteIdentityPublicKey(rawRepresentation: hostKey.publicKey.rawRepresentation)
+        )
+        let client = RemoteHostConnection(
+            clientKey: clientKey,
+            expectedHostFingerprint: hostFingerprint
+        )
+        let recorder = StateChangeRecorder()
+        await client.setOnStateChange { recorder.record($0) }
+        let answererPeer = TestAnswerer()
+
+        let offer = try await client.createOffer()
+        let answer = try await answererPeer.accept(offer: offer)
+        await client.bindIceCandidates(to: answererPeer)
+        await answererPeer.bindIceCandidates(to: client)
+        try await client.applyAnswer(answer)
+
+        await client.close()
+        await client.close()
+
+        let closedTransitions = recorder.recorded.filter { $0 == .closed }
+        #expect(
+            closedTransitions.count == 1,
+            "expected close() to fire .closed exactly once, observed \(recorder.recorded)"
+        )
+
+        await answererPeer.close()
+    }
+}
+
+/// Records every `RemoteHostConnection.State` the observer fires, in
+/// order. `onStateChange` is a plain `@Sendable` closure invoked
+/// synchronously from actor-isolated code, so an NSLock-guarded class
+/// (matching the pattern used by other loopback test collectors, e.g.
+/// `PromiseCompleter` in `SSHAuthLoopbackTests.swift`) lets the test
+/// body read it back without its own actor hop.
+private final class StateChangeRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var states: [RemoteHostConnection.State] = []
+
+    func record(_ state: RemoteHostConnection.State) {
+        lock.lock(); defer { lock.unlock() }
+        states.append(state)
+    }
+
+    var recorded: [RemoteHostConnection.State] {
+        lock.lock(); defer { lock.unlock() }
+        return states
+    }
 }
 
 /// Test helper that owns the answerer side of the loopback. Production

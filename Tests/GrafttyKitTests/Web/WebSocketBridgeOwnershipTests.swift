@@ -50,7 +50,7 @@ struct WebSocketBridgeOwnershipTests {
     @Test
     func ownerResizeReachesWebSessionResize() throws {
         let store = SessionDisplayOwnershipStore()
-        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let broadcaster = DisplayOwnershipBroadcaster()
         let owner = makeCoordinator(
             store: store,
             broadcaster: broadcaster,
@@ -90,7 +90,7 @@ struct WebSocketBridgeOwnershipTests {
     @Test
     func ownerReceivesLocalizedOwnershipSnapshotUsingProtocolClientID() throws {
         let store = SessionDisplayOwnershipStore()
-        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let broadcaster = DisplayOwnershipBroadcaster()
         let owner = makeCoordinator(
             store: store,
             broadcaster: broadcaster,
@@ -121,7 +121,7 @@ struct WebSocketBridgeOwnershipTests {
     @Test
     func requestDefaultKindWinsOverSpoofedFrameKind() throws {
         let store = SessionDisplayOwnershipStore()
-        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let broadcaster = DisplayOwnershipBroadcaster()
         let socket = makeCoordinator(
             store: store,
             broadcaster: broadcaster,
@@ -156,7 +156,7 @@ struct WebSocketBridgeOwnershipTests {
     """)
     func iosHelloReturnsOwnerlessSnapshotUntilExplicitTakeControl() throws {
         let store = SessionDisplayOwnershipStore()
-        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let broadcaster = DisplayOwnershipBroadcaster()
         let socket = makeCoordinator(
             store: store,
             broadcaster: broadcaster,
@@ -182,7 +182,7 @@ struct WebSocketBridgeOwnershipTests {
     @Test
     func followerResizeIsRejected() throws {
         let store = SessionDisplayOwnershipStore()
-        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let broadcaster = DisplayOwnershipBroadcaster()
         let owner = makeCoordinator(store: store, broadcaster: broadcaster, serverClientID: DisplayClientID("server-web-1"))
         let follower = makeCoordinator(store: store, broadcaster: broadcaster, serverClientID: DisplayClientID("server-web-2"))
 
@@ -205,7 +205,7 @@ struct WebSocketBridgeOwnershipTests {
     @Test
     func ownerBinaryInputReachesWebSessionWrite() {
         let store = SessionDisplayOwnershipStore()
-        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let broadcaster = DisplayOwnershipBroadcaster()
         let owner = makeCoordinator(store: store, broadcaster: broadcaster, serverClientID: DisplayClientID("server-web-1"))
 
         owner.coordinator.handleControl(.hello(clientID: DisplayClientID("owner-protocol"), kind: .web, role: .interactive, visible: true, cols: 80, rows: 24))
@@ -218,7 +218,7 @@ struct WebSocketBridgeOwnershipTests {
     @Test
     func followerBinaryInputIsIgnored() {
         let store = SessionDisplayOwnershipStore()
-        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let broadcaster = DisplayOwnershipBroadcaster()
         let owner = makeCoordinator(store: store, broadcaster: broadcaster, serverClientID: DisplayClientID("server-web-1"))
         let follower = makeCoordinator(store: store, broadcaster: broadcaster, serverClientID: DisplayClientID("server-web-2"))
 
@@ -233,7 +233,7 @@ struct WebSocketBridgeOwnershipTests {
     @Test
     func binaryBeforeTakeControlDoesNotClaimOwnerlessSocketOrWrite() {
         let store = SessionDisplayOwnershipStore()
-        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let broadcaster = DisplayOwnershipBroadcaster()
         let legacy = makeCoordinator(
             store: store,
             broadcaster: broadcaster,
@@ -251,7 +251,7 @@ struct WebSocketBridgeOwnershipTests {
     @Test
     func binaryBeforeTakeControlDoesNotRaceImplicitOwnership() {
         let store = SessionDisplayOwnershipStore()
-        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let broadcaster = DisplayOwnershipBroadcaster()
         let racing = makeCoordinator(
             store: store,
             broadcaster: broadcaster,
@@ -269,7 +269,7 @@ struct WebSocketBridgeOwnershipTests {
     @Test
     func takeoverImmediatelyResizesPTYToNewOwnerGrid() throws {
         let store = SessionDisplayOwnershipStore()
-        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let broadcaster = DisplayOwnershipBroadcaster()
         let owner = makeCoordinator(store: store, broadcaster: broadcaster, serverClientID: DisplayClientID("server-web-1"))
         let takeover = makeCoordinator(
             store: store,
@@ -299,7 +299,7 @@ struct WebSocketBridgeOwnershipTests {
     @Test
     func ownerDisconnectEmitsOwnerlessSnapshotAndDoesNotAutoPromoteFollower() throws {
         let store = SessionDisplayOwnershipStore()
-        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let broadcaster = DisplayOwnershipBroadcaster()
         let owner = makeCoordinator(store: store, broadcaster: broadcaster, serverClientID: DisplayClientID("server-web-1"))
         let follower = makeCoordinator(store: store, broadcaster: broadcaster, serverClientID: DisplayClientID("server-web-2"))
 
@@ -328,7 +328,7 @@ struct WebSocketBridgeOwnershipTests {
     @Test
     func legacyResizeWithoutTakeControlDoesNotClaimOrResize() throws {
         let store = SessionDisplayOwnershipStore()
-        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let broadcaster = DisplayOwnershipBroadcaster()
         let legacy = makeCoordinator(store: store, broadcaster: broadcaster, serverClientID: DisplayClientID("server-web-1"))
         let follower = makeCoordinator(store: store, broadcaster: broadcaster, serverClientID: DisplayClientID("server-web-2"))
 
@@ -344,12 +344,46 @@ struct WebSocketBridgeOwnershipTests {
     @Test
     func invalidPTYSizePollIsIgnored() {
         let store = SessionDisplayOwnershipStore()
-        let broadcaster = WebDisplayOwnershipBroadcaster()
+        let broadcaster = DisplayOwnershipBroadcaster()
         let owner = makeCoordinator(store: store, broadcaster: broadcaster, serverClientID: DisplayClientID("server-web-1"))
 
         owner.coordinator.handlePTYSize(cols: 0, rows: 0)
 
         #expect(owner.recorder.snapshot().sent.isEmpty)
+    }
+
+    @Test
+    func ownershipSnapshotCarriesStoreRevisionNotZero() throws {
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = DisplayOwnershipBroadcaster()
+        let owner = makeCoordinator(
+            store: store,
+            broadcaster: broadcaster,
+            serverClientID: DisplayClientID("server-web-1")
+        )
+
+        owner.coordinator.handleControl(.hello(
+            clientID: DisplayClientID("browser-generated-1"),
+            kind: .web,
+            role: .interactive,
+            visible: true,
+            cols: 80,
+            rows: 24
+        ))
+        owner.coordinator.handleControl(.takeControl(
+            clientID: DisplayClientID("browser-generated-1"),
+            kind: .web,
+            cols: 80,
+            rows: 24
+        ))
+
+        let storeRevision = store.snapshot(sessionName: sessionName).revision
+        #expect(storeRevision > 0, "the store itself must have advanced its revision by now")
+        let ownership = try #require(owner.recorder.ownershipSnapshots().last)
+        #expect(
+            ownership.revision == storeRevision,
+            "the wire snapshot must carry the store's current revision, not a localization-reset 0 — otherwise the same-epoch reorder guard (an owner resize that changes the grid without bumping epoch) can't distinguish a stale delivery from a fresh one"
+        )
     }
 
     @Test("""
@@ -359,7 +393,7 @@ struct WebSocketBridgeOwnershipTests {
         let store = SessionDisplayOwnershipStore()
         // Constructed with the store, exactly as WebServer.Config does, so the
         // broadcaster re-broadcasts store mutations made outside this bridge.
-        let broadcaster = WebDisplayOwnershipBroadcaster(store: store)
+        let broadcaster = DisplayOwnershipBroadcaster(store: store)
         let web = makeCoordinator(store: store, broadcaster: broadcaster, serverClientID: DisplayClientID("server-web-1"))
 
         // Web client attaches and explicitly claims the ownerless session.
@@ -391,14 +425,115 @@ struct WebSocketBridgeOwnershipTests {
         #expect(last.grid == (try DisplayGrid(cols: 120, rows: 40)))
     }
 
+    /// Task 6 mixed-transport parity: two REAL `TerminalAttachCoordinator`
+    /// instances sharing one REAL `SessionDisplayOwnershipStore` +
+    /// `DisplayOwnershipBroadcaster`, one built with `defaultKind: .web`
+    /// (exactly how `WebServer`'s `/ws` bridge constructs its coordinator)
+    /// and one with `defaultKind: .ios` (exactly how
+    /// `GrafttyHostAgent`'s SSH terminal path — `TerminalSessionHandler`
+    /// — constructs its coordinator; see
+    /// `Sources/GrafttyHostAgent/SSH/Channels/TerminalSessionHandler.swift`).
+    /// Only the transport's send/resize/write plumbing is simulated, the
+    /// same way every other test in this file simulates the `/ws` bridge
+    /// — the coordinator, store, and broadcaster driving the arbitration
+    /// are 100% production code. Proves take-control flips propagate
+    /// identically across two different client kinds sharing one store,
+    /// which is what "SSH and web are one engine" (W2) actually means at
+    /// the ownership layer.
+    ///
+    /// A literal end-to-end version — a real `TerminalSessionClient`
+    /// (iOS/UIKit-gated, `GrafttyMobileKit`) driving an actual SSH-over-
+    /// WebRTC channel alongside a real `/ws` `WebSocketClient` in the
+    /// SAME process — isn't feasible here: `GrafttyMobileKit`'s SSH
+    /// client only compiles under `#if canImport(UIKit)` (iOS test
+    /// target), while `GrafttyKit`'s `SessionDisplayOwnershipStore`/
+    /// `TerminalAttachCoordinator`/`WebServer` transitively pull in
+    /// AppKit and only compile on macOS — the same platform split that
+    /// forces `SSHTerminalLoopbackTests` to maintain hand-written mirrors
+    /// of these exact Mac-only types instead of importing them. Combining
+    /// both real transports in one test process would mean either making
+    /// `GrafttyKit` iOS-buildable (out of scope for a W2 close-out) or
+    /// cross-process orchestration of a macOS test binary and an iOS
+    /// Simulator process — disproportionate to what this parity check
+    /// needs to prove.
+    @Test("""
+    @spec REMOTE-5.2: While a session terminal is served over `/ws`, the application shall route its terminal and ownership traffic through the same `SessionDisplayOwnershipStore` instance used by SSH-attached clients, so a take-control transition originating from either transport is visible identically to the other.
+    """)
+    func mixedTransportKindsShareOwnershipStoreAndSeeTakeControlFlips() throws {
+        let store = SessionDisplayOwnershipStore()
+        let broadcaster = DisplayOwnershipBroadcaster()
+        let webClient = makeCoordinator(
+            store: store,
+            broadcaster: broadcaster,
+            serverClientID: DisplayClientID("server-web-1"),
+            defaultKind: .web
+        )
+        let sshClient = makeCoordinator(
+            store: store,
+            broadcaster: broadcaster,
+            serverClientID: DisplayClientID("server-ssh-1"),
+            defaultKind: .ios
+        )
+
+        webClient.coordinator.handleControl(.hello(
+            clientID: DisplayClientID("web-protocol"),
+            kind: .web,
+            role: .interactive,
+            visible: true,
+            cols: 80,
+            rows: 24
+        ))
+        webClient.coordinator.handleControl(.takeControl(
+            clientID: DisplayClientID("web-protocol"),
+            kind: .web,
+            cols: 80,
+            rows: 24
+        ))
+
+        sshClient.coordinator.handleControl(.hello(
+            clientID: DisplayClientID("ssh-protocol"),
+            kind: .ios,
+            role: .interactive,
+            visible: true,
+            cols: 90,
+            rows: 25
+        ))
+
+        // The SSH-kind client sees the web client's ownership — never
+        // itself — proving the shared store is visible cross-transport
+        // from the moment it attaches.
+        let sshSeesWebOwns = try #require(sshClient.recorder.ownershipSnapshots().last)
+        #expect(sshSeesWebOwns.ownerClientID != DisplayClientID("ssh-protocol"))
+        #expect(sshSeesWebOwns.ownerKind == .web)
+
+        // The SSH-kind client takes control — the flip must be visible to
+        // BOTH sides, not just the taker.
+        sshClient.coordinator.handleControl(.takeControl(
+            clientID: DisplayClientID("ssh-protocol"),
+            kind: .ios,
+            cols: 90,
+            rows: 25
+        ))
+
+        let storeSnapshot = store.snapshot(sessionName: sessionName)
+        #expect(storeSnapshot.ownerKind == .ios)
+
+        let sshOwns = try #require(sshClient.recorder.ownershipSnapshots().last)
+        #expect(sshOwns.ownerClientID == DisplayClientID("ssh-protocol"))
+
+        let webSeesHandoff = try #require(webClient.recorder.ownershipSnapshots().last)
+        #expect(webSeesHandoff.ownerClientID != DisplayClientID("web-protocol"), "the former web owner must see it lost control")
+        #expect(webSeesHandoff.ownerKind == .ios)
+    }
+
     private func makeCoordinator(
         store: SessionDisplayOwnershipStore,
-        broadcaster: WebDisplayOwnershipBroadcaster,
+        broadcaster: DisplayOwnershipBroadcaster,
         serverClientID: DisplayClientID,
         defaultKind: DisplayClientKind = .web
-    ) -> (coordinator: WebSocketBridgeCoordinator, recorder: Recorder) {
+    ) -> (coordinator: TerminalAttachCoordinator, recorder: Recorder) {
         let recorder = Recorder()
-        let coordinator = WebSocketBridgeCoordinator(
+        let coordinator = TerminalAttachCoordinator(
             sessionName: sessionName,
             clientID: serverClientID,
             defaultKind: defaultKind,

@@ -9,6 +9,10 @@ type OwnershipSnapshot = {
   ownerKind: DisplayClientKind | null;
   grid: { cols: number; rows: number };
   epoch: number;
+  // Monotonic per-session revision; advances on every store mutation (including
+  // same-epoch owner resizes). Followers reject a lower-revision snapshot so a
+  // reordered delivery cannot roll the grid back to a stale size.
+  revision: number;
   ownerless: boolean;
 };
 
@@ -79,15 +83,20 @@ function parseOwnershipSnapshot(value: unknown): OwnershipSnapshot | null {
     ownerKind,
     grid: { cols: grid.cols, rows: grid.rows },
     epoch: snapshot.epoch,
+    // Backward compatible with servers predating the revision field.
+    revision: typeof snapshot.revision === 'number' ? snapshot.revision : 0,
     ownerless: typeof snapshot.ownerless === 'boolean' ? snapshot.ownerless : ownerClientID == null,
   };
 }
 
 // ghostty-web's `init()` loads the inlined WASM once into a process-wide
 // Ghostty instance. Memoize the promise so parallel pane mounts don't race.
+// Reset on rejection so a transient failure doesn't poison future mounts.
 let ghosttyReady: Promise<void> | null = null;
 function ensureGhostty() {
-  if (!ghosttyReady) ghosttyReady = init();
+  if (!ghosttyReady) {
+    ghosttyReady = init().catch((err) => { ghosttyReady = null; throw err; });
+  }
   return ghosttyReady;
 }
 
@@ -102,7 +111,14 @@ function nextBackoffMs(attempt: number): number {
   return Math.max(250, Math.round(base + jitter));
 }
 
-export function TerminalPane({ sessionName }: { sessionName: string }) {
+interface TerminalPaneProps {
+  sessionName: string;
+  role?: 'interactive' | 'preview';
+  fit?: 'viewport' | 'container';
+  autoFocus?: boolean;
+}
+
+export function TerminalPane({ sessionName, role = 'interactive', fit = 'viewport', autoFocus = true }: TerminalPaneProps) {
   const [status, setStatus] = useState<Status>('connecting');
   const [activeClientID, setActiveClientID] = useState<string | null>(null);
   const [ownershipSnapshot, setOwnershipSnapshot] = useState<OwnershipSnapshot | null>(null);
@@ -115,7 +131,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
 
   const isOwner = ownershipSnapshot?.ownerClientID === activeClientID
     && ownershipSnapshot?.ownerKind === WEB_CLIENT_KIND;
-  const canTakeControl = ownershipSnapshot !== null && activeClientID !== null && !isOwner;
+  const canTakeControl = ownershipSnapshot !== null && activeClientID !== null && !isOwner && role === 'interactive';
 
   const sendTakeControlFrame = () => {
     const { ws, clientID } = connectionRef.current;
@@ -140,6 +156,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
     let disposed = false;
     const host = hostRef.current;
     if (!host) return;
+    const readOnly = role === 'preview';
     setStatus('connecting');
     setActiveClientID(null);
     setOwnershipSnapshot(null);
@@ -204,7 +221,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
         type: 'hello',
         clientID,
         kind: WEB_CLIENT_KIND,
-        role: 'interactive',
+        role,
         visible: true,
         cols,
         rows,
@@ -259,6 +276,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
     // silently; the user sees "reconnecting…" in the status strip so
     // the drop is visible.
     const sendBytes = (data: string) => {
+      if (readOnly) return;
       const encoded = textEncoder.encode(data);
       if (isOwnerRef.current && currentWs && currentWs.readyState === WebSocket.OPEN) {
         currentWs.send(encoded);
@@ -269,6 +287,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
     };
 
     const sendOwnerResize = (cols: number, rows: number) => {
+      if (readOnly) return;
       const clientID = connectionRef.current.clientID;
       const epoch = ownershipRef.current?.epoch;
       if (isOwnerRef.current && clientID && epoch != null && currentWs && currentWs.readyState === WebSocket.OPEN) {
@@ -283,14 +302,17 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
 
     const updateOwnership = (snapshot: OwnershipSnapshot) => {
       // Ignore reordered, stale broadcasts. The server enqueues sends from
-      // multiple threads without ordering, so an older-epoch snapshot can
-      // arrive after a newer one on the same socket; applying it would revert
-      // the owner/grid we already advanced past. Strict `<` (not `<=`): the
-      // server bumps `epoch` only on owner-identity changes, so legitimate
-      // same-epoch grid resizes must still be applied.
+      // multiple threads without ordering, so a superseded snapshot can arrive
+      // after a newer one on the same socket; applying it would revert the
+      // owner/grid we already advanced past. Reject on epoch regression, and —
+      // within one ownership tenure, where owner resizes keep the epoch fixed —
+      // on `revision` regression (a reordered same-epoch grid). `revision`
+      // advances on every store mutation, ordering same-epoch resizes that epoch
+      // alone cannot (WEB-5.10).
       const prev = ownershipRef.current;
-      if (prev && snapshot.epoch < prev.epoch) {
-        return;
+      if (prev) {
+        if (snapshot.epoch < prev.epoch) return;
+        if (snapshot.epoch === prev.epoch && snapshot.revision < prev.revision) return;
       }
       const wasOwner = isOwnerRef.current;
       ownershipRef.current = snapshot;
@@ -419,30 +441,37 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
     // refit the PTY rows so the cursor stays above the keyboard.
     // Width is tracked too: Android sometimes changes visual width
     // when the IME opens.
-    const vv = window.visualViewport;
-    let lastAppliedW = -1;
-    let lastAppliedH = -1;
-    const applyViewportSize = () => {
-      if (disposed) return;
-      const w = vv ? vv.width : window.innerWidth;
-      const h = vv ? vv.height : window.innerHeight;
-      // iOS fires `visualViewport.scroll` continuously during
-      // momentum/IME animation — gate so we don't write the same px
-      // into inline style dozens of times per second.
-      if (w === lastAppliedW && h === lastAppliedH) return;
-      lastAppliedW = w;
-      lastAppliedH = h;
-      host.style.width = `${w}px`;
-      host.style.height = `${h}px`;
-    };
-    applyViewportSize();
-    if (vv) {
-      // `scroll` on visualViewport fires when iOS pans the viewport
-      // around the keyboard without resizing — cover both.
-      vv.addEventListener('resize', applyViewportSize, { signal: abort.signal });
-      vv.addEventListener('scroll', applyViewportSize, { signal: abort.signal });
+    // When fit='container', skip this wiring — the host fills its parent
+    // via CSS (width:100%;height:100%) and the ResizeObserver drives sizing.
+    if (fit === 'viewport') {
+      const vv = window.visualViewport;
+      let lastAppliedW = -1;
+      let lastAppliedH = -1;
+      const applyViewportSize = () => {
+        if (disposed) return;
+        const w = vv ? vv.width : window.innerWidth;
+        const h = vv ? vv.height : window.innerHeight;
+        // iOS fires `visualViewport.scroll` continuously during
+        // momentum/IME animation — gate so we don't write the same px
+        // into inline style dozens of times per second.
+        if (w === lastAppliedW && h === lastAppliedH) return;
+        lastAppliedW = w;
+        lastAppliedH = h;
+        host.style.width = `${w}px`;
+        host.style.height = `${h}px`;
+      };
+      applyViewportSize();
+      if (vv) {
+        // `scroll` on visualViewport fires when iOS pans the viewport
+        // around the keyboard without resizing — cover both.
+        vv.addEventListener('resize', applyViewportSize, { signal: abort.signal });
+        vv.addEventListener('scroll', applyViewportSize, { signal: abort.signal });
+      }
+      window.addEventListener('resize', applyViewportSize, { signal: abort.signal });
+    } else {
+      host.style.width = '100%';
+      host.style.height = '100%';
     }
-    window.addEventListener('resize', applyViewportSize, { signal: abort.signal });
 
     ensureGhostty()
       .then(() => {
@@ -516,7 +545,7 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
 
         termReady = true;
         termRef.current = term;
-        term.focus();
+        if (autoFocus) term.focus();
 
         // fitTerminal already called resize() above before onResize was
         // registered. If ownership was established while WASM loaded,
@@ -552,17 +581,21 @@ export function TerminalPane({ sessionName }: { sessionName: string }) {
       termRef.current?.dispose();
       termRef.current = null;
     };
-  }, [sessionName]);
+  }, [sessionName, role, fit]);
+
+  useEffect(() => {
+    if (autoFocus) termRef.current?.focus();
+  }, [autoFocus]);
 
   return (
     <>
-      <div id="status">{status}</div>
+      <div className="term-status">{status}</div>
       {canTakeControl ? (
-        <button id="take-control" type="button" onClick={sendTakeControl}>
+        <button className="term-take-control" type="button" onClick={sendTakeControl}>
           Take Control
         </button>
       ) : null}
-      <div id="term" ref={hostRef} />
+      <div className={fit === 'container' ? 'term-host term-host-container' : 'term-host'} ref={hostRef} />
     </>
   );
 }

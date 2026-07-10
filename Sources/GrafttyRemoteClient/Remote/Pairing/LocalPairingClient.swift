@@ -184,14 +184,14 @@ public actor LocalPairingClient {
             clientKind: session.clientKind,
             clientDisplayName: session.clientDisplayName
         )
-        return try await postJSON(pathSuffix: "introduce", pairingURL: payload.pairingURL, body: body)
+        return try await postJSON(pathSuffix: PairingRoutes.introduce, pairingURL: payload.pairingURL, body: body)
     }
 
     private func postAwaitOutcome(
         payload: PairingPayload
     ) async throws -> PairingOutcomeResponse {
         let body = PairingAwaitOutcomeRequest(nonce: payload.nonce)
-        return try await postJSON(pathSuffix: "await-outcome", pairingURL: payload.pairingURL, body: body)
+        return try await postJSON(pathSuffix: PairingRoutes.awaitOutcome, pairingURL: payload.pairingURL, body: body)
     }
 
     private func postJSON<Request: Encodable, Response: Decodable>(
@@ -219,6 +219,17 @@ public actor LocalPairingClient {
         let http: HTTPURLResponse
         do {
             (data, http) = try await transport(request)
+        } catch is CancellationError {
+            // Swift Task cancellation (from `PairDeviceFlowModel.cancel()`)
+            // surfaces here as `CancellationError` from stubbed transports
+            // and as `URLError(.cancelled)` from `URLSession.data(for:)`
+            // (below) — neither should read to the user as a network
+            // failure. Map both to the same case the host-initiated
+            // "outcome=cancelled" path already produces, so a cancelled
+            // ceremony always lands on `.cancelled`, never `.failed`.
+            throw Error.cancelled
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw Error.cancelled
         } catch {
             throw Error.transport("\(error)")
         }

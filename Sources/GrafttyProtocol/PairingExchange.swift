@@ -1,5 +1,34 @@
 import Foundation
 
+// MARK: - PairingRoutes
+
+/// The two HTTP routes the local pairing ceremony serves, shared by the
+/// host's `PairingHTTPServer` (route switch), `HostPairingCoordinator`
+/// (constructing the QR-advertised `pairingURL`), and the client's
+/// `LocalPairingClient` (path suffixes appended to that URL) so the
+/// three can't drift apart.
+public enum PairingRoutes {
+    public static let basePath = "/v1/pairing"
+    public static let introduce = "introduce"
+    public static let awaitOutcome = "await-outcome"
+}
+
+// MARK: - PairingProtocolDefaults
+
+/// Shared timing defaults for the local pairing ceremony.
+public enum PairingProtocolDefaults {
+    /// How long a QR-published pairing session stays valid before its
+    /// nonce expires. Matches `HostPairingSession.startPairing`'s and
+    /// `HostPairingServer.start`'s default `validFor`.
+    public static let sessionValidity: TimeInterval = 300
+
+    /// The client's HTTP request timeout for the `await-outcome`
+    /// long-poll. Must exceed `sessionValidity` (the host may
+    /// legitimately hold the connection open for the full session
+    /// window) with margin for network latency.
+    public static let clientRequestTimeout: TimeInterval = sessionValidity + 20
+}
+
 // MARK: - PairingIntroduceRequest
 
 /// Body of `POST /v1/pairing/introduce`.

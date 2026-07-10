@@ -185,7 +185,8 @@ struct AgentHookInstallerTests {
 
         #expect(script.contains(#"if [ "$dir" = '/app/hooks/bin' ]; then"#))
         #expect(script.contains("continue"))
-        #expect(script.contains(#"exec "$real_binary" "$@""#))
+        #expect(script.contains(#""$real_binary" "$@""#))
+        #expect(!script.contains(#"exec "$real_binary" "$@""#))
     }
 
     @Test func wrapperQuotesShellPathsWithoutExpansion() {

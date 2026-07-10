@@ -33,16 +33,35 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
     private let streamFactory: @Sendable (String) async throws -> TerminalByteStream
     private let panesStateSubscribe: PanesStateChannelHandler.Subscribe
     private let paneControlMutator: PaneControlChannelHandler.Mutator
+    /// REMOTE-9: display-ownership plumbing threaded through to
+    /// `TerminalSessionHandler` for the terminal-session path only —
+    /// panes-state/pane-control subsystem channels don't participate in
+    /// display ownership.
+    private let ownershipStore: SessionDisplayOwnershipStore
+    private let ownershipBroadcaster: DisplayOwnershipBroadcaster
+    /// Resolves the authenticated peer's device identity. A closure
+    /// (rather than a plain value) because `SubsystemDispatcher` is
+    /// constructed inside `WebRTCHostAgent`'s `inboundChildChannelInitializer`
+    /// closure, which fires once per child channel — reading through a
+    /// shared box at that point always sees the value userauth set before
+    /// NIOSSH allowed any channel to open.
+    private let deviceIDProvider: @Sendable () -> RemoteDeviceID?
     private var dispatched = false
 
     public init(
         streamFactory: @escaping @Sendable (String) async throws -> TerminalByteStream,
         panesStateSubscribe: @escaping PanesStateChannelHandler.Subscribe,
-        paneControlMutator: @escaping PaneControlChannelHandler.Mutator
+        paneControlMutator: @escaping PaneControlChannelHandler.Mutator,
+        ownershipStore: SessionDisplayOwnershipStore,
+        ownershipBroadcaster: DisplayOwnershipBroadcaster,
+        deviceIDProvider: @escaping @Sendable () -> RemoteDeviceID?
     ) {
         self.streamFactory = streamFactory
         self.panesStateSubscribe = panesStateSubscribe
         self.paneControlMutator = paneControlMutator
+        self.ownershipStore = ownershipStore
+        self.ownershipBroadcaster = ownershipBroadcaster
+        self.deviceIDProvider = deviceIDProvider
     }
 
     public func userInboundEventTriggered(context: ChannelHandlerContext, event: Any) {
@@ -68,8 +87,21 @@ public final class SubsystemDispatcher: ChannelInboundHandler, RemovableChannelH
             // `removeHandler` avoids that whole class of subtlety.
             dispatched = true
             do {
+                // Fall back to a freshly generated device ID rather than
+                // crashing if identity is somehow unresolved at
+                // channel-open — SSH protocol makes this unreachable
+                // (auth completes before any channel can open), but
+                // `deviceIDProvider` is `RemoteDeviceID?` for testability
+                // and this keeps a resolution gap from taking down the
+                // channel entirely.
+                let deviceID = deviceIDProvider() ?? RemoteDeviceID.generate()
                 try context.pipeline.syncOperations.addHandler(
-                    TerminalSessionHandler(streamFactory: streamFactory),
+                    TerminalSessionHandler(
+                        streamFactory: streamFactory,
+                        ownershipStore: ownershipStore,
+                        ownershipBroadcaster: ownershipBroadcaster,
+                        deviceID: deviceID
+                    ),
                     position: .after(self)
                 )
                 context.fireUserInboundEventTriggered(event)

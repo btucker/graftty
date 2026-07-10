@@ -29,17 +29,25 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
     private let activePeerRegistry: ActiveRemotePeerRegistry?
     private let closeActiveTransport: (@Sendable () async -> Void)?
     private let onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)?
+    /// REMOTE-9.1: invoked synchronously with the authenticated peer's
+    /// `RemoteDeviceID` the moment userauth succeeds — before
+    /// `responsePromise` is even resolved, so a caller that stashes the
+    /// value in a box sees it populated by the time NIOSSH allows the
+    /// first channel-open (which cannot happen until auth completes).
+    private let onAuthenticated: (@Sendable (RemoteDeviceID) -> Void)?
 
     public init(
         store: TrustedPeerStore,
         activePeerRegistry: ActiveRemotePeerRegistry? = nil,
         closeActiveTransport: (@Sendable () async -> Void)? = nil,
-        onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)? = nil
+        onActivePeerRegistered: (@Sendable (ActiveRemotePeerRegistry.EntryID) -> Void)? = nil,
+        onAuthenticated: (@Sendable (RemoteDeviceID) -> Void)? = nil
     ) {
         self.store = store
         self.activePeerRegistry = activePeerRegistry
         self.closeActiveTransport = closeActiveTransport
         self.onActivePeerRegistered = onActivePeerRegistered
+        self.onAuthenticated = onAuthenticated
     }
 
     public func requestReceived(
@@ -61,6 +69,7 @@ public struct SSHUserAuthDelegate: NIOSSHServerUserAuthenticationDelegate {
                         )
                         onActivePeerRegistered?(entryID)
                     }
+                    onAuthenticated?(peer.id)
                     responsePromise.succeed(.success)
                 } else {
                     // Either no matching trusted peer (unpaired / revoked) or the

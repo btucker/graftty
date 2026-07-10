@@ -107,6 +107,13 @@ struct SidebarView: View {
                 repoDisplayName: request.repo.displayName,
                 initialWorktreeName: request.prefill,
                 branchEntries: currentBranchEntries(forRepo: request.repo),
+                defaultBranchStatus: defaultBranchStatus(
+                    for: request.repo,
+                    stats: statsStore.stats[request.repo.path]
+                ),
+                onPullDefaultBranch: {
+                    await pullDefaultBranch(for: request.repo)
+                },
                 onSubmit: { worktreeName, branch in
                     let err = await onAddWorktree(request.repo, worktreeName, branch)
                     if err == nil { pendingAddWorktree = nil }
@@ -135,6 +142,25 @@ struct SidebarView: View {
             prsByBranch: prs,
             filterText: ""
         )
+    }
+
+    private func pullDefaultBranch(for repo: RepoEntry) async -> String? {
+        guard let status = defaultBranchStatus(
+            for: repo,
+            stats: statsStore.stats[repo.path]
+        ) else {
+            return nil
+        }
+        do {
+            try await GitDefaultBranchPull.pull(repoPath: repo.path, branchName: status.branchName)
+        } catch GitDefaultBranchPull.Error.gitFailed(_, let stderr) {
+            return stderr
+        } catch {
+            return "\(error)"
+        }
+        let branch = repo.worktrees.first(where: { $0.path == repo.path })?.branch ?? ""
+        statsStore.refresh(worktreePath: repo.path, repoPath: repo.path, branch: branch)
+        return nil
     }
 
     /// Title + destination for the repo's "Open on <forge>…"
@@ -192,11 +218,11 @@ struct SidebarView: View {
                     .listRowInsets(EdgeInsets(top: 0, leading: -20, bottom: 0, trailing: 0))
             }
             .onMove { fromOffsets, toOffset in
-                guard fromOffsets.allSatisfy({ repo.worktrees.indices.contains($0) }) else { return }
-                appState.moveWorktrees(
+                WorktreeDropReorder.applyListMove(
                     inRepoID: repo.id,
-                    movingWorktreeIDs: fromOffsets.map { repo.worktrees[$0].id },
-                    toIndex: toOffset
+                    fromOffsets: fromOffsets,
+                    toOffset: toOffset,
+                    to: &appState
                 )
             }
         } label: {
@@ -297,6 +323,7 @@ struct SidebarView: View {
                 )
             }
             .buttonStyle(.plain)
+            .worktreeReorderTarget(repoID: repo.id, worktreeID: worktree.id, appState: $appState)
             // PWD-1.4: same-repo drop target. Sources are sidebar pane
             // rows wrapped in `TransferablePaneSlotID`. Cross-repo drops
             // are rejected so a user can't accidentally hop a pane

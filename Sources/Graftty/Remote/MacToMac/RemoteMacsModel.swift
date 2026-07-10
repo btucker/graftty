@@ -161,7 +161,7 @@ enum RemoteMacAccessServices {
     @MainActor
     static func makeLANRouteHandler(
         lanBaseURLProvider: @escaping @Sendable () -> URL,
-        hostPairingCoordinator: HostPairingCoordinator,
+        hostPairingCoordinator: RemoteMacHostPairingCoordinator,
         acceptSignalingOffer: @escaping SignalingOfferAcceptor
     ) -> LANRemoteAccessRouteHandler {
         LANRemoteAccessRouteHandler(

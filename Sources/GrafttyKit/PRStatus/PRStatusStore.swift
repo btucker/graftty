@@ -53,6 +53,10 @@ public final class PRStatusStore {
     @ObservationIgnored private var fetchStateByRepo: [String: RepoFetchState] = [:]
 
     @ObservationIgnored private var ticker: PollingTickerLike?
+    /// Set by `pulse()`, consumed by the next `tick()`: forces that
+    /// tick's per-repo dispatches past the cadence gate (see `pulse()`,
+    /// PR-8.25).
+    @ObservationIgnored private var forceNextTick = false
     @ObservationIgnored private var getRepos: @MainActor () -> [RepoEntry] = { [] }
     @ObservationIgnored private let logger = Logger(subsystem: "com.btucker.graftty", category: "PRStatusStore")
 
@@ -67,6 +71,9 @@ public final class PRStatusStore {
     /// for a tracked worktree. Idempotent polls (same info twice) do not
     /// fire. The initial discovery of a PR (previous == nil) does not
     /// fire — a transition requires a previous state to transition FROM.
+    /// A CI/mergeability transition INTO an absence-of-signal value
+    /// (`checks == .none` / `mergeable == .unknown`) does not fire
+    /// either — those are transient blips, not conclusions (PR-8.24).
     ///
     /// Delivers a `(RoutableEvent, worktreePath, attrs)` tuple. The body
     /// string is reconstructable from `attrs` via
@@ -394,13 +401,20 @@ public final class PRStatusStore {
             let routable: RoutableEvent = (current.state == .merged) ? .prMerged : .prStateChanged
             onTransition(routable, worktreePath, attrs)
         }
-        if checksChanged {
+        // PR-8.24: `.none` / `.unknown` are absence-of-signal values —
+        // an empty / all-neutral rollup or GitHub still recomputing
+        // mergeability, both of which appear transiently (mid-run and
+        // around merge, where a terminal PR forces both). A transition
+        // whose destination is one of those isn't a settled conclusion,
+        // so it must not wake an agent. Transitions FROM them into a
+        // real value still fire — that's the genuine edge.
+        if checksChanged && current.checks != .none {
             var attrs = common
             attrs["from"] = previous.checks.rawValue
             attrs["to"] = current.checks.rawValue
             onTransition(.ciConclusionChanged, worktreePath, attrs)
         }
-        if mergeableChanged {
+        if mergeableChanged && current.mergeable != .unknown {
             var attrs = common
             attrs["from"] = previous.mergeable.rawValue
             attrs["to"] = current.mergeable.rawValue
@@ -442,16 +456,21 @@ extension PRStatusStore {
         .seconds(30)
     }
 
-    /// Per-repo polling cadence. Single base value (5s) matches
-    /// the ticker interval — every tick attempts a fetch unless an
-    /// earlier one is still in-flight or just completed. Failures
-    /// back off exponentially up to 60s so a misconfigured `gh`
-    /// doesn't hammer the network on every tick. @spec PR-8.19
+    /// Per-repo polling cadence. Base value 60s: `gh pr list
+    /// --json statusCheckRollup,mergeable` is a GraphQL query (counted
+    /// against the 5,000-point/hour GraphQL budget, separate from
+    /// REST), and PR/CI/merge state changes on a minute scale, so a
+    /// tighter cadence only burns quota — a 5s cadence exhausted the
+    /// entire GraphQL budget on a single repo. Window focus and push
+    /// events still `pulse()` an immediate fetch, so perceived
+    /// freshness is unaffected. Failures back off exponentially up to
+    /// 300s so a `403` rate-limit rejection retries every five minutes
+    /// rather than every minute. @spec PR-8.19
     nonisolated static func cadenceFor(failureStreak: Int) -> Duration {
         ExponentialBackoff.scale(
-            base: .seconds(5),
+            base: .seconds(60),
             streak: failureStreak,
-            cap: .seconds(60)
+            cap: .seconds(300)
         )
     }
 
@@ -472,16 +491,28 @@ extension PRStatusStore {
         ticker = nil
     }
 
+    /// A pulse is an explicit "refresh now" signal (window focus, the
+    /// add-worktree picker opening, a newly-pushed remote branch). It
+    /// forces the *next* tick past the per-repo cadence gate so fresh
+    /// data is fetched even while the background cadence sits in a long
+    /// backoff (up to 300s) — otherwise the pulse would wake the ticker
+    /// only to have the gate suppress the fetch, silently rendering
+    /// stale PR data. The in-flight guard still applies, so a pulse
+    /// can't stack a duplicate fetch on top of one already running.
+    /// @spec PR-8.25
     public func pulse() {
+        forceNextTick = true
         ticker?.pulse()
     }
 
     private func tick() async {
+        let force = forceNextTick
+        forceNextTick = false
         let repos = getRepos()
         pruneStaleRepoState(currentRepoPaths: Set(repos.map(\.path)))
         for repo in repos where repo.isGitTracked
                 && repo.worktrees.contains(where: { $0.state.hasOnDiskWorktree }) {
-            dispatchRepoFetch(repoPath: repo.path, force: false)
+            dispatchRepoFetch(repoPath: repo.path, force: force)
         }
     }
 

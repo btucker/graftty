@@ -343,7 +343,7 @@ private final class RemoteMacsModelTestWebSocketClient: WebSocketClient, @unchec
 private struct HostPairingCoordinatorTestFixture {
     let dir: URL
     let server: HostPairingServer
-    let coordinator: HostPairingCoordinator
+    let coordinator: RemoteMacHostPairingCoordinator
 
     @MainActor
     static func make() throws -> HostPairingCoordinatorTestFixture {
@@ -364,7 +364,7 @@ private struct HostPairingCoordinatorTestFixture {
         return HostPairingCoordinatorTestFixture(
             dir: dir,
             server: server,
-            coordinator: HostPairingCoordinator(server: server)
+            coordinator: RemoteMacHostPairingCoordinator(server: server)
         )
     }
 

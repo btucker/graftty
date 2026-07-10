@@ -77,6 +77,17 @@ jobs:
         timeout-minutes: 25
         run: scripts/run-swift-tests-ci.sh
 
+      - name: Ownership model corpus gate
+        timeout-minutes: 5
+        # Runs the full OwnershipModelTests target: the committed 1000-seed
+        # corpus, the 500-seed web sweep, the randomized Mac-gate sweep, the
+        # non-vacuity guards, the seam/model tests, and the historical-regression
+        # re-catch. Wide random batches (seeds > 1000) are intentionally excluded
+        # — run those manually or as a nightly sweep.  The dedicated timeout above
+        # is a canary: if the corpus slows past 5 min, investigate the root cause
+        # rather than bumping it.
+        run: /usr/bin/script -q /dev/null swift test --filter OwnershipModel --skip-build
+
   ios-build-and-test:
     runs-on: macos-26
     steps:
@@ -94,6 +105,34 @@ jobs:
         working-directory: Apps/GrafttyMobile
         run: xcodegen generate
 
+      # Cache the resolved SwiftPM sources (.spm) and the compiled
+      # DerivedData (.derivedData). The bulk of the ~5-minute cold build
+      # is recompiling the stable dependency graph (swift-nio, swift-crypto,
+      # swift-certificates, GhosttyKit, MSDisplayLink, …), which only
+      # changes when Package.resolved does. On a same-deps hit xcodebuild
+      # reuses those artifacts and incrementally rebuilds just the
+      # first-party targets that changed. Both dirs are pinned to fixed
+      # workspace paths below — the default DerivedData path carries a
+      # random suffix that would never cache-hit. Bump `v1` to bust.
+      #
+      # Restore + save are split (not the combined `actions/cache`) so the
+      # save runs even when the build step fails: the iOS test suite is
+      # flaky (real WebRTC loopback negotiations), and the combined action
+      # skips its post-save on job failure — which would mean the cache
+      # NEVER populates while a flake persists. The build artifacts are
+      # valid regardless of whether a later test flaked, so we save on
+      # `!cancelled()`.
+      - name: Restore SPM / DerivedData cache
+        id: spm-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .spm
+            .derivedData
+          key: ios-build-v1-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml') }}-${{ github.sha }}
+          restore-keys: |
+            ios-build-v1-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml') }}-
+
       - name: Build & test GrafttyMobile (iOS Simulator SDK)
         timeout-minutes: 15
         # Let xcodebuild apply the default simulator ad-hoc signature
@@ -107,5 +146,19 @@ jobs:
             -sdk iphonesimulator \
             -configuration Debug \
             -skipPackagePluginValidation \
+            -clonedSourcePackagesDirPath .spm \
+            -derivedDataPath .derivedData \
             -destination 'platform=iOS Simulator,name=iPhone 17' \
             test
+
+      # Save whether or not the tests passed (see restore-step comment):
+      # the build artifacts are valid regardless of a flaky test. Skip
+      # only on an exact-key hit (a same-SHA rerun) where nothing changed.
+      - name: Save SPM / DerivedData cache
+        if: ${{ !cancelled() && steps.spm-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .spm
+            .derivedData
+          key: ${{ steps.spm-cache.outputs.cache-primary-key }}

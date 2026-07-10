@@ -19,9 +19,11 @@ struct GhosttyActionTests {
         #expect(GhosttyAction.equalizeSplits.rawValue  == "equalize_splits")
         #expect(GhosttyAction.reloadConfig.rawValue    == "reload_config")
         #expect(GhosttyAction.openConfig.rawValue      == "open_config")
+        #expect(GhosttyAction.nextTab.rawValue     == "next_tab")
+        #expect(GhosttyAction.previousTab.rawValue == "previous_tab")
     }
 
     @Test func allCasesCountMatchesEnumSize() {
-        #expect(GhosttyAction.allCases.count == 15)
+        #expect(GhosttyAction.allCases.count == 17)
     }
 }
