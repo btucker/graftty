@@ -33,18 +33,22 @@ struct GhosttyDefaultKeybindsTests {
         #expect(GhosttyDefaultKeybinds.bridge.allChords == GhosttyDefaultKeybinds.chords)
     }
 
-    @Test func nextTabHardwareChordsPutPrimaryBeforeAlias() {
+    @Test func nextTabHardwareChordsContainOnlyGhosttyDefault() {
         #expect(GhosttyDefaultKeybinds.hardwareChords(for: .nextTab) == [
             ShortcutChord(key: "bracketright", modifiers: [.command, .shift]),
-            ShortcutChord(key: "tab", modifiers: [.control]),
         ])
     }
 
-    @Test func previousTabHardwareChordsPutPrimaryBeforeAlias() {
+    @Test func previousTabHardwareChordsContainOnlyGhosttyDefault() {
         #expect(GhosttyDefaultKeybinds.hardwareChords(for: .previousTab) == [
             ShortcutChord(key: "bracketleft", modifiers: [.command, .shift]),
-            ShortcutChord(key: "tab", modifiers: [.control, .shift]),
         ])
+    }
+
+    @Test func bundledDefaultsDoNotOwnFixedPaneAliases() {
+        #expect(GhosttyDefaultKeybinds.aliases.isEmpty)
+        #expect(GhosttyDefaultKeybinds.bridge[.nextTab] != GrafttyNavigationShortcuts.nextPane)
+        #expect(GhosttyDefaultKeybinds.bridge[.previousTab] != GrafttyNavigationShortcuts.previousPane)
     }
 
     @Test func hardwareChordsReturnOnlyPrimaryWhenNoAliasesExist() {
