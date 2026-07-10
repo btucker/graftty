@@ -16,13 +16,16 @@ public struct TerminalPaneView: UIViewRepresentable {
     public struct SoftwareKeyboardInput {
         public let insertText: (String) -> Void
         public let deleteBackward: () -> Void
+        public let sendEscape: () -> Void
 
         public init(
             insertText: @escaping (String) -> Void,
-            deleteBackward: @escaping () -> Void
+            deleteBackward: @escaping () -> Void,
+            sendEscape: @escaping () -> Void
         ) {
             self.insertText = insertText
             self.deleteBackward = deleteBackward
+            self.sendEscape = sendEscape
         }
     }
 
@@ -136,6 +139,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.inputProxy.softwareKeyboardInputEnabled = softwareKeyboardInput != nil
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
+        view.inputProxy.sendEscapeHandler = softwareKeyboardInput?.sendEscape
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
         view.terminalView.renderPace = renderPace
         view.onUserInteraction = onUserInteraction
@@ -152,6 +156,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.inputProxy.softwareKeyboardInputEnabled = softwareKeyboardInput != nil
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
+        view.inputProxy.sendEscapeHandler = softwareKeyboardInput?.sendEscape
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
         view.terminalView.renderPace = renderPace
         view.onUserInteraction = onUserInteraction
@@ -482,6 +487,7 @@ final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTr
     var softwareKeyboardInputEnabled = false
     var insertTextHandler: ((String) -> Void)?
     var deleteBackwardHandler: (() -> Void)?
+    var sendEscapeHandler: (() -> Void)?
     private var storedHardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] = []
     private(set) var keyCommandUpdateRequestCountForTesting = 0
 
@@ -553,6 +559,29 @@ final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTr
 
     func deleteBackward() {
         deleteBackwardHandler?()
+    }
+
+    /// Decision seam for `pressesBegan` — split out because `UIPress`/
+    /// `UIKey` cannot be constructed in tests. Returns true when the
+    /// presses were consumed.
+    func handleKeyPresses(keyCodes: [UIKeyboardHIDUsage]) -> Bool {
+        guard sendEscapeHandler != nil, keyCodes.contains(.keyboardEscape) else {
+            return false
+        }
+        sendEscapeHandler?()
+        return true
+    }
+
+    /// @spec IOS-6.18: `UIKeyInput` (IOS-6.6) never delivers Escape — it
+    /// only forwards printable text and backspace — so hardware Escape
+    /// must be caught here, one level up the responder chain, and
+    /// translated into an explicit ESC byte via `SessionClient.sendEscape()`.
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        let keyCodes = presses.compactMap { $0.key?.keyCode }
+        if handleKeyPresses(keyCodes: keyCodes) {
+            return
+        }
+        super.pressesBegan(presses, with: event)
     }
 
     @objc private func handleHardwareKeyboardCommand(_ command: UIKeyCommand) {

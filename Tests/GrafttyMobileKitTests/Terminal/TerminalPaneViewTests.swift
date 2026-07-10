@@ -394,6 +394,32 @@ struct TerminalPaneViewTests {
 
         #expect(fired == 1)
     }
+
+    @Test("""
+    @spec IOS-6.18: When a hardware keyboard Escape press reaches the terminal input proxy, the application shall send ESC to the session rather than discarding the press.
+    """)
+    func hardwareEscapePressSendsEscape() {
+        let proxy = TerminalSoftwareKeyboardProxyView(frame: .zero)
+        var escapes = 0
+        proxy.sendEscapeHandler = { escapes += 1 }
+
+        let handled = proxy.handleKeyPresses(keyCodes: [.keyboardEscape])
+
+        #expect(handled)
+        #expect(escapes == 1)
+    }
+
+    @Test("non-escape key presses fall through to UIKit")
+    func nonEscapePressesAreNotConsumed() {
+        let proxy = TerminalSoftwareKeyboardProxyView(frame: .zero)
+        var escapes = 0
+        proxy.sendEscapeHandler = { escapes += 1 }
+
+        let handled = proxy.handleKeyPresses(keyCodes: [.keyboardA])
+
+        #expect(!handled)
+        #expect(escapes == 0)
+    }
 }
 
 @Suite("Terminal gestures do not claim ownership")

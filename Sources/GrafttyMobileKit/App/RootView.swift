@@ -807,7 +807,8 @@ struct SingleSessionView: View {
             focusRequestCount: focusRequestCount + externalFocusRequestCount,
             softwareKeyboardInput: Self.shouldInstallKeyboardProxy(clientIsOwner: client.isOwner) ? .init(
                 insertText: { text in client.sendSoftwareKeyboardText(text) },
-                deleteBackward: { client.deleteBackward() }
+                deleteBackward: { client.deleteBackward() },
+                sendEscape: { client.sendEscape() }
             ) : nil,
             hardwareKeyboardCommands: ghosttyCommandContext.map {
                 MobileGhosttyCommandButtons.hardwareKeyboardCommands(for: $0)
