@@ -282,6 +282,14 @@ final class AppServices {
 
 @main
 struct GrafttyApp: App {
+    // Keep this in menu order: the first host action for a chord wins.
+    private static let macHostShortcutCommands =
+        GhosttyCommandRegistry.macSplitActions
+        + GhosttyCommandRegistry.macPaneFocusActions
+        + GhosttyCommandRegistry.macPaneLayoutActions
+        + GhosttyCommandRegistry.macPaneLifecycleActions
+        + GhosttyCommandRegistry.macSettingsActions
+
     @State private var appState: AppState
     @StateObject private var terminalManager: TerminalManager
     @StateObject private var webController: WebServerController
@@ -523,6 +531,11 @@ struct GrafttyApp: App {
         // pixel values is silently a no-op.
         .defaultSize(width: 1400, height: 900)
         .commands {
+            let hostShortcutsByAction = NavigationCommandShortcutPolicy.hostShortcutWinners(
+                commands: Self.macHostShortcutCommands,
+                bridge: terminalManager.keybindBridge
+            )
+
             CommandGroup(after: .newItem) {
                 // "Add Repository..." keeps its hardcoded Cmd+Shift+O —
                 // it's an Graftty-specific action with no Ghostty equivalent.
@@ -537,7 +550,9 @@ struct GrafttyApp: App {
                 Divider()
 
                 ForEach(GhosttyCommandRegistry.macSplitActions, id: \.action) { command in
-                    bridgedButton(command) { handleGhosttyCommand(command) }
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
                 }
 
                 Divider()
@@ -556,7 +571,9 @@ struct GrafttyApp: App {
                 }
 
                 ForEach(GhosttyCommandRegistry.macPaneFocusActions, id: \.action) { command in
-                    bridgedButton(command) { handleGhosttyCommand(command) }
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
                 }
 
                 Divider()
@@ -566,13 +583,17 @@ struct GrafttyApp: App {
                 Divider()
 
                 ForEach(GhosttyCommandRegistry.macPaneLayoutActions, id: \.action) { command in
-                    bridgedButton(command) { handleGhosttyCommand(command) }
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
                 }
 
                 Divider()
 
                 ForEach(GhosttyCommandRegistry.macPaneLifecycleActions, id: \.action) { command in
-                    bridgedButton(command) { handleGhosttyCommand(command) }
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
                 }
             }
 
@@ -603,7 +624,9 @@ struct GrafttyApp: App {
                     installCLI()
                 }
                 ForEach(GhosttyCommandRegistry.macSettingsActions, id: \.action) { command in
-                    bridgedButton(command) { handleGhosttyCommand(command) }
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
                 }
             }
         }
@@ -3539,19 +3562,6 @@ struct GrafttyApp: App {
 
     // MARK: - View builder for bridge-shortcutted menu buttons
 
-    /// Resolve a `GhosttyAction`'s configured chord to a SwiftUI shortcut,
-    /// or nil if unbound — shared by `bridgedButton` and command views that
-    /// need the shortcut value directly. `@MainActor` to match its access of
-    /// the main-actor-isolated `terminalManager.keybindBridge`.
-    @MainActor
-    private func shortcut(for action: GhosttyAction) -> KeyboardShortcut? {
-        guard let configured = terminalManager.keybindBridge[action],
-              let chord = NavigationCommandShortcutPolicy.hostChordIfNoncolliding(configured) else {
-            return nil
-        }
-        return KeyboardShortcutFromChord.shortcut(from: chord)
-    }
-
     /// Wraps a menu button so its keyboard shortcut is derived from the
     /// keybind bridge at runtime, not hardcoded. If the action has no
     /// configured binding (or the key can't be translated to a
@@ -3560,23 +3570,14 @@ struct GrafttyApp: App {
     @ViewBuilder
     private func bridgedButton(
         _ command: GhosttyCommandRegistry.Entry,
-        onTap: @escaping () -> Void
-    ) -> some View {
-        bridgedButton(command.label, action: command.action, onTap: onTap)
-    }
-
-    @MainActor
-    @ViewBuilder
-    private func bridgedButton(
-        _ label: String,
-        action: GhosttyAction,
+        shortcutsByAction: [GhosttyAction: KeyboardShortcut],
         onTap: @escaping () -> Void
     ) -> some View {
         Group {
-            if let shortcut = shortcut(for: action) {
-                Button(label, action: onTap).keyboardShortcut(shortcut)
+            if let shortcut = shortcutsByAction[command.action] {
+                Button(command.label, action: onTap).keyboardShortcut(shortcut)
             } else {
-                Button(label, action: onTap)
+                Button(command.label, action: onTap)
             }
         }
     }
