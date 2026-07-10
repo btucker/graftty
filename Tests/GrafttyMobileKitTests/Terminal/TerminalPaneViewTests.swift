@@ -420,6 +420,13 @@ struct TerminalPaneViewTests {
         #expect(!handled)
         #expect(escapes == 0)
     }
+
+    @Test("escape with no handler installed is not consumed")
+    func escapeWithoutHandlerFallsThrough() {
+        let proxy = TerminalSoftwareKeyboardProxyView(frame: .zero)
+
+        #expect(!proxy.handleKeyPresses(keyCodes: [.keyboardEscape]))
+    }
 }
 
 @Suite("Terminal gestures do not claim ownership")
