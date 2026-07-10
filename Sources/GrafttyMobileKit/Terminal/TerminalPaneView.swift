@@ -53,6 +53,16 @@ public struct TerminalPaneView: UIViewRepresentable {
     public let focusRequestCount: Int
     public let softwareKeyboardInput: SoftwareKeyboardInput?
     public let hardwareKeyboardCommands: [HardwareKeyboardCommand]
+    /// Governs how frequently `UITerminalView` repaints while no host output
+    /// is arriving. `.full` (the default) matches display refresh; `.reduced`
+    /// throttles idle repaints. Threaded straight through from
+    /// `SessionClient.renderPace` at call sites that have a client.
+    public let renderPace: TerminalRenderPace
+    /// Invoked on any touch that begins on the terminal surface — local
+    /// scrolling and selection render without new host output, so a finger
+    /// on the surface must still promote the render pace back to `.full`.
+    /// Call sites with a `SessionClient` wire this to `client.wakeRenderer()`.
+    public let onUserInteraction: (() -> Void)?
     /// Forces the terminal view's color-scheme appearance, overriding the
     /// iOS system appearance. Use `.dark` or `.light` when the Ghostty
     /// config specifies an explicit single theme so that libghostty's
@@ -81,6 +91,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         focusRequestCount: Int = 0,
         softwareKeyboardInput: SoftwareKeyboardInput? = nil,
         hardwareKeyboardCommands: [HardwareKeyboardCommand] = [],
+        renderPace: TerminalRenderPace = .full,
+        onUserInteraction: (() -> Void)? = nil,
         preferredInterfaceStyle: UIUserInterfaceStyle = .unspecified,
         onWillUnmount: ((UIImage?) -> Void)? = nil,
         onPasteRequested: (() -> Void)? = nil,
@@ -91,6 +103,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.focusRequestCount = focusRequestCount
         self.softwareKeyboardInput = softwareKeyboardInput
         self.hardwareKeyboardCommands = hardwareKeyboardCommands
+        self.renderPace = renderPace
+        self.onUserInteraction = onUserInteraction
         self.preferredInterfaceStyle = preferredInterfaceStyle
         self.onWillUnmount = onWillUnmount
         self.onPasteRequested = onPasteRequested
@@ -123,6 +137,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
+        view.terminalView.renderPace = renderPace
+        view.onUserInteraction = onUserInteraction
         view.onPasteRequested = onPasteRequested
         context.coordinator.onWillUnmount = onWillUnmount
         captureContainer?(view)
@@ -137,6 +153,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
         view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
+        view.terminalView.renderPace = renderPace
+        view.onUserInteraction = onUserInteraction
         view.onPasteRequested = onPasteRequested
         context.coordinator.onWillUnmount = onWillUnmount
         context.coordinator.applyFocusRequest(focusRequestCount, to: view)
@@ -158,6 +176,11 @@ public final class TerminalInputContainerView: UIView {
     /// Called when the user taps the Paste action in the long-press
     /// menu — the SwiftUI layer wires this to `SessionClient.sendPaste`.
     public var onPasteRequested: (() -> Void)?
+    /// Called on any touch that begins on the terminal surface — powers
+    /// render-pace promotion back to `.full` (local scrolling renders
+    /// without host output, so a finger on the surface must count as
+    /// activity). Wired by the SwiftUI layer to `SessionClient.wakeRenderer()`.
+    public var onUserInteraction: (() -> Void)?
     public var hardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] {
         get { inputProxy.hardwareKeyboardCommands }
         set { inputProxy.hardwareKeyboardCommands = newValue }
@@ -165,6 +188,13 @@ public final class TerminalInputContainerView: UIView {
 
     private lazy var longPressMenu = UIEditMenuInteraction(delegate: self)
     private lazy var selectionMenu = UIEditMenuInteraction(delegate: self)
+
+    private lazy var anyTouchObserver: AnyTouchObserverGestureRecognizer = {
+        let r = AnyTouchObserverGestureRecognizer()
+        r.cancelsTouchesInView = false
+        r.onTouchBegan = { [weak self] in self?.onUserInteraction?() }
+        return r
+    }()
 
     private lazy var longPressRecognizer: UILongPressGestureRecognizer = {
         let r = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
@@ -228,6 +258,7 @@ public final class TerminalInputContainerView: UIView {
         addInteraction(selectionMenu)
         addGestureRecognizer(longPressRecognizer)
         addGestureRecognizer(selectionPanRecognizer)
+        addGestureRecognizer(anyTouchObserver)
     }
 
     private func configureTerminalPanRecognizersForIndirectScrolling() {
@@ -372,12 +403,32 @@ public final class TerminalInputContainerView: UIView {
         performPaste()
     }
 
+    /// Internal-visibility access for unit tests: simulates the any-touch
+    /// observer's `touchesBegan` callback without a real UIKit touch event.
+    func simulateAnyTouchBeganForTesting() {
+        onUserInteraction?()
+    }
+
     private func refocusKeyboardAfterEditMenuAction() {
         guard inputProxy.canBecomeFirstResponder else { return }
         keyboardRefocusRequestCountForTesting += 1
         DispatchQueue.main.async { [weak self] in
             self?.focusKeyboardInput()
         }
+    }
+}
+
+/// Observes touch-begin without claiming the gesture: reports, then
+/// immediately fails so libghostty's pan/pinch and the selection
+/// recognizers proceed untouched. Powers render-pace promotion —
+/// local scrolling renders without host output, so a finger on the
+/// surface must count as activity.
+final class AnyTouchObserverGestureRecognizer: UIGestureRecognizer {
+    var onTouchBegan: (() -> Void)?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        onTouchBegan?()
+        state = .failed
     }
 }
 

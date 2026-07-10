@@ -812,6 +812,8 @@ struct SingleSessionView: View {
             hardwareKeyboardCommands: ghosttyCommandContext.map {
                 MobileGhosttyCommandButtons.hardwareKeyboardCommands(for: $0)
             } ?? [],
+            renderPace: client.renderPace,
+            onUserInteraction: { [weak client] in client?.wakeRenderer() },
             preferredInterfaceStyle: preferredStyle,
             onWillUnmount: { snapshot in client.setIdleSnapshot(snapshot) },
             // @spec IOS-11.8: When the user taps **Paste** in the long-press menu,

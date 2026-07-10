@@ -383,6 +383,17 @@ struct TerminalPaneViewTests {
         #expect(didRequestPaste)
         #expect(container.keyboardRefocusRequestCountForTesting == 1)
     }
+
+    @Test("any touch on the terminal container fires onUserInteraction")
+    func touchBeganFiresUserInteraction() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        var fired = 0
+        container.onUserInteraction = { fired += 1 }
+
+        container.simulateAnyTouchBeganForTesting()
+
+        #expect(fired == 1)
+    }
 }
 
 @Suite("Terminal gestures do not claim ownership")
