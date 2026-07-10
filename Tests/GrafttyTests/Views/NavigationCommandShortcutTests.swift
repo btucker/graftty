@@ -65,12 +65,27 @@ struct NavigationCommandShortcutTests {
         }
     }
 
-    @Test("fixed worktree reservations do not depend on a focused action")
-    func fixedWorktreeReservationIsStableWithoutAction() {
+    @Test("fixed worktree projection reserves both shortcuts without a focused action")
+    func fixedWorktreeProjectionIsStableWithoutAction() throws {
         let action: ((Bool) -> Void)? = nil
+        let descriptors = NavigationCommandShortcutPolicy.fixedWorktreeCommandDescriptors(
+            action: action
+        )
+        let nextShortcut = try #require(KeyboardShortcutFromChord.shortcut(
+            from: GrafttyNavigationShortcuts.nextWorktree
+        ))
+        let previousShortcut = try #require(KeyboardShortcutFromChord.shortcut(
+            from: GrafttyNavigationShortcuts.previousWorktree
+        ))
 
-        #expect(NavigationCommandShortcutPolicy.fixedWorktreeCommands.count == 2)
-        NavigationCommandShortcutPolicy.perform(action: action, forward: true)
-        NavigationCommandShortcutPolicy.perform(action: action, forward: false)
+        #expect(descriptors.map(\.chord) == [
+            GrafttyNavigationShortcuts.nextWorktree,
+            GrafttyNavigationShortcuts.previousWorktree,
+        ])
+        #expect(descriptors.map(\.shortcut) == [
+            nextShortcut,
+            previousShortcut,
+        ])
+        descriptors.forEach { $0.perform() }
     }
 }

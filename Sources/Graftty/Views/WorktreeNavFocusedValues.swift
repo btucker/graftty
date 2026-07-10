@@ -9,6 +9,13 @@ struct NavigationCommandShortcutPolicy {
         let chord: ShortcutChord
     }
 
+    struct FixedWorktreeCommandDescriptor {
+        let label: String
+        let chord: ShortcutChord
+        let shortcut: KeyboardShortcut
+        let perform: () -> Void
+    }
+
     static let fixedPaneCommands = [
         FixedCommand(label: "Next Pane", forward: true, chord: GrafttyNavigationShortcuts.nextPane),
         FixedCommand(label: "Previous Pane", forward: false, chord: GrafttyNavigationShortcuts.previousPane),
@@ -18,6 +25,22 @@ struct NavigationCommandShortcutPolicy {
         FixedCommand(label: "Next Worktree", forward: true, chord: GrafttyNavigationShortcuts.nextWorktree),
         FixedCommand(label: "Previous Worktree", forward: false, chord: GrafttyNavigationShortcuts.previousWorktree),
     ]
+
+    static func fixedWorktreeCommandDescriptors(
+        action: ((Bool) -> Void)?
+    ) -> [FixedWorktreeCommandDescriptor] {
+        fixedWorktreeCommands.map { command in
+            guard let shortcut = KeyboardShortcutFromChord.shortcut(from: command.chord) else {
+                preconditionFailure("Fixed worktree shortcut must be representable")
+            }
+            return FixedWorktreeCommandDescriptor(
+                label: command.label,
+                chord: command.chord,
+                shortcut: shortcut,
+                perform: { action?(command.forward) }
+            )
+        }
+    }
 
     private struct ShortcutCandidate {
         let action: GhosttyAction?
@@ -64,10 +87,6 @@ struct NavigationCommandShortcutPolicy {
             shortcuts[action] = winner.value.shortcut
         }
     }
-
-    static func perform(action: ((Bool) -> Void)?, forward: Bool) {
-        action?(forward)
-    }
 }
 
 /// Scene-scoped command exposed by `MainWindow` so the `.commands` block in
@@ -90,22 +109,12 @@ struct WorktreeNavCommandButtons: View {
 
     var body: some View {
         Group {
-            ForEach(NavigationCommandShortcutPolicy.fixedWorktreeCommands, id: \.label) { command in
-                button(command)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func button(_ command: NavigationCommandShortcutPolicy.FixedCommand) -> some View {
-        if let shortcut = KeyboardShortcutFromChord.shortcut(from: command.chord) {
-            Button(command.label) {
-                NavigationCommandShortcutPolicy.perform(action: action, forward: command.forward)
-            }
-            .keyboardShortcut(shortcut)
-        } else {
-            Button(command.label) {
-                NavigationCommandShortcutPolicy.perform(action: action, forward: command.forward)
+            ForEach(
+                NavigationCommandShortcutPolicy.fixedWorktreeCommandDescriptors(action: action),
+                id: \.label
+            ) { command in
+                Button(command.label, action: command.perform)
+                    .keyboardShortcut(command.shortcut)
             }
         }
     }

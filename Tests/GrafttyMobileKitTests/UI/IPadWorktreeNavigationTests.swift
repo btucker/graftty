@@ -74,19 +74,6 @@ struct IPadWorktreeNavigationTests {
         #expect(IPadWorktreeNavigation.nextPath(in: list, selectedPath: "/a", forward: true) == nil)
     }
 
-    @Test("execution capability follows selectable worktree count")
-    func executionCapabilityFollowsSelectableWorktreeCount() {
-        #expect(IPadWorktreeNavigation.canNavigate(in: []) == false)
-        #expect(IPadWorktreeNavigation.canNavigate(in: [
-            wt("/a"),
-            wt("/creating", state: .creating),
-        ]) == false)
-        #expect(IPadWorktreeNavigation.canNavigate(in: [
-            wt("/a"),
-            wt("/b"),
-        ]) == true)
-    }
-
     @Test("""
 @spec IPAD-8.4: When resolving iPad attention-first worktree navigation, the application shall count pane-scoped attention while excluding the currently selected worktree.
 """)

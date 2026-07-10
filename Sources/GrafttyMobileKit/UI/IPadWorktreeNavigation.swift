@@ -2,10 +2,6 @@
 import GrafttyProtocol
 
 public enum IPadWorktreeNavigation {
-    public static func canNavigate(in list: [WorktreePanes]) -> Bool {
-        list.filter { $0.state.hasOnDiskWorktree }.count > 1
-    }
-
     public static func nextPath(
         in list: [WorktreePanes],
         selectedPath: String?,
