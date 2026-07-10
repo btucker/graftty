@@ -1043,12 +1043,12 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
         ))
     }
 
-    /// @spec IOS-6.14: The terminal view shall install GrafttyMobile's
-    /// `UIKeyInput` proxy only for an owner. Non-owner taps should still reach
-    /// libghostty gestures, but they must not summon the software keyboard.
-    func testKeyboardProxyRequiresDisplayOwnership() {
-        XCTAssertFalse(SingleSessionView.shouldInstallKeyboardProxy(clientIsOwner: false))
-        XCTAssertTrue(SingleSessionView.shouldInstallKeyboardProxy(clientIsOwner: true))
+    /// @spec IOS-6.14: The owner shall install committed-software-input
+    /// handlers on the sole `UITerminalView` responder. A non-owner shall
+    /// disable terminal keyboard eligibility without blocking Ghostty gestures.
+    func testTerminalKeyboardEligibilityRequiresDisplayOwnership() {
+        XCTAssertFalse(SingleSessionView.isTerminalKeyboardEligible(clientIsOwner: false))
+        XCTAssertTrue(SingleSessionView.isTerminalKeyboardEligible(clientIsOwner: true))
     }
 
     /// @spec IPAD-8.5: While processing an iPad auto-ownership request, the
@@ -1093,8 +1093,8 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
 
     /// @spec IOS-6.16: When a fullscreen mobile client transitions from
     /// non-owner to owner while keyboard input is allowed, the application
-    /// shall request keyboard focus for the terminal input proxy. This covers
-    /// takeovers initiated by Paste or Take Control, where the proxy was not
+    /// shall request keyboard focus for the sole `UITerminalView` responder. This covers
+    /// takeovers initiated by Paste or Take Control, where the terminal was not
     /// eligible before ownership was confirmed.
     func testOwnerTransitionRequestsKeyboardFocusWhenAllowed() {
         XCTAssertTrue(SingleSessionView.shouldFocusKeyboardOnOwnerTransition(

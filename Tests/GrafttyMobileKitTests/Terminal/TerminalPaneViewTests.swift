@@ -13,57 +13,42 @@ private final class NilInputKeyCommand: UIKeyCommand {
 struct TerminalPaneViewTests {
 
     @Test
-    func softwareKeyboardProxyDoesNotExposeGhosttyAccessoryView() {
+    func terminalDoesNotExposeGhosttyAccessoryView() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
 
-        #expect(container.inputProxy.inputAccessoryView == nil)
-        #expect(container.inputProxy !== container.terminalView)
+        #expect(!container.terminalView.showsInputAccessory)
+        #expect(container.terminalView.inputAccessoryView == nil)
     }
 
     @Test("""
-@spec IOS-6.7: While a terminal pane is rendered in the iOS app, GrafttyMobile shall prevent libghostty-spm's built-in `TerminalInputAccessoryView` from appearing by suppressing both `UITerminalView.inputAccessoryView` and `UITerminalView.canBecomeFirstResponder` at the UIKit ObjC dispatch path. With `canBecomeFirstResponder` returning false, libghostty's `touchesBegan`-driven `becomeFirstResponder()` is a no-op, so GrafttyMobile's `UIKeyInput` proxy wins the keyboard responder race and the GhosttyKit accessory bar never mounts. The only visible software-keyboard accessory row shall be GrafttyMobile's terminal control bar (`IOS-6.1`).
+@spec IOS-6.7: While a terminal pane is rendered in the iOS app, `UITerminalView` shall remain the sole terminal keyboard responder and its supported `showsInputAccessory` property shall be false, so the GhosttyKit accessory is absent without Objective-C runtime swizzling. The only visible software-keyboard accessory row shall be GrafttyMobile's terminal control bar (`IOS-6.1`).
 """)
     func terminalPaneShowsOnlyGrafttyKeyboardAccessory() {
-        UITerminalView.suppressGhosttyInputAccessory()
-        // UIKit reads the first responder's `inputAccessoryView` through
-        // `objc_msgSend`, so the assertion mirrors that path. Direct
-        // Swift property access on a concrete type can statically
-        // dispatch and bypass the runtime IMP swap, hiding the
-        // suppression in production.
-        let term = UITerminalView(frame: .zero)
-        let accessory = term.perform(
-            #selector(getter: UIResponder.inputAccessoryView)
-        )?.takeUnretainedValue()
-        #expect(accessory == nil)
+        let container = TerminalInputContainerView(frame: .zero)
 
-        // canBecomeFirstResponder must return false through the same
-        // ObjC dispatch path that UIKit uses when libghostty's
-        // touchesBegan calls becomeFirstResponder().
-        let nsterm = term as NSObject
-        let canBecome = nsterm.value(forKey: "canBecomeFirstResponder") as? Bool
-        #expect(canBecome == false)
+        #expect(!container.terminalView.showsInputAccessory)
+        #expect(container.terminalView.inputAccessoryView == nil)
     }
 
     @Test("""
-@spec IOS-6.8: While a terminal pane is rendered in the iOS app, libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures on `UITerminalView` shall remain functional. The iOS scaffolding shall not place an interaction-blocking overlay above `UITerminalView`: the `UIKeyInput` proxy responsible for software-keyboard text (`IOS-6.6`) shall be hit-test transparent so touches reach `UITerminalView`'s gesture recognizers underneath.
+@spec IOS-6.8: While a terminal pane is rendered in the iOS app, libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures on `UITerminalView` shall remain functional. `UITerminalView` shall be the container's sole full-size subview and touch target, with no keyboard or selection overlay above it.
 """)
-    func touchesPassThroughInputProxyToTerminalView() {
+    func terminalViewIsSoleFullSizeSubviewAndTouchTarget() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         container.layoutIfNeeded()
 
         let hitView = container.hitTest(CGPoint(x: 160, y: 120), with: nil)
 
-        #expect(hitView !== container.inputProxy)
-        // Without owner-installed software-keyboard handlers, a tap shall not
-        // summon the keyboard. Enabling those handlers restores responder
-        // eligibility without changing hit-test transparency.
-        #expect(!container.inputProxy.canBecomeFirstResponder)
-        container.inputProxy.softwareKeyboardInputEnabled = true
-        #expect(container.inputProxy.canBecomeFirstResponder)
+        #expect(container.subviews == [container.terminalView])
+        #expect(container.terminalView.frame == container.bounds)
+        #expect(hitView === container.terminalView)
+        #expect(!container.terminalView.canBecomeFirstResponder)
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+        #expect(container.terminalView.canBecomeFirstResponder)
     }
 
     @Test("""
-@spec IOS-6.17: While a terminal pane is rendered on iPad with a trackpad, indirect pointer scroll gestures shall reach libghostty's terminal scroll/input recognizers rather than being blocked by GrafttyMobile's keyboard proxy or selection overlay.
+@spec IOS-6.17: While a terminal pane is rendered on iPad with a trackpad, indirect pointer scroll gestures shall reach libghostty's terminal scroll/input recognizers on the sole `UITerminalView` touch surface, with no GrafttyMobile keyboard or selection overlay blocking them.
 """)
     func terminalPanRecognizersAllowIndirectScrolling() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -72,15 +57,13 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IPAD-9.9: The active iPad terminal input responder shall publish app-level Ghostty shortcuts as UIKeyCommands that take priority over conflicting focus and text-input system behavior, and synchronously request a UIKit menu-system rebuild whenever the effective command identities, titles, inputs, or modifiers change, so hardware-keyboard commands remain current while terminal input owns first responder status.
+@spec IPAD-9.9: The `TerminalInputContainerView` in the active iPad terminal responder chain shall publish only app-level Ghostty shortcuts as `UIKeyCommand`s that take priority over conflicting focus and text-input system behavior, and synchronously request a UIKit menu-system rebuild whenever the effective command identities, titles, inputs, or modifiers change. General terminal hardware keys remain owned by the sole `UITerminalView` responder.
 """)
     func activeTerminalInputResponderRefreshesPublishedHardwareKeyboardCommands() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        let proxy = container.inputProxy
 
-        #expect(proxy.keyCommands == nil)
-        #expect(proxy.keyCommandUpdateRequestCountForTesting == 0)
         #expect(container.keyCommands == nil)
+        #expect(container.keyCommandUpdateRequestCountForTesting == 0)
 
         container.hardwareKeyboardCommands = [
             .init(
@@ -99,8 +82,8 @@ struct TerminalPaneViewTests {
             ),
         ]
 
-        #expect(proxy.keyCommandUpdateRequestCountForTesting == 1)
-        let publishedCommands = try! #require(proxy.keyCommands)
+        #expect(container.keyCommandUpdateRequestCountForTesting == 1)
+        let publishedCommands = try! #require(container.keyCommands)
         #expect(publishedCommands.count == 2)
         #expect(publishedCommands[0].input == "d")
         #expect(publishedCommands[0].modifierFlags == [.command])
@@ -109,8 +92,6 @@ struct TerminalPaneViewTests {
         for command in publishedCommands {
             #expect(command.wantsPriorityOverSystemBehavior)
         }
-        #expect(container.keyCommands == nil)
-
         container.hardwareKeyboardCommands = [
             .init(
                 id: "split-down",
@@ -120,7 +101,7 @@ struct TerminalPaneViewTests {
                 perform: {}
             ),
         ]
-        #expect(proxy.keyCommandUpdateRequestCountForTesting == 2)
+        #expect(container.keyCommandUpdateRequestCountForTesting == 2)
 
         container.hardwareKeyboardCommands = [
             .init(
@@ -131,8 +112,8 @@ struct TerminalPaneViewTests {
                 perform: {}
             ),
         ]
-        #expect(proxy.keyCommandUpdateRequestCountForTesting == 3)
-        #expect(proxy.keyCommands?.first?.input == "j")
+        #expect(container.keyCommandUpdateRequestCountForTesting == 3)
+        #expect(container.keyCommands?.first?.input == "j")
 
         container.hardwareKeyboardCommands = [
             .init(
@@ -143,19 +124,17 @@ struct TerminalPaneViewTests {
                 perform: {}
             ),
         ]
-        #expect(proxy.keyCommandUpdateRequestCountForTesting == 4)
-        #expect(proxy.keyCommands?.first?.modifierFlags == [.command, .shift])
+        #expect(container.keyCommandUpdateRequestCountForTesting == 4)
+        #expect(container.keyCommands?.first?.modifierFlags == [.command, .shift])
 
         container.hardwareKeyboardCommands = []
-        #expect(proxy.keyCommandUpdateRequestCountForTesting == 5)
-        #expect(proxy.keyCommands == nil)
+        #expect(container.keyCommandUpdateRequestCountForTesting == 5)
         #expect(container.keyCommands == nil)
     }
 
     @Test("equivalent hardware command signatures retain UIKit's table and replace dispatch closures")
     func equivalentHardwareCommandSignatureUsesReplacementClosureWithoutInvalidation() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        let proxy = container.inputProxy
         var performed: [String] = []
         container.hardwareKeyboardCommands = [
             .init(
@@ -177,9 +156,9 @@ struct TerminalPaneViewTests {
             ),
         ]
 
-        #expect(proxy.keyCommandUpdateRequestCountForTesting == 1)
-        #expect(proxy.keyCommands?.first?.modifierFlags == [.command])
-        proxy.performHardwareKeyboardCommandForTesting(
+        #expect(container.keyCommandUpdateRequestCountForTesting == 1)
+        #expect(container.keyCommands?.first?.modifierFlags == [.command])
+        container.performHardwareKeyboardCommandForTesting(
             input: "d",
             modifierFlags: [.command, .numericPad]
         )
@@ -189,7 +168,6 @@ struct TerminalPaneViewTests {
     @Test("changed hardware command titles request a menu rebuild")
     func changedHardwareCommandTitleRequestsMenuRebuild() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        let proxy = container.inputProxy
         container.hardwareKeyboardCommands = [
             .init(
                 id: "split-right",
@@ -210,15 +188,14 @@ struct TerminalPaneViewTests {
             ),
         ]
 
-        #expect(proxy.keyCommandUpdateRequestCountForTesting == 2)
-        #expect(proxy.keyCommands?.first?.title == "Split Pane Right")
-        #expect(proxy.keyCommands?.first?.discoverabilityTitle == "Split Pane Right")
+        #expect(container.keyCommandUpdateRequestCountForTesting == 2)
+        #expect(container.keyCommands?.first?.title == "Split Pane Right")
+        #expect(container.keyCommands?.first?.discoverabilityTitle == "Split Pane Right")
     }
 
     @Test("hardware command dispatch requires an exact normalized input and modifier match")
     func hardwareCommandDispatchUsesExactNormalizedMatch() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        let proxy = container.inputProxy
         var performed = 0
         container.hardwareKeyboardCommands = [
             .init(
@@ -230,22 +207,20 @@ struct TerminalPaneViewTests {
             ),
         ]
 
-        proxy.performHardwareKeyboardCommandForTesting(input: "D", modifierFlags: [.command])
-        proxy.performHardwareKeyboardCommandForTesting(input: "d", modifierFlags: [.command, .shift])
+        container.performHardwareKeyboardCommandForTesting(input: "D", modifierFlags: [.command])
+        container.performHardwareKeyboardCommandForTesting(input: "d", modifierFlags: [.command, .shift])
         #expect(performed == 0)
 
-        proxy.performHardwareKeyboardCommandForTesting(
+        container.performHardwareKeyboardCommandForTesting(
             input: "d",
             modifierFlags: [.command, .numericPad]
         )
         #expect(performed == 1)
-        #expect(container.keyCommands == nil)
     }
 
     @Test("stale cached hardware commands are rejected while current commands remain dispatchable")
     func staleCachedHardwareCommandIsRejected() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        let proxy = container.inputProxy
         var performed: [String] = []
         container.hardwareKeyboardCommands = [
             .init(
@@ -256,7 +231,7 @@ struct TerminalPaneViewTests {
                 perform: { performed.append("old") }
             ),
         ]
-        let staleCommand = try! #require(proxy.keyCommands?.first)
+        let staleCommand = try! #require(container.keyCommands?.first)
 
         container.hardwareKeyboardCommands = [
             .init(
@@ -267,20 +242,19 @@ struct TerminalPaneViewTests {
                 perform: { performed.append("current") }
             ),
         ]
-        let currentCommand = try! #require(proxy.keyCommands?.first)
+        let currentCommand = try! #require(container.keyCommands?.first)
         let commandAction = try! #require(currentCommand.action)
 
-        #expect(!proxy.canPerformAction(commandAction, withSender: staleCommand))
-        #expect(proxy.canPerformAction(commandAction, withSender: currentCommand))
+        #expect(!container.canPerformAction(commandAction, withSender: staleCommand))
+        #expect(container.canPerformAction(commandAction, withSender: currentCommand))
 
-        proxy.perform(commandAction, with: currentCommand)
+        container.perform(commandAction, with: currentCommand)
         #expect(performed == ["current"])
     }
 
     @Test("hardware command validation rejects nil input and mismatched modifiers")
     func hardwareCommandValidationRequiresExactNormalizedMatch() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        let proxy = container.inputProxy
         container.hardwareKeyboardCommands = [
             .init(
                 id: "split-down",
@@ -290,7 +264,7 @@ struct TerminalPaneViewTests {
                 perform: {}
             ),
         ]
-        let currentCommand = try! #require(proxy.keyCommands?.first)
+        let currentCommand = try! #require(container.keyCommands?.first)
         let commandAction = try! #require(currentCommand.action)
         let nilInputCommand = NilInputKeyCommand(
             title: "Missing Input",
@@ -305,16 +279,15 @@ struct TerminalPaneViewTests {
             modifierFlags: [.command, .shift]
         )
 
-        #expect(!proxy.canPerformAction(commandAction, withSender: nilInputCommand))
-        #expect(!proxy.canPerformAction(commandAction, withSender: mismatchedModifierCommand))
+        #expect(!container.canPerformAction(commandAction, withSender: nilInputCommand))
+        #expect(!container.canPerformAction(commandAction, withSender: mismatchedModifierCommand))
     }
 
     @Test("hardware command changes do not alter unrelated action validation")
     func unrelatedActionValidationIsUnchanged() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        let proxy = container.inputProxy
         let action = #selector(UIResponderStandardEditActions.copy(_:))
-        let resultBeforeCommand = proxy.canPerformAction(action, withSender: nil)
+        let resultBeforeCommand = container.canPerformAction(action, withSender: nil)
 
         container.hardwareKeyboardCommands = [
             .init(
@@ -326,7 +299,7 @@ struct TerminalPaneViewTests {
             ),
         ]
 
-        #expect(proxy.canPerformAction(action, withSender: nil) == resultBeforeCommand)
+        #expect(container.canPerformAction(action, withSender: nil) == resultBeforeCommand)
     }
 
     @Test("selection mode keeps indirect terminal pan recognizers enabled")
@@ -340,16 +313,26 @@ struct TerminalPaneViewTests {
         #expect(pans.allSatisfy { $0.isEnabled })
     }
 
-    @Test("focus requests remain pending until the keyboard proxy can become first responder")
-    func focusRequestNotConsumedWhenProxyCannotFocus() async {
+    @Test("focus requests remain pending until the terminal can become first responder")
+    func focusRequestNotConsumedUntilTerminalCanFocus() async {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let controller = UIViewController()
+        controller.view = container
+        let window = UIWindow(frame: container.frame)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
         let coordinator = TerminalPaneView.Coordinator()
-        container.inputProxy.softwareKeyboardInputEnabled = false
+        container.committedSoftwareInput = nil
 
         coordinator.applyFocusRequest(1, to: container)
         try? await Task.sleep(nanoseconds: 10_000_000)
-
         #expect(coordinator.lastFocusRequest == 0)
+
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+        coordinator.applyFocusRequest(1, to: container)
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        #expect(coordinator.lastFocusRequest == 1)
+        #expect(container.terminalView.isFirstResponder)
     }
 
     @Test
@@ -370,18 +353,24 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-11.12: When the user taps Paste from the terminal long-press edit menu, the application shall forward the clipboard paste request and then re-focus GrafttyMobile's software-keyboard proxy when it is eligible, so dismissing the UIKit edit menu does not leave the user without terminal keyboard control.
+@spec IOS-11.12: When the user taps Paste from the terminal long-press edit menu, the application shall forward the clipboard paste request and then re-focus the eligible `UITerminalView`, so dismissing the UIKit edit menu does not leave the user without terminal keyboard control.
 """)
-    func pasteMenuRefocusesKeyboardProxyAfterForwardingPaste() {
+    func pasteMenuRefocusesEligibleTerminalAfterForwardingPaste() async {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
-        container.inputProxy.softwareKeyboardInputEnabled = true
+        let controller = UIViewController()
+        controller.view = container
+        let window = UIWindow(frame: container.frame)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
         var didRequestPaste = false
         container.onPasteRequested = { didRequestPaste = true }
 
         container.performPasteForTesting()
+        try? await Task.sleep(nanoseconds: 10_000_000)
 
         #expect(didRequestPaste)
-        #expect(container.keyboardRefocusRequestCountForTesting == 1)
+        #expect(container.terminalView.isFirstResponder)
     }
 
     @Test("any touch on the terminal container fires onUserInteraction")
@@ -396,36 +385,61 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-    @spec IOS-6.18: When a hardware keyboard Escape press reaches the terminal input proxy, the application shall send ESC to the session rather than discarding the press.
-    """)
-    func hardwareEscapePressSendsEscape() {
-        let proxy = TerminalSoftwareKeyboardProxyView(frame: .zero)
-        var escapes = 0
-        proxy.sendEscapeHandler = { escapes += 1 }
+@spec IOS-6.6: While an owner terminal pane is focused on iOS, committed software-keyboard text and delete shall flow through `UITerminalView`'s supported `TerminalSoftwareInputDelegate` and be forwarded exactly once to `SessionClient.sendSoftwareKeyboardText(_:)` and `deleteBackward()`. A single software-keyboard newline shall be translated to CR (`0x0D`) per `IOS-6.3`, and delete shall send DEL (`0x7F`), without using Ghostty's paste-text path.
+""")
+    func committedSoftwareInputDelegateForwardsExactlyOnce() {
+        let container = TerminalInputContainerView(frame: .zero)
+        var texts: [String] = []
+        var deletes = 0
+        container.committedSoftwareInput = .init(
+            insertText: { texts.append($0) },
+            deleteBackward: { deletes += 1 }
+        )
 
-        let handled = proxy.handleKeyPresses(keyCodes: [.keyboardEscape])
-
-        #expect(handled)
-        #expect(escapes == 1)
+        #expect(container.terminalView.softwareInputDelegate === container)
+        container.terminalView.insertText("hello")
+        container.terminalView.deleteBackward()
+        #expect(texts == ["hello"])
+        #expect(deletes == 1)
     }
 
-    @Test("non-escape key presses fall through to UIKit")
-    func nonEscapePressesAreNotConsumed() {
-        let proxy = TerminalSoftwareKeyboardProxyView(frame: .zero)
-        var escapes = 0
-        proxy.sendEscapeHandler = { escapes += 1 }
+    @Test("missing committed software handlers decline delegate delivery")
+    func missingCommittedSoftwareInputHandlersReturnFalse() {
+        let container = TerminalInputContainerView(frame: .zero)
+        let delegate: any TerminalSoftwareInputDelegate = container
 
-        let handled = proxy.handleKeyPresses(keyCodes: [.keyboardA])
-
-        #expect(!handled)
-        #expect(escapes == 0)
+        #expect(!delegate.terminalView(container.terminalView, insertText: "hello"))
+        #expect(!delegate.terminalViewDeleteBackward(container.terminalView))
     }
 
-    @Test("escape with no handler installed is not consumed")
-    func escapeWithoutHandlerFallsThrough() {
-        let proxy = TerminalSoftwareKeyboardProxyView(frame: .zero)
+    @Test("""
+@spec IOS-6.2: `UITerminalView` shall be the sole terminal keyboard responder and the primary owner of rendering and hardware-key event translation for every iOS pane. All general hardware keys, including Escape and arrows, shall flow through libghostty; GrafttyMobile shall publish `UIKeyCommand`s only for application-level shortcuts and shall not reimplement terminal key translation.
+""")
+    func eligibleTerminalBecomesFirstResponderInWindow() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let controller = UIViewController()
+        controller.view = container
+        let window = UIWindow(frame: container.frame)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
 
-        #expect(!proxy.handleKeyPresses(keyCodes: [.keyboardEscape]))
+        #expect(container.terminalView.becomeFirstResponder())
+        #expect(container.terminalView.isFirstResponder)
+        #expect(container.terminalView.next === container)
+
+        container.committedSoftwareInput = nil
+        #expect(!container.terminalView.isFirstResponder)
+        #expect(!container.terminalView.canBecomeFirstResponder)
+    }
+
+    @Test("""
+@spec IOS-6.18: When hardware Escape, arrow, or other terminal key presses reach an iOS terminal pane, the sole `UITerminalView` responder shall pass them to libghostty's hardware-key translation. GrafttyMobile shall not install per-key handlers; explicit control-bar Escape remains a `SessionClient.sendEscape()` command under `IOS-6.1`.
+""")
+    func containerPublishesNoGeneralTerminalKeyCommands() {
+        let container = TerminalInputContainerView(frame: .zero)
+
+        #expect(container.keyCommands == nil)
     }
 }
 

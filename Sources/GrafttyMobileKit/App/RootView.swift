@@ -259,7 +259,7 @@ struct SingleSessionView: View {
         clientIsOwner
     }
 
-    static func shouldInstallKeyboardProxy(clientIsOwner: Bool) -> Bool {
+    static func isTerminalKeyboardEligible(clientIsOwner: Bool) -> Bool {
         clientIsOwner
     }
 
@@ -371,7 +371,8 @@ struct SingleSessionView: View {
         // IOS-6.9: explicit bottom padding lifts the terminal above
         // the keyboard. SwiftUI's automatic `.keyboard` safe-area
         // avoidance is unreliable when the focused responder is the
-        // UIKeyInput proxy from IOS-6.6, so we drive it ourselves.
+        // committed-software-input delegate from IOS-6.6, so we drive
+        // it ourselves.
         .padding(.bottom, keyboardBottomInset)
         // IOS-4.8 + IPAD-1.7: fullscreen path bleeds to every edge
         // (under the notch, home indicator, landscape bands) and hides
@@ -805,10 +806,9 @@ struct SingleSessionView: View {
             session: client.session,
             controller: controller,
             focusRequestCount: focusRequestCount + externalFocusRequestCount,
-            softwareKeyboardInput: Self.shouldInstallKeyboardProxy(clientIsOwner: client.isOwner) ? .init(
+            committedSoftwareInput: Self.isTerminalKeyboardEligible(clientIsOwner: client.isOwner) ? .init(
                 insertText: { text in client.sendSoftwareKeyboardText(text) },
-                deleteBackward: { client.deleteBackward() },
-                sendEscape: { client.sendEscape() }
+                deleteBackward: { client.deleteBackward() }
             ) : nil,
             hardwareKeyboardCommands: ghosttyCommandContext.map {
                 MobileGhosttyCommandButtons.hardwareKeyboardCommands(for: $0)

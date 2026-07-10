@@ -1,6 +1,5 @@
 #if canImport(UIKit)
 import GhosttyTerminal
-import ObjectiveC
 import SwiftUI
 import UIKit
 
@@ -13,19 +12,16 @@ import UIKit
 /// "Show keyboard" button programmatically summon the keyboard without
 /// the user having to tap the terminal itself.
 public struct TerminalPaneView: UIViewRepresentable {
-    public struct SoftwareKeyboardInput {
+    public struct CommittedSoftwareInput {
         public let insertText: (String) -> Void
         public let deleteBackward: () -> Void
-        public let sendEscape: () -> Void
 
         public init(
             insertText: @escaping (String) -> Void,
-            deleteBackward: @escaping () -> Void,
-            sendEscape: @escaping () -> Void
+            deleteBackward: @escaping () -> Void
         ) {
             self.insertText = insertText
             self.deleteBackward = deleteBackward
-            self.sendEscape = sendEscape
         }
     }
 
@@ -54,7 +50,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     public let session: InMemoryTerminalSession
     public let controller: TerminalController
     public let focusRequestCount: Int
-    public let softwareKeyboardInput: SoftwareKeyboardInput?
+    public let committedSoftwareInput: CommittedSoftwareInput?
     public let hardwareKeyboardCommands: [HardwareKeyboardCommand]
     /// Governs how frequently `UITerminalView` repaints while no host output
     /// is arriving. `.full` (the default) matches display refresh; `.reduced`
@@ -92,7 +88,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         session: InMemoryTerminalSession,
         controller: TerminalController,
         focusRequestCount: Int = 0,
-        softwareKeyboardInput: SoftwareKeyboardInput? = nil,
+        committedSoftwareInput: CommittedSoftwareInput? = nil,
         hardwareKeyboardCommands: [HardwareKeyboardCommand] = [],
         renderPace: TerminalRenderPace = .full,
         onUserInteraction: (() -> Void)? = nil,
@@ -104,7 +100,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         self.session = session
         self.controller = controller
         self.focusRequestCount = focusRequestCount
-        self.softwareKeyboardInput = softwareKeyboardInput
+        self.committedSoftwareInput = committedSoftwareInput
         self.hardwareKeyboardCommands = hardwareKeyboardCommands
         self.renderPace = renderPace
         self.onUserInteraction = onUserInteraction
@@ -136,10 +132,7 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
         view.terminalView.controller = controller
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
-        view.inputProxy.softwareKeyboardInputEnabled = softwareKeyboardInput != nil
-        view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
-        view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
-        view.inputProxy.sendEscapeHandler = softwareKeyboardInput?.sendEscape
+        view.committedSoftwareInput = committedSoftwareInput
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
         view.terminalView.renderPace = renderPace
         view.onUserInteraction = onUserInteraction
@@ -153,10 +146,7 @@ public struct TerminalPaneView: UIViewRepresentable {
     public func updateUIView(_ view: TerminalInputContainerView, context: Context) {
         view.overrideUserInterfaceStyle = preferredInterfaceStyle
         view.terminalView.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
-        view.inputProxy.softwareKeyboardInputEnabled = softwareKeyboardInput != nil
-        view.inputProxy.insertTextHandler = softwareKeyboardInput?.insertText
-        view.inputProxy.deleteBackwardHandler = softwareKeyboardInput?.deleteBackward
-        view.inputProxy.sendEscapeHandler = softwareKeyboardInput?.sendEscape
+        view.committedSoftwareInput = committedSoftwareInput
         view.hardwareKeyboardCommands = hardwareKeyboardCommands
         view.terminalView.renderPace = renderPace
         view.onUserInteraction = onUserInteraction
@@ -171,9 +161,22 @@ public struct TerminalPaneView: UIViewRepresentable {
     }
 }
 
-public final class TerminalInputContainerView: UIView {
+public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDelegate {
+    private struct HardwareKeyboardCommandSignature: Equatable {
+        let id: String
+        let title: String
+        let input: String
+        let modifierFlags: UIKeyModifierFlags
+    }
+
     let terminalView = UITerminalView(frame: .zero)
-    let inputProxy = TerminalSoftwareKeyboardProxyView(frame: .zero)
+    var committedSoftwareInput: TerminalPaneView.CommittedSoftwareInput? {
+        didSet {
+            terminalView.isKeyboardInputEnabled = committedSoftwareInput != nil
+        }
+    }
+    private var storedHardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] = []
+    private(set) var keyCommandUpdateRequestCountForTesting = 0
     private(set) lazy var selectionController = TerminalSelectionController(
         surface: RealSurfaceProxy(surfaceProvider: { [weak self] in self?.terminalView.surface })
     )
@@ -187,8 +190,40 @@ public final class TerminalInputContainerView: UIView {
     /// activity). Wired by the SwiftUI layer to `SessionClient.wakeRenderer()`.
     public var onUserInteraction: (() -> Void)?
     public var hardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] {
-        get { inputProxy.hardwareKeyboardCommands }
-        set { inputProxy.hardwareKeyboardCommands = newValue }
+        get { storedHardwareKeyboardCommands }
+        set {
+            let previousSignature = effectiveHardwareKeyboardCommandSignature
+            storedHardwareKeyboardCommands = newValue
+            guard previousSignature != effectiveHardwareKeyboardCommandSignature else { return }
+            keyCommandUpdateRequestCountForTesting += 1
+            UIMenuSystem.main.setNeedsRebuild()
+        }
+    }
+
+    override public var keyCommands: [UIKeyCommand]? {
+        guard !hardwareKeyboardCommands.isEmpty else { return nil }
+        return hardwareKeyboardCommands.map { command in
+            let keyCommand = UIKeyCommand(
+                title: command.title,
+                action: #selector(handleHardwareKeyboardCommand(_:)),
+                input: command.input,
+                modifierFlags: command.modifierFlags.appCommandModifiers
+            )
+            keyCommand.discoverabilityTitle = command.title
+            keyCommand.wantsPriorityOverSystemBehavior = true
+            return keyCommand
+        }
+    }
+
+    private var effectiveHardwareKeyboardCommandSignature: [HardwareKeyboardCommandSignature] {
+        hardwareKeyboardCommands.map {
+            HardwareKeyboardCommandSignature(
+                id: $0.id,
+                title: $0.title,
+                input: $0.input,
+                modifierFlags: $0.modifierFlags.appCommandModifiers
+            )
+        }
     }
 
     private lazy var longPressMenu = UIEditMenuInteraction(delegate: self)
@@ -217,7 +252,6 @@ public final class TerminalInputContainerView: UIView {
     /// `Select` action can word-select at the original touch point even
     /// after the gesture has ended. Updated on `.began`.
     private var lastLongPressPoint: CGPoint = .zero
-    private(set) var keyboardRefocusRequestCountForTesting = 0
 
     override public init(frame: CGRect) {
         super.init(frame: frame)
@@ -234,23 +268,15 @@ public final class TerminalInputContainerView: UIView {
         isOpaque = false
 
         terminalView.translatesAutoresizingMaskIntoConstraints = false
+        terminalView.softwareInputDelegate = self
+        terminalView.isKeyboardInputEnabled = false
+        terminalView.showsInputAccessory = false
         addSubview(terminalView)
         NSLayoutConstraint.activate([
             terminalView.leadingAnchor.constraint(equalTo: leadingAnchor),
             terminalView.trailingAnchor.constraint(equalTo: trailingAnchor),
             terminalView.topAnchor.constraint(equalTo: topAnchor),
             terminalView.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-
-        inputProxy.translatesAutoresizingMaskIntoConstraints = false
-        inputProxy.backgroundColor = .clear
-        inputProxy.isOpaque = false
-        addSubview(inputProxy)
-        NSLayoutConstraint.activate([
-            inputProxy.leadingAnchor.constraint(equalTo: leadingAnchor),
-            inputProxy.trailingAnchor.constraint(equalTo: trailingAnchor),
-            inputProxy.topAnchor.constraint(equalTo: topAnchor),
-            inputProxy.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
         configureTerminalPanRecognizersForIndirectScrolling()
@@ -280,7 +306,7 @@ public final class TerminalInputContainerView: UIView {
 
     @discardableResult
     func focusKeyboardInput() -> Bool {
-        inputProxy.becomeFirstResponder()
+        terminalView.becomeFirstResponder()
     }
 
     /// @spec IOS-11.1: When the user long-presses a focused terminal pane, the application shall present a `UIEditMenuInteraction` menu at the touch point containing **Select**, **Select All**, and (when `UIPasteboard.general.hasStrings` is true at menu-build time) **Paste**.
@@ -415,11 +441,54 @@ public final class TerminalInputContainerView: UIView {
     }
 
     private func refocusKeyboardAfterEditMenuAction() {
-        guard inputProxy.canBecomeFirstResponder else { return }
-        keyboardRefocusRequestCountForTesting += 1
+        guard terminalView.canBecomeFirstResponder else { return }
         DispatchQueue.main.async { [weak self] in
             self?.focusKeyboardInput()
         }
+    }
+
+    public func terminalView(_: UITerminalView, insertText text: String) -> Bool {
+        guard let insertText = committedSoftwareInput?.insertText else { return false }
+        insertText(text)
+        return true
+    }
+
+    public func terminalViewDeleteBackward(_: UITerminalView) -> Bool {
+        guard let deleteBackward = committedSoftwareInput?.deleteBackward else { return false }
+        deleteBackward()
+        return true
+    }
+
+    override public func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(handleHardwareKeyboardCommand(_:)),
+           let command = sender as? UIKeyCommand {
+            return matchingHardwareKeyboardCommand(for: command) != nil
+        }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
+    @objc private func handleHardwareKeyboardCommand(_ command: UIKeyCommand) {
+        matchingHardwareKeyboardCommand(for: command)?.perform()
+    }
+
+    private func matchingHardwareKeyboardCommand(
+        for keyCommand: UIKeyCommand
+    ) -> TerminalPaneView.HardwareKeyboardCommand? {
+        guard let input = keyCommand.input else { return nil }
+        let modifierFlags = keyCommand.modifierFlags.appCommandModifiers
+        return hardwareKeyboardCommands.first {
+            $0.input == input && $0.modifierFlags.appCommandModifiers == modifierFlags
+        }
+    }
+
+    func performHardwareKeyboardCommandForTesting(input: String, modifierFlags: UIKeyModifierFlags) {
+        handleHardwareKeyboardCommand(
+            UIKeyCommand(
+                action: #selector(handleHardwareKeyboardCommand(_:)),
+                input: input,
+                modifierFlags: modifierFlags
+            )
+        )
     }
 }
 
@@ -476,209 +545,4 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
     }
 }
 
-final class TerminalSoftwareKeyboardProxyView: UIView, UIKeyInput, UITextInputTraits {
-    private struct HardwareKeyboardCommandSignature: Equatable {
-        let id: String
-        let title: String
-        let input: String
-        let modifierFlags: UIKeyModifierFlags
-    }
-
-    var softwareKeyboardInputEnabled = false
-    var insertTextHandler: ((String) -> Void)?
-    var deleteBackwardHandler: (() -> Void)?
-    var sendEscapeHandler: (() -> Void)?
-    private var storedHardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] = []
-    private(set) var keyCommandUpdateRequestCountForTesting = 0
-
-    var hardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] {
-        get { storedHardwareKeyboardCommands }
-        set {
-            let previousSignature = effectiveHardwareKeyboardCommandSignature
-            storedHardwareKeyboardCommands = newValue
-            guard previousSignature != effectiveHardwareKeyboardCommandSignature else { return }
-            keyCommandUpdateRequestCountForTesting += 1
-            UIMenuSystem.main.setNeedsRebuild()
-        }
-    }
-
-    override var keyCommands: [UIKeyCommand]? {
-        guard !hardwareKeyboardCommands.isEmpty else { return nil }
-        return hardwareKeyboardCommands.map { command in
-            let keyCommand = UIKeyCommand(
-                title: command.title,
-                action: #selector(handleHardwareKeyboardCommand(_:)),
-                input: command.input,
-                modifierFlags: command.modifierFlags.appCommandModifiers
-            )
-            keyCommand.discoverabilityTitle = command.title
-            keyCommand.wantsPriorityOverSystemBehavior = true
-            return keyCommand
-        }
-    }
-
-    private var effectiveHardwareKeyboardCommandSignature: [HardwareKeyboardCommandSignature] {
-        hardwareKeyboardCommands.map {
-            HardwareKeyboardCommandSignature(
-                id: $0.id,
-                title: $0.title,
-                input: $0.input,
-                modifierFlags: $0.modifierFlags.appCommandModifiers
-            )
-        }
-    }
-
-    override var canBecomeFirstResponder: Bool { softwareKeyboardInputEnabled }
-    var hasText: Bool { true }
-
-    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
-        if action == #selector(handleHardwareKeyboardCommand(_:)),
-           let command = sender as? UIKeyCommand {
-            return matchingHardwareKeyboardCommand(for: command) != nil
-        }
-        return super.canPerformAction(action, withSender: sender)
-    }
-
-    override var inputAccessoryView: UIView? {
-        nil
-    }
-
-    /// IOS-6.8: hit-test transparent. Touches pass through to
-    /// `UITerminalView` underneath so its pan-to-scroll and pinch-to-zoom
-    /// gesture recognizers receive them. The keyboard responder chain
-    /// is independent of hit-testing — `becomeFirstResponder()` from the
-    /// container's tap recognizer still routes software-keyboard input
-    /// here per IOS-6.6.
-    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
-        nil
-    }
-
-    func insertText(_ text: String) {
-        insertTextHandler?(text)
-    }
-
-    func deleteBackward() {
-        deleteBackwardHandler?()
-    }
-
-    /// Decision seam for `pressesBegan` — split out because `UIPress`/
-    /// `UIKey` cannot be constructed in tests. Returns true when the
-    /// presses were consumed.
-    func handleKeyPresses(keyCodes: [UIKeyboardHIDUsage]) -> Bool {
-        guard sendEscapeHandler != nil, keyCodes.contains(.keyboardEscape) else {
-            return false
-        }
-        sendEscapeHandler?()
-        return true
-    }
-
-    /// @spec IOS-6.18: `UIKeyInput` (IOS-6.6) never delivers Escape — it
-    /// only forwards printable text and backspace — so hardware Escape
-    /// must be caught here, one level up the responder chain, and
-    /// translated into an explicit ESC byte via `SessionClient.sendEscape()`.
-    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        let keyCodes = presses.compactMap { $0.key?.keyCode }
-        if handleKeyPresses(keyCodes: keyCodes) {
-            return
-        }
-        super.pressesBegan(presses, with: event)
-    }
-
-    @objc private func handleHardwareKeyboardCommand(_ command: UIKeyCommand) {
-        matchingHardwareKeyboardCommand(for: command)?.perform()
-    }
-
-    private func matchingHardwareKeyboardCommand(
-        for keyCommand: UIKeyCommand
-    ) -> TerminalPaneView.HardwareKeyboardCommand? {
-        guard let input = keyCommand.input else { return nil }
-        let modifierFlags = keyCommand.modifierFlags.appCommandModifiers
-        return hardwareKeyboardCommands.first {
-            $0.input == input && $0.modifierFlags.appCommandModifiers == modifierFlags
-        }
-    }
-
-    func performHardwareKeyboardCommandForTesting(input: String, modifierFlags: UIKeyModifierFlags) {
-        handleHardwareKeyboardCommand(
-            UIKeyCommand(
-                action: #selector(handleHardwareKeyboardCommand(_:)),
-                input: input,
-                modifierFlags: modifierFlags
-            )
-        )
-    }
-
-    var autocorrectionType: UITextAutocorrectionType {
-        get { .no }
-        set {}
-    }
-
-    var autocapitalizationType: UITextAutocapitalizationType {
-        get { .none }
-        set {}
-    }
-
-    var smartQuotesType: UITextSmartQuotesType {
-        get { .no }
-        set {}
-    }
-
-    var smartDashesType: UITextSmartDashesType {
-        get { .no }
-        set {}
-    }
-
-    var smartInsertDeleteType: UITextSmartInsertDeleteType {
-        get { .no }
-        set {}
-    }
-
-    var spellCheckingType: UITextSpellCheckingType {
-        get { .no }
-        set {}
-    }
-
-    var keyboardType: UIKeyboardType {
-        get { .default }
-        set {}
-    }
-}
-
-/// libghostty-spm's `UITerminalView` is `final` and unconditionally returns
-/// its own `terminalInputAccessory` from `inputAccessoryView`. On iOS it
-/// also auto-focuses itself in `touchesBegan` — once the keyboard responder
-/// — UIKit mounts the GhosttyKit bar above the keyboard alongside graftty's
-/// own SwiftUI `terminalControlBar` (`IOS-6.1`). The package exposes no
-/// opt-out, so we replace two `@objc` getters at the ObjC runtime level:
-///   - `inputAccessoryView` → nil, so even if `UITerminalView` ever does
-///      win the responder race, no accessory mounts.
-///   - `canBecomeFirstResponder` → false, so the `becomeFirstResponder()`
-///      call inside its `touchesBegan` is a no-op and our `inputProxy`
-///      stays the first responder (IOS-6.6 routing). The view's pan and
-///      pinch gesture recognizers are unaffected — UIKit doesn't gate
-///      gesture recognizers on responder status.
-/// UIKit's keyboard / responder machinery dispatches via `objc_msgSend`
-/// and picks up our IMPs. The swaps are idempotent (`dispatch_once`
-/// semantics via `static let`) and fire from `GrafttyMobileApp.init`.
-/// (`IOS-6.7`.)
-extension UITerminalView {
-    static func suppressGhosttyInputAccessory() {
-        _ = swizzleInputAccessoryViewToNilOnce
-        _ = swizzleCanBecomeFirstResponderToFalseOnce
-    }
-
-    private static let swizzleInputAccessoryViewToNilOnce: Void = {
-        let selector = #selector(getter: UIResponder.inputAccessoryView)
-        guard let method = class_getInstanceMethod(UITerminalView.self, selector) else { return }
-        let block: @convention(block) (UIResponder) -> UIView? = { _ in nil }
-        method_setImplementation(method, imp_implementationWithBlock(block))
-    }()
-
-    private static let swizzleCanBecomeFirstResponderToFalseOnce: Void = {
-        let selector = #selector(getter: UIResponder.canBecomeFirstResponder)
-        guard let method = class_getInstanceMethod(UITerminalView.self, selector) else { return }
-        let block: @convention(block) (UIResponder) -> Bool = { _ in false }
-        method_setImplementation(method, imp_implementationWithBlock(block))
-    }()
-}
 #endif
