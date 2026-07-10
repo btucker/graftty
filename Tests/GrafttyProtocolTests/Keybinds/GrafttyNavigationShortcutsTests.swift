@@ -11,13 +11,37 @@ struct GrafttyNavigationShortcutsTests {
         #expect(GrafttyNavigationShortcuts.previousWorktree == ShortcutChord(key: "tab", modifiers: [.control, .option, .shift]))
     }
 
-    @Test("collision precedence is fixed worktree, fixed pane, then host")
-    func collisionPrecedence() {
-        #expect(GrafttyNavigationShortcuts.collisionPrecedence == [
-            .fixedWorktree,
-            .fixedPane,
-            .host,
-        ])
+    @Test("fixed worktree wins when all candidate sources collide")
+    func fixedWorktreeWinsCollision() {
+        let candidates = [
+            GrafttyNavigationShortcuts.SourcedCandidate(source: .host, value: "host"),
+            GrafttyNavigationShortcuts.SourcedCandidate(source: .fixedPane, value: "pane"),
+            GrafttyNavigationShortcuts.SourcedCandidate(source: .fixedWorktree, value: "worktree"),
+        ]
+
+        let winners = GrafttyNavigationShortcuts.collisionWinners(
+            from: candidates,
+            identifiedBy: { _ in "tab" }
+        )
+
+        #expect(winners.map(\.value) == ["worktree"])
+    }
+
+    @Test("noncolliding host candidates survive after fixed sources in stable order")
+    func noncollidingHostCandidatesSurvive() {
+        let candidates = [
+            GrafttyNavigationShortcuts.SourcedCandidate(source: .host, value: "host-first"),
+            GrafttyNavigationShortcuts.SourcedCandidate(source: .fixedPane, value: "pane"),
+            GrafttyNavigationShortcuts.SourcedCandidate(source: .host, value: "host-second"),
+            GrafttyNavigationShortcuts.SourcedCandidate(source: .fixedWorktree, value: "worktree"),
+        ]
+
+        let winners = GrafttyNavigationShortcuts.collisionWinners(
+            from: candidates,
+            identifiedBy: { $0 }
+        )
+
+        #expect(winners.map(\.value) == ["worktree", "pane", "host-first", "host-second"])
     }
 
     @Test("fixed pane aliases are independent of host remaps and unbinds")

@@ -31,12 +31,8 @@ struct GhosttyCommandRegistryTests {
         #expect(GhosttyCommandRegistry[.gotoSplitLeft]?.kind == .focusPane(.left))
         #expect(GhosttyCommandRegistry[.gotoSplitNext]?.kind == .focusPaneByOrder(forward: true))
         #expect(GhosttyCommandRegistry[.gotoSplitPrevious]?.kind == .focusPaneByOrder(forward: false))
-        #expect(GhosttyCommandRegistry[.nextTab]?.kind == .focusPaneByOrder(forward: true))
-        #expect(GhosttyCommandRegistry[.previousTab]?.kind == .focusPaneByOrder(forward: false))
-        #expect(GhosttyCommandRegistry.allActions.contains { entry in
-            if case .navigateWorktree = entry.kind { return true }
-            return false
-        } == false)
+        #expect(GhosttyCommandRegistry[.nextTab]?.kind == .navigateWorktree(forward: true))
+        #expect(GhosttyCommandRegistry[.previousTab]?.kind == .navigateWorktree(forward: false))
         #expect(GhosttyCommandRegistry[.toggleSplitZoom]?.kind == .unsupported)
     }
 
@@ -44,8 +40,6 @@ struct GhosttyCommandRegistryTests {
     func metadata() {
         #expect(GhosttyCommandRegistry[.newSplitRight]?.label == "Split Right")
         #expect(GhosttyCommandRegistry[.closeSurface]?.label == "Close Pane")
-        #expect(GhosttyCommandRegistry[.nextTab]?.label == "Next Pane")
-        #expect(GhosttyCommandRegistry[.previousTab]?.label == "Previous Pane")
         #expect(GhosttyCommandRegistry[.openConfig]?.label == "Open Ghostty Settings")
         #expect(GhosttyCommandRegistry[.newSplitRight]?.isSupportedOniPad == true)
         #expect(GhosttyCommandRegistry[.toggleSplitZoom]?.isSupportedOniPad == false)
@@ -59,9 +53,10 @@ struct GhosttyCommandRegistryTests {
         #expect(GhosttyCommandRegistry.macPaneFocusActions.map(\.action) == [
             .gotoSplitLeft, .gotoSplitRight, .gotoSplitUp, .gotoSplitDown,
             .gotoSplitPrevious, .gotoSplitNext,
+        ])
+        #expect(GhosttyCommandRegistry.macWorktreeNavigationActions.map(\.action) == [
             .nextTab, .previousTab,
         ])
-        #expect(GhosttyCommandRegistry.macWorktreeNavigationActions.isEmpty)
         #expect(GhosttyCommandRegistry.macPaneLayoutActions.map(\.action) == [
             .toggleSplitZoom, .equalizeSplits,
         ])
