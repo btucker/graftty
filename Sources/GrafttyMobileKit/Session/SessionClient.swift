@@ -215,6 +215,9 @@ public final class SessionClient {
     /// @spec IOS-10.3
     public private(set) var renderActivity: RenderActivity = .active
 
+    /// @spec IOS-10.8, IOS-10.9
+    public private(set) var renderPace: TerminalRenderPace = .full
+
     /// @spec IOS-10.4: While a `SessionClient` is in `.idle`, the corresponding view shall display a static snapshot of the last live frame in place of `TerminalPaneView`, with a tap target that resumes `.active`.
     public private(set) var idleSnapshot: UIImage?
 
@@ -230,6 +233,9 @@ public final class SessionClient {
 
     @ObservationIgnored
     private var idleWatchdogTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var paceWatchdogTask: Task<Void, Never>?
 
     /// Single source for the production `clock` default — also consulted
     /// by `SessionClient.live`'s own `clock` default
@@ -344,6 +350,7 @@ public final class SessionClient {
     public func start() {
         lastActivityAt = clock.now
         startIdleWatchdog()
+        startPaceWatchdog()
         // Eagerly install a Task that opens the first WS. Outbound
         // writes that fire between `start()` returning and the factory
         // resolving wait on `wsReadyTask` so they don't silently drop
@@ -490,11 +497,35 @@ public final class SessionClient {
     }
 
     @MainActor
+    private func startPaceWatchdog() {
+        paceWatchdogTask?.cancel()
+        paceWatchdogTask = Task { @MainActor [weak self] in
+            while let self, !self.stopped, self.renderPace == .full {
+                let elapsed = self.clock.now.timeIntervalSince(self.lastActivityAt)
+                let remaining = Self.renderPaceQuietDelay - elapsed
+                if remaining <= 0 {
+                    self.renderPace = .reduced(interval: Self.reducedRenderPaceInterval)
+                    return
+                }
+                do {
+                    try await self.clock.sleep(for: remaining)
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    @MainActor
     private func recordActivity() {
         lastActivityAt = clock.now
         if renderActivity == .idle {
             renderActivity = .active
             startIdleWatchdog()
+        }
+        if renderPace != .full {
+            renderPace = .full
+            startPaceWatchdog()
         }
     }
 
@@ -604,6 +635,8 @@ public final class SessionClient {
         setWSReadyTask(nil)
         idleWatchdogTask?.cancel()
         idleWatchdogTask = nil
+        paceWatchdogTask?.cancel()
+        paceWatchdogTask = nil
         clearPendingInput()
         currentWS()?.close()
         setWS(nil)

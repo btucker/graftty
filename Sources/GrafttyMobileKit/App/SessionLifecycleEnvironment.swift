@@ -34,6 +34,12 @@ extension SessionClient {
     public nonisolated static let previewIdleThreshold: TimeInterval = 10
     public nonisolated static let fullscreenIdleThreshold: TimeInterval = .infinity
 
+    /// Quiet window before a mounted surface's render pace drops to
+    /// `.reduced` (~1 fps). Distinct from `idleThreshold`, which
+    /// unmounts the surface entirely (previews only).
+    public nonisolated static let renderPaceQuietDelay: TimeInterval = 5
+    public nonisolated static let reducedRenderPaceInterval: TimeInterval = 1.0
+
     /// One-stop factory for the WebSocket transport + `SessionClient`
     /// pair. Both `SingleSessionView` (initial / re-dial) and
     /// `WorktreeDetailView` (preview pool) need the same triplet — URL
