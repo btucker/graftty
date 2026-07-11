@@ -162,6 +162,32 @@ public struct TerminalPaneView: UIViewRepresentable {
 }
 
 public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDelegate {
+    private final class AppHardwareKeyCommand: UIKeyCommand {
+        let stableCommandID: String
+        private let commandAction: Selector
+        private let commandInput: String
+        private let commandModifierFlags: UIKeyModifierFlags
+
+        override var action: Selector? { commandAction }
+        override var input: String? { commandInput }
+        override var modifierFlags: UIKeyModifierFlags { commandModifierFlags }
+        override var propertyList: Any? { stableCommandID }
+
+        init(command: TerminalPaneView.HardwareKeyboardCommand, action: Selector) {
+            stableCommandID = command.id
+            commandAction = action
+            commandInput = command.input
+            commandModifierFlags = command.modifierFlags.appCommandModifiers
+            super.init()
+            title = command.title
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+    }
+
     private struct HardwareKeyboardCommandSignature: Equatable {
         let id: String
         let title: String
@@ -170,9 +196,20 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
     }
 
     let terminalView = UITerminalView(frame: .zero)
+    private var isCommittedSoftwareInputEligible = false
+    private var storedCommittedSoftwareInput: TerminalPaneView.CommittedSoftwareInput?
     var committedSoftwareInput: TerminalPaneView.CommittedSoftwareInput? {
-        didSet {
-            terminalView.isKeyboardInputEnabled = committedSoftwareInput != nil
+        get { storedCommittedSoftwareInput }
+        set {
+            if let newValue {
+                storedCommittedSoftwareInput = newValue
+                isCommittedSoftwareInputEligible = true
+                terminalView.isKeyboardInputEnabled = true
+            } else {
+                isCommittedSoftwareInputEligible = false
+                terminalView.isKeyboardInputEnabled = false
+                storedCommittedSoftwareInput = nil
+            }
         }
     }
     private var storedHardwareKeyboardCommands: [TerminalPaneView.HardwareKeyboardCommand] = []
@@ -203,11 +240,9 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
     override public var keyCommands: [UIKeyCommand]? {
         guard !hardwareKeyboardCommands.isEmpty else { return nil }
         return hardwareKeyboardCommands.map { command in
-            let keyCommand = UIKeyCommand(
-                title: command.title,
-                action: #selector(handleHardwareKeyboardCommand(_:)),
-                input: command.input,
-                modifierFlags: command.modifierFlags.appCommandModifiers
+            let keyCommand = AppHardwareKeyCommand(
+                command: command,
+                action: #selector(handleHardwareKeyboardCommand(_:))
             )
             keyCommand.discoverabilityTitle = command.title
             keyCommand.wantsPriorityOverSystemBehavior = true
@@ -390,13 +425,6 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
 
     // MARK: - Test seams
 
-    /// Internal-visibility access for unit tests: Task 6 removed terminal
-    /// gesture-driven ownership claims. Long-press presents edit menus and
-    /// pinch belongs to libghostty's local zoom handling, not takeover.
-    var hasOwnershipClaimGestureHookForTesting: Bool {
-        false
-    }
-
     /// Internal-visibility access for unit tests: terminal pan recognizers
     /// accept indirect pointer scroll input while selection gestures remain
     /// owned by `selectionPanRecognizer`.
@@ -416,16 +444,6 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
     /// Internal-visibility access for unit tests: invokes `exitSelectionMode`.
     func exitSelectionModeForTesting() {
         exitSelectionMode()
-    }
-
-    /// Internal-visibility access for unit tests: synthesized pinch gestures
-    /// are ownership-neutral.
-    func simulatePinchForTesting(state: UIGestureRecognizer.State, scale: CGFloat) {
-    }
-
-    /// Internal-visibility access for unit tests: simulates the
-    /// long-press handler's `.began` branch without presenting UIKit UI.
-    func simulateLongPressBeganForTesting() {
     }
 
     /// Internal-visibility access for unit tests: invokes the paste menu
@@ -448,13 +466,15 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
     }
 
     public func terminalView(_: UITerminalView, insertText text: String) -> Bool {
-        guard let insertText = committedSoftwareInput?.insertText else { return false }
+        guard isCommittedSoftwareInputEligible else { return true }
+        guard let insertText = storedCommittedSoftwareInput?.insertText else { return false }
         insertText(text)
         return true
     }
 
     public func terminalViewDeleteBackward(_: UITerminalView) -> Bool {
-        guard let deleteBackward = committedSoftwareInput?.deleteBackward else { return false }
+        guard isCommittedSoftwareInputEligible else { return true }
+        guard let deleteBackward = storedCommittedSoftwareInput?.deleteBackward else { return false }
         deleteBackward()
         return true
     }
@@ -474,21 +494,28 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
     private func matchingHardwareKeyboardCommand(
         for keyCommand: UIKeyCommand
     ) -> TerminalPaneView.HardwareKeyboardCommand? {
-        guard let input = keyCommand.input else { return nil }
+        guard let keyCommand = keyCommand as? AppHardwareKeyCommand,
+              let commandID = keyCommand.propertyList as? String,
+              let input = keyCommand.input else { return nil }
         let modifierFlags = keyCommand.modifierFlags.appCommandModifiers
         return hardwareKeyboardCommands.first {
-            $0.input == input && $0.modifierFlags.appCommandModifiers == modifierFlags
+            $0.id == commandID
+                && $0.title == keyCommand.title
+                && $0.input == input
+                && $0.modifierFlags.appCommandModifiers == modifierFlags
         }
     }
 
     func performHardwareKeyboardCommandForTesting(input: String, modifierFlags: UIKeyModifierFlags) {
-        handleHardwareKeyboardCommand(
-            UIKeyCommand(
-                action: #selector(handleHardwareKeyboardCommand(_:)),
-                input: input,
-                modifierFlags: modifierFlags
-            )
-        )
+        let normalizedModifiers = modifierFlags.appCommandModifiers
+        guard let command = hardwareKeyboardCommands.first(where: {
+            $0.input == input
+                && $0.modifierFlags.appCommandModifiers == normalizedModifiers
+        }) else { return }
+        handleHardwareKeyboardCommand(AppHardwareKeyCommand(
+            command: command,
+            action: #selector(handleHardwareKeyboardCommand(_:))
+        ))
     }
 }
 

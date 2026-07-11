@@ -370,9 +370,8 @@ struct SingleSessionView: View {
         }
         // IOS-6.9: explicit bottom padding lifts the terminal above
         // the keyboard. SwiftUI's automatic `.keyboard` safe-area
-        // avoidance is unreliable when the focused responder is the
-        // committed-software-input delegate from IOS-6.6, so we drive
-        // it ourselves.
+        // avoidance is unreliable when UITerminalView is the focused
+        // responder, so we drive it ourselves.
         .padding(.bottom, keyboardBottomInset)
         // IOS-4.8 + IPAD-1.7: fullscreen path bleeds to every edge
         // (under the notch, home indicator, landscape bands) and hides

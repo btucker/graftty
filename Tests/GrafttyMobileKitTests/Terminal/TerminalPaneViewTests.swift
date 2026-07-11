@@ -252,6 +252,56 @@ struct TerminalPaneViewTests {
         #expect(performed == ["current"])
     }
 
+    @Test("stale cached command identity is rejected when its chord is reused")
+    func staleCachedHardwareCommandWithReusedChordIsRejected() {
+        let container = TerminalInputContainerView(frame: .zero)
+        var performed: [String] = []
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-right",
+                title: "Split Right",
+                input: "d",
+                modifierFlags: [.command],
+                perform: { performed.append("old") }
+            ),
+        ]
+        let staleCommand = try! #require(container.keyCommands?.first)
+
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-right",
+                title: "Split Pane Right",
+                input: "d",
+                modifierFlags: [.command],
+                perform: { performed.append("retitled") }
+            ),
+        ]
+        let retitledCommand = try! #require(container.keyCommands?.first)
+        let commandAction = try! #require(retitledCommand.action)
+
+        #expect(!container.canPerformAction(commandAction, withSender: staleCommand))
+        container.perform(commandAction, with: staleCommand)
+        #expect(performed.isEmpty)
+
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-down",
+                title: "Split Pane Right",
+                input: "d",
+                modifierFlags: [.command],
+                perform: { performed.append("new") }
+            ),
+        ]
+        let currentCommand = try! #require(container.keyCommands?.first)
+        #expect(!container.canPerformAction(commandAction, withSender: retitledCommand))
+        container.perform(commandAction, with: retitledCommand)
+        #expect(performed.isEmpty)
+
+        #expect(container.canPerformAction(commandAction, withSender: currentCommand))
+        container.perform(commandAction, with: currentCommand)
+        #expect(performed == ["new"])
+    }
+
     @Test("hardware command validation rejects nil input and mismatched modifiers")
     func hardwareCommandValidationRequiresExactNormalizedMatch() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -403,13 +453,24 @@ struct TerminalPaneViewTests {
         #expect(deletes == 1)
     }
 
-    @Test("missing committed software handlers decline delegate delivery")
-    func missingCommittedSoftwareInputHandlersReturnFalse() {
+    @Test("ineligible terminal consumes pending committed input after owner loss")
+    func ownerLossConsumesPendingCommittedInputWithoutForwarding() {
         let container = TerminalInputContainerView(frame: .zero)
         let delegate: any TerminalSoftwareInputDelegate = container
+        var texts: [String] = []
+        var deletes = 0
+        container.committedSoftwareInput = .init(
+            insertText: { texts.append($0) },
+            deleteBackward: { deletes += 1 }
+        )
 
-        #expect(!delegate.terminalView(container.terminalView, insertText: "hello"))
-        #expect(!delegate.terminalViewDeleteBackward(container.terminalView))
+        container.committedSoftwareInput = nil
+
+        #expect(delegate.terminalView(container.terminalView, insertText: "pending"))
+        #expect(delegate.terminalViewDeleteBackward(container.terminalView))
+        #expect(texts.isEmpty)
+        #expect(deletes == 0)
+        #expect(!container.terminalView.isKeyboardInputEnabled)
     }
 
     @Test("""
@@ -443,24 +504,4 @@ struct TerminalPaneViewTests {
     }
 }
 
-@Suite("Terminal gestures do not claim ownership")
-@MainActor
-struct OwnershipNeutralGestureTests {
-
-    @Test
-    func terminalInputContainerHasNoOwnershipClaimGestureHook() {
-        let view = TerminalInputContainerView()
-        #expect(!view.hasOwnershipClaimGestureHookForTesting)
-    }
-
-    @Test
-    func longPressAndPinchRemainOwnershipNeutral() {
-        let view = TerminalInputContainerView()
-
-        view.simulateLongPressBeganForTesting()
-        view.simulatePinchForTesting(state: .began, scale: 1.2)
-
-        #expect(!view.hasOwnershipClaimGestureHookForTesting)
-    }
-}
 #endif
