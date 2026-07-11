@@ -333,6 +333,62 @@ struct TerminalPaneViewTests {
         #expect(!container.canPerformAction(commandAction, withSender: mismatchedModifierCommand))
     }
 
+    @Test("ordinary reconstructed key commands validate stable identity and title")
+    func reconstructedHardwareCommandValidatesStableIdentityAndTitle() {
+        let container = TerminalInputContainerView(frame: .zero)
+        container.hardwareKeyboardCommands = [
+            .init(
+                id: "split-down",
+                title: "Split Down",
+                input: "j",
+                modifierFlags: [.command],
+                perform: {}
+            ),
+        ]
+        let action = try! #require(container.keyCommands?.first?.action)
+
+        let matching = UIKeyCommand(
+            title: "Split Down",
+            image: nil,
+            action: action,
+            input: "j",
+            modifierFlags: [.command],
+            propertyList: "split-down",
+            alternates: [],
+            discoverabilityTitle: "Split Down",
+            attributes: [],
+            state: .off
+        )
+        let staleID = UIKeyCommand(
+            title: "Split Down",
+            image: nil,
+            action: action,
+            input: "j",
+            modifierFlags: [.command],
+            propertyList: "split-right",
+            alternates: [],
+            discoverabilityTitle: "Split Down",
+            attributes: [],
+            state: .off
+        )
+        let staleTitle = UIKeyCommand(
+            title: "Split Right",
+            image: nil,
+            action: action,
+            input: "j",
+            modifierFlags: [.command],
+            propertyList: "split-down",
+            alternates: [],
+            discoverabilityTitle: "Split Right",
+            attributes: [],
+            state: .off
+        )
+
+        #expect(container.canPerformAction(action, withSender: matching))
+        #expect(!container.canPerformAction(action, withSender: staleID))
+        #expect(!container.canPerformAction(action, withSender: staleTitle))
+    }
+
     @Test("hardware command changes do not alter unrelated action validation")
     func unrelatedActionValidationIsUnchanged() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
