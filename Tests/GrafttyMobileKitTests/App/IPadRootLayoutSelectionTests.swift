@@ -106,6 +106,35 @@ struct IPadRootLayoutSelectionTests {
         ])
     }
 
+    @Test("fixed worktree execution is a no-op with one eligible worktree")
+    func fixedWorktreeExecutionIsNoOpWithOneEligibleWorktree() {
+        let only = WorktreePanes(
+            path: "/a",
+            displayName: "a",
+            repoDisplayName: "repo",
+            displayBranch: "a",
+            state: .running,
+            isMainCheckout: false,
+            prBadge: nil,
+            stats: nil,
+            attentionText: nil,
+            layout: nil
+        )
+
+        for selectedPath in [String?.none, "/a"] {
+            #expect(IPadWorktreeNavigation.nextPath(
+                in: [only],
+                selectedPath: selectedPath,
+                forward: true
+            ) == nil)
+            #expect(IPadWorktreeNavigation.nextPath(
+                in: [only],
+                selectedPath: selectedPath,
+                forward: false
+            ) == nil)
+        }
+    }
+
     @Test("pane row selection derives the selected worktree from the latest snapshot")
     func paneRowSelectionDerivesWorktreePath() {
         let appState = freshAppState()

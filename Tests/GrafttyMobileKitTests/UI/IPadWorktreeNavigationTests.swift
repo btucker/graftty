@@ -67,11 +67,13 @@ struct IPadWorktreeNavigationTests {
         #expect(IPadWorktreeNavigation.nextPath(in: list, selectedPath: nil, forward: false) == "/c")
     }
 
-    @Test("single selectable worktree can be selected from no current selection")
-    func singleSelectableStartsFromNoSelection() {
+    @Test("single selectable worktree is always a no-op")
+    func singleSelectableIsAlwaysNoOp() {
         let list = [wt("/a")]
-        #expect(IPadWorktreeNavigation.nextPath(in: list, selectedPath: nil, forward: true) == "/a")
         #expect(IPadWorktreeNavigation.nextPath(in: list, selectedPath: "/a", forward: true) == nil)
+        #expect(IPadWorktreeNavigation.nextPath(in: list, selectedPath: "/a", forward: false) == nil)
+        #expect(IPadWorktreeNavigation.nextPath(in: list, selectedPath: nil, forward: true) == nil)
+        #expect(IPadWorktreeNavigation.nextPath(in: list, selectedPath: nil, forward: false) == nil)
     }
 
     @Test("""
