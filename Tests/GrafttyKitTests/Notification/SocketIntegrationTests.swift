@@ -20,12 +20,13 @@ struct SocketIntegrationTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let socketPath = dir.appendingPathComponent("s").path
-        let received = MutableBox<NotificationMessage?>(nil)
+        let (messages, messageContinuation) = AsyncStream.makeStream(of: NotificationMessage.self)
+        defer { messageContinuation.finish() }
 
         let server = SocketServer(socketPath: socketPath)
-        server.onMessage = { msg in received.value = msg }
+        server.onMessage = { messageContinuation.yield($0) }
         try server.start()
-        try await Task.sleep(for: .milliseconds(100))
+        defer { server.stop() }
 
         // Connect as client
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -45,11 +46,8 @@ struct SocketIntegrationTests {
         msg.withCString { ptr in _ = Darwin.write(fd, ptr, strlen(ptr)) }
         close(fd)
 
-        try await Task.sleep(for: .milliseconds(200))
-        server.stop()
-
-        #expect(received.value != nil)
-        if case .notify(let path, let text, _, _) = received.value {
+        let received = try await expectMessage(from: messages)
+        if case .notify(let path, let text, _, _) = received {
             #expect(path == "/tmp/wt")
             #expect(text == "test")
         } else { Issue.record("Expected .notify message") }
@@ -90,15 +88,14 @@ struct SocketIntegrationTests {
         let preInode = (try? FileManager.default.attributesOfItem(atPath: socketPath)[.systemFileNumber] as? UInt64) ?? 0
         #expect(preInode != 0)
 
-        let received = MutableBox<NotificationMessage?>(nil)
+        let (messages, messageContinuation) = AsyncStream.makeStream(of: NotificationMessage.self)
+        defer { messageContinuation.finish() }
         let server = SocketServer(socketPath: socketPath)
-        server.onMessage = { msg in received.value = msg }
+        server.onMessage = { messageContinuation.yield($0) }
 
         // This must not throw, even though the stale file exists.
         try server.start()
         defer { server.stop() }
-
-        try await Task.sleep(for: .milliseconds(100))
 
         // Verify the file at socketPath is now a socket (post-unlink,
         // post-bind) and is a different inode than the stale one.
@@ -128,10 +125,8 @@ struct SocketIntegrationTests {
         msg.withCString { ptr in _ = Darwin.write(fd, ptr, strlen(ptr)) }
         close(fd)
 
-        try await Task.sleep(for: .milliseconds(200))
-
-        #expect(received.value != nil)
-        if case .notify(_, let text, _, _) = received.value {
+        let received = try await expectMessage(from: messages)
+        if case .notify(_, let text, _, _) = received {
             #expect(text == "after-crash")
         } else { Issue.record("Expected .notify message after stale-file recovery") }
     }
@@ -281,13 +276,13 @@ struct SocketIntegrationTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let socketPath = dir.appendingPathComponent("s").path
-        let received = MutableBox<NotificationMessage?>(nil)
+        let (messages, messageContinuation) = AsyncStream.makeStream(of: NotificationMessage.self)
+        defer { messageContinuation.finish() }
         let server = SocketServer(socketPath: socketPath)
-        server.onMessage = { msg in received.value = msg }
+        server.onMessage = { messageContinuation.yield($0) }
         // Intentionally no onRequest.
         try server.start()
         defer { server.stop() }
-        try await Task.sleep(for: .milliseconds(100))
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         var addr = sockaddr_un()
@@ -310,8 +305,7 @@ struct SocketIntegrationTests {
         // Server closes without writing anything; read returns 0 (EOF).
         #expect(bytesRead == 0)
 
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(received.value != nil)
+        _ = try await expectMessage(from: messages)
     }
 
     /// `onRequest` runs on the main queue; if the main queue stalls
@@ -410,12 +404,13 @@ struct SocketIntegrationTests {
         defer { try? FileManager.default.removeItem(at: dir) }
 
         let socketPath = dir.appendingPathComponent("s").path
-        let received = MutableBox<NotificationMessage?>(nil)
+        let (messages, messageContinuation) = AsyncStream.makeStream(of: NotificationMessage.self)
+        defer { messageContinuation.finish() }
 
         let server = SocketServer(socketPath: socketPath)
-        server.onMessage = { msg in received.value = msg }
+        server.onMessage = { messageContinuation.yield($0) }
         try server.start()
-        try await Task.sleep(for: .milliseconds(100))
+        defer { server.stop() }
 
         func connectClient() -> Int32 {
             let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -448,13 +443,33 @@ struct SocketIntegrationTests {
         msg.withCString { ptr in _ = Darwin.write(activeFD, ptr, strlen(ptr)) }
         close(activeFD)
 
-        // Wait comfortably longer than the 2s server-side read timeout
-        // so handler #1 finishes and the serial queue drains to #2.
-        try await Task.sleep(for: .milliseconds(2800))
-        server.stop()
+        // The callback itself is the synchronization point. This still covers
+        // the 2s server-side read timeout without assuming the main queue will
+        // run within an arbitrary post-send sleep window under full-suite load.
+        _ = try await expectMessage(from: messages)
+    }
 
-        #expect(received.value != nil,
-                "Silent client blocked the serial dispatch queue; message from the valid client was never processed.")
+    private struct MessageTimeoutError: Error {}
+
+    private func expectMessage(
+        from stream: AsyncStream<NotificationMessage>,
+        timeout: Duration = .seconds(20)
+    ) async throws -> NotificationMessage {
+        try await withThrowingTaskGroup(of: NotificationMessage?.self) { group in
+            group.addTask {
+                var iterator = stream.makeAsyncIterator()
+                return await iterator.next()
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                return nil
+            }
+            defer { group.cancelAll() }
+            guard let message = try await group.next() ?? nil else {
+                throw MessageTimeoutError()
+            }
+            return message
+        }
     }
 }
 
