@@ -131,7 +131,6 @@ public actor WebRTCHostAgent {
     private var peerConnection: RTCPeerConnection?
     private var dataChannel: RTCDataChannel?
     private let delegate: PeerConnectionDelegate
-    private let dataChannelDelegate: DataChannelDelegate
 
     /// Resumed once `iceGatheringState` first reaches `.complete`. Stored on
     /// the actor so the WebRTC-thread delegate callback and the actor's
@@ -142,11 +141,6 @@ public actor WebRTCHostAgent {
 
     /// See `RemoteHostConnection.iceGatheringTimeout`.
     private static let iceGatheringTimeout: Duration = .seconds(5)
-
-    /// Most-recently received binary frame. Test-only entry point —
-    /// production replaces this with channel-framing dispatch in M1.4.
-    /// `internal` so the in-target test can read it via `@testable import`.
-    internal private(set) var lastReceivedBinary: Data?
 
     public init(
         hostKey: Curve25519.Signing.PrivateKey,
@@ -166,7 +160,6 @@ public actor WebRTCHostAgent {
         self.displayOwnershipBroadcaster = DisplayOwnershipBroadcaster(store: displayOwnershipStore)
         self.sshConnectionRegistry = sshConnectionRegistry
         self.delegate = PeerConnectionDelegate()
-        self.dataChannelDelegate = DataChannelDelegate()
     }
 
     /// Replace the `panes-state` subscription callback. The R5 wiring path
@@ -386,20 +379,23 @@ public actor WebRTCHostAgent {
             return
         }
         self.dataChannel = dc
-        dc.delegate = dataChannelDelegate
-        dataChannelDelegate.onOpen = { [weak self] in
-            Task { await self?.installSSHHandler() }
-        }
-        dataChannelDelegate.onMessage = { [weak self] data in
-            Task { await self?.recordReceivedBinary(data) }
-        }
-        if dc.readyState == .open {
-            Task { await installSSHHandler() }
-        }
-    }
-
-    private func recordReceivedBinary(_ data: Data) {
-        lastReceivedBinary = data
+        // Install the SSH stack IMMEDIATELY — not at the open
+        // notification. `SSHNIOTransport.init` (inside `installSSHHandler`)
+        // takes over the channel delegate and buffers inbound bytes, and
+        // `transport.start()` parks until the channel opens (or throws if
+        // it dies first). Installing at the open notification instead left
+        // a multi-async-hop window in which the client's NIOSSH — which
+        // writes its SSH version banner the moment the CLIENT's own open
+        // notification lands — could deliver bytes to a delegate that
+        // discarded them, silently stalling the handshake forever (the
+        // remote peer waits for a banner that never arrives). One narrower
+        // window remains — the single actor hop between `didOpen` delivery
+        // and `SSHNIOTransport.init` — closing it fully would require
+        // constructing the transport synchronously on WebRTC's delegate
+        // thread; the client cannot realistically beat one hop because its
+        // first byte requires its own open notification plus its own
+        // handler install and `start()`.
+        Task { await installSSHHandler() }
     }
 
     /// `internal` (rather than `private`) so `WebRTCHostAgentReconnectTests`
@@ -655,17 +651,3 @@ private final class AuthenticatedPeerBox: @unchecked Sendable {
     }
 }
 
-private final class DataChannelDelegate: NSObject, RTCDataChannelDelegate, @unchecked Sendable {
-    nonisolated(unsafe) var onOpen: (@Sendable () -> Void)?
-    nonisolated(unsafe) var onMessage: (@Sendable (Data) -> Void)?
-
-    func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
-        if dataChannel.readyState == .open {
-            onOpen?()
-        }
-    }
-
-    func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
-        onMessage?(buffer.data)
-    }
-}

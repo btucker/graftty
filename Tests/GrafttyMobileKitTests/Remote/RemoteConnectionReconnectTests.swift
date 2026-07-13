@@ -324,15 +324,21 @@ struct RemoteConnectionReconnectTests {
             }
             box.retain(answerer)
 
-            // Fire-and-forget: once the answerer's DataChannel opens
-            // (asynchronously, after the offerer applies this answer and
-            // ICE completes), build the server-side SSH stack and start
-            // it. `SSHNIOTransport.init` reassigns the DataChannel's
-            // delegate and buffers any inbound bytes that arrive before
-            // `start()` runs, so there's no hard ordering requirement
-            // against the client side's own handshake start.
+            // Fire-and-forget: build the server-side SSH stack the moment
+            // the answerer's DataChannel OBJECT arrives — deliberately NOT
+            // waiting for it to reach `.open`. `SSHNIOTransport.init`
+            // takes over the channel delegate and buffers inbound bytes;
+            // `start()` parks until the channel opens. The previous shape
+            // (await `openedDataChannel()`, then construct) left a
+            // multi-async-hop window in which the client's NIOSSH — which
+            // writes its version banner the instant the CLIENT's open
+            // notification lands — delivered bytes to the no-op
+            // OpenTrackerDelegate, silently dropping them and stalling
+            // the handshake forever: the load-dependent cause of the
+            // IPAD-5.2 CI flake (the second cause, after REMOTE-11.2's
+            // dropped early ICE candidates).
             Task {
-                guard let dc = try? await answerer.openedDataChannel() else { return }
+                guard let dc = try? await answerer.arrivedDataChannel() else { return }
                 let serverTransport = SSHNIOTransport(dataChannel: dc)
                 box.retainTransport(serverTransport)
                 do {
@@ -512,6 +518,7 @@ private actor LoopbackPeer: WebRTCIceCandidateReceiver {
     private var gatheringContinuation: CheckedContinuation<Void, Never>?
     private var gatheringTimeoutTask: Task<Void, Never>?
     private var openContinuation: CheckedContinuation<RTCDataChannel, Error>?
+    private var arrivalContinuation: CheckedContinuation<RTCDataChannel, Error>?
     private var resolvedOpenDataChannel: RTCDataChannel?
 
     private static let gatheringTimeout: Duration = .seconds(5)
@@ -591,6 +598,19 @@ private actor LoopbackPeer: WebRTCIceCandidateReceiver {
         }
     }
 
+    /// Resolves as soon as the DataChannel OBJECT exists (for the
+    /// answerer: when `didOpen dataChannel` is delivered), possibly while
+    /// it is still `.connecting`. Callers that wrap the channel in
+    /// `SSHNIOTransport` must use this rather than `openedDataChannel()`
+    /// so the transport's delegate takeover + inbound buffering is in
+    /// place before the remote side's first bytes can arrive.
+    func arrivedDataChannel() async throws -> RTCDataChannel {
+        if let dc = dataChannel { return dc }
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RTCDataChannel, Error>) in
+            self.arrivalContinuation = continuation
+        }
+    }
+
     func bindIceCandidates(to peer: WebRTCIceCandidateReceiver) {
         self.iceCandidateTarget = peer
         let drained = pendingLocalCandidates
@@ -622,6 +642,10 @@ private actor LoopbackPeer: WebRTCIceCandidateReceiver {
     private func adoptInboundDataChannel(_ dc: RTCDataChannel) {
         self.dataChannel = dc
         installOpenTracker(on: dc)
+        if let continuation = arrivalContinuation {
+            arrivalContinuation = nil
+            continuation.resume(returning: dc)
+        }
     }
 
     private nonisolated(unsafe) var currentOpenTracker: OpenTrackerDelegate?
@@ -685,6 +709,10 @@ private actor LoopbackPeer: WebRTCIceCandidateReceiver {
         }
         if let pending = openContinuation {
             openContinuation = nil
+            pending.resume(throwing: LoopbackError.dataChannelNeverOpened)
+        }
+        if let pending = arrivalContinuation {
+            arrivalContinuation = nil
             pending.resume(throwing: LoopbackError.dataChannelNeverOpened)
         }
         dataChannel?.close()
