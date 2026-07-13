@@ -1874,6 +1874,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-11.2** If a remote ICE candidate arrives before the answer has been applied, then the connection shall buffer it and add it to the peer connection once the remote description is set, rather than dropping it.
 
+**REMOTE-11.3** When the client creates its data channel, the connection shall install the inbound-buffering SSH transport immediately, before the channel opens, so bytes the host writes upon its own open notification are never dropped.
+
+**REMOTE-11.4** While a data channel's SSH transport has not yet attached, the application shall buffer inbound data-channel bytes losslessly from the moment the channel is announced and deliver them to the transport in arrival order ahead of live traffic.
+
 ## URL — Worktree URL Handler
 
 ### URL-1.x

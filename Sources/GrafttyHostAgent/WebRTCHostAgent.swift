@@ -130,6 +130,11 @@ public actor WebRTCHostAgent {
     }()
     private var peerConnection: RTCPeerConnection?
     private var dataChannel: RTCDataChannel?
+    /// The lossless inbox attached to `dataChannel` synchronously inside
+    /// `peerConnection(_:didOpen:)` — see `DataChannelInbox`. Handed to
+    /// `SSHNIOTransport` in `installSSHHandler` so bytes the client sent
+    /// before the transport existed replay instead of dropping.
+    private var dataChannelInbox: DataChannelInbox?
     private let delegate: PeerConnectionDelegate
 
     /// Resumed once `iceGatheringState` first reaches `.complete`. Stored on
@@ -220,8 +225,8 @@ public actor WebRTCHostAgent {
         // The mobile side is the data-channel creator; the host receives
         // the data channel via `didOpen dataChannel` (handled in
         // `PeerConnectionDelegate.onDataChannel`).
-        delegate.onDataChannel = { [weak self] dc in
-            Task { await self?.adoptDataChannel(dc) }
+        delegate.onDataChannel = { [weak self] dc, inbox in
+            Task { await self?.adoptDataChannel(dc, inbox: inbox) }
         }
 
         state = .answering
@@ -350,6 +355,7 @@ public actor WebRTCHostAgent {
         }
         dataChannel?.close()
         dataChannel = nil
+        dataChannelInbox = nil
     }
 
     /// Generation-guarded teardown used ONLY by the closure registered with
@@ -370,7 +376,7 @@ public actor WebRTCHostAgent {
         await close()
     }
 
-    private func adoptDataChannel(_ dc: RTCDataChannel) {
+    private func adoptDataChannel(_ dc: RTCDataChannel, inbox: DataChannelInbox) {
         guard dc.label == GrafttyWebRTC.dataChannelLabel else {
             // Unexpected label — close defensively. With Noise handshake (M1.3),
             // peer identity will be authenticated separately; this is belt-and-
@@ -379,22 +385,17 @@ public actor WebRTCHostAgent {
             return
         }
         self.dataChannel = dc
-        // Install the SSH stack IMMEDIATELY — not at the open
-        // notification. `SSHNIOTransport.init` (inside `installSSHHandler`)
-        // takes over the channel delegate and buffers inbound bytes, and
-        // `transport.start()` parks until the channel opens (or throws if
-        // it dies first). Installing at the open notification instead left
-        // a multi-async-hop window in which the client's NIOSSH — which
-        // writes its SSH version banner the moment the CLIENT's own open
-        // notification lands — could deliver bytes to a delegate that
-        // discarded them, silently stalling the handshake forever (the
-        // remote peer waits for a banner that never arrives). One narrower
-        // window remains — the single actor hop between `didOpen` delivery
-        // and `SSHNIOTransport.init` — closing it fully would require
-        // constructing the transport synchronously on WebRTC's delegate
-        // thread; the client cannot realistically beat one hop because its
-        // first byte requires its own open notification plus its own
-        // handler install and `start()`.
+        self.dataChannelInbox = inbox
+        // Install the SSH stack immediately — `transport.start()` (inside
+        // `installSSHHandler`) parks until the channel opens, or throws if
+        // it dies first. The inbox was attached as the channel's delegate
+        // synchronously inside `peerConnection(_:didOpen:)`, so every byte
+        // the client has sent since the channel was announced — including
+        // the SSH version banner NIOSSH writes the instant the CLIENT's
+        // open notification lands — is buffered and replays into the
+        // transport. Before the inbox, banner bytes racing the delegate
+        // handoff were silently discarded, stalling the handshake forever
+        // (the dominant cause of the IPAD-5.2 CI flake).
         Task { await installSSHHandler() }
     }
 
@@ -408,8 +409,8 @@ public actor WebRTCHostAgent {
     internal func installSSHHandler() async {
         guard !sshInstallStarted else { return }
         sshInstallStarted = true
-        guard let dc = dataChannel else { return }
-        let transport = SSHNIOTransport(dataChannel: dc)
+        guard let dc = dataChannel, let inbox = dataChannelInbox else { return }
+        let transport = SSHNIOTransport(dataChannel: dc, inbox: inbox)
         self.sshTransport = transport  // assign before start so close() can find it
         let factory = streamFactory
         let panesStateSubscribe = self.panesStateSubscribe
@@ -613,7 +614,7 @@ public actor WebRTCHostAgent {
 /// unsafe is bounded; `@Sendable` keeps callers honest.
 private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
     nonisolated(unsafe) var onIceCandidate: (@Sendable (RTCIceCandidate) -> Void)?
-    nonisolated(unsafe) var onDataChannel: (@Sendable (RTCDataChannel) -> Void)?
+    nonisolated(unsafe) var onDataChannel: (@Sendable (RTCDataChannel, DataChannelInbox) -> Void)?
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
@@ -631,7 +632,11 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate,
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
-        onDataChannel?(dataChannel)
+        // WebRTC serializes message delivery behind this callback. Attach
+        // the inbox before returning so the actor hop cannot lose bytes.
+        let inbox = DataChannelInbox()
+        dataChannel.delegate = inbox
+        onDataChannel?(dataChannel, inbox)
     }
 }
 
@@ -650,4 +655,3 @@ private final class AuthenticatedPeerBox: @unchecked Sendable {
         set { lock.lock(); defer { lock.unlock() }; _deviceID = newValue }
     }
 }
-

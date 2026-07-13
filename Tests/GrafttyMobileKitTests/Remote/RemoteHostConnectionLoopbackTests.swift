@@ -129,6 +129,34 @@ struct RemoteHostConnectionLoopbackTests {
         await answererPeer.close()
     }
 
+    /// The mirror of the host-side first-bytes race: the HOST writes its
+    /// SSH version banner the instant the host's open notification lands,
+    /// which can precede this client's own open notification handling by
+    /// several scheduler hops. If the client only constructs its
+    /// inbound-buffering transport at its open notification, the host
+    /// banner lands on a delegate that discards it and the handshake
+    /// stalls forever. Arming the transport at channel creation closes
+    /// the window: from that point every inbound byte is buffered.
+    @Test("""
+@spec REMOTE-11.3: When the client creates its data channel, the connection shall install the inbound-buffering SSH transport immediately, before the channel opens, so bytes the host writes upon its own open notification are never dropped.
+""", .timeLimit(.minutes(1)))
+    func transportIsArmedAtChannelCreationBeforeOpen() async throws {
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let hostFingerprint = RemoteIdentityFingerprint(
+            of: try RemoteIdentityPublicKey(rawRepresentation: hostKey.publicKey.rawRepresentation)
+        )
+        let client = RemoteHostConnection(
+            clientKey: clientKey,
+            expectedHostFingerprint: hostFingerprint
+        )
+        _ = try await client.createOffer()
+
+        #expect(await client.sshTransportForTesting != nil)
+
+        await client.close()
+    }
+
     /// The CI-flake mechanism behind IPAD-5.2's intermittent 15s pollUntil
     /// timeout: signaling can trickle the answerer's candidates to the
     /// offerer BEFORE the answer SDP is applied. libwebrtc rejects
