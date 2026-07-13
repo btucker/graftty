@@ -97,6 +97,23 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     private var pendingLocalCandidates: [RTCIceCandidate] = []
     private var iceCandidateTarget: WebRTCIceCandidateReceiver?
 
+    /// Remote ICE candidates that arrived before `applyAnswer` set the
+    /// remote description. libwebrtc rejects `add(_:)` until a remote
+    /// description exists, so trickled candidates that race ahead of the
+    /// answer must be held and added once `applyAnswer` succeeds — the
+    /// receive-side mirror of `pendingLocalCandidates` above. Without
+    /// this buffer the race is invisible when ICE gathering completes
+    /// fast (candidates ride inside the SDPs), but on a loaded machine
+    /// the 5s gathering timeout ships candidate-poor SDPs and the
+    /// dropped trickle batch leaves ICE unable to connect.
+    private var pendingRemoteCandidates: [RTCIceCandidate] = []
+    private var remoteDescriptionApplied = false
+
+    /// Test seam: how many early remote candidates are currently buffered.
+    internal var pendingRemoteCandidateCountForTesting: Int {
+        pendingRemoteCandidates.count
+    }
+
     /// Bound on how long `waitForIceGatheringComplete` will block when the
     /// SDK never emits `.complete` (iOS simulator, locked-down networks).
     /// Real LAN gathering completes in <100ms, so this only fires in
@@ -290,6 +307,16 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         do {
             guard let pc = peerConnection else { throw ConnectionError.notConfigured }
             try await Self.setRemoteDescription(pc, answer)
+            remoteDescriptionApplied = true
+            // Drain candidates that trickled in ahead of the answer.
+            // Best-effort per candidate, mirroring the trickle path's
+            // semantics — one malformed candidate must not fail the
+            // whole answer application. (REMOTE-11.2)
+            let drained = pendingRemoteCandidates
+            pendingRemoteCandidates.removeAll()
+            for candidate in drained {
+                try? await Self.addCandidate(candidate, to: pc)
+            }
             try await waitForDataChannelOpen()
         } catch {
             setState(.failed(reason: "apply answer failed: \(error)"))
@@ -338,9 +365,20 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         }
     }
 
-    /// Apply an ICE candidate received from the remote peer.
+    /// Apply an ICE candidate received from the remote peer. Candidates
+    /// arriving before `applyAnswer` has set the remote description are
+    /// buffered (libwebrtc rejects them with "remote description was
+    /// null") and added once the answer is applied. (REMOTE-11.2)
     public func addRemoteIceCandidate(_ candidate: RTCIceCandidate) async throws {
         guard let pc = peerConnection else { throw ConnectionError.notConfigured }
+        guard remoteDescriptionApplied else {
+            pendingRemoteCandidates.append(candidate)
+            return
+        }
+        try await Self.addCandidate(candidate, to: pc)
+    }
+
+    private static func addCandidate(_ candidate: RTCIceCandidate, to pc: RTCPeerConnection) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             pc.add(candidate) { error in
                 if let error { continuation.resume(throwing: error); return }
@@ -498,6 +536,8 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         peerConnection = nil
         iceCandidateTarget = nil
         pendingLocalCandidates.removeAll()
+        pendingRemoteCandidates.removeAll()
+        remoteDescriptionApplied = false
     }
 
     /// `RTCIceConnectionState.failed` means ICE has exhausted every
