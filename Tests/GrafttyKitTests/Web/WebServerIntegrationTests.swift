@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import GrafttyKit
+import GrafttyProtocol
 
 @Suite("WebServer — integration (requires vendored zmx)")
 struct WebServerIntegrationTests {
@@ -110,7 +111,7 @@ struct WebServerIntegrationTests {
         defer { wsSession.invalidateAndCancel() }
         let first = wsSession.webSocketTask(with: url)
         first.resume()
-        try await first.send(.string(#"{"type":"resize","cols":80,"rows":24}"#))
+        try await Self.claimControl(task: first, clientID: "web-it-first")
         try await first.send(.data(Data("echo ONE\n".utf8)))
 
         // Drain until we see the marker, then hang up — the server's
@@ -126,7 +127,7 @@ struct WebServerIntegrationTests {
 
         let second = wsSession.webSocketTask(with: url)
         second.resume()
-        try await second.send(.string(#"{"type":"resize","cols":80,"rows":24}"#))
+        try await Self.claimControl(task: second, clientID: "web-it-second")
         try await second.send(.data(Data("echo TWO\n".utf8)))
         let text = try await Self.readUntil(task: second, marker: "TWO", deadline: 8.0)
         #expect(text.contains("TWO"),
@@ -171,6 +172,24 @@ struct WebServerIntegrationTests {
         return String(data: collected, encoding: .utf8) ?? ""
     }
 
+    private static func claimControl(task: URLSessionWebSocketTask, clientID: String) async throws {
+        let id = DisplayClientID(clientID)
+        try await task.send(.string(WebControlEnvelope.hello(
+            clientID: id,
+            kind: .web,
+            role: .interactive,
+            visible: true,
+            cols: 80,
+            rows: 24
+        ).encoded()))
+        try await task.send(.string(WebControlEnvelope.takeControl(
+            clientID: id,
+            kind: .web,
+            cols: 80,
+            rows: 24
+        ).encoded()))
+    }
+
     @Test func wsEchoRoundTrip() async throws {
         // Skipped in CI until the end-to-end zmx-attach + NIO + URLSession
         // WebSocket path is hardened against environment quirks that
@@ -207,7 +226,7 @@ struct WebServerIntegrationTests {
         let wsTask = wsSession.webSocketTask(with: url)
         wsTask.resume()
 
-        try await wsTask.send(.string(#"{"type":"resize","cols":80,"rows":24}"#))
+        try await Self.claimControl(task: wsTask, clientID: "web-it-echo")
         try await wsTask.send(.data(Data("echo HELLO_INTEG\n".utf8)))
 
         // URLSessionWebSocketTask.receive() blocks until a frame arrives —
