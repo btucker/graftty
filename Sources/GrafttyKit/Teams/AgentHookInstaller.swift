@@ -423,24 +423,20 @@ public struct AgentHookInstaller: Sendable {
                     --help|-h|--version|-V)
                       return 1
                       ;;
-                    -c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote|--remote-auth-token-env|--local-provider|--add-dir|-i|--image)
+                    --remote|--remote=*)
+                      return 1
+                      ;;
+                    -c|--config|--enable|--disable|--model|-m|--profile|-p|--sandbox|-s|--ask-for-approval|-a|--approval-policy|--cwd|--cd|-C|--color|--output-schema|--origin|--settings|--remote-auth-token-env|--local-provider|--add-dir|-i|--image)
                       shift
                       [ "$#" -gt 0 ] && shift
                       continue
                       ;;
-                    --config=*|--enable=*|--disable=*|--model=*|--profile=*|--sandbox=*|--ask-for-approval=*|--approval-policy=*|--cwd=*|--cd=*|--color=*|--output-schema=*|--origin=*|--settings=*|--remote=*|--remote-auth-token-env=*|--local-provider=*|--add-dir=*|--image=*)
-                      shift
-                      continue
-                      ;;
                     --)
-                      shift
-                      ;;
-                    --oss|--strict-config|--dangerously-bypass-approvals-and-sandbox|--dangerously-bypass-hook-trust|--search|--no-alt-screen)
-                      shift
-                      continue
+                      return 0
                       ;;
                     -*)
-                      return 1
+                      shift
+                      continue
                       ;;
                     app-server|remote-control|exec|e|review|login|logout|mcp|plugin|mcp-server|app|completion|update|doctor|sandbox|debug|apply|a|archive|delete|unarchive|cloud|exec-server|features|help)
                       return 1
@@ -459,7 +455,7 @@ public struct AgentHookInstaller: Sendable {
               mkdir -p "$_graftty_codex_socket_dir"
               _graftty_codex_socket="$_graftty_codex_socket_dir/$$.sock"
               _graftty_codex_app_server_log="$_graftty_codex_socket_dir/$$.log"
-              rm -f "$_graftty_codex_socket"
+              rm -f "$_graftty_codex_socket" "$_graftty_codex_app_server_log"
               env CODEX_HOME=\(codexHomeLiteral) "$real_binary" app-server --listen "unix://$_graftty_codex_socket" </dev/null >>"$_graftty_codex_app_server_log" 2>&1 &
               _graftty_codex_app_server_pid=$!
               _graftty_wait_for_codex_socket() {

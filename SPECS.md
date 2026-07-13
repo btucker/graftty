@@ -1742,6 +1742,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-9.1** When a Stop-event hook command (`graftty team hook <runtime> stop` or the async `graftty team watch-inbox <runtime>`) is invoked and the JSON the runtime wrote to the hook's stdin contains an `agent_id` string — Claude Code's marker that this Stop fired inside a Task subagent context rather than for a top-level agent turn — the CLI shall short-circuit before doing any per-Stop work: no `teamHook` socket message is sent, no `InboxWatcher` is spawned, and neither the worktree's `"<Agent> needs input"` attention overlay nor the macOS user notification fires. Without this filter, every Task subagent end both produces a spurious 'needs attention' alert and leaks a long-running watcher process while the top-level agent is still working.
 
+### TEAM-10.x — Codex Wrapper App-Server Routing
+
+**TEAM-10.1** When codex is invoked interactively — any option flags (known or unknown to the wrapper), a prompt, or arguments after `--` — the generated wrapper shall start a codex app-server and connect the TUI to it via `--remote`, so team-message delivery has a live app-server for the session.
+
+**TEAM-10.2** If a codex invocation names a non-interactive subcommand, requests help or version output, or supplies its own `--remote` endpoint, then the generated wrapper shall run codex directly without starting an app-server.
+
 ## EDITOR — Editor Integration
 
 ### EDITOR-1.x
