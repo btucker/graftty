@@ -1080,6 +1080,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-9.9** When Web Access receives GET /ghostty-keybindings, the server shall return a JSON object whose bindings map Ghostty action raw names to the host-resolved ShortcutChord values so remote clients can install the same app-level command shortcuts as the host.
 
+**WEB-9.10** While no ghostty-keybindings provider is wired (e.g. the host app is still starting up), GET /ghostty-keybindings shall return 503 rather than an empty 200 map, so remote clients fall back to their bundled defaults instead of caching an empty binding set as host-resolved.
+
 ## OWN — Display Ownership
 
 ### OWN-1.x — Follower Convergence
@@ -1480,7 +1482,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-11.3** When the user taps **Select All** in the long-press menu, the application shall invoke libghostty's `select_all` binding action via `surface.performAction("select_all")` and shall enter selection mode for that pane with the visible viewport highlighted.
 
-**IOS-11.4** While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and libghostty's built-in pan-to-scroll recognizer on the underlying `UITerminalView` shall be disabled until selection mode exits.
+**IOS-11.4** While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and libghostty's built-in pan-to-scroll recognizers on the underlying `UITerminalView` shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
 
 **IOS-11.5** When selection mode is active and the user lifts their finger after Select / Select All / extend, the application shall present a second `UIEditMenuInteraction` menu anchored near the selection rect containing **Copy** and **Cancel**.
 
@@ -1621,6 +1623,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IPAD-8.6** When no current iPad worktree is selected, forward Ctrl+Option+Tab shall start before the first selectable worktree and reverse Ctrl+Option+Shift+Tab shall start after the last selectable worktree.
 
 **IPAD-8.7** iPad fixed worktree navigation commands shall be registered in both command projections even when zero or one target exists, reserving their chords while execution is a no-op.
+
+**IPAD-8.8** The auto-ownership fulfillment latch shall live in app-scoped state with the same lifetime as `ownershipRequestCount`, so detail-view recreation (e.g. the focused-pane fallback after the host closes a pane) cannot replay an already-fulfilled ownership request and seize display control without a new user action.
+
+**IPAD-8.9** When a terminal pane remounts with zero pending focus requests (all prior requests already honored and consumed), the application shall not call becomeFirstResponder, so a keyboard the user dismissed is not re-summoned by idle-snapshot swaps or other view recreations.
 
 ### IPAD-9.x
 
@@ -1840,7 +1846,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-7.6** If a trusted peer is revoked while a `pane_control` channel is open, the channel shall close and subsequent open requests from the revoked peer shall be rejected.
 
-**REMOTE-7.7** When pane-control split requests are encoded, they shall use semantic directions right/down/left/up, and when legacy horizontal/vertical split directions are decoded, they shall decode as right/down for compatibility.
+**REMOTE-7.7** When pane-control split requests are encoded, the right/down directions shall encode as the legacy horizontal/vertical wire tokens so hosts running released builds keep decoding them, left/up shall encode as their semantic tokens, and when legacy horizontal/vertical split directions are decoded, they shall decode as right/down.
 
 ### REMOTE-8.x — SSH session layer
 

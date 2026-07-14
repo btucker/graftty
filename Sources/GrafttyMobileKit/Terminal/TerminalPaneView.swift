@@ -6,11 +6,15 @@ import UIKit
 /// A SwiftUI wrapper around `UITerminalView` backed by an
 /// `InMemoryTerminalSession` (no PTY — safe inside App Sandbox).
 ///
-/// `focusRequestCount` is a monotonically-increasing counter; incrementing
-/// it causes the wrapped `UITerminalView` to call `becomeFirstResponder`
-/// on the next `updateUIView`. This lets `SingleSessionView`'s
-/// "Show keyboard" button programmatically summon the keyboard without
-/// the user having to tap the terminal itself.
+/// `pendingFocusRequests` is the number of not-yet-honored keyboard focus
+/// requests; while it is positive the wrapped `UITerminalView` calls
+/// `becomeFirstResponder` on each `updateUIView` and reports success via
+/// `onFocusRequestsConsumed` so the counter owners can zero it. This lets
+/// `SingleSessionView`'s "Show keyboard" button programmatically summon the
+/// keyboard without the user having to tap the terminal itself. Passing a
+/// pending delta (not a monotonic total) is what keeps a remounted pane —
+/// whose fresh `Coordinator` has no memory — from replaying an old,
+/// already-honored request and re-summoning a dismissed keyboard (IPAD-8.9).
 public struct TerminalPaneView: UIViewRepresentable {
     public struct CommittedSoftwareInput {
         public let insertText: (String) -> Void
@@ -49,7 +53,10 @@ public struct TerminalPaneView: UIViewRepresentable {
 
     public let session: InMemoryTerminalSession
     public let controller: TerminalController
-    public let focusRequestCount: Int
+    public let pendingFocusRequests: Int
+    /// Fired once per successful keyboard focus so the owners of the
+    /// focus-request counters can mark them consumed.
+    public let onFocusRequestsConsumed: (() -> Void)?
     public let committedSoftwareInput: CommittedSoftwareInput?
     public let hardwareKeyboardCommands: [HardwareKeyboardCommand]
     /// Governs how frequently `UITerminalView` repaints while no host output
@@ -87,7 +94,8 @@ public struct TerminalPaneView: UIViewRepresentable {
     public init(
         session: InMemoryTerminalSession,
         controller: TerminalController,
-        focusRequestCount: Int = 0,
+        pendingFocusRequests: Int = 0,
+        onFocusRequestsConsumed: (() -> Void)? = nil,
         committedSoftwareInput: CommittedSoftwareInput? = nil,
         hardwareKeyboardCommands: [HardwareKeyboardCommand] = [],
         renderPace: TerminalRenderPace = .full,
@@ -99,7 +107,8 @@ public struct TerminalPaneView: UIViewRepresentable {
     ) {
         self.session = session
         self.controller = controller
-        self.focusRequestCount = focusRequestCount
+        self.pendingFocusRequests = pendingFocusRequests
+        self.onFocusRequestsConsumed = onFocusRequestsConsumed
         self.committedSoftwareInput = committedSoftwareInput
         self.hardwareKeyboardCommands = hardwareKeyboardCommands
         self.renderPace = renderPace
@@ -113,15 +122,19 @@ public struct TerminalPaneView: UIViewRepresentable {
     public func makeCoordinator() -> Coordinator { Coordinator() }
 
     public final class Coordinator {
-        var lastFocusRequest: Int = 0
         var onWillUnmount: ((UIImage?) -> Void)?
+        /// Fired once per successful keyboard focus so the counter owners
+        /// can zero the pending count. Consumption lives with the counters
+        /// (not here) because this Coordinator dies with the representable
+        /// while the counters survive remounts (IPAD-8.9).
+        var onFocusRequestsConsumed: (() -> Void)?
 
-        func applyFocusRequest(_ focusRequestCount: Int, to view: TerminalInputContainerView) {
-            guard lastFocusRequest != focusRequestCount else { return }
+        func applyFocusRequest(_ pendingRequests: Int, to view: TerminalInputContainerView) {
+            guard pendingRequests > 0 else { return }
             DispatchQueue.main.async { [weak self, weak view] in
                 guard let self, let view else { return }
                 if view.focusKeyboardInput() {
-                    self.lastFocusRequest = focusRequestCount
+                    self.onFocusRequestsConsumed?()
                 }
             }
         }
@@ -138,8 +151,9 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.onUserInteraction = onUserInteraction
         view.onPasteRequested = onPasteRequested
         context.coordinator.onWillUnmount = onWillUnmount
+        context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
         captureContainer?(view)
-        context.coordinator.applyFocusRequest(focusRequestCount, to: view)
+        context.coordinator.applyFocusRequest(pendingFocusRequests, to: view)
         return view
     }
 
@@ -152,7 +166,8 @@ public struct TerminalPaneView: UIViewRepresentable {
         view.onUserInteraction = onUserInteraction
         view.onPasteRequested = onPasteRequested
         context.coordinator.onWillUnmount = onWillUnmount
-        context.coordinator.applyFocusRequest(focusRequestCount, to: view)
+        context.coordinator.onFocusRequestsConsumed = onFocusRequestsConsumed
+        context.coordinator.applyFocusRequest(pendingFocusRequests, to: view)
     }
 
     public static func dismantleUIView(_: TerminalInputContainerView, coordinator: Coordinator) {
@@ -206,14 +221,25 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
             let previousSignature = effectiveHardwareKeyboardCommandSignature
             storedHardwareKeyboardCommands = newValue
             guard previousSignature != effectiveHardwareKeyboardCommandSignature else { return }
+            cachedKeyCommands = nil
             keyCommandUpdateRequestCountForTesting += 1
             UIMenuSystem.main.setNeedsRebuild()
         }
     }
 
+    /// UIKit queries `keyCommands` on every hardware key-down (plus menu and
+    /// discoverability-HUD builds), so the built array is cached and only
+    /// invalidated when the command signature actually changes. Fired
+    /// commands resolve their `perform` closure by id from
+    /// `storedHardwareKeyboardCommands` at handle time (see
+    /// `matchingHardwareKeyboardCommand`), so a signature-equal update never
+    /// needs a rebuilt array.
+    private var cachedKeyCommands: [UIKeyCommand]?
+
     override public var keyCommands: [UIKeyCommand]? {
         guard !hardwareKeyboardCommands.isEmpty else { return nil }
-        return hardwareKeyboardCommands.map { command in
+        if let cachedKeyCommands { return cachedKeyCommands }
+        let commands = hardwareKeyboardCommands.map { command in
             let keyCommand = UIKeyCommand(
                 title: command.title,
                 image: nil,
@@ -229,6 +255,8 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
             keyCommand.wantsPriorityOverSystemBehavior = true
             return keyCommand
         }
+        cachedKeyCommands = commands
+        return commands
     }
 
     private var effectiveHardwareKeyboardCommandSignature: [HardwareKeyboardCommandSignature] {
@@ -346,12 +374,32 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
         }
     }
 
-    /// @spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and libghostty's built-in pan-to-scroll recognizer on the underlying `UITerminalView` shall be disabled until selection mode exits.
+    /// Touch types masked pan recognizers may keep receiving while selection
+    /// mode is active: indirect pointer only, so trackpad/mouse scrolling
+    /// (IOS-6.17) stays live while finger drags belong to the selection pan.
+    static let indirectPointerOnlyTouchTypes: [NSNumber] = [
+        NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)
+    ]
+
+    /// Masked pans whose `allowedTouchTypes` were narrowed on entering
+    /// selection mode, with their prior values, so exit restores exactly
+    /// what libghostty/setup installed.
+    private var selectionModeSavedTouchTypes: [(UIPanGestureRecognizer, [NSNumber])] = []
+
+    /// @spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and libghostty's built-in pan-to-scroll recognizers on the underlying `UITerminalView` shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
     private func enterSelectionMode() {
         selectionPanRecognizer.isEnabled = true
+        selectionModeSavedTouchTypes = []
         terminalView.gestureRecognizers?.forEach { recognizer in
             if let pan = recognizer as? UIPanGestureRecognizer,
                !pan.allowedScrollTypesMask.isEmpty {
+                // A non-empty scroll mask only ADDS indirect scroll-event
+                // recognition — the pan still recognizes finger drags, and
+                // left enabled it would race the selection pan for them.
+                // Narrow it to indirect touches instead of disabling it so
+                // trackpad scrolling keeps working during selection.
+                selectionModeSavedTouchTypes.append((pan, pan.allowedTouchTypes))
+                pan.allowedTouchTypes = Self.indirectPointerOnlyTouchTypes
                 return
             }
             recognizer.isEnabled = false
@@ -360,6 +408,10 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
 
     private func exitSelectionMode() {
         selectionPanRecognizer.isEnabled = false
+        for (pan, savedTouchTypes) in selectionModeSavedTouchTypes {
+            pan.allowedTouchTypes = savedTouchTypes
+        }
+        selectionModeSavedTouchTypes = []
         terminalView.gestureRecognizers?.forEach { $0.isEnabled = true }
     }
 

@@ -207,7 +207,7 @@ public actor WebRTCHostAgent {
         // here, exactly once per accepted offer — see `connectionGeneration`'s
         // doc comment for why this is the right site and what it protects
         // against.
-        connectionGeneration += 1
+        beginConnectionLifecycle()
         let config = Self.defaultConfig()
         let constraints = RTCMediaConstraints(
             mandatoryConstraints: nil,
@@ -333,11 +333,26 @@ public actor WebRTCHostAgent {
         // matching `sshTransport`/`authenticatedRegistration`/`peerConnection`/
         // `dataChannel` below.
         sshInstallStarted = false
-        if let transport = sshTransport {
-            sshTransport = nil
+        // Snapshot + detach every connection field SYNCHRONOUSLY before the
+        // first await: `acceptOffer` is permitted from `.closed`, so a
+        // reconnect can interleave during `transport.close()` and populate a
+        // fresh peerConnection/dataChannel/dataChannelInbox/registration —
+        // the teardown below must only ever touch the objects THIS call
+        // detached, never whatever is live when it resumes.
+        let transport = sshTransport
+        sshTransport = nil
+        let registration = authenticatedRegistration
+        authenticatedRegistration = nil
+        let pc = peerConnection
+        peerConnection = nil
+        let dc = dataChannel
+        dataChannel = nil
+        dataChannelInbox = nil
+
+        if let transport {
             await transport.close()
         }
-        if let (deviceID, token) = authenticatedRegistration {
+        if let (deviceID, token) = registration {
             // Remove the stale entry so a later `revoke` of this same
             // peer (after it reconnects) hits the NEW connection's
             // closure rather than this torn-down one. `deregister` is
@@ -345,17 +360,27 @@ public actor WebRTCHostAgent {
             // reconnect already replaced it with a fresh token (that's
             // the identity-scoping `token` provides — see
             // `authenticatedRegistration`'s doc comment).
-            authenticatedRegistration = nil
             let registry = sshConnectionRegistry
             Task { await registry.deregister(deviceID: deviceID, token: token) }
         }
-        if let pc = peerConnection {
-            pc.close()
-            peerConnection = nil
-        }
-        dataChannel?.close()
-        dataChannel = nil
-        dataChannelInbox = nil
+        pc?.close()
+        dc?.close()
+    }
+
+    /// Begins a fresh connection lifecycle — called exactly once per accepted
+    /// offer. Besides bumping the generation guard, it re-arms the
+    /// per-connection SSH install latch: a stale `installSSHHandler` Task
+    /// racing the previous `close()` (didOpen queues adopt/install as Tasks,
+    /// so close can land between them) latches `sshInstallStarted = true` on
+    /// the already-closed agent AFTER close's own reset ran, and without this
+    /// re-arm the next connection's install would hit the stale latch and
+    /// never attach SSH to its channel.
+    ///
+    /// `internal` so `WebRTCHostAgentReconnectTests` can exercise the re-arm
+    /// without driving native WebRTC through `acceptOffer`.
+    internal func beginConnectionLifecycle() {
+        connectionGeneration += 1
+        sshInstallStarted = false
     }
 
     /// Generation-guarded teardown used ONLY by the closure registered with
@@ -381,6 +406,14 @@ public actor WebRTCHostAgent {
             // Unexpected label — close defensively. With Noise handshake (M1.3),
             // peer identity will be authenticated separately; this is belt-and-
             // suspenders.
+            dc.close()
+            return
+        }
+        guard state != .closed else {
+            // `didOpen` delivered this adoption as a Task, so `close()` can
+            // have run in between — a late adoption must not resurrect
+            // channel state on the closed agent (or spawn an install that
+            // latches `sshInstallStarted` for the next connection).
             dc.close()
             return
         }

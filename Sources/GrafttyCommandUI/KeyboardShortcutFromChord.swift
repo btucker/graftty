@@ -59,33 +59,12 @@ public enum KeyboardShortcutFromChord {
             return .pageUp
         case "pagedown":
             return .pageDown
-        // Punctuation tokens, mirroring ShortcutChord.keyToken's
-        // codepoint table — ghostty defaults bind several of these
-        // (super+[ / super+] for split and tab navigation).
-        case "comma":
-            return ","
-        case "minus":
-            return "-"
-        case "period":
-            return "."
-        case "slash":
-            return "/"
-        case "semicolon":
-            return ";"
-        case "equal":
-            return "="
-        case "quote":
-            return "'"
-        case "bracketleft":
-            return "["
-        case "backslash":
-            return "\\"
-        case "bracketright":
-            return "]"
-        case "backquote":
-            return "`"
         default:
-            return nil
+            // Punctuation tokens — ghostty defaults bind several of these
+            // (super+[ / super+] for split and tab navigation). The table
+            // lives once on ShortcutChord so the UIKit input mapping and
+            // this SwiftUI translator can't drift.
+            return ShortcutChord.character(forKeyToken: token).map { KeyEquivalent($0) }
         }
     }
 }

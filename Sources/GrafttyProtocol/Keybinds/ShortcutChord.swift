@@ -36,6 +36,30 @@ public struct ShortcutChord: Hashable, Sendable, Codable {
         self.init(key: key, modifiers: modifiers)
     }
 
+    /// Inverse of `keyToken(forCodepoint:)` for the character-representable
+    /// punctuation tokens — the single shared vocabulary both shortcut
+    /// translators (SwiftUI `KeyboardShortcutFromChord` and the UIKit
+    /// `UIKeyCommand` input mapping) consume, so adding a token here reaches
+    /// every platform instead of silently dropping a shortcut on one.
+    /// Named non-character keys (arrows, escape, …) return nil and stay in
+    /// the per-framework switches.
+    public static func character(forKeyToken token: String) -> Character? {
+        switch token {
+        case "comma": return ","
+        case "minus": return "-"
+        case "period": return "."
+        case "slash": return "/"
+        case "semicolon": return ";"
+        case "equal": return "="
+        case "quote": return "'"
+        case "bracketleft": return "["
+        case "backslash": return "\\"
+        case "bracketright": return "]"
+        case "backquote": return "`"
+        default: return nil
+        }
+    }
+
     static func keyToken(forCodepoint codepoint: UInt32) -> String? {
         // Normalize A-Z to a-z so the token matches the PHYSICAL letter tokens.
         // Ghostty's UNICODE triggers for shifted letters still carry the lowercase

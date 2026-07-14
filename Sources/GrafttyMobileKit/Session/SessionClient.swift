@@ -479,32 +479,41 @@ public final class SessionClient {
             idleWatchdogTask = nil
             return
         }
-        idleWatchdogTask = Task { @MainActor [weak self] in
-            while let self, !self.stopped, self.renderActivity == .active {
-                let elapsed = self.clock.now.timeIntervalSince(self.lastActivityAt)
-                let remaining = self.idleThreshold - elapsed
-                if remaining <= 0 {
-                    self.renderActivity = .idle
-                    return
-                }
-                do {
-                    try await self.clock.sleep(for: remaining)
-                } catch {
-                    return
-                }
-            }
-        }
+        idleWatchdogTask = spawnQuietWatchdog(
+            threshold: idleThreshold,
+            shouldContinue: { $0.renderActivity == .active },
+            onQuiet: { $0.renderActivity = .idle }
+        )
     }
 
     @MainActor
     private func startPaceWatchdog() {
         paceWatchdogTask?.cancel()
-        paceWatchdogTask = Task { @MainActor [weak self] in
-            while let self, !self.stopped, self.renderPace == .full {
+        paceWatchdogTask = spawnQuietWatchdog(
+            threshold: Self.renderPaceQuietDelay,
+            shouldContinue: { $0.renderPace == .full },
+            onQuiet: { $0.renderPace = .reduced(interval: Self.reducedRenderPaceInterval) }
+        )
+    }
+
+    /// Shared quiet-timer core for the idle/pace watchdogs: sleeps until
+    /// `threshold` seconds have elapsed since `lastActivityAt`, re-arming
+    /// after activity-driven wakeups, and fires `onQuiet` once the deadline
+    /// genuinely passes while `shouldContinue` still holds. The closures
+    /// receive the client instead of capturing it so the Task keeps only a
+    /// weak reference.
+    @MainActor
+    private func spawnQuietWatchdog(
+        threshold: TimeInterval,
+        shouldContinue: @escaping @MainActor (SessionClient) -> Bool,
+        onQuiet: @escaping @MainActor (SessionClient) -> Void
+    ) -> Task<Void, Never> {
+        Task { @MainActor [weak self] in
+            while let self, !self.stopped, shouldContinue(self) {
                 let elapsed = self.clock.now.timeIntervalSince(self.lastActivityAt)
-                let remaining = Self.renderPaceQuietDelay - elapsed
+                let remaining = threshold - elapsed
                 if remaining <= 0 {
-                    self.renderPace = .reduced(interval: Self.reducedRenderPaceInterval)
+                    onQuiet(self)
                     return
                 }
                 do {

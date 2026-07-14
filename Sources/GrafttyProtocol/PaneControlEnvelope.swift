@@ -42,7 +42,18 @@ extension PaneControlRequest.SplitDirection: Codable {
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.singleValueContainer()
-        try c.encode(rawValue)
+        // Hosts running released builds only decode the legacy
+        // horizontal/vertical tokens, so right/down must keep encoding as
+        // those for splits to work against not-yet-upgraded hosts. left/up
+        // never existed on the old wire and use their semantic tokens.
+        switch self {
+        case .right:
+            try c.encode("horizontal")
+        case .down:
+            try c.encode("vertical")
+        case .left, .up:
+            try c.encode(rawValue)
+        }
     }
 }
 

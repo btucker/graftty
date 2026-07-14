@@ -427,7 +427,11 @@ final class WebServerController: ObservableObject {
         let creator = worktreeCreator
         let puller = defaultBranchPuller
         let remover = worktreeRemover
-        let ghosttyKeybindingsProvider = self.ghosttyKeybindingsProvider ?? { [:] }
+        // Deliberately NOT defaulted to an empty map: a nil provider means
+        // startup() hasn't wired the keybind bridge yet, and the endpoint
+        // answers 503 so clients keep their bundled fallback instead of
+        // caching {} as host-resolved (WEB-9.10).
+        let ghosttyKeybindingsProvider = self.ghosttyKeybindingsProvider
         let signalingHandler = self.signalingHandler
         let s = WebServer(
             config: .init(

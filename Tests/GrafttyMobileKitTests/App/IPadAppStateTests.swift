@@ -89,5 +89,37 @@ struct IPadAppStateTests {
         #expect(state.focusRequestCount == 1)
         #expect(state.ownershipRequestCount == 1)
     }
+
+    @Test("""
+@spec IPAD-8.8: The auto-ownership fulfillment latch shall live in app-scoped state with the same lifetime as `ownershipRequestCount`, so detail-view recreation (e.g. the focused-pane fallback after the host closes a pane) cannot replay an already-fulfilled ownership request and seize display control without a new user action.
+""")
+    func autoTakeControlLatchSurvivesViewRecreation() {
+        let state = IPadAppState(defaults: freshDefaults())
+        state.requestActiveTerminal()
+
+        // First SingleSessionView instance fulfills the request.
+        #expect(state.autoTakeControlPolicy.shouldTakeControl(
+            requestCount: state.ownershipRequestCount,
+            isOwner: false,
+            canTakeControl: true
+        ))
+
+        // A recreated view (fresh identity, e.g. focused-pane fallback)
+        // consults the same app-scoped latch, so the stale request must
+        // not re-take control from the current owner.
+        #expect(!state.autoTakeControlPolicy.shouldTakeControl(
+            requestCount: state.ownershipRequestCount,
+            isOwner: false,
+            canTakeControl: true
+        ))
+
+        // A genuinely new user request fires again.
+        state.requestActiveTerminal()
+        #expect(state.autoTakeControlPolicy.shouldTakeControl(
+            requestCount: state.ownershipRequestCount,
+            isOwner: false,
+            canTakeControl: true
+        ))
+    }
 }
 #endif

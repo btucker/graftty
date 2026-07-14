@@ -230,8 +230,11 @@ public final class WebServer {
         public let ghosttyConfigProvider: @Sendable () async -> String
         /// Source for `GET /ghostty-keybindings`. Returns the Mac-resolved
         /// Ghostty action-to-shortcut map so remote clients can expose the
-        /// same command shortcuts as the desktop app.
-        public let ghosttyKeybindingsProvider: @Sendable () async -> [GhosttyAction: ShortcutChord]
+        /// same command shortcuts as the desktop app. Nil answers 503 so a
+        /// client that fetches during host startup falls back to bundled
+        /// defaults instead of caching an empty map as host-resolved
+        /// (WEB-9.10).
+        public let ghosttyKeybindingsProvider: (@Sendable () async -> [GhosttyAction: ShortcutChord])?
         /// Source for `GET /worktrees/panes`. Returns one entry per
         /// running worktree with the full pane split-tree + titles, so
         /// a mobile client can render a worktree picker and the
@@ -265,7 +268,7 @@ public final class WebServer {
             defaultBranchPuller: (@Sendable (PullDefaultBranchRequest) async -> PullDefaultBranchOutcome)? = nil,
             worktreeRemover: (@Sendable (DeleteWorktreeRequest) async -> DeleteWorktreeOutcome)? = nil,
             ghosttyConfigProvider: @escaping @Sendable () async -> String = { "" },
-            ghosttyKeybindingsProvider: @escaping @Sendable () async -> [GhosttyAction: ShortcutChord] = { [:] },
+            ghosttyKeybindingsProvider: (@Sendable () async -> [GhosttyAction: ShortcutChord])? = nil,
             worktreePanesProvider: @escaping @Sendable () async -> [WorktreePanes] = { [] },
             signalingHandler: (@Sendable (SignalingOffer) async -> SignalingHandlerOutcome)? = nil,
             remoteAttachmentRegistry: RemoteAttachmentRegistry? = nil,
@@ -674,7 +677,17 @@ public final class WebServer {
                 return
             }
             if path == "/ghostty-keybindings" {
-                let provider = config.ghosttyKeybindingsProvider
+                // WEB-9.10: no provider yet (host still starting up) must
+                // not read as an authoritative empty map — clients cache
+                // 200 responses as host-resolved for the whole session.
+                guard let provider = config.ghosttyKeybindingsProvider else {
+                    Self.respondJSON(
+                        context: context,
+                        status: .serviceUnavailable,
+                        error: "keybindings provider not ready"
+                    )
+                    return
+                }
                 let promise = context.eventLoop.makePromise(of: [GhosttyAction: ShortcutChord].self)
                 promise.futureResult.whenComplete { result in
                     let chords = (try? result.get()) ?? [:]

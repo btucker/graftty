@@ -192,7 +192,13 @@ struct SingleSessionView: View {
     /// coordinator is absent, returns nil (host isn't paired), or
     /// negotiation fails.
     let coordinator: RemoteConnectionCoordinator?
-    let externalFocusRequestCount: Int
+    /// Not-yet-honored focus requests owned by app-scoped state (the iPad
+    /// layout passes `appState.pendingFocusRequests`). A pending delta, not
+    /// a monotonic total, so view recreation cannot replay honored requests.
+    let externalPendingFocusRequests: Int
+    /// Zeroes the external pending count after a successful keyboard focus
+    /// (the iPad layout wires this to `appState.consumeFocusRequests()`).
+    let onExternalFocusRequestsConsumed: (() -> Void)?
     let autoTakeControlRequestCount: Int
     let ghosttyCommandContext: MobileGhosttyCommandContext?
     @Environment(\.scenePhase) private var scenePhase
@@ -217,6 +223,12 @@ struct SingleSessionView: View {
     /// becomeFirstResponder() on next update. Used to summon the
     /// keyboard programmatically from the show-keyboard button.
     @State private var focusRequestCount: Int = 0
+    /// How much of `focusRequestCount` has already been honored with a
+    /// successful `becomeFirstResponder()`. Same `@State` lifetime as the
+    /// counter itself, so the pair stays consistent across TerminalPaneView
+    /// remounts (idle-snapshot swaps) and resets together when this view's
+    /// identity changes (IPAD-8.9).
+    @State private var consumedFocusRequestCount: Int = 0
     /// Height (pts) of the keyboard's overlap with the screen, used
     /// as an explicit bottom padding on the fullscreen layout
     /// (`IOS-6.9`). Populated from `keyboardWillChangeFrame`.
@@ -234,7 +246,11 @@ struct SingleSessionView: View {
     /// avoid pointlessly rebuilding the controller config on every layout
     /// tick. Set to nil while the base config is in effect.
     @State private var liveFontOverride: Float?
-    @State private var autoTakeControlPolicy = AutoTakeControlPolicy()
+    /// Injected by the iPad layout as `appState.autoTakeControlPolicy` so the
+    /// fulfillment latch survives view recreation; direct constructions
+    /// (compact path, previews, tests) default to a fresh instance, which is
+    /// inert because their `autoTakeControlRequestCount` is always 0.
+    private let autoTakeControlPolicy: AutoTakeControlPolicy
     /// Scene-suspension memory only: if this fullscreen pane was the display
     /// owner before iOS forced the live session down, the next dial may reclaim
     /// an ownerless session. It deliberately does not apply to navigation-away
@@ -263,12 +279,18 @@ struct SingleSessionView: View {
         clientIsOwner
     }
 
-    struct AutoTakeControlPolicy {
+    /// Reference type on purpose: the fulfillment latch must outlive any one
+    /// `SingleSessionView` identity. The instance is owned by `IPadAppState`
+    /// (the same scope as `ownershipRequestCount`) so a detail-view
+    /// recreation — e.g. the focused-pane fallback after the host closes a
+    /// pane — cannot reset the latch and replay an already-fulfilled
+    /// ownership request (IPAD-8.8).
+    final class AutoTakeControlPolicy {
         private var fulfilledRequestCount: Int = 0
 
         init() {}
 
-        mutating func shouldTakeControl(
+        func shouldTakeControl(
             requestCount: Int,
             isOwner: Bool,
             canTakeControl: Bool
@@ -316,16 +338,20 @@ struct SingleSessionView: View {
         navigationPath: Binding<NavigationPath>,
         isFullScreen: Bool = true,
         coordinator: RemoteConnectionCoordinator? = nil,
-        externalFocusRequestCount: Int = 0,
+        externalPendingFocusRequests: Int = 0,
+        onExternalFocusRequestsConsumed: (() -> Void)? = nil,
         autoTakeControlRequestCount: Int = 0,
+        autoTakeControlPolicy: AutoTakeControlPolicy = AutoTakeControlPolicy(),
         ghosttyCommandContext: MobileGhosttyCommandContext? = nil
     ) {
         self.step = step
         self._navigationPath = navigationPath
         self.isFullScreen = isFullScreen
         self.coordinator = coordinator
-        self.externalFocusRequestCount = externalFocusRequestCount
+        self.externalPendingFocusRequests = externalPendingFocusRequests
+        self.onExternalFocusRequestsConsumed = onExternalFocusRequestsConsumed
         self.autoTakeControlRequestCount = autoTakeControlRequestCount
+        self.autoTakeControlPolicy = autoTakeControlPolicy
         self.ghosttyCommandContext = ghosttyCommandContext
     }
 
@@ -804,7 +830,13 @@ struct SingleSessionView: View {
         let pane = TerminalPaneView(
             session: client.session,
             controller: controller,
-            focusRequestCount: focusRequestCount + externalFocusRequestCount,
+            pendingFocusRequests:
+                max(0, focusRequestCount - consumedFocusRequestCount)
+                + externalPendingFocusRequests,
+            onFocusRequestsConsumed: {
+                consumedFocusRequestCount = focusRequestCount
+                onExternalFocusRequestsConsumed?()
+            },
             committedSoftwareInput: Self.isTerminalKeyboardEligible(clientIsOwner: client.isOwner) ? .init(
                 insertText: { text in client.sendSoftwareKeyboardText(text) },
                 deleteBackward: { client.deleteBackward() }

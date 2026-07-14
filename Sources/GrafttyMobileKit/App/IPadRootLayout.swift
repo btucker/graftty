@@ -98,10 +98,7 @@ public struct IPadRootLayout: View {
                     appState: appState,
                     coordinator: coordinator,
                     paneEnvironment: paneEnvironment,
-                    ghosttyCommandContext: ghosttyCommandContext,
-                    onPaneTreeChanged: {
-                        worktreeListRefreshToken &+= 1
-                    }
+                    ghosttyCommandContext: ghosttyCommandContext
                 )
                 .background(appState.theme.background)
             }
@@ -213,8 +210,7 @@ public struct IPadRootLayout: View {
     }
 
     public static func commandKind(for action: GhosttyAction) -> GhosttyCommandKind? {
-        guard GhosttyCommandRegistry.iPadSupportedActions.contains(action),
-              let entry = GhosttyCommandRegistry[action],
+        guard let entry = GhosttyCommandRegistry[action],
               entry.isSupportedOniPad,
               entry.kind != .unsupported else {
             return nil
@@ -440,33 +436,43 @@ public struct IPadRootLayout: View {
     @MainActor
     private func refreshPaneEnvironment() async {
         guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else {
-            await paneEnvironment.close()
-            paneEnvironment = .empty
+            await closeAndClearPaneEnvironment()
             return
         }
         guard let host = selectedHost else {
-            await paneEnvironment.close()
-            paneEnvironment = .empty
+            await closeAndClearPaneEnvironment()
             return
         }
 
-        await paneEnvironment.close()
-        paneEnvironment = .empty
+        await closeAndClearPaneEnvironment()
         let capturedHostID = host.id
         let remoteHost = await coordinator.connection(for: host)
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
         let environment = await buildPaneEnvironment(remoteHost: remoteHost)
-        guard !Task.isCancelled else {
+        // Every guard must sit between the last suspension and the state
+        // write: `.task(id:)` cancels this task when the scene backgrounds
+        // or the biometric gate locks, and a cancelled task resuming here
+        // must not install a live environment over its successor's teardown
+        // (nor leave SSH channels open behind the lock).
+        guard !Task.isCancelled, capturedHostID == appState.selectedHostId else {
             await environment.close()
             return
         }
-        guard capturedHostID == appState.selectedHostId else {
-            await environment.close()
-            return
-        }
-        await paneEnvironment.close()
+        let previous = paneEnvironment
         paneEnvironment = environment
+        await previous.close()
+    }
+
+    /// Detaches the current environment synchronously (no suspension between
+    /// reading and clearing the state) and only then awaits its close, so a
+    /// stale task parked inside `close()` can never clobber a successor's
+    /// freshly-installed environment when it resumes.
+    @MainActor
+    private func closeAndClearPaneEnvironment() async {
+        let current = paneEnvironment
+        paneEnvironment = .empty
+        await current.close()
     }
 }
 
@@ -554,9 +560,11 @@ private struct IPadDetailColumn: View {
     let host: Host?
     @Bindable var appState: IPadAppState
     let coordinator: RemoteConnectionCoordinator
+    /// Still needed after the toolbar splits moved onto
+    /// `ghosttyCommandContext`: `shouldShowSplitControls` gates the toolbar
+    /// group on `paneControlClient` availability.
     let paneEnvironment: PaneEnvironment
     let ghosttyCommandContext: MobileGhosttyCommandContext
-    let onPaneTreeChanged: () -> Void
 
     var body: some View {
         content
@@ -573,24 +581,27 @@ private struct IPadDetailColumn: View {
                     }
                 }
                 if shouldShowSplitControls {
+                    // One split implementation: the buttons dispatch through
+                    // the same command context as the keyboard shortcuts, so
+                    // enablement, refresh, and error semantics can't diverge.
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         Button {
-                            Task { await splitFocusedPane(.right) }
+                            ghosttyCommandContext.perform(.ghostty(.newSplitRight))
                         } label: {
                             Label("Split Right", systemImage: "rectangle.split.2x1")
                         }
                         Button {
-                            Task { await splitFocusedPane(.down) }
+                            ghosttyCommandContext.perform(.ghostty(.newSplitDown))
                         } label: {
                             Label("Split Down", systemImage: "rectangle.split.1x2")
                         }
                         Button {
-                            Task { await splitFocusedPane(.left) }
+                            ghosttyCommandContext.perform(.ghostty(.newSplitLeft))
                         } label: {
                             Label("Split Left", systemImage: "rectangle.split.2x1")
                         }
                         Button {
-                            Task { await splitFocusedPane(.up) }
+                            ghosttyCommandContext.perform(.ghostty(.newSplitUp))
                         } label: {
                             Label("Split Up", systemImage: "rectangle.split.1x2")
                         }
@@ -615,8 +626,10 @@ private struct IPadDetailColumn: View {
                 navigationPath: .constant(NavigationPath()),
                 isFullScreen: false,
                 coordinator: coordinator,
-                externalFocusRequestCount: appState.focusRequestCount,
+                externalPendingFocusRequests: appState.pendingFocusRequests,
+                onExternalFocusRequestsConsumed: { appState.consumeFocusRequests() },
                 autoTakeControlRequestCount: appState.ownershipRequestCount,
+                autoTakeControlPolicy: appState.autoTakeControlPolicy,
                 ghosttyCommandContext: ghosttyCommandContext
             )
             .id("\(host.id)-\(path)-\(pane)")
@@ -639,22 +652,6 @@ private struct IPadDetailColumn: View {
                 focusedPaneId: appState.focusedPaneId,
                 paneControlAvailable: paneEnvironment.paneControlClient != nil
             ).isEmpty
-    }
-
-    private func splitFocusedPane(_ direction: PaneControlRequest.SplitDirection) async {
-        guard let target = appState.focusedPaneId,
-              let client = paneEnvironment.paneControlClient else {
-            return
-        }
-        do {
-            let response = try await client.split(target: target, direction: direction)
-            if response == .ok {
-                onPaneTreeChanged()
-            }
-        } catch {
-            // Conflict and transport errors stay silent for v1; the next
-            // panes_state snapshot remains authoritative.
-        }
     }
 }
 #endif

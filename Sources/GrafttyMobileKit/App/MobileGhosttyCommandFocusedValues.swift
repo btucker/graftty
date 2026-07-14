@@ -144,7 +144,6 @@ struct MobileGhosttyCommandButtons: View {
         } else {
             hostCandidates = GhosttyCommandRegistry.iPadSupportedActions.compactMap { action in
                 guard let entry = GhosttyCommandRegistry[action],
-                      entry.isSupportedOniPad,
                       entry.kind != .unsupported,
                       isReservableHostAction(action, context: context),
                       let chord = context.keybindingSet.bridge[action] else {
@@ -233,30 +232,11 @@ private enum UIKeyCommandInputFromChord {
             return UIKeyCommand.inputPageUp
         case "pagedown":
             return UIKeyCommand.inputPageDown
-        case "comma":
-            return ","
-        case "minus":
-            return "-"
-        case "period":
-            return "."
-        case "slash":
-            return "/"
-        case "semicolon":
-            return ";"
-        case "equal":
-            return "="
-        case "quote":
-            return "'"
-        case "bracketleft":
-            return "["
-        case "backslash":
-            return "\\"
-        case "bracketright":
-            return "]"
-        case "backquote":
-            return "`"
         default:
-            return nil
+            // Punctuation tokens share ShortcutChord's single table with the
+            // SwiftUI translator, so a new token can't silently drop its
+            // shortcut on just one dispatch path.
+            return ShortcutChord.character(forKeyToken: chord.key).map(String.init)
         }
     }
 }

@@ -408,6 +408,35 @@ struct TerminalPaneViewTests {
         #expect(container.canPerformAction(action, withSender: nil) == resultBeforeCommand)
     }
 
+    @Test("keyCommands are cached between queries and invalidated on signature change")
+    func keyCommandsAreCachedUntilSignatureChanges() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        container.hardwareKeyboardCommands = [
+            .init(id: "split-right", title: "Split Right", input: "d", modifierFlags: [.command], perform: {}),
+        ]
+
+        // UIKit queries keyCommands on every hardware key-down; repeated
+        // queries must return the cached objects, not fresh allocations.
+        let first = container.keyCommands?.first
+        let second = container.keyCommands?.first
+        #expect(first != nil)
+        #expect(first === second)
+
+        // A signature-equal update (fresh closures, same chords) keeps the cache.
+        container.hardwareKeyboardCommands = [
+            .init(id: "split-right", title: "Split Right", input: "d", modifierFlags: [.command], perform: {}),
+        ]
+        #expect(container.keyCommands?.first === first)
+
+        // A real signature change rebuilds.
+        container.hardwareKeyboardCommands = [
+            .init(id: "split-down", title: "Split Down", input: "j", modifierFlags: [.command], perform: {}),
+        ]
+        let rebuilt = container.keyCommands?.first
+        #expect(rebuilt !== first)
+        #expect(rebuilt?.input == "j")
+    }
+
     @Test("selection mode keeps indirect terminal pan recognizers enabled")
     func selectionModeKeepsIndirectScrollingEnabled() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -419,6 +448,30 @@ struct TerminalPaneViewTests {
         #expect(pans.allSatisfy { $0.isEnabled })
     }
 
+    @Test("""
+@spec IOS-11.4: While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and libghostty's built-in pan-to-scroll recognizers on the underlying `UITerminalView` shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
+""")
+    func selectionModeStripsDirectTouchesFromScrollPans() {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let maskedPans = {
+            (container.terminalView.gestureRecognizers ?? [])
+                .compactMap { $0 as? UIPanGestureRecognizer }
+                .filter { !$0.allowedScrollTypesMask.isEmpty }
+        }
+        let savedTouchTypes = maskedPans().map(\.allowedTouchTypes)
+        #expect(!maskedPans().isEmpty)
+
+        container.enterSelectionModeForTesting()
+        // allowedScrollTypesMask only adds indirect scroll recognition; the
+        // direct-touch block must come from narrowing allowedTouchTypes.
+        #expect(maskedPans().allSatisfy {
+            $0.allowedTouchTypes == TerminalInputContainerView.indirectPointerOnlyTouchTypes
+        })
+
+        container.exitSelectionModeForTesting()
+        #expect(maskedPans().map(\.allowedTouchTypes) == savedTouchTypes)
+    }
+
     @Test("focus requests remain pending until the terminal can become first responder")
     func focusRequestNotConsumedUntilTerminalCanFocus() async {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
@@ -428,17 +481,44 @@ struct TerminalPaneViewTests {
         window.rootViewController = controller
         window.makeKeyAndVisible()
         let coordinator = TerminalPaneView.Coordinator()
+        var consumedCount = 0
+        coordinator.onFocusRequestsConsumed = { consumedCount += 1 }
         container.committedSoftwareInput = nil
 
         coordinator.applyFocusRequest(1, to: container)
         try? await Task.sleep(nanoseconds: 10_000_000)
-        #expect(coordinator.lastFocusRequest == 0)
+        #expect(consumedCount == 0)
 
         container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
         coordinator.applyFocusRequest(1, to: container)
         try? await Task.sleep(nanoseconds: 10_000_000)
-        #expect(coordinator.lastFocusRequest == 1)
+        #expect(consumedCount == 1)
         #expect(container.terminalView.isFirstResponder)
+    }
+
+    @Test("""
+@spec IPAD-8.9: When a terminal pane remounts with zero pending focus requests (all prior requests already honored and consumed), the application shall not call becomeFirstResponder, so a keyboard the user dismissed is not re-summoned by idle-snapshot swaps or other view recreations.
+""")
+    func remountWithNoPendingFocusRequestsDoesNotSummonKeyboard() async {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let controller = UIViewController()
+        controller.view = container
+        let window = UIWindow(frame: container.frame)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        // Keyboard-eligible: a stale-total replay would succeed if attempted.
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+
+        // A remount creates a fresh Coordinator with no memory; the counter
+        // owners survive the remount and report zero pending requests.
+        let freshCoordinator = TerminalPaneView.Coordinator()
+        var consumedCount = 0
+        freshCoordinator.onFocusRequestsConsumed = { consumedCount += 1 }
+        freshCoordinator.applyFocusRequest(0, to: container)
+        try? await Task.sleep(nanoseconds: 10_000_000)
+
+        #expect(consumedCount == 0)
+        #expect(!container.terminalView.isFirstResponder)
     }
 
     @Test

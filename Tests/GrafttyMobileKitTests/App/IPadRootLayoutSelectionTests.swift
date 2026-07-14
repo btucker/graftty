@@ -320,11 +320,11 @@ struct IPadRootLayoutSelectionTests {
             navigationPath: .constant(NavigationPath()),
             isFullScreen: false,
             coordinator: nil,
-            externalFocusRequestCount: 3,
+            externalPendingFocusRequests: 3,
             autoTakeControlRequestCount: 4
         )
 
-        #expect(view.externalFocusRequestCount == 3)
+        #expect(view.externalPendingFocusRequests == 3)
         #expect(view.autoTakeControlRequestCount == 4)
     }
 
@@ -1085,7 +1085,7 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
     /// takeable, but an already-owned pane shall fulfill the request as a no-op
     /// so stale selection requests cannot steal ownership back later.
     func testAutoOwnershipRetriesWhenSessionBecomesTakeable() {
-        var policy = SingleSessionView.AutoTakeControlPolicy()
+        let policy = SingleSessionView.AutoTakeControlPolicy()
         XCTAssertFalse(policy.shouldTakeControl(
             requestCount: 1,
             isOwner: false,
@@ -1107,7 +1107,7 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
             canTakeControl: true
         ))
 
-        var alreadyOwnerPolicy = SingleSessionView.AutoTakeControlPolicy()
+        let alreadyOwnerPolicy = SingleSessionView.AutoTakeControlPolicy()
         XCTAssertFalse(alreadyOwnerPolicy.shouldTakeControl(
             requestCount: 1,
             isOwner: true,

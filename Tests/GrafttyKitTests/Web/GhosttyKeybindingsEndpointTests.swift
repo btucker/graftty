@@ -61,4 +61,25 @@ struct GhosttyKeybindingsEndpointTests {
         #expect(decoded.bindings[GhosttyAction.newSplitRight.rawValue] == expected[.newSplitRight])
         #expect(decoded.bindings[GhosttyAction.nextTab.rawValue] == expected[.nextTab])
     }
+
+    @Test("""
+    @spec WEB-9.10: While no ghostty-keybindings provider is wired (e.g. the host app is still starting up), GET /ghostty-keybindings shall return 503 rather than an empty 200 map, so remote clients fall back to their bundled defaults instead of caching an empty binding set as host-resolved.
+    """)
+    func ghosttyKeybindingsEndpointReturns503BeforeProviderWired() async throws {
+        if skipInCI() { return }
+
+        let config = WebServer.Config(
+            port: 0,
+            zmxExecutable: URL(fileURLWithPath: "/dev/null"),
+            zmxDir: URL(fileURLWithPath: "/tmp")
+        )
+        let (server, port) = try Self.startServer(config: config)
+        defer { server.stop() }
+
+        let (_, response) = try await trustAllData(
+            from: URL(string: "https://localhost:\(port)/ghostty-keybindings")!
+        )
+        let http = response as! HTTPURLResponse
+        #expect(http.statusCode == 503)
+    }
 }

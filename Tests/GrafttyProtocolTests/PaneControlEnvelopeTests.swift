@@ -14,13 +14,22 @@ struct PaneControlEnvelopeTests {
     }
 
     @Test("""
-@spec REMOTE-7.7: When pane-control split requests are encoded, they shall use semantic directions right/down/left/up, and when legacy horizontal/vertical split directions are decoded, they shall decode as right/down for compatibility.
+@spec REMOTE-7.7: When pane-control split requests are encoded, the right/down directions shall encode as the legacy horizontal/vertical wire tokens so hosts running released builds keep decoding them, left/up shall encode as their semantic tokens, and when legacy horizontal/vertical split directions are decoded, they shall decode as right/down.
 """)
-    func semanticDirectionsAndLegacyAxes() throws {
-        let request = PaneControlRequest.split(target: "s", direction: .left)
-        let encoded = try JSONEncoder().encode(request)
-        let object = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-        #expect(object["direction"] as? String == "left")
+    func compatEncodingAndLegacyAxes() throws {
+        let expectedWireTokens: [PaneControlRequest.SplitDirection: String] = [
+            .right: "horizontal",
+            .down: "vertical",
+            .left: "left",
+            .up: "up",
+        ]
+        for (direction, token) in expectedWireTokens {
+            let encoded = try JSONEncoder().encode(
+                PaneControlRequest.split(target: "s", direction: direction)
+            )
+            let object = try #require(try JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+            #expect(object["direction"] as? String == token)
+        }
 
         let legacyHorizontal = Data(#"{"type":"split","target":"s","direction":"horizontal"}"#.utf8)
         let legacyVertical = Data(#"{"type":"split","target":"s","direction":"vertical"}"#.utf8)
