@@ -7,9 +7,53 @@ public enum PaneControlRequest: Sendable, Equatable {
     case close(target: String)
     case swap(source: String, target: String)
 
-    public enum SplitDirection: String, Codable, Sendable, CaseIterable {
-        case horizontal
-        case vertical
+    public enum SplitDirection: String, Sendable, CaseIterable {
+        case right
+        case down
+        case left
+        case up
+    }
+}
+
+extension PaneControlRequest.SplitDirection: Codable {
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        let raw = try c.decode(String.self)
+        switch raw {
+        case "right":
+            self = .right
+        case "down":
+            self = .down
+        case "left":
+            self = .left
+        case "up":
+            self = .up
+        case "horizontal":
+            self = .right
+        case "vertical":
+            self = .down
+        default:
+            throw DecodingError.dataCorruptedError(
+                in: c,
+                debugDescription: "unknown PaneControlRequest.SplitDirection: \(raw)"
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.singleValueContainer()
+        // Hosts running released builds only decode the legacy
+        // horizontal/vertical tokens, so right/down must keep encoding as
+        // those for splits to work against not-yet-upgraded hosts. left/up
+        // never existed on the old wire and use their semantic tokens.
+        switch self {
+        case .right:
+            try c.encode("horizontal")
+        case .down:
+            try c.encode("vertical")
+        case .left, .up:
+            try c.encode(rawValue)
+        }
     }
 }
 

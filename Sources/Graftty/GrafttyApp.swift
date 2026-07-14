@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import UserNotifications
+import GrafttyCommandUI
 import GrafttyHostAgent
 import GrafttyKit
 import GrafttyProtocol
@@ -281,6 +282,14 @@ final class AppServices {
 
 @main
 struct GrafttyApp: App {
+    // Keep this in menu order: the first host action for a chord wins.
+    private static let macHostShortcutCommands =
+        GhosttyCommandRegistry.macSplitActions
+        + GhosttyCommandRegistry.macPaneFocusActions
+        + GhosttyCommandRegistry.macPaneLayoutActions
+        + GhosttyCommandRegistry.macPaneLifecycleActions
+        + GhosttyCommandRegistry.macSettingsActions
+
     @State private var appState: AppState
     @StateObject private var terminalManager: TerminalManager
     @StateObject private var webController: WebServerController
@@ -522,6 +531,11 @@ struct GrafttyApp: App {
         // pixel values is silently a no-op.
         .defaultSize(width: 1400, height: 900)
         .commands {
+            let hostShortcutsByAction = NavigationCommandShortcutPolicy.hostShortcutWinners(
+                commands: Self.macHostShortcutCommands,
+                bridge: terminalManager.keybindBridge
+            )
+
             CommandGroup(after: .newItem) {
                 // "Add Repository..." keeps its hardcoded Cmd+Shift+O —
                 // it's an Graftty-specific action with no Ghostty equivalent.
@@ -535,35 +549,52 @@ struct GrafttyApp: App {
 
                 Divider()
 
-                bridgedButton("Split Right", action: .newSplitRight) { handleSplit(.right) }
-                bridgedButton("Split Left",  action: .newSplitLeft)  { handleSplit(.left) }
-                bridgedButton("Split Down",  action: .newSplitDown)  { handleSplit(.down) }
-                bridgedButton("Split Up",    action: .newSplitUp)    { handleSplit(.up) }
+                ForEach(GhosttyCommandRegistry.macSplitActions, id: \.action) { command in
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
+                }
 
                 Divider()
 
-                bridgedButton("Focus Pane Left",  action: .gotoSplitLeft)   { handleNavigate(.left) }
-                bridgedButton("Focus Pane Right", action: .gotoSplitRight)  { handleNavigate(.right) }
-                bridgedButton("Focus Pane Up",    action: .gotoSplitUp)     { handleNavigate(.up) }
-                bridgedButton("Focus Pane Down",  action: .gotoSplitDown)   { handleNavigate(.down) }
-                bridgedButton("Previous Pane",    action: .gotoSplitPrevious) { handleNavigateTreeOrder(forward: false) }
-                bridgedButton("Next Pane",        action: .gotoSplitNext)     { handleNavigateTreeOrder(forward: true) }
+                ForEach(NavigationCommandShortcutPolicy.fixedPaneCommands, id: \.label) { command in
+                    if let shortcut = KeyboardShortcutFromChord.shortcut(from: command.chord) {
+                        Button(command.label) {
+                            handleNavigateTreeOrder(forward: command.forward)
+                        }
+                        .keyboardShortcut(shortcut)
+                    } else {
+                        Button(command.label) {
+                            handleNavigateTreeOrder(forward: command.forward)
+                        }
+                    }
+                }
+
+                ForEach(GhosttyCommandRegistry.macPaneFocusActions, id: \.action) { command in
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
+                }
 
                 Divider()
 
-                WorktreeNavCommandButtons(
-                    nextShortcut: shortcut(for: .nextTab),
-                    previousShortcut: shortcut(for: .previousTab)
-                )
+                WorktreeNavCommandButtons()
 
                 Divider()
 
-                bridgedButton("Zoom Split",      action: .toggleSplitZoom) { handleToggleZoom() }
-                bridgedButton("Equalize Splits", action: .equalizeSplits)  { handleEqualizeSplits() }
+                ForEach(GhosttyCommandRegistry.macPaneLayoutActions, id: \.action) { command in
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
+                }
 
                 Divider()
 
-                bridgedButton("Close Pane", action: .closeSurface) { handleClosePane() }
+                ForEach(GhosttyCommandRegistry.macPaneLifecycleActions, id: \.action) { command in
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
+                }
             }
 
             // TEAM-7.1: *Window → Team Activity Log* opens the activity
@@ -592,8 +623,11 @@ struct GrafttyApp: App {
                 Button("Install CLI Tool...") {
                     installCLI()
                 }
-                bridgedButton("Open Ghostty Settings", action: .openConfig) { handleOpenGhosttySettings() }
-                bridgedButton("Reload Ghostty Config", action: .reloadConfig) { handleReloadConfig() }
+                ForEach(GhosttyCommandRegistry.macSettingsActions, id: \.action) { command in
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
+                }
             }
         }
 
@@ -1226,6 +1260,10 @@ struct GrafttyApp: App {
         // shared registry so Mac pane backends can see web-client attaches.
         webController.setRemoteAttachmentRegistry(services.remoteAttachmentRegistry)
 
+        webController.setGhosttyKeybindingsProvider { [tm = terminalManager] in
+            await MainActor.run { tm.keybindBridge.allChords }
+        }
+
         // WEB-5.4: feed the web server a snapshot of running sessions on
         // each GET /sessions request. Binding snapshot is read on the
         // main actor; worktree names are routed through
@@ -1523,12 +1561,17 @@ struct GrafttyApp: App {
                                 message: "no pane with session name '\(target)'"
                             )
                         }
-                        // Mobile sends a coarse axis; we pick the "natural"
-                        // direction on each axis (right / down) so the new
-                        // pane appears after the target, matching what the
-                        // Mac sidebar context menu's "Split Right" / "Split
-                        // Down" defaults produce.
-                        let split: PaneSplit = direction == .horizontal ? .right : .down
+                        let split: PaneSplit
+                        switch direction {
+                        case .right:
+                            split = .right
+                        case .down:
+                            split = .down
+                        case .left:
+                            split = .left
+                        case .up:
+                            split = .up
+                        }
                         let slot = PaneSlotID(id: paneID)
                         guard Self.splitPane(
                             appState: appStateBinding,
@@ -3133,10 +3176,9 @@ struct GrafttyApp: App {
     /// DFS order regardless of the spatial layout — that's what the menu
     /// items promise. Kept separate from the spatial `navigatePane` so
     /// TERM-7.3 (arrow-key spatial nav) doesn't silently change the
-    /// semantics of Cmd+[ / Cmd+] on users who rely on the plain
-    /// round-robin sequence.
+    /// round-robin semantics shared by fixed and host tab-action chords.
     @MainActor
-    fileprivate static func navigatePaneInTreeOrder(
+    static func navigatePaneInTreeOrder(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         from terminalID: PaneSlotID,
@@ -3399,6 +3441,62 @@ struct GrafttyApp: App {
         Self.openGhosttySettings()
     }
 
+    private func handleGhosttyCommand(_ command: GhosttyCommandRegistry.Entry) {
+        switch command.kind {
+        case let .split(direction):
+            handleSplit(paneSplit(for: direction))
+        case .closePane:
+            handleClosePane()
+        case let .focusPane(direction):
+            handleNavigate(navigationDirection(for: direction))
+        case let .focusPaneByOrder(forward):
+            handleNavigateTreeOrder(forward: forward)
+        case .unsupported:
+            handleUnsupportedGhosttyAction(command.action)
+        }
+    }
+
+    private func handleUnsupportedGhosttyAction(_ action: GhosttyAction) {
+        switch action {
+        case .toggleSplitZoom:
+            handleToggleZoom()
+        case .equalizeSplits:
+            handleEqualizeSplits()
+        case .reloadConfig:
+            handleReloadConfig()
+        case .openConfig:
+            handleOpenGhosttySettings()
+        default:
+            break
+        }
+    }
+
+    private func paneSplit(for direction: GhosttySplitDirection) -> PaneSplit {
+        switch direction {
+        case .left:
+            return .left
+        case .right:
+            return .right
+        case .up:
+            return .up
+        case .down:
+            return .down
+        }
+    }
+
+    private func navigationDirection(for direction: GhosttyPaneFocusDirection) -> NavigationDirection {
+        switch direction {
+        case .left:
+            return .left
+        case .right:
+            return .right
+        case .up:
+            return .up
+        case .down:
+            return .down
+        }
+    }
+
     /// Confirm with the user, then destroy every running worktree's panes
     /// (which fires `zmx kill --force` per session via `destroySurface` →
     /// `killZmxSession`) and mark those worktrees `.closed` via
@@ -3464,16 +3562,6 @@ struct GrafttyApp: App {
 
     // MARK: - View builder for bridge-shortcutted menu buttons
 
-    /// Resolve a `GhosttyAction`'s configured chord to a SwiftUI shortcut,
-    /// or nil if unbound — shared by `bridgedButton` and command views that
-    /// need the shortcut value directly. `@MainActor` to match its access of
-    /// the main-actor-isolated `terminalManager.keybindBridge`.
-    @MainActor
-    private func shortcut(for action: GhosttyAction) -> KeyboardShortcut? {
-        guard let chord = terminalManager.keybindBridge[action] else { return nil }
-        return KeyboardShortcutFromChord.shortcut(from: chord)
-    }
-
     /// Wraps a menu button so its keyboard shortcut is derived from the
     /// keybind bridge at runtime, not hardcoded. If the action has no
     /// configured binding (or the key can't be translated to a
@@ -3481,15 +3569,15 @@ struct GrafttyApp: App {
     @MainActor
     @ViewBuilder
     private func bridgedButton(
-        _ label: LocalizedStringKey,
-        action: GhosttyAction,
+        _ command: GhosttyCommandRegistry.Entry,
+        shortcutsByAction: [GhosttyAction: KeyboardShortcut],
         onTap: @escaping () -> Void
     ) -> some View {
         Group {
-            if let shortcut = shortcut(for: action) {
-                Button(label, action: onTap).keyboardShortcut(shortcut)
+            if let shortcut = shortcutsByAction[command.action] {
+                Button(command.label, action: onTap).keyboardShortcut(shortcut)
             } else {
-                Button(label, action: onTap)
+                Button(command.label, action: onTap)
             }
         }
     }

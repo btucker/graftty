@@ -24,7 +24,7 @@ struct WorktreeNavigationTests {
         return AppState(repos: [repo], selectedWorktreePath: selected)
     }
 
-    @Test("@spec KBD-5.1: When another on-disk worktree has attention, next_tab shall select the next attention-carrying worktree in cyclic sidebar order (skipping non-attention worktrees between), flattening worktrees across repos in sidebar order.")
+    @Test("@spec KBD-5.1: When another on-disk worktree has attention, Ctrl+Option+Tab shall select the next attention-carrying worktree in cyclic sidebar order (skipping non-attention worktrees between), flattening worktrees across repos in sidebar order.")
     func forwardPrefersAttention() {
         // A(selected) B(no) C(attention) D(no) — skip B, land on C.
         let s = state([wt("/a"), wt("/b"), wt("/c", attention: true), wt("/d")], selected: "/a")
@@ -37,7 +37,7 @@ struct WorktreeNavigationTests {
         #expect(crossRepo.nextWorktreePath(forward: true) == "/c")
     }
 
-    @Test("@spec KBD-5.2: When no other worktree has attention, next_tab shall select the immediate next on-disk worktree in cyclic sidebar order, wrapping from the last back to the first.")
+    @Test("@spec KBD-5.2: When no other worktree has attention, Ctrl+Option+Tab shall select the immediate next on-disk worktree in cyclic sidebar order, wrapping from the last back to the first.")
     func forwardPlainNextAndWrap() {
         let s = state([wt("/a"), wt("/b"), wt("/c")], selected: "/a")
         #expect(s.nextWorktreePath(forward: true) == "/b")
@@ -46,7 +46,7 @@ struct WorktreeNavigationTests {
         #expect(wrap.nextWorktreePath(forward: true) == "/a")
     }
 
-    @Test("@spec KBD-5.3: When the user presses previous_tab, the application shall apply attention-first selection in reverse cyclic order, and select the immediate previous on-disk worktree (wrapping) when no worktree has attention.")
+    @Test("@spec KBD-5.3: When the user presses Ctrl+Option+Shift+Tab, the application shall apply attention-first selection in reverse cyclic order, and select the immediate previous on-disk worktree (wrapping) when no worktree has attention.")
     func reverseAttentionAndPlainWrap() {
         // A(attention) B(no) C(no) D(selected) — reverse to A.
         let attn = state([wt("/a", attention: true), wt("/b"), wt("/c"), wt("/d")], selected: "/d")
@@ -79,7 +79,7 @@ struct WorktreeNavigationTests {
         #expect(withSource(.commandFinished).nextWorktreePath(forward: true) == "/c")
     }
 
-    @Test("@spec KBD-5.5: When zero or one on-disk worktree is selectable, next_tab and previous_tab shall be a no-op (return nil); non-on-disk worktrees (.stale/.creating/.deleting) shall never be navigation targets even when they carry attention.")
+    @Test("@spec KBD-5.5: When zero or one on-disk worktree is selectable, Ctrl+Option+Tab and Ctrl+Option+Shift+Tab shall be no-ops (return nil) while their chords remain reserved; non-on-disk worktrees (.stale/.creating/.deleting) shall never be navigation targets even when they carry attention.")
     func zeroOrOneSelectableNoOpAndSkipNonOnDisk() {
         let one = state([wt("/a")], selected: "/a")
         #expect(one.nextWorktreePath(forward: true) == nil)
@@ -94,7 +94,7 @@ struct WorktreeNavigationTests {
         #expect(skip.nextWorktreePath(forward: true) == "/c")
     }
 
-    @Test("@spec KBD-5.6: When no worktree is selected, next_tab shall select the first attention worktree else the first on-disk worktree, and previous_tab shall select the first attention worktree scanning backward from the end else the last on-disk worktree.")
+    @Test("@spec KBD-5.6: When no worktree is selected, Ctrl+Option+Tab shall select the first attention worktree else the first on-disk worktree, and Ctrl+Option+Shift+Tab shall select the first attention worktree scanning backward from the end else the last on-disk worktree.")
     func noSelectionEdges() {
         let plain = state([wt("/a"), wt("/b"), wt("/c")], selected: nil)
         #expect(plain.nextWorktreePath(forward: true) == "/a")

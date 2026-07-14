@@ -96,9 +96,9 @@ public final class SSHNIOTransport: @unchecked Sendable {
     private let embeddedLoop: NIOAsyncTestingEventLoop
     private let embedded: NIOAsyncTestingChannel
     /// Strongly held — `RTCDataChannel.delegate` is `weak`. Without a
-    /// strong reference here the delegate would deallocate the moment
+    /// strong reference here the inbox would deallocate the moment
     /// `init` returns and every inbound message would be dropped.
-    private let dcDelegate: DataChannelDelegate
+    private let inbox: DataChannelInbox
 
     /// One-shot continuation resumed when the DataChannel first reaches
     /// `.open`. Accessed only on `embeddedLoop` to keep the
@@ -133,23 +133,38 @@ public final class SSHNIOTransport: @unchecked Sendable {
     /// Fires exactly once, the moment the transport becomes closed —
     /// whether via an explicit `close()` call or because the underlying
     /// DataChannel closed out from under it (remote hang-up, transport
-    /// reset). `init` re-assigns `RTCDataChannel.delegate` to this
-    /// transport's own `dcDelegate`, which means whatever delegate the
-    /// caller had installed on the DataChannel before wrapping it here
-    /// (e.g. `RemoteHostConnection`'s own `dataChannelDidChangeState`
-    /// hook) stops receiving callbacks the instant this transport takes
-    /// over. `onClose` is that caller's only remaining way to observe a
-    /// DataChannel death once the transport owns it. Set via the
-    /// initializer — see its doc comment.
+    /// reset). The transport is the inbox's consumer, and the inbox is
+    /// the DataChannel's only delegate — `onClose` is the caller's only
+    /// way to observe a DataChannel death once the transport owns the
+    /// stream. Set via the initializer — see its doc comment.
     public var onClose: (@Sendable () -> Void)?
+
+    /// Convenience for a channel that has no inbox yet (a locally
+    /// created channel wrapped at creation time): makes an inbox,
+    /// attaches it as the channel's delegate immediately, and proceeds
+    /// through the designated initializer. Any event landing between
+    /// the delegate assignment and consumer attachment buffers in the
+    /// inbox and replays — nothing can drop.
+    public convenience init(dataChannel: RTCDataChannel, onClose: (@Sendable () -> Void)? = nil) {
+        let inbox = DataChannelInbox()
+        dataChannel.delegate = inbox
+        self.init(dataChannel: dataChannel, inbox: inbox, onClose: onClose)
+    }
 
     /// `onClose` is an initializer parameter (rather than requiring the
     /// caller to set the `onClose` property after construction) so there
     /// is no window between `init` returning and the caller wiring up
-    /// the callback — `init` re-assigns `dataChannel.delegate` to
-    /// `dcDelegate` before returning, so a close landing in a
-    /// post-construction gap would otherwise be observed by nothing.
-    public init(dataChannel: RTCDataChannel, onClose: (@Sendable () -> Void)? = nil) {
+    /// the callback — consumer attachment to the inbox happens before
+    /// `init` returns, so a close landing in a post-construction gap
+    /// would otherwise be observed by nothing.
+    ///
+    /// `inbox` must already be the channel's delegate (attached as early
+    /// as possible — for a received channel, synchronously inside
+    /// `peerConnection(_:didOpen:)`; see `DataChannelInbox`). The
+    /// transport becomes its consumer: the inbox replays anything the
+    /// channel delivered before this point, so no delegate-attachment
+    /// race can drop the peer's first bytes (the SSH banner deadlock).
+    internal init(dataChannel: RTCDataChannel, inbox: DataChannelInbox, onClose: (@Sendable () -> Void)? = nil) {
         self.dataChannel = dataChannel
         self.onClose = onClose
         let loop = NIOAsyncTestingEventLoop()
@@ -182,38 +197,34 @@ public final class SSHNIOTransport: @unchecked Sendable {
             try channel.pipeline.syncOperations.addHandler(relay)
             channel.register(promise: nil)
         }.wait()
-        self.dcDelegate = DataChannelDelegate()
+        self.inbox = inbox
 
-        // Wire every callback BEFORE handing `dcDelegate` to the
-        // DataChannel as its delegate. WebRTC can dispatch a state change
-        // the instant `dataChannel.delegate` is assigned (e.g. the
-        // channel is already `.open`/`.closed` on a background queue) —
-        // assigning the delegate first left a window where such a
-        // transition would land on `dcDelegate.onOpen`/`onClose`/`onMessage`
-        // while they were still nil, silently dropping it (a missed
-        // terminal fire). Installing the closures first closes that
-        // window: by the time the delegate is attached, every callback is
-        // already live.
-        dcDelegate.onOpen = { [weak self] in
-            guard let self else { return }
-            self.embeddedLoop.execute {
-                self.handleDataChannelOpen()
+        // Attach as the inbox's consumer LAST, after the transport is
+        // fully wired: the inbox replays every buffered event (open,
+        // messages in arrival order, close) synchronously inside
+        // `attach`, so the closures must be ready to enqueue work. Each
+        // closure only enqueues onto the embedded loop — the inbox's
+        // "consumers must be non-blocking" contract.
+        inbox.attach(
+            onOpen: { [weak self] in
+                guard let self else { return }
+                self.embeddedLoop.execute {
+                    self.handleDataChannelOpen()
+                }
+            },
+            onClose: { [weak self] in
+                guard let self else { return }
+                self.embeddedLoop.execute {
+                    self.handleDataChannelClosed()
+                }
+            },
+            onMessage: { [weak self] data in
+                guard let self else { return }
+                self.embeddedLoop.execute {
+                    self.deliverInbound(data)
+                }
             }
-        }
-        dcDelegate.onClose = { [weak self] in
-            guard let self else { return }
-            self.embeddedLoop.execute {
-                self.handleDataChannelClosed()
-            }
-        }
-        dcDelegate.onMessage = { [weak self] data in
-            guard let self else { return }
-            self.embeddedLoop.execute {
-                self.deliverInbound(data)
-            }
-        }
-
-        dataChannel.delegate = dcDelegate
+        )
     }
 
     /// Block until the DataChannel reaches `.open`, then fire
@@ -385,13 +396,6 @@ public final class SSHNIOTransport: @unchecked Sendable {
         // nowhere to go.
         pendingInbound.removeAll()
         pendingInboundByteCount = 0
-        // Detach delegate callbacks so any late WebRTC-thread events
-        // become no-ops. Delegate itself stays alive (we own it) and
-        // remains assigned to the DataChannel — the SDK clears it on
-        // its own close path.
-        dcDelegate.onOpen = nil
-        dcDelegate.onClose = nil
-        dcDelegate.onMessage = nil
         // Close the DataChannel first so any outbound writes still
         // pending in the embedded pipeline get rejected by the relay
         // handler's readyState check rather than queued onto a closed
@@ -497,31 +501,4 @@ internal final class OutboundRelayHandler: ChannelOutboundHandler, @unchecked Se
     }
 }
 
-/// `RTCDataChannelDelegate` shim. Identical pattern to
-/// `RemoteHostConnection.DataChannelDelegate` — WebRTC dispatches
-/// delegate calls on a fixed internal serial queue, so closure
-/// mutation through `nonisolated(unsafe)` is safe under the SDK's
-/// documented invariant.
-private final class DataChannelDelegate: NSObject, RTCDataChannelDelegate, @unchecked Sendable {
-    nonisolated(unsafe) var onOpen: (@Sendable () -> Void)?
-    nonisolated(unsafe) var onClose: (@Sendable () -> Void)?
-    nonisolated(unsafe) var onMessage: (@Sendable (Data) -> Void)?
-
-    func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
-        switch dataChannel.readyState {
-        case .open:
-            onOpen?()
-        case .closing, .closed:
-            onClose?()
-        case .connecting:
-            break
-        @unknown default:
-            break
-        }
-    }
-
-    func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
-        onMessage?(buffer.data)
-    }
-}
 #endif

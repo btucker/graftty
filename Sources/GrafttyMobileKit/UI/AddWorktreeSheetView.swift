@@ -29,6 +29,10 @@ public struct AddWorktreeSheetView: View {
         self.onCreated = onCreated
     }
 
+    public static func shouldSubmitOnReturn(canSubmit: Bool, isSubmitting: Bool) -> Bool {
+        canSubmit && !isSubmitting
+    }
+
     private enum ReposState {
         case loading
         case loaded([ReposFetcher.RepoInfo])
@@ -72,6 +76,7 @@ public struct AddWorktreeSheetView: View {
                         ProgressView().controlSize(.small)
                     } else {
                         Button("Create") { Task { await submit() } }
+                            .keyboardShortcut(.defaultAction)
                             .disabled(!canSubmit)
                     }
                 }
@@ -150,6 +155,8 @@ public struct AddWorktreeSheetView: View {
                 }
             }
         }
+        .submitLabel(.done)
+        .onSubmit { submitFromReturn() }
     }
 
     private var canSubmit: Bool {
@@ -173,7 +180,13 @@ public struct AddWorktreeSheetView: View {
         }
     }
 
+    private func submitFromReturn() {
+        guard Self.shouldSubmitOnReturn(canSubmit: canSubmit, isSubmitting: isSubmitting) else { return }
+        Task { await submit() }
+    }
+
     private func submit() async {
+        guard canSubmit else { return }
         guard let repoPath = selectedRepoPath else { return }
         errorMessage = nil
         isSubmitting = true

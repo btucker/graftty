@@ -3,6 +3,9 @@ import GrafttyProtocol
 import SwiftUI
 
 public struct WorktreeListContent: View {
+    public static let iPadRowTrailingInset: CGFloat = 2
+    static let iPadRowLeadingInset: CGFloat = 10
+
     @State private var state: LoadState = .loading
     @State private var isAddSheetPresented: Bool = false
     @State private var pendingDelete: PendingDelete?
@@ -41,6 +44,7 @@ public struct WorktreeListContent: View {
     public let onSelect: (WorktreePanes) -> Void
     public let onSelectPane: (PaneLayoutNode.Leaf) -> Void
     public let onListChanged: ([WorktreePanes]) -> Void
+    public let externalRefreshToken: Int
 
     public init(
         host: Host,
@@ -49,7 +53,8 @@ public struct WorktreeListContent: View {
         focusedPaneId: String? = nil,
         onSelect: @escaping (WorktreePanes) -> Void,
         onSelectPane: @escaping (PaneLayoutNode.Leaf) -> Void,
-        onListChanged: @escaping ([WorktreePanes]) -> Void = { _ in }
+        onListChanged: @escaping ([WorktreePanes]) -> Void = { _ in },
+        externalRefreshToken: Int = 0
     ) {
         self.host = host
         self.theme = theme
@@ -58,6 +63,7 @@ public struct WorktreeListContent: View {
         self.onSelect = onSelect
         self.onSelectPane = onSelectPane
         self.onListChanged = onListChanged
+        self.externalRefreshToken = externalRefreshToken
     }
 
     private enum LoadState {
@@ -191,6 +197,10 @@ public struct WorktreeListContent: View {
         // tears down the previous fetch and re-runs `load()` for the new
         // host, refreshing worktrees and theme.
         .task(id: host.id) { await load() }
+        .task(id: externalRefreshToken) {
+            guard externalRefreshToken != 0 else { return }
+            await refresh()
+        }
         .onDisappear { errorToastTask?.cancel() }
     }
 
@@ -322,13 +332,19 @@ private struct WorktreeBlock: View {
         // Painted on the whole VStack so the rounded rectangle spans
         // both the worktree row and its pane children — same visual
         // grouping as the Mac sidebar's `worktreeBlock`.
-        .padding(.horizontal, 6)
+        .padding(.leading, 6)
+        .padding(.trailing, 2)
         .padding(.vertical, 3)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(highlightFill)
         )
-        .listRowInsets(EdgeInsets(top: 4, leading: 10, bottom: 4, trailing: 10))
+        .listRowInsets(EdgeInsets(
+            top: 4,
+            leading: WorktreeListContent.iPadRowLeadingInset,
+            bottom: 4,
+            trailing: WorktreeListContent.iPadRowTrailingInset
+        ))
         .listRowSeparator(.hidden)
     }
 

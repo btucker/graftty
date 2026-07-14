@@ -57,6 +57,7 @@ schemes:
         GrafttyMobile: all
     run:
       config: Debug
+      debugEnabled: false
     test:
       config: Debug
       targets:

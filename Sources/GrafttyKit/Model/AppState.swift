@@ -210,8 +210,8 @@ public struct AppState: Codable, Sendable, Equatable {
         return nil
     }
 
-    /// Target worktree path for `ctrl+tab` (forward) / `ctrl+shift+tab`
-    /// (reverse) — KBD-5. Worktrees requesting attention (any
+    /// Target worktree path for fixed forward/reverse worktree navigation.
+    /// Worktrees requesting attention (any
     /// `AttentionSource`, worktree- or pane-scoped), excluding the current
     /// selection, take priority; otherwise the immediate next/previous
     /// selectable worktree. Cyclic over on-disk worktrees in sidebar order

@@ -41,6 +41,31 @@ public final class IPadAppState {
 
     public var selectedWorktreePath: String?
     public var focusedPaneId: String?
+    public var latestWorktrees: [WorktreePanes] = []
+    public private(set) var focusRequestCount: Int = 0
+    /// How much of `focusRequestCount` has been honored with a successful
+    /// keyboard focus. Lives here — the same scope as the counter — so a
+    /// recreated detail view sees zero pending requests instead of
+    /// replaying honored ones (IPAD-8.9).
+    public private(set) var consumedFocusRequestCount: Int = 0
+    public private(set) var ownershipRequestCount: Int = 0
+
+    public var pendingFocusRequests: Int {
+        max(0, focusRequestCount - consumedFocusRequestCount)
+    }
+
+    public func consumeFocusRequests() {
+        consumedFocusRequestCount = focusRequestCount
+    }
+
+    /// @spec IPAD-8.8
+    /// The auto-ownership fulfillment latch shall live in app-scoped state
+    /// with the same lifetime as `ownershipRequestCount`, so detail-view
+    /// recreation (e.g. the focused-pane fallback after the host closes a
+    /// pane) cannot replay an already-fulfilled ownership request and seize
+    /// display control without a new user action.
+    @ObservationIgnored
+    let autoTakeControlPolicy = SingleSessionView.AutoTakeControlPolicy()
 
     /// Sidebar/detail visibility for the iPad NavigationSplitView.
     /// In-memory only — a fresh launch always lands on both columns
@@ -85,6 +110,11 @@ public final class IPadAppState {
         self.sidebarWidth = savedWidth > 0 ? savedWidth : 320
 
         self.theme = .fallback
+    }
+
+    public func requestActiveTerminal() {
+        focusRequestCount &+= 1
+        ownershipRequestCount &+= 1
     }
 
     private enum Keys {

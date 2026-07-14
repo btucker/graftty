@@ -1,4 +1,5 @@
 #if canImport(UIKit)
+import Foundation
 import GrafttyProtocol
 import SwiftUI
 
@@ -7,6 +8,7 @@ import SwiftUI
 /// sidebar (host header + WorktreeListContent) and a detail column
 /// showing the focused pane via SingleSessionView.
 public struct IPadRootLayout: View {
+    public static let paintsTerminalBackgroundBehindSidebar = true
 
     @Bindable public var hostStore: HostStore
     @Bindable public var appState: IPadAppState
@@ -14,6 +16,11 @@ public struct IPadRootLayout: View {
     /// `RootView` level so a host negotiated from either surface is
     /// cached for the other (W3 Task 3).
     public let coordinator: RemoteConnectionCoordinator
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.biometricGate) private var gate
+    @State private var paneEnvironment: PaneEnvironment = .empty
+    @State private var worktreeListRefreshToken: Int = 0
+    @State private var keybindingSet = MobileGhosttyKeybindingSet.loading
 
     public init(hostStore: HostStore, appState: IPadAppState, coordinator: RemoteConnectionCoordinator) {
         self.hostStore = hostStore
@@ -32,63 +39,69 @@ public struct IPadRootLayout: View {
         // appState so the system's sidebar-toggle button can flip it back
         // to `.all` after a user collapse — without the binding there'd
         // be no way to re-show a hidden sidebar.
-        NavigationSplitView(columnVisibility: Binding(
-            get: { appState.columnVisibility },
-            set: { appState.columnVisibility = $0 }
-        )) {
-            Group {
-                if let host = selectedHost {
-                    WorktreeListContent(
-                        host: host,
-                        theme: appState.theme,
-                        selectedWorktreePath: appState.selectedWorktreePath,
-                        focusedPaneId: appState.focusedPaneId,
-                        onSelect: { wt in selectWorktree(wt) },
-                        onSelectPane: { leaf in selectPane(leaf) },
-                        onListChanged: { list in Self.onWorktreeListChanged(appState: appState, list: list) }
-                    )
-                } else {
-                    Spacer()
+        ZStack {
+            appState.theme.background.ignoresSafeArea()
+            NavigationSplitView(columnVisibility: Binding(
+                get: { appState.columnVisibility },
+                set: { appState.columnVisibility = $0 }
+            )) {
+                Group {
+                    if let host = selectedHost {
+                        WorktreeListContent(
+                            host: host,
+                            theme: appState.theme,
+                            selectedWorktreePath: appState.selectedWorktreePath,
+                            focusedPaneId: appState.focusedPaneId,
+                            onSelect: { wt in selectWorktree(wt) },
+                            onSelectPane: { leaf in selectPane(leaf) },
+                            onListChanged: { list in Self.onWorktreeListChanged(appState: appState, list: list) },
+                            externalRefreshToken: worktreeListRefreshToken
+                        )
+                    } else {
+                        Spacer()
+                    }
                 }
-            }
-            .themedSidebarSurface(appState.theme)
-            // IPAD-1.2: the host menu lives in the sidebar nav bar's
-            // `.topBarLeading` slot — adjacent to the system
-            // sidebar-toggle button. Originally `.principal`, but the
-            // centered placement let the menu expand into the trailing
-            // `.primaryAction` (+) item at narrow column widths and
-            // overlap it. Leading placement is naturally bounded.
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    HostMenu(
-                        selectedHost: selectedHost,
-                        hostStore: hostStore,
-                        appState: appState
-                    )
+                .themedSidebarSurface(appState.theme)
+                // IPAD-1.2: the host menu lives in the sidebar nav bar's
+                // `.topBarLeading` slot — adjacent to the system
+                // sidebar-toggle button. Originally `.principal`, but the
+                // centered placement let the menu expand into the trailing
+                // `.primaryAction` (+) item at narrow column widths and
+                // overlap it. Leading placement is naturally bounded.
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        HostMenu(
+                            selectedHost: selectedHost,
+                            hostStore: hostStore,
+                            appState: appState
+                        )
+                    }
                 }
+                // IPAD-1.12: explicit 1pt trailing border separates the
+                // sidebar from the detail column (Mac's NSSplitView draws
+                // this automatically; iPad's NavigationSplitView does not).
+                .overlay(alignment: .trailing) {
+                    Rectangle()
+                        .fill(appState.theme.foreground.opacity(0.15))
+                        .frame(width: 1)
+                        .ignoresSafeArea()
+                }
+                .publishSidebarWidth()
+                .navigationSplitViewColumnWidth(
+                    min: 220,
+                    ideal: appState.sidebarWidth,
+                    max: 480
+                )
+            } detail: {
+                IPadDetailColumn(
+                    host: selectedHost,
+                    appState: appState,
+                    coordinator: coordinator,
+                    paneEnvironment: paneEnvironment,
+                    ghosttyCommandContext: ghosttyCommandContext
+                )
+                .background(appState.theme.background)
             }
-            // IPAD-1.12: explicit 1pt trailing border separates the
-            // sidebar from the detail column (Mac's NSSplitView draws
-            // this automatically; iPad's NavigationSplitView does not).
-            .overlay(alignment: .trailing) {
-                Rectangle()
-                    .fill(appState.theme.foreground.opacity(0.15))
-                    .frame(width: 1)
-                    .ignoresSafeArea()
-            }
-            .publishSidebarWidth()
-            .navigationSplitViewColumnWidth(
-                min: 220,
-                ideal: appState.sidebarWidth,
-                max: 480
-            )
-        } detail: {
-            IPadDetailColumn(
-                host: selectedHost,
-                appState: appState,
-                coordinator: coordinator
-            )
-            .background(appState.theme.background)
         }
         .navigationSplitViewStyle(.balanced)
         // IPAD-1.8: route the host's ghostty theme through SwiftUI's
@@ -100,8 +113,23 @@ public struct IPadRootLayout: View {
             get: { appState.sidebarWidth },
             set: { appState.sidebarWidth = $0 }
         ))
+        .focusedSceneValue(\.mobileGhosttyCommandContext, ghosttyCommandContext)
         .task(id: selectedHost?.id) {
-            await refreshTheme()
+            await refreshHostPresentationState()
+        }
+        .task(id: PaneEnvironmentRefreshKey(
+            hostID: selectedHost?.id,
+            isReady: LiveSessionReadiness.isActive(
+                scene: scenePhase,
+                gateUnlocked: gate.isUnlocked
+            )
+        )) {
+            await refreshPaneEnvironment()
+        }
+        .onDisappear {
+            Task {
+                await paneEnvironment.close()
+            }
         }
     }
 
@@ -116,9 +144,13 @@ public struct IPadRootLayout: View {
         appState.selectedHostId = newHostId
         appState.selectedWorktreePath = nil
         appState.focusedPaneId = nil
+        appState.latestWorktrees = []
+        appState.anyWorktreeHasAttention = false
     }
 
     static func onWorktreeListChanged(appState: IPadAppState, list: [WorktreePanes]) {
+        appState.latestWorktrees = list
+
         // Clear a stale selection whose path vanished server-side.
         if let path = appState.selectedWorktreePath,
            !list.contains(where: { $0.path == path }) {
@@ -152,30 +184,301 @@ public struct IPadRootLayout: View {
         }
     }
 
+    static func applyWorktreeSelection(appState: IPadAppState, worktree: WorktreePanes) {
+        guard !worktree.state.isInFlight else { return }
+        appState.selectedWorktreePath = worktree.path
+        appState.focusedPaneId = worktree.layout?.leaves.first?.sessionName
+        appState.requestActiveTerminal()
+    }
+
+    static func applyPaneSelection(appState: IPadAppState, leaf: PaneLayoutNode.Leaf) {
+        if let worktree = appState.latestWorktrees.first(where: { wt in
+            wt.layout?.leaves.contains { $0.sessionName == leaf.sessionName } ?? false
+        }) {
+            appState.selectedWorktreePath = worktree.path
+        }
+        appState.focusedPaneId = leaf.sessionName
+        appState.requestActiveTerminal()
+    }
+
+    public static func availableSplitDirections(
+        focusedPaneId: String?,
+        paneControlAvailable: Bool = true
+    ) -> [PaneControlRequest.SplitDirection] {
+        guard focusedPaneId != nil, paneControlAvailable else { return [] }
+        return [.right, .down, .left, .up]
+    }
+
+    public static func commandKind(for action: GhosttyAction) -> GhosttyCommandKind? {
+        guard let entry = GhosttyCommandRegistry[action],
+              entry.isSupportedOniPad,
+              entry.kind != .unsupported else {
+            return nil
+        }
+        return entry.kind
+    }
+
+    static func keybindingSetForStartingHostRefresh() -> MobileGhosttyKeybindingSet {
+        .loading
+    }
+
     // MARK: - Side-effecting selection (callbacks from WorktreeListContent)
 
     private func selectWorktree(_ wt: WorktreePanes) {
-        guard !wt.state.isInFlight else { return }
-        appState.selectedWorktreePath = wt.path
-        appState.focusedPaneId = wt.layout?.leaves.first?.sessionName
+        Self.applyWorktreeSelection(appState: appState, worktree: wt)
     }
 
     private func selectPane(_ leaf: PaneLayoutNode.Leaf) {
-        appState.focusedPaneId = leaf.sessionName
+        Self.applyPaneSelection(appState: appState, leaf: leaf)
+    }
+
+    private func selectWorktree(path: String) {
+        guard let wt = appState.latestWorktrees.first(where: { $0.path == path }) else { return }
+        selectWorktree(wt)
+    }
+
+    private func navigateWorktree(forward: Bool) {
+        guard let path = IPadWorktreeNavigation.nextPath(
+            in: appState.latestWorktrees,
+            selectedPath: appState.selectedWorktreePath,
+            forward: forward
+        ) else {
+            return
+        }
+        selectWorktree(path: path)
+    }
+
+    private var ghosttyCommandContext: MobileGhosttyCommandContext {
+        MobileGhosttyCommandContext(
+            keybindingSet: keybindingSet,
+            perform: { semantic in
+                performMobileCommand(semantic)
+            },
+            isEnabled: { action in
+                isGhosttyCommandEnabled(action)
+            }
+        )
+    }
+
+    private func performMobileCommand(_ semantic: MobileGhosttyCommandSemantic) {
+        switch semantic {
+        case let .ghostty(action):
+            performGhosttyCommand(action)
+        case let .navigateWorktree(forward):
+            navigateWorktree(forward: forward)
+        }
+    }
+
+    private var selectedWorktreeLayout: PaneLayoutNode? {
+        guard let path = appState.selectedWorktreePath else { return nil }
+        return appState.latestWorktrees.first { $0.path == path }?.layout
+    }
+
+    private func performGhosttyCommand(_ action: GhosttyAction) {
+        guard let kind = Self.commandKind(for: action) else { return }
+        switch kind {
+        case let .split(direction):
+            Task { await splitFocusedPane(Self.paneControlSplitDirection(for: direction)) }
+        case .closePane:
+            Task { await closeFocusedPane() }
+        case let .focusPane(direction):
+            focusPane(Self.paneLayoutDirection(for: direction))
+        case let .focusPaneByOrder(forward):
+            focusPaneInOrder(forward: forward)
+        case .unsupported:
+            break
+        }
+    }
+
+    private func isGhosttyCommandEnabled(_ action: GhosttyAction) -> Bool {
+        guard let kind = Self.commandKind(for: action) else { return false }
+        switch kind {
+        case .split, .closePane:
+            return appState.focusedPaneId != nil && paneEnvironment.paneControlClient != nil
+        case let .focusPane(direction):
+            guard let layout = selectedWorktreeLayout,
+                  let pane = appState.focusedPaneId else {
+                return false
+            }
+            return PaneLayoutNavigation.spatialNeighbor(
+                in: layout,
+                of: pane,
+                direction: Self.paneLayoutDirection(for: direction)
+            ) != nil
+        case let .focusPaneByOrder(forward):
+            guard let layout = selectedWorktreeLayout,
+                  let pane = appState.focusedPaneId else {
+                return false
+            }
+            return PaneLayoutNavigation.nextInOrder(
+                in: layout,
+                from: pane,
+                forward: forward
+            ) != nil
+        case .unsupported:
+            return false
+        }
+    }
+
+    private func focusPane(_ direction: PaneLayoutNavigation.Direction) {
+        guard let layout = selectedWorktreeLayout,
+              let pane = appState.focusedPaneId,
+              let next = PaneLayoutNavigation.spatialNeighbor(
+                in: layout,
+                of: pane,
+                direction: direction
+              ) else {
+            return
+        }
+        appState.focusedPaneId = next
+        appState.requestActiveTerminal()
+    }
+
+    private func focusPaneInOrder(forward: Bool) {
+        guard let layout = selectedWorktreeLayout,
+              let pane = appState.focusedPaneId,
+              let next = PaneLayoutNavigation.nextInOrder(
+                in: layout,
+                from: pane,
+                forward: forward
+              ) else {
+            return
+        }
+        appState.focusedPaneId = next
+        appState.requestActiveTerminal()
+    }
+
+    private func splitFocusedPane(_ direction: PaneControlRequest.SplitDirection) async {
+        guard let target = appState.focusedPaneId,
+              let client = paneEnvironment.paneControlClient else {
+            return
+        }
+        do {
+            let response = try await client.split(target: target, direction: direction)
+            if response == .ok {
+                worktreeListRefreshToken &+= 1
+            }
+        } catch {
+            // Conflict and transport errors stay silent for v1; the next
+            // panes_state snapshot remains authoritative.
+        }
+    }
+
+    private func closeFocusedPane() async {
+        guard let target = appState.focusedPaneId,
+              let client = paneEnvironment.paneControlClient else {
+            return
+        }
+        do {
+            let response = try await client.close(target: target)
+            if response == .ok {
+                worktreeListRefreshToken &+= 1
+            }
+        } catch {
+            // Conflict and transport errors stay silent for v1; the next
+            // panes_state snapshot remains authoritative.
+        }
+    }
+
+    private static func paneControlSplitDirection(
+        for direction: GhosttySplitDirection
+    ) -> PaneControlRequest.SplitDirection {
+        switch direction {
+        case .left:
+            return .left
+        case .right:
+            return .right
+        case .up:
+            return .up
+        case .down:
+            return .down
+        }
+    }
+
+    private static func paneLayoutDirection(
+        for direction: GhosttyPaneFocusDirection
+    ) -> PaneLayoutNavigation.Direction {
+        switch direction {
+        case .left:
+            return .left
+        case .right:
+            return .right
+        case .up:
+            return .up
+        case .down:
+            return .down
+        }
     }
 
     @MainActor
-    private func refreshTheme() async {
+    private func refreshHostPresentationState() async {
         guard let host = selectedHost else {
             appState.theme = .fallback
+            keybindingSet = Self.keybindingSetForStartingHostRefresh()
             return
         }
         let capturedHostID = host.id
-        let text = await GhosttyConfigFetcher.fetch(baseURL: host.baseURL)
+        keybindingSet = Self.keybindingSetForStartingHostRefresh()
+        async let configText = GhosttyConfigFetcher.fetch(baseURL: host.baseURL)
+        async let keybindings = GhosttyKeybindingsFetcher.fetch(baseURL: host.baseURL)
+
+        let text = await configText
         guard !Task.isCancelled else { return }
         guard capturedHostID == appState.selectedHostId else { return }
         appState.theme = text.map(GhosttyThemeColors.init(parsingConfigText:)) ?? .fallback
+
+        let resolvedKeybindingSet = await keybindings
+        guard !Task.isCancelled else { return }
+        guard capturedHostID == appState.selectedHostId else { return }
+        keybindingSet = resolvedKeybindingSet
     }
+
+    @MainActor
+    private func refreshPaneEnvironment() async {
+        guard LiveSessionReadiness.isActive(scene: scenePhase, gateUnlocked: gate.isUnlocked) else {
+            await closeAndClearPaneEnvironment()
+            return
+        }
+        guard let host = selectedHost else {
+            await closeAndClearPaneEnvironment()
+            return
+        }
+
+        await closeAndClearPaneEnvironment()
+        let capturedHostID = host.id
+        let remoteHost = await coordinator.connection(for: host)
+        guard !Task.isCancelled else { return }
+        guard capturedHostID == appState.selectedHostId else { return }
+        let environment = await buildPaneEnvironment(remoteHost: remoteHost)
+        // Every guard must sit between the last suspension and the state
+        // write: `.task(id:)` cancels this task when the scene backgrounds
+        // or the biometric gate locks, and a cancelled task resuming here
+        // must not install a live environment over its successor's teardown
+        // (nor leave SSH channels open behind the lock).
+        guard !Task.isCancelled, capturedHostID == appState.selectedHostId else {
+            await environment.close()
+            return
+        }
+        let previous = paneEnvironment
+        paneEnvironment = environment
+        await previous.close()
+    }
+
+    /// Detaches the current environment synchronously (no suspension between
+    /// reading and clearing the state) and only then awaits its close, so a
+    /// stale task parked inside `close()` can never clobber a successor's
+    /// freshly-installed environment when it resumes.
+    @MainActor
+    private func closeAndClearPaneEnvironment() async {
+        let current = paneEnvironment
+        paneEnvironment = .empty
+        await current.close()
+    }
+}
+
+private struct PaneEnvironmentRefreshKey: Hashable {
+    let hostID: UUID?
+    let isReady: Bool
 }
 
 // MARK: - HostMenu (private)
@@ -257,6 +560,11 @@ private struct IPadDetailColumn: View {
     let host: Host?
     @Bindable var appState: IPadAppState
     let coordinator: RemoteConnectionCoordinator
+    /// Still needed after the toolbar splits moved onto
+    /// `ghosttyCommandContext`: `shouldShowSplitControls` gates the toolbar
+    /// group on `paneControlClient` availability.
+    let paneEnvironment: PaneEnvironment
+    let ghosttyCommandContext: MobileGhosttyCommandContext
 
     var body: some View {
         content
@@ -270,6 +578,33 @@ private struct IPadDetailColumn: View {
                             .fill(Color.red)
                             .frame(width: 8, height: 8)
                             .accessibilityLabel("Attention needed in sidebar")
+                    }
+                }
+                if shouldShowSplitControls {
+                    // One split implementation: the buttons dispatch through
+                    // the same command context as the keyboard shortcuts, so
+                    // enablement, refresh, and error semantics can't diverge.
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        Button {
+                            ghosttyCommandContext.perform(.ghostty(.newSplitRight))
+                        } label: {
+                            Label("Split Right", systemImage: "rectangle.split.2x1")
+                        }
+                        Button {
+                            ghosttyCommandContext.perform(.ghostty(.newSplitDown))
+                        } label: {
+                            Label("Split Down", systemImage: "rectangle.split.1x2")
+                        }
+                        Button {
+                            ghosttyCommandContext.perform(.ghostty(.newSplitLeft))
+                        } label: {
+                            Label("Split Left", systemImage: "rectangle.split.2x1")
+                        }
+                        Button {
+                            ghosttyCommandContext.perform(.ghostty(.newSplitUp))
+                        } label: {
+                            Label("Split Up", systemImage: "rectangle.split.1x2")
+                        }
                     }
                 }
             }
@@ -290,7 +625,12 @@ private struct IPadDetailColumn: View {
                 step: SessionStep(host: host, sessionName: pane, title: pane),
                 navigationPath: .constant(NavigationPath()),
                 isFullScreen: false,
-                coordinator: coordinator
+                coordinator: coordinator,
+                externalPendingFocusRequests: appState.pendingFocusRequests,
+                onExternalFocusRequestsConsumed: { appState.consumeFocusRequests() },
+                autoTakeControlRequestCount: appState.ownershipRequestCount,
+                autoTakeControlPolicy: appState.autoTakeControlPolicy,
+                ghosttyCommandContext: ghosttyCommandContext
             )
             .id("\(host.id)-\(path)-\(pane)")
         } else {
@@ -303,6 +643,15 @@ private struct IPadDetailColumn: View {
 
     private var shouldShowAttentionDot: Bool {
         appState.columnVisibility != .all && appState.anyWorktreeHasAttention
+    }
+
+    private var shouldShowSplitControls: Bool {
+        host != nil
+            && appState.selectedWorktreePath != nil
+            && !IPadRootLayout.availableSplitDirections(
+                focusedPaneId: appState.focusedPaneId,
+                paneControlAvailable: paneEnvironment.paneControlClient != nil
+            ).isEmpty
     }
 }
 #endif

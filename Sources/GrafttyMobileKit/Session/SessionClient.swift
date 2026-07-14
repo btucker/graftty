@@ -215,6 +215,9 @@ public final class SessionClient {
     /// @spec IOS-10.3
     public private(set) var renderActivity: RenderActivity = .active
 
+    /// @spec IOS-10.8, IOS-10.9
+    public private(set) var renderPace: TerminalRenderPace = .full
+
     /// @spec IOS-10.4: While a `SessionClient` is in `.idle`, the corresponding view shall display a static snapshot of the last live frame in place of `TerminalPaneView`, with a tap target that resumes `.active`.
     public private(set) var idleSnapshot: UIImage?
 
@@ -230,6 +233,9 @@ public final class SessionClient {
 
     @ObservationIgnored
     private var idleWatchdogTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var paceWatchdogTask: Task<Void, Never>?
 
     /// Single source for the production `clock` default — also consulted
     /// by `SessionClient.live`'s own `clock` default
@@ -344,6 +350,7 @@ public final class SessionClient {
     public func start() {
         lastActivityAt = clock.now
         startIdleWatchdog()
+        startPaceWatchdog()
         // Eagerly install a Task that opens the first WS. Outbound
         // writes that fire between `start()` returning and the factory
         // resolving wait on `wsReadyTask` so they don't silently drop
@@ -472,12 +479,41 @@ public final class SessionClient {
             idleWatchdogTask = nil
             return
         }
-        idleWatchdogTask = Task { @MainActor [weak self] in
-            while let self, !self.stopped, self.renderActivity == .active {
+        idleWatchdogTask = spawnQuietWatchdog(
+            threshold: idleThreshold,
+            shouldContinue: { $0.renderActivity == .active },
+            onQuiet: { $0.renderActivity = .idle }
+        )
+    }
+
+    @MainActor
+    private func startPaceWatchdog() {
+        paceWatchdogTask?.cancel()
+        paceWatchdogTask = spawnQuietWatchdog(
+            threshold: Self.renderPaceQuietDelay,
+            shouldContinue: { $0.renderPace == .full },
+            onQuiet: { $0.renderPace = .reduced(interval: Self.reducedRenderPaceInterval) }
+        )
+    }
+
+    /// Shared quiet-timer core for the idle/pace watchdogs: sleeps until
+    /// `threshold` seconds have elapsed since `lastActivityAt`, re-arming
+    /// after activity-driven wakeups, and fires `onQuiet` once the deadline
+    /// genuinely passes while `shouldContinue` still holds. The closures
+    /// receive the client instead of capturing it so the Task keeps only a
+    /// weak reference.
+    @MainActor
+    private func spawnQuietWatchdog(
+        threshold: TimeInterval,
+        shouldContinue: @escaping @MainActor (SessionClient) -> Bool,
+        onQuiet: @escaping @MainActor (SessionClient) -> Void
+    ) -> Task<Void, Never> {
+        Task { @MainActor [weak self] in
+            while let self, !self.stopped, shouldContinue(self) {
                 let elapsed = self.clock.now.timeIntervalSince(self.lastActivityAt)
-                let remaining = self.idleThreshold - elapsed
+                let remaining = threshold - elapsed
                 if remaining <= 0 {
-                    self.renderActivity = .idle
+                    onQuiet(self)
                     return
                 }
                 do {
@@ -495,6 +531,10 @@ public final class SessionClient {
         if renderActivity == .idle {
             renderActivity = .active
             startIdleWatchdog()
+        }
+        if renderPace != .full {
+            renderPace = .full
+            startPaceWatchdog()
         }
     }
 
@@ -604,6 +644,8 @@ public final class SessionClient {
         setWSReadyTask(nil)
         idleWatchdogTask?.cancel()
         idleWatchdogTask = nil
+        paceWatchdogTask?.cancel()
+        paceWatchdogTask = nil
         clearPendingInput()
         currentWS()?.close()
         setWS(nil)

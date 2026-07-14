@@ -18,6 +18,8 @@ public struct GhosttyKeybindBridge: Sendable {
 
     private let chords: [GhosttyAction: ShortcutChord]
 
+    public var allChords: [GhosttyAction: ShortcutChord] { chords }
+
     public init(resolver: Resolver) {
         var map: [GhosttyAction: ShortcutChord] = [:]
         for action in GhosttyAction.allCases {
@@ -25,6 +27,19 @@ public struct GhosttyKeybindBridge: Sendable {
         }
         self.chords = map
     }
+
+    /// For callers that already hold resolved chords keyed by action
+    /// (decoded host responses, the bundled default table) — skips the
+    /// resolver round-trip through raw action names.
+    public init(chords: [GhosttyAction: ShortcutChord]) {
+        self.chords = chords
+    }
+
+    /// The deliberately-shortcutless bridge: "no keybinds", as distinct
+    /// from `GhosttyDefaultKeybinds.bridge`'s "fall back to defaults".
+    /// Used while host keybindings are being (re)fetched so stale
+    /// shortcuts never dispatch against the wrong host.
+    public static let empty = GhosttyKeybindBridge(chords: [:])
 
     public subscript(action: GhosttyAction) -> ShortcutChord? {
         chords[action]

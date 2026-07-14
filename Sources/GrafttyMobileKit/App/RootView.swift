@@ -192,6 +192,15 @@ struct SingleSessionView: View {
     /// coordinator is absent, returns nil (host isn't paired), or
     /// negotiation fails.
     let coordinator: RemoteConnectionCoordinator?
+    /// Not-yet-honored focus requests owned by app-scoped state (the iPad
+    /// layout passes `appState.pendingFocusRequests`). A pending delta, not
+    /// a monotonic total, so view recreation cannot replay honored requests.
+    let externalPendingFocusRequests: Int
+    /// Zeroes the external pending count after a successful keyboard focus
+    /// (the iPad layout wires this to `appState.consumeFocusRequests()`).
+    let onExternalFocusRequestsConsumed: (() -> Void)?
+    let autoTakeControlRequestCount: Int
+    let ghosttyCommandContext: MobileGhosttyCommandContext?
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.biometricGate) private var gate
 
@@ -214,6 +223,12 @@ struct SingleSessionView: View {
     /// becomeFirstResponder() on next update. Used to summon the
     /// keyboard programmatically from the show-keyboard button.
     @State private var focusRequestCount: Int = 0
+    /// How much of `focusRequestCount` has already been honored with a
+    /// successful `becomeFirstResponder()`. Same `@State` lifetime as the
+    /// counter itself, so the pair stays consistent across TerminalPaneView
+    /// remounts (idle-snapshot swaps) and resets together when this view's
+    /// identity changes (IPAD-8.9).
+    @State private var consumedFocusRequestCount: Int = 0
     /// Height (pts) of the keyboard's overlap with the screen, used
     /// as an explicit bottom padding on the fullscreen layout
     /// (`IOS-6.9`). Populated from `keyboardWillChangeFrame`.
@@ -231,6 +246,11 @@ struct SingleSessionView: View {
     /// avoid pointlessly rebuilding the controller config on every layout
     /// tick. Set to nil while the base config is in effect.
     @State private var liveFontOverride: Float?
+    /// Injected by the iPad layout as `appState.autoTakeControlPolicy` so the
+    /// fulfillment latch survives view recreation; direct constructions
+    /// (compact path, previews, tests) default to a fresh instance, which is
+    /// inert because their `autoTakeControlRequestCount` is always 0.
+    private let autoTakeControlPolicy: AutoTakeControlPolicy
     /// Scene-suspension memory only: if this fullscreen pane was the display
     /// owner before iOS forced the live session down, the next dial may reclaim
     /// an ownerless session. It deliberately does not apply to navigation-away
@@ -255,8 +275,37 @@ struct SingleSessionView: View {
         clientIsOwner
     }
 
-    static func shouldInstallKeyboardProxy(clientIsOwner: Bool) -> Bool {
+    static func isTerminalKeyboardEligible(clientIsOwner: Bool) -> Bool {
         clientIsOwner
+    }
+
+    /// Reference type on purpose: the fulfillment latch must outlive any one
+    /// `SingleSessionView` identity. The instance is owned by `IPadAppState`
+    /// (the same scope as `ownershipRequestCount`) so a detail-view
+    /// recreation — e.g. the focused-pane fallback after the host closes a
+    /// pane — cannot reset the latch and replay an already-fulfilled
+    /// ownership request (IPAD-8.8).
+    final class AutoTakeControlPolicy {
+        private var fulfilledRequestCount: Int = 0
+
+        init() {}
+
+        func shouldTakeControl(
+            requestCount: Int,
+            isOwner: Bool,
+            canTakeControl: Bool
+        ) -> Bool {
+            guard requestCount > fulfilledRequestCount else { return false }
+            if isOwner {
+                fulfilledRequestCount = requestCount
+                return false
+            }
+            if canTakeControl {
+                fulfilledRequestCount = requestCount
+                return true
+            }
+            return false
+        }
     }
 
     static func shouldFocusKeyboardOnOwnerTransition(
@@ -288,12 +337,22 @@ struct SingleSessionView: View {
         step: SessionStep,
         navigationPath: Binding<NavigationPath>,
         isFullScreen: Bool = true,
-        coordinator: RemoteConnectionCoordinator? = nil
+        coordinator: RemoteConnectionCoordinator? = nil,
+        externalPendingFocusRequests: Int = 0,
+        onExternalFocusRequestsConsumed: (() -> Void)? = nil,
+        autoTakeControlRequestCount: Int = 0,
+        autoTakeControlPolicy: AutoTakeControlPolicy = AutoTakeControlPolicy(),
+        ghosttyCommandContext: MobileGhosttyCommandContext? = nil
     ) {
         self.step = step
         self._navigationPath = navigationPath
         self.isFullScreen = isFullScreen
         self.coordinator = coordinator
+        self.externalPendingFocusRequests = externalPendingFocusRequests
+        self.onExternalFocusRequestsConsumed = onExternalFocusRequestsConsumed
+        self.autoTakeControlRequestCount = autoTakeControlRequestCount
+        self.autoTakeControlPolicy = autoTakeControlPolicy
+        self.ghosttyCommandContext = ghosttyCommandContext
     }
 
     var body: some View {
@@ -337,8 +396,8 @@ struct SingleSessionView: View {
         }
         // IOS-6.9: explicit bottom padding lifts the terminal above
         // the keyboard. SwiftUI's automatic `.keyboard` safe-area
-        // avoidance is unreliable when the focused responder is the
-        // UIKeyInput proxy from IOS-6.6, so we drive it ourselves.
+        // avoidance is unreliable when UITerminalView is the focused
+        // responder, so we drive it ourselves.
         .padding(.bottom, keyboardBottomInset)
         // IOS-4.8 + IPAD-1.7: fullscreen path bleeds to every edge
         // (under the notch, home indicator, landscape bands) and hides
@@ -420,6 +479,15 @@ struct SingleSessionView: View {
             .onDisappear {
                 client?.stop()
                 client = nil
+            }
+            .onChange(of: autoTakeControlRequestCount) { _, _ in
+                attemptAutoTakeControl()
+            }
+            .onChange(of: client?.canTakeControl) { _, _ in
+                attemptAutoTakeControl()
+            }
+            .onChange(of: client?.isOwner) { _, _ in
+                attemptAutoTakeControl()
             }
     }
 
@@ -514,6 +582,7 @@ struct SingleSessionView: View {
         client = new
         connection = .live
         reclaimControlOnNextDial = false
+        attemptAutoTakeControl()
     }
 
     private var loadingPlaceholder: some View {
@@ -657,6 +726,17 @@ struct SingleSessionView: View {
         .accessibilityLabel("Take Control")
     }
 
+    private func attemptAutoTakeControl() {
+        guard let client else { return }
+        if autoTakeControlPolicy.shouldTakeControl(
+            requestCount: autoTakeControlRequestCount,
+            isOwner: client.isOwner,
+            canTakeControl: client.canTakeControl
+        ) {
+            client.takeControl()
+        }
+    }
+
     private var terminalControlBar: some View {
         // Bar is only mounted when `connection == .live`, where
         // `client != nil` — the optional-chaining is purely to satisfy
@@ -750,11 +830,22 @@ struct SingleSessionView: View {
         let pane = TerminalPaneView(
             session: client.session,
             controller: controller,
-            focusRequestCount: focusRequestCount,
-            softwareKeyboardInput: Self.shouldInstallKeyboardProxy(clientIsOwner: client.isOwner) ? .init(
+            pendingFocusRequests:
+                max(0, focusRequestCount - consumedFocusRequestCount)
+                + externalPendingFocusRequests,
+            onFocusRequestsConsumed: {
+                consumedFocusRequestCount = focusRequestCount
+                onExternalFocusRequestsConsumed?()
+            },
+            committedSoftwareInput: Self.isTerminalKeyboardEligible(clientIsOwner: client.isOwner) ? .init(
                 insertText: { text in client.sendSoftwareKeyboardText(text) },
                 deleteBackward: { client.deleteBackward() }
             ) : nil,
+            hardwareKeyboardCommands: ghosttyCommandContext.map {
+                MobileGhosttyCommandButtons.hardwareKeyboardCommands(for: $0)
+            } ?? [],
+            renderPace: client.renderPace,
+            onUserInteraction: { [weak client] in client?.wakeRenderer() },
             preferredInterfaceStyle: preferredStyle,
             onWillUnmount: { snapshot in client.setIdleSnapshot(snapshot) },
             // @spec IOS-11.8: When the user taps **Paste** in the long-press menu,
