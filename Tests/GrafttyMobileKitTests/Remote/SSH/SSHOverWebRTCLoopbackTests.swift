@@ -584,7 +584,7 @@ private actor LoopbackPeer: WebRTCIceCandidateReceiver {
         // freshly-constructed objects, but cheap to check) resolve
         // immediately.
         if dc.readyState == .open {
-            Task { await self.handleDataChannelOpen(dc) }
+            Task { self.handleDataChannelOpen(dc) }
         }
         dc.delegate = tracker
         self.currentOpenTracker = tracker

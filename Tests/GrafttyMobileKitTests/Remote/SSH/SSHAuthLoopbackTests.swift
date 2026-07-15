@@ -949,7 +949,7 @@ fileprivate actor LoopbackPeer: WebRTCIceCandidateReceiver {
             Task { await self?.handleDataChannelOpen(dc) }
         }
         if dc.readyState == .open {
-            Task { await self.handleDataChannelOpen(dc) }
+            Task { self.handleDataChannelOpen(dc) }
         }
         dc.delegate = tracker
         self.currentOpenTracker = tracker

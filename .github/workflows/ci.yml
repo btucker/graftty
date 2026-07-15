@@ -146,11 +146,15 @@ jobs:
             -skipPackagePluginValidation \
             -clonedSourcePackagesDirPath .spm \
             -derivedDataPath .derivedData \
-            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -destination 'generic/platform=iOS Simulator' \
+            ARCHS=arm64 \
+            ONLY_ACTIVE_ARCH=YES \
             build-for-testing
 
       - name: Save SPM / DerivedData cache
-        if: ${{ !cancelled() && steps.spm-cache.outputs.cache-hit != 'true' }}
+        # Never publish partial DerivedData from a failed build: a later
+        # restore-key match would otherwise spread the bad handoff.
+        if: ${{ success() && steps.spm-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: |

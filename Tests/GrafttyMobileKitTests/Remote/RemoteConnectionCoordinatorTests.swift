@@ -481,7 +481,7 @@ struct RemoteConnectionCoordinatorTests {
 
         let again = await coordinator.connection(for: host)
         #expect(counter.count == 2, "a fresh call after invalidateAll must negotiate again")
-        #expect(await again !== firstConnection)
+        #expect(again !== firstConnection)
         await again?.close()
     }
 
@@ -646,8 +646,8 @@ struct RemoteConnectionCoordinatorTests {
         // without a real negotiation). Directly exercise the guard
         // instead: evicting with `stale`'s identity while `newer` is
         // registered must be a no-op.
-        await coordinator.registerLiveConnectionForTesting(newer, hostID: host.id)
-        await coordinator.evict(hostID: host.id, connectionIdentity: ObjectIdentifier(stale))
+        coordinator.registerLiveConnectionForTesting(newer, hostID: host.id)
+        coordinator.evict(hostID: host.id, connectionIdentity: ObjectIdentifier(stale))
 
         let result = await coordinator.connection(for: host)
         #expect(result === newer, "a stale connection's terminal notification must not evict a newer, live connection")
