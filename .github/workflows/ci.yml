@@ -205,6 +205,13 @@ jobs:
           key: ios-build-v2-${{ hashFiles('Package.resolved', 'Apps/GrafttyMobile/project.yml') }}-${{ github.sha }}
           fail-on-cache-miss: true
 
+      - name: Create isolated iOS simulator
+        run: |
+          SIMULATOR_UDID="$(xcrun simctl create "Graftty CI (${{ matrix.shard }})" "iPhone 17")"
+          echo "SIMULATOR_UDID=$SIMULATOR_UDID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$SIMULATOR_UDID"
+          xcrun simctl bootstatus "$SIMULATOR_UDID" -b
+
       - name: Test GrafttyMobile shard without rebuilding
         env:
           TEST_ARGUMENTS: ${{ matrix.test-arguments }}
@@ -217,7 +224,7 @@ jobs:
           read -r -a TEST_ARGUMENTS_ARRAY <<< "$TEST_ARGUMENTS"
           xcodebuild \
             -xctestrun "${XCTESTRUN_PATHS[0]}" \
-            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -destination "platform=iOS Simulator,id=$SIMULATOR_UDID" \
             "${TEST_ARGUMENTS_ARRAY[@]}" \
             test-without-building
 
