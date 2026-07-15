@@ -13,7 +13,7 @@ struct WorktreePanesStoreTests {
         let store = WorktreePanesStore(driver: driver)
         try await store.subscribe()
         #expect(await store.connectionState == .subscribed)
-        #expect(await driver.opened == true)
+        #expect(driver.opened)
     }
 
     @Test func applySnapshotMutatesCurrent() async throws {
@@ -30,7 +30,7 @@ struct WorktreePanesStoreTests {
         try await store.subscribe()
         await store.unsubscribe()
         #expect(await store.connectionState == .closed(reason: "unsubscribed"))
-        #expect(await driver.closed == true)
+        #expect(driver.closed)
     }
 
     @Test func markClosedUpdatesState() async throws {
