@@ -6,7 +6,8 @@ import Observation
 /// Not persisted. Git work is kicked on a child `Task` inherited from the
 /// MainActor; the async CLI calls yield rather than block. Publishing back
 /// to `stats` happens on the MainActor. Concurrent refresh requests for the
-/// same worktree path are deduplicated (DIVERGE-4.4).
+/// same worktree path are coalesced into one trailing refresh
+/// (DIVERGE-4.4).
 @MainActor
 @Observable
 public final class WorktreeStatsStore {
@@ -31,6 +32,19 @@ public final class WorktreeStatsStore {
     /// eventually returns.
     @ObservationIgnored
     private var inFlight: [String: Date] = [:]
+
+    /// Latest request received while a per-path computation is still in
+    /// flight. Event-driven HEAD/origin refreshes can arrive behind a
+    /// polling computation that captured older refs; retaining one
+    /// trailing request prevents that authoritative final signal from
+    /// being dropped. Newer requests replace older ones.
+    @ObservationIgnored
+    private var pendingRefresh: [String: RefreshRequest] = [:]
+
+    private struct RefreshRequest {
+        let repoPath: String
+        let branch: String
+    }
 
     /// Per-path generation counter. Bumped by `clear(worktreePath:)`
     /// and by `refresh(…)` so a superseded in-flight fetch's late
@@ -221,8 +235,15 @@ public final class WorktreeStatsStore {
         let cap = Double(Self.inFlightAbandonmentThreshold().components.seconds)
         if let started = inFlight[worktreePath],
            now.timeIntervalSince(started) < cap {
+            pendingRefresh[worktreePath] = RefreshRequest(
+                repoPath: repoPath,
+                branch: branch
+            )
             return
         }
+        // A dispatch past the abandonment threshold supersedes both the
+        // active Task and any trailing request queued behind it.
+        pendingRefresh.removeValue(forKey: worktreePath)
         inFlight[worktreePath] = now
         generation[worktreePath, default: 0] += 1
         let cached = defaultBranchByRepo[repoPath] ?? nil
@@ -246,6 +267,7 @@ public final class WorktreeStatsStore {
         // silently suppressed while the prior Task drains. The Task's
         // late `apply` is handled by the generation check.
         inFlight.removeValue(forKey: worktreePath)
+        pendingRefresh.removeValue(forKey: worktreePath)
         // Bump the generation so any in-flight fetch's late apply
         // (after its await resumes) detects the invalidation and drops
         // the write instead of repopulating stats for a dismissed
@@ -358,6 +380,12 @@ public final class WorktreeStatsStore {
         // in-flight gate so the next cadence tick can dispatch again.
         if generation[worktreePath, default: 0] != fetchGeneration { return }
         inFlight.removeValue(forKey: worktreePath)
+        let pending = pendingRefresh.removeValue(forKey: worktreePath)
+
+        // Publish every generation-valid completion before starting its
+        // trailing refresh. If a normal computation takes longer than the
+        // polling interval, another tick can otherwise perpetually queue a
+        // successor and suppress every completed snapshot.
         if let s = result.stats {
             if stats[worktreePath] != s {
                 stats[worktreePath] = s
@@ -367,6 +395,14 @@ public final class WorktreeStatsStore {
         }
         // `DIVERGE-4.9`: nil stats with a resolved defaultBranch
         // means compute threw — preserve the last-known ↑N ↓M.
+
+        if let pending {
+            refresh(
+                worktreePath: worktreePath,
+                repoPath: pending.repoPath,
+                branch: pending.branch
+            )
+        }
     }
 
     nonisolated static func repoFetchCadence(failureStreak: Int) -> Duration {
@@ -401,7 +437,7 @@ public final class WorktreeStatsStore {
 
             // Gate B: refresh every running worktree on every tick
             // (DIVERGE-4.6 / PERF-1.3). The compute pipeline is local
-            // and cheap; `inFlight` (DIVERGE-4.4) is the only dedup.
+            // and cheap; `inFlight` (DIVERGE-4.4) coalesces overlap.
             // Skipped when the repo-fetch dispatch already scheduled
             // a refresh for these worktrees — `performRepoFetch` calls
             // `refresh` for each non-stale worktree after its fetch
