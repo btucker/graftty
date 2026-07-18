@@ -5,12 +5,15 @@ import Foundation
 @Suite("WorktreeMonitor Tests", .serialized)
 struct WorktreeMonitorTests {
 
-    @Test func originRefChangeFiresWhenRemoteTrackingRefsMove() async throws {
+    @Test("""
+    @spec GIT-2.5: While a repository is in the sidebar, the application shall watch `<repoPath>/.git/logs/refs/remotes/origin/` using FSEvents so that any operation which advances a remote-tracking ref — `git push` (the common `gh pr create` path), `git fetch`, and prune — surfaces as an origin-ref change. One watch per repository covers all linked worktrees, since they share the main checkout's git directory.
+    """)
+    func originRefChangeFiresWhenExistingRemoteTrackingRefMoves() async throws {
         // Covers the "gh pr create" / `git push` flow. Neither moves the
         // local HEAD, so the existing `watchHeadRef` can't see them — the
         // only local artifact is an append to `logs/refs/remotes/origin/`.
-        // We simulate by writing into that directory directly (push would
-        // produce the same dispatch-source signal on the directory fd).
+        // Advance a real existing remote-tracking ref so the test exercises
+        // the in-place reflog append that a normal fetch produces.
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-originrefs-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
@@ -19,24 +22,64 @@ struct WorktreeMonitorTests {
         try runGit(["init", "--initial-branch=main"], cwd: tmp)
         try runGit(["commit", "--allow-empty", "-m", "init"], cwd: tmp)
 
+        // Seed the reflog before arming the watcher. The common fetch path
+        // appends an existing origin/main reflog in place; a directory
+        // vnode source only sees entry creation/removal and misses this.
+        try runGit(
+            ["update-ref", "-m", "seed", "refs/remotes/origin/main", "HEAD"],
+            cwd: tmp
+        )
+
         let recorder = OriginRefRecorder()
         let monitor = WorktreeMonitor()
         monitor.delegate = recorder
         monitor.watchOriginRefs(repoPath: tmp.path)
+        defer { monitor.stopAll() }
 
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await Task.sleep(nanoseconds: 200_000_000)
 
-        // Simulate what `git push origin <branch>` writes locally: the
-        // reflog file under `.git/logs/refs/remotes/origin/<branch>`
-        // appears / is extended. The watcher fires on directory-level
-        // events regardless of which specific ref moved, which is exactly
-        // what we want (refresh *all* tracked worktrees in the repo).
-        let reflogDir = tmp.appendingPathComponent(".git/logs/refs/remotes/origin")
-        let reflogFile = reflogDir.appendingPathComponent("branchA")
-        try "0000000000000000000000000000000000000000 abcdef 1700000000 +0000\tpush\n"
-            .write(to: reflogFile, atomically: true, encoding: .utf8)
+        try runGit(["commit", "--allow-empty", "-m", "second"], cwd: tmp)
+        try runGit(
+            ["update-ref", "-m", "fetch", "refs/remotes/origin/main", "HEAD"],
+            cwd: tmp
+        )
 
         try await waitUntil(timeout: 2.0) { recorder.didFire }
+    }
+
+    @Test func stopWatchingCancelsOriginRefStream() async throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-originrefs-stop-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try runGit(["init", "--initial-branch=main"], cwd: tmp)
+        try runGit(["commit", "--allow-empty", "-m", "init"], cwd: tmp)
+        try runGit(
+            ["update-ref", "-m", "seed", "refs/remotes/origin/main", "HEAD"],
+            cwd: tmp
+        )
+
+        let recorder = OriginRefRecorder()
+        let monitor = WorktreeMonitor()
+        monitor.delegate = recorder
+        monitor.watchOriginRefs(repoPath: tmp.path)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        monitor.stopWatching(repoPath: tmp.path)
+        // FSEvents may already have queued a root-history callback while
+        // arming. Let that callback drain, then establish the post-stop
+        // baseline before moving the ref.
+        try await Task.sleep(nanoseconds: 200_000_000)
+        recorder.reset()
+
+        try runGit(["commit", "--allow-empty", "-m", "second"], cwd: tmp)
+        try runGit(
+            ["update-ref", "-m", "fetch", "refs/remotes/origin/main", "HEAD"],
+            cwd: tmp
+        )
+
+        try await Task.sleep(nanoseconds: 500_000_000)
+        #expect(!recorder.didFire)
     }
 
     // GIT-3.11: WorktreeMonitor's file-descriptor lifecycle.
@@ -55,7 +98,7 @@ struct WorktreeMonitorTests {
     // monotonically. Uses `/dev/fd/` — the macOS-visible enumeration of
     // a process's open file descriptors.
     @Test("""
-    @spec GIT-3.11: `WorktreeMonitor`'s `DispatchSource` watchers (one per watched worktree-directory, worktree-path, HEAD reflog, and origin-refs directory) shall release their underlying file descriptors on cancel. Specifically: `createFileWatcher` installs `source.setCancelHandler { close(fd) }`, and no `watch*` method shall override that handler — DispatchSource allows only one cancel handler per source, and an override silently leaks the fd. A long-running session that churns repos (add/remove, stale/resurrect) would otherwise monotonically grow its open-fd count and eventually hit macOS's 256-fd ulimit, failing every subsequent `open` (including socket accepts, terminal PTYs, and config reloads).
+    @spec GIT-3.11: `WorktreeMonitor`'s `DispatchSource` watchers (one per watched worktree-directory, worktree-path, and HEAD reflog; origin refs and content use `FSEventStream`) shall release their underlying file descriptors on cancel. Specifically: `createFileWatcher` installs `source.setCancelHandler { close(fd) }`, and no `watch*` method shall override that handler — DispatchSource allows only one cancel handler per source, and an override silently leaks the fd. A long-running session that churns repos (add/remove, stale/resurrect) would otherwise monotonically grow its open-fd count and eventually hit macOS's 256-fd ulimit, failing every subsequent `open` (including socket accepts, terminal PTYs, and config reloads).
     """)
     func watchersCloseTheirFdsWhenCancelled() async throws {
         let tmp = FileManager.default.temporaryDirectory
@@ -168,6 +211,33 @@ struct WorktreeMonitorTests {
         try await waitUntil(timeout: 2.0) { recorder.didFire }
     }
 
+    @Test func branchChangeFiresOnMergeOriginMain() async throws {
+        let tmp = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-monitor-merge-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        try runGit(["init", "--initial-branch=main"], cwd: tmp)
+        try runGit(["commit", "--allow-empty", "-m", "base"], cwd: tmp)
+        try runGit(["switch", "-c", "feature"], cwd: tmp)
+        try runGit(["commit", "--allow-empty", "-m", "feature"], cwd: tmp)
+        try runGit(["switch", "main"], cwd: tmp)
+        try runGit(["commit", "--allow-empty", "-m", "upstream"], cwd: tmp)
+        try runGit(["update-ref", "refs/remotes/origin/main", "main"], cwd: tmp)
+        try runGit(["switch", "feature"], cwd: tmp)
+
+        let recorder = BranchChangeRecorder()
+        let monitor = WorktreeMonitor()
+        monitor.delegate = recorder
+        monitor.watchHeadRef(worktreePath: tmp.path, repoPath: tmp.path)
+        defer { monitor.stopAll() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        try runGit(["merge", "--no-edit", "origin/main"], cwd: tmp)
+
+        try await waitUntil(timeout: 2.0) { recorder.didFire }
+    }
+
     // MARK: - Helpers
 
     private func runGit(_ args: [String], cwd: URL) throws {
@@ -188,6 +258,13 @@ struct WorktreeMonitorTests {
         process.standardError = pipe
         try process.run()
         process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let output = pipe.fileHandleForReading.readDataToEndOfFile()
+            throw GitCommandError(
+                arguments: args,
+                output: String(decoding: output, as: UTF8.self)
+            )
+        }
     }
 
     private func waitUntil(
@@ -260,6 +337,15 @@ struct WorktreeMonitorTests {
     }
 }
 
+private struct GitCommandError: Error, CustomStringConvertible {
+    let arguments: [String]
+    let output: String
+
+    var description: String {
+        "git \(arguments.joined(separator: " ")) failed: \(output)"
+    }
+}
+
 private final class DeletionRecorder: WorktreeMonitorDelegate, @unchecked Sendable {
     private let lock = NSLock()
     private var _didFire = false
@@ -311,5 +397,10 @@ private final class OriginRefRecorder: WorktreeMonitorDelegate, @unchecked Senda
     func worktreeMonitorDidDetectOriginRefChange(_ monitor: WorktreeMonitor, repoPath: String) {
         lock.lock(); defer { lock.unlock() }
         _didFire = true
+    }
+
+    func reset() {
+        lock.lock(); defer { lock.unlock() }
+        _didFire = false
     }
 }
