@@ -73,14 +73,26 @@ jobs:
       - name: Build app + tests (warnings as errors)
         run: swift build --build-tests -Xswiftc -warnings-as-errors
 
-      - name: Test
+      - name: Test package targets in isolated processes
         timeout-minutes: 5
         # `script` gives swift test a PTY-like stdout so output streams
         # in real time instead of being block-buffered by the CI log pipe.
-        # The ownership model target runs in its own gate step below (with a
-        # dedicated timeout as a corpus-slowdown canary), so skip it here to
-        # avoid running the ~1000-seed sweep twice per build.
-        run: /usr/bin/script -q /dev/null swift test --skip-build --skip OwnershipModelTests
+        # A package-wide invocation intermittently stalls while the many async,
+        # subprocess, and socket suites contend in one test process. Launching
+        # one process per test target isolates those executors and resources
+        # while reusing the build products from the preceding step. Discover
+        # targets from Package.swift so a future target cannot silently miss CI;
+        # OwnershipModelTests keeps its dedicated corpus gate below.
+        run: |
+          swift package dump-package \
+            | jq -r '.targets[] | select(.type == "test" and .name != "OwnershipModelTests") | .name' \
+            | while IFS= read -r target; do
+                echo "::group::$target"
+                /usr/bin/script -q /dev/null \
+                  swift test --skip-build --filter "^${target}\\." \
+                  < /dev/null
+                echo "::endgroup::"
+              done
 
       - name: Ownership model corpus gate
         timeout-minutes: 5
@@ -166,7 +178,10 @@ jobs:
     name: ios-test (${{ matrix.shard }})
     needs: ios-build-for-testing
     runs-on: macos-26
-    timeout-minutes: 10
+    # Fresh simulator boot can spend several minutes in Apple data migration.
+    # Give provisioning and testing independent canaries below; this outer
+    # ceiling only catches a job that overruns both budgets plus setup time.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -210,6 +225,7 @@ jobs:
           fail-on-cache-miss: true
 
       - name: Create isolated iOS simulator
+        timeout-minutes: 12
         run: |
           SIMULATOR_UDID="$(xcrun simctl create "Graftty CI (${{ matrix.shard }})" "iPhone 17")"
           echo "SIMULATOR_UDID=$SIMULATOR_UDID" >> "$GITHUB_ENV"
@@ -217,6 +233,7 @@ jobs:
           xcrun simctl bootstatus "$SIMULATOR_UDID" -b
 
       - name: Test GrafttyMobile shard without rebuilding
+        timeout-minutes: 10
         env:
           TEST_ARGUMENTS: ${{ matrix.test-arguments }}
         run: |
