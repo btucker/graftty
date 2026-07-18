@@ -124,31 +124,60 @@ struct SessionClientTests {
         return nil
     }
 
-    private struct AsyncConditionTimeout: Error, CustomStringConvertible {
+    private struct UnexpectedAsyncCondition: Error, CustomStringConvertible {
         let stage: String
-        let timeout: Duration
+        let observationWindow: Duration
 
         var description: String {
-            "Timed out after \(timeout) waiting for \(stage)"
+            "Unexpectedly observed \(stage) within \(observationWindow)"
         }
     }
 
-    /// Waits for the observable effect a test actually needs instead of
-    /// assuming an unstructured task will finish within an arbitrary sleep.
     private func waitUntil(
         _ stage: String,
         timeout: Duration = .seconds(5),
         interval: Duration = .milliseconds(10),
         condition: () -> Bool
     ) async throws {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: timeout)
-        while clock.now < deadline {
+        do {
+            try await RemoteConnectionTestSupport.pollUntil(
+                timeout: timeout,
+                interval: interval,
+                stage: stage
+            ) {
+                condition()
+            }
+        } catch let error as RemoteConnectionTestSupport.PollTimeout {
             if condition() { return }
+            throw error
+        }
+    }
+
+    /// Negative async assertions have no success event to await. Observe a
+    /// short quiet window and fail as soon as the forbidden effect appears.
+    private func expectNever(
+        _ stage: String,
+        for observationWindow: Duration = .milliseconds(100),
+        interval: Duration = .milliseconds(10),
+        condition: () -> Bool
+    ) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: observationWindow)
+        while clock.now < deadline {
+            if condition() {
+                throw UnexpectedAsyncCondition(
+                    stage: stage,
+                    observationWindow: observationWindow
+                )
+            }
             try await Task.sleep(for: interval)
         }
-        if condition() { return }
-        throw AsyncConditionTimeout(stage: stage, timeout: timeout)
+        if condition() {
+            throw UnexpectedAsyncCondition(
+                stage: stage,
+                observationWindow: observationWindow
+            )
+        }
     }
 
     private func waitForHelloClientID(_ ws: FakeWS) async throws -> DisplayClientID {
@@ -439,6 +468,9 @@ struct SessionClientTests {
         try await confirmOwner(client, ws: ws)
         let before = binaryFrames(ws).count
         client.sendPaste("")
+        try await expectNever("a frame for an empty paste") {
+            binaryFrames(ws).count != before
+        }
         #expect(binaryFrames(ws).count == before)
     }
 
@@ -502,9 +534,11 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, role: .preview)
         client.start()
         defer { client.stop() }
-        client.session.sendInput(Data([0x68, 0x69]))
         _ = try await waitForHelloClientID(ws)
-        await Task.yield()
+        client.session.sendInput(Data([0x68, 0x69]))
+        try await expectNever("a preview terminal-input frame") {
+            !binaryFrames(ws).isEmpty
+        }
         #expect(binaryFrames(ws).isEmpty)
     }
 
@@ -537,19 +571,28 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, role: .preview)
         client.start()
         defer { client.stop() }
+        _ = try await waitForHelloClientID(ws)
         client.handleViewport(InMemoryTerminalViewport(
             columns: 80, rows: 24,
             widthPixels: 0, heightPixels: 0,
             cellWidthPixels: 12, cellHeightPixels: 24
         ))
         client.session.sendInput(Data([0x68]))
-        _ = try await waitForHelloClientID(ws)
-        await Task.yield()
         client.handleViewport(InMemoryTerminalViewport(
             columns: 60, rows: 24,
             widthPixels: 0, heightPixels: 0,
             cellWidthPixels: 12, cellHeightPixels: 24
         ))
+        try await expectNever("a preview resize or takeover frame") {
+            envelopes(ws).contains { envelope in
+                switch envelope {
+                case .resize, .ownerResize, .takeControl:
+                    return true
+                case .hello, .grid, .ownership:
+                    return false
+                }
+            }
+        }
         let controlAttempts = envelopes(ws).filter { envelope in
             switch envelope {
             case .resize, .ownerResize, .takeControl:
@@ -622,6 +665,12 @@ struct SessionClientTests {
                 return false
             }
         }
+        try await expectNever("follower binary input or a duplicate takeover before confirmation") {
+            !binaryFrames(ws).isEmpty || envelopes(ws).filter {
+                if case .takeControl = $0 { return true }
+                return false
+            }.count > 1
+        }
 
         #expect(binaryFrames(ws).isEmpty)
         let takeovers = envelopes(ws).filter {
@@ -650,6 +699,12 @@ struct SessionClientTests {
                 if case .takeControl = $0 { return true }
                 return false
             }
+        }
+        try await expectNever("follower binary input or a duplicate takeover before confirmation") {
+            !binaryFrames(ws).isEmpty || envelopes(ws).filter {
+                if case .takeControl = $0 { return true }
+                return false
+            }.count > 1
         }
 
         #expect(binaryFrames(ws).isEmpty)
@@ -688,6 +743,7 @@ struct SessionClientTests {
         client.start()
         defer { client.stop() }
         primeViewport(client, columns: 80, rows: 24)
+        _ = try await waitForHelloClientID(ws)
         try confirmFollower(client, cols: 120, rows: 40)
 
         client.takeControl()
@@ -802,6 +858,12 @@ struct SessionClientTests {
         ws.clearSent()
 
         try confirmFollower(client, cols: 120, rows: 40, epoch: 3)
+        try await expectNever("automatic takeover from another active owner") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
 
         let takeoverCount = envelopes(ws).filter {
             if case .takeControl = $0 { return true }
@@ -831,6 +893,12 @@ struct SessionClientTests {
             epoch: 3
         )
         client.handleTextFrame(WebControlEnvelope.ownership(ownerless).encoded())
+        try await expectNever("automatic takeover before the first viewport") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
         #expect(envelopes(ws).filter {
             if case .takeControl = $0 { return true }
             return false
@@ -909,6 +977,9 @@ struct SessionClientTests {
 
         // Layout tick on connect, before the user has engaged — must not resize.
         primeViewport(client, columns: 132, rows: 44)
+        try await expectNever("a legacy resize before user engagement") {
+            !ws.resizes.isEmpty
+        }
         #expect(ws.resizes.isEmpty)
 
         // First engagement applies the current viewport and unlocks later ticks.
@@ -1055,6 +1126,12 @@ struct SessionClientTests {
                 return false
             }
         }
+        try await expectNever("mismatched-kind follower input or owner resize") {
+            !binaryFrames(ws).isEmpty || envelopes(ws).contains {
+                if case .ownerResize = $0 { return true }
+                return false
+            }
+        }
 
         #expect(!client.isOwner)
         #expect(client.isFollower)
@@ -1109,6 +1186,12 @@ struct SessionClientTests {
         )
         client.handleTextFrame(WebControlEnvelope.ownership(snapshot).encoded())
         client.takeControl()
+        try await expectNever("a preview takeover request") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
 
         #expect(!client.isOwner)
         #expect(!client.canTakeControl)

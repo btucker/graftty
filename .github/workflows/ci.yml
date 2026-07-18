@@ -86,8 +86,8 @@ jobs:
         run: |
           set -o pipefail
           test_targets="$(
-            swift package dump-package \
-              | jq -r '.targets[] | select(.type == "test" and .name != "OwnershipModelTests") | .name'
+            swift package describe --type json \
+              | jq -r '.targets[] | select(.type == "test" and .name != "OwnershipModelTests") | .c99name'
           )"
           if [[ -z "$test_targets" ]]; then
             echo "::error::No non-ownership Swift test targets were discovered"
