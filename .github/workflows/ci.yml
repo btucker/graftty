@@ -84,15 +84,23 @@ jobs:
         # targets from Package.swift so a future target cannot silently miss CI;
         # OwnershipModelTests keeps its dedicated corpus gate below.
         run: |
-          swift package dump-package \
-            | jq -r '.targets[] | select(.type == "test" and .name != "OwnershipModelTests") | .name' \
-            | while IFS= read -r target; do
-                echo "::group::$target"
-                /usr/bin/script -q /dev/null \
-                  swift test --skip-build --filter "^${target}\\." \
-                  < /dev/null
-                echo "::endgroup::"
-              done
+          set -o pipefail
+          test_targets="$(
+            swift package dump-package \
+              | jq -r '.targets[] | select(.type == "test" and .name != "OwnershipModelTests") | .name'
+          )"
+          if [[ -z "$test_targets" ]]; then
+            echo "::error::No non-ownership Swift test targets were discovered"
+            exit 1
+          fi
+
+          while IFS= read -r target; do
+            echo "::group::$target"
+            /usr/bin/script -q /dev/null \
+              swift test --skip-build --filter "^${target}\\." \
+              < /dev/null
+            echo "::endgroup::"
+          done <<< "$test_targets"
 
       - name: Ownership model corpus gate
         timeout-minutes: 5
