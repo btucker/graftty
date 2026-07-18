@@ -3683,6 +3683,14 @@ struct GrafttyApp: App {
 
 @MainActor
 final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
+    typealias DiscoverWorktrees = @Sendable (
+        _ repo: RepoEntry
+    ) async throws -> [DiscoveredWorktree]
+
+    nonisolated static let defaultDiscoverWorktrees: DiscoverWorktrees = { repo in
+        try await WorktreeDiscovery.discover(repo: repo)
+    }
+
     /// Tests substitute an immediate-fire recorder so a CI MainActor
     /// starvation episode can't push the wall-clock follow-up sleep
     /// past the test's `waitUntil` window.
@@ -3703,6 +3711,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
     let remoteBranchStore: RemoteBranchStore
+    private let discoverWorktrees: DiscoverWorktrees
     private let originRefPRFollowUpScheduler: FollowUpScheduler
 
     init(
@@ -3710,12 +3719,14 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         statsStore: WorktreeStatsStore,
         prStatusStore: PRStatusStore,
         remoteBranchStore: RemoteBranchStore,
+        discoverWorktrees: @escaping DiscoverWorktrees = WorktreeMonitorBridge.defaultDiscoverWorktrees,
         originRefPRFollowUpScheduler: @escaping FollowUpScheduler = WorktreeMonitorBridge.defaultFollowUpScheduler
     ) {
         self.appState = appState
         self.statsStore = statsStore
         self.prStatusStore = prStatusStore
         self.remoteBranchStore = remoteBranchStore
+        self.discoverWorktrees = discoverWorktrees
         self.originRefPRFollowUpScheduler = originRefPRFollowUpScheduler
     }
 
@@ -3728,6 +3739,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         let binding = appState
         let store = statsStore
         let prStore = prStatusStore
+        let discover = discoverWorktrees
         // `git worktree list --porcelain` is a subprocess wait. Awaiting the
         // now-async `GitWorktreeDiscovery.discover` yields the main actor
         // during the wait so ghostty keystrokes aren't delayed (prior
@@ -3737,7 +3749,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }) else { return }
             let discovered: [DiscoveredWorktree]
             do {
-                discovered = try await WorktreeDiscovery.discover(repo: repo)
+                discovered = try await discover(repo)
             } catch {
                 NSLog("[Graftty] worktreeMonitorDidDetectChange: discover failed for %@: %@",
                       repoPath, String(describing: error))
@@ -3899,6 +3911,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         let store = statsStore
         let prStore = prStatusStore
         let remoteBranchStore = remoteBranchStore
+        let discover = discoverWorktrees
         // Branch changes fire in bursts (rebase, interactive checkout), so
         // `GitWorktreeDiscovery.discover`'s subprocess wait must yield the
         // main actor — the async version does that naturally. Scope the
@@ -3910,7 +3923,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             let repoPath = repo.path
             let discovered: [DiscoveredWorktree]
             do {
-                discovered = try await WorktreeDiscovery.discover(repo: repo)
+                discovered = try await discover(repo)
             } catch {
                 NSLog("[Graftty] worktreeMonitorDidDetectBranchChange: discover failed for %@: %@",
                       repoPath, String(describing: error))

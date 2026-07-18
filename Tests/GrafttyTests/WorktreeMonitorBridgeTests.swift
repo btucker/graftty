@@ -2,7 +2,7 @@ import Foundation
 import GrafttyProtocol
 import SwiftUI
 import Testing
-import GrafttyKit
+@testable import GrafttyKit
 @testable import Graftty
 
 @Suite("WorktreeMonitorBridge event-driven refresh", .serialized)
@@ -13,9 +13,7 @@ struct WorktreeMonitorBridgeTests {
 @spec DIVERGE-4.2: When a worktree's HEAD reference changes, the application shall recompute that worktree's divergence counts immediately, without waiting for the polling fallback.
 """)
     func headRefChangeRefreshesStatsImmediately() async throws {
-        let repoURL = try makeGitRepo()
-        defer { try? FileManager.default.removeItem(at: repoURL) }
-        let repoPath = CanonicalPath.canonicalize(repoURL.path)
+        let repoPath = "/repo"
         let compute = RecordingStatsCompute()
         let stateBox = AppStateBox(AppState(
             repos: [
@@ -29,7 +27,13 @@ struct WorktreeMonitorBridgeTests {
             ],
             selectedWorktreePath: nil
         ))
-        let bridge = makeBridge(stateBox: stateBox, compute: compute)
+        let bridge = makeBridge(
+            stateBox: stateBox,
+            compute: compute,
+            discoverWorktrees: { _ in
+                [DiscoveredWorktree(path: repoPath, branch: "main")]
+            }
+        )
 
         bridge.worktreeMonitorDidDetectBranchChange(
             WorktreeMonitor(),
@@ -231,7 +235,8 @@ struct WorktreeMonitorBridgeTests {
     @MainActor
     private func makeBridge(
         stateBox: AppStateBox,
-        compute: RecordingStatsCompute
+        compute: RecordingStatsCompute,
+        discoverWorktrees: @escaping WorktreeMonitorBridge.DiscoverWorktrees = WorktreeMonitorBridge.defaultDiscoverWorktrees
     ) -> WorktreeMonitorBridge {
         let remoteBranchStore = RemoteBranchStore(list: { _ in RemoteBranchSnapshot() })
         let prStore = PRStatusStore(
@@ -247,33 +252,9 @@ struct WorktreeMonitorBridgeTests {
             ),
             statsStore: WorktreeStatsStore(compute: compute.function, fetch: { _ in }),
             prStatusStore: prStore,
-            remoteBranchStore: remoteBranchStore
+            remoteBranchStore: remoteBranchStore,
+            discoverWorktrees: discoverWorktrees
         )
-    }
-
-    private func makeGitRepo() throws -> URL {
-        let repoURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("graftty-bridge-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: repoURL, withIntermediateDirectories: true)
-        var succeeded = false
-        defer {
-            if !succeeded {
-                try? FileManager.default.removeItem(at: repoURL)
-            }
-        }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = ["init", "--initial-branch=main"]
-        process.currentDirectoryURL = repoURL
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        process.waitUntilExit()
-        guard process.terminationStatus == 0 else {
-            throw CocoaError(.fileWriteUnknown)
-        }
-        succeeded = true
-        return repoURL
     }
 }
 
