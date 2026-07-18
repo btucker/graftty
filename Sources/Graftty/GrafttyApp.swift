@@ -1043,7 +1043,9 @@ struct GrafttyApp: App {
 
         reconcileOnLaunch()
 
-        // Start the stats poller: a 5s ticker that, per-repo, gates the
+        // Start the stats safety-net poller: HEAD and origin-ref events
+        // provide the prompt path, while this 5s ticker catches
+        // coalesced or missed filesystem events. Per-repo, it gates the
         // 30-second `git fetch` cadence (DIVERGE-4.3) and unconditionally
         // refreshes every running worktree on every tick (DIVERGE-4.6).
         // Keeps polling while Graftty is backgrounded (DIVERGE-4.8) —
@@ -3681,6 +3683,14 @@ struct GrafttyApp: App {
 
 @MainActor
 final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
+    typealias DiscoverWorktrees = @Sendable (
+        _ repo: RepoEntry
+    ) async throws -> [DiscoveredWorktree]
+
+    nonisolated static let defaultDiscoverWorktrees: DiscoverWorktrees = { repo in
+        try await WorktreeDiscovery.discover(repo: repo)
+    }
+
     /// Tests substitute an immediate-fire recorder so a CI MainActor
     /// starvation episode can't push the wall-clock follow-up sleep
     /// past the test's `waitUntil` window.
@@ -3701,6 +3711,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
     let remoteBranchStore: RemoteBranchStore
+    private let discoverWorktrees: DiscoverWorktrees
     private let originRefPRFollowUpScheduler: FollowUpScheduler
 
     init(
@@ -3708,12 +3719,14 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         statsStore: WorktreeStatsStore,
         prStatusStore: PRStatusStore,
         remoteBranchStore: RemoteBranchStore,
+        discoverWorktrees: @escaping DiscoverWorktrees = WorktreeMonitorBridge.defaultDiscoverWorktrees,
         originRefPRFollowUpScheduler: @escaping FollowUpScheduler = WorktreeMonitorBridge.defaultFollowUpScheduler
     ) {
         self.appState = appState
         self.statsStore = statsStore
         self.prStatusStore = prStatusStore
         self.remoteBranchStore = remoteBranchStore
+        self.discoverWorktrees = discoverWorktrees
         self.originRefPRFollowUpScheduler = originRefPRFollowUpScheduler
     }
 
@@ -3726,6 +3739,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         let binding = appState
         let store = statsStore
         let prStore = prStatusStore
+        let discover = discoverWorktrees
         // `git worktree list --porcelain` is a subprocess wait. Awaiting the
         // now-async `GitWorktreeDiscovery.discover` yields the main actor
         // during the wait so ghostty keystrokes aren't delayed (prior
@@ -3735,7 +3749,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }) else { return }
             let discovered: [DiscoveredWorktree]
             do {
-                discovered = try await WorktreeDiscovery.discover(repo: repo)
+                discovered = try await discover(repo)
             } catch {
                 NSLog("[Graftty] worktreeMonitorDidDetectChange: discover failed for %@: %@",
                       repoPath, String(describing: error))
@@ -3771,9 +3785,10 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
                 monitor.watchWorktreeContents(worktreePath: wt.path)
             }
 
-            // Existing worktrees' stats are driven by their own HEAD
-            // callbacks and the polling loop, so a `.git/worktrees/`
-            // directory tick only needs to seed stats for new entries.
+            // Existing worktrees' stats are driven by their own HEAD and
+            // origin-ref callbacks plus the polling fallback, so a
+            // `.git/worktrees/` directory tick only needs to seed stats
+            // for new entries.
             for wt in result.newlyAdded where wt.state == .running {
                 store.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
             }
@@ -3846,15 +3861,24 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
     /// `<repoPath>/.git/logs/refs/remotes/origin/` moves — i.e. a
     /// `git push` or `git fetch` landed. Covers the `gh pr create`
     /// flow, which pushes then creates the PR via API without touching
-    /// local HEAD. Drives only the remote-branch and PR refresh; the
-    /// divergence stats are already covered by the unconditional 5s
-    /// polling tick (DIVERGE-4.6), so they don't need a parallel
-    /// FSEvents kick here.
+    /// local HEAD. Refreshes divergence for the repo's running
+    /// worktrees immediately, then drives the remote-branch and PR
+    /// refresh. The polling tick remains a fallback for a coalesced or
+    /// missed FSEvent.
     nonisolated func worktreeMonitorDidDetectOriginRefChange(_ monitor: WorktreeMonitor, repoPath: String) {
         let binding = appState
+        let store = statsStore
         let remoteBranchStore = remoteBranchStore
         Task { @MainActor in
-            guard binding.wrappedValue.repos.contains(where: { $0.path == repoPath }) else { return }
+            guard let repo = binding.wrappedValue.repos.first(where: {
+                $0.path == repoPath && $0.isGitTracked
+            }) else { return }
+            // Graftty's own periodic fetch also moves origin refs. Limit
+            // this repo-wide signal to running rows so it doesn't turn
+            // into recurring work proportional to closed history.
+            for wt in repo.worktrees where wt.state == .running {
+                store.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
+            }
             remoteBranchStore.refresh(repoPath: repoPath) { [weak self] in
                 self?.refreshPushedPRs(repoPath: repoPath)
                 self?.scheduleOriginRefPRFollowUps(repoPath: repoPath)
@@ -3884,20 +3908,22 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
 
     nonisolated func worktreeMonitorDidDetectBranchChange(_ monitor: WorktreeMonitor, worktreePath: String) {
         let binding = appState
+        let store = statsStore
         let prStore = prStatusStore
         let remoteBranchStore = remoteBranchStore
+        let discover = discoverWorktrees
         // Branch changes fire in bursts (rebase, interactive checkout), so
         // `GitWorktreeDiscovery.discover`'s subprocess wait must yield the
         // main actor — the async version does that naturally. Scope the
         // discover call to the owning repo only, not every tracked repo.
         Task { @MainActor in
             guard let repo = binding.wrappedValue.repos.first(where: { repo in
-                repo.worktrees.contains(where: { $0.path == worktreePath })
+                repo.isGitTracked && repo.worktrees.contains(where: { $0.path == worktreePath })
             }) else { return }
             let repoPath = repo.path
             let discovered: [DiscoveredWorktree]
             do {
-                discovered = try await WorktreeDiscovery.discover(repo: repo)
+                discovered = try await discover(repo)
             } catch {
                 NSLog("[Graftty] worktreeMonitorDidDetectBranchChange: discover failed for %@: %@",
                       repoPath, String(describing: error))
@@ -3907,6 +3933,9 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             guard let repoIdx = binding.wrappedValue.repos.firstIndex(where: { $0.path == repoPath }),
                   let wtIdx = binding.wrappedValue.repos[repoIdx].worktrees.firstIndex(where: { $0.path == worktreePath }) else { return }
             binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].branch = match.branch
+            if binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state.hasOnDiskWorktree {
+                store.refresh(worktreePath: worktreePath, repoPath: repoPath, branch: match.branch)
+            }
             prStore.clear(worktreePath: worktreePath)
             remoteBranchStore.refresh(repoPath: repoPath) {
                 guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }),

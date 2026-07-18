@@ -39,11 +39,6 @@ struct GitTodo {
     func git_2_4() async throws { }
 
     @Test("""
-@spec GIT-2.5: While a repository is in the sidebar, the application shall watch `<repoPath>/.git/logs/refs/remotes/origin/` using FSEvents so that any operation which advances a remote-tracking ref — `git push` (the common `gh pr create` path), `git fetch`, and prune — surfaces as an origin-ref change. One watch per repository covers all linked worktrees, since they share the main checkout's git directory.
-""", .disabled("not yet implemented"))
-    func git_2_5() async throws { }
-
-    @Test("""
 @spec GIT-2.8: While a repository is in the sidebar, the application shall scan local `refs/remotes/origin/*` every 10 seconds without contacting the network, maintaining a repo-scoped set of locally-known remote branch names. The scan shall use local git ref metadata only; it shall not replace the repo-level fetch cadence that discovers branches created from another clone.
 """, .disabled("not yet implemented"))
     func git_2_8() async throws { }

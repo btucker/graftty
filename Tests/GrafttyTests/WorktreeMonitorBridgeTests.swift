@@ -2,11 +2,113 @@ import Foundation
 import GrafttyProtocol
 import SwiftUI
 import Testing
-import GrafttyKit
+@testable import GrafttyKit
 @testable import Graftty
 
-@Suite("WorktreeMonitorBridge origin-ref refresh", .serialized)
+@Suite("WorktreeMonitorBridge event-driven refresh", .serialized)
 struct WorktreeMonitorBridgeTests {
+
+    @MainActor
+    @Test("""
+@spec DIVERGE-4.2: When a worktree's HEAD reference changes, the application shall recompute that worktree's divergence counts immediately, without waiting for the polling fallback.
+""")
+    func headRefChangeRefreshesStatsImmediately() async throws {
+        let repoPath = "/repo"
+        let compute = RecordingStatsCompute()
+        let stateBox = AppStateBox(AppState(
+            repos: [
+                RepoEntry(
+                    path: repoPath,
+                    displayName: "repo",
+                    worktrees: [
+                        WorktreeEntry(path: repoPath, branch: "main", state: .running)
+                    ]
+                )
+            ],
+            selectedWorktreePath: nil
+        ))
+        let bridge = makeBridge(
+            stateBox: stateBox,
+            compute: compute,
+            discoverWorktrees: { _ in
+                [DiscoveredWorktree(path: repoPath, branch: "main")]
+            }
+        )
+
+        bridge.worktreeMonitorDidDetectBranchChange(
+            WorktreeMonitor(),
+            worktreePath: repoPath
+        )
+
+        try await waitUntil(timeout: 2.0) {
+            compute.callCount(for: repoPath) == 1
+        }
+    }
+
+    @MainActor
+    @Test("Non-git repositories ignore ref-driven divergence refreshes")
+    func nonGitRefEventsDoNotRefreshStats() async throws {
+        let compute = RecordingStatsCompute()
+        let stateBox = AppStateBox(AppState(
+            repos: [
+                RepoEntry(
+                    path: "/project",
+                    displayName: "project",
+                    worktrees: [
+                        WorktreeEntry(path: "/project", branch: "main", state: .running)
+                    ],
+                    isGitTracked: false
+                )
+            ],
+            selectedWorktreePath: nil
+        ))
+        let bridge = makeBridge(stateBox: stateBox, compute: compute)
+
+        bridge.worktreeMonitorDidDetectBranchChange(
+            WorktreeMonitor(),
+            worktreePath: "/project"
+        )
+        bridge.worktreeMonitorDidDetectOriginRefChange(
+            WorktreeMonitor(),
+            repoPath: "/project"
+        )
+
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(compute.calledPaths.isEmpty)
+    }
+
+    @MainActor
+    @Test("""
+@spec DIVERGE-4.7: When a remote-tracking-ref change event fires (GIT-2.5), the application shall immediately refresh divergence stats for every running worktree in the affected repository, without waiting for the polling fallback.
+""")
+    func originRefChangeRefreshesRunningWorktreesImmediately() async throws {
+        let compute = RecordingStatsCompute()
+        let stateBox = AppStateBox(AppState(
+            repos: [
+                RepoEntry(
+                    path: "/repo",
+                    displayName: "repo",
+                    worktrees: [
+                        WorktreeEntry(path: "/repo/a", branch: "a", state: .running),
+                        WorktreeEntry(path: "/repo/b", branch: "b", state: .running),
+                        WorktreeEntry(path: "/repo/closed", branch: "closed", state: .closed)
+                    ]
+                )
+            ],
+            selectedWorktreePath: nil
+        ))
+        let bridge = makeBridge(stateBox: stateBox, compute: compute)
+
+        bridge.worktreeMonitorDidDetectOriginRefChange(
+            WorktreeMonitor(),
+            repoPath: "/repo"
+        )
+
+        try await waitUntil(timeout: 2.0) {
+            compute.calledPaths == ["/repo/a", "/repo/b"]
+        }
+        #expect(compute.callCount(for: "/repo/closed") == 0)
+    }
 
     @MainActor
     @Test func originRefChangeRetriesAfterCreateRace() async throws {
@@ -129,6 +231,31 @@ struct WorktreeMonitorBridgeTests {
         let succeeded = await condition()
         #expect(succeeded, "waitUntil timed out")
     }
+
+    @MainActor
+    private func makeBridge(
+        stateBox: AppStateBox,
+        compute: RecordingStatsCompute,
+        discoverWorktrees: @escaping WorktreeMonitorBridge.DiscoverWorktrees = WorktreeMonitorBridge.defaultDiscoverWorktrees
+    ) -> WorktreeMonitorBridge {
+        let remoteBranchStore = RemoteBranchStore(list: { _ in RemoteBranchSnapshot() })
+        let prStore = PRStatusStore(
+            executor: NoopCLIExecutor(),
+            fetcherFor: { _ in nil },
+            detectHost: { _ in nil },
+            remoteBranchStore: remoteBranchStore
+        )
+        return WorktreeMonitorBridge(
+            appState: Binding(
+                get: { stateBox.state },
+                set: { stateBox.state = $0 }
+            ),
+            statsStore: WorktreeStatsStore(compute: compute.function, fetch: { _ in }),
+            prStatusStore: prStore,
+            remoteBranchStore: remoteBranchStore,
+            discoverWorktrees: discoverWorktrees
+        )
+    }
 }
 
 @MainActor
@@ -199,6 +326,36 @@ private actor RecordingRemoteBranchLister {
 
     func invocations(for repoPath: String) -> Int {
         counts[repoPath, default: 0]
+    }
+}
+
+private final class RecordingStatsCompute: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls: [String: Int] = [:]
+
+    var calledPaths: Set<String> {
+        lock.lock(); defer { lock.unlock() }
+        return Set(calls.keys)
+    }
+
+    func callCount(for path: String) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return calls[path, default: 0]
+    }
+
+    var function: WorktreeStatsStore.ComputeFunction {
+        { [weak self] worktreePath, _, _, _ in
+            self?.record(worktreePath)
+            return WorktreeStatsStore.ComputeResult(
+                defaultBranch: "main",
+                stats: WorktreeStats(ahead: 0, behind: 0, insertions: 0, deletions: 0)
+            )
+        }
+    }
+
+    private func record(_ path: String) {
+        lock.lock(); defer { lock.unlock() }
+        calls[path, default: 0] += 1
     }
 }
 
