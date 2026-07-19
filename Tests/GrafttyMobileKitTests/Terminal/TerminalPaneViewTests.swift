@@ -8,6 +8,25 @@ private final class NilInputKeyCommand: UIKeyCommand {
     override var input: String? { nil }
 }
 
+@MainActor
+private final class DeferredEditMenuAnimator: NSObject, UIEditMenuInteractionAnimating {
+    private var completions: [() -> Void] = []
+
+    func addAnimations(_ animations: @escaping () -> Void) {
+        animations()
+    }
+
+    func addCompletion(_ completion: @escaping () -> Void) {
+        completions.append(completion)
+    }
+
+    func finish() {
+        let pending = completions
+        completions.removeAll()
+        pending.forEach { $0() }
+    }
+}
+
 @Suite
 @MainActor
 struct TerminalPaneViewTests {
@@ -539,9 +558,9 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-11.12: When the user taps Paste from the terminal long-press edit menu, the application shall forward the clipboard paste request and then re-focus the eligible `UITerminalView`, so dismissing the UIKit edit menu does not leave the user without terminal keyboard control.
+@spec IOS-11.12: When the user taps Paste from the terminal long-press edit menu, the application shall forward the clipboard paste request and re-focus the eligible `UITerminalView` after UIKit's edit-menu dismissal completes, so the dismissal cannot subsequently resign the terminal and leave the user without keyboard control.
 """)
-    func pasteMenuRefocusesEligibleTerminalAfterForwardingPaste() async {
+    func pasteMenuRefocusesEligibleTerminalAfterDismissalCompletes() async {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         let controller = UIViewController()
         controller.view = container
@@ -552,11 +571,74 @@ struct TerminalPaneViewTests {
         var didRequestPaste = false
         container.onPasteRequested = { didRequestPaste = true }
 
+        let animator = DeferredEditMenuAnimator()
+        container.dismissLongPressMenuForTesting(animator: animator)
+        // UIKit is allowed to begin dismissal before invoking the selected
+        // action. Register the completion first to cover that ordering.
         container.performPasteForTesting()
-        try? await Task.sleep(nanoseconds: 10_000_000)
 
         #expect(didRequestPaste)
+        #expect(!container.terminalView.isFirstResponder)
+
+        animator.finish()
+
+        // The refocus deliberately leaves UIKit's dismissal-completion turn.
+        #expect(!container.terminalView.isFirstResponder)
+        try? await Task.sleep(nanoseconds: 10_000_000)
         #expect(container.terminalView.isFirstResponder)
+        _ = window
+    }
+
+    @Test("Paste refocuses when edit-menu dismissal completes before the action callback")
+    func pasteMenuRefocusesWhenDismissalCompletesBeforeAction() async {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let controller = UIViewController()
+        controller.view = container
+        let window = UIWindow(frame: container.frame)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+        var didRequestPaste = false
+        container.onPasteRequested = { didRequestPaste = true }
+
+        let animator = DeferredEditMenuAnimator()
+        container.dismissLongPressMenuForTesting(animator: animator)
+        animator.finish()
+        container.performPasteForTesting()
+
+        #expect(didRequestPaste)
+        #expect(!container.terminalView.isFirstResponder)
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        #expect(container.terminalView.isFirstResponder)
+        _ = window
+    }
+
+    @Test("selection-menu dismissal cannot consume a pending Paste refocus")
+    func selectionMenuDismissalDoesNotConsumePendingPasteRefocus() async {
+        let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        let controller = UIViewController()
+        controller.view = container
+        let window = UIWindow(frame: container.frame)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        container.committedSoftwareInput = .init(insertText: { _ in }, deleteBackward: {})
+
+        container.performPasteForTesting()
+        let selectionAnimator = DeferredEditMenuAnimator()
+        container.dismissSelectionMenuForTesting(animator: selectionAnimator)
+        selectionAnimator.finish()
+
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        #expect(!container.terminalView.isFirstResponder)
+
+        let longPressAnimator = DeferredEditMenuAnimator()
+        container.dismissLongPressMenuForTesting(animator: longPressAnimator)
+        longPressAnimator.finish()
+
+        #expect(!container.terminalView.isFirstResponder)
+        try? await Task.sleep(nanoseconds: 10_000_000)
+        #expect(container.terminalView.isFirstResponder)
+        _ = window
     }
 
     @Test("any touch on the terminal container fires onUserInteraction")

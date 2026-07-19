@@ -296,6 +296,12 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
     /// `Select` action can word-select at the original touch point even
     /// after the gesture has ended. Updated on `.began`.
     private var lastLongPressPoint: CGPoint = .zero
+    /// Paste and edit-menu dismissal are independent UIKit callbacks whose
+    /// relative ordering is not part of our contract. Pair them by long-press
+    /// menu generation and refocus only after both have happened.
+    private var longPressMenuGeneration: UInt = 0
+    private var pendingPasteRefocusGeneration: UInt?
+    private var completedLongPressMenuDismissalGeneration: UInt?
 
     override public init(frame: CGRect) {
         super.init(frame: frame)
@@ -358,7 +364,13 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
         guard recognizer.state == .began else { return }
         let point = recognizer.location(in: self)
         lastLongPressPoint = point
-        let config = UIEditMenuConfiguration(identifier: nil, sourcePoint: point)
+        longPressMenuGeneration &+= 1
+        pendingPasteRefocusGeneration = nil
+        completedLongPressMenuDismissalGeneration = nil
+        let config = UIEditMenuConfiguration(
+            identifier: longPressMenuIdentifier(for: longPressMenuGeneration),
+            sourcePoint: point
+        )
         longPressMenu.presentEditMenu(with: config)
     }
 
@@ -428,9 +440,11 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
         presentSelectionMenu(near: center)
     }
 
-    fileprivate func performPaste() {
+    fileprivate func performPaste(for menuGeneration: UInt) {
         onPasteRequested?()
-        refocusKeyboardAfterEditMenuAction()
+        guard menuGeneration == longPressMenuGeneration else { return }
+        pendingPasteRefocusGeneration = menuGeneration
+        refocusKeyboardAfterEditMenuDismissalIfReady(for: menuGeneration)
     }
 
     fileprivate func performCopy() {
@@ -482,7 +496,33 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
     /// Internal-visibility access for unit tests: invokes the paste menu
     /// action without presenting UIKit's edit menu.
     func performPasteForTesting() {
-        performPaste()
+        performPaste(for: longPressMenuGeneration)
+    }
+
+    /// Internal-visibility access for unit tests: drives the real long-press
+    /// edit-menu interaction's dismissal callback without presenting UIKit UI.
+    func dismissLongPressMenuForTesting(animator: any UIEditMenuInteractionAnimating) {
+        editMenuInteraction(
+            longPressMenu,
+            willDismissMenuFor: UIEditMenuConfiguration(
+                identifier: longPressMenuIdentifier(for: longPressMenuGeneration),
+                sourcePoint: .zero
+            ),
+            animator: animator
+        )
+    }
+
+    /// Internal-visibility access for unit tests: proves the independent
+    /// selection-menu interaction cannot consume a pending Paste refocus.
+    func dismissSelectionMenuForTesting(animator: any UIEditMenuInteractionAnimating) {
+        editMenuInteraction(
+            selectionMenu,
+            willDismissMenuFor: UIEditMenuConfiguration(
+                identifier: "selection" as AnyHashable,
+                sourcePoint: .zero
+            ),
+            animator: animator
+        )
     }
 
     /// Internal-visibility access for unit tests: simulates the any-touch
@@ -491,11 +531,24 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
         onUserInteraction?()
     }
 
-    private func refocusKeyboardAfterEditMenuAction() {
-        guard terminalView.canBecomeFirstResponder else { return }
+    private func refocusKeyboardAfterEditMenuDismissalIfReady(for generation: UInt) {
+        guard pendingPasteRefocusGeneration == generation,
+              completedLongPressMenuDismissalGeneration == generation
+        else { return }
+        pendingPasteRefocusGeneration = nil
+        // Leave UIKit's dismissal-completion turn before asking its terminal
+        // responder to focus, so any remaining internal cleanup runs first.
         DispatchQueue.main.async { [weak self] in
-            self?.focusKeyboardInput()
+            guard let self,
+                  self.longPressMenuGeneration == generation,
+                  self.terminalView.canBecomeFirstResponder
+            else { return }
+            _ = self.focusKeyboardInput()
         }
+    }
+
+    private func longPressMenuIdentifier(for generation: UInt) -> AnyHashable {
+        "long-press:\(generation)" as AnyHashable
     }
 
     public func terminalView(_: UITerminalView, insertText text: String) -> Bool {
@@ -586,18 +639,38 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
         suggestedActions: [UIMenuElement]
     ) -> UIMenu? {
         if interaction === longPressMenu {
-            return longPressUIMenu()
+            guard configuration.identifier == longPressMenuIdentifier(for: longPressMenuGeneration)
+            else { return nil }
+            return longPressUIMenu(for: longPressMenuGeneration)
         }
         return selectionUIMenu()
     }
 
-    private func longPressUIMenu() -> UIMenu {
+    public func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction,
+        willDismissMenuFor configuration: UIEditMenuConfiguration,
+        animator: any UIEditMenuInteractionAnimating
+    ) {
+        guard interaction === longPressMenu,
+              configuration.identifier == longPressMenuIdentifier(for: longPressMenuGeneration)
+        else { return }
+        let generation = longPressMenuGeneration
+        animator.addCompletion { [weak self] in
+            guard let self, self.longPressMenuGeneration == generation else { return }
+            self.completedLongPressMenuDismissalGeneration = generation
+            self.refocusKeyboardAfterEditMenuDismissalIfReady(for: generation)
+        }
+    }
+
+    private func longPressUIMenu(for generation: UInt) -> UIMenu {
         var children: [UIMenuElement] = [
             UIAction(title: "Select") { [weak self] _ in self?.performSelectAtLongPressPoint() },
             UIAction(title: "Select All") { [weak self] _ in self?.performSelectAll() },
         ]
         if UIPasteboard.general.hasStrings {
-            children.append(UIAction(title: "Paste") { [weak self] _ in self?.performPaste() })
+            children.append(UIAction(title: "Paste") { [weak self] _ in
+                self?.performPaste(for: generation)
+            })
         }
         return UIMenu(children: children)
     }
