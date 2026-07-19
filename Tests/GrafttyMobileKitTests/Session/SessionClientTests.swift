@@ -124,6 +124,69 @@ struct SessionClientTests {
         return nil
     }
 
+    private struct UnexpectedAsyncCondition: Error, CustomStringConvertible {
+        let stage: String
+        let observationWindow: Duration
+
+        var description: String {
+            "Unexpectedly observed \(stage) within \(observationWindow)"
+        }
+    }
+
+    private func waitUntil(
+        _ stage: String,
+        timeout: Duration = .seconds(5),
+        interval: Duration = .milliseconds(10),
+        condition: () -> Bool
+    ) async throws {
+        do {
+            try await RemoteConnectionTestSupport.pollUntil(
+                timeout: timeout,
+                interval: interval,
+                stage: stage
+            ) {
+                condition()
+            }
+        } catch let error as RemoteConnectionTestSupport.PollTimeout {
+            if condition() { return }
+            throw error
+        }
+    }
+
+    /// Negative async assertions have no success event to await. Observe a
+    /// short quiet window and fail as soon as the forbidden effect appears.
+    private func expectNever(
+        _ stage: String,
+        for observationWindow: Duration = .milliseconds(100),
+        interval: Duration = .milliseconds(10),
+        condition: () -> Bool
+    ) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: observationWindow)
+        while clock.now < deadline {
+            if condition() {
+                throw UnexpectedAsyncCondition(
+                    stage: stage,
+                    observationWindow: observationWindow
+                )
+            }
+            try await Task.sleep(for: interval)
+        }
+        if condition() {
+            throw UnexpectedAsyncCondition(
+                stage: stage,
+                observationWindow: observationWindow
+            )
+        }
+    }
+
+    private func waitForHelloClientID(_ ws: FakeWS) async throws -> DisplayClientID {
+        try await waitUntil("the initial WebSocket hello") {
+            firstHelloClientID(ws) != nil
+        }
+        return try #require(firstHelloClientID(ws))
+    }
+
     private func ownershipSnapshot(
         sessionName: String = "s",
         ownerClientID: DisplayClientID?,
@@ -151,8 +214,7 @@ struct SessionClientTests {
         rows: UInt16 = 24,
         epoch: UInt64 = 1
     ) async throws -> DisplayClientID {
-        try await Task.sleep(nanoseconds: 100_000_000)
-        let clientID = try #require(firstHelloClientID(ws))
+        let clientID = try await waitForHelloClientID(ws)
         let snapshot = try ownershipSnapshot(
             ownerClientID: clientID,
             ownerKind: .ios,
@@ -190,10 +252,11 @@ struct SessionClientTests {
         defer { client.stop() }
         try await confirmOwner(client, ws: ws)
         // Simulate libghostty surface emitting bytes.
-        client.session.sendInput(Data([0x68, 0x69]))   // "hi"
-        // Allow the spawned Task to run.
-        try await Task.sleep(nanoseconds: 100_000_000)
-        #expect(binaryFrames(ws).contains(Data([0x68, 0x69])))
+        let input = Data([0x68, 0x69])   // "hi"
+        client.session.sendInput(input)
+        try await waitUntil("terminal input to reach the WebSocket") {
+            binaryFrames(ws).contains(input)
+        }
     }
 
     /// The iOS soft keyboard's Return produces LF via `UIKeyInput.insertText`,
@@ -210,7 +273,9 @@ struct SessionClientTests {
         defer { client.stop() }
         try await confirmOwner(client, ws: ws)
         client.session.sendInput(Data([0x0A]))
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("soft-keyboard Return to reach the WebSocket as CR") {
+            binaryFrames(ws).contains(Data([0x0D]))
+        }
         #expect(binaryFrames(ws).contains(Data([0x0D])))
         #expect(!binaryFrames(ws).contains(Data([0x0A])))
     }
@@ -228,7 +293,9 @@ struct SessionClientTests {
         defer { client.stop() }
         try await confirmOwner(client, ws: ws)
         client.insertNewline()
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("literal newline to reach the WebSocket") {
+            binaryFrames(ws).contains(Data([0x0A]))
+        }
         #expect(binaryFrames(ws).contains(Data([0x0A])))
     }
 
@@ -242,7 +309,9 @@ struct SessionClientTests {
         defer { client.stop() }
         try await confirmOwner(client, ws: ws)
         client.submitReturn()
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("submit Return to reach the WebSocket") {
+            binaryFrames(ws).contains(Data([0x0D]))
+        }
         #expect(binaryFrames(ws).contains(Data([0x0D])))
     }
 
@@ -254,7 +323,9 @@ struct SessionClientTests {
         defer { client.stop() }
         try await confirmOwner(client, ws: ws)
         client.sendSoftwareKeyboardText("abc")
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("software-keyboard text to reach the WebSocket") {
+            binaryFrames(ws).contains(Data("abc".utf8))
+        }
         #expect(binaryFrames(ws).contains(Data("abc".utf8)))
         #expect(!binaryFrames(ws).contains(Data("\u{1B}[200~".utf8)))
         #expect(!binaryFrames(ws).contains(Data("\u{1B}[201~".utf8)))
@@ -268,7 +339,9 @@ struct SessionClientTests {
         defer { client.stop() }
         try await confirmOwner(client, ws: ws)
         client.sendSoftwareKeyboardText("\n")
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("software-keyboard newline to reach the WebSocket as CR") {
+            binaryFrames(ws).contains(Data([0x0D]))
+        }
         #expect(binaryFrames(ws).contains(Data([0x0D])))
         #expect(!binaryFrames(ws).contains(Data([0x0A])))
     }
@@ -281,7 +354,9 @@ struct SessionClientTests {
         defer { client.stop() }
         try await confirmOwner(client, ws: ws)
         client.deleteBackward()
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("delete byte to reach the WebSocket") {
+            binaryFrames(ws).contains(Data([0x7F]))
+        }
         #expect(binaryFrames(ws).contains(Data([0x7F])))
     }
 
@@ -298,7 +373,15 @@ struct SessionClientTests {
         client.sendArrow(.down)
         client.sendArrow(.left)
         client.sendArrow(.right)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("all terminal control keys to reach the WebSocket") {
+            let frames = binaryFrames(ws)
+            return frames.contains(Data([0x1B]))
+                && frames.contains(Data([0x09]))
+                && frames.contains(Data("\u{1B}[A".utf8))
+                && frames.contains(Data("\u{1B}[B".utf8))
+                && frames.contains(Data("\u{1B}[D".utf8))
+                && frames.contains(Data("\u{1B}[C".utf8))
+        }
         #expect(binaryFrames(ws).contains(Data([0x1B])))
         #expect(binaryFrames(ws).contains(Data([0x09])))
         #expect(binaryFrames(ws).contains(Data("\u{1B}[A".utf8)))
@@ -316,7 +399,10 @@ struct SessionClientTests {
         try await confirmOwner(client, ws: ws)
         client.sendControl(.c)
         client.sendControl(.d)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("terminal control characters to reach the WebSocket") {
+            let frames = binaryFrames(ws)
+            return frames.contains(Data([0x03])) && frames.contains(Data([0x04]))
+        }
         #expect(binaryFrames(ws).contains(Data([0x03])))
         #expect(binaryFrames(ws).contains(Data([0x04])))
     }
@@ -333,7 +419,9 @@ struct SessionClientTests {
         try await confirmOwner(client, ws: ws)
         let paste = Data([0x68, 0x0A, 0x69])   // "h\ni"
         client.session.sendInput(paste)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("multi-byte input to reach the WebSocket") {
+            binaryFrames(ws).contains(paste)
+        }
         #expect(binaryFrames(ws).contains(paste))
     }
 
@@ -347,9 +435,10 @@ struct SessionClientTests {
         defer { client.stop() }
         try await confirmOwner(client, ws: ws)
         client.sendPaste("hello")
-        try await Task.sleep(nanoseconds: 100_000_000)
-
         let expected = Data("\u{1B}[200~hello\u{1B}[201~".utf8)
+        try await waitUntil("bracketed paste to reach the WebSocket") {
+            binaryFrames(ws).contains(expected)
+        }
         #expect(binaryFrames(ws).contains(expected))
     }
 
@@ -361,9 +450,10 @@ struct SessionClientTests {
         defer { client.stop() }
         try await confirmOwner(client, ws: ws)
         client.sendPaste("a\nb")
-        try await Task.sleep(nanoseconds: 100_000_000)
-
         let expected = Data("\u{1B}[200~a\nb\u{1B}[201~".utf8)
+        try await waitUntil("multi-line bracketed paste to reach the WebSocket") {
+            binaryFrames(ws).contains(expected)
+        }
         #expect(binaryFrames(ws).contains(expected))
         // The IOS-6.3 LF→CR translation must NOT apply here.
         #expect(!binaryFrames(ws).contains(Data("\u{1B}[200~a\rb\u{1B}[201~".utf8)))
@@ -378,7 +468,9 @@ struct SessionClientTests {
         try await confirmOwner(client, ws: ws)
         let before = binaryFrames(ws).count
         client.sendPaste("")
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await expectNever("a frame for an empty paste") {
+            binaryFrames(ws).count != before
+        }
         #expect(binaryFrames(ws).count == before)
     }
 
@@ -392,7 +484,9 @@ struct SessionClientTests {
         // an open Task. `stop()` flags `stopped`, the open Task sees it
         // when the factory resolves, and closes the WS without
         // assigning it to `self.ws`. Quiesce so the open Task runs.
-        try await Task.sleep(nanoseconds: 50_000_000)
+        try await waitUntil("the stopped client's pending WebSocket to close") {
+            ws.closed
+        }
         #expect(ws.closed)
     }
 
@@ -440,8 +534,11 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, role: .preview)
         client.start()
         defer { client.stop() }
+        _ = try await waitForHelloClientID(ws)
         client.session.sendInput(Data([0x68, 0x69]))
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await expectNever("a preview terminal-input frame") {
+            !binaryFrames(ws).isEmpty
+        }
         #expect(binaryFrames(ws).isEmpty)
     }
 
@@ -456,7 +553,7 @@ struct SessionClientTests {
         ))
         client.start()
         defer { client.stop() }
-        try await Task.sleep(nanoseconds: 100_000_000)
+        _ = try await waitForHelloClientID(ws)
         guard case let .hello(_, kind, role, visible, cols, rows)? = envelopes(ws).first else {
             Issue.record("Expected preview hello text frame")
             return
@@ -474,19 +571,28 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws }, role: .preview)
         client.start()
         defer { client.stop() }
+        _ = try await waitForHelloClientID(ws)
         client.handleViewport(InMemoryTerminalViewport(
             columns: 80, rows: 24,
             widthPixels: 0, heightPixels: 0,
             cellWidthPixels: 12, cellHeightPixels: 24
         ))
         client.session.sendInput(Data([0x68]))
-        try await Task.sleep(nanoseconds: 100_000_000)
         client.handleViewport(InMemoryTerminalViewport(
             columns: 60, rows: 24,
             widthPixels: 0, heightPixels: 0,
             cellWidthPixels: 12, cellHeightPixels: 24
         ))
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await expectNever("a preview resize or takeover frame") {
+            envelopes(ws).contains { envelope in
+                switch envelope {
+                case .resize, .ownerResize, .takeControl:
+                    return true
+                case .hello, .grid, .ownership:
+                    return false
+                }
+            }
+        }
         let controlAttempts = envelopes(ws).filter { envelope in
             switch envelope {
             case .resize, .ownerResize, .takeControl:
@@ -509,7 +615,7 @@ struct SessionClientTests {
         ))
         client.start()
         defer { client.stop() }
-        try await Task.sleep(nanoseconds: 100_000_000)
+        _ = try await waitForHelloClientID(ws)
         guard case let .hello(clientID, kind, role, visible, cols, rows)? = envelopes(ws).first else {
             Issue.record("Expected hello text frame")
             return
@@ -539,8 +645,7 @@ struct SessionClientTests {
         client.start()
         defer { client.stop() }
         primeViewport(client, columns: 80, rows: 24)
-        try await Task.sleep(nanoseconds: 100_000_000)
-        _ = try #require(firstHelloClientID(ws))
+        _ = try await waitForHelloClientID(ws)
         try confirmFollower(client)
         ws.clearSent()
 
@@ -554,7 +659,18 @@ struct SessionClientTests {
         client.sendPaste("paste")
         client.insertNewline()
         client.submitReturn()
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("the follower's single takeover request") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
+        try await expectNever("follower binary input or a duplicate takeover before confirmation") {
+            !binaryFrames(ws).isEmpty || envelopes(ws).filter {
+                if case .takeControl = $0 { return true }
+                return false
+            }.count > 1
+        }
 
         #expect(binaryFrames(ws).isEmpty)
         let takeovers = envelopes(ws).filter {
@@ -571,15 +687,25 @@ struct SessionClientTests {
         client.start()
         defer { client.stop() }
         primeViewport(client, columns: 90, rows: 28)
-        try await Task.sleep(nanoseconds: 100_000_000)
-        let clientID = try #require(firstHelloClientID(ws))
+        let clientID = try await waitForHelloClientID(ws)
         try confirmFollower(client, cols: 120, rows: 40, epoch: 1)
         ws.clearSent()
 
         client.sendSoftwareKeyboardText("a")
         client.deleteBackward()
         client.sendPaste("p")
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("the follower's takeover request") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
+        try await expectNever("follower binary input or a duplicate takeover before confirmation") {
+            !binaryFrames(ws).isEmpty || envelopes(ws).filter {
+                if case .takeControl = $0 { return true }
+                return false
+            }.count > 1
+        }
 
         #expect(binaryFrames(ws).isEmpty)
         let takeovers = envelopes(ws).filter {
@@ -597,11 +723,17 @@ struct SessionClientTests {
             epoch: 2
         )
         client.handleTextFrame(WebControlEnvelope.ownership(owned).encoded())
-        try await Task.sleep(nanoseconds: 100_000_000)
+        let expectedPaste = Data("\u{1B}[200~p\u{1B}[201~".utf8)
+        try await waitUntil("queued follower input to flush after ownership confirmation") {
+            let frames = binaryFrames(ws)
+            return frames.contains(Data("a".utf8))
+                && frames.contains(Data([0x7F]))
+                && frames.contains(expectedPaste)
+        }
 
         #expect(binaryFrames(ws).contains(Data("a".utf8)))
         #expect(binaryFrames(ws).contains(Data([0x7F])))
-        #expect(binaryFrames(ws).contains(Data("\u{1B}[200~p\u{1B}[201~".utf8)))
+        #expect(binaryFrames(ws).contains(expectedPaste))
     }
 
     @Test
@@ -611,10 +743,16 @@ struct SessionClientTests {
         client.start()
         defer { client.stop() }
         primeViewport(client, columns: 80, rows: 24)
+        _ = try await waitForHelloClientID(ws)
         try confirmFollower(client, cols: 120, rows: 40)
 
         client.takeControl()
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("the explicit takeover request") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
 
         let takeovers = envelopes(ws).compactMap { envelope -> (DisplayClientID, DisplayClientKind, UInt16, UInt16)? in
             if case let .takeControl(clientID, kind, cols, rows) = envelope {
@@ -635,6 +773,7 @@ struct SessionClientTests {
         client.start()
         defer { client.stop() }
         primeViewport(client, columns: 90, rows: 28)
+        let clientID = try await waitForHelloClientID(ws)
         let snapshot = try ownershipSnapshot(
             ownerClientID: nil,
             ownerKind: nil,
@@ -647,14 +786,19 @@ struct SessionClientTests {
         #expect(client.canTakeControl)
 
         client.takeControl()
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("the ownerless session's takeover request") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
 
         let takeover = envelopes(ws).first {
             if case .takeControl = $0 { return true }
             return false
         }
         #expect(takeover == .takeControl(
-            clientID: firstHelloClientID(ws) ?? DisplayClientID("missing"),
+            clientID: clientID,
             kind: .ios,
             cols: 90,
             rows: 28
@@ -674,8 +818,7 @@ struct SessionClientTests {
         client.start()
         defer { client.stop() }
         primeViewport(client, columns: 90, rows: 28)
-        try await Task.sleep(nanoseconds: 100_000_000)
-        let clientID = try #require(firstHelloClientID(ws))
+        let clientID = try await waitForHelloClientID(ws)
         ws.clearSent()
 
         let ownerless = try ownershipSnapshot(
@@ -686,7 +829,12 @@ struct SessionClientTests {
             epoch: 3
         )
         client.handleTextFrame(WebControlEnvelope.ownership(ownerless).encoded())
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("automatic ownerless-session reclaim") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
 
         let takeover = envelopes(ws).first {
             if case .takeControl = $0 { return true }
@@ -706,12 +854,16 @@ struct SessionClientTests {
         client.start()
         defer { client.stop() }
         primeViewport(client, columns: 90, rows: 28)
-        try await Task.sleep(nanoseconds: 100_000_000)
-        _ = try #require(firstHelloClientID(ws))
+        _ = try await waitForHelloClientID(ws)
         ws.clearSent()
 
         try confirmFollower(client, cols: 120, rows: 40, epoch: 3)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await expectNever("automatic takeover from another active owner") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
 
         let takeoverCount = envelopes(ws).filter {
             if case .takeControl = $0 { return true }
@@ -730,8 +882,7 @@ struct SessionClientTests {
         )
         client.start()
         defer { client.stop() }
-        try await Task.sleep(nanoseconds: 100_000_000)
-        let clientID = try #require(firstHelloClientID(ws))
+        let clientID = try await waitForHelloClientID(ws)
         ws.clearSent()
 
         let ownerless = try ownershipSnapshot(
@@ -742,14 +893,24 @@ struct SessionClientTests {
             epoch: 3
         )
         client.handleTextFrame(WebControlEnvelope.ownership(ownerless).encoded())
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await expectNever("automatic takeover before the first viewport") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
         #expect(envelopes(ws).filter {
             if case .takeControl = $0 { return true }
             return false
         }.isEmpty)
 
         primeViewport(client, columns: 90, rows: 28)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("viewport-driven ownerless-session reclaim") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
         let takeover = envelopes(ws).first {
             if case .takeControl = $0 { return true }
             return false
@@ -766,7 +927,12 @@ struct SessionClientTests {
         let clientID = try await confirmOwner(client, ws: ws, cols: 80, rows: 24, epoch: 42)
 
         primeViewport(client, columns: 100, rows: 30)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("the owner resize frame") {
+            envelopes(ws).contains {
+                if case .ownerResize = $0 { return true }
+                return false
+            }
+        }
 
         let ownerResize = envelopes(ws).first { envelope in
             if case .ownerResize = envelope { return true }
@@ -781,11 +947,16 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("the legacy WebSocket to become ready") {
+            client.isOwner
+        }
 
         client.sendSoftwareKeyboardText("abc")
         primeViewport(client, columns: 132, rows: 44)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("legacy input and resize to reach the WebSocket") {
+            binaryFrames(ws).contains(Data("abc".utf8))
+                && ws.resizes.contains { $0.cols == 132 && $0.rows == 44 }
+        }
 
         #expect(client.isOwner)
         #expect(binaryFrames(ws).contains(Data("abc".utf8)))
@@ -800,20 +971,28 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("the legacy WebSocket to become ready") {
+            client.isOwner
+        }
 
         // Layout tick on connect, before the user has engaged — must not resize.
         primeViewport(client, columns: 132, rows: 44)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await expectNever("a legacy resize before user engagement") {
+            !ws.resizes.isEmpty
+        }
         #expect(ws.resizes.isEmpty)
 
         // First engagement applies the current viewport and unlocks later ticks.
         client.sendSoftwareKeyboardText("x")
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("the first engaged legacy resize") {
+            ws.resizes.contains { $0.cols == 132 && $0.rows == 44 }
+        }
         #expect(ws.resizes.contains { $0.cols == 132 && $0.rows == 44 })
 
         primeViewport(client, columns: 120, rows: 40)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("the subsequent legacy resize") {
+            ws.resizes.contains { $0.cols == 120 && $0.rows == 40 }
+        }
         #expect(ws.resizes.contains { $0.cols == 120 && $0.rows == 40 })
     }
 
@@ -887,8 +1066,7 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
-        try await Task.sleep(nanoseconds: 100_000_000)
-        let clientID = try #require(firstHelloClientID(ws))
+        let clientID = try await waitForHelloClientID(ws)
 
         // Establish an iOS viewport while a follower of another owner.
         primeViewport(client, columns: 110, rows: 33)
@@ -909,7 +1087,12 @@ struct SessionClientTests {
             epoch: 2
         )
         client.handleTextFrame(WebControlEnvelope.ownership(owned).encoded())
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("the resize sent on owner promotion") {
+            envelopes(ws).contains {
+                if case .ownerResize = $0 { return true }
+                return false
+            }
+        }
 
         #expect(client.isOwner)
         let ownerResize = envelopes(ws).first { envelope in
@@ -925,8 +1108,7 @@ struct SessionClientTests {
         let client = SessionClient(sessionName: "s", webSocketFactory: { ws })
         client.start()
         defer { client.stop() }
-        try await Task.sleep(nanoseconds: 100_000_000)
-        let clientID = try #require(firstHelloClientID(ws))
+        let clientID = try await waitForHelloClientID(ws)
         let snapshot = try ownershipSnapshot(
             ownerClientID: clientID,
             ownerKind: .web,
@@ -938,7 +1120,18 @@ struct SessionClientTests {
 
         client.sendSoftwareKeyboardText("blocked")
         primeViewport(client, columns: 100, rows: 30)
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await waitUntil("the mismatched-kind follower's takeover request") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
+        try await expectNever("mismatched-kind follower input or owner resize") {
+            !binaryFrames(ws).isEmpty || envelopes(ws).contains {
+                if case .ownerResize = $0 { return true }
+                return false
+            }
+        }
 
         #expect(!client.isOwner)
         #expect(client.isFollower)
@@ -983,8 +1176,7 @@ struct SessionClientTests {
         )
         client.start()
         defer { client.stop() }
-        try await Task.sleep(nanoseconds: 100_000_000)
-        let clientID = try #require(firstHelloClientID(ws))
+        let clientID = try await waitForHelloClientID(ws)
         let snapshot = try ownershipSnapshot(
             ownerClientID: clientID,
             ownerKind: .ios,
@@ -994,7 +1186,12 @@ struct SessionClientTests {
         )
         client.handleTextFrame(WebControlEnvelope.ownership(snapshot).encoded())
         client.takeControl()
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await expectNever("a preview takeover request") {
+            envelopes(ws).contains {
+                if case .takeControl = $0 { return true }
+                return false
+            }
+        }
 
         #expect(!client.isOwner)
         #expect(!client.canTakeControl)
