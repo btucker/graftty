@@ -296,6 +296,11 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
     /// `Select` action can word-select at the original touch point even
     /// after the gesture has ended. Updated on `.began`.
     private var lastLongPressPoint: CGPoint = .zero
+    /// UIKit may resign the terminal while its edit menu is dismissing. A
+    /// refocus dispatched from the Paste action can therefore run too early
+    /// and be undone by the remainder of that dismissal. Carry the intent to
+    /// the interaction animator's completion instead.
+    private var shouldRefocusKeyboardAfterMenuDismissal = false
 
     override public init(frame: CGRect) {
         super.init(frame: frame)
@@ -430,7 +435,7 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
 
     fileprivate func performPaste() {
         onPasteRequested?()
-        refocusKeyboardAfterEditMenuAction()
+        shouldRefocusKeyboardAfterMenuDismissal = true
     }
 
     fileprivate func performCopy() {
@@ -491,11 +496,11 @@ public final class TerminalInputContainerView: UIView, TerminalSoftwareInputDele
         onUserInteraction?()
     }
 
-    private func refocusKeyboardAfterEditMenuAction() {
+    private func refocusKeyboardAfterEditMenuDismissalIfNeeded() {
+        guard shouldRefocusKeyboardAfterMenuDismissal else { return }
+        shouldRefocusKeyboardAfterMenuDismissal = false
         guard terminalView.canBecomeFirstResponder else { return }
-        DispatchQueue.main.async { [weak self] in
-            self?.focusKeyboardInput()
-        }
+        _ = focusKeyboardInput()
     }
 
     public func terminalView(_: UITerminalView, insertText text: String) -> Bool {
@@ -589,6 +594,19 @@ extension TerminalInputContainerView: UIEditMenuInteractionDelegate {
             return longPressUIMenu()
         }
         return selectionUIMenu()
+    }
+
+    public func editMenuInteraction(
+        _: UIEditMenuInteraction,
+        willDismissMenuFor _: UIEditMenuConfiguration,
+        animator: any UIEditMenuInteractionAnimating
+    ) {
+        // The completion runs after UIKit has finished changing responders.
+        // Checking the flag at completion time also covers UIKit beginning the
+        // dismissal before it invokes the selected UIAction handler.
+        animator.addCompletion { [weak self] in
+            self?.refocusKeyboardAfterEditMenuDismissalIfNeeded()
+        }
     }
 
     private func longPressUIMenu() -> UIMenu {

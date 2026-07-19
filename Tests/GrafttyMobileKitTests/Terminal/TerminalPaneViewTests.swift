@@ -8,6 +8,25 @@ private final class NilInputKeyCommand: UIKeyCommand {
     override var input: String? { nil }
 }
 
+@MainActor
+private final class DeferredEditMenuAnimator: NSObject, UIEditMenuInteractionAnimating {
+    private var completions: [() -> Void] = []
+
+    func addAnimations(_ animations: @escaping () -> Void) {
+        animations()
+    }
+
+    func addCompletion(_ completion: @escaping () -> Void) {
+        completions.append(completion)
+    }
+
+    func finish() {
+        let pending = completions
+        completions.removeAll()
+        pending.forEach { $0() }
+    }
+}
+
 @Suite
 @MainActor
 struct TerminalPaneViewTests {
@@ -539,9 +558,9 @@ struct TerminalPaneViewTests {
     }
 
     @Test("""
-@spec IOS-11.12: When the user taps Paste from the terminal long-press edit menu, the application shall forward the clipboard paste request and then re-focus the eligible `UITerminalView`, so dismissing the UIKit edit menu does not leave the user without terminal keyboard control.
+@spec IOS-11.12: When the user taps Paste from the terminal long-press edit menu, the application shall forward the clipboard paste request and re-focus the eligible `UITerminalView` after UIKit's edit-menu dismissal completes, so the dismissal cannot subsequently resign the terminal and leave the user without keyboard control.
 """)
-    func pasteMenuRefocusesEligibleTerminalAfterForwardingPaste() async {
+    func pasteMenuRefocusesEligibleTerminalAfterDismissalCompletes() {
         let container = TerminalInputContainerView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
         let controller = UIViewController()
         controller.view = container
@@ -552,10 +571,21 @@ struct TerminalPaneViewTests {
         var didRequestPaste = false
         container.onPasteRequested = { didRequestPaste = true }
 
+        let animator = DeferredEditMenuAnimator()
+        container.editMenuInteraction(
+            UIEditMenuInteraction(delegate: nil),
+            willDismissMenuFor: UIEditMenuConfiguration(identifier: nil, sourcePoint: .zero),
+            animator: animator
+        )
+        // UIKit is allowed to begin dismissal before invoking the selected
+        // action. Register the completion first to cover that ordering.
         container.performPasteForTesting()
-        try? await Task.sleep(nanoseconds: 10_000_000)
 
         #expect(didRequestPaste)
+        #expect(!container.terminalView.isFirstResponder)
+
+        animator.finish()
+
         #expect(container.terminalView.isFirstResponder)
     }
 
