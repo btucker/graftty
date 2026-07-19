@@ -94,11 +94,6 @@ struct DivergeTodo {
     func diverge_4_1() async throws { }
 
     @Test("""
-@spec DIVERGE-4.2: When a worktree's HEAD reference changes, the application shall recompute that worktree's divergence counts.
-""", .disabled("not yet implemented"))
-    func diverge_4_2() async throws { }
-
-    @Test("""
 @spec DIVERGE-4.8: The polling ticker for divergence stats shall continue to fire while Graftty is not the frontmost application. Users frequently run their editor or Claude session in a different app while the sidebar's divergence indicator tracks their work; pausing on `resignActive` leaves those updates queued until the user clicks back into Graftty, defeating the purpose of the indicator.
 """, .disabled("not yet implemented"))
     func diverge_4_8() async throws { }

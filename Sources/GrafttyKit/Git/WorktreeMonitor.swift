@@ -8,23 +8,20 @@ public protocol WorktreeMonitorDelegate: AnyObject {
     func worktreeMonitorDidDetectOriginRefChange(_ monitor: WorktreeMonitor, repoPath: String)
     /// Fires when any non-`.git/objects` path inside the worktree changes
     /// (working tree edit, stage/unstage via `.git/index`, untracked file
-    /// added). Currently unused by production consumers — stats refresh
-    /// is driven exclusively by the polling tick — but the FSEvents
-    /// stream itself remains armed so future consumers (e.g., in-pane
-    /// previews of working-tree status) can subscribe without
-    /// re-introducing the watcher.
+    /// added). The stream remains armed for future production consumers;
+    /// divergence stats use the bounded polling path because sustained
+    /// build churn can otherwise launch git scans far more frequently.
     func worktreeMonitorDidDetectContentChange(_ monitor: WorktreeMonitor, worktreePath: String)
 }
 
 public extension WorktreeMonitorDelegate {
-    // Default no-op: no production delegate currently consumes this
-    // signal. Tests opt in via their own recorder.
+    // Default no-op: no production delegate currently consumes this signal.
     func worktreeMonitorDidDetectContentChange(_ monitor: WorktreeMonitor, worktreePath: String) {}
 }
 
 public final class WorktreeMonitor: @unchecked Sendable {
     private var sources: [String: DispatchSourceFileSystemObject] = [:]
-    private var contentStreams: [String: ContentStream] = [:]
+    private var eventStreams: [String: FSEventsSubscription] = [:]
     private let queue = DispatchQueue(label: "com.graftty.worktree-monitor")
     public weak var delegate: WorktreeMonitorDelegate?
 
@@ -104,7 +101,7 @@ public final class WorktreeMonitor: @unchecked Sendable {
         for tag in ["path", "head", "content"] {
             let key = "\(tag):\(worktreePath)"
             sources.removeValue(forKey: key)?.cancel()
-            contentStreams.removeValue(forKey: key)?.cancel()
+            eventStreams.removeValue(forKey: key)?.cancel()
         }
     }
 
@@ -125,8 +122,8 @@ public final class WorktreeMonitor: @unchecked Sendable {
         sources[key] = source
     }
 
-    /// Watches `<repoPath>/.git/logs/refs/remotes/origin/` — the dir
-    /// git appends to on every remote-tracking-ref movement (push,
+    /// Recursively watches `<repoPath>/.git/logs/refs/remotes/origin/`,
+    /// where git appends on every remote-tracking-ref movement (push,
     /// fetch, prune). Catches the `gh pr create` / `git push` flow,
     /// which doesn't move HEAD and is therefore invisible to the
     /// per-worktree HEAD watcher. One watch per repo covers every
@@ -139,36 +136,43 @@ public final class WorktreeMonitor: @unchecked Sendable {
         let dir = "\(repoPath)/.git/logs/refs/remotes/origin"
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let key = "originrefs:\(repoPath)"
-        guard sources[key] == nil else { return }
-        guard let source = createFileWatcher(path: dir, events: [.write, .extend, .link]) else { return }
-        source.setEventHandler { [weak self] in
-            guard let self else { return }
-            self.delegate?.worktreeMonitorDidDetectOriginRefChange(self, repoPath: repoPath)
-        }
-        source.resume()
-        sources[key] = source
+        guard eventStreams[key] == nil else { return }
+        guard let stream = FSEventsSubscription.make(
+            paths: [dir],
+            queue: queue,
+            latency: 0.1,
+            shouldIgnore: { _ in false },
+            onChange: { [weak self] in
+                guard let self else { return }
+                self.delegate?.worktreeMonitorDidDetectOriginRefChange(self, repoPath: repoPath)
+            }
+        ) else { return }
+        eventStreams[key] = stream
     }
 
     /// Recursively watches the worktree's working tree using FSEvents, so
     /// edits, stages (`.git/index`), and untracked-file creation that the
-    /// HEAD-reflog and origin-refs watchers can't see still bump the
-    /// divergence indicator promptly. Events under `.git/objects/` are
+    /// HEAD-reflog and origin-refs watchers can't see surface as content-
+    /// change events. Events under `.git/objects/` are
     /// filtered out — object churn from `git gc` / pack writes doesn't
     /// affect `git status` or `git diff --shortstat` output and would
     /// otherwise fire thousands of no-op refreshes. One stream per
     /// worktree, coalesced with a 0.5s latency.
     public func watchWorktreeContents(worktreePath: String) {
         let key = "content:\(worktreePath)"
-        guard contentStreams[key] == nil else { return }
-        guard let stream = ContentStream.make(
-            worktreePath: worktreePath,
+        guard eventStreams[key] == nil else { return }
+        let filter = WorktreeContentFilter(worktreePath: worktreePath)
+        guard let stream = FSEventsSubscription.make(
+            paths: [worktreePath],
             queue: queue,
+            latency: 0.5,
+            shouldIgnore: { filter.shouldIgnore($0) },
             onChange: { [weak self] in
                 guard let self else { return }
                 self.delegate?.worktreeMonitorDidDetectContentChange(self, worktreePath: worktreePath)
             }
         ) else { return }
-        contentStreams[key] = stream
+        eventStreams[key] = stream
     }
 
     public func stopWatching(repoPath: String) {
@@ -190,17 +194,17 @@ public final class WorktreeMonitor: @unchecked Sendable {
             sources[key]?.cancel()
             sources.removeValue(forKey: key)
         }
-        for key in contentStreams.keys.filter(matches) {
-            contentStreams[key]?.cancel()
-            contentStreams.removeValue(forKey: key)
+        for key in eventStreams.keys.filter(matches) {
+            eventStreams[key]?.cancel()
+            eventStreams.removeValue(forKey: key)
         }
     }
 
     public func stopAll() {
         for source in sources.values { source.cancel() }
         sources.removeAll()
-        for stream in contentStreams.values { stream.cancel() }
-        contentStreams.removeAll()
+        for stream in eventStreams.values { stream.cancel() }
+        eventStreams.removeAll()
     }
 
     /// Opens an fd on `path` and wraps it in a dispatch source that
@@ -238,17 +242,14 @@ public final class WorktreeMonitor: @unchecked Sendable {
     }
 }
 
-/// Captured by the FSEvents C callback via a retained `Unmanaged`
-/// pointer. File-private so the callback (also file-private) can name it
-/// directly rather than going through a type-erased cast.
-fileprivate final class ContentStreamContext {
-    let onChange: () -> Void
+/// Filters recursive worktree events down to paths that can affect
+/// `git status` / divergence output.
+fileprivate final class WorktreeContentFilter {
     let objectsDir: String
     let gitDir: String
     let worktreeRoot: String
 
-    init(worktreePath: String, onChange: @escaping () -> Void) {
-        self.onChange = onChange
+    init(worktreePath: String) {
         // FSEvents reports canonical (symlink-resolved) paths — on
         // macOS `/var` is a symlink to `/private/var`, so a worktree at
         // `/var/folders/...` receives events prefixed with
@@ -290,25 +291,41 @@ fileprivate final class ContentStreamContext {
     }
 }
 
+/// Captured by the FSEvents C callback via a retained `Unmanaged`
+/// pointer. The predicate lets worktree-content and origin-ref streams
+/// share the same lifecycle implementation without applying worktree-
+/// specific `.git/objects` filtering to origin reflogs.
+fileprivate final class FSEventsContextBox {
+    let onChange: () -> Void
+    let shouldIgnore: (String) -> Bool
+
+    init(onChange: @escaping () -> Void, shouldIgnore: @escaping (String) -> Bool) {
+        self.onChange = onChange
+        self.shouldIgnore = shouldIgnore
+    }
+}
+
 /// RAII holder for an `FSEventStreamRef`. Owns the stream + the
-/// `Unmanaged<ContentStreamContext>` it captures, so `cancel()` tears
+/// `Unmanaged<FSEventsContextBox>` it captures, so `cancel()` tears
 /// down both in the correct order (stop → invalidate → release stream,
 /// then release the Unmanaged).
-fileprivate final class ContentStream {
+fileprivate final class FSEventsSubscription {
     private let stream: FSEventStreamRef
-    private let context: Unmanaged<ContentStreamContext>
+    private let context: Unmanaged<FSEventsContextBox>
 
-    private init(stream: FSEventStreamRef, context: Unmanaged<ContentStreamContext>) {
+    private init(stream: FSEventStreamRef, context: Unmanaged<FSEventsContextBox>) {
         self.stream = stream
         self.context = context
     }
 
     static func make(
-        worktreePath: String,
+        paths: [String],
         queue: DispatchQueue,
+        latency: CFTimeInterval,
+        shouldIgnore: @escaping (String) -> Bool,
         onChange: @escaping () -> Void
-    ) -> ContentStream? {
-        let ctxObj = ContentStreamContext(worktreePath: worktreePath, onChange: onChange)
+    ) -> FSEventsSubscription? {
+        let ctxObj = FSEventsContextBox(onChange: onChange, shouldIgnore: shouldIgnore)
         let unmanaged = Unmanaged.passRetained(ctxObj)
 
         var ctx = FSEventStreamContext(
@@ -319,7 +336,7 @@ fileprivate final class ContentStream {
             copyDescription: nil
         )
 
-        let paths = [worktreePath] as CFArray
+        let watchedPaths = paths as CFArray
         // Note: no `kFSEventStreamCreateFlagIgnoreSelf`. That flag drops
         // events whose writer PID matches our own; Graftty itself
         // generally doesn't write to worktree files, but any future code
@@ -334,11 +351,11 @@ fileprivate final class ContentStream {
         )
         guard let stream = FSEventStreamCreate(
             kCFAllocatorDefault,
-            contentCallback,
+            fileEventsCallback,
             &ctx,
-            paths,
+            watchedPaths,
             FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
-            0.5,
+            latency,
             flags
         ) else {
             unmanaged.release()
@@ -352,7 +369,7 @@ fileprivate final class ContentStream {
             unmanaged.release()
             return nil
         }
-        return ContentStream(stream: stream, context: unmanaged)
+        return FSEventsSubscription(stream: stream, context: unmanaged)
     }
 
     func cancel() {
@@ -365,12 +382,12 @@ fileprivate final class ContentStream {
 
 /// FSEventStream C callback. With `kFSEventStreamCreateFlagUseCFTypes`
 /// set, `eventPaths` is a `CFArray` of `CFString`. Fires `onChange` once
-/// per callback as long as at least one event path is outside
-/// `.git/objects/` — object-pack churn from `git gc` would otherwise
-/// trigger thousands of no-op refreshes without affecting divergence.
-fileprivate let contentCallback: FSEventStreamCallback = { _, clientCallBackInfo, _, eventPaths, _, _ in
+/// per callback as long as at least one path passes the subscription's
+/// filter. Worktree streams filter `.git/objects`; origin-ref streams
+/// accept every path below their watched directory.
+fileprivate let fileEventsCallback: FSEventStreamCallback = { _, clientCallBackInfo, _, eventPaths, _, _ in
     guard let clientCallBackInfo else { return }
-    let ctx = Unmanaged<ContentStreamContext>.fromOpaque(clientCallBackInfo).takeUnretainedValue()
+    let ctx = Unmanaged<FSEventsContextBox>.fromOpaque(clientCallBackInfo).takeUnretainedValue()
 
     let cfPaths = Unmanaged<CFArray>.fromOpaque(eventPaths).takeUnretainedValue()
     for case let path as String in (cfPaths as NSArray) {
