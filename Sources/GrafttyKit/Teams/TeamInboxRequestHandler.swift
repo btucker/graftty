@@ -138,7 +138,7 @@ public final class TeamInboxRequestHandler {
                 name: member.name,
                 branch: member.branch,
                 worktreePath: member.worktreePath,
-                role: member.role.rawValue,
+                isMainWorktree: member.isMainWorktree,
                 isRunning: member.isRunning
             )
         }

@@ -52,7 +52,7 @@ struct TeamHookRendererTests {
         let context = try additionalContext(from: json)
 
         #expect(context.contains("graftty team inbox"))
-        #expect(context.contains("graftty team msg"))
+        #expect(context.contains("graftty team send --stdin"))
         #expect(context.contains("graftty team list"))
         #expect(context.contains("team data here"))
         #expect(!context.lowercased().contains("coworker"))
@@ -62,6 +62,24 @@ struct TeamHookRendererTests {
         // typed by the model. The primer must not instruct it — that's the
         // shape the classifier kept blocking.
         #expect(!context.contains("graftty team register"))
+    }
+
+    @Test("@spec TEAM-4.4: The session-start team primer shall instruct agents to send direct and broadcast message bodies through standard input with a quoted, freshly generated heredoc delimiter that is absent from the message, never as a shell argument, so shell syntax in messages remains literal.")
+    func sessionStartDocumentsLiteralMessageInput() throws {
+        let json = try TeamHookRenderer.sessionStart(runtime: .codex, teamContext: "team data here")
+        let context = try additionalContext(from: json)
+
+        #expect(context.contains("graftty team send --stdin"))
+        #expect(context.contains("graftty team broadcast --stdin"))
+        #expect(context.contains("<<'<unique-delimiter>'"))
+        #expect(context.contains("newly generated high-entropy value"))
+        #expect(context.contains("does not appear as an exact line"))
+        #expect(context.contains("Do not run the placeholder literally"))
+        #expect(!context.contains("GRAFTTY_MSG_7F3A"))
+        #expect(context.contains("backticks"))
+        #expect(context.contains("$()"))
+        #expect(context.contains("never as a shell argument"))
+        #expect(!context.contains("graftty team msg"))
     }
 
     @Test("Both runtimes produce the identical SessionStart primer text.")

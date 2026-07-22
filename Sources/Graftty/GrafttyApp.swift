@@ -2691,7 +2691,7 @@ struct GrafttyApp: App {
         return EventBodyRenderer.renderSessionPrompt(
             template: template,
             branch: viewer.branch,
-            lead: viewer.role == .lead
+            isMainWorktree: viewer.isMainWorktree
         )
     }
 

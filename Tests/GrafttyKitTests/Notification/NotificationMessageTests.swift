@@ -213,8 +213,8 @@ struct NotificationMessageTests {
         let resp: ResponseMessage = .teamList(
             teamName: "acme-web",
             members: [
-                .init(name: "main", branch: "main", worktreePath: "/r/a", role: "lead", isRunning: true),
-                .init(name: "alice", branch: "alice", worktreePath: "/r/a/.worktrees/alice", role: "coworker", isRunning: false),
+                .init(name: "main", branch: "main", worktreePath: "/r/a", isMainWorktree: true, isRunning: true),
+                .init(name: "alice", branch: "alice", worktreePath: "/r/a/.worktrees/alice", isMainWorktree: false, isRunning: false),
             ]
         )
         let data = try JSONEncoder().encode(resp)
@@ -231,8 +231,8 @@ struct NotificationMessageTests {
           "type": "team_list",
           "team_name": "acme-web",
           "members": [
-            {"name":"main","branch":"main","worktree_path":"/r/a","role":"lead","is_running":true},
-            {"name":"alice","branch":"alice","worktree_path":"/r/a/.worktrees/alice","role":"coworker","is_running":false}
+            {"name":"main","branch":"main","worktree_path":"/r/a","is_main_worktree":true,"is_running":true},
+            {"name":"alice","branch":"alice","worktree_path":"/r/a/.worktrees/alice","is_main_worktree":false,"is_running":false}
           ]
         }
         """#
@@ -244,7 +244,7 @@ struct NotificationMessageTests {
         #expect(teamName == "acme-web")
         #expect(members.count == 2)
         #expect(members[0].name == "main")
-        #expect(members[0].role == "lead")
+        #expect(members[0].isMainWorktree)
         #expect(members[0].isRunning == true)
         #expect(members[1].worktreePath == "/r/a/.worktrees/alice")
         #expect(members[1].isRunning == false)

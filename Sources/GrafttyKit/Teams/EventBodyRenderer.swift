@@ -52,17 +52,17 @@ public enum EventBodyRenderer {
     /// Builds the `[String: Any]` agent dict consumed by every Stencil render
     /// in `Graftty`. Centralizes the four key strings so the wire shape can't
     /// drift between call sites (`split(...)`, team-instructions composition,
-    /// tests). Worktree-scoped flags default to `false` for the session-start
-    /// path where no event exists yet.
+    /// tests). Event-scoped flags default to `false` for the session-start path
+    /// where no event exists yet.
     public static func makeAgentContext(
         branch: String,
-        lead: Bool,
+        isMainWorktree: Bool,
         thisWorktree: Bool = false,
         otherWorktree: Bool = false
     ) -> [String: Any] {
         [
             "branch": branch,
-            "lead": lead,
+            "main_worktree": isMainWorktree,
             "this_worktree": thisWorktree,
             "other_worktree": otherWorktree,
         ]
@@ -89,7 +89,7 @@ public enum EventBodyRenderer {
         }
         let recipient = recipientRepo?.worktrees.first(where: { $0.path == recipientWorktreePath })
 
-        let isLead = (recipientRepo?.path == recipientWorktreePath)
+        let isMainWorktree = (recipientRepo?.path == recipientWorktreePath)
         let isThisWorktree: Bool = {
             guard let subject = subjectWorktreePath else { return false }
             return subject == recipientWorktreePath
@@ -101,7 +101,7 @@ public enum EventBodyRenderer {
 
         let agentDict = makeAgentContext(
             branch: recipient?.branch ?? "",
-            lead: isLead,
+            isMainWorktree: isMainWorktree,
             thisWorktree: isThisWorktree,
             otherWorktree: isOtherWorktree
         )
@@ -170,14 +170,17 @@ extension EventBodyRenderer {
     }
 
     /// Convenience: renders the user's `teamSessionPrompt` against a session-
-    /// start agent context (only `branch` and `lead` are meaningful before any
-    /// event has fired).
+    /// start agent context (only `branch` and `main_worktree` are meaningful
+    /// before any event has fired).
     public static func renderSessionPrompt(
         template: String,
         branch: String,
-        lead: Bool
+        isMainWorktree: Bool
     ) -> String? {
-        renderAgentTemplate(template, agent: makeAgentContext(branch: branch, lead: lead))
+        renderAgentTemplate(
+            template,
+            agent: makeAgentContext(branch: branch, isMainWorktree: isMainWorktree)
+        )
     }
 
 }

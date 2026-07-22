@@ -259,22 +259,63 @@ public struct TeamListMember: Codable, Sendable, Equatable {
     public let name: String
     public let branch: String
     public let worktreePath: String
-    public let role: String   // "lead" | "coworker"
+    public let isMainWorktree: Bool
     public let isRunning: Bool
 
-    public init(name: String, branch: String, worktreePath: String, role: String, isRunning: Bool) {
+    public init(
+        name: String,
+        branch: String,
+        worktreePath: String,
+        isMainWorktree: Bool,
+        isRunning: Bool
+    ) {
         self.name = name
         self.branch = branch
         self.worktreePath = worktreePath
-        self.role = role
+        self.isMainWorktree = isMainWorktree
         self.isRunning = isRunning
     }
 
     enum CodingKeys: String, CodingKey {
         case name, branch
         case worktreePath = "worktree_path"
-        case role
+        case isMainWorktree = "is_main_worktree"
         case isRunning = "is_running"
+    }
+
+    private enum LegacyCodingKeys: String, CodingKey {
+        case role
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let isMainWorktree: Bool
+        if let value = try container.decodeIfPresent(Bool.self, forKey: .isMainWorktree) {
+            isMainWorktree = value
+        } else {
+            let legacy = try decoder.container(keyedBy: LegacyCodingKeys.self)
+            let role = try legacy.decode(String.self, forKey: .role)
+            switch role {
+            case "lead":
+                isMainWorktree = true
+            case "coworker":
+                isMainWorktree = false
+            default:
+                throw DecodingError.dataCorruptedError(
+                    forKey: .role,
+                    in: legacy,
+                    debugDescription: "Unknown legacy team member role: \(role)"
+                )
+            }
+        }
+
+        self.init(
+            name: try container.decode(String.self, forKey: .name),
+            branch: try container.decode(String.self, forKey: .branch),
+            worktreePath: try container.decode(String.self, forKey: .worktreePath),
+            isMainWorktree: isMainWorktree,
+            isRunning: try container.decode(Bool.self, forKey: .isRunning)
+        )
     }
 }
 

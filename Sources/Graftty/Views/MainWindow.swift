@@ -563,7 +563,7 @@ struct MainWindow: View {
             case .success(let outcome):
                 selectWorktree(outcome.worktreePath)
                 // Roster signal flows through the inbox: a
-                // team_member_joined row addressed to the lead is appended
+                // team_member_joined row addressed to the main worktree is appended
                 // by TeamMembershipEvents on add, no live broadcast needed.
             }
         }

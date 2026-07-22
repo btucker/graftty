@@ -47,9 +47,9 @@ CLI surface for coordination:
 
 ```sh
 graftty team register --runtime claude   # announce presence at session start
-graftty team list                        # see teammates, roles, and running state
-graftty team send <member> "<text>"      # direct message a teammate's inbox
-graftty team broadcast "<text>"          # message everyone on the team
+graftty team list                        # see teammates, worktrees, and running state
+graftty team send --stdin <member>       # read a direct message literally from stdin
+graftty team broadcast --stdin           # read a broadcast literally from stdin
 graftty team inbox                       # read your incoming messages
 ```
 
@@ -58,15 +58,13 @@ each agent's `PATH` that wire `SessionStart` and `Stop` hooks into the
 runtime. `SessionStart` primes the agent with team context and your
 session prompt; `Stop` triggers inbox delivery at the end of each turn.
 For Claude Code, a `Stop`-spawned watcher wakes the agent on stderr
-when a new message arrives; for Codex, a graftty-side service types the
-message text into the pane's PTY via zmx. Both paths defer while the
-pane shows recent user typing, so a teammate's message can't interrupt
-you mid-edit.
+when a new message arrives; for Codex, a graftty-side service sends the
+message into the active conversation through Codex's app server.
 
 *Window → Team Activity Log* opens a unified transcript of every team
 event and inter-agent message for the focused worktree's team.
 
-When inbox messages aren't enough, a lead agent can drive a teammate's
+When inbox messages aren't enough, any agent can drive a teammate's
 pane directly — see **CLI** below for `graftty pane show` (read another
 worktree's terminal) and `graftty pane send` (inject keystrokes).
 

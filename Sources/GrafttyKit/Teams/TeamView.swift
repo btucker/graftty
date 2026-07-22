@@ -1,29 +1,23 @@
-import Foundation
 import GrafttyProtocol
-
-public enum TeamRole: String, Codable, Sendable, Equatable {
-    case lead
-    case coworker
-}
 
 public struct TeamMember: Sendable, Equatable {
     public let name: String           // sanitized branch
     public let worktreePath: String
     public let branch: String
-    public let role: TeamRole
+    public let isMainWorktree: Bool
     public let isRunning: Bool
 
     public init(
         name: String,
         worktreePath: String,
         branch: String,
-        role: TeamRole,
+        isMainWorktree: Bool,
         isRunning: Bool
     ) {
         self.name = name
         self.worktreePath = worktreePath
         self.branch = branch
-        self.role = role
+        self.isMainWorktree = isMainWorktree
         self.isRunning = isRunning
     }
 }
@@ -35,20 +29,21 @@ public struct TeamMember: Sendable, Equatable {
 public struct TeamView: Sendable, Equatable {
     public let repoPath: String
     public let repoDisplayName: String
-    /// members[0] is always the lead, enforced by the static factory `team(for:in:teamsEnabled:)`.
+    /// `members[0]` is always the repository's main worktree, enforced by
+    /// the static factory `team(for:in:teamsEnabled:)`.
     public let members: [TeamMember]
 
     /// Internal so external modules must construct via `team(for:in:teamsEnabled:)`,
-    /// which enforces the "members[0] is the lead, count >= 2" invariant.
+    /// which enforces the "members[0] is the main worktree, count >= 2" invariant.
     internal init(repoPath: String, repoDisplayName: String, members: [TeamMember]) {
         self.repoPath = repoPath
         self.repoDisplayName = repoDisplayName
         self.members = members
     }
 
-    public var lead: TeamMember {
+    public var mainWorktree: TeamMember {
         // Guaranteed non-empty by the static factory.
-        members.first(where: { $0.role == .lead })
+        members.first(where: \.isMainWorktree)
             ?? members[0]
     }
 
@@ -79,12 +74,12 @@ public struct TeamView: Sendable, Equatable {
                 name: WorktreeNameSanitizer.sanitize(wt.branch),
                 worktreePath: wt.path,
                 branch: wt.branch,
-                role: wt.path == repo.path ? .lead : .coworker,
+                isMainWorktree: wt.path == repo.path,
                 isRunning: wt.state == .running
             )
         }.sorted { lhs, rhs in
-            // Lead first, then coworkers in worktree-add order (preserve repo.worktrees order)
-            if lhs.role != rhs.role { return lhs.role == .lead }
+            // Main worktree first, then linked worktrees in worktree-add order.
+            if lhs.isMainWorktree != rhs.isMainWorktree { return lhs.isMainWorktree }
             return false
         }
 

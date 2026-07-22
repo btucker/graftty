@@ -114,7 +114,7 @@ struct EventBodyRendererSplitTests {
     }
 }
 
-/// Shared two-worktree fixture: lead `main` at `/r`, coworker `alice` at `/r/alice`.
+/// Shared two-worktree fixture: main worktree at `/r`, linked worktree at `/r/alice`.
 fileprivate func eventBodyRendererFixtureRepo() -> RepoEntry {
     RepoEntry(
         path: "/r",
