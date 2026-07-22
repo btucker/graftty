@@ -133,7 +133,7 @@ struct TeamHookRendererTests {
 
         let rendered = TeamHookRenderer.format(messages: [msg])
 
-        #expect(rendered == "Worktree message from `main`:\n\nPlease check the parser.")
+        #expect(rendered == "Worktree message from `/repo/acme`:\n\nPlease check the parser.")
         #expect(!rendered.contains("opaque-id"))
         #expect(!rendered.contains("runtime="))
         #expect(!rendered.contains("automated team event"))
@@ -145,7 +145,7 @@ struct TeamHookRendererTests {
 
         let rendered = TeamHookRenderer.format(messages: [msg])
 
-        #expect(rendered == "Urgent worktree message from `main`:\n\nThis blocks the merge.")
+        #expect(rendered == "Urgent worktree message from `/repo/acme`:\n\nThis blocks the merge.")
     }
 
     private func message(

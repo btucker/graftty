@@ -2612,7 +2612,6 @@ struct GrafttyApp: App {
                 inbox: teamInbox,
                 dispatcher: teamEventDispatcher,
                 automaticDeliveryOwner: { teamID, worktree, runtime, paneSessionName in
-                    guard let paneSessionName else { return false }
                     let resolver = TeamDeliveryOwnershipResolver(
                         records: { presenceRecords },
                         liveness: AppTeamDeliveryLiveness(
@@ -2621,7 +2620,13 @@ struct GrafttyApp: App {
                         )
                     )
                     let key = TeamDeliveryOwnerKey(teamID: teamID, worktree: worktree, runtime: runtime)
-                    return resolver.owner(for: key)?.paneSessionName == paneSessionName
+                    guard let owner = resolver.owner(for: key) else {
+                        // Preserve direct-shell / registration-failure fallback:
+                        // only suppress a hook when another live pane is a
+                        // positively identified owner.
+                        return true
+                    }
+                    return owner.paneSessionName == paneSessionName
                 }
             ).hook(
                 callerWorktree: callerPath,

@@ -17,7 +17,8 @@ public enum WorktreeCreationInput {
         }
         // Existing refs come from Git discovery and may contain characters
         // outside the deliberately narrow worktree-name alphabet. Preserve
-        // them byte-for-byte and let `git worktree add` validate the ref.
+        // them byte-for-byte; GitWorktreeAdd verifies the exact local ref
+        // before it mutates the repository.
         if existing {
             return branchName.isEmpty ? "branch name must not be empty" : nil
         }

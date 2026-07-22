@@ -116,7 +116,7 @@ public enum TeamHookRenderer {
                     ? "Urgent worktree message"
                     : "Worktree message"
                 return """
-                \(label) from `\(message.from.member)`:
+                \(label) from `\(message.from.worktree)`:
 
                 \(message.body)
                 """

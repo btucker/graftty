@@ -167,7 +167,7 @@ struct TeamEventDispatcherTests {
         #expect(messages.first?.from.member == "system")
     }
 
-    @Test("@spec TEAM-5.10: A team_message is authored communication, so the dispatcher shall store its body verbatim and shall not apply the automated-event teamPrompt template.")
+    @Test("@spec TEAM-5.10: When a team_message is dispatched, the application shall store its authored body verbatim and shall not apply the automated-event teamPrompt template.")
     func teamMessageBypassesTeamPromptTemplate() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
@@ -236,7 +236,7 @@ struct TeamEventDispatcherTests {
         #expect(row.agentPrompt?.contains(body) == true)
     }
 
-    @Test("@spec TEAM-5.11: A team_broadcast shall write one authored team_message row per non-sender team member without applying the automated-event teamPrompt template.")
+    @Test("@spec TEAM-5.11: When a team_broadcast is dispatched, the application shall write one authored team_message row per non-sender team member without applying the automated-event teamPrompt template.")
     func teamBroadcastFansOutPerRecipient() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice", "bob"])

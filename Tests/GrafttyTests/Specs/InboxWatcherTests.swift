@@ -4,7 +4,7 @@ import Foundation
 
 @Suite("InboxWatcher — exit on new message + PID-file supersede")
 struct InboxWatcherTests {
-    @Test("@spec TEAM-IDLE-1.4: When the watcher observes a new unread message addressed to its session, it shall exit with code 2 and a stderr summary.")
+    @Test("@spec TEAM-IDLE-1.4: When the watcher observes a new unread message whose canonical `to.worktree` equals its recipient worktree, it shall exit with code 2 and a stderr summary naming the sender's canonical worktree address; branch-derived member names shall remain display metadata and shall not control routing.")
     func exitsWithCode2OnMessage() async throws {
         let tmpRoot = try makeTmpDir()
         defer { try? FileManager.default.removeItem(at: tmpRoot) }
@@ -17,7 +17,11 @@ struct InboxWatcherTests {
         let inbox = TeamInbox(rootDirectory: inboxRoot)
         let outcome = WatcherOutcome()
 
-        let recipient = InboxWatcher.Recipient(member: "wt-foo", runtime: .claude)
+        let recipient = InboxWatcher.Recipient(
+            member: "wt-foo",
+            worktree: "wt-foo-path",
+            runtime: .claude
+        )
         let watcher = InboxWatcher(
             sessionID: "test-session",
             recipient: recipient,
@@ -42,7 +46,7 @@ struct InboxWatcherTests {
             teamName: "TeamX",
             repoPath: "/repo",
             from: TeamInboxEndpoint(member: "other", worktree: "wt-other", runtime: "claude"),
-            to: TeamInboxEndpoint(member: "wt-foo", worktree: "wt-foo", runtime: "claude"),
+            to: TeamInboxEndpoint(member: "renamed-display", worktree: "wt-foo-path", runtime: "claude"),
             priority: .normal,
             body: "new message body!"
         )
@@ -50,6 +54,7 @@ struct InboxWatcherTests {
         let result = try await outcome.wait(timeout: 3.0)
         #expect(result.exitCode == 2)
         #expect(result.stderr.contains("new message body!"))
+        #expect(result.stderr.contains("from wt-other:"))
     }
 
     @Test("Watcher wakes for a message queued after SessionStart but present in its first snapshot")
@@ -85,7 +90,7 @@ struct InboxWatcherTests {
         let outcome = WatcherOutcome()
         let watcher = InboxWatcher(
             sessionID: "test-session",
-            recipient: .init(member: "wt-foo", runtime: .claude),
+            recipient: .init(member: "wt-foo", worktree: "wt-foo-path", runtime: .claude),
             teamID: teamID,
             inboxRootDirectory: inboxRoot,
             outcome: outcome,
@@ -131,7 +136,7 @@ struct InboxWatcherTests {
         let outcome = WatcherOutcome()
         let watcher = InboxWatcher(
             sessionID: "test-session",
-            recipient: .init(member: "wt-foo", runtime: .claude),
+            recipient: .init(member: "wt-foo", worktree: "wt-foo-path", runtime: .claude),
             teamID: teamID,
             inboxRootDirectory: inboxRoot,
             outcome: outcome,

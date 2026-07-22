@@ -248,6 +248,10 @@ enum AddWorktreeFlow {
             return .failure(.discoveryFailed("failed to start terminal backend"))
         }
         appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .running
+        terminalManager.surfaceBudget.noteCreated(
+            worktreePath: worktreePath,
+            splitTreesByPath: appState.wrappedValue.runningSplitTreesByPath()
+        )
         let firstSessionID = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
             .ensurePaneSession(for: firstLeaf)
         let sessionName = ZmxLauncher.sessionName(for: firstSessionID)

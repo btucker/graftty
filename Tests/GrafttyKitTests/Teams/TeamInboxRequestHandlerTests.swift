@@ -140,7 +140,7 @@ struct TeamInboxRequestHandlerTests {
     }
 
     @Test("""
-    @spec AGENT-5.3: When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions for launching an agent with `graftty worktree add --agent`, identify the returned address as belonging to the worktree rather than the process, direct later guidance through the shell-safe `graftty team send --stdin` inbox path, and deliver queued worktree inbox messages before normal work begins.
+    @spec AGENT-5.3: When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions for launching an agent with `graftty worktree add --agent`, identify the returned address as belonging to the worktree rather than the process, direct later guidance through the shell-safe `graftty team send --stdin` inbox path, and deliver queued worktree inbox messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
     """)
     func sessionStartDeliversQueuedMessagesAndAdvancesCursor() throws {
         for runtime in [TeamHookRuntime.codex, .claude] {
@@ -187,6 +187,65 @@ struct TeamInboxRequestHandlerTests {
                 worktree: "/repo/.worktrees/alice"
             )?.lastDeliveredToAnySessionID == "0001")
         }
+    }
+
+    @Test("A non-owner SessionStart receives team context without consuming the owner's queue.")
+    func nonOwnerSessionStartDoesNotRenderOrAdvanceQueuedMessages() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(
+            path: "/repo",
+            displayName: "repo",
+            branches: ["main", "alice"]
+        )
+        let inbox = TeamInbox(
+            rootDirectory: root,
+            idGenerator: Self.fixedIDs(["0001"]),
+            now: { Self.fixedDate }
+        )
+        let handler = Self.makeHandler(
+            inbox: inbox,
+            automaticDeliveryOwner: { _, _, _, paneSessionName in
+                paneSessionName == "graftty-owner"
+            }
+        )
+
+        _ = try handler.send(
+            callerWorktree: "/repo",
+            recipient: "alice",
+            text: "queued for the owner",
+            priority: .normal,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        let secondaryOutput = try handler.hook(
+            callerWorktree: "/repo/.worktrees/alice",
+            runtime: .claude,
+            event: .sessionStart,
+            sessionID: "secondary",
+            paneSessionName: "graftty-secondary",
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        #expect(secondaryOutput.contains("Graftty Agent Team session context"))
+        #expect(!secondaryOutput.contains("queued for the owner"))
+        #expect(try inbox.cursor(teamID: "/repo", sessionID: "secondary") == nil)
+        #expect(try inbox.worktreeWatermark(
+            teamID: "/repo",
+            worktree: "/repo/.worktrees/alice"
+        ) == nil)
+
+        let ownerOutput = try handler.hook(
+            callerWorktree: "/repo/.worktrees/alice",
+            runtime: .claude,
+            event: .sessionStart,
+            sessionID: "owner",
+            paneSessionName: "graftty-owner",
+            repos: [repo],
+            teamsEnabled: true
+        )
+        #expect(ownerOutput.contains("queued for the owner"))
     }
 
     @Test func claudePostToolUseDoesNotAdvanceCursorPastUndeliveredNormalMessage() throws {

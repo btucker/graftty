@@ -446,7 +446,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.9** When persisting `WorktreeEntry` to `state.json`, the application shall encode `.creating` as `.closed`. The `.creating` state is in-memory-only; if the app crashes mid-creation, the next launch's reconciler classifies the entry from `git worktree list --porcelain` rather than restoring a phantom spinner that would never resolve.
 
-**GIT-5.10** When BranchSelection.useExisting is submitted with a local source, the application shall invoke `git worktree add <path> <name>` (no `-b` flag).
+**GIT-5.10** When BranchSelection.useExisting is submitted with a local source, the application shall verify that `refs/heads/<name>` exists and invoke `git worktree add -- <path> <name>` (no `-b` flag), so commit-ish values cannot create a detached worktree and option-shaped names cannot alter Git's parsing.
 
 **GIT-5.11** When BranchSelection.useExisting is submitted and the same repo already has the branch mounted in another worktree, the application shall reject the create with branchAlreadyMounted(at:) before invoking git.
 
@@ -1722,9 +1722,9 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-5.9** When pr_state_changed fires in a single-worktree repo, the dispatcher shall write the row to the subject worktree iff .worktree is in the matrix row.
 
-**TEAM-5.10** A team_message is authored communication, so the dispatcher shall store its body verbatim and shall not apply the automated-event teamPrompt template.
+**TEAM-5.10** When a team_message is dispatched, the application shall store its authored body verbatim and shall not apply the automated-event teamPrompt template.
 
-**TEAM-5.11** A team_broadcast shall write one authored team_message row per non-sender team member without applying the automated-event teamPrompt template.
+**TEAM-5.11** When a team_broadcast is dispatched, the application shall write one authored team_message row per non-sender team member without applying the automated-event teamPrompt template.
 
 **TEAM-5.12** When a routable event is dispatched and the user's teamPrompt template is non-empty, the dispatcher shall write the inbox row with the original event body intact and the rendered per-recipient prompt stored separately as agentPrompt.
 
@@ -1962,11 +1962,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### AGENT-5.x
 
-**AGENT-5.1** When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to accept any optional launch command before reporting success. `--existing` shall preserve and reuse a local branch name. `--agent codex|claude` shall queue that runtime as the pane's explicit initial command, while `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
+**AGENT-5.1** When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to accept any optional launch command before reporting success. `--existing` shall verify and reuse an exact local branch ref. `--agent codex|claude` shall queue that runtime as the pane's explicit initial command and shall encode prompt bytes into a printable terminal transport before the shell decodes them into one argument, while `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
 
 **AGENT-5.2** While a CLI worktree-creation operation is retained, the application shall expose exactly one pending, ready, or failed state by operation ID, together with the canonical worktree path used as its stable messaging address.
 
-**AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions for launching an agent with `graftty worktree add --agent`, identify the returned address as belonging to the worktree rather than the process, direct later guidance through the shell-safe `graftty team send --stdin` inbox path, and deliver queued worktree inbox messages before normal work begins.
+**AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions for launching an agent with `graftty worktree add --agent`, identify the returned address as belonging to the worktree rather than the process, direct later guidance through the shell-safe `graftty team send --stdin` inbox path, and deliver queued worktree inbox messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
 
 ## CLI — CLI
 
@@ -1978,7 +1978,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### MEM-1.x
 
-**MEM-1.1** While more than 4 worktrees have live surfaces, the application shall evict the least-recently-selected worktree's surfaces.
+**MEM-1.1** While more than 4 worktrees have live surfaces, including surfaces created in the background by web or CLI worktree creation, the application shall evict the least-recently-selected worktree's surfaces; a background-created worktree that has never been selected shall enter as least recent.
 
 **MEM-1.2** When a worktree's surfaces are evicted via the LRU budget, the application shall preserve its zmx sessions, pane-to-session mapping, titles, PWDs, and rehydration state so re-selection re-attaches transparently.
 

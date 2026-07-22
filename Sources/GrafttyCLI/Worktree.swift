@@ -87,6 +87,9 @@ struct WorktreeAdd: ParsableCommand {
         }
 
         let resolvedPrompt = try promptStdin ? Self.readPromptFromStdin() : prompt
+        if let error = WorktreeAgentLaunchCommand.validationError(prompt: resolvedPrompt) {
+            throw ValidationError(error)
+        }
         let launchCommand = WorktreeAgentLaunchCommand.build(
             agent: agent,
             prompt: resolvedPrompt,
@@ -162,11 +165,25 @@ enum WorktreeRequestNames {
 }
 
 enum WorktreeAgentLaunchCommand {
+    static func validationError(prompt: String?) -> String? {
+        guard let prompt, prompt.utf8.contains(0) else { return nil }
+        return "agent prompts cannot contain NUL bytes"
+    }
+
     static func build(agent: String?, prompt: String?, exactCommand: String?) -> String? {
         if let exactCommand { return exactCommand }
         guard let agent else { return nil }
         guard let prompt else { return agent }
-        return agent + " -- " + shellLiteral(prompt)
+        // This string is typed through an interactive PTY, where control
+        // bytes are interpreted by the terminal line editor before shell
+        // quoting applies. Carry only printable base64 through the PTY and
+        // decode after the shell accepts the line. The sentinel preserves
+        // trailing newlines that command substitution would otherwise trim.
+        let encoded = Data(prompt.utf8).base64EncodedString()
+        let encodedLiteral = shellLiteral(encoded)
+        return """
+        ( _graftty_agent_prompt="$(/usr/bin/printf '%s' \(encodedLiteral) | /usr/bin/base64 -D; /usr/bin/printf x)"; _graftty_agent_prompt="${_graftty_agent_prompt%x}"; exec \(agent) -- "$_graftty_agent_prompt" )
+        """
     }
 
     static func shellLiteral(_ value: String) -> String {

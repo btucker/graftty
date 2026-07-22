@@ -80,7 +80,8 @@ graftty pane close 2                         # close pane 2
 
 # Launch an agent in a new worktree, then message that worktree's inbox:
 graftty worktree add fix-auth --agent codex
-printf '%s\n' 'Please own the auth test failures.' | graftty team send --stdin fix-auth
+# Copy the canonical address=... path printed by the command:
+printf '%s\n' 'Please own the auth test failures.' | graftty team send --stdin /path/to/repo/.worktrees/fix-auth
 
 # Cross-worktree pane control:
 graftty pane list drag-files                 # list panes in another worktree
@@ -93,6 +94,8 @@ graftty pane send drag-files:1 "y" --no-enter  # type without committing
 `<addr>` is `<id>` (current worktree, that pane), `<worktree>` (worktree's only pane), or `<worktree>:<id>`. Worktree names match what `graftty team list` prints. Run `graftty pane <verb> --help` for examples on every subcommand.
 
 `graftty pane send` writes raw bytes to the addressed pane's PTY — there's no inbox or consent layer, so the keystrokes land in whatever process is reading that pane's stdin. Use `graftty team send` for cooperative messaging where the receiving agent decides what to do.
+
+`graftty worktree add --agent` prints a canonical worktree-path address. Incoming worktree messages show that same stable path in their `from` label, so the recipient can reply with `graftty team send --stdin <address>` even if branches are renamed or display names collide.
 
 ## Building
 

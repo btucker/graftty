@@ -7,7 +7,7 @@ import GrafttyKit
 @Suite("CLI worktree creation and agent launch")
 struct CLIWorktreeCreationTests {
     @Test("""
-    @spec AGENT-5.1: When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to accept any optional launch command before reporting success. `--existing` shall preserve and reuse a local branch name. `--agent codex|claude` shall queue that runtime as the pane's explicit initial command, while `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
+    @spec AGENT-5.1: When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to accept any optional launch command before reporting success. `--existing` shall verify and reuse an exact local branch ref. `--agent codex|claude` shall queue that runtime as the pane's explicit initial command and shall encode prompt bytes into a printable terminal transport before the shell decodes them into one argument, while `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
     """)
     func helpDocumentsCreateAndLaunchWorkflow() throws {
         let help = WorktreeAdd.helpMessage()
@@ -28,14 +28,63 @@ struct CLIWorktreeCreationTests {
         #expect(names.branch == "release--café-")
     }
 
-    @Test("Agent prompts are POSIX-quoted before terminal injection")
-    func promptIsShellQuoted() {
+    @Test("Agent prompts are encoded into printable bytes before terminal injection")
+    func promptUsesPrintableTerminalTransport() throws {
+        let prompt = "don't expand $(danger)\u{15}\r\nkeep trailing\n\n"
         let command = WorktreeAgentLaunchCommand.build(
             agent: "codex",
-            prompt: "don't expand $(danger)",
+            prompt: prompt,
             exactCommand: nil
         )
-        #expect(command == "codex -- 'don'\\''t expand $(danger)'")
+        let generated = try #require(command)
+        #expect(!generated.contains(prompt))
+        #expect(generated.contains(Data(prompt.utf8).base64EncodedString()))
+        #expect(generated.unicodeScalars.allSatisfy { scalar in
+            scalar.value >= 0x20 && scalar.value != 0x7f
+        })
+    }
+
+    @Test("The printable prompt transport preserves control bytes, Unicode, and trailing newlines")
+    func promptTransportRoundTripsExactly() throws {
+        let prompt = "quote ' dollar $ backtick ` tab\t escape\u{1b}\r\nUnicode café\n\n"
+        let command = try #require(WorktreeAgentLaunchCommand.build(
+            agent: "codex",
+            prompt: prompt,
+            exactCommand: nil
+        ))
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-prompt-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fakeAgent = root.appendingPathComponent("codex")
+        try "#!/bin/sh\n/usr/bin/printf '%s' \"$2\" | /usr/bin/base64\n"
+            .write(to: fakeAgent, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: fakeAgent.path
+        )
+
+        let process = Process()
+        let stdout = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        process.arguments = ["-c", command]
+        process.environment = ["PATH": "\(root.path):/usr/bin:/bin"]
+        process.standardOutput = stdout
+        try process.run()
+        process.waitUntilExit()
+
+        #expect(process.terminationStatus == 0)
+        let encoded = String(
+            decoding: stdout.fileHandleForReading.readDataToEndOfFile(),
+            as: UTF8.self
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        #expect(Data(base64Encoded: encoded) == Data(prompt.utf8))
+    }
+
+    @Test("NUL is rejected because POSIX argv cannot represent it")
+    func promptRejectsNUL() {
+        #expect(WorktreeAgentLaunchCommand.validationError(prompt: "a\0b") != nil)
+        #expect(WorktreeAgentLaunchCommand.validationError(prompt: "") == nil)
     }
 
     @Test("An exact command wins when no agent runtime is selected")
