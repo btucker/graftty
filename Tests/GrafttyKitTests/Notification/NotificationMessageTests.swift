@@ -279,6 +279,48 @@ struct NotificationMessageTests {
         #expect(json?["type"] as? String == "send_pane")
     }
 
+    @Test func createWorktreeRequestRoundTrips() throws {
+        let original: NotificationMessage = .createWorktree(
+            callerWorktree: "/repo",
+            worktreeName: "fix-auth",
+            branchName: "feature/fix-auth",
+            existing: false,
+            command: "codex",
+            agentRuntime: .codex
+        )
+        let data = try JSONEncoder().encode(original)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        #expect(json["type"] as? String == "create_worktree")
+        #expect(json["caller_worktree"] as? String == "/repo")
+        #expect(json["worktree_name"] as? String == "fix-auth")
+        #expect(json["branch_name"] as? String == "feature/fix-auth")
+        #expect(json["command"] as? String == "codex")
+        #expect(json["agent_runtime"] as? String == "codex")
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == original)
+    }
+
+    @Test func worktreeCreateStatusRequestRoundTrips() throws {
+        let original: NotificationMessage = .worktreeCreateStatus(operationID: "op-123")
+        let data = try JSONEncoder().encode(original)
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == original)
+    }
+
+    @Test func worktreeCreateResponseRoundTrips() throws {
+        let status = WorktreeCreateStatus(
+            operationID: "op-123",
+            state: .ready,
+            worktreePath: "/repo/.worktrees/fix-auth",
+            messageAddress: "/repo/.worktrees/fix-auth"
+        )
+        let original: ResponseMessage = .worktreeCreate(status)
+        let data = try JSONEncoder().encode(original)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        #expect(json["type"] as? String == "worktree_create")
+        let operation = json["operation"] as! [String: Any]
+        #expect(operation["message_address"] as? String == "/repo/.worktrees/fix-auth")
+        #expect(try JSONDecoder().decode(ResponseMessage.self, from: data) == original)
+    }
+
     @Test func paneShowResponseRoundTrip() throws {
         let original: ResponseMessage = .paneShow("hello\nworld\n")
         let data = try JSONEncoder().encode(original)

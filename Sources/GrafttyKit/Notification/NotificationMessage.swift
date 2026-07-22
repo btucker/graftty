@@ -40,6 +40,15 @@ public enum NotificationMessage: Sendable, Equatable {
     case teamInbox(callerWorktree: String?, worktree: String?, repo: String?, member: String?, unread: Bool, all: Bool)
     case teamMembers(callerWorktree: String?, worktree: String?, repo: String?)
     case teamList(callerWorktree: String)
+    case createWorktree(
+        callerWorktree: String,
+        worktreeName: String,
+        branchName: String,
+        existing: Bool,
+        command: String?,
+        agentRuntime: TeamHookRuntime?
+    )
+    case worktreeCreateStatus(operationID: String)
 }
 
 extension NotificationMessage: Codable {
@@ -47,6 +56,11 @@ extension NotificationMessage: Codable {
         case type, path, text, clearAfter, direction, command, index, lines
         case callerWorktree = "caller_worktree"
         case recipient, priority, runtime, event, worktree, repo, member, unread, all
+        case worktreeName = "worktree_name"
+        case branchName = "branch_name"
+        case operationID = "operation_id"
+        case agentRuntime = "agent_runtime"
+        case existing
         case sessionID = "session_id"
         case paneSessionName = "pane_session_name"
         case pressEnter = "press_enter"
@@ -127,6 +141,24 @@ extension NotificationMessage: Codable {
         case .teamList(let path):
             try container.encode("team_list", forKey: .type)
             try container.encode(path, forKey: .callerWorktree)
+        case .createWorktree(
+            let callerWorktree,
+            let worktreeName,
+            let branchName,
+            let existing,
+            let command,
+            let agentRuntime
+        ):
+            try container.encode("create_worktree", forKey: .type)
+            try container.encode(callerWorktree, forKey: .callerWorktree)
+            try container.encode(worktreeName, forKey: .worktreeName)
+            try container.encode(branchName, forKey: .branchName)
+            try container.encode(existing, forKey: .existing)
+            try container.encodeIfPresent(command, forKey: .command)
+            try container.encodeIfPresent(agentRuntime, forKey: .agentRuntime)
+        case .worktreeCreateStatus(let operationID):
+            try container.encode("worktree_create_status", forKey: .type)
+            try container.encode(operationID, forKey: .operationID)
         }
     }
 
@@ -207,9 +239,63 @@ extension NotificationMessage: Codable {
         case "team_list":
             let path = try container.decode(String.self, forKey: .callerWorktree)
             self = .teamList(callerWorktree: path)
+        case "create_worktree":
+            self = .createWorktree(
+                callerWorktree: try container.decode(String.self, forKey: .callerWorktree),
+                worktreeName: try container.decode(String.self, forKey: .worktreeName),
+                branchName: try container.decode(String.self, forKey: .branchName),
+                existing: try container.decode(Bool.self, forKey: .existing),
+                command: try container.decodeIfPresent(String.self, forKey: .command),
+                agentRuntime: try container.decodeIfPresent(TeamHookRuntime.self, forKey: .agentRuntime)
+            )
+        case "worktree_create_status":
+            self = .worktreeCreateStatus(
+                operationID: try container.decode(String.self, forKey: .operationID)
+            )
         default:
             throw DecodingError.dataCorrupted(.init(codingPath: [CodingKeys.type], debugDescription: "Unknown message type: \(type)"))
         }
+    }
+}
+
+/// @spec AGENT-5.2
+/// While a CLI worktree-creation operation is retained, the application shall expose exactly one pending, ready, or failed state by operation ID, together with the canonical worktree path used as its stable messaging address.
+public enum WorktreeCreateState: String, Codable, Sendable, Equatable {
+    case pending
+    case ready
+    case failed
+}
+
+/// Snapshot returned while a CLI-created worktree moves through Git,
+/// discovery, terminal creation, and optional agent launch. The operation ID
+/// lets the CLI poll without holding the serial control socket open while Git
+/// hooks run.
+public struct WorktreeCreateStatus: Codable, Sendable, Equatable {
+    public let operationID: String
+    public let state: WorktreeCreateState
+    public let worktreePath: String
+    public let messageAddress: String
+    public let error: String?
+
+    public init(
+        operationID: String,
+        state: WorktreeCreateState,
+        worktreePath: String,
+        messageAddress: String,
+        error: String? = nil
+    ) {
+        self.operationID = operationID
+        self.state = state
+        self.worktreePath = worktreePath
+        self.messageAddress = messageAddress
+        self.error = error
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case state, error
+        case operationID = "operation_id"
+        case worktreePath = "worktree_path"
+        case messageAddress = "message_address"
     }
 }
 
@@ -331,11 +417,12 @@ public enum ResponseMessage: Sendable, Equatable {
     case teamList(teamName: String, members: [TeamListMember])
     case teamHookOutput(String)
     case teamInbox([TeamInboxMessage])
+    case worktreeCreate(WorktreeCreateStatus)
 }
 
 extension ResponseMessage: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, message, panes, output, messages, text
+        case type, message, panes, output, messages, text, operation
         case teamName = "team_name"
         case members
     }
@@ -364,6 +451,9 @@ extension ResponseMessage: Codable {
         case .teamInbox(let messages):
             try container.encode("team_inbox", forKey: .type)
             try container.encode(messages, forKey: .messages)
+        case .worktreeCreate(let operation):
+            try container.encode("worktree_create", forKey: .type)
+            try container.encode(operation, forKey: .operation)
         }
     }
 
@@ -392,6 +482,10 @@ extension ResponseMessage: Codable {
         case "team_inbox":
             let messages = try container.decode([TeamInboxMessage].self, forKey: .messages)
             self = .teamInbox(messages)
+        case "worktree_create":
+            self = .worktreeCreate(
+                try container.decode(WorktreeCreateStatus.self, forKey: .operation)
+            )
         default:
             throw DecodingError.dataCorrupted(.init(codingPath: [CodingKeys.type], debugDescription: "Unknown response type: \(type)"))
         }

@@ -107,6 +107,7 @@ let package = Package(
             name: "GrafttyCLI",
             dependencies: [
                 "GrafttyKit",
+                "GrafttyProtocol",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             swiftSettings: strictWarnings

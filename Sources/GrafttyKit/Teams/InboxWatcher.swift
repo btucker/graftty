@@ -60,9 +60,11 @@ public actor WatcherOutcome {
 public actor InboxWatcher {
     public struct Recipient: Sendable, Equatable {
         public let member: String
+        public let worktree: String
         public let runtime: TeamHookRuntime
-        public init(member: String, runtime: TeamHookRuntime) {
+        public init(member: String, worktree: String, runtime: TeamHookRuntime) {
             self.member = member
+            self.worktree = worktree
             self.runtime = runtime
         }
     }
@@ -144,6 +146,7 @@ public actor InboxWatcher {
         emit(.watcherSpawned, detail: [
             "session": sessionID,
             "member": recipient.member,
+            "worktree": recipient.worktree,
             "runtime": recipient.runtime.rawValue,
         ])
 
@@ -186,13 +189,45 @@ public actor InboxWatcher {
             // FSEvents has now delivered its initial state — the observer
             // is actually live. Unblock any whenReady() waiters.
             markReady()
+            // A message can land after SessionStart advanced this session's
+            // cursor but before the Stop watcher attaches. Do not baseline
+            // such a message away: the persisted cursor tells us it is new
+            // to this session even though it was present in the observer's
+            // first snapshot.
+            if let match = initialUnreadMessage() {
+                await fire(match)
+            }
             return
         }
         guard let match = messages.first(where: { msg in
             !initialIDs.contains(msg.id) &&
-                msg.to.member == recipient.member &&
+                msg.to.worktree == recipient.worktree &&
                 (msg.to.runtime == nil || msg.to.runtime == recipient.runtime.rawValue)
         }) else { return }
+        await fire(match)
+    }
+
+    private func initialUnreadMessage() -> TeamInboxMessage? {
+        let inbox = TeamInbox(rootDirectory: inboxRootDirectory)
+        do {
+            guard let cursor = try inbox.cursor(teamID: teamID, sessionID: sessionID) else {
+                return nil
+            }
+            guard cursor.worktree == recipient.worktree else { return nil }
+            return try inbox.unreadMessages(
+                teamID: teamID,
+                recipientWorktree: recipient.worktree,
+                after: cursor.lastSeenID
+            ).first(where: { message in
+                message.to.runtime == nil || message.to.runtime == recipient.runtime.rawValue
+            })
+        } catch {
+            return nil
+        }
+    }
+
+    private func fire(_ match: TeamInboxMessage) async {
+        guard !hasFired else { return }
         hasFired = true
         emit(.watcherWoke, detail: [
             "session": sessionID,
@@ -211,7 +246,7 @@ public actor InboxWatcher {
             .split(whereSeparator: \.isNewline)
             .first
             .map(String.init) ?? message.body
-        return "[graftty] new message from \(message.from.member): \(preview)\n"
+        return "[graftty] new message from \(message.from.worktree): \(preview)\n"
     }
 
     private func writePIDFile() throws {

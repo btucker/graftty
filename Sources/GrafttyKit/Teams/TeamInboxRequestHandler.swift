@@ -186,19 +186,46 @@ public final class TeamInboxRequestHandler {
 
         switch event {
         case .sessionStart:
-            if runtime == .claude {
-                _ = try cursorForHook(
+            let ownsAutomaticDelivery = canConsumeAutomaticInbox(
+                teamID: teamID,
+                worktree: context.sender.worktreePath,
+                runtime: runtime,
+                paneSessionName: paneSessionName
+            )
+            let cursor = ownsAutomaticDelivery ? try cursorForHook(
+                teamID: teamID,
+                sessionID: sessionID,
+                worktree: context.sender.worktreePath,
+                runtime: runtime
+            ) : nil
+            let pending = try cursor.map { cursor in
+                try inbox.unreadMessages(
                     teamID: teamID,
-                    sessionID: sessionID,
-                    worktree: context.sender.worktreePath,
-                    runtime: runtime
+                    recipientWorktree: context.sender.worktreePath,
+                    after: cursor.lastSeenID
                 )
-            }
+            } ?? []
             var text = TeamInstructionsRenderer.render(team: context.team, viewer: context.sender)
             if let renderedPrompt = sessionPromptRenderer?(context.team, context.sender) {
                 text += "\n\n\(renderedPrompt)"
             }
-            return try TeamHookRenderer.sessionStart(runtime: runtime, teamContext: text)
+            let output = try TeamHookRenderer.sessionStart(
+                runtime: runtime,
+                teamContext: text,
+                messages: pending
+            )
+            if let cursor {
+                try advanceCursorAcrossDeliveredPrefix(
+                    delivered: pending,
+                    allUnread: pending,
+                    teamID: teamID,
+                    sessionID: sessionID,
+                    worktree: context.sender.worktreePath,
+                    runtime: runtime,
+                    after: cursor.lastSeenID
+                )
+            }
+            return output
         case .postToolUse:
             guard runtime != .codex else {
                 return try TeamHookRenderer.postToolUse(runtime: runtime, messages: [])

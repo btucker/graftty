@@ -44,11 +44,12 @@ public struct TeamInboxMessage: Codable, Sendable, Equatable {
     public let priority: TeamInboxPriority
     public let kind: String
     public let body: String
-    /// Rendered `teamPrompt` template output for this delivery, or nil
-    /// when the template was empty / failed to render / pre-split row
-    /// from disk. Hook delivery (`TeamHookRenderer.format`) emits this
-    /// when present and falls through to `body` otherwise; activity
-    /// log / watcher / `team inbox` CLI ignore it. See @spec TEAM-1.6.
+    /// Rendered `teamPrompt` template output for an automated event, or nil
+    /// for authored `team_message` rows, when the template was empty / failed
+    /// to render, or for a pre-split row from disk. Hook delivery
+    /// (`TeamHookRenderer.format`) emits this for automated events when present
+    /// and falls through to `body` otherwise; activity log / watcher /
+    /// `team inbox` CLI ignore it. See @spec TEAM-1.6.
     public let agentPrompt: String?
 
     enum CodingKeys: String, CodingKey {

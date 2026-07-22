@@ -21,12 +21,16 @@ public enum DefaultCommandDecision: Equatable, Sendable {
 ///   - wasRehydrated: Whether this pane was recreated by the
 ///     restore-on-launch path. Rehydrated panes never auto-run — the
 ///     command is already presumed running under zmx.
+///   - hasExplicitInitialInput: Whether the pane was created with an explicit
+///     spawn-time command. Such panes never also run the configured default.
 public func defaultCommandDecision(
     defaultCommand: String,
     firstPaneOnly: Bool,
     isFirstPane: Bool,
-    wasRehydrated: Bool
+    wasRehydrated: Bool,
+    hasExplicitInitialInput: Bool = false
 ) -> DefaultCommandDecision {
+    if hasExplicitInitialInput { return .skip }
     if wasRehydrated { return .skip }
     if firstPaneOnly && !isFirstPane { return .skip }
 
