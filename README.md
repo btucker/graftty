@@ -78,6 +78,10 @@ graftty pane list                            # panes in the current worktree
 graftty pane add --command "claude"          # split + run a command
 graftty pane close 2                         # close pane 2
 
+# Launch an agent in a new worktree, then message that worktree's inbox:
+graftty worktree add fix-auth --agent codex
+printf '%s\n' 'Please own the auth test failures.' | graftty team send --stdin fix-auth
+
 # Cross-worktree pane control:
 graftty pane list drag-files                 # list panes in another worktree
 graftty pane show drag-files:1               # last 100 lines of that pane's output

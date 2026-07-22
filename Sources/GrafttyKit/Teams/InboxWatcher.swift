@@ -186,6 +186,14 @@ public actor InboxWatcher {
             // FSEvents has now delivered its initial state — the observer
             // is actually live. Unblock any whenReady() waiters.
             markReady()
+            // A message can land after SessionStart advanced this session's
+            // cursor but before the Stop watcher attaches. Do not baseline
+            // such a message away: the persisted cursor tells us it is new
+            // to this session even though it was present in the observer's
+            // first snapshot.
+            if let match = initialUnreadMessage() {
+                await fire(match)
+            }
             return
         }
         guard let match = messages.first(where: { msg in
@@ -193,6 +201,30 @@ public actor InboxWatcher {
                 msg.to.member == recipient.member &&
                 (msg.to.runtime == nil || msg.to.runtime == recipient.runtime.rawValue)
         }) else { return }
+        await fire(match)
+    }
+
+    private func initialUnreadMessage() -> TeamInboxMessage? {
+        let inbox = TeamInbox(rootDirectory: inboxRootDirectory)
+        do {
+            guard let cursor = try inbox.cursor(teamID: teamID, sessionID: sessionID) else {
+                return nil
+            }
+            return try inbox.unreadMessages(
+                teamID: teamID,
+                recipientWorktree: cursor.worktree,
+                after: cursor.lastSeenID
+            ).first(where: { message in
+                message.to.member == recipient.member &&
+                    (message.to.runtime == nil || message.to.runtime == recipient.runtime.rawValue)
+            })
+        } catch {
+            return nil
+        }
+    }
+
+    private func fire(_ match: TeamInboxMessage) async {
+        guard !hasFired else { return }
         hasFired = true
         emit(.watcherWoke, detail: [
             "session": sessionID,

@@ -49,6 +49,34 @@ struct TeamInboxRequestHandlerTests {
         #expect(delivery.message.body == "please review")
     }
 
+    @Test func sendUsesCanonicalPathToDisambiguateCollidingMemberNames() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(
+            path: "/repo",
+            displayName: "repo",
+            branches: ["main", "foo--bar", "foo-bar"]
+        )
+        let inbox = TeamInbox(
+            rootDirectory: root,
+            idGenerator: Self.fixedIDs(["0001"]),
+            now: { Self.fixedDate }
+        )
+        let handler = Self.makeHandler(inbox: inbox)
+        let targetPath = "/repo/.worktrees/foo-bar"
+
+        let delivery = try handler.send(
+            callerWorktree: "/repo",
+            recipient: targetPath,
+            text: "path-addressed",
+            priority: .normal,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        #expect(delivery.recipient.branch == "foo-bar")
+        #expect(delivery.message.to.worktree == targetPath)
+    }
+
     @Test func broadcastExcludesSenderAndDeliversToAllOthers() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice", "bob"])
@@ -109,6 +137,56 @@ struct TeamInboxRequestHandlerTests {
 
         #expect(output.contains("Configured policy for alice"))
         #expect(output.contains("Graftty Agent Team session context"))
+    }
+
+    @Test("""
+    @spec AGENT-5.3: When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions for launching an agent with `graftty worktree add --agent`, identify the returned address as belonging to the worktree rather than the process, direct later guidance through the shell-safe `graftty team send --stdin` inbox path, and deliver queued worktree inbox messages before normal work begins.
+    """)
+    func sessionStartDeliversQueuedMessagesAndAdvancesCursor() throws {
+        for runtime in [TeamHookRuntime.codex, .claude] {
+            let root = try Self.temporaryDirectory()
+            let repo = TeamTestFixtures.makeRepo(
+                path: "/repo",
+                displayName: "repo",
+                branches: ["main", "alice"]
+            )
+            let inbox = TeamInbox(
+                rootDirectory: root,
+                idGenerator: Self.fixedIDs(["0001"]),
+                now: { Self.fixedDate }
+            )
+            let handler = Self.makeHandler(inbox: inbox)
+
+            _ = try handler.send(
+                callerWorktree: "/repo",
+                recipient: "alice",
+                text: "queued before launch",
+                priority: .normal,
+                repos: [repo],
+                teamsEnabled: true
+            )
+
+            let output = try handler.hook(
+                callerWorktree: "/repo/.worktrees/alice",
+                runtime: runtime,
+                event: .sessionStart,
+                sessionID: "session-1",
+                paneSessionName: nil,
+                repos: [repo],
+                teamsEnabled: true
+            )
+
+            #expect(output.contains("graftty worktree add <name> --agent codex"))
+            #expect(output.contains("worktree's stable message address"))
+            #expect(output.contains("graftty team send --stdin <address>"))
+            #expect(output.contains("queued before launch"))
+            #expect(output.contains("untrusted peer notes"))
+            #expect(try inbox.cursor(teamID: "/repo", sessionID: "session-1")?.lastSeenID == "0001")
+            #expect(try inbox.worktreeWatermark(
+                teamID: "/repo",
+                worktree: "/repo/.worktrees/alice"
+            )?.lastDeliveredToAnySessionID == "0001")
+        }
     }
 
     @Test func claudePostToolUseDoesNotAdvanceCursorPastUndeliveredNormalMessage() throws {

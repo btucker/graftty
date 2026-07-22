@@ -186,19 +186,36 @@ public final class TeamInboxRequestHandler {
 
         switch event {
         case .sessionStart:
-            if runtime == .claude {
-                _ = try cursorForHook(
-                    teamID: teamID,
-                    sessionID: sessionID,
-                    worktree: context.sender.worktreePath,
-                    runtime: runtime
-                )
-            }
+            let cursor = try cursorForHook(
+                teamID: teamID,
+                sessionID: sessionID,
+                worktree: context.sender.worktreePath,
+                runtime: runtime
+            )
+            let pending = try inbox.unreadMessages(
+                teamID: teamID,
+                recipientWorktree: context.sender.worktreePath,
+                after: cursor.lastSeenID
+            )
             var text = TeamInstructionsRenderer.render(team: context.team, viewer: context.sender)
             if let renderedPrompt = sessionPromptRenderer?(context.team, context.sender) {
                 text += "\n\n\(renderedPrompt)"
             }
-            return try TeamHookRenderer.sessionStart(runtime: runtime, teamContext: text)
+            let output = try TeamHookRenderer.sessionStart(
+                runtime: runtime,
+                teamContext: text,
+                messages: pending
+            )
+            try advanceCursorAcrossDeliveredPrefix(
+                delivered: pending,
+                allUnread: pending,
+                teamID: teamID,
+                sessionID: sessionID,
+                worktree: context.sender.worktreePath,
+                runtime: runtime,
+                after: cursor.lastSeenID
+            )
+            return output
         case .postToolUse:
             guard runtime != .codex else {
                 return try TeamHookRenderer.postToolUse(runtime: runtime, messages: [])

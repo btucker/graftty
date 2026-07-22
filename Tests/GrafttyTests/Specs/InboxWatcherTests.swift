@@ -52,6 +52,54 @@ struct InboxWatcherTests {
         #expect(result.stderr.contains("new message body!"))
     }
 
+    @Test("Watcher wakes for a message queued after SessionStart but present in its first snapshot")
+    func initialSnapshotUsesPersistedSessionCursor() async throws {
+        let tmpRoot = try makeTmpDir()
+        defer { try? FileManager.default.removeItem(at: tmpRoot) }
+
+        let teamID = "team-x"
+        let inboxRoot = tmpRoot.appendingPathComponent("inbox", isDirectory: true)
+        try FileManager.default.createDirectory(at: inboxRoot, withIntermediateDirectories: true)
+        let pidRoot = tmpRoot.appendingPathComponent("teams", isDirectory: true)
+        let inbox = TeamInbox(rootDirectory: inboxRoot)
+
+        try inbox.writeCursor(
+            TeamInboxCursor(
+                sessionID: "test-session",
+                worktree: "wt-foo-path",
+                runtime: TeamHookRuntime.claude.rawValue,
+                lastSeenID: nil
+            ),
+            teamID: teamID
+        )
+        _ = try inbox.appendMessage(
+            teamID: teamID,
+            teamName: "TeamX",
+            repoPath: "/repo",
+            from: TeamInboxEndpoint(member: "other", worktree: "wt-other", runtime: "claude"),
+            to: TeamInboxEndpoint(member: "wt-foo", worktree: "wt-foo-path", runtime: "claude"),
+            priority: .normal,
+            body: "queued during startup"
+        )
+
+        let outcome = WatcherOutcome()
+        let watcher = InboxWatcher(
+            sessionID: "test-session",
+            recipient: .init(member: "wt-foo", runtime: .claude),
+            teamID: teamID,
+            inboxRootDirectory: inboxRoot,
+            outcome: outcome,
+            pidFileRoot: pidRoot,
+            eventLog: TeamEventLog(rootDirectory: tmpRoot.appendingPathComponent("events", isDirectory: true))
+        )
+        let runTask = Task.detached { await watcher.runUntilSignal() }
+        defer { runTask.cancel() }
+
+        let result = try await outcome.wait(timeout: 3.0)
+        #expect(result.exitCode == 2)
+        #expect(result.stderr.contains("queued during startup"))
+    }
+
     @Test("@spec TEAM-IDLE-1.3: Watcher writes a PID file at <root>/<teamID>/watchers/<session>.<runtime>.pid and SIGTERMs any prior PID it finds.")
     func supersedesPriorWatcher() async throws {
         let tmpRoot = try makeTmpDir()

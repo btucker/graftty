@@ -61,6 +61,19 @@ struct TeamViewTests {
         #expect(view.memberNamed("nobody") == nil)
     }
 
+    @Test func canonicalWorktreePathDisambiguatesCollidingBranchNames() {
+        let repo = makeRepo(
+            path: "/r/multi",
+            displayName: "multi",
+            branches: ["main", "foo--bar", "foo-bar"]
+        )
+        let view = TeamView.team(for: repo.worktrees[0], in: [repo], teamsEnabled: true)!
+        let targetPath = "/r/multi/.worktrees/foo-bar"
+
+        #expect(view.memberNamed(targetPath)?.worktreePath == targetPath)
+        #expect(view.memberNamed(targetPath)?.branch == "foo-bar")
+    }
+
     @Test func membersSortedWithMainWorktreeFirst() {
         let repo = makeRepo(path: "/r/multi", displayName: "multi", branches: ["main", "a", "b"])
         let view = TeamView.team(for: repo.worktrees[0], in: [repo], teamsEnabled: true)!
