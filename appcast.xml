@@ -6,16 +6,33 @@
         <description>Updates for Graftty.</description>
         <language>en</language>
         <item>
+            <title>Version 0.2.2</title>
+            <sparkle:version>0.2.2</sparkle:version>
+            <sparkle:shortVersionString>0.2.2</sparkle:shortVersionString>
+            <pubDate>Wed, 22 Jul 2026 01:16:52 +0000</pubDate>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
+<ul dir="auto">
+<li>appcast: v0.2.1 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4895205844" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/252" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/252/hovercard" href="https://github.com/btucker/graftty/pull/252">#252</a></li>
+<li>Refresh git status lines from ref events by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4916060462" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/253" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/253/hovercard" href="https://github.com/btucker/graftty/pull/253">#253</a></li>
+<li>Harden CI against macOS test stalls and slow simulator boots by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4916654518" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/254" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/254/hovercard" href="https://github.com/btucker/graftty/pull/254">#254</a></li>
+<li>Fix iOS paste focus restoration by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4920748649" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/255" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/255/hovercard" href="https://github.com/btucker/graftty/pull/255">#255</a></li>
+<li>fix(teams): make cross-worktree messaging shell-safe by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4944132497" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/256" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/256/hovercard" href="https://github.com/btucker/graftty/pull/256">#256</a></li>
+</ul>
+<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.2.1...v0.2.2"><tt>v0.2.1...v0.2.2</tt></a></p>]]></description>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.2.2/Graftty-0.2.2.zip" length="29753186" type="application/octet-stream" sparkle:edSignature="HS8qcFvv57+kQsdTFFALF2V94g9ecZ2iR5apzoXLMQrlxcdL+JzQp/kdj4FmBetHz0kv4BNdzTU2v2T6s4drAA=="/>
+        </item>
+        <item>
             <title>Version 0.2.1</title>
             <sparkle:version>0.2.1</sparkle:version>
             <sparkle:shortVersionString>0.2.1</sparkle:shortVersionString>
             <pubDate>Wed, 15 Jul 2026 18:15:55 +0000</pubDate>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
-<ul dir="auto">
-<li>Speed up and quiet mobile CI by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4894894338" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/251" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/251/hovercard" href="https://github.com/btucker/graftty/pull/251">#251</a></li>
-</ul>
-<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.2.0...v0.2.1"><tt>v0.2.0...v0.2.1</tt></a></p>]]></description>
+            <description>&lt;h2 dir="auto"&gt;What's Changed&lt;/h2&gt;
+&lt;ul dir="auto"&gt;
+&lt;li&gt;Speed up and quiet mobile CI by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4894894338" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/251" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/251/hovercard" href="https://github.com/btucker/graftty/pull/251"&gt;#251&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.2.0...v0.2.1"&gt;&lt;tt&gt;v0.2.0...v0.2.1&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
             <enclosure url="https://github.com/btucker/graftty/releases/download/v0.2.1/Graftty-0.2.1.zip" length="29746982" type="application/octet-stream" sparkle:edSignature="dNtb7zGJsioMpmWMJajRE9r6+/bXiKA6X/zEQ/rrvGTYoQJp3/iVA4lnfawzTlkbubCH207kFrrOpAlkTkFEAA=="/>
         </item>
         <item>
