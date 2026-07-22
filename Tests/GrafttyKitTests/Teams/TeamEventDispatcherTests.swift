@@ -167,8 +167,8 @@ struct TeamEventDispatcherTests {
         #expect(messages.first?.from.member == "system")
     }
 
-    @Test("@spec TEAM-5.10: When team_message is dispatched and the user's teamPrompt template is non-empty, the dispatcher shall write the inbox row with the original event body and the rendered per-recipient prompt stored separately as agentPrompt.")
-    func teamMessageRespectsTeamPromptTemplate() throws {
+    @Test("@spec TEAM-5.10: A team_message is authored communication, so the dispatcher shall store its body verbatim and shall not apply the automated-event teamPrompt template.")
+    func teamMessageBypassesTeamPromptTemplate() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root)
@@ -188,12 +188,8 @@ struct TeamEventDispatcherTests {
         )
 
         let resolved = try #require(message)
-        // Recipient is alice, so `agent.branch == "alice"`. The original
-        // event body is stored verbatim; the rendered prompt is split out
-        // into agentPrompt with the body auto-appended.
         #expect(resolved.body == "ping")
-        #expect(resolved.agentPrompt?.contains("From alice:") == true)
-        #expect(resolved.agentPrompt?.contains("ping") == true)
+        #expect(resolved.agentPrompt == nil)
     }
 
     @Test("@spec TEAM-5.12: When a routable event is dispatched and the user's teamPrompt template is non-empty, the dispatcher shall write the inbox row with the original event body intact and the rendered per-recipient prompt stored separately as agentPrompt.")
@@ -240,7 +236,7 @@ struct TeamEventDispatcherTests {
         #expect(row.agentPrompt?.contains(body) == true)
     }
 
-    @Test("@spec TEAM-5.11: When team_broadcast is dispatched, the dispatcher shall write one team_message inbox row per non-sender team member, each rendered against that recipient's agent context.")
+    @Test("@spec TEAM-5.11: A team_broadcast shall write one authored team_message row per non-sender team member without applying the automated-event teamPrompt template.")
     func teamBroadcastFansOutPerRecipient() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice", "bob"])
@@ -248,7 +244,7 @@ struct TeamEventDispatcherTests {
         let dispatcher = TeamEventDispatcher(
             inbox: inbox,
             preferencesProvider: { TeamEventRoutingPreferences() },
-            templateProvider: { "" }
+            templateProvider: { "AUTOMATED EVENT: {{ agent.branch }}" }
         )
 
         let messages = try dispatcher.dispatchTeamBroadcast(
@@ -265,6 +261,8 @@ struct TeamEventDispatcherTests {
         #expect(messages.allSatisfy { $0.from.member == "alice" })
         #expect(messages.allSatisfy { $0.kind == "team_message" })
         #expect(messages.allSatisfy { $0.body == "heads up" })
+        #expect(messages.allSatisfy { $0.agentPrompt == nil })
+        #expect(Set(messages.compactMap(\.batchID)).count == 1)
     }
 
     @Test("@spec TEAM-5.8: When a worktree is removed from a team-enabled repo (collapsing to one worktree), the dispatcher shall still append one team_member_left inbox row addressed to the main worktree.")

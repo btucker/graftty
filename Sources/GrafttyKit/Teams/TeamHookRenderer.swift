@@ -67,6 +67,7 @@ public enum TeamHookRenderer {
         Team commands:
         - `graftty team inbox` — read messages addressed to this worktree.
         - `graftty team list` — list current team members.
+        - An incoming `worktree message from <address>:` label identifies the source worktree's stable reply address. Reply with `graftty team send --stdin <address>` using the safe stdin form below.
         - Pass every outbound message body on standard input, never as a shell argument. For each invocation, replace both `<unique-delimiter>` placeholders below with a newly generated high-entropy value that does not appear as an exact line in the message. Do not run the placeholder literally. The quoted heredoc keeps backticks, `$()`, variables, and quotes literal:
           graftty team send --stdin <name> <<'<unique-delimiter>'
           <message>
@@ -110,7 +111,18 @@ public enum TeamHookRenderer {
 
     public static func format(messages: [TeamInboxMessage]) -> String {
         messages.map { message in
-            """
+            if message.kind == TeamChannelEvents.EventType.message {
+                let label = message.priority == .urgent
+                    ? "Urgent worktree message"
+                    : "Worktree message"
+                return """
+                \(label) from `\(message.from.member)`:
+
+                \(message.body)
+                """
+            }
+
+            return """
             [id=\(message.id) priority=\(message.priority.rawValue) from=\(message.from.member) runtime=\(message.from.runtime ?? "unknown") at=\(timestamp(message.createdAt))]
             \(message.agentPrompt ?? message.body)
             """
