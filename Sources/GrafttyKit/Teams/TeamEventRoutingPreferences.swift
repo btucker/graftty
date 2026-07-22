@@ -6,11 +6,11 @@ public struct RecipientSet: OptionSet, Codable, Equatable, Sendable {
     public let rawValue: Int
     public init(rawValue: Int) { self.rawValue = rawValue }
 
-    /// The repo's root worktree (the team's lead).
+    /// The repo's main worktree.
     public static let root           = RecipientSet(rawValue: 1 << 0)
     /// The worktree the event is *about*.
     public static let worktree       = RecipientSet(rawValue: 1 << 1)
-    /// All other coworkers in the same repo.
+    /// All other worktrees in the same repo.
     public static let otherWorktrees = RecipientSet(rawValue: 1 << 2)
 }
 

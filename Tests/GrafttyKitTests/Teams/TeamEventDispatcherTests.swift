@@ -143,8 +143,8 @@ struct TeamEventDispatcherTests {
         #expect(messages.first?.to.worktree == "/repo")
     }
 
-    @Test("@spec TEAM-5.7: When a worktree joins a team-enabled repo, the dispatcher shall append one team_member_joined inbox row addressed to the lead.")
-    func memberJoinedAddressesLead() throws {
+    @Test("@spec TEAM-5.7: When a worktree joins a team-enabled repo, the dispatcher shall append one team_member_joined inbox row addressed to the main worktree.")
+    func memberJoinedAddressesMainWorktree() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
         let inbox = TeamInbox(rootDirectory: root)
@@ -267,8 +267,8 @@ struct TeamEventDispatcherTests {
         #expect(messages.allSatisfy { $0.body == "heads up" })
     }
 
-    @Test("@spec TEAM-5.8: When a worktree is removed from a team-enabled repo (collapsing to one worktree), the dispatcher shall still append one team_member_left inbox row addressed to the lead.")
-    func memberLeftAddressesLeadEvenWhenTeamShrinks() throws {
+    @Test("@spec TEAM-5.8: When a worktree is removed from a team-enabled repo (collapsing to one worktree), the dispatcher shall still append one team_member_left inbox row addressed to the main worktree.")
+    func memberLeftAddressesMainWorktreeEvenWhenTeamShrinks() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main"])  // alice is gone
         let inbox = TeamInbox(rootDirectory: root)

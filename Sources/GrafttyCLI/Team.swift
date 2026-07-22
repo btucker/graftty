@@ -877,7 +877,7 @@ private enum TeamOutput {
     }
 
     static func memberLine(_ member: TeamListMember) -> String {
-        "\(member.name)  branch=\(member.branch)  worktree=\(member.worktreePath)  role=\(member.role)  running=\(member.isRunning)"
+        "\(member.name)  branch=\(member.branch)  worktree=\(member.worktreePath)  main=\(member.isMainWorktree)  running=\(member.isRunning)"
     }
 
     static func inboxLine(_ message: TeamInboxMessage) -> String {

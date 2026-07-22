@@ -84,7 +84,7 @@ public enum TeamChannelEvents {
                 "branch": branch,
                 "worktree": worktree,
             ],
-            body: "Coworker \"\(member)\" joined."
+            body: "Worktree \"\(member)\" joined."
         )
     }
 
@@ -107,7 +107,7 @@ public enum TeamChannelEvents {
                 "member": member,
                 "reason": reason.rawValue,
             ],
-            body: "Coworker \"\(member)\" left (\(reason.rawValue))."
+            body: "Worktree \"\(member)\" left (\(reason.rawValue))."
         )
     }
 

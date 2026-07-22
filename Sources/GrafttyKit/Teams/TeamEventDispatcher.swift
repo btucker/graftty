@@ -78,7 +78,7 @@ public final class TeamEventDispatcher {
     /// Writes one `team_message` row per recipient (every team member
     /// other than the sender). Each row is rendered through the user's
     /// `teamPrompt` template against the recipient's agent context, so
-    /// `{{ agent.branch }}` / `{{ agent.lead }}` resolve per-recipient
+    /// `{{ agent.branch }}` / `{{ agent.main_worktree }}` resolve per-recipient
     /// like every other event the dispatcher fans out.
     ///
     /// Note: `appendBroadcast` (which shares a `batchID` across rows) is
@@ -196,18 +196,18 @@ public final class TeamEventDispatcher {
 
     // MARK: - Membership events (TEAM-5.7, TEAM-5.8)
 
-    /// Writes one `team_member_joined` row addressed to the team lead.
+    /// Writes one `team_member_joined` row addressed to the main worktree.
     /// Same suppression rules as `TeamMembershipEvents.fireJoined`:
     /// - team has fewer than two worktrees
     /// - the joiner isn't found in the repo
-    /// - the joiner *is* the lead (nobody else to notify)
+    /// - the joiner *is* the main worktree (nobody else to notify)
     public func dispatchMemberJoined(
         joinerWorktreePath: String,
         repos: [RepoEntry]
     ) throws {
         guard let team = TeamLookup.team(for: joinerWorktreePath, in: repos) else { return }
         guard let joiner = team.members.first(where: { $0.worktreePath == joinerWorktreePath }) else { return }
-        guard joiner.role != .lead else { return }
+        guard !joiner.isMainWorktree else { return }
 
         let event = TeamChannelEvents.memberJoined(
             team: team.repoDisplayName,
@@ -217,10 +217,10 @@ public final class TeamEventDispatcher {
         )
         guard case let .event(type, _, _) = event else { return }
 
-        let lead = team.lead
+        let mainWorktree = team.mainWorktree
         let rendered = renderBody(
             event: event,
-            recipientWorktreePath: lead.worktreePath,
+            recipientWorktreePath: mainWorktree.worktreePath,
             subjectWorktreePath: joiner.worktreePath,
             repos: repos
         )
@@ -230,8 +230,8 @@ public final class TeamEventDispatcher {
             repoPath: team.repoPath,
             from: .system(repoPath: team.repoPath),
             to: TeamInboxEndpoint(
-                member: lead.name,
-                worktree: lead.worktreePath,
+                member: mainWorktree.name,
+                worktree: mainWorktree.worktreePath,
                 runtime: nil
             ),
             priority: .normal,
@@ -241,13 +241,13 @@ public final class TeamEventDispatcher {
         )
     }
 
-    /// Writes one `team_member_left` row addressed to the team lead.
+    /// Writes one `team_member_left` row addressed to the main worktree.
     /// The team may have collapsed to one worktree by the time this is
     /// called (so `TeamLookup.team(for:)` returns nil) — we still emit
     /// the row, deriving the team ID from the repo path. Suppression
     /// rules match `TeamMembershipEvents.fireLeft`:
-    /// - the lead is no longer present in the repo
-    /// - the leaver was the lead itself
+    /// - the main worktree is no longer present in the repo
+    /// - the leaver was the main worktree itself
     public func dispatchMemberLeft(
         leaverBranch: String,
         leaverWorktreePath: String,
@@ -262,7 +262,7 @@ public final class TeamEventDispatcher {
         guard let repo = repos.first(where: { repo in
             leaverWorktreePath == repo.path || leaverWorktreePath.hasPrefix(repo.path + "/")
         }) else { return }
-        // Lead must still be present and the leaver must not have been the lead.
+        // The main worktree must still be present and must not be the leaver.
         guard repo.worktrees.contains(where: { $0.path == repo.path }) else { return }
         guard leaverWorktreePath != repo.path else { return }
 

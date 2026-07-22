@@ -37,4 +37,27 @@ struct SettingsKeyMigrationTests {
         #expect(defaults.string(forKey: "channelRoutingPreferences") == nil)
         #expect(defaults.string(forKey: "teamEventRoutingPreferences") == nil)
     }
+
+    @Test("@spec TEAM-1.12: On startup, the application shall migrate `agent.lead` references in saved team session and event prompt templates to `agent.main_worktree` before any AppStorage binding reads them.")
+    func migratesLegacyTemplateVocabulary() {
+        let suiteName = "test-\(UUID())"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.set("{% if agent.lead %}main{% endif %}", forKey: "teamSessionPrompt")
+        defaults.set("{{ agent.lead }} / {{ agent.this_worktree }}", forKey: "teamPrompt")
+
+        SettingsKeyMigration.run(in: defaults)
+
+        #expect(defaults.string(forKey: "teamSessionPrompt") == "{% if agent.main_worktree %}main{% endif %}")
+        #expect(defaults.string(forKey: "teamPrompt") == "{{ agent.main_worktree }} / {{ agent.this_worktree }}")
+    }
+
+    @Test func leavesLongerTemplateIdentifiersUnchanged() {
+        let suiteName = "test-\(UUID())"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.set("Follow agent.leadership guidance", forKey: "teamSessionPrompt")
+
+        SettingsKeyMigration.run(in: defaults)
+
+        #expect(defaults.string(forKey: "teamSessionPrompt") == "Follow agent.leadership guidance")
+    }
 }

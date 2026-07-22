@@ -24,7 +24,7 @@ struct TeamTodo {
     func team_1_5() async throws { }
 
     @Test("""
-@spec TEAM-1.6: The Agent Teams Settings pane shall expose **two** user-editable Stencil-templated text areas registered into `UserDefaults.standard` at app startup so non-binding readers see the same defaults until the user overrides. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt` (`@AppStorage("teamSessionPrompt")`, String), defaults to empty because the auto-generated team-aware instructions already include stable session context; when non-empty, it is rendered once at session start against the `agent` context. Only `agent.branch` and `agent.lead` are meaningful at session start (`agent.this_worktree` and `agent.other_worktree` are always `false`), and the pane's variable-list disclosure deliberately omits the latter two. The rendered text is appended after a blank line to the auto-generated team-aware instructions text returned by `graftty team hook`. The second, `teamPrompt` (`@AppStorage("teamPrompt")`, String), is pre-populated with a non-empty default (`DefaultPrompts.eventPrompt`) and rendered per inbox-row write against the full four-field `agent` context evaluated against the recipient agent, plus a top-level `body` variable carrying the original event body and a top-level `event` object exposing `event.type` (the wire-format event-type string, e.g. `"merge_state_changed"`), `event.attrs` (the event's attribute dictionary), and `event.body` (a duplicate of the top-level `body`). The rendered output is stored in the inbox row's `agent_prompt` field. If the template does not reference `{{ body }}` the renderer appends `\n\n{{ body }}` to the template before rendering, so templates that pre-date the `body` variable continue to surface the event content to the agent. Hook-context delivery (via `TeamHookRenderer.format`) emits `agent_prompt` when present and falls through to `body` otherwise; the inbox row's `body` field stores the event content unchanged so consumers other than the agent (activity log, `graftty team inbox`, watcher wake summaries) read it without the template prelude. Both templates use the same `agent` struct shape: `branch` (String), `lead` (Bool), `this_worktree` (Bool), `other_worktree` (Bool). The previously-defined `teamLeadPrompt` and `teamCoworkerPrompt` AppStorage keys are removed.
+@spec TEAM-1.6: The Agent Teams Settings pane shall expose **two** user-editable Stencil-templated text areas registered into `UserDefaults.standard` at app startup so non-binding readers see the same defaults until the user overrides. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt` (`@AppStorage("teamSessionPrompt")`, String), defaults to empty because the auto-generated team-aware instructions already include stable session context; when non-empty, it is rendered once at session start against the `agent` context. Only `agent.branch` and `agent.main_worktree` are meaningful at session start (`agent.this_worktree` and `agent.other_worktree` are always `false`), and the pane's variable-list disclosure deliberately omits the latter two. The rendered text is appended after a blank line to the auto-generated team-aware instructions text returned by `graftty team hook`. The second, `teamPrompt` (`@AppStorage("teamPrompt")`, String), is pre-populated with a non-empty default (`DefaultPrompts.eventPrompt`) and rendered per inbox-row write against the full four-field `agent` context evaluated against the recipient agent, plus a top-level `body` variable carrying the original event body and a top-level `event` object exposing `event.type` (the wire-format event-type string, e.g. `"merge_state_changed"`), `event.attrs` (the event's attribute dictionary), and `event.body` (a duplicate of the top-level `body`). The rendered output is stored in the inbox row's `agent_prompt` field. If the template does not reference `{{ body }}` the renderer appends `\n\n{{ body }}` to the template before rendering, so templates that pre-date the `body` variable continue to surface the event content to the agent. Hook-context delivery (via `TeamHookRenderer.format`) emits `agent_prompt` when present and falls through to `body` otherwise; the inbox row's `body` field stores the event content unchanged so consumers other than the agent (activity log, `graftty team inbox`, watcher wake summaries) read it without the template prelude. Both templates use the same `agent` struct shape: `branch` (String), `main_worktree` (Bool), `this_worktree` (Bool), `other_worktree` (Bool). Previously-defined role-specific prompt keys are removed.
 """, .disabled("not yet implemented"))
     func team_1_6() async throws { }
 
@@ -49,17 +49,17 @@ struct TeamTodo {
     func team_2_2() async throws { }
 
     @Test("""
-@spec TEAM-2.3: A team's *lead* shall be the worktree where `worktree.path == repo.path` (the repository's main checkout per `LAYOUT-2.3`). All other worktrees of the team are *coworkers*.
+@spec TEAM-2.3: A team's main worktree shall be the worktree where `worktree.path == repo.path` (the repository's main checkout per `LAYOUT-2.3`). Every other member is a linked worktree.
 """, .disabled("not yet implemented"))
     func team_2_3() async throws { }
 
     @Test("""
-@spec TEAM-2.4: Team identity, membership, and lead designation are derived live from `AppState`. The application shall not persist any team-specific data beyond `agentTeamsEnabled` itself.
+@spec TEAM-2.4: Team identity, membership, and main-worktree designation are derived live from `AppState`. The application shall not persist any team-specific data beyond `agentTeamsEnabled` itself.
 """, .disabled("not yet implemented"))
     func team_2_4() async throws { }
 
     @Test("""
-@spec TEAM-3.2: The application shall render the *lead variant* of the team-aware instructions when the viewer's worktree is the team's lead (per TEAM-2.3), and the *coworker variant* otherwise. Both variants name the team (by repo display name), the agent (by member name), and list the team's other members by name and worktree.
+@spec TEAM-3.2: The application shall render the main-worktree variant of the team-aware instructions when the viewer's worktree is the repository's main worktree (per TEAM-2.3), and the linked-worktree variant otherwise. Both variants name the team (by repo display name), the agent (by member name), and list the team's other members by name and worktree.
 """, .disabled("not yet implemented"))
     func team_3_2() async throws { }
 
@@ -69,27 +69,27 @@ struct TeamTodo {
     func team_3_3() async throws { }
 
     @Test("""
-@spec TEAM-4.1: The application shall provide a CLI subcommand group `graftty team` with two subcommands: `msg <member-name> "<text>"` and `list`.
+@spec TEAM-4.1: The application shall provide a `graftty team` CLI group with direct-message, broadcast, inbox, and member-list commands. Direct-message and broadcast commands shall accept message text from standard input via `--stdin`.
 """, .disabled("not yet implemented"))
     func team_4_1() async throws { }
 
     @Test("""
-@spec TEAM-4.2: `graftty team msg <member-name> "<text>"` shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, look up the team for that worktree, find a teammate matching `<member-name>`, and write a `team_message` inbox row addressed to that teammate's worktree with `from.member = <calling-worktree's member name>` and body `<text>`. The CLI shall exit non-zero with a stderr message if (a) team mode is disabled, (b) the calling worktree has no team, or (c) `<member-name>` is not a teammate of the caller. In case (c) the error shall list the current teammates' member names.
+@spec TEAM-4.2: `graftty team send [--urgent] [--stdin] <member-name> [text]` shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, look up the team for that worktree, find a teammate matching `<member-name>`, and write a `team_message` inbox row addressed to that teammate's worktree with `from.member = <calling-worktree's member name>` and the supplied body. The CLI shall exit non-zero with a stderr message if (a) team mode is disabled, (b) the calling worktree has no team, (c) `<member-name>` is not a teammate of the caller, or (d) no non-empty body is supplied. In case (c) the error shall list the current teammates' member names.
 """, .disabled("not yet implemented"))
     func team_4_2() async throws { }
 
     @Test("""
-@spec TEAM-4.3: `graftty team list` shall print one line per team member of the caller's team to stdout: `<member-name>  branch=<branch>  worktree=<path>  role=<lead|coworker>  running=<true|false>`. The first printed line shall be a header `team=<repo-display-name>  members=<count>`. The CLI shall exit non-zero with a stderr message if team mode is disabled or the calling worktree has no team.
+@spec TEAM-4.3: `graftty team list` shall print one line per team member of the caller's team to stdout: `<member-name>  branch=<branch>  worktree=<path>  main=<true|false>  running=<true|false>`. The first printed line shall be a header `team=<repo-display-name>  members=<count>`. The CLI shall exit non-zero with a stderr message if team mode is disabled or the calling worktree has no team.
 """, .disabled("not yet implemented"))
     func team_4_3() async throws { }
 
     @Test("""
-@spec TEAM-5.2: The application shall write a `team_member_joined` inbox row when a worktree is added to a team (a new worktree appears in a team-enabled repo, or a single-worktree repo gains a second worktree). Routing: addressed to the team's lead's worktree only. Attributes: `team`, `member` (joiner's member name), `branch`, `worktree` (joiner's path).
+@spec TEAM-5.2: The application shall write a `team_member_joined` inbox row when a worktree is added to a team (a new worktree appears in a team-enabled repo, or a single-worktree repo gains a second worktree). Routing: addressed to the repository's main worktree only. Attributes: `team`, `member` (joiner's member name), `branch`, `worktree` (joiner's path).
 """, .disabled("not yet implemented"))
     func team_5_2() async throws { }
 
     @Test("""
-@spec TEAM-5.3: The application shall write a `team_member_left` inbox row when a worktree is removed from a team (the worktree is deleted, or the team-enabled repo collapses to one worktree). Routing: addressed to the team's lead's worktree only. Attributes: `team`, `member` (departing member's name), `reason` (`removed` or `exited`).
+@spec TEAM-5.3: The application shall write a `team_member_left` inbox row when a worktree is removed from a team (the worktree is deleted, or the team-enabled repo collapses to one worktree). Routing: addressed to the repository's main worktree only. Attributes: `team`, `member` (departing member's name), `reason` (`removed` or `exited`).
 """, .disabled("not yet implemented"))
     func team_5_3() async throws { }
 
