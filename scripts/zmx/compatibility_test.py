@@ -1,0 +1,393 @@
+#!/usr/bin/env python3
+"""Exercise zmx client/daemon compatibility across a vendored upgrade."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import os
+import selectors
+import shlex
+import shutil
+import signal
+import struct
+import subprocess
+import sys
+import tempfile
+import termios
+import time
+from pathlib import Path
+
+
+def terminate_on_signal(signum: int, _frame: object) -> None:
+    raise SystemExit(128 + signum)
+
+
+def window_size(rows: int, cols: int, xpixel: int, ypixel: int) -> bytes:
+    return struct.pack("HHHH", rows, cols, xpixel, ypixel)
+
+
+class Attach:
+    def __init__(
+        self,
+        binary: Path,
+        env: dict[str, str],
+        session: str,
+        *,
+        rows: int,
+        cols: int,
+        xpixel: int,
+        ypixel: int,
+    ) -> None:
+        master, slave = os.openpty()
+        fcntl.ioctl(master, termios.TIOCSWINSZ, window_size(rows, cols, xpixel, ypixel))
+        os.set_blocking(master, False)
+
+        def child_setup() -> None:
+            os.setsid()
+            fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+        try:
+            self.process = subprocess.Popen(
+                [str(binary), "attach", session, "/bin/sh"],
+                stdin=slave,
+                stdout=slave,
+                stderr=slave,
+                env=env,
+                close_fds=True,
+                preexec_fn=child_setup,
+            )
+        except BaseException:
+            os.close(master)
+            raise
+        finally:
+            os.close(slave)
+        self.master = master
+        self.output = bytearray()
+
+    def write(self, command: str) -> None:
+        os.write(self.master, command.encode())
+
+    def resize(
+        self,
+        *,
+        rows: int,
+        cols: int,
+        xpixel: int,
+        ypixel: int,
+    ) -> None:
+        fcntl.ioctl(
+            self.master,
+            termios.TIOCSWINSZ,
+            window_size(rows, cols, xpixel, ypixel),
+        )
+
+    def wait_for(self, marker: str, timeout: float = 8.0) -> str:
+        marker_bytes = marker.encode()
+        deadline = time.monotonic() + timeout
+        selector = selectors.DefaultSelector()
+        selector.register(self.master, selectors.EVENT_READ)
+        try:
+            while marker_bytes not in self.output and time.monotonic() < deadline:
+                if self.process.poll() is not None:
+                    self._drain()
+                    break
+                for _, _ in selector.select(timeout=0.1):
+                    self._drain()
+        finally:
+            selector.close()
+        decoded = self.output.decode(errors="replace")
+        if marker not in decoded:
+            raise AssertionError(
+                f"attach pid {self.process.pid} never emitted {marker!r}; output={decoded!r}"
+            )
+        return decoded
+
+    def _drain(self) -> None:
+        while True:
+            try:
+                data = os.read(self.master, 65536)
+            except BlockingIOError:
+                return
+            except OSError:
+                return
+            if not data:
+                return
+            self.output.extend(data)
+
+    def clear_output(self) -> None:
+        self._drain()
+        self.output.clear()
+
+    def terminate_client(self) -> None:
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=2)
+        os.close(self.master)
+
+
+def zmx_env(directory: Path) -> dict[str, str]:
+    env = dict(os.environ)
+    env["ZMX_DIR"] = str(directory)
+    env["SHELL"] = "/bin/sh"
+    env.setdefault("TERM", "xterm-256color")
+    env.pop("ZMX_SESSION", None)
+    return env
+
+
+def list_sessions(binary: Path, env: dict[str, str]) -> set[str]:
+    result = subprocess.run(
+        [str(binary), "list", "--short"],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=3,
+        check=False,
+    )
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def wait_for_session(
+    binary: Path,
+    env: dict[str, str],
+    session: str,
+    timeout: float = 8.0,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if session in list_sessions(binary, env):
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"session {session!r} never appeared")
+
+
+def kill_session(
+    candidate: Path,
+    legacy: Path,
+    env: dict[str, str],
+    session: str,
+) -> None:
+    for binary in (candidate, legacy):
+        try:
+            subprocess.run(
+                [str(binary), "kill", "--force", session],
+                env=env,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            continue
+        try:
+            if session not in list_sessions(binary, env):
+                return
+        except subprocess.TimeoutExpired:
+            continue
+    raise RuntimeError(
+        f"could not stop zmx session {session!r}; preserving {env['ZMX_DIR']} for cleanup"
+    )
+
+
+def cleanup_case(
+    directory: Path,
+    env: dict[str, str],
+    session: str,
+    candidate: Path,
+    legacy: Path,
+    *attaches: Attach | None,
+) -> None:
+    errors: list[Exception] = []
+    for attach in attaches:
+        if attach is None:
+            continue
+        try:
+            attach.terminate_client()
+        except Exception as error:
+            errors.append(error)
+
+    try:
+        kill_session(candidate, legacy, env, session)
+    except Exception as error:
+        errors.append(error)
+    else:
+        shutil.rmtree(directory, ignore_errors=True)
+
+    if errors:
+        raise RuntimeError(
+            f"zmx compatibility cleanup failed; scope retained at {directory}"
+        ) from errors[0]
+
+
+def make_scope() -> tuple[Path, dict[str, str]]:
+    directory = Path(tempfile.mkdtemp(prefix="zmx-compat-", dir="/tmp"))
+    return directory, zmx_env(directory)
+
+
+def prepare_shell(attach: Attach) -> None:
+    # The marker is assembled by printf so the terminal's command echo cannot
+    # satisfy the wait before the shell has actually executed it.
+    attach.write("printf '__SHELL_%s__\\n' READY\n")
+    attach.wait_for("__SHELL_READY__")
+    attach.write("stty -echo\n")
+    time.sleep(0.1)
+    attach.clear_output()
+
+
+def assert_grid(attach: Attach, rows: int, cols: int, marker: str) -> None:
+    attach.write(f"printf '{marker}:'; stty size\n")
+    output = attach.wait_for(f"{marker}:{rows} {cols}")
+    if f"{marker}:{rows} {cols}" not in output:
+        raise AssertionError(f"wrong grid after cross-version resize: {output!r}")
+
+
+def old_daemon_new_client(legacy: Path, candidate: Path) -> None:
+    directory, env = make_scope()
+    session = "compat-old-daemon"
+    first: Attach | None = None
+    second: Attach | None = None
+    try:
+        first = Attach(
+            legacy,
+            env,
+            session,
+            rows=24,
+            cols=80,
+            xpixel=800,
+            ypixel=480,
+        )
+        wait_for_session(legacy, env, session)
+        prepare_shell(first)
+        first.write("export GRAFTTY_COMPAT_MARKER=old-daemon\nprintf 'OLD_READY\\n'\n")
+        first.wait_for("OLD_READY")
+        first.terminate_client()
+        first = None
+
+        second = Attach(
+            candidate,
+            env,
+            session,
+            rows=30,
+            cols=100,
+            xpixel=1000,
+            ypixel=600,
+        )
+        prepare_shell(second)
+        second.write("printf 'STATE:%s\\n' \"$GRAFTTY_COMPAT_MARKER\"\n")
+        second.wait_for("STATE:old-daemon")
+        second.resize(rows=37, cols=111, xpixel=1234, ypixel=777)
+        time.sleep(0.2)
+        assert_grid(second, 37, 111, "OLD_GRID")
+
+        logs = "\n".join(
+            path.read_text(errors="replace")
+            for path in (directory / "logs").glob("*.log")
+        )
+        if "unknown IPC tag=18" in logs or "unknown IPC tag=19" in logs:
+            raise AssertionError("new client sent negotiated extension tags to an old daemon")
+    finally:
+        cleanup_case(directory, env, session, candidate, legacy, first, second)
+
+
+def new_daemon_old_client(legacy: Path, candidate: Path) -> None:
+    directory, env = make_scope()
+    session = "compat-new-daemon"
+    first: Attach | None = None
+    second: Attach | None = None
+    try:
+        first = Attach(
+            candidate,
+            env,
+            session,
+            rows=25,
+            cols=81,
+            xpixel=810,
+            ypixel=500,
+        )
+        wait_for_session(candidate, env, session)
+        prepare_shell(first)
+        first.write("export GRAFTTY_COMPAT_MARKER=new-daemon\nprintf 'NEW_READY\\n'\n")
+        first.wait_for("NEW_READY")
+        first.terminate_client()
+        first = None
+
+        second = Attach(
+            legacy,
+            env,
+            session,
+            rows=28,
+            cols=90,
+            xpixel=900,
+            ypixel=560,
+        )
+        prepare_shell(second)
+        second.write("printf 'STATE:%s\\n' \"$GRAFTTY_COMPAT_MARKER\"\n")
+        second.wait_for("STATE:new-daemon")
+        second.resize(rows=39, cols=112, xpixel=1240, ypixel=780)
+        time.sleep(0.2)
+        assert_grid(second, 39, 112, "NEW_GRID")
+    finally:
+        cleanup_case(directory, env, session, candidate, legacy, first, second)
+
+
+def new_client_new_daemon_pixels(legacy: Path, candidate: Path) -> None:
+    directory, env = make_scope()
+    session = "compat-pixels"
+    attach: Attach | None = None
+    try:
+        attach = Attach(
+            candidate,
+            env,
+            session,
+            rows=31,
+            cols=101,
+            xpixel=1313,
+            ypixel=919,
+        )
+        wait_for_session(candidate, env, session)
+        prepare_shell(attach)
+        attach.resize(rows=31, cols=101, xpixel=1515, ypixel=929)
+        time.sleep(0.2)
+
+        code = (
+            "import fcntl,struct,termios;"
+            "r,c,x,y=struct.unpack('HHHH',fcntl.ioctl(0,termios.TIOCGWINSZ,"
+            "struct.pack('HHHH',0,0,0,0)));"
+            "print(f'PIXELS:{r}:{c}:{x}:{y}')"
+        )
+        attach.write(f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}\n")
+        attach.wait_for("PIXELS:31:101:1515:929")
+    finally:
+        cleanup_case(directory, env, session, candidate, legacy, attach)
+
+
+def main() -> None:
+    # Convert cancellation into a Python exception so each compatibility
+    # case unwinds through its `finally` cleanup instead of abandoning a
+    # persistent zmx daemon and shell.
+    signal.signal(signal.SIGTERM, terminate_on_signal)
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--legacy", required=True, type=Path)
+    parser.add_argument("--candidate", required=True, type=Path)
+    args = parser.parse_args()
+    legacy = args.legacy.resolve()
+    candidate = args.candidate.resolve()
+    if not os.access(legacy, os.X_OK) or not os.access(candidate, os.X_OK):
+        parser.error("legacy and candidate must both be executable")
+
+    old_daemon_new_client(legacy, candidate)
+    print("  ✓ old daemon → new client")
+    new_daemon_old_client(legacy, candidate)
+    print("  ✓ new daemon → old client")
+    new_client_new_daemon_pixels(legacy, candidate)
+    print("  ✓ negotiated pixel-size resize")
+
+
+if __name__ == "__main__":
+    main()

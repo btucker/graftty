@@ -383,6 +383,10 @@ struct HostManagedZmxBackendTests {
         staleTaker.bindSurfaceSync(currentGridSize: { (cols: 140, rows: 50) }, requestRefresh: {})
         try staleTaker.start(surface: Self.fakeSurface())
         staleTaker.markLayoutSettled()
+        HostManagedZmxBackend.receiveResizeCallback(
+            staleTaker.userdataForTesting,
+            140, 50, 1_400, 1_000
+        )
 
         #expect(!staleTaker.takeControl())
 
@@ -394,6 +398,10 @@ struct HostManagedZmxBackendTests {
         #expect(staleTakerSession.resizes() == [
             Resize(cols: 140, rows: 50),
             Resize(cols: 90, rows: 24),
+        ])
+        #expect(staleTakerSession.windowSizes() == [
+            PtyProcess.WindowSize(cols: 140, rows: 50, xpixel: 1_400, ypixel: 1_000),
+            PtyProcess.WindowSize(cols: 90, rows: 24),
         ])
     }
 
@@ -787,6 +795,33 @@ struct HostManagedZmxBackendTests {
         #expect(session.resizes() == [Resize(cols: 120, rows: 40), Resize(cols: 100, rows: 40)])
     }
 
+    @Test("""
+    @spec ZMX-9.3: When native libghostty reports a resize, Graftty shall forward both the cell grid and pixel dimensions to the outer `zmx attach` PTY. When only the pixel dimensions change, Graftty shall not deduplicate the update, including across the trailing-edge resize coalescer.
+    """)
+    func postLayoutPixelOnlyResizeIsPropagated() throws {
+        let session = FakeHostManagedSession()
+        let coalescer = ManualResizeCoalescer()
+        let backend = Self.makeBackend(session: session, coalescer: coalescer)
+        defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+        try backend.start(surface: Self.fakeSurface())
+        backend.markLayoutSettled()
+
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            120, 40, 1_440, 960
+        )
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            120, 40, 1_800, 1_200
+        )
+        coalescer.fireAll()
+
+        #expect(session.windowSizes() == [
+            PtyProcess.WindowSize(cols: 120, rows: 40, xpixel: 1_440, ypixel: 960),
+            PtyProcess.WindowSize(cols: 120, rows: 40, xpixel: 1_800, ypixel: 1_200),
+        ])
+    }
+
     @Test func defaultSessionFactoryReceivesInitialSizeFromBackend() throws {
         final class CapturingSession: HostManagedZmxSession {
             var startCount = 0
@@ -795,11 +830,16 @@ struct HostManagedZmxBackendTests {
             func resize(cols: UInt16, rows: UInt16) throws {}
             func close() {}
         }
-        let captured = LockedRecorder<(cols: UInt16, rows: UInt16)?>()
+        let captured = LockedRecorder<PtyProcess.WindowSize?>()
         let session = CapturingSession()
         let backend = HostManagedZmxBackend(
             spawnConfiguration: Self.spawnConfiguration(),
-            initialSize: (cols: 132, rows: 43),
+            initialSize: PtyProcess.WindowSize(
+                cols: 132,
+                rows: 43,
+                xpixel: 1_584,
+                ypixel: 688
+            ),
             sessionFactory: { _, _, initialSize in
                 captured.append(initialSize)
                 return session
@@ -814,6 +854,8 @@ struct HostManagedZmxBackendTests {
         #expect(recorded.count == 1)
         #expect(recorded.first??.cols == 132)
         #expect(recorded.first??.rows == 43)
+        #expect(recorded.first??.xpixel == 1_584)
+        #expect(recorded.first??.ypixel == 688)
     }
 
     @Test("`write(_:claimEngagement:)` does not control resize ownership; explicit display ownership does.")
@@ -1074,21 +1116,41 @@ struct HostManagedZmxBackendTests {
         #expect(session.resizes().isEmpty)
     }
 
-    @Test("start(surface:) shall spawn the PTY at the live grid size when a grid provider is bound, falling back to the construction-time initialSize — so a deferred start (TERM-11.10) attaches at the settled dims, not the stale eviction cache.")
-    func startSpawnsAtLiveGridSizeWhenBound() throws {
-        let captured = LockedRecorder<(cols: UInt16, rows: UInt16)?>()
+    @Test("start(surface:) shall spawn the PTY from one live cell-and-pixel snapshot, discarding pre-start callbacks and falling back to construction-time initialSize only when no live size exists.")
+    func startSpawnsAtLiveWindowSizeWhenBound() throws {
+        let captured = LockedRecorder<PtyProcess.WindowSize?>()
         let session = FakeHostManagedSession()
         let backend = HostManagedZmxBackend(
             spawnConfiguration: Self.spawnConfiguration(),
-            initialSize: (cols: 49, rows: 17),
+            initialSize: PtyProcess.WindowSize(
+                cols: 49,
+                rows: 17,
+                xpixel: 980,
+                ypixel: 510
+            ),
             sessionFactory: { _, _, initialSize in
                 captured.append(initialSize)
                 return session
             }
         )
         defer { backend.releaseReceiveUserdataAfterSurfaceFree() }
+
+        // libghostty may report a placeholder before SurfaceHandle binds its
+        // settled live-size provider. Neither half of this stale snapshot may
+        // leak into the eventual spawn size.
+        HostManagedZmxBackend.receiveResizeCallback(
+            backend.userdataForTesting,
+            100, 31, 1_200, 744
+        )
         backend.bindSurfaceSync(
-            currentGridSize: { (cols: 224, rows: 82) },
+            currentWindowSize: {
+                PtyProcess.WindowSize(
+                    cols: 224,
+                    rows: 82,
+                    xpixel: 1_792,
+                    ypixel: 1_312
+                )
+            },
             requestRefresh: {}
         )
 
@@ -1098,6 +1160,8 @@ struct HostManagedZmxBackendTests {
         #expect(recorded.count == 1)
         #expect(recorded.first??.cols == 224)
         #expect(recorded.first??.rows == 82)
+        #expect(recorded.first??.xpixel == 1_792)
+        #expect(recorded.first??.ypixel == 1_312)
     }
 
     // MARK: - TERM-11.11 / TERM-11.14 — no synthetic bounce on agreeing grid; real delta only
@@ -1620,6 +1684,7 @@ private final class FakeHostManagedSession: HostManagedZmxSession {
     private let resizeHook: ((UInt16, UInt16) -> Void)?
     private var storedWrites: [Data] = []
     private var storedResizes: [Resize] = []
+    private var storedWindowSizes: [PtyProcess.WindowSize] = []
     private var storedStartCount = 0
     private var storedCloseCount = 0
     private var failNextResize = false
@@ -1654,15 +1719,22 @@ private final class FakeHostManagedSession: HostManagedZmxSession {
     }
 
     func resize(cols: UInt16, rows: UInt16) throws {
+        try resize(windowSize: PtyProcess.WindowSize(cols: cols, rows: rows))
+    }
+
+    func resize(windowSize: PtyProcess.WindowSize) throws {
         lock.lock()
         let shouldFail = failNextResize
         if shouldFail { failNextResize = false }
         lock.unlock()
 
-        resizeHook?(cols, rows)
+        resizeHook?(windowSize.cols, windowSize.rows)
 
         lock.lock()
-        if !shouldFail { storedResizes.append(Resize(cols: cols, rows: rows)) }
+        if !shouldFail {
+            storedResizes.append(Resize(cols: windowSize.cols, rows: windowSize.rows))
+            storedWindowSizes.append(windowSize)
+        }
         lock.unlock()
         if shouldFail { throw FakeResizeError() }
     }
@@ -1689,6 +1761,12 @@ private final class FakeHostManagedSession: HostManagedZmxSession {
         lock.lock()
         defer { lock.unlock() }
         return storedResizes
+    }
+
+    func windowSizes() -> [PtyProcess.WindowSize] {
+        lock.lock()
+        defer { lock.unlock() }
+        return storedWindowSizes
     }
 
     func startCount() -> Int {

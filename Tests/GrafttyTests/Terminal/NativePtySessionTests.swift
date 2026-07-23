@@ -100,7 +100,7 @@ struct NativePtySessionTests {
                     argv: argv,
                     env: env,
                     currentDirectory: currentDirectory,
-                    initialSize: initialSize
+                    initialWindowSize: initialSize
                 )
             }
         )
@@ -261,7 +261,7 @@ struct NativePtySessionTests {
             writeToSurface: { _ in },
             processExited: { _, _ in },
             spawnFailed: { _ in },
-            resizer: { _, _, _ in
+            resizer: { _, _ in
                 resizeEntered.signal()
                 _ = allowResizeToFinish.wait(timeout: .now() + 2)
             },

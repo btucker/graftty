@@ -8,7 +8,7 @@ final class NativePtySession {
         _ argv: [String],
         _ env: [String: String],
         _ currentDirectory: URL?,
-        _ initialSize: (cols: UInt16, rows: UInt16)?
+        _ initialSize: PtyProcess.WindowSize?
     ) throws -> PtyProcess.Spawned
     typealias Writer = (
         _ fd: Int32,
@@ -17,8 +17,7 @@ final class NativePtySession {
     ) throws -> Void
     typealias Resizer = (
         _ fd: Int32,
-        _ cols: UInt16,
-        _ rows: UInt16
+        _ windowSize: PtyProcess.WindowSize
     ) throws -> Void
     typealias Closer = (_ spawned: PtyProcess.Spawned) -> Void
     typealias FDCloser = (_ fd: Int32) -> Void
@@ -62,7 +61,7 @@ final class NativePtySession {
     private let argv: [String]
     private let env: [String: String]
     private let workingDirectory: URL?
-    private let initialSize: (cols: UInt16, rows: UInt16)?
+    private let initialSize: PtyProcess.WindowSize?
     private let spawner: Spawner
     private let writer: Writer
     private let resizer: Resizer
@@ -76,7 +75,7 @@ final class NativePtySession {
         argv: [String],
         env: [String: String],
         workingDirectory: URL?,
-        initialSize: (cols: UInt16, rows: UInt16)? = nil,
+        initialSize: PtyProcess.WindowSize? = nil,
         writeToSurface: @escaping (Data) -> Void,
         processExited: @escaping (pid_t, Int32?) -> Void,
         spawnFailed: @escaping (Swift.Error) -> Void,
@@ -85,11 +84,13 @@ final class NativePtySession {
                 argv: argv,
                 env: env,
                 currentDirectory: currentDirectory,
-                initialSize: initialSize
+                initialWindowSize: initialSize
             )
         },
         writer: @escaping Writer = SocketIO.writeAll,
-        resizer: @escaping Resizer = PtyProcess.resize,
+        resizer: @escaping Resizer = { fd, size in
+            try PtyProcess.resize(masterFD: fd, windowSize: size)
+        },
         closer: @escaping Closer = NativePtySession.defaultTerminate,
         fdCloser: @escaping FDCloser = { fd in _ = Darwin.close(fd) },
         readerWillStart: ((Int32) -> Void)? = nil
@@ -114,14 +115,14 @@ final class NativePtySession {
         argv: [String],
         env: [String: String],
         workingDirectory: URL?,
-        initialSize: (cols: UInt16, rows: UInt16)? = nil,
+        initialSize: PtyProcess.WindowSize? = nil,
         spawnFailed: @escaping (Swift.Error) -> Void,
         spawner: @escaping Spawner = { argv, env, currentDirectory, initialSize in
             try PtyProcess.spawn(
                 argv: argv,
                 env: env,
                 currentDirectory: currentDirectory,
-                initialSize: initialSize
+                initialWindowSize: initialSize
             )
         }
     ) {
@@ -213,10 +214,14 @@ final class NativePtySession {
     }
 
     func resize(cols: UInt16, rows: UInt16) throws {
+        try resize(windowSize: PtyProcess.WindowSize(cols: cols, rows: rows))
+    }
+
+    func resize(windowSize: PtyProcess.WindowSize) throws {
         ioLock.lock()
         defer { ioLock.unlock() }
 
-        try resizer(activeMasterFD(), cols, rows)
+        try resizer(activeMasterFD(), windowSize)
     }
 
     func close() {

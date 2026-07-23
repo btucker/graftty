@@ -8,7 +8,14 @@ protocol HostManagedZmxSession: AnyObject {
     func start() throws
     func write(_ data: Data) throws
     func resize(cols: UInt16, rows: UInt16) throws
+    func resize(windowSize: PtyProcess.WindowSize) throws
     func close()
+}
+
+extension HostManagedZmxSession {
+    func resize(windowSize: PtyProcess.WindowSize) throws {
+        try resize(cols: windowSize.cols, rows: windowSize.rows)
+    }
 }
 
 extension NativePtySession: HostManagedZmxSession {}
@@ -176,7 +183,7 @@ final class HostManagedZmxBackend {
     typealias SessionFactory = (
         _ surface: ghostty_surface_t,
         _ spawnConfiguration: ZmxSpawnConfiguration,
-        _ initialSize: (cols: UInt16, rows: UInt16)?
+        _ initialSize: PtyProcess.WindowSize?
     ) -> HostManagedZmxSession
 
     enum Error: Swift.Error {
@@ -192,10 +199,7 @@ final class HostManagedZmxBackend {
         case closed
     }
 
-    private struct PendingResize: Equatable {
-        let cols: UInt16
-        let rows: UInt16
-    }
+    private typealias PendingResize = PtyProcess.WindowSize
 
     private struct AuthorizedResize {
         let resize: PendingResize
@@ -239,15 +243,22 @@ final class HostManagedZmxBackend {
         try? backend.write(data, claimEngagement: backend.emittedBytesClaimEngagement)
     }
 
-    static let receiveResizeCallback: ghostty_surface_receive_resize_cb = { userdata, cols, rows, _, _ in
+    static let receiveResizeCallback: ghostty_surface_receive_resize_cb = { userdata, cols, rows, widthPx, heightPx in
         guard let userdata else { return }
         guard let backend = HostManagedZmxBackend.backend(from: userdata) else { return }
 
-        backend.receiveResize(cols: cols, rows: rows)
+        backend.receiveResize(
+            PtyProcess.WindowSize(
+                cols: cols,
+                rows: rows,
+                xpixel: UInt16(clamping: widthPx),
+                ypixel: UInt16(clamping: heightPx)
+            )
+        )
     }
 
     private let spawnConfiguration: ZmxSpawnConfiguration
-    private let initialSize: (cols: UInt16, rows: UInt16)?
+    private let initialSize: PtyProcess.WindowSize?
     private let scheduleCoalescedResize: ResizeCoalescingScheduler
     private let sessionFactory: SessionFactory
     private let lock = NSLock()
@@ -281,6 +292,7 @@ final class HostManagedZmxBackend {
     private var coalesceCancel: (() -> Void)?
     private var pendingCoalescedResize: PendingResize?
     private var lastForwardedResize: PendingResize?
+    private var latestPixelSize: (xpixel: UInt16, ypixel: UInt16)
 
     /// Reentrant counter tracking active `withProgrammaticInput` scopes.
     /// While > 0, `receiveBufferCallback` treats the inbound bytes as
@@ -302,6 +314,10 @@ final class HostManagedZmxBackend {
 
     /// The surface-sync closures are bound by SurfaceHandle after
     /// ghostty_surface_new succeeds, before start(surface:).
+    private var currentWindowSize: () -> PendingResize? = { nil }
+    /// Grid-only compatibility seam retained for focused backend tests.
+    /// Production SurfaceHandle binds `currentWindowSize`, keeping cell
+    /// and pixel dimensions in one atomic libghostty snapshot.
     private var currentGridSize: () -> (cols: UInt16, rows: UInt16)? = { nil }
     private var requestRefresh: () -> Void = {}
 
@@ -312,7 +328,7 @@ final class HostManagedZmxBackend {
 
     init(
         spawnConfiguration: ZmxSpawnConfiguration,
-        initialSize: (cols: UInt16, rows: UInt16)? = nil,
+        initialSize: PtyProcess.WindowSize? = nil,
         hasRemoteClient: @escaping () -> Bool = { false },
         ownership: HostManagedZmxOwnership? = nil,
         scheduleCoalescedResize: @escaping ResizeCoalescingScheduler = HostManagedZmxBackend.defaultResizeCoalescingScheduler,
@@ -329,6 +345,10 @@ final class HostManagedZmxBackend {
     ) {
         self.spawnConfiguration = spawnConfiguration
         self.initialSize = initialSize
+        self.latestPixelSize = (
+            xpixel: initialSize?.xpixel ?? 0,
+            ypixel: initialSize?.ypixel ?? 0
+        )
         _ = hasRemoteClient
         self.ownership = ownership
         self.scheduleCoalescedResize = scheduleCoalescedResize
@@ -373,15 +393,26 @@ final class HostManagedZmxBackend {
             throw Error.closed
         }
 
-        // TERM-11.10: spawn at the live grid size when the surface-sync
+        // TERM-11.10: spawn at the live window size when the surface-sync
         // provider is bound (it is, before any deferred start) — the
         // construction-time initialSize is the eviction-cache fallback
         // and can be stale relative to the settled layout.
         lock.lock()
+        let windowQuery = currentWindowSize
         let gridQuery = currentGridSize
+        let initialPixelSize = latestPixelSize
         lock.unlock()
-        let spawnSize = gridQuery() ?? initialSize
-        attachToOwnershipIfNeeded(grid: Self.displayGrid(from: spawnSize) ?? .daemonFallback)
+        let spawnSize = windowQuery() ?? gridQuery().map {
+            PtyProcess.WindowSize(
+                cols: $0.cols,
+                rows: $0.rows,
+                xpixel: initialPixelSize.xpixel,
+                ypixel: initialPixelSize.ypixel
+            )
+        } ?? initialSize
+        attachToOwnershipIfNeeded(
+            grid: spawnSize.flatMap { Self.displayGrid(from: $0) } ?? .daemonFallback
+        )
         let newSession = sessionFactory(surface, spawnConfiguration, spawnSize)
 
         lock.lock()
@@ -419,7 +450,7 @@ final class HostManagedZmxBackend {
                         continue
                     }
                     lock.unlock()
-                    if (try? newSession.resize(cols: resize.cols, rows: resize.rows)) == nil {
+                    if (try? newSession.resize(windowSize: resize)) == nil {
                         lock.lock()
                         if lastForwardedResize == resize { lastForwardedResize = nil }
                         lock.unlock()
@@ -544,10 +575,25 @@ final class HostManagedZmxBackend {
     /// (lifecycle-gated), which orders before ghostty_surface_free in
     /// SurfaceHandle.deinit, so a bound surface pointer cannot dangle.
     func bindSurfaceSync(
+        currentWindowSize: @escaping () -> PtyProcess.WindowSize?,
+        requestRefresh: @escaping () -> Void
+    ) {
+        lock.lock()
+        self.currentWindowSize = currentWindowSize
+        self.currentGridSize = { nil }
+        self.requestRefresh = requestRefresh
+        lock.unlock()
+    }
+
+    /// Grid-only compatibility seam for backend-focused tests. Production
+    /// callers must bind the full window-size overload above so a live cell
+    /// grid is never paired with stale pixel dimensions.
+    func bindSurfaceSync(
         currentGridSize: @escaping () -> (cols: UInt16, rows: UInt16)?,
         requestRefresh: @escaping () -> Void
     ) {
         lock.lock()
+        self.currentWindowSize = { nil }
         self.currentGridSize = currentGridSize
         self.requestRefresh = requestRefresh
         lock.unlock()
@@ -585,7 +631,16 @@ final class HostManagedZmxBackend {
             lock.unlock()
             return false
         }
-        let target = currentGridSize() ?? lastWithheldResize.map { ($0.cols, $0.rows) }
+        let liveWindow = currentWindowSize()
+        let legacyGrid = liveWindow == nil ? currentGridSize() : nil
+        let target = liveWindow ?? legacyGrid.map {
+            PendingResize(
+                cols: $0.cols,
+                rows: $0.rows,
+                xpixel: latestPixelSize.xpixel,
+                ypixel: latestPixelSize.ypixel
+            )
+        } ?? lastWithheldResize
         guard let target, let grid = Self.displayGrid(from: target) else {
             lock.unlock()
             return false
@@ -601,13 +656,18 @@ final class HostManagedZmxBackend {
             lock.unlock()
             return false
         }
-        let resize = PendingResize(cols: grid.cols, rows: grid.rows)
+        let resize = PendingResize(
+            cols: grid.cols,
+            rows: grid.rows,
+            xpixel: target.xpixel,
+            ypixel: target.ypixel
+        )
         pendingCoalescedResize = nil
         lastForwardedResize = resize
         let refresh = requestRefresh
         lock.unlock()
 
-        if (try? currentSession.resize(cols: resize.cols, rows: resize.rows)) == nil {
+        if (try? currentSession.resize(windowSize: resize)) == nil {
             lock.lock()
             if lastForwardedResize == resize { lastForwardedResize = nil }
             let restoredSnapshot = ownership.restoreFailedClaim(
@@ -745,23 +805,23 @@ final class HostManagedZmxBackend {
         return userdataPointer
     }
 
-    private func receiveResize(cols: UInt16, rows: UInt16) {
+    private func receiveResize(_ resize: PendingResize) {
         let currentSession: HostManagedZmxSession?
-        let resize = PendingResize(cols: cols, rows: rows)
 
         lock.lock()
+        latestPixelSize = (xpixel: resize.xpixel, ypixel: resize.ypixel)
         // TERM-11.7: withhold while layout hasn't settled. These
         // callbacks are pre-layout placeholder noise and must never reach
         // the PTY, regardless of display ownership.
         if !layoutSettled {
             lastWithheldResize = resize
             lock.unlock()
-            Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(cols)x\(rows) WITHHELD layout")
+            Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(resize.cols)x\(resize.rows) pixels=\(resize.xpixel)x\(resize.ypixel) WITHHELD layout")
             return
         }
         guard let authorized = authorizeOwnerResizeLocked(resize) else {
             lock.unlock()
-            Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(cols)x\(rows) BLOCKED follower-or-stale")
+            Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(resize.cols)x\(resize.rows) pixels=\(resize.xpixel)x\(resize.ypixel) BLOCKED follower-or-stale")
             return
         }
         // Forwarding live dims supersedes anything withheld earlier;
@@ -779,7 +839,7 @@ final class HostManagedZmxBackend {
             if coalesceCancel != nil {
                 pendingCoalescedResize = resize
                 lock.unlock()
-                Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(cols)x\(rows) COALESCED")
+                Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(resize.cols)x\(resize.rows) pixels=\(resize.xpixel)x\(resize.ypixel) COALESCED")
                 return
             }
             lastForwardedResize = resize
@@ -790,13 +850,13 @@ final class HostManagedZmxBackend {
         }
         lock.unlock()
 
-        Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(cols)x\(rows) \(currentSession != nil ? "FORWARDED" : "QUEUED", privacy: .public)")
-        if let s = currentSession, (try? s.resize(cols: cols, rows: rows)) == nil {
+        Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(resize.cols)x\(resize.rows) pixels=\(resize.xpixel)x\(resize.ypixel) \(currentSession != nil ? "FORWARDED" : "QUEUED", privacy: .public)")
+        if let s = currentSession, (try? s.resize(windowSize: resize)) == nil {
             // Forward failed — don't let the optimistic record lie about what the
             // PTY adopted. Clear only if it's still ours (a newer forward may have
             // landed between unlock and now).
             lock.lock()
-            if lastForwardedResize == PendingResize(cols: cols, rows: rows) {
+            if lastForwardedResize == resize {
                 lastForwardedResize = nil
             }
             lock.unlock()
@@ -851,7 +911,7 @@ final class HostManagedZmxBackend {
         lock.unlock()
 
         Self.trace.notice("receiveResize \(self.spawnConfiguration.sessionName, privacy: .public) \(pending.cols)x\(pending.rows) TRAILING")
-        if let s = currentSession, (try? s.resize(cols: pending.cols, rows: pending.rows)) == nil {
+        if let s = currentSession, (try? s.resize(windowSize: pending)) == nil {
             lock.lock()
             if let lf = lastForwardedResize, lf == pending { lastForwardedResize = nil }
             lock.unlock()
@@ -870,7 +930,7 @@ final class HostManagedZmxBackend {
 
     /// Shared sync tail for markLayoutSettled / resyncVisibleGrid /
     /// takeControl. Caller holds `lock`.
-    /// Resolves the sync target — the live grid when a provider is bound,
+    /// Resolves the sync target — the live window when a provider is bound,
     /// else the last withheld viewport size — and ships it to the PTY (or
     /// queues it when the session is still starting). `resize` does take
     /// the session's ioLock, but ioLock holders never take the backend
@@ -886,37 +946,46 @@ final class HostManagedZmxBackend {
     private func flushSizeToPtyLocked(reason: StaticString) -> (() -> Void)? {
         // Bail before touching the closures on a closed backend: close()
         // happens-before ghostty_surface_free, so this lifecycle gate is
-        // what keeps a bound `currentGridSize` surface pointer from being
+        // what keeps a bound surface-size query from being
         // dereferenced after the surface is gone.
         if case .closed = lifecycle { return nil }
         let queued = lastWithheldResize
         lastWithheldResize = nil
-        let grid = currentGridSize()
-        let target = grid ?? queued.map { (cols: $0.cols, rows: $0.rows) }
-        guard let target else {
+        let liveWindow = currentWindowSize()
+        let legacyGrid = liveWindow == nil ? currentGridSize() : nil
+        let pending = liveWindow ?? legacyGrid.map {
+            PendingResize(
+                cols: $0.cols,
+                rows: $0.rows,
+                xpixel: latestPixelSize.xpixel,
+                ypixel: latestPixelSize.ypixel
+            )
+        } ?? queued
+        guard let pending else {
             Self.trace.notice("flush(\(reason, privacy: .public)) \(self.spawnConfiguration.sessionName, privacy: .public) NO-TARGET")
             return nil
         }
-        let pending = PendingResize(cols: target.cols, rows: target.rows)
         guard let authorized = authorizeOwnerResizeLocked(pending) else {
             Self.trace.notice("flush(\(reason, privacy: .public)) \(self.spawnConfiguration.sessionName, privacy: .public) BLOCKED follower-or-stale")
             return nil
         }
-        Self.trace.notice("flush(\(reason, privacy: .public)) \(self.spawnConfiguration.sessionName, privacy: .public) -> \(target.cols)x\(target.rows) fromGrid=\(grid != nil) queued=\(queued.map { "\($0.cols)x\($0.rows)" } ?? "nil", privacy: .public)")
+        Self.trace.notice("flush(\(reason, privacy: .public)) \(self.spawnConfiguration.sessionName, privacy: .public) -> \(pending.cols)x\(pending.rows) fromWindow=\(liveWindow != nil) fromLegacyGrid=\(legacyGrid != nil) queued=\(queued.map { "\($0.cols)x\($0.rows)" } ?? "nil", privacy: .public)")
         switch lifecycle {
         case .running:
             // TERM-11.9: the flush supersedes any mid-drag size parked
             // in the quiet window — a stale coalesced resize must not
             // land after this authoritative sync.
             pendingCoalescedResize = nil
-            if (try? session?.resize(cols: target.cols, rows: target.rows)) != nil {
+            if (try? session?.resize(windowSize: pending)) != nil {
                 let result = commitOwnerResizeLocked(authorized)
                 if result.accepted {
-                    lastForwardedResize = PendingResize(cols: target.cols, rows: target.rows)
+                    lastForwardedResize = pending
                 } else {
                     lastForwardedResize = nil
                     if let snapshot = result.snapshot {
-                        try? session?.resize(cols: snapshot.grid.cols, rows: snapshot.grid.rows)
+                        try? session?.resize(
+                            windowSize: Self.gridOnlyWindowSize(snapshot.grid)
+                        )
                     }
                     return nil
                 }
@@ -999,11 +1068,31 @@ final class HostManagedZmxBackend {
     }
 
     private func repairSession(_ session: HostManagedZmxSession, to snapshot: DisplayOwnershipSnapshot) {
-        try? session.resize(cols: snapshot.grid.cols, rows: snapshot.grid.rows)
+        // Ownership snapshots currently carry only the authoritative grid.
+        // Do not attach this follower's local pixel dimensions to another
+        // client's repair; zero preserves the grid-only semantics used by
+        // web/iOS owners until ownership itself becomes pixel-aware.
+        try? session.resize(windowSize: Self.gridOnlyWindowSize(snapshot.grid))
+    }
+
+    private func windowSizeForGridLocked(_ grid: DisplayGrid) -> PendingResize {
+        PendingResize(
+            cols: grid.cols,
+            rows: grid.rows,
+            xpixel: latestPixelSize.xpixel,
+            ypixel: latestPixelSize.ypixel
+        )
+    }
+
+    private static func gridOnlyWindowSize(_ grid: DisplayGrid) -> PendingResize {
+        PendingResize(cols: grid.cols, rows: grid.rows)
     }
 
     private func fallbackDisplayGridLocked() -> DisplayGrid {
-        if let grid = currentGridSize().flatMap(Self.displayGrid(from:)) {
+        if let grid = currentWindowSize().flatMap(Self.displayGrid(from:)) {
+            return grid
+        }
+        if let grid = currentGridSize().flatMap(Self.displayGrid(fromGridSize:)) {
             return grid
         }
         if let lastWithheldResize,
@@ -1017,8 +1106,9 @@ final class HostManagedZmxBackend {
         return ownershipSnapshot?.grid ?? .daemonFallback
     }
 
-    private static func displayGrid(from size: (cols: UInt16, rows: UInt16)?) -> DisplayGrid? {
-        guard let size else { return nil }
+    private static func displayGrid(
+        fromGridSize size: (cols: UInt16, rows: UInt16)
+    ) -> DisplayGrid? {
         return try? DisplayGrid(cols: size.cols, rows: size.rows)
     }
 
