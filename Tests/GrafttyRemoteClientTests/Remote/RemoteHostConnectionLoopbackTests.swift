@@ -129,6 +129,82 @@ struct RemoteHostConnectionLoopbackTests {
         await answererPeer.close()
     }
 
+    /// The mirror of the host-side first-bytes race: the HOST writes its
+    /// SSH version banner the instant the host's open notification lands,
+    /// which can precede this client's own open notification handling by
+    /// several scheduler hops. If the client only constructs its
+    /// inbound-buffering transport at its open notification, the host
+    /// banner lands on a delegate that discards it and the handshake
+    /// stalls forever. Arming the transport at channel creation closes
+    /// the window: from that point every inbound byte is buffered.
+    @Test("""
+@spec REMOTE-11.3: When the client creates its data channel, the connection shall install the inbound-buffering SSH transport immediately, before the channel opens, so bytes the host writes upon its own open notification are never dropped.
+""", .timeLimit(.minutes(1)))
+    func transportIsArmedAtChannelCreationBeforeOpen() async throws {
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let hostFingerprint = RemoteIdentityFingerprint(
+            of: try RemoteIdentityPublicKey(rawRepresentation: hostKey.publicKey.rawRepresentation)
+        )
+        let client = RemoteHostConnection(
+            clientKey: clientKey,
+            expectedHostFingerprint: hostFingerprint
+        )
+        _ = try await client.createOffer()
+
+        #expect(await client.sshTransportForTesting != nil)
+
+        await client.close()
+    }
+
+    /// The CI-flake mechanism behind IPAD-5.2's intermittent 15s pollUntil
+    /// timeout: signaling can trickle the answerer's candidates to the
+    /// offerer BEFORE the answer SDP is applied. libwebrtc rejects
+    /// `add(_:)` until a remote description exists, and every caller in
+    /// the trickle path swallows the error — so on machines where the 5s
+    /// gathering timeout ships candidate-poor SDPs, the dropped batch
+    /// leaves ICE unable to connect. Early candidates must buffer, then
+    /// drain once the answer is applied.
+    @Test("""
+@spec REMOTE-11.2: If a remote ICE candidate arrives before the answer has been applied, then the connection shall buffer it and add it to the peer connection once the remote description is set, rather than dropping it.
+""", .timeLimit(.minutes(1)))
+    func remoteCandidateArrivingBeforeAnswerIsBufferedThenDrained() async throws {
+        let clientKey = Curve25519.Signing.PrivateKey()
+        let hostKey = Curve25519.Signing.PrivateKey()
+        let hostFingerprint = RemoteIdentityFingerprint(
+            of: try RemoteIdentityPublicKey(rawRepresentation: hostKey.publicKey.rawRepresentation)
+        )
+        let client = RemoteHostConnection(
+            clientKey: clientKey,
+            expectedHostFingerprint: hostFingerprint
+        )
+        let offer = try await client.createOffer()
+
+        // A syntactically valid host candidate delivered before any
+        // answer exists — today this is rejected by libwebrtc and the
+        // rejection is swallowed by the trickle path's callers.
+        let early = RTCIceCandidate(
+            sdp: "candidate:842163049 1 udp 1677729535 127.0.0.1 54555 typ host generation 0",
+            sdpMLineIndex: 0,
+            sdpMid: "0"
+        )
+        try await client.addRemoteIceCandidate(early)
+        #expect(await client.pendingRemoteCandidateCountForTesting == 1)
+
+        // Applying the answer drains the buffer (the bogus candidate just
+        // fails its connectivity checks; real candidates arrive inside
+        // the answer SDP) and the negotiation still completes.
+        let answerer = TestAnswerer()
+        let answer = try await answerer.accept(offer: offer)
+        await client.bindIceCandidates(to: answerer)
+        await answerer.bindIceCandidates(to: client)
+        try await client.applyAnswer(answer)
+        #expect(await client.pendingRemoteCandidateCountForTesting == 0)
+
+        await client.close()
+        await answerer.close()
+    }
+
     /// Killing the answerer out from under an established connection must
     /// land the client on exactly one terminal transition — never zero,
     /// never two. Both an ICE `.failed` report and the DataChannel

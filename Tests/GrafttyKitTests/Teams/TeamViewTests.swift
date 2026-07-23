@@ -27,23 +27,23 @@ struct TeamViewTests {
         #expect(TeamView.team(for: repo.worktrees[0], in: [repo], teamsEnabled: false) == nil)
     }
 
-    @Test func leadIsRootWorktree() {
+    @Test func mainWorktreeIsRepoRoot() {
         let repo = makeRepo(path: "/r/multi", displayName: "multi", branches: ["main", "feature/login"])
         let view = TeamView.team(for: repo.worktrees[1], in: [repo], teamsEnabled: true)!
-        #expect(view.lead.worktreePath == "/r/multi")
-        #expect(view.lead.role == .lead)
-        let coworker = view.members.first(where: { $0.role == .coworker })!
-        #expect(coworker.branch == "feature/login")
+        #expect(view.mainWorktree.worktreePath == "/r/multi")
+        #expect(view.mainWorktree.isMainWorktree)
+        let linkedWorktree = view.members.first(where: { !$0.isMainWorktree })!
+        #expect(linkedWorktree.branch == "feature/login")
     }
 
     @Test func memberNameSanitizesBranch() {
         let repo = makeRepo(path: "/r/multi", displayName: "multi", branches: ["main", "feature/login-form"])
         let view = TeamView.team(for: repo.worktrees[1], in: [repo], teamsEnabled: true)!
-        let coworker = view.members.first(where: { $0.role == .coworker })!
+        let linkedWorktree = view.members.first(where: { !$0.isMainWorktree })!
         // WorktreeNameSanitizer replaces "/" with "-" preservation rules; we expect
         // the sanitized form (the existing sanitizer keeps "/" — confirm in impl).
         // Here we just assert the name is set and matches the expected sanitization.
-        #expect(coworker.name == "feature/login-form" || coworker.name == "feature-login-form")
+        #expect(linkedWorktree.name == "feature/login-form" || linkedWorktree.name == "feature-login-form")
     }
 
     @Test func peersOfMemberExcludesSelf() {
@@ -61,10 +61,23 @@ struct TeamViewTests {
         #expect(view.memberNamed("nobody") == nil)
     }
 
-    @Test func membersSortedWithLeadFirst() {
+    @Test func canonicalWorktreePathDisambiguatesCollidingBranchNames() {
+        let repo = makeRepo(
+            path: "/r/multi",
+            displayName: "multi",
+            branches: ["main", "foo--bar", "foo-bar"]
+        )
+        let view = TeamView.team(for: repo.worktrees[0], in: [repo], teamsEnabled: true)!
+        let targetPath = "/r/multi/.worktrees/foo-bar"
+
+        #expect(view.memberNamed(targetPath)?.worktreePath == targetPath)
+        #expect(view.memberNamed(targetPath)?.branch == "foo-bar")
+    }
+
+    @Test func membersSortedWithMainWorktreeFirst() {
         let repo = makeRepo(path: "/r/multi", displayName: "multi", branches: ["main", "a", "b"])
         let view = TeamView.team(for: repo.worktrees[0], in: [repo], teamsEnabled: true)!
-        #expect(view.members[0].role == .lead)
+        #expect(view.members[0].isMainWorktree)
         #expect(view.members[0].worktreePath == "/r/multi")
     }
 }

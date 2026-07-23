@@ -65,6 +65,7 @@ struct RemoteConnectionReconnectTests {
         let box = ConnectionBox()
         let negotiationCounter = CallCounter()
         let recorder = TerminalByteRecorder()
+        let trace = ServerTrace()
 
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
@@ -73,6 +74,7 @@ struct RemoteConnectionReconnectTests {
                 trustedClientFingerprint: clientFingerprint,
                 userauthCounter: userauthCounter,
                 box: box,
+                trace: trace,
                 // A real inbound channel initializer (not `nil`, this
                 // suite's default) so the "before opening any channel"
                 // clause below has an actual channel to open against —
@@ -100,7 +102,10 @@ struct RemoteConnectionReconnectTests {
         let first = await coordinator.connection(for: host)
         #expect(first != nil, "first negotiation should succeed")
         #expect(negotiationCounter.count == 1)
-        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { userauthCounter.count >= 1 }
+        try await RemoteConnectionTestSupport.pollUntil(
+            timeout: .seconds(15),
+            stage: "first userauth (userauth=\(userauthCounter.count))"
+        ) { userauthCounter.count >= 1 }
 
         // Background teardown (the exact call Task 4 wires into
         // `RootView`'s / `WorktreeDetailView`'s scenePhase handling).
@@ -114,7 +119,11 @@ struct RemoteConnectionReconnectTests {
         let liveSecond = try #require(second, "reconnect should succeed")
         #expect(liveSecond !== first, "must be a genuinely new connection, not the invalidated one")
         #expect(negotiationCounter.count == 2, "a second WebRTC negotiation must have occurred")
-        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { userauthCounter.count >= 2 }
+        let secondClientState = await liveSecond.state
+        try await RemoteConnectionTestSupport.pollUntil(
+            timeout: .seconds(15),
+            stage: "second userauth (userauth=\(userauthCounter.count), negotiations=\(negotiationCounter.count), clientState=\(secondClientState), server=[\(trace.dump)])"
+        ) { userauthCounter.count >= 2 }
 
         // EARS clause under test: "...completing a fresh SSH userauth
         // BEFORE opening any channel." The counter snapshot taken here —
@@ -132,7 +141,10 @@ struct RemoteConnectionReconnectTests {
         let session = try await liveSecond.openTerminalSession(sessionName: "ipad-5-2-order-check")
         let bytes = Data("ipad-5-2\n".utf8)
         try await session.send(.binary(bytes))
-        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { recorder.contains(bytes) }
+        try await RemoteConnectionTestSupport.pollUntil(
+            timeout: .seconds(15),
+            stage: "echo of order-check bytes after second userauth"
+        ) { recorder.contains(bytes) }
         #expect(userauthCounter.count == userauthCountBeforeChannelOpen, "opening a channel must not itself trigger another userauth")
 
         await coordinator.invalidate(host: host)
@@ -197,6 +209,7 @@ struct RemoteConnectionReconnectTests {
         let negotiationCounter = CallCounter()
         let box = ConnectionBox()
         let recorder = TerminalByteRecorder()
+        let trace = ServerTrace()
 
         let coordinator = RemoteConnectionCoordinator(
             directory: dir,
@@ -205,6 +218,7 @@ struct RemoteConnectionReconnectTests {
                 trustedClientFingerprint: clientFingerprint,
                 userauthCounter: userauthCounter,
                 box: box,
+                trace: trace,
                 inboundChildChannelInitializer: { childChannel, channelType in
                     guard case .session = channelType else {
                         return childChannel.eventLoop.makeFailedFuture(LoopbackError.unexpectedChannelType)
@@ -237,8 +251,14 @@ struct RemoteConnectionReconnectTests {
         client.start()
 
         // 1: first dial negotiates through the real coordinator + signaling.
-        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { negotiationCounter.count == 1 }
-        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { userauthCounter.count >= 1 }
+        try await RemoteConnectionTestSupport.pollUntil(
+            timeout: .seconds(15),
+            stage: "E2E first negotiation (negotiations=\(negotiationCounter.count))"
+        ) { negotiationCounter.count == 1 }
+        try await RemoteConnectionTestSupport.pollUntil(
+            timeout: .seconds(15),
+            stage: "E2E first userauth (userauth=\(userauthCounter.count))"
+        ) { userauthCounter.count >= 1 }
 
         // 2/3: hello grants ownership; injected PTY bytes reach the host
         // and echo back over the SAME SSH session channel `SessionClient`
@@ -280,7 +300,10 @@ struct RemoteConnectionReconnectTests {
             _ = try? await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(5)) { negotiationCounter.count >= 2 }
         }
         #expect(negotiationCounter.count == 2, "a second negotiation must occur once the coordinator evicts the dead connection")
-        try await RemoteConnectionTestSupport.pollUntil(timeout: .seconds(15)) { userauthCounter.count >= 2 }
+        try await RemoteConnectionTestSupport.pollUntil(
+            timeout: .seconds(15),
+            stage: "E2E second userauth (userauth=\(userauthCounter.count), negotiations=\(negotiationCounter.count), server=[\(trace.dump)])"
+        ) { userauthCounter.count >= 2 }
 
         // 6: self-heal proof — a fresh hello re-grants ownership on the
         // NEW connection, and bytes flow again through the NEW SSH
@@ -312,9 +335,11 @@ struct RemoteConnectionReconnectTests {
         trustedClientFingerprint: RemoteIdentityFingerprint,
         userauthCounter: CallCounter,
         box: ConnectionBox,
+        trace: ServerTrace = ServerTrace(),
         inboundChildChannelInitializer: (@Sendable (Channel, SSHChannelType) -> EventLoopFuture<Void>)? = nil
     ) -> SignalingClient.Transport {
         { request, body in
+            let negotiation = trace.beginNegotiation()
             let offer = try JSONDecoder().decode(SignalingOffer.self, from: body)
             let answerer = LoopbackPeer(role: .answerer)
             let rtcAnswer = try await answerer.accept(offer: RTCSessionDescription(type: .offer, sdp: offer.sdp))
@@ -324,16 +349,27 @@ struct RemoteConnectionReconnectTests {
             }
             box.retain(answerer)
 
-            // Fire-and-forget: once the answerer's DataChannel opens
-            // (asynchronously, after the offerer applies this answer and
-            // ICE completes), build the server-side SSH stack and start
-            // it. `SSHNIOTransport.init` reassigns the DataChannel's
-            // delegate and buffers any inbound bytes that arrive before
-            // `start()` runs, so there's no hard ordering requirement
-            // against the client side's own handshake start.
+            // Fire-and-forget: build the server-side SSH stack the moment
+            // the answerer's DataChannel OBJECT arrives — deliberately NOT
+            // waiting for it to reach `.open`. The peer delegate attaches
+            // an inbox synchronously, then `SSHNIOTransport` consumes its
+            // buffered bytes while `start()` parks until open. The previous
+            // shape
+            // (await `openedDataChannel()`, then construct) left a
+            // multi-async-hop window in which the client's NIOSSH — which
+            // writes its version banner the instant the CLIENT's open
+            // notification lands — delivered bytes to the no-op
+            // OpenTrackerDelegate, silently dropping them and stalling
+            // the handshake forever: the load-dependent cause of the
+            // IPAD-5.2 CI flake (the second cause, after REMOTE-11.2's
+            // dropped early ICE candidates).
             Task {
-                guard let dc = try? await answerer.openedDataChannel() else { return }
-                let serverTransport = SSHNIOTransport(dataChannel: dc)
+                guard let (dc, inbox) = try? await answerer.arrivedDataChannel() else {
+                    trace.record(negotiation, "arrival-failed")
+                    return
+                }
+                trace.record(negotiation, "channel-arrived readyState=\(dc.readyState.rawValue)")
+                let serverTransport = SSHNIOTransport(dataChannel: dc, inbox: inbox)
                 box.retainTransport(serverTransport)
                 do {
                     try await serverTransport.eventLoop.submit {
@@ -351,10 +387,15 @@ struct RemoteConnectionReconnectTests {
                         )
                         try serverTransport.channel.pipeline.syncOperations.addHandler(sshHandler)
                     }.get()
+                    trace.record(negotiation, "handler-added")
                     try await serverTransport.start()
+                    trace.record(negotiation, "started")
                 } catch {
-                    // Best-effort: a failure here surfaces as the test's
-                    // `pollUntil` timing out, which is diagnostic enough.
+                    // Recorded so a stalled userauth pollUntil can name
+                    // the exact server-side step that died — before this,
+                    // the swallow here made every failure an opaque
+                    // generic timeout.
+                    trace.record(negotiation, "error: \(error)")
                 }
             }
 
@@ -385,6 +426,31 @@ struct RemoteConnectionReconnectTests {
 // `.pollUntil(timeout:interval:condition:)`, `.PollTimeout`, and top-level
 // `CallCounter` are defined once, in `RemoteConnectionCoordinatorTests.swift`
 // (this test target's byte-identical duplicates were consolidated there).
+
+/// Records host-side SSH-stack progress per negotiation so a stalled
+/// userauth `pollUntil` can name the exact server-side step that died
+/// instead of surfacing as an opaque generic timeout.
+final class ServerTrace: @unchecked Sendable {
+    private let lock = NSLock()
+    private var negotiations = 0
+    private var events: [String] = []
+
+    func beginNegotiation() -> Int {
+        lock.withLock {
+            negotiations += 1
+            events.append("n\(negotiations):begin")
+            return negotiations
+        }
+    }
+
+    func record(_ negotiation: Int, _ event: String) {
+        lock.withLock { events.append("n\(negotiation):\(event)") }
+    }
+
+    var dump: String {
+        lock.withLock { events.joined(separator: " | ") }
+    }
+}
 
 /// Holds the most-recently factory-created `RemoteHostConnection` (so the
 /// fake transport can route ICE candidates to/from it), every `LoopbackPeer`
@@ -512,7 +578,9 @@ private actor LoopbackPeer: WebRTCIceCandidateReceiver {
     private var gatheringContinuation: CheckedContinuation<Void, Never>?
     private var gatheringTimeoutTask: Task<Void, Never>?
     private var openContinuation: CheckedContinuation<RTCDataChannel, Error>?
+    private var arrivalContinuation: CheckedContinuation<(RTCDataChannel, DataChannelInbox), Error>?
     private var resolvedOpenDataChannel: RTCDataChannel?
+    private var dataChannelInbox: DataChannelInbox?
 
     private static let gatheringTimeout: Duration = .seconds(5)
 
@@ -522,8 +590,8 @@ private actor LoopbackPeer: WebRTCIceCandidateReceiver {
         pcDelegate.onIceCandidate = { [weak self] candidate in
             Task { await self?.routeLocalIceCandidate(candidate) }
         }
-        pcDelegate.onDataChannel = { [weak self] dc in
-            Task { await self?.adoptInboundDataChannel(dc) }
+        pcDelegate.onDataChannel = { [weak self] dc, inbox in
+            Task { await self?.adoptInboundDataChannel(dc, inbox: inbox) }
         }
     }
 
@@ -591,6 +659,18 @@ private actor LoopbackPeer: WebRTCIceCandidateReceiver {
         }
     }
 
+    /// Resolves as soon as the DataChannel OBJECT and its lossless inbox
+    /// exist (for the answerer: when `didOpen dataChannel` is delivered
+    /// — the inbox was attached synchronously inside that callback).
+    /// Callers wrap the pair in `SSHNIOTransport(dataChannel:inbox:)`;
+    /// any bytes the peer sent in the meantime replay from the inbox.
+    func arrivedDataChannel() async throws -> (RTCDataChannel, DataChannelInbox) {
+        if let dc = dataChannel, let inbox = dataChannelInbox { return (dc, inbox) }
+        return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<(RTCDataChannel, DataChannelInbox), Error>) in
+            self.arrivalContinuation = continuation
+        }
+    }
+
     func bindIceCandidates(to peer: WebRTCIceCandidateReceiver) {
         self.iceCandidateTarget = peer
         let drained = pendingLocalCandidates
@@ -619,9 +699,13 @@ private actor LoopbackPeer: WebRTCIceCandidateReceiver {
         }
     }
 
-    private func adoptInboundDataChannel(_ dc: RTCDataChannel) {
+    private func adoptInboundDataChannel(_ dc: RTCDataChannel, inbox: DataChannelInbox) {
         self.dataChannel = dc
-        installOpenTracker(on: dc)
+        self.dataChannelInbox = inbox
+        if let continuation = arrivalContinuation {
+            arrivalContinuation = nil
+            continuation.resume(returning: (dc, inbox))
+        }
     }
 
     private nonisolated(unsafe) var currentOpenTracker: OpenTrackerDelegate?
@@ -632,7 +716,7 @@ private actor LoopbackPeer: WebRTCIceCandidateReceiver {
             Task { await self?.handleDataChannelOpen(dc) }
         }
         if dc.readyState == .open {
-            Task { await self.handleDataChannelOpen(dc) }
+            Task { self.handleDataChannelOpen(dc) }
         }
         dc.delegate = tracker
         self.currentOpenTracker = tracker
@@ -687,6 +771,10 @@ private actor LoopbackPeer: WebRTCIceCandidateReceiver {
             openContinuation = nil
             pending.resume(throwing: LoopbackError.dataChannelNeverOpened)
         }
+        if let pending = arrivalContinuation {
+            arrivalContinuation = nil
+            pending.resume(throwing: LoopbackError.dataChannelNeverOpened)
+        }
         dataChannel?.close()
         peerConnection?.close()
         iceCandidateTarget = nil
@@ -720,7 +808,7 @@ private enum LoopbackError: Error {
 
 private final class LoopbackPeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
     nonisolated(unsafe) var onIceCandidate: (@Sendable (RTCIceCandidate) -> Void)?
-    nonisolated(unsafe) var onDataChannel: (@Sendable (RTCDataChannel) -> Void)?
+    nonisolated(unsafe) var onDataChannel: (@Sendable (RTCDataChannel, DataChannelInbox) -> Void)?
     nonisolated(unsafe) var onIceGatheringComplete: (@Sendable () -> Void)?
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
@@ -735,7 +823,15 @@ private final class LoopbackPeerConnectionDelegate: NSObject, RTCPeerConnectionD
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
-        onDataChannel?(dataChannel)
+        // Attach the lossless inbox SYNCHRONOUSLY on WebRTC's delegate
+        // thread: message delivery is serialized behind this callback,
+        // so a delegate attached before it returns can never miss a
+        // byte. Everything after this line (actor hops, transport
+        // construction) can take as long as it likes — the inbox
+        // buffers and replays.
+        let inbox = DataChannelInbox()
+        dataChannel.delegate = inbox
+        onDataChannel?(dataChannel, inbox)
     }
 }
 

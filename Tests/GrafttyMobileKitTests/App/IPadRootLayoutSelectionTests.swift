@@ -3,6 +3,7 @@ import Testing
 import Foundation
 import SwiftUI
 import XCTest
+import GrafttyCommandUI
 import GrafttyProtocol
 @testable import GrafttyMobileKit
 
@@ -22,6 +23,12 @@ struct IPadRootLayoutSelectionTests {
             addedAt: Date(),
             lastUsedAt: nil
         )
+    }
+
+    @Test("shared Ghostty shortcut converter is visible to mobile Xcode tests")
+    func sharedGhosttyShortcutConverterIsVisible() {
+        #expect(KeyboardShortcutFromChord.shortcut(from: .init(key: "tab", modifiers: [.control])) != nil)
+        #expect(KeyboardShortcutFromChord.shortcut(from: .init(key: "f13", modifiers: [.command])) == nil)
     }
 
     @Test("""
@@ -84,6 +91,120 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
+@spec IPAD-8.7: iPad fixed worktree navigation commands shall be registered in both command projections even when zero or one target exists, reserving their chords while execution is a no-op.
+""")
+    func worktreeCommandsRemainReservedInNoOpStates() {
+        let context = MobileGhosttyCommandContext(
+            keybindingSet: .loading,
+            perform: { _ in },
+            isEnabled: { _ in false }
+        )
+
+        #expect(MobileGhosttyCommandButtons.renderableCommands(for: context).prefix(2).map(\.semantic) == [
+            .navigateWorktree(forward: true),
+            .navigateWorktree(forward: false),
+        ])
+    }
+
+    @Test("fixed worktree execution is a no-op with one eligible worktree")
+    func fixedWorktreeExecutionIsNoOpWithOneEligibleWorktree() {
+        let only = WorktreePanes(
+            path: "/a",
+            displayName: "a",
+            repoDisplayName: "repo",
+            displayBranch: "a",
+            state: .running,
+            isMainCheckout: false,
+            prBadge: nil,
+            stats: nil,
+            attentionText: nil,
+            layout: nil
+        )
+
+        for selectedPath in [String?.none, "/a"] {
+            #expect(IPadWorktreeNavigation.nextPath(
+                in: [only],
+                selectedPath: selectedPath,
+                forward: true
+            ) == nil)
+            #expect(IPadWorktreeNavigation.nextPath(
+                in: [only],
+                selectedPath: selectedPath,
+                forward: false
+            ) == nil)
+        }
+    }
+
+    @Test("pane row selection derives the selected worktree from the latest snapshot")
+    func paneRowSelectionDerivesWorktreePath() {
+        let appState = freshAppState()
+        let layout = PaneLayoutNode.split(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: .leaf(sessionName: "session-a", title: "shell A", attentionText: nil, isBusy: false, attentionSource: nil),
+            right: .leaf(sessionName: "session-b", title: "shell B", attentionText: nil, isBusy: false, attentionSource: nil)
+        )
+        let target = WorktreePanes(
+            path: "/repo/feat",
+            displayName: "feat",
+            repoDisplayName: "repo",
+            displayBranch: "feat",
+            state: .running,
+            isMainCheckout: false,
+            prBadge: nil,
+            stats: nil,
+            attentionText: nil,
+            layout: layout
+        )
+        IPadRootLayout.onWorktreeListChanged(appState: appState, list: [
+            .init(
+                path: "/repo/other",
+                displayName: "other",
+                repoDisplayName: "repo",
+                displayBranch: "other",
+                state: .running,
+                isMainCheckout: false,
+                prBadge: nil,
+                stats: nil,
+                attentionText: nil,
+                layout: .leaf(sessionName: "session-other", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil)
+            ),
+            target
+        ])
+
+        IPadRootLayout.applyPaneSelection(appState: appState, leaf: layout.leaves[1])
+
+        #expect(appState.selectedWorktreePath == "/repo/feat")
+        #expect(appState.focusedPaneId == "session-b")
+        #expect(appState.focusRequestCount == 1)
+        #expect(appState.ownershipRequestCount == 1)
+    }
+
+    @Test("worktree row selection updates active pane and requests terminal activation")
+    func worktreeRowSelectionRequestsActiveTerminal() {
+        let appState = freshAppState()
+        let worktree = WorktreePanes(
+            path: "/repo/feat",
+            displayName: "feat",
+            repoDisplayName: "repo",
+            displayBranch: "feat",
+            state: .running,
+            isMainCheckout: false,
+            prBadge: nil,
+            stats: nil,
+            attentionText: nil,
+            layout: .leaf(sessionName: "session-a", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil)
+        )
+
+        IPadRootLayout.applyWorktreeSelection(appState: appState, worktree: worktree)
+
+        #expect(appState.selectedWorktreePath == "/repo/feat")
+        #expect(appState.focusedPaneId == "session-a")
+        #expect(appState.focusRequestCount == 1)
+        #expect(appState.ownershipRequestCount == 1)
+    }
+
+    @Test("""
 @spec IPAD-6.1: When the user selects a different host from the host-switcher menu, the application shall reset `selectedWorktreePath` and `focusedPaneId`, dismiss the menu, and re-fetch worktrees and theme for the new host.
 """)
     func ipad_6_1_hostSwitchResetsSelection() {
@@ -93,12 +214,29 @@ struct IPadRootLayoutSelectionTests {
         appState.selectedHostId = hostA.id
         appState.selectedWorktreePath = "/repo/branch-a"
         appState.focusedPaneId = "session-a"
+        appState.latestWorktrees = [
+            .init(
+                path: "/repo/branch-a",
+                displayName: "branch-a",
+                repoDisplayName: "repo",
+                displayBranch: "branch-a",
+                state: .running,
+                isMainCheckout: false,
+                prBadge: nil,
+                stats: nil,
+                attentionText: "old host",
+                layout: .leaf(sessionName: "session-a", title: "shell", attentionText: nil, isBusy: false, attentionSource: nil)
+            )
+        ]
+        appState.anyWorktreeHasAttention = true
 
         IPadRootLayout.applyHostSwitch(appState: appState, to: hostB.id)
 
         #expect(appState.selectedHostId == hostB.id)
         #expect(appState.selectedWorktreePath == nil)
         #expect(appState.focusedPaneId == nil)
+        #expect(appState.latestWorktrees.isEmpty)
+        #expect(!appState.anyWorktreeHasAttention)
         // The "re-fetch worktrees and theme for the new host" clause is
         // enforced by `WorktreeListContent`'s `.task(id: host.id)` —
         // not directly testable from a unit test.
@@ -171,6 +309,23 @@ struct IPadRootLayoutSelectionTests {
             navigationPath: .constant(NavigationPath())
         )
         #expect(compact.isFullScreen == true)
+    }
+
+    @Test("iPad detail session can receive external focus and ownership requests")
+    func ipadDetailSessionReceivesActiveRequests() {
+        let host = sampleHost()
+        let step = SessionStep(host: host, sessionName: "s", title: "s")
+        let view = SingleSessionView(
+            step: step,
+            navigationPath: .constant(NavigationPath()),
+            isFullScreen: false,
+            coordinator: nil,
+            externalPendingFocusRequests: 3,
+            autoTakeControlRequestCount: 4
+        )
+
+        #expect(view.externalPendingFocusRequests == 3)
+        #expect(view.autoTakeControlRequestCount == 4)
     }
 
     @Test("""
@@ -301,7 +456,7 @@ struct IPadRootLayoutSelectionTests {
     }
 
     @Test("""
-@spec IPAD-1.13: While `IPadRootLayout` is presented, each worktree's row + its pane child rows shall be packed into a single `List` row (`VStack(spacing: 0)`) with `.listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))` and `.listRowSeparator(.hidden)`, so the iOS sidebar-list style's default per-row padding doesn't compound between panes — the vertical spacing between pane rows is controlled entirely by the outer block's insets, not by accumulating list-row defaults on every leaf.
+@spec IPAD-1.13: While `IPadRootLayout` is presented, each worktree's row + its pane child rows shall be packed into a single `List` row (`VStack(spacing: 0)`) with explicit compact row insets and `.listRowSeparator(.hidden)`, so the iOS sidebar-list style's default per-row padding doesn't compound between panes — the vertical spacing between pane rows is controlled entirely by the outer block's insets, not by accumulating list-row defaults on every leaf.
 """)
     func ipad_1_13_paneRowsPackedIntoOneListRow() {
         // Visual concern; smoke-check that WorktreeBlock continues to
@@ -427,6 +582,317 @@ struct IPadRootLayoutSelectionTests {
         )
     }
 
+    @Test("""
+@spec IPAD-3.7: While an iPad focused pane is available, the detail toolbar shall expose split actions for right, down, left, and up; when no pane is focused, split actions shall be disabled.
+""")
+    func splitToolbarPolicy() {
+        #expect(IPadRootLayout.availableSplitDirections(focusedPaneId: nil).isEmpty)
+        #expect(IPadRootLayout.availableSplitDirections(focusedPaneId: "s") == [.right, .down, .left, .up])
+        #expect(IPadRootLayout.availableSplitDirections(
+            focusedPaneId: "s",
+            paneControlAvailable: false
+        ).isEmpty)
+    }
+
+    @Test("""
+@spec IPAD-9.2: iPad command routing shall map only GhosttyCommandRegistry.iPadSupportedActions to executable iPad command kinds; unsupported Ghostty actions such as toggle_split_zoom shall not be routed or registered.
+""")
+    func ipad_9_2_commandKindOnlyRoutesSupportedIPadActions() {
+        #expect(IPadRootLayout.commandKind(for: .newSplitRight) == .split(.right))
+        #expect(IPadRootLayout.commandKind(for: .newSplitDown) == .split(.down))
+        #expect(IPadRootLayout.commandKind(for: .newSplitLeft) == .split(.left))
+        #expect(IPadRootLayout.commandKind(for: .newSplitUp) == .split(.up))
+        #expect(IPadRootLayout.commandKind(for: .closeSurface) == .closePane)
+        #expect(IPadRootLayout.commandKind(for: .gotoSplitLeft) == .focusPane(.left))
+        #expect(IPadRootLayout.commandKind(for: .gotoSplitNext) == .focusPaneByOrder(forward: true))
+        #expect(IPadRootLayout.commandKind(for: .gotoSplitPrevious) == .focusPaneByOrder(forward: false))
+        #expect(IPadRootLayout.commandKind(for: .nextTab) == .focusPaneByOrder(forward: true))
+        #expect(IPadRootLayout.commandKind(for: .previousTab) == .focusPaneByOrder(forward: false))
+        #expect(IPadRootLayout.commandKind(for: .toggleSplitZoom) == nil)
+    }
+
+    @Test("""
+@spec IPAD-9.3: iPad shall always reserve fixed pane and worktree navigation chords; host tab-action chords remain reserved when their bridge is available, while disabled split, close, and directional commands are omitted.
+""")
+    func ipad_9_3_commandRenderingSeparatesReservationFromExecutionEnablement() {
+        let bridge = GhosttyKeybindBridge(chords: [
+            .newSplitRight: ShortcutChord(key: "d", modifiers: [.command]),
+            .newSplitDown: ShortcutChord(key: "f13", modifiers: [.command]),
+            .previousTab: ShortcutChord(key: "tab", modifiers: [.control, .shift]),
+        ])
+        let context = MobileGhosttyCommandContext(
+            keybindingSet: MobileGhosttyKeybindingSet(bridge: bridge, source: .hostResolved),
+            perform: { _ in },
+            isEnabled: { $0 == .newSplitRight }
+        )
+
+        let commands = MobileGhosttyCommandButtons.renderableCommands(for: context)
+
+        #expect(commands.map(\.semantic) == [
+            .navigateWorktree(forward: true),
+            .navigateWorktree(forward: false),
+            .ghostty(.nextTab),
+            .ghostty(.previousTab),
+            .ghostty(.newSplitRight),
+        ])
+        #expect(commands.contains { $0.semantic == .ghostty(.newSplitDown) } == false)
+    }
+
+    @Test("""
+@spec IPAD-9.10: Fixed Graftty pane and worktree chords shall be provenance-independent, host tab-action chords shall be additional when noncolliding, and both SwiftUI and responder projections shall use the same normalized input-and-modifier collision winners with precedence fixed worktree over fixed pane over host.
+""")
+    func navigationDescriptorsRespectProvenanceAndCollisionPolicy() {
+        func context(
+            bridge: GhosttyKeybindBridge,
+            source: MobileGhosttyKeybindingSource,
+            enabled: @escaping (GhosttyAction) -> Bool = { _ in false },
+            perform: @escaping (MobileGhosttyCommandSemantic) -> Void = { _ in }
+        ) -> MobileGhosttyCommandContext {
+            MobileGhosttyCommandContext(
+                keybindingSet: MobileGhosttyKeybindingSet(bridge: bridge, source: source),
+                perform: perform,
+                isEnabled: enabled
+            )
+        }
+
+        let fixedSemantics: [MobileGhosttyCommandSemantic] = [
+            .navigateWorktree(forward: true),
+            .navigateWorktree(forward: false),
+            .ghostty(.nextTab),
+            .ghostty(.previousTab),
+        ]
+        for source in [
+            MobileGhosttyKeybindingSource.loading,
+            .hostResolved,
+            .bundledFallback,
+        ] {
+            let commands = MobileGhosttyCommandButtons.renderableCommands(
+                for: context(bridge: .empty, source: source)
+            )
+            #expect(commands.map(\.semantic) == fixedSemantics)
+        }
+
+        let fallback = MobileGhosttyCommandButtons.renderableCommands(for: context(
+            bridge: GhosttyDefaultKeybinds.bridge,
+            source: .bundledFallback
+        ))
+        #expect(fallback.map(\.semantic) == fixedSemantics + [
+            .ghostty(.nextTab),
+            .ghostty(.previousTab),
+        ])
+        #expect(fallback.suffix(2).map(\.input) == ["]", "["])
+
+        let hostBridge = GhosttyKeybindBridge(chords: [
+            .nextTab: ShortcutChord(key: "period", modifiers: [.command]),
+            .previousTab: ShortcutChord(key: "tab", modifiers: [.control, .option]),
+            .newSplitRight: ShortcutChord(key: "tab", modifiers: [.control, .shift]),
+        ])
+        let commandContext = context(
+            bridge: hostBridge,
+            source: .hostResolved,
+            enabled: { _ in true }
+        )
+        let scene = MobileGhosttyCommandButtons.renderableCommands(for: commandContext)
+        let responder = MobileGhosttyCommandButtons.hardwareKeyboardCommands(for: commandContext)
+        let repeatedScene = MobileGhosttyCommandButtons.renderableCommands(for: commandContext)
+
+        #expect(scene.map(\.id) == responder.map(\.id))
+        #expect(scene.map(\.id) == repeatedScene.map(\.id))
+        #expect(Set(scene.map(\.id)).count == scene.count)
+        #expect(scene.map(\.semantic) == fixedSemantics + [.ghostty(.nextTab)])
+        #expect(scene.last?.input == ".")
+        #expect(scene.contains {
+            $0.semantic == .ghostty(.previousTab) && $0.modifierFlags.contains(.alternate)
+        } == false)
+        #expect(scene.contains { $0.semantic == .ghostty(.newSplitRight) } == false)
+    }
+
+    @Test("""
+@spec IPAD-9.6: iPad shall project every winning app-level navigation candidate to responder-chain UIKeyCommands with the same stable identities and semantic execution as scene commands.
+""")
+    func hardwareKeyboardCommandsUseWinningSemanticCandidates() {
+        var performed: [MobileGhosttyCommandSemantic] = []
+        let context = MobileGhosttyCommandContext(
+            keybindingSet: .loading,
+            perform: { performed.append($0) },
+            isEnabled: { _ in false }
+        )
+
+        let commands = MobileGhosttyCommandButtons.hardwareKeyboardCommands(for: context)
+        commands.forEach { $0.perform() }
+
+        #expect(performed == [
+            .navigateWorktree(forward: true),
+            .navigateWorktree(forward: false),
+            .ghostty(.nextTab),
+            .ghostty(.previousTab),
+        ])
+        #expect(commands.map(\.modifierFlags) == [
+            [.control, .alternate],
+            [.control, .alternate, .shift],
+            [.control],
+            [.control, .shift],
+        ])
+    }
+
+    @Test("host refresh clears host chords without releasing fixed navigation")
+    func hostRefreshPreservesFixedNavigationReservations() {
+        let staleBridge = GhosttyKeybindBridge { rawAction in
+            GhosttyAction(rawValue: rawAction) == .newSplitRight
+                ? ShortcutChord(key: "d", modifiers: [.command])
+                : nil
+        }
+        let staleContext = MobileGhosttyCommandContext(
+            keybindingSet: MobileGhosttyKeybindingSet(bridge: staleBridge, source: .hostResolved),
+            perform: { _ in },
+            isEnabled: { _ in true }
+        )
+        #expect(MobileGhosttyCommandButtons.renderableCommands(for: staleContext).map(\.semantic) == [
+            .navigateWorktree(forward: true),
+            .navigateWorktree(forward: false),
+            .ghostty(.nextTab),
+            .ghostty(.previousTab),
+            .ghostty(.newSplitRight),
+        ])
+
+        let loadingSet = IPadRootLayout.keybindingSetForStartingHostRefresh()
+
+        #expect(loadingSet.source == .loading)
+        #expect(loadingSet.bridge[.newSplitRight] == nil)
+        let loadingContext = MobileGhosttyCommandContext(
+            keybindingSet: loadingSet,
+            perform: { _ in },
+            isEnabled: { _ in true }
+        )
+        #expect(MobileGhosttyCommandButtons.renderableCommands(for: loadingContext).map(\.semantic) == [
+            .navigateWorktree(forward: true),
+            .navigateWorktree(forward: false),
+            .ghostty(.nextTab),
+            .ghostty(.previousTab),
+        ])
+    }
+
+    @Test("""
+@spec IPAD-9.4: Directional iPad pane-focus commands shall use the same spatial split-tree semantics as Mac TERM-7.3: nearest matching-axis ancestor, opposite subtree near-edge descent, and no wrapping for unrelated directions.
+""")
+    func ipad_9_4_spatialNavigationHorizontalSplit() {
+        let layout = PaneLayoutNode.split(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: leaf("A"),
+            right: leaf("B")
+        )
+
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .right) == "B")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .left) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .up) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .down) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .left) == "A")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .right) == nil)
+    }
+
+    @Test("IPAD-9.4 vertical split case")
+    func ipad_9_4_spatialNavigationVerticalSplit() {
+        let layout = PaneLayoutNode.split(
+            direction: .vertical,
+            ratio: 0.5,
+            left: leaf("A"),
+            right: leaf("B")
+        )
+
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .down) == "B")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .up) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .left) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .right) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .up) == "A")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .down) == nil)
+    }
+
+    @Test("IPAD-9.4 nested right vertical split case")
+    func ipad_9_4_spatialNavigationNestedRightVerticalSplit() {
+        let layout = PaneLayoutNode.split(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: leaf("A"),
+            right: .split(
+                direction: .vertical,
+                ratio: 0.5,
+                left: leaf("B"),
+                right: leaf("C")
+            )
+        )
+
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .right) == "B")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .up) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .down) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .left) == "A")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "C", direction: .left) == "A")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .down) == "C")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "C", direction: .up) == "B")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .up) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "C", direction: .down) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .right) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "C", direction: .right) == nil)
+    }
+
+    @Test("IPAD-9.4 mixed top horizontal split case")
+    func ipad_9_4_spatialNavigationMixedTopHorizontalSplit() {
+        let layout = PaneLayoutNode.split(
+            direction: .vertical,
+            ratio: 0.5,
+            left: .split(
+                direction: .horizontal,
+                ratio: 0.5,
+                left: leaf("A"),
+                right: leaf("B")
+            ),
+            right: leaf("C")
+        )
+
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .right) == "B")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .left) == "A")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: .down) == "C")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "B", direction: .down) == "C")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "C", direction: .up) == "A")
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "C", direction: .left) == nil)
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "C", direction: .right) == nil)
+    }
+
+    @Test("IPAD-9.4 single leaf case")
+    func ipad_9_4_singleLeafHasNoSpatialNeighbors() {
+        let layout = leaf("A")
+
+        for direction in PaneLayoutNavigation.Direction.allCases {
+            #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "A", direction: direction) == nil)
+        }
+        #expect(PaneLayoutNavigation.spatialNeighbor(in: layout, of: "unknown", direction: .right) == nil)
+    }
+
+    @Test("""
+@spec IPAD-9.5: Previous-pane and next-pane iPad commands shall traverse PaneLayoutNode leaves in stable in-order layout order with wrapping; a single pane or unknown current pane shall be a no-op.
+""")
+    func ipad_9_5_nextAndPreviousPaneInOrderWraps() {
+        let layout = PaneLayoutNode.split(
+            direction: .horizontal,
+            ratio: 0.5,
+            left: leaf("A"),
+            right: .split(
+                direction: .vertical,
+                ratio: 0.5,
+                left: leaf("B"),
+                right: leaf("C")
+            )
+        )
+
+        #expect(PaneLayoutNavigation.nextInOrder(in: layout, from: "A", forward: true) == "B")
+        #expect(PaneLayoutNavigation.nextInOrder(in: layout, from: "B", forward: true) == "C")
+        #expect(PaneLayoutNavigation.nextInOrder(in: layout, from: "C", forward: true) == "A")
+        #expect(PaneLayoutNavigation.nextInOrder(in: layout, from: "A", forward: false) == "C")
+        #expect(PaneLayoutNavigation.nextInOrder(in: layout, from: "C", forward: false) == "B")
+        #expect(PaneLayoutNavigation.nextInOrder(in: leaf("A"), from: "A", forward: true) == nil)
+        #expect(PaneLayoutNavigation.nextInOrder(in: layout, from: "unknown", forward: true) == nil)
+    }
+
     @Test("stale-selectedWorktreePath is cleared when onListChanged fires without the path")
     func stalePathCleanup() {
         let appState = freshAppState()
@@ -453,6 +919,7 @@ struct IPadRootLayoutSelectionTests {
 
         #expect(appState.selectedWorktreePath == nil)
         #expect(appState.focusedPaneId == nil)
+        #expect(appState.latestWorktrees.map(\.path) == ["/repo/branch-other"])
     }
 
     @Test("""
@@ -540,6 +1007,23 @@ struct IPadRootLayoutSelectionTests {
         )
         #expect(appState3.focusedPaneId == "session-a")
     }
+
+    @Test("""
+@spec IPAD-1.20: While `IPadRootLayout` is presented, iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.
+""")
+    func backgroundPolicy() {
+        #expect(IPadRootLayout.paintsTerminalBackgroundBehindSidebar == true)
+    }
+
+    private func leaf(_ sessionName: String) -> PaneLayoutNode {
+        .leaf(
+            sessionName: sessionName,
+            title: "shell \(sessionName)",
+            attentionText: nil,
+            isBusy: false,
+            attentionSource: nil
+        )
+    }
 }
 
 @MainActor
@@ -588,18 +1072,58 @@ final class IPadRootLayoutTakeControlXCTests: XCTestCase {
         ))
     }
 
-    /// @spec IOS-6.14: The terminal view shall install GrafttyMobile's
-    /// `UIKeyInput` proxy only for an owner. Non-owner taps should still reach
-    /// libghostty gestures, but they must not summon the software keyboard.
-    func testKeyboardProxyRequiresDisplayOwnership() {
-        XCTAssertFalse(SingleSessionView.shouldInstallKeyboardProxy(clientIsOwner: false))
-        XCTAssertTrue(SingleSessionView.shouldInstallKeyboardProxy(clientIsOwner: true))
+    /// @spec IOS-6.14: The owner shall install committed-software-input
+    /// handlers on the sole `UITerminalView` responder. A non-owner shall
+    /// disable terminal keyboard eligibility without blocking Ghostty gestures.
+    func testTerminalKeyboardEligibilityRequiresDisplayOwnership() {
+        XCTAssertFalse(SingleSessionView.isTerminalKeyboardEligible(clientIsOwner: false))
+        XCTAssertTrue(SingleSessionView.isTerminalKeyboardEligible(clientIsOwner: true))
+    }
+
+    /// @spec IPAD-8.5: While processing an iPad auto-ownership request, the
+    /// application shall keep the request pending until the live session becomes
+    /// takeable, but an already-owned pane shall fulfill the request as a no-op
+    /// so stale selection requests cannot steal ownership back later.
+    func testAutoOwnershipRetriesWhenSessionBecomesTakeable() {
+        let policy = SingleSessionView.AutoTakeControlPolicy()
+        XCTAssertFalse(policy.shouldTakeControl(
+            requestCount: 1,
+            isOwner: false,
+            canTakeControl: false
+        ))
+        XCTAssertTrue(policy.shouldTakeControl(
+            requestCount: 1,
+            isOwner: false,
+            canTakeControl: true
+        ))
+        XCTAssertFalse(policy.shouldTakeControl(
+            requestCount: 1,
+            isOwner: false,
+            canTakeControl: true
+        ))
+        XCTAssertTrue(policy.shouldTakeControl(
+            requestCount: 2,
+            isOwner: false,
+            canTakeControl: true
+        ))
+
+        let alreadyOwnerPolicy = SingleSessionView.AutoTakeControlPolicy()
+        XCTAssertFalse(alreadyOwnerPolicy.shouldTakeControl(
+            requestCount: 1,
+            isOwner: true,
+            canTakeControl: false
+        ))
+        XCTAssertFalse(alreadyOwnerPolicy.shouldTakeControl(
+            requestCount: 1,
+            isOwner: false,
+            canTakeControl: true
+        ))
     }
 
     /// @spec IOS-6.16: When a fullscreen mobile client transitions from
     /// non-owner to owner while keyboard input is allowed, the application
-    /// shall request keyboard focus for the terminal input proxy. This covers
-    /// takeovers initiated by Paste or Take Control, where the proxy was not
+    /// shall request keyboard focus for the sole `UITerminalView` responder. This covers
+    /// takeovers initiated by Paste or Take Control, where the terminal was not
     /// eligible before ownership was confirmed.
     func testOwnerTransitionRequestsKeyboardFocusWhenAllowed() {
         XCTAssertTrue(SingleSessionView.shouldFocusKeyboardOnOwnerTransition(

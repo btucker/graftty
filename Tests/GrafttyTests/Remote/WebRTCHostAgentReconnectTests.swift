@@ -52,6 +52,29 @@ struct WebRTCHostAgentReconnectTests {
         #expect(await agent.sshInstallStartedForTesting == false)
     }
 
+    /// Regression guard for the adopt-after-close interleaving — not a new
+    /// spec ID. `peerConnection(_:didOpen:)` queues `adoptDataChannel` (and
+    /// its `installSSHHandler`) as Tasks, so `close()` can run between the
+    /// channel announcement and the install: the stale install then latches
+    /// `sshInstallStarted = true` on the already-closed agent (its
+    /// `dataChannel` is nil, so it latches and bails). The close-side reset
+    /// has already run at that point, so only `acceptOffer`'s fresh-lifecycle
+    /// re-arm (`beginConnectionLifecycle`) keeps the NEXT connection's
+    /// install from hitting the stale latch and never attaching SSH.
+    @Test
+    func aFreshOfferReArmsTheInstallLatchAfterAStaleInstallLatchedPostClose() async throws {
+        let agent = Self.makeHostAgent()
+
+        await agent.close()
+        // The stale install Task resumes on the closed agent and latches.
+        await agent.installSSHHandler()
+        #expect(await agent.sshInstallStartedForTesting == true)
+
+        // Mirrors what every accepted offer does first (see `acceptOffer`).
+        await agent.beginConnectionLifecycle()
+        #expect(await agent.sshInstallStartedForTesting == false)
+    }
+
     /// Regression guard for the generation-guard fix — not a new spec ID.
     /// `WebRTCHostAgent` is a single process-wide instance reused for every
     /// device sequentially (`AppServices.hostAgent`); `installSSHHandler`'s

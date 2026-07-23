@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import CryptoKit
 import UserNotifications
+import GrafttyCommandUI
 import GrafttyHostAgent
 import GrafttyKit
 import GrafttyProtocol
@@ -191,6 +192,7 @@ final class AppServices {
     let displayOwnershipStore: SessionDisplayOwnershipStore
     let teamInbox: TeamInbox
     let teamEventDispatcher: TeamEventDispatcher
+    let cliWorktreeCreations: CLIWorktreeCreationStore
     var worktreeMonitorBridge: WorktreeMonitorBridge?
     /// Drives `TeamPresenceMonitor.cleanupStale` on a slow cadence so
     /// SIGKILL'd agents (whose wrapper trap never fired) don't leave
@@ -246,6 +248,7 @@ final class AppServices {
         self.claudeSessionRegistry = ClaudeSessionRegistry()
         self.remoteAttachmentRegistry = RemoteAttachmentRegistry()
         self.displayOwnershipStore = SessionDisplayOwnershipStore()
+        self.cliWorktreeCreations = CLIWorktreeCreationStore()
 
         // Lift the team inbox up here so the request handler
         // (`teamInboxRequestHandler()`) and the dispatcher share one
@@ -493,6 +496,14 @@ final class AppServices {
 
 @main
 struct GrafttyApp: App {
+    // Keep this in menu order: the first host action for a chord wins.
+    private static let macHostShortcutCommands =
+        GhosttyCommandRegistry.macSplitActions
+        + GhosttyCommandRegistry.macPaneFocusActions
+        + GhosttyCommandRegistry.macPaneLayoutActions
+        + GhosttyCommandRegistry.macPaneLifecycleActions
+        + GhosttyCommandRegistry.macSettingsActions
+
     @State private var appState: AppState
     @StateObject private var terminalManager: TerminalManager
     @StateObject private var webController: WebServerController
@@ -737,6 +748,11 @@ struct GrafttyApp: App {
         // pixel values is silently a no-op.
         .defaultSize(width: 1400, height: 900)
         .commands {
+            let hostShortcutsByAction = NavigationCommandShortcutPolicy.hostShortcutWinners(
+                commands: Self.macHostShortcutCommands,
+                bridge: terminalManager.keybindBridge
+            )
+
             CommandGroup(after: .newItem) {
                 // "Add Repository..." keeps its hardcoded Cmd+Shift+O —
                 // it's an Graftty-specific action with no Ghostty equivalent.
@@ -750,35 +766,52 @@ struct GrafttyApp: App {
 
                 Divider()
 
-                bridgedButton("Split Right", action: .newSplitRight) { handleSplit(.right) }
-                bridgedButton("Split Left",  action: .newSplitLeft)  { handleSplit(.left) }
-                bridgedButton("Split Down",  action: .newSplitDown)  { handleSplit(.down) }
-                bridgedButton("Split Up",    action: .newSplitUp)    { handleSplit(.up) }
+                ForEach(GhosttyCommandRegistry.macSplitActions, id: \.action) { command in
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
+                }
 
                 Divider()
 
-                bridgedButton("Focus Pane Left",  action: .gotoSplitLeft)   { handleNavigate(.left) }
-                bridgedButton("Focus Pane Right", action: .gotoSplitRight)  { handleNavigate(.right) }
-                bridgedButton("Focus Pane Up",    action: .gotoSplitUp)     { handleNavigate(.up) }
-                bridgedButton("Focus Pane Down",  action: .gotoSplitDown)   { handleNavigate(.down) }
-                bridgedButton("Previous Pane",    action: .gotoSplitPrevious) { handleNavigateTreeOrder(forward: false) }
-                bridgedButton("Next Pane",        action: .gotoSplitNext)     { handleNavigateTreeOrder(forward: true) }
+                ForEach(NavigationCommandShortcutPolicy.fixedPaneCommands, id: \.label) { command in
+                    if let shortcut = KeyboardShortcutFromChord.shortcut(from: command.chord) {
+                        Button(command.label) {
+                            handleNavigateTreeOrder(forward: command.forward)
+                        }
+                        .keyboardShortcut(shortcut)
+                    } else {
+                        Button(command.label) {
+                            handleNavigateTreeOrder(forward: command.forward)
+                        }
+                    }
+                }
+
+                ForEach(GhosttyCommandRegistry.macPaneFocusActions, id: \.action) { command in
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
+                }
 
                 Divider()
 
-                WorktreeNavCommandButtons(
-                    nextShortcut: shortcut(for: .nextTab),
-                    previousShortcut: shortcut(for: .previousTab)
-                )
+                WorktreeNavCommandButtons()
 
                 Divider()
 
-                bridgedButton("Zoom Split",      action: .toggleSplitZoom) { handleToggleZoom() }
-                bridgedButton("Equalize Splits", action: .equalizeSplits)  { handleEqualizeSplits() }
+                ForEach(GhosttyCommandRegistry.macPaneLayoutActions, id: \.action) { command in
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
+                }
 
                 Divider()
 
-                bridgedButton("Close Pane", action: .closeSurface) { handleClosePane() }
+                ForEach(GhosttyCommandRegistry.macPaneLifecycleActions, id: \.action) { command in
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
+                }
             }
 
             // TEAM-7.1: *Window → Team Activity Log* opens the activity
@@ -807,8 +840,11 @@ struct GrafttyApp: App {
                 Button("Install CLI Tool...") {
                     installCLI()
                 }
-                bridgedButton("Open Ghostty Settings", action: .openConfig) { handleOpenGhosttySettings() }
-                bridgedButton("Reload Ghostty Config", action: .reloadConfig) { handleReloadConfig() }
+                ForEach(GhosttyCommandRegistry.macSettingsActions, id: \.action) { command in
+                    bridgedButton(command, shortcutsByAction: hostShortcutsByAction) {
+                        handleGhosttyCommand(command)
+                    }
+                }
             }
         }
 
@@ -1192,7 +1228,10 @@ struct GrafttyApp: App {
                     appState: binding,
                     terminalManager: tm,
                     teamInbox: teamInbox,
-                    teamEventDispatcher: teamEventDispatcher
+                    teamEventDispatcher: teamEventDispatcher,
+                    worktreeMonitor: services.worktreeMonitor,
+                    statsStore: services.statsStore,
+                    worktreeCreations: services.cliWorktreeCreations
                 )
             }
         }
@@ -1227,7 +1266,9 @@ struct GrafttyApp: App {
 
         reconcileOnLaunch()
 
-        // Start the stats poller: a 5s ticker that, per-repo, gates the
+        // Start the stats safety-net poller: HEAD and origin-ref events
+        // provide the prompt path, while this 5s ticker catches
+        // coalesced or missed filesystem events. Per-repo, it gates the
         // 30-second `git fetch` cadence (DIVERGE-4.3) and unconditionally
         // refreshes every running worktree on every tick (DIVERGE-4.6).
         // Keeps polling while Graftty is backgrounded (DIVERGE-4.8) —
@@ -1444,6 +1485,10 @@ struct GrafttyApp: App {
         // shared registry so Mac pane backends can see web-client attaches.
         webController.setRemoteAttachmentRegistry(services.remoteAttachmentRegistry)
 
+        webController.setGhosttyKeybindingsProvider { [tm = terminalManager] in
+            await MainActor.run { tm.keybindBridge.allChords }
+        }
+
         // WEB-5.4: feed the web server a snapshot of running sessions on
         // each GET /sessions request. Binding snapshot is read on the
         // main actor; worktree names are routed through
@@ -1651,6 +1696,7 @@ struct GrafttyApp: App {
                 case .pathCollision: return .invalid("a worktree at that name already exists")
                 case .branchAlreadyMounted:
                     return .conflict(message: err.userMessage ?? "branch already mounted")
+                case .invalidInput(let msg): return .invalid(msg)
                 case .discoveryFailed(let msg): return .internalFailure(msg)
                 }
             }
@@ -1741,12 +1787,17 @@ struct GrafttyApp: App {
                                 message: "no pane with session name '\(target)'"
                             )
                         }
-                        // Mobile sends a coarse axis; we pick the "natural"
-                        // direction on each axis (right / down) so the new
-                        // pane appears after the target, matching what the
-                        // Mac sidebar context menu's "Split Right" / "Split
-                        // Down" defaults produce.
-                        let split: PaneSplit = direction == .horizontal ? .right : .down
+                        let split: PaneSplit
+                        switch direction {
+                        case .right:
+                            split = .right
+                        case .down:
+                            split = .down
+                        case .left:
+                            split = .left
+                        case .up:
+                            split = .up
+                        }
                         let slot = PaneSlotID(id: paneID)
                         guard Self.splitPane(
                             appState: appStateBinding,
@@ -2483,7 +2534,8 @@ struct GrafttyApp: App {
                 }
             }
         case .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend,
-             .teamBroadcast, .teamHook, .teamInbox, .teamMembers, .teamList:
+             .teamBroadcast, .teamHook, .teamInbox, .teamMembers, .teamList,
+             .createWorktree, .worktreeCreateStatus:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
             // fire-and-forget onMessage path.
@@ -2500,7 +2552,10 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         teamInbox: TeamInbox,
-        teamEventDispatcher: TeamEventDispatcher
+        teamEventDispatcher: TeamEventDispatcher,
+        worktreeMonitor: WorktreeMonitor,
+        statsStore: WorktreeStatsStore,
+        worktreeCreations: CLIWorktreeCreationStore
     ) -> ResponseMessage? {
         switch message {
         case .listPanes(let path):
@@ -2597,10 +2652,115 @@ struct GrafttyApp: App {
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
             )
+        case .createWorktree(
+            let callerPath,
+            let worktreeName,
+            let branchName,
+            let existing,
+            let command,
+            let agentRuntime
+        ):
+            return beginCLIWorktreeCreation(
+                callerPath: callerPath,
+                worktreeName: worktreeName,
+                branchName: branchName,
+                existing: existing,
+                command: command,
+                agentRuntime: agentRuntime,
+                appState: appState,
+                terminalManager: terminalManager,
+                teamEventDispatcher: teamEventDispatcher,
+                worktreeMonitor: worktreeMonitor,
+                statsStore: statsStore,
+                worktreeCreations: worktreeCreations
+            )
+        case .worktreeCreateStatus(let operationID):
+            guard let status = worktreeCreations.status(operationID: operationID) else {
+                return .error("unknown or expired worktree creation operation")
+            }
+            return .worktreeCreate(status)
         case .notify, .clear:
             // Fire-and-forget cases — no response. `onMessage` already handled them.
             return nil
         }
+    }
+
+    @MainActor
+    private static func beginCLIWorktreeCreation(
+        callerPath: String,
+        worktreeName: String,
+        branchName: String,
+        existing: Bool,
+        command: String?,
+        agentRuntime: TeamHookRuntime?,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager,
+        teamEventDispatcher: TeamEventDispatcher,
+        worktreeMonitor: WorktreeMonitor,
+        statsStore: WorktreeStatsStore,
+        worktreeCreations: CLIWorktreeCreationStore
+    ) -> ResponseMessage {
+        if let error = CLIWorktreeCreationPolicy.validationError(
+            agentRuntime: agentRuntime,
+            teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+        ) {
+            return .error(error)
+        }
+        guard let repo = appState.wrappedValue.repos.first(where: { repo in
+            repo.worktrees.contains(where: { $0.path == callerPath })
+        }) else {
+            return .error("caller is not inside a tracked worktree")
+        }
+
+        let branch: BranchSelection = existing
+            ? .useExisting(name: branchName, source: .local)
+            : .createNew(name: branchName)
+        let worktreePath: String
+        switch AddWorktreeFlow.beginCreate(
+            repoPath: repo.path,
+            worktreeName: worktreeName,
+            branch: branch,
+            appState: appState
+        ) {
+        case .success(let path):
+            worktreePath = path
+        case .failure(let error):
+            return .error(error.userMessage ?? "could not begin worktree creation")
+        }
+
+        let status = worktreeCreations.begin(
+            worktreePath: worktreePath,
+            messageAddress: worktreePath
+        )
+        let initialCommand = command.flatMap { value in
+            value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
+        }
+        Task { @MainActor in
+            let result = await AddWorktreeFlow.finishCreate(
+                repoPath: repo.path,
+                worktreePath: worktreePath,
+                branch: branch,
+                appState: appState,
+                worktreeMonitor: worktreeMonitor,
+                statsStore: statsStore,
+                terminalManager: terminalManager,
+                teamEventDispatcher: teamEventDispatcher,
+                initialCommand: initialCommand
+            )
+            switch result {
+            case .success:
+                worktreeCreations.markReady(operationID: status.operationID)
+            case .failure(let error):
+                let message: String
+                if case .discoveryFailed(let detail) = error {
+                    message = detail
+                } else {
+                    message = error.userMessage ?? "worktree creation failed"
+                }
+                worktreeCreations.markFailed(operationID: status.operationID, error: message)
+            }
+        }
+        return .worktreeCreate(status)
     }
 
     @MainActor
@@ -2684,7 +2844,6 @@ struct GrafttyApp: App {
                 inbox: teamInbox,
                 dispatcher: teamEventDispatcher,
                 automaticDeliveryOwner: { teamID, worktree, runtime, paneSessionName in
-                    guard let paneSessionName else { return false }
                     let resolver = TeamDeliveryOwnershipResolver(
                         records: { presenceRecords },
                         liveness: AppTeamDeliveryLiveness(
@@ -2693,7 +2852,13 @@ struct GrafttyApp: App {
                         )
                     )
                     let key = TeamDeliveryOwnerKey(teamID: teamID, worktree: worktree, runtime: runtime)
-                    return resolver.owner(for: key)?.paneSessionName == paneSessionName
+                    guard let owner = resolver.owner(for: key) else {
+                        // Preserve direct-shell / registration-failure fallback:
+                        // only suppress a hook when another live pane is a
+                        // positively identified owner.
+                        return true
+                    }
+                    return owner.paneSessionName == paneSessionName
                 }
             ).hook(
                 callerWorktree: callerPath,
@@ -2878,7 +3043,7 @@ struct GrafttyApp: App {
         return EventBodyRenderer.renderSessionPrompt(
             template: template,
             branch: viewer.branch,
-            lead: viewer.role == .lead
+            isMainWorktree: viewer.isMainWorktree
         )
     }
 
@@ -3365,10 +3530,9 @@ struct GrafttyApp: App {
     /// DFS order regardless of the spatial layout — that's what the menu
     /// items promise. Kept separate from the spatial `navigatePane` so
     /// TERM-7.3 (arrow-key spatial nav) doesn't silently change the
-    /// semantics of Cmd+[ / Cmd+] on users who rely on the plain
-    /// round-robin sequence.
+    /// round-robin semantics shared by fixed and host tab-action chords.
     @MainActor
-    fileprivate static func navigatePaneInTreeOrder(
+    static func navigatePaneInTreeOrder(
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         from terminalID: PaneSlotID,
@@ -3561,7 +3725,8 @@ struct GrafttyApp: App {
             defaultCommand: command,
             firstPaneOnly: firstPaneOnly,
             isFirstPane: terminalManager.isFirstPane(terminalID),
-            wasRehydrated: terminalManager.wasRehydrated(terminalID)
+            wasRehydrated: terminalManager.wasRehydrated(terminalID),
+            hasExplicitInitialInput: terminalManager.consumeExplicitInitialInputMarker(terminalID)
         )
 
         switch decision {
@@ -3631,6 +3796,62 @@ struct GrafttyApp: App {
         Self.openGhosttySettings()
     }
 
+    private func handleGhosttyCommand(_ command: GhosttyCommandRegistry.Entry) {
+        switch command.kind {
+        case let .split(direction):
+            handleSplit(paneSplit(for: direction))
+        case .closePane:
+            handleClosePane()
+        case let .focusPane(direction):
+            handleNavigate(navigationDirection(for: direction))
+        case let .focusPaneByOrder(forward):
+            handleNavigateTreeOrder(forward: forward)
+        case .unsupported:
+            handleUnsupportedGhosttyAction(command.action)
+        }
+    }
+
+    private func handleUnsupportedGhosttyAction(_ action: GhosttyAction) {
+        switch action {
+        case .toggleSplitZoom:
+            handleToggleZoom()
+        case .equalizeSplits:
+            handleEqualizeSplits()
+        case .reloadConfig:
+            handleReloadConfig()
+        case .openConfig:
+            handleOpenGhosttySettings()
+        default:
+            break
+        }
+    }
+
+    private func paneSplit(for direction: GhosttySplitDirection) -> PaneSplit {
+        switch direction {
+        case .left:
+            return .left
+        case .right:
+            return .right
+        case .up:
+            return .up
+        case .down:
+            return .down
+        }
+    }
+
+    private func navigationDirection(for direction: GhosttyPaneFocusDirection) -> NavigationDirection {
+        switch direction {
+        case .left:
+            return .left
+        case .right:
+            return .right
+        case .up:
+            return .up
+        case .down:
+            return .down
+        }
+    }
+
     /// Confirm with the user, then destroy every running worktree's panes
     /// (which fires `zmx kill --force` per session via `destroySurface` →
     /// `killZmxSession`) and mark those worktrees `.closed` via
@@ -3696,16 +3917,6 @@ struct GrafttyApp: App {
 
     // MARK: - View builder for bridge-shortcutted menu buttons
 
-    /// Resolve a `GhosttyAction`'s configured chord to a SwiftUI shortcut,
-    /// or nil if unbound — shared by `bridgedButton` and command views that
-    /// need the shortcut value directly. `@MainActor` to match its access of
-    /// the main-actor-isolated `terminalManager.keybindBridge`.
-    @MainActor
-    private func shortcut(for action: GhosttyAction) -> KeyboardShortcut? {
-        guard let chord = terminalManager.keybindBridge[action] else { return nil }
-        return KeyboardShortcutFromChord.shortcut(from: chord)
-    }
-
     /// Wraps a menu button so its keyboard shortcut is derived from the
     /// keybind bridge at runtime, not hardcoded. If the action has no
     /// configured binding (or the key can't be translated to a
@@ -3713,15 +3924,15 @@ struct GrafttyApp: App {
     @MainActor
     @ViewBuilder
     private func bridgedButton(
-        _ label: LocalizedStringKey,
-        action: GhosttyAction,
+        _ command: GhosttyCommandRegistry.Entry,
+        shortcutsByAction: [GhosttyAction: KeyboardShortcut],
         onTap: @escaping () -> Void
     ) -> some View {
         Group {
-            if let shortcut = shortcut(for: action) {
-                Button(label, action: onTap).keyboardShortcut(shortcut)
+            if let shortcut = shortcutsByAction[command.action] {
+                Button(command.label, action: onTap).keyboardShortcut(shortcut)
             } else {
-                Button(label, action: onTap)
+                Button(command.label, action: onTap)
             }
         }
     }
@@ -3825,6 +4036,14 @@ struct GrafttyApp: App {
 
 @MainActor
 final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
+    typealias DiscoverWorktrees = @Sendable (
+        _ repo: RepoEntry
+    ) async throws -> [DiscoveredWorktree]
+
+    nonisolated static let defaultDiscoverWorktrees: DiscoverWorktrees = { repo in
+        try await WorktreeDiscovery.discover(repo: repo)
+    }
+
     /// Tests substitute an immediate-fire recorder so a CI MainActor
     /// starvation episode can't push the wall-clock follow-up sleep
     /// past the test's `waitUntil` window.
@@ -3845,6 +4064,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
     let statsStore: WorktreeStatsStore
     let prStatusStore: PRStatusStore
     let remoteBranchStore: RemoteBranchStore
+    private let discoverWorktrees: DiscoverWorktrees
     private let originRefPRFollowUpScheduler: FollowUpScheduler
 
     init(
@@ -3852,12 +4072,14 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         statsStore: WorktreeStatsStore,
         prStatusStore: PRStatusStore,
         remoteBranchStore: RemoteBranchStore,
+        discoverWorktrees: @escaping DiscoverWorktrees = WorktreeMonitorBridge.defaultDiscoverWorktrees,
         originRefPRFollowUpScheduler: @escaping FollowUpScheduler = WorktreeMonitorBridge.defaultFollowUpScheduler
     ) {
         self.appState = appState
         self.statsStore = statsStore
         self.prStatusStore = prStatusStore
         self.remoteBranchStore = remoteBranchStore
+        self.discoverWorktrees = discoverWorktrees
         self.originRefPRFollowUpScheduler = originRefPRFollowUpScheduler
     }
 
@@ -3870,6 +4092,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
         let binding = appState
         let store = statsStore
         let prStore = prStatusStore
+        let discover = discoverWorktrees
         // `git worktree list --porcelain` is a subprocess wait. Awaiting the
         // now-async `GitWorktreeDiscovery.discover` yields the main actor
         // during the wait so ghostty keystrokes aren't delayed (prior
@@ -3879,7 +4102,7 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }) else { return }
             let discovered: [DiscoveredWorktree]
             do {
-                discovered = try await WorktreeDiscovery.discover(repo: repo)
+                discovered = try await discover(repo)
             } catch {
                 NSLog("[Graftty] worktreeMonitorDidDetectChange: discover failed for %@: %@",
                       repoPath, String(describing: error))
@@ -3915,9 +4138,10 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
                 monitor.watchWorktreeContents(worktreePath: wt.path)
             }
 
-            // Existing worktrees' stats are driven by their own HEAD
-            // callbacks and the polling loop, so a `.git/worktrees/`
-            // directory tick only needs to seed stats for new entries.
+            // Existing worktrees' stats are driven by their own HEAD and
+            // origin-ref callbacks plus the polling fallback, so a
+            // `.git/worktrees/` directory tick only needs to seed stats
+            // for new entries.
             for wt in result.newlyAdded where wt.state == .running {
                 store.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
             }
@@ -3990,15 +4214,24 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
     /// `<repoPath>/.git/logs/refs/remotes/origin/` moves — i.e. a
     /// `git push` or `git fetch` landed. Covers the `gh pr create`
     /// flow, which pushes then creates the PR via API without touching
-    /// local HEAD. Drives only the remote-branch and PR refresh; the
-    /// divergence stats are already covered by the unconditional 5s
-    /// polling tick (DIVERGE-4.6), so they don't need a parallel
-    /// FSEvents kick here.
+    /// local HEAD. Refreshes divergence for the repo's running
+    /// worktrees immediately, then drives the remote-branch and PR
+    /// refresh. The polling tick remains a fallback for a coalesced or
+    /// missed FSEvent.
     nonisolated func worktreeMonitorDidDetectOriginRefChange(_ monitor: WorktreeMonitor, repoPath: String) {
         let binding = appState
+        let store = statsStore
         let remoteBranchStore = remoteBranchStore
         Task { @MainActor in
-            guard binding.wrappedValue.repos.contains(where: { $0.path == repoPath }) else { return }
+            guard let repo = binding.wrappedValue.repos.first(where: {
+                $0.path == repoPath && $0.isGitTracked
+            }) else { return }
+            // Graftty's own periodic fetch also moves origin refs. Limit
+            // this repo-wide signal to running rows so it doesn't turn
+            // into recurring work proportional to closed history.
+            for wt in repo.worktrees where wt.state == .running {
+                store.refresh(worktreePath: wt.path, repoPath: repoPath, branch: wt.branch)
+            }
             remoteBranchStore.refresh(repoPath: repoPath) { [weak self] in
                 self?.refreshPushedPRs(repoPath: repoPath)
                 self?.scheduleOriginRefPRFollowUps(repoPath: repoPath)
@@ -4028,20 +4261,22 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
 
     nonisolated func worktreeMonitorDidDetectBranchChange(_ monitor: WorktreeMonitor, worktreePath: String) {
         let binding = appState
+        let store = statsStore
         let prStore = prStatusStore
         let remoteBranchStore = remoteBranchStore
+        let discover = discoverWorktrees
         // Branch changes fire in bursts (rebase, interactive checkout), so
         // `GitWorktreeDiscovery.discover`'s subprocess wait must yield the
         // main actor — the async version does that naturally. Scope the
         // discover call to the owning repo only, not every tracked repo.
         Task { @MainActor in
             guard let repo = binding.wrappedValue.repos.first(where: { repo in
-                repo.worktrees.contains(where: { $0.path == worktreePath })
+                repo.isGitTracked && repo.worktrees.contains(where: { $0.path == worktreePath })
             }) else { return }
             let repoPath = repo.path
             let discovered: [DiscoveredWorktree]
             do {
-                discovered = try await WorktreeDiscovery.discover(repo: repo)
+                discovered = try await discover(repo)
             } catch {
                 NSLog("[Graftty] worktreeMonitorDidDetectBranchChange: discover failed for %@: %@",
                       repoPath, String(describing: error))
@@ -4051,6 +4286,9 @@ final class WorktreeMonitorBridge: WorktreeMonitorDelegate {
             guard let repoIdx = binding.wrappedValue.repos.firstIndex(where: { $0.path == repoPath }),
                   let wtIdx = binding.wrappedValue.repos[repoIdx].worktrees.firstIndex(where: { $0.path == worktreePath }) else { return }
             binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].branch = match.branch
+            if binding.wrappedValue.repos[repoIdx].worktrees[wtIdx].state.hasOnDiskWorktree {
+                store.refresh(worktreePath: worktreePath, repoPath: repoPath, branch: match.branch)
+            }
             prStore.clear(worktreePath: worktreePath)
             remoteBranchStore.refresh(repoPath: repoPath) {
                 guard let repo = binding.wrappedValue.repos.first(where: { $0.path == repoPath }),

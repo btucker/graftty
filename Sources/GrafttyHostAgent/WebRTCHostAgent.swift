@@ -131,8 +131,12 @@ public actor WebRTCHostAgent {
     }()
     private var peerConnection: RTCPeerConnection?
     private var dataChannel: RTCDataChannel?
+    /// The lossless inbox attached to `dataChannel` synchronously inside
+    /// `peerConnection(_:didOpen:)` — see `DataChannelInbox`. Handed to
+    /// `SSHNIOTransport` in `installSSHHandler` so bytes the client sent
+    /// before the transport existed replay instead of dropping.
+    private var dataChannelInbox: DataChannelInbox?
     private let delegate: PeerConnectionDelegate
-    private let dataChannelDelegate: DataChannelDelegate
 
     /// Resumed once `iceGatheringState` first reaches `.complete`. Stored on
     /// the actor so the WebRTC-thread delegate callback and the actor's
@@ -143,11 +147,6 @@ public actor WebRTCHostAgent {
 
     /// See `RemoteHostConnection.iceGatheringTimeout`.
     private static let iceGatheringTimeout: Duration = .seconds(5)
-
-    /// Most-recently received binary frame. Test-only entry point —
-    /// production replaces this with channel-framing dispatch in M1.4.
-    /// `internal` so the in-target test can read it via `@testable import`.
-    internal private(set) var lastReceivedBinary: Data?
 
     public init(
         hostKey: Curve25519.Signing.PrivateKey,
@@ -169,7 +168,6 @@ public actor WebRTCHostAgent {
         self.displayOwnershipBroadcaster = DisplayOwnershipBroadcaster(store: displayOwnershipStore)
         self.sshConnectionRegistry = sshConnectionRegistry
         self.delegate = PeerConnectionDelegate()
-        self.dataChannelDelegate = DataChannelDelegate()
     }
 
     /// Replace the `panes-state` subscription callback. The R5 wiring path
@@ -213,7 +211,7 @@ public actor WebRTCHostAgent {
         // here, exactly once per accepted offer — see `connectionGeneration`'s
         // doc comment for why this is the right site and what it protects
         // against.
-        connectionGeneration += 1
+        beginConnectionLifecycle()
         let config = Self.defaultConfig()
         let constraints = RTCMediaConstraints(
             mandatoryConstraints: nil,
@@ -231,8 +229,8 @@ public actor WebRTCHostAgent {
         // The mobile side is the data-channel creator; the host receives
         // the data channel via `didOpen dataChannel` (handled in
         // `PeerConnectionDelegate.onDataChannel`).
-        delegate.onDataChannel = { [weak self] dc in
-            Task { await self?.adoptDataChannel(dc) }
+        delegate.onDataChannel = { [weak self] dc, inbox in
+            Task { await self?.adoptDataChannel(dc, inbox: inbox) }
         }
 
         do {
@@ -344,11 +342,26 @@ public actor WebRTCHostAgent {
         // matching `sshTransport`/`authenticatedRegistration`/`peerConnection`/
         // `dataChannel` below.
         sshInstallStarted = false
-        if let transport = sshTransport {
-            sshTransport = nil
+        // Snapshot + detach every connection field SYNCHRONOUSLY before the
+        // first await: `acceptOffer` is permitted from `.closed`, so a
+        // reconnect can interleave during `transport.close()` and populate a
+        // fresh peerConnection/dataChannel/dataChannelInbox/registration —
+        // the teardown below must only ever touch the objects THIS call
+        // detached, never whatever is live when it resumes.
+        let transport = sshTransport
+        sshTransport = nil
+        let registration = authenticatedRegistration
+        authenticatedRegistration = nil
+        let pc = peerConnection
+        peerConnection = nil
+        let dc = dataChannel
+        dataChannel = nil
+        dataChannelInbox = nil
+
+        if let transport {
             await transport.close()
         }
-        if let (deviceID, token) = authenticatedRegistration {
+        if let (deviceID, token) = registration {
             // Remove the stale entry so a later `revoke` of this same
             // peer (after it reconnects) hits the NEW connection's
             // closure rather than this torn-down one. `deregister` is
@@ -356,16 +369,27 @@ public actor WebRTCHostAgent {
             // reconnect already replaced it with a fresh token (that's
             // the identity-scoping `token` provides — see
             // `authenticatedRegistration`'s doc comment).
-            authenticatedRegistration = nil
             let registry = sshConnectionRegistry
             Task { await registry.deregister(deviceID: deviceID, token: token) }
         }
-        if let pc = peerConnection {
-            pc.close()
-            peerConnection = nil
-        }
-        dataChannel?.close()
-        dataChannel = nil
+        pc?.close()
+        dc?.close()
+    }
+
+    /// Begins a fresh connection lifecycle — called exactly once per accepted
+    /// offer. Besides bumping the generation guard, it re-arms the
+    /// per-connection SSH install latch: a stale `installSSHHandler` Task
+    /// racing the previous `close()` (didOpen queues adopt/install as Tasks,
+    /// so close can land between them) latches `sshInstallStarted = true` on
+    /// the already-closed agent AFTER close's own reset ran, and without this
+    /// re-arm the next connection's install would hit the stale latch and
+    /// never attach SSH to its channel.
+    ///
+    /// `internal` so `WebRTCHostAgentReconnectTests` can exercise the re-arm
+    /// without driving native WebRTC through `acceptOffer`.
+    internal func beginConnectionLifecycle() {
+        connectionGeneration += 1
+        sshInstallStarted = false
     }
 
     /// Generation-guarded teardown used ONLY by the closure registered with
@@ -386,7 +410,7 @@ public actor WebRTCHostAgent {
         await close()
     }
 
-    private func adoptDataChannel(_ dc: RTCDataChannel) {
+    private func adoptDataChannel(_ dc: RTCDataChannel, inbox: DataChannelInbox) {
         guard dc.label == GrafttyWebRTC.dataChannelLabel else {
             // Unexpected label — close defensively. With Noise handshake (M1.3),
             // peer identity will be authenticated separately; this is belt-and-
@@ -394,24 +418,27 @@ public actor WebRTCHostAgent {
             dc.close()
             return
         }
+        guard state != .closed else {
+            // `didOpen` delivered this adoption as a Task, so `close()` can
+            // have run in between — a late adoption must not resurrect
+            // channel state on the closed agent (or spawn an install that
+            // latches `sshInstallStarted` for the next connection).
+            dc.close()
+            return
+        }
         self.dataChannel = dc
-        dc.delegate = dataChannelDelegate
-        dataChannelDelegate.onOpen = { [weak self] in
-            Task { await self?.installSSHHandler() }
-        }
-        dataChannelDelegate.onClosed = { [weak self] in
-            Task { await self?.handleTransportClosed() }
-        }
-        dataChannelDelegate.onMessage = { [weak self] data in
-            Task { await self?.recordReceivedBinary(data) }
-        }
-        if dc.readyState == .open {
-            Task { await installSSHHandler() }
-        }
-    }
-
-    private func recordReceivedBinary(_ data: Data) {
-        lastReceivedBinary = data
+        self.dataChannelInbox = inbox
+        // Install the SSH stack immediately — `transport.start()` (inside
+        // `installSSHHandler`) parks until the channel opens, or throws if
+        // it dies first. The inbox was attached as the channel's delegate
+        // synchronously inside `peerConnection(_:didOpen:)`, so every byte
+        // the client has sent since the channel was announced — including
+        // the SSH version banner NIOSSH writes the instant the CLIENT's
+        // open notification lands — is buffered and replays into the
+        // transport. Before the inbox, banner bytes racing the delegate
+        // handoff were silently discarded, stalling the handshake forever
+        // (the dominant cause of the IPAD-5.2 CI flake).
+        Task { await installSSHHandler() }
     }
 
     /// `internal` (rather than `private`) so `WebRTCHostAgentReconnectTests`
@@ -424,8 +451,8 @@ public actor WebRTCHostAgent {
     internal func installSSHHandler() async {
         guard !sshInstallStarted else { return }
         sshInstallStarted = true
-        guard let dc = dataChannel else { return }
-        let transport = SSHNIOTransport(dataChannel: dc)
+        guard let dc = dataChannel, let inbox = dataChannelInbox else { return }
+        let transport = SSHNIOTransport(dataChannel: dc, inbox: inbox)
         self.sshTransport = transport  // assign before start so close() can find it
         let factory = streamFactory
         let panesStateSubscribe = self.panesStateSubscribe
@@ -646,7 +673,7 @@ public actor WebRTCHostAgent {
 /// unsafe is bounded; `@Sendable` keeps callers honest.
 private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
     nonisolated(unsafe) var onIceCandidate: (@Sendable (RTCIceCandidate) -> Void)?
-    nonisolated(unsafe) var onDataChannel: (@Sendable (RTCDataChannel) -> Void)?
+    nonisolated(unsafe) var onDataChannel: (@Sendable (RTCDataChannel, DataChannelInbox) -> Void)?
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
@@ -664,7 +691,11 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate,
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
-        onDataChannel?(dataChannel)
+        // WebRTC serializes message delivery behind this callback. Attach
+        // the inbox before returning so the actor hop cannot lose bytes.
+        let inbox = DataChannelInbox()
+        dataChannel.delegate = inbox
+        onDataChannel?(dataChannel, inbox)
     }
 }
 
@@ -681,23 +712,5 @@ private final class AuthenticatedPeerBox: @unchecked Sendable {
     var deviceID: RemoteDeviceID? {
         get { lock.lock(); defer { lock.unlock() }; return _deviceID }
         set { lock.lock(); defer { lock.unlock() }; _deviceID = newValue }
-    }
-}
-
-private final class DataChannelDelegate: NSObject, RTCDataChannelDelegate, @unchecked Sendable {
-    nonisolated(unsafe) var onOpen: (@Sendable () -> Void)?
-    nonisolated(unsafe) var onClosed: (@Sendable () -> Void)?
-    nonisolated(unsafe) var onMessage: (@Sendable (Data) -> Void)?
-
-    func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
-        if dataChannel.readyState == .open {
-            onOpen?()
-        } else if dataChannel.readyState == .closed {
-            onClosed?()
-        }
-    }
-
-    func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
-        onMessage?(buffer.data)
     }
 }

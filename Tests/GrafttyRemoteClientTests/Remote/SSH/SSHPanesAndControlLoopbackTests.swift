@@ -86,7 +86,7 @@ struct SSHPanesAndControlLoopbackTests {
             expectedHostFingerprint: Self.fingerprint(of: serverKey),
             subscribe: subscribe,
             mutator: mutator,
-            request: .split(target: "session-a", direction: .vertical)
+            request: .split(target: "session-a", direction: .down)
         )
 
         #expect(response == .ok)
@@ -937,7 +937,7 @@ fileprivate actor LoopbackPeer: WebRTCIceCandidateReceiver {
             Task { await self?.handleDataChannelOpen(dc) }
         }
         if dc.readyState == .open {
-            Task { await self.handleDataChannelOpen(dc) }
+            Task { self.handleDataChannelOpen(dc) }
         }
         dc.delegate = tracker
         self.currentOpenTracker = tracker

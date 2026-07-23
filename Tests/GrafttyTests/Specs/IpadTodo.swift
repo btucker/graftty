@@ -44,7 +44,7 @@ struct IpadTodo {
     func ipad_2_7() async throws { }
 
     @Test("""
-@spec IPAD-3.1: When `MultiPaneDetailView` has a focused leaf and the soft keyboard is hidden, the application shall overlay a `FocusedPaneToolbar` on the focused leaf containing Split Right, Split Down, Swap, and Close icons.
+@spec IPAD-3.1: When `MultiPaneDetailView` has a focused leaf and the soft keyboard is hidden, the application shall expose a focused-pane toolbar containing Split Right, Split Down, Split Left, Split Up, Swap, and Close controls.
 """, .disabled("not yet implemented"))
     func ipad_3_1() async throws { }
 
@@ -54,7 +54,7 @@ struct IpadTodo {
     func ipad_3_2() async throws { }
 
     @Test("""
-@spec IPAD-3.3: When the user taps Split Right or Split Down in the toolbar, the application shall send a `pane_control` RPC with `type: "split"`, `target` set to the focused leaf's `sessionName`, and `direction` set to `"horizontal"` or `"vertical"` respectively.
+@spec IPAD-3.3: When the user taps Split Right, Split Down, Split Left, or Split Up in the toolbar, the application shall send a `pane_control` RPC with `type: "split"`, `target` set to the focused leaf's `sessionName`, and `direction` set to `"right"`, `"down"`, `"left"`, or `"up"` respectively.
 """, .disabled("not yet implemented"))
     func ipad_3_3() async throws { }
 

@@ -160,6 +160,8 @@ private struct PaneTile: View {
                 TerminalPaneView(
                     session: client.session,
                     controller: controller,
+                    renderPace: client.renderPace,
+                    onUserInteraction: { [weak client] in client?.wakeRenderer() },
                     preferredInterfaceStyle: preferredInterfaceStyle,
                     onWillUnmount: { snapshot in client.setIdleSnapshot(snapshot) }
                 )

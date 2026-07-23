@@ -14,7 +14,7 @@ struct TeamCLITests {
     // MARK: - TeamListMember protocol (TEAM-4.3 output contract)
 
     /// TEAM-4.3: the per-member line format is:
-    ///   "<name>  branch=<branch>  worktree=<path>  role=<role>  running=<bool>"
+    ///   "<name>  branch=<branch>  worktree=<path>  main=<bool>  running=<bool>"
     /// This test validates the expected format string by constructing the same
     /// interpolation the CLI's `TeamList.run()` uses, so any change to the
     /// format string breaks here first.
@@ -23,11 +23,11 @@ struct TeamCLITests {
             name: "feature/login",
             branch: "feature/login",
             worktreePath: "/repo/.worktrees/feature-login",
-            role: "coworker",
+            isMainWorktree: false,
             isRunning: true
         )
-        let line = "\(m.name)  branch=\(m.branch)  worktree=\(m.worktreePath)  role=\(m.role)  running=\(m.isRunning)"
-        #expect(line == "feature/login  branch=feature/login  worktree=/repo/.worktrees/feature-login  role=coworker  running=true")
+        let line = "\(m.name)  branch=\(m.branch)  worktree=\(m.worktreePath)  main=\(m.isMainWorktree)  running=\(m.isRunning)"
+        #expect(line == "feature/login  branch=feature/login  worktree=/repo/.worktrees/feature-login  main=false  running=true")
     }
 
     @Test func headerLineFormatMatchesSpec() {
@@ -45,7 +45,7 @@ struct TeamCLITests {
             name: "main",
             branch: "main",
             worktreePath: "/repo",
-            role: "lead",
+            isMainWorktree: true,
             isRunning: true
         )
         let data = try JSONEncoder().encode(original)
@@ -58,7 +58,7 @@ struct TeamCLITests {
             name: "alice",
             branch: "feature/alice",
             worktreePath: "/repo/.worktrees/alice",
-            role: "coworker",
+            isMainWorktree: false,
             isRunning: false
         )
         let data = try JSONEncoder().encode(m)
@@ -67,15 +67,24 @@ struct TeamCLITests {
         #expect(json["worktree_path"] as? String == "/repo/.worktrees/alice")
         #expect(json["is_running"] as? Bool == false)
         #expect(json["name"] as? String == "alice")
-        #expect(json["role"] as? String == "coworker")
+        #expect(json["is_main_worktree"] as? Bool == false)
+        #expect(json["role"] == nil)
+    }
+
+    @Test func teamListMemberDecodesLegacyRole() throws {
+        let data = Data(#"{"name":"main","branch":"main","worktree_path":"/repo","role":"lead","is_running":true}"#.utf8)
+
+        let decoded = try JSONDecoder().decode(TeamListMember.self, from: data)
+
+        #expect(decoded.isMainWorktree)
     }
 
     // MARK: - ResponseMessage.teamList round-trip
 
     @Test func responseMessageTeamListRoundTrips() throws {
         let members = [
-            TeamListMember(name: "main", branch: "main", worktreePath: "/r", role: "lead", isRunning: true),
-            TeamListMember(name: "feature-x", branch: "feature/x", worktreePath: "/r/.worktrees/feature-x", role: "coworker", isRunning: false),
+            TeamListMember(name: "main", branch: "main", worktreePath: "/r", isMainWorktree: true, isRunning: true),
+            TeamListMember(name: "feature-x", branch: "feature/x", worktreePath: "/r/.worktrees/feature-x", isMainWorktree: false, isRunning: false),
         ]
         let original = ResponseMessage.teamList(teamName: "myrepo", members: members)
         let data = try JSONEncoder().encode(original)
@@ -151,16 +160,16 @@ struct TeamCLITests {
                 name: m.name,
                 branch: m.branch,
                 worktreePath: m.worktreePath,
-                role: m.role.rawValue,
+                isMainWorktree: m.isMainWorktree,
                 isRunning: m.isRunning
             )
         }
         #expect(members.count == 2)
-        let lead = members.first(where: { $0.role == "lead" })!
-        #expect(lead.worktreePath == "/repo")
-        #expect(lead.branch == "main")
-        let coworker = members.first(where: { $0.role == "coworker" })!
-        #expect(coworker.branch == "feature/alice")
+        let mainWorktree = members.first(where: \.isMainWorktree)!
+        #expect(mainWorktree.worktreePath == "/repo")
+        #expect(mainWorktree.branch == "main")
+        let linkedWorktree = members.first(where: { !$0.isMainWorktree })!
+        #expect(linkedWorktree.branch == "feature/alice")
     }
 
     @Test func memberNamedReturnsNilForUnknownRecipient() {

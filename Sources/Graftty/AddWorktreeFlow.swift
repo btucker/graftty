@@ -59,6 +59,10 @@ enum AddWorktreeFlow {
         /// has the branch mounted in another worktree. Holds the colliding
         /// worktree's path so the caller can surface it.
         case branchAlreadyMounted(at: String)
+        /// A raw CLI/HTTP client supplied a name that the interactive UI
+        /// would never emit (for example `../outside`). Holds the validation
+        /// message so every surface reports the same rejection.
+        case invalidInput(String)
     }
 
     /// Phase one: validate the request and insert a `.creating`
@@ -75,6 +79,19 @@ enum AddWorktreeFlow {
         branch: BranchSelection,
         appState: Binding<AppState>
     ) -> Swift.Result<String, FlowError> {
+        let usesExistingBranch: Bool
+        if case .useExisting = branch {
+            usesExistingBranch = true
+        } else {
+            usesExistingBranch = false
+        }
+        if let message = WorktreeCreationInput.validationError(
+            worktreeName: worktreeName,
+            branchName: branch.branchName,
+            existing: usesExistingBranch
+        ) {
+            return .failure(.invalidInput(message))
+        }
         guard let repoIdx = appState.wrappedValue.repos
             .firstIndex(where: { $0.path == repoPath }) else {
             return .failure(.repoNotFound)
@@ -115,7 +132,8 @@ enum AddWorktreeFlow {
         worktreeMonitor: WorktreeMonitor,
         statsStore: WorktreeStatsStore,
         terminalManager: TerminalManager,
-        teamEventDispatcher: TeamEventDispatcher
+        teamEventDispatcher: TeamEventDispatcher,
+        initialCommand: String? = nil
     ) async -> Swift.Result<Result, FlowError> {
         // For .useExisting, the start point is the existing branch itself;
         // git takes it from argv. For .createNew, default to origin's main.
@@ -210,16 +228,30 @@ enum AddWorktreeFlow {
         for leafID in splitTree.allLeaves {
             terminalManager.markFirstPane(leafID)
         }
-        _ = terminalManager.createSurfaces(
+        let createdSurfaces = terminalManager.createSurfaces(
             for: splitTree,
             paneSessions: appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].paneSessions,
-            worktreePath: worktreePath
+            worktreePath: worktreePath,
+            extraInitialInput: initialCommand.map { $0 + "\r" }
         )
-        appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .running
 
         guard let firstLeaf = splitTree.allLeaves.first else {
             return .failure(.discoveryFailed("split tree produced no leaves"))
         }
+        guard let firstHandle = createdSurfaces[firstLeaf] ?? terminalManager.handle(for: firstLeaf) else {
+            appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
+            return .failure(.discoveryFailed("failed to create terminal surface"))
+        }
+        if initialCommand != nil, !firstHandle.startForBackgroundLaunch() {
+            terminalManager.destroySurfaces(terminalIDs: splitTree.allLeaves)
+            appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .closed
+            return .failure(.discoveryFailed("failed to start terminal backend"))
+        }
+        appState.wrappedValue.repos[repoIdx].worktrees[wtIdx].state = .running
+        terminalManager.surfaceBudget.noteCreated(
+            worktreePath: worktreePath,
+            splitTreesByPath: appState.wrappedValue.runningSplitTreesByPath()
+        )
         let firstSessionID = appState.wrappedValue.repos[repoIdx].worktrees[wtIdx]
             .ensurePaneSession(for: firstLeaf)
         let sessionName = ZmxLauncher.sessionName(for: firstSessionID)
@@ -239,7 +271,8 @@ enum AddWorktreeFlow {
         worktreeMonitor: WorktreeMonitor,
         statsStore: WorktreeStatsStore,
         terminalManager: TerminalManager,
-        teamEventDispatcher: TeamEventDispatcher
+        teamEventDispatcher: TeamEventDispatcher,
+        initialCommand: String? = nil
     ) async -> Swift.Result<Result, FlowError> {
         let worktreePath: String
         switch beginCreate(
@@ -259,7 +292,8 @@ enum AddWorktreeFlow {
             worktreeMonitor: worktreeMonitor,
             statsStore: statsStore,
             terminalManager: terminalManager,
-            teamEventDispatcher: teamEventDispatcher
+            teamEventDispatcher: teamEventDispatcher,
+            initialCommand: initialCommand
         )
     }
 
@@ -289,6 +323,7 @@ extension AddWorktreeFlow.FlowError {
         case .branchAlreadyMounted(let path):
             let base = (path as NSString).lastPathComponent
             return "branch is already mounted at " + base
+        case .invalidInput(let message): return message
         case .discoveryFailed: return nil
         }
     }

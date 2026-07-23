@@ -31,4 +31,46 @@ struct AddWorktreeFlowBeginCreateTests {
             Issue.record("expected .branchAlreadyMounted, got \(result)")
         }
     }
+
+    @Test("Raw clients cannot escape the repository's .worktrees directory")
+    func traversalNameRejected() {
+        var state = AppState(repos: [
+            RepoEntry(path: "/r", displayName: "r", worktrees: [
+                WorktreeEntry(path: "/r", branch: "main")
+            ])
+        ])
+        let binding = Binding<AppState>(get: { state }, set: { state = $0 })
+        let result = AddWorktreeFlow.beginCreate(
+            repoPath: "/r",
+            worktreeName: "../outside",
+            branch: .createNew(name: "safe-branch"),
+            appState: binding
+        )
+        guard case .failure(.invalidInput(let message)) = result else {
+            Issue.record("expected invalidInput, got \(result)")
+            return
+        }
+        #expect(message.contains("invalid path component"))
+        #expect(state.repos[0].worktrees.count == 1)
+    }
+
+    @Test("Existing Git refs bypass the worktree-name sanitizer")
+    func existingBranchNameIsPreserved() {
+        var state = AppState(repos: [
+            RepoEntry(path: "/r", displayName: "r", worktrees: [
+                WorktreeEntry(path: "/r", branch: "main")
+            ])
+        ])
+        let binding = Binding<AppState>(get: { state }, set: { state = $0 })
+
+        let result = AddWorktreeFlow.beginCreate(
+            repoPath: "/r",
+            worktreeName: "release-2",
+            branch: .useExisting(name: "release@2", source: .local),
+            appState: binding
+        )
+
+        #expect(result == .success("/r/.worktrees/release-2"))
+        #expect(state.repos[0].worktrees.last?.branch == "release@2")
+    }
 }

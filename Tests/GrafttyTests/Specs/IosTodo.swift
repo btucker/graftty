@@ -129,16 +129,6 @@ struct IosTodo {
     func ios_6_1() async throws { }
 
     @Test("""
-@spec IOS-6.2: libghostty-spm's `TerminalView` shall remain the primary owner of terminal rendering and hardware-keyboard key-event translation for every pane. Ordinary software-keyboard text shall use the app-owned `UIKeyInput` path in `IOS-6.6` so committed text is sent as raw PTY input instead of paste text. The application shall additionally publish a `UIKeyCommand` table solely for **application-level** shortcuts that must be intercepted before the terminal sees them (e.g., Cmd-\\\\ to split on iPad, Cmd-1…9 to switch visible sessions). `UIKeyCommand` shall not be used to re-implement general terminal chord translation.
-""", .disabled("not yet implemented"))
-    func ios_6_2() async throws { }
-
-    @Test("""
-@spec IOS-6.6: While a terminal pane is focused on iOS, ordinary software-keyboard text shall be captured by GrafttyMobile's own `UIKeyInput` responder and forwarded to the remote PTY as raw UTF-8 bytes via `SessionClient.sendSoftwareKeyboardText(_:)`, rather than through libghostty's `TerminalSurface.sendText(_:)` path. A single software-keyboard newline shall be translated to CR (`0x0D`) per `IOS-6.3`, and software-keyboard delete shall send DEL (`0x7F`). This prevents normal typing from being wrapped in bracketed-paste delimiters (`ESC [ 200 ~` / `ESC [ 201 ~`) that prompt-driven TUIs can display as stray `[200~` text.
-""", .disabled("not yet implemented"))
-    func ios_6_6() async throws { }
-
-    @Test("""
 @spec IOS-8.1: The v1 iOS app shall not support connecting to non-Graftty SSH/mosh hosts.
 """, .disabled("not yet implemented"))
     func ios_8_1() async throws { }

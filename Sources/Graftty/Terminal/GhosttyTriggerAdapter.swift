@@ -1,6 +1,6 @@
 import Foundation
 import GhosttyKit
-import GrafttyKit
+import GrafttyProtocol
 
 /// Translates libghostty's `ghostty_input_trigger_s` into Graftty's
 /// pure-Swift `ShortcutChord`. Lives in the app target because it's

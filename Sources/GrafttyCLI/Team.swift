@@ -171,7 +171,7 @@ struct TeamHook: ParsableCommand {
                 print(output)
             case .error:
                 print("{}")
-            case .ok, .paneList, .paneShow, .teamList, .teamInbox:
+            case .ok, .paneList, .paneShow, .teamList, .teamInbox, .worktreeCreate:
                 print("{}")
             }
         } catch {
@@ -229,7 +229,7 @@ struct TeamInbox: ParsableCommand {
         case .error(let msg):
             CLIEnv.printError(msg)
             throw ExitCode(1)
-        case .ok, .paneList, .paneShow, .teamList, .teamHookOutput:
+        case .ok, .paneList, .paneShow, .teamList, .teamHookOutput, .worktreeCreate:
             CLIEnv.printError("Unexpected response for team inbox")
             throw ExitCode(1)
         }
@@ -694,7 +694,11 @@ struct TeamWatchInbox: ParsableCommand {
         guard let watcher = Self.makeWatcherIfOwner(decision: decision, makeWatcher: {
             InboxWatcher(
                 sessionID: decision.sessionID,
-                recipient: .init(member: resolved.memberName, runtime: runtimeValue),
+                recipient: .init(
+                    member: resolved.memberName,
+                    worktree: resolved.worktreePath,
+                    runtime: runtimeValue
+                ),
                 teamID: teamID,
                 inboxRootDirectory: inboxRoot,
                 outcome: outcome,
@@ -777,8 +781,8 @@ struct SyncCodexHome: ParsableCommand {
 }
 
 /// Helpers shared by `team register` / `team unregister` / `team watch-inbox`.
-/// Presence ownership uses the canonical worktree path, while inbox addressing
-/// still uses the member name.
+/// Presence ownership and inbox delivery use the canonical worktree path;
+/// the member name is display-only compatibility metadata.
 /// Returns nil when the cwd is not in a tracked, team-enabled worktree
 /// so the wrapper-driven CLI calls can no-op cleanly.
 enum TeamPresenceCLI {
@@ -870,14 +874,14 @@ private enum TeamOutput {
         case .error(let msg):
             CLIEnv.printError(msg)
             throw ExitCode(1)
-        case .ok, .paneList, .paneShow, .teamHookOutput, .teamInbox:
+        case .ok, .paneList, .paneShow, .teamHookOutput, .teamInbox, .worktreeCreate:
             CLIEnv.printError("Unexpected response for team members")
             throw ExitCode(1)
         }
     }
 
     static func memberLine(_ member: TeamListMember) -> String {
-        "\(member.name)  branch=\(member.branch)  worktree=\(member.worktreePath)  role=\(member.role)  running=\(member.isRunning)"
+        "\(member.name)  branch=\(member.branch)  worktree=\(member.worktreePath)  main=\(member.isMainWorktree)  running=\(member.isRunning)"
     }
 
     static func inboxLine(_ message: TeamInboxMessage) -> String {

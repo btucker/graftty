@@ -365,9 +365,9 @@ struct MainWindow: View {
     }
 
     /// Command handler surfaced to `GrafttyApp.commands` via `@FocusedValue`
-    /// for `next_tab` / `previous_tab` (KBD-5). `nil` when there is nothing
-    /// to move to, so the menu items disable. Routes through the same
-    /// `selectWorktree` sidebar clicks use, so surface show/hide and
+    /// for fixed Option worktree navigation. `nil` when there is nothing
+    /// to move to; the fixed menu chords remain registered as no-ops. Routes
+    /// through the same `selectWorktree` sidebar clicks use, so surface show/hide and
     /// `acknowledgeAttention()` all fire identically.
     private var worktreeNavAction: ((Bool) -> Void)? {
         // Enablement is direction-agnostic: `nextWorktreePath` returns nil in
@@ -821,7 +821,7 @@ struct MainWindow: View {
             case .success(let outcome):
                 selectWorktree(outcome.worktreePath)
                 // Roster signal flows through the inbox: a
-                // team_member_joined row addressed to the lead is appended
+                // team_member_joined row addressed to the main worktree is appended
                 // by TeamMembershipEvents on add, no live broadcast needed.
             }
         }

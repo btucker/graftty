@@ -47,9 +47,9 @@ CLI surface for coordination:
 
 ```sh
 graftty team register --runtime claude   # announce presence at session start
-graftty team list                        # see teammates, roles, and running state
-graftty team send <member> "<text>"      # direct message a teammate's inbox
-graftty team broadcast "<text>"          # message everyone on the team
+graftty team list                        # see teammates, worktrees, and running state
+graftty team send --stdin <member>       # read a direct message literally from stdin
+graftty team broadcast --stdin           # read a broadcast literally from stdin
 graftty team inbox                       # read your incoming messages
 ```
 
@@ -58,15 +58,13 @@ each agent's `PATH` that wire `SessionStart` and `Stop` hooks into the
 runtime. `SessionStart` primes the agent with team context and your
 session prompt; `Stop` triggers inbox delivery at the end of each turn.
 For Claude Code, a `Stop`-spawned watcher wakes the agent on stderr
-when a new message arrives; for Codex, a graftty-side service types the
-message text into the pane's PTY via zmx. Both paths defer while the
-pane shows recent user typing, so a teammate's message can't interrupt
-you mid-edit.
+when a new message arrives; for Codex, a graftty-side service sends the
+message into the active conversation through Codex's app server.
 
 *Window → Team Activity Log* opens a unified transcript of every team
 event and inter-agent message for the focused worktree's team.
 
-When inbox messages aren't enough, a lead agent can drive a teammate's
+When inbox messages aren't enough, any agent can drive a teammate's
 pane directly — see **CLI** below for `graftty pane show` (read another
 worktree's terminal) and `graftty pane send` (inject keystrokes).
 
@@ -80,6 +78,11 @@ graftty pane list                            # panes in the current worktree
 graftty pane add --command "claude"          # split + run a command
 graftty pane close 2                         # close pane 2
 
+# Launch an agent in a new worktree, then message that worktree's inbox:
+graftty worktree add fix-auth --agent codex
+# Copy the canonical address=... path printed by the command:
+printf '%s\n' 'Please own the auth test failures.' | graftty team send --stdin /path/to/repo/.worktrees/fix-auth
+
 # Cross-worktree pane control:
 graftty pane list drag-files                 # list panes in another worktree
 graftty pane show drag-files:1               # last 100 lines of that pane's output
@@ -91,6 +94,8 @@ graftty pane send drag-files:1 "y" --no-enter  # type without committing
 `<addr>` is `<id>` (current worktree, that pane), `<worktree>` (worktree's only pane), or `<worktree>:<id>`. Worktree names match what `graftty team list` prints. Run `graftty pane <verb> --help` for examples on every subcommand.
 
 `graftty pane send` writes raw bytes to the addressed pane's PTY — there's no inbox or consent layer, so the keystrokes land in whatever process is reading that pane's stdin. Use `graftty team send` for cooperative messaging where the receiving agent decides what to do.
+
+`graftty worktree add --agent` prints a canonical worktree-path address. Incoming worktree messages show that same stable path in their `from` label, so the recipient can reply with `graftty team send --stdin <address>` even if branches are renamed or display names collide.
 
 ## Building
 

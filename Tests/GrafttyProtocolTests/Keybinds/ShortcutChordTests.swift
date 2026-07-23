@@ -1,5 +1,5 @@
 import Testing
-@testable import GrafttyKit
+@testable import GrafttyProtocol
 
 @Suite("ShortcutChord")
 struct ShortcutChordTests {
@@ -22,6 +22,24 @@ struct ShortcutChordTests {
     // path used for `super+d=new_split:right`-style defaults. Prior to this,
     // the adapter dropped every UNICODE trigger, leaving menu items without
     // their keyboard shortcuts despite Ghostty exposing them.
+
+    @Test("character(forKeyToken:) is the inverse of keyToken's punctuation table")
+    func punctuationTokenTableRoundTrips() {
+        // Every character-representable punctuation codepoint must round-trip
+        // token → character, so the SwiftUI and UIKit shortcut translators
+        // can share this single table instead of hand-mirroring it.
+        let punctuationCodepoints: [UInt32] = [
+            0x2C, 0x2D, 0x2E, 0x2F, 0x3B, 0x3D, 0x27, 0x5B, 0x5C, 0x5D, 0x60,
+        ]
+        for codepoint in punctuationCodepoints {
+            let token = ShortcutChord.keyToken(forCodepoint: codepoint)!
+            let character = ShortcutChord.character(forKeyToken: token)
+            #expect(character == Character(UnicodeScalar(codepoint)!))
+        }
+        // Named non-character keys stay per-framework.
+        #expect(ShortcutChord.character(forKeyToken: "arrowleft") == nil)
+        #expect(ShortcutChord.character(forKeyToken: "escape") == nil)
+    }
 
     @Test func codepointLowercaseLetterMapsToTokenAndPreservesModifiers() {
         let chord = ShortcutChord(codepoint: 0x64, modifiers: [.command])

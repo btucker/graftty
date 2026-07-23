@@ -17,9 +17,122 @@ import Foundation
 @Suite("""
 WorktreeStatsStore — in-flight stuck-refresh recovery
 
-@spec DIVERGE-4.4: While a divergence computation is in flight for a particular worktree, duplicate refresh requests for the same worktree shall be dropped — but only while the in-flight Task is plausibly still running. After 30 seconds (the in-flight abandonment threshold), a subsequent refresh shall supersede the prior Task: the generation counter is bumped so the stuck Task's late `apply` is discarded, and a fresh compute is dispatched. Without the staleness cap, a `git` subprocess blocked on a ref-transaction lock (e.g., during a concurrent `git push`) permanently locks the worktree's divergence gutter at whatever value was observed in the lock window.
+@spec DIVERGE-4.4: While a divergence computation is in flight for a particular worktree, duplicate refresh requests for that worktree shall be coalesced into at most one trailing refresh carrying the latest repository and branch values. Each generation-valid computation shall publish its completed snapshot before the trailing refresh begins, so computations slower than the polling interval still make visible progress instead of perpetually suppressing one another. After 30 seconds (the in-flight abandonment threshold), a subsequent refresh shall supersede the prior Task immediately: the generation counter is bumped so the stuck Task's late `apply` is discarded, and the superseding request replaces any queued trailing request. `clear(worktreePath:)` shall discard both active and queued refresh state. Without trailing coalescing, an authoritative HEAD or post-fetch refresh that arrives behind an older computation is dropped and stale divergence can be published until the polling fallback.
 """)
 struct WorktreeStatsStoreInFlightRecoveryTests {
+
+    @MainActor
+    @Test func inFlightRefreshRunsOneTrailingComputeWithLatestBranch() async throws {
+        let firstResume = AsyncStream<Void>.makeStream()
+        let firstIterator = Box(firstResume.stream.makeAsyncIterator())
+        let secondResume = AsyncStream<Void>.makeStream()
+        let secondIterator = Box(secondResume.stream.makeAsyncIterator())
+        let calls = BranchCallRecorder()
+
+        let compute: WorktreeStatsStore.ComputeFunction = { _, _, branch, _ in
+            let invocation = calls.record(branch)
+            if invocation == 1 {
+                _ = await firstIterator.value.next()
+            } else if invocation == 2 {
+                _ = await secondIterator.value.next()
+            }
+            return WorktreeStatsStore.ComputeResult(
+                defaultBranch: "main",
+                stats: WorktreeStats(
+                    ahead: invocation,
+                    behind: 0,
+                    insertions: 0,
+                    deletions: 0
+                )
+            )
+        }
+        let store = WorktreeStatsStore(compute: compute, fetch: { _ in })
+
+        store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "old")
+        try await waitUntil { calls.branches == ["old"] }
+
+        store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "intermediate")
+        store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "latest")
+        #expect(calls.branches == ["old"])
+
+        firstResume.continuation.yield(())
+        firstResume.continuation.finish()
+
+        try await waitUntil { calls.branches == ["old", "latest"] }
+        // The trailing compute is deliberately still blocked. The first
+        // valid snapshot must publish now; otherwise a compute that always
+        // exceeds the poll interval can suppress every result forever.
+        try await waitUntil { store.stats["/wt"]?.ahead == 1 }
+
+        secondResume.continuation.yield(())
+        secondResume.continuation.finish()
+        try await waitUntil { store.stats["/wt"]?.ahead == 2 }
+    }
+
+    @MainActor
+    @Test func clearDiscardsQueuedTrailingRefresh() async throws {
+        let firstResume = AsyncStream<Void>.makeStream()
+        let firstIterator = Box(firstResume.stream.makeAsyncIterator())
+        let calls = BranchCallRecorder()
+        let compute: WorktreeStatsStore.ComputeFunction = { _, _, branch, _ in
+            let invocation = calls.record(branch)
+            if invocation == 1 {
+                _ = await firstIterator.value.next()
+            }
+            return WorktreeStatsStore.ComputeResult(
+                defaultBranch: "main",
+                stats: WorktreeStats(ahead: invocation, behind: 0, insertions: 0, deletions: 0)
+            )
+        }
+        let store = WorktreeStatsStore(compute: compute, fetch: { _ in })
+
+        store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "old")
+        try await waitUntil { calls.branches == ["old"] }
+        store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "queued")
+        store.clear(worktreePath: "/wt")
+
+        firstResume.continuation.yield(())
+        firstResume.continuation.finish()
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(calls.branches == ["old"])
+        #expect(store.stats["/wt"] == nil)
+    }
+
+    @MainActor
+    @Test func abandonmentSupersessionReplacesQueuedTrailingRefresh() async throws {
+        let firstResume = AsyncStream<Void>.makeStream()
+        let firstIterator = Box(firstResume.stream.makeAsyncIterator())
+        let calls = BranchCallRecorder()
+        let compute: WorktreeStatsStore.ComputeFunction = { _, _, branch, _ in
+            let invocation = calls.record(branch)
+            if invocation == 1 {
+                _ = await firstIterator.value.next()
+            }
+            return WorktreeStatsStore.ComputeResult(
+                defaultBranch: "main",
+                stats: WorktreeStats(ahead: invocation, behind: 0, insertions: 0, deletions: 0)
+            )
+        }
+        let store = WorktreeStatsStore(compute: compute, fetch: { _ in })
+
+        store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "old")
+        try await waitUntil { calls.branches == ["old"] }
+        store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "queued")
+        store.seedInFlightSinceForTesting(
+            Date().addingTimeInterval(-3600),
+            forWorktree: "/wt"
+        )
+        store.refresh(worktreePath: "/wt", repoPath: "/repo", branch: "latest")
+
+        try await waitUntil { calls.branches == ["old", "latest"] }
+        firstResume.continuation.yield(())
+        firstResume.continuation.finish()
+        try await Task.sleep(nanoseconds: 100_000_000)
+
+        #expect(calls.branches == ["old", "latest"])
+        #expect(store.stats["/wt"]?.ahead == 2)
+    }
 
     @MainActor
     @Test func hungRefreshDoesNotLockOutSubsequentRefreshes() async throws {
@@ -87,6 +200,19 @@ struct WorktreeStatsStoreInFlightRecoveryTests {
 
         hang.continuation.finish()
     }
+
+    @MainActor
+    private func waitUntil(
+        timeout: TimeInterval = 2.0,
+        condition: @MainActor @escaping () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(condition(), "waitUntil timed out")
+    }
 }
 
 /// Swift 6 doesn't let an AsyncStream.Iterator cross actor boundaries
@@ -107,5 +233,23 @@ private final class SyncCounter: @unchecked Sendable {
         defer { lock.unlock() }
         value += 1
         return value
+    }
+}
+
+private final class BranchCallRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [String] = []
+
+    var branches: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return values
+    }
+
+    func record(_ branch: String) -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        values.append(branch)
+        return values.count
     }
 }

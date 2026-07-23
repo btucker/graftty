@@ -34,7 +34,7 @@ struct AgentTeamsSettingsPaneTests {
     /// agent shapes a real delivery could produce. The default session prompt
     /// is intentionally empty and therefore renders to nil.
     @Test func defaultPromptsRenderUnderEveryAgentContext() {
-        let shapes: [(lead: Bool, thisWorktree: Bool, otherWorktree: Bool)] = [
+        let shapes: [(isMainWorktree: Bool, thisWorktree: Bool, otherWorktree: Bool)] = [
             (true,  false, false),
             (false, true,  false),
             (false, false, true ),
@@ -43,7 +43,7 @@ struct AgentTeamsSettingsPaneTests {
         for s in shapes {
             let ctx = EventBodyRenderer.makeAgentContext(
                 branch: "b",
-                lead: s.lead,
+                isMainWorktree: s.isMainWorktree,
                 thisWorktree: s.thisWorktree,
                 otherWorktree: s.otherWorktree
             )

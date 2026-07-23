@@ -22,6 +22,9 @@ struct IPadAppStateTests {
         #expect(state.selectedHostId == nil)
         #expect(state.selectedWorktreePath == nil)
         #expect(state.focusedPaneId == nil)
+        #expect(state.latestWorktrees.isEmpty)
+        #expect(state.focusRequestCount == 0)
+        #expect(state.ownershipRequestCount == 0)
         #expect(state.sidebarWidth == 320)
         #expect(state.theme == GhosttyThemeColors.fallback)
     }
@@ -73,6 +76,50 @@ struct IPadAppStateTests {
 
         let b = IPadAppState(defaults: defaults)
         #expect(b.selectedHostId == nil)
+    }
+
+    @Test("requesting active terminal focus and ownership increments separate counters")
+    func activeRequestCounters() {
+        let state = IPadAppState(defaults: freshDefaults())
+        #expect(state.focusRequestCount == 0)
+        #expect(state.ownershipRequestCount == 0)
+
+        state.requestActiveTerminal()
+
+        #expect(state.focusRequestCount == 1)
+        #expect(state.ownershipRequestCount == 1)
+    }
+
+    @Test("""
+@spec IPAD-8.8: The auto-ownership fulfillment latch shall live in app-scoped state with the same lifetime as `ownershipRequestCount`, so detail-view recreation (e.g. the focused-pane fallback after the host closes a pane) cannot replay an already-fulfilled ownership request and seize display control without a new user action.
+""")
+    func autoTakeControlLatchSurvivesViewRecreation() {
+        let state = IPadAppState(defaults: freshDefaults())
+        state.requestActiveTerminal()
+
+        // First SingleSessionView instance fulfills the request.
+        #expect(state.autoTakeControlPolicy.shouldTakeControl(
+            requestCount: state.ownershipRequestCount,
+            isOwner: false,
+            canTakeControl: true
+        ))
+
+        // A recreated view (fresh identity, e.g. focused-pane fallback)
+        // consults the same app-scoped latch, so the stale request must
+        // not re-take control from the current owner.
+        #expect(!state.autoTakeControlPolicy.shouldTakeControl(
+            requestCount: state.ownershipRequestCount,
+            isOwner: false,
+            canTakeControl: true
+        ))
+
+        // A genuinely new user request fires again.
+        state.requestActiveTerminal()
+        #expect(state.autoTakeControlPolicy.shouldTakeControl(
+            requestCount: state.ownershipRequestCount,
+            isOwner: false,
+            canTakeControl: true
+        ))
     }
 }
 #endif

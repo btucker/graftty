@@ -50,7 +50,7 @@ public enum TeamLookup {
     /// path. Useful when a team has shrunk to one worktree (so
     /// `team(for:in:)` returns nil) but the dispatcher still needs to
     /// address the inbox bucket — e.g. when emitting a
-    /// `team_member_left` row after the last coworker is removed.
+    /// `team_member_left` row after the last linked worktree is removed.
     public static func id(forRepoPath repoPath: String) -> String {
         repoPath
     }

@@ -26,7 +26,7 @@ struct TeamMembershipEventsTests {
         TeamTestFixtures.makeRepo(branches: branches)
     }
 
-    @Test func joiningAddsRoutedEventForLead() throws {
+    @Test func joiningAddsRoutedEventForMainWorktree() throws {
         let root = try Self.temporaryDirectory()
         let (dispatcher, inbox) = Self.makeDispatcher(rootDirectory: root)
         let repo = makeRepo(branches: ["main", "feature/login"])
@@ -41,18 +41,18 @@ struct TeamMembershipEventsTests {
         let messages = try inbox.messages(teamID: TeamLookup.id(forRepoPath: repo.path))
         #expect(messages.count == 1)
         #expect(messages.first?.kind == TeamChannelEvents.EventType.memberJoined)
-        // Lead is the root worktree.
+        // Main worktree is the repo root.
         #expect(messages.first?.to.worktree == "/r/multi")
     }
 
-    @Test func joinDoesNotFireWhenJoinerIsTheLead() throws {
+    @Test func joinDoesNotFireWhenJoinerIsMainWorktree() throws {
         let root = try Self.temporaryDirectory()
         let (dispatcher, inbox) = Self.makeDispatcher(rootDirectory: root)
-        let repo = makeRepo(branches: ["main"])  // single-worktree → lead would be alone
+        let repo = makeRepo(branches: ["main"])  // main worktree would be alone
 
         TeamMembershipEvents.fireJoined(
             repo: repo,
-            joinerWorktreePath: "/r/multi",  // the root worktree (lead)
+            joinerWorktreePath: "/r/multi",  // the main worktree
             teamsEnabled: true,
             dispatcher: dispatcher
         )
@@ -77,10 +77,10 @@ struct TeamMembershipEventsTests {
         #expect(messages.isEmpty)
     }
 
-    @Test func leaveFiresEventForLead() throws {
+    @Test func leaveFiresEventForMainWorktree() throws {
         let root = try Self.temporaryDirectory()
         let (dispatcher, inbox) = Self.makeDispatcher(rootDirectory: root)
-        // Repo state AFTER removal — lead remains, leaver is gone but we know its branch+path
+        // Repo state after removal: main worktree remains; leaver is already gone.
         let repo = makeRepo(branches: ["main"])
 
         TeamMembershipEvents.fireLeft(
@@ -116,11 +116,11 @@ struct TeamMembershipEventsTests {
         #expect(messages.isEmpty)
     }
 
-    @Test func leaveDoesNotFireIfLeadGone() throws {
+    @Test func leaveDoesNotFireIfMainWorktreeIsGone() throws {
         let root = try Self.temporaryDirectory()
         let (dispatcher, inbox) = Self.makeDispatcher(rootDirectory: root)
-        // Lead-removal edge case: if the lead is gone too, nobody to notify.
-        // Repo state after removal: empty worktrees array (lead was removed).
+        // Main-worktree removal edge case: if it is gone too, nobody to notify.
+        // Repo state after removal: empty worktrees array.
         let repo = RepoEntry(path: "/r/multi", displayName: "multi-repo")
 
         TeamMembershipEvents.fireLeft(

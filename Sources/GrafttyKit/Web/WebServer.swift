@@ -228,6 +228,13 @@ public final class WebServer {
         /// native Mac app. Default is empty — clients see an empty body
         /// and fall back to libghostty-spm's defaults.
         public let ghosttyConfigProvider: @Sendable () async -> String
+        /// Source for `GET /ghostty-keybindings`. Returns the Mac-resolved
+        /// Ghostty action-to-shortcut map so remote clients can expose the
+        /// same command shortcuts as the desktop app. Nil answers 503 so a
+        /// client that fetches during host startup falls back to bundled
+        /// defaults instead of caching an empty map as host-resolved
+        /// (WEB-9.10).
+        public let ghosttyKeybindingsProvider: (@Sendable () async -> [GhosttyAction: ShortcutChord])?
         /// Source for `GET /worktrees/panes`. Returns one entry per
         /// running worktree with the full pane split-tree + titles, so
         /// a mobile client can render a worktree picker and the
@@ -261,6 +268,7 @@ public final class WebServer {
             defaultBranchPuller: (@Sendable (PullDefaultBranchRequest) async -> PullDefaultBranchOutcome)? = nil,
             worktreeRemover: (@Sendable (DeleteWorktreeRequest) async -> DeleteWorktreeOutcome)? = nil,
             ghosttyConfigProvider: @escaping @Sendable () async -> String = { "" },
+            ghosttyKeybindingsProvider: (@Sendable () async -> [GhosttyAction: ShortcutChord])? = nil,
             worktreePanesProvider: @escaping @Sendable () async -> [WorktreePanes] = { [] },
             signalingHandler: (@Sendable (SignalingOffer) async -> SignalingHandlerOutcome)? = nil,
             remoteAttachmentRegistry: RemoteAttachmentRegistry? = nil,
@@ -276,6 +284,7 @@ public final class WebServer {
             self.defaultBranchPuller = defaultBranchPuller
             self.worktreeRemover = worktreeRemover
             self.ghosttyConfigProvider = ghosttyConfigProvider
+            self.ghosttyKeybindingsProvider = ghosttyKeybindingsProvider
             self.worktreePanesProvider = worktreePanesProvider
             self.signalingHandler = signalingHandler
             self.remoteAttachmentRegistry = remoteAttachmentRegistry
@@ -667,6 +676,29 @@ public final class WebServer {
                 Task { promise.succeed(await provider()) }
                 return
             }
+            if path == "/ghostty-keybindings" {
+                // WEB-9.10: no provider yet (host still starting up) must
+                // not read as an authoritative empty map — clients cache
+                // 200 responses as host-resolved for the whole session.
+                guard let provider = config.ghosttyKeybindingsProvider else {
+                    Self.respondJSON(
+                        context: context,
+                        status: .serviceUnavailable,
+                        error: "keybindings provider not ready"
+                    )
+                    return
+                }
+                let promise = context.eventLoop.makePromise(of: [GhosttyAction: ShortcutChord].self)
+                promise.futureResult.whenComplete { result in
+                    let chords = (try? result.get()) ?? [:]
+                    Self.respondEncodable(
+                        context: context,
+                        item: GhosttyKeybindingsResponse(chords: chords)
+                    )
+                }
+                Task { promise.succeed(await provider()) }
+                return
+            }
             // WEB-7.2: create a new worktree. POST-only; other verbs get
             // 405 to keep caching proxies from surprising the client.
             if path == "/worktrees" {
@@ -1048,6 +1080,28 @@ public final class WebServer {
                 Self.respond(
                     context: context,
                     status: .ok,
+                    body: data,
+                    contentType: "application/json; charset=utf-8"
+                )
+            } catch {
+                Self.respondJSON(
+                    context: context,
+                    status: .internalServerError,
+                    error: "encoding error"
+                )
+            }
+        }
+
+        private static func respondEncodable<T: Encodable>(
+            context: ChannelHandlerContext,
+            item: T,
+            status: HTTPResponseStatus = .ok
+        ) {
+            do {
+                let data = try JSONEncoder().encode(item)
+                Self.respond(
+                    context: context,
+                    status: status,
                     body: data,
                     contentType: "application/json; charset=utf-8"
                 )

@@ -25,7 +25,7 @@ struct AgentTeamsSettingsPane: View {
                 } header: {
                     Text("Team event routing")
                 } footer: {
-                    Text("Choose which agents receive each automated team event. Events flow into the team inbox and are delivered to agents through hook context. \"Worktree agent\" means the agent in the worktree the event is about; \"Other worktree agents\" means every other coworker in the same repo.")
+                    Text("Choose which agents receive each automated team event. Events flow into the team inbox and are delivered to agents through hook context. \"Worktree agent\" means the agent in the worktree the event is about; \"Other worktree agents\" means agents in every other linked worktree in the same repo.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -80,7 +80,7 @@ private struct AgentVariablesDocs: View {
         DisclosureGroup("Available variables in your template") {
             VStack(alignment: .leading, spacing: 4) {
                 Text("agent.branch (String) — agent's branch.")
-                Text("agent.lead (Bool) — true iff this agent is the team's lead.")
+                Text("agent.main_worktree (Bool) — true iff this agent is in the repo's main worktree.")
                 if includesEventScope {
                     Text("agent.this_worktree (Bool) — true iff event is about agent's own worktree.")
                     Text("agent.other_worktree (Bool) — true iff event is about a different worktree.")
@@ -88,7 +88,6 @@ private struct AgentVariablesDocs: View {
                     Text(verbatim: "    \"\(TeamChannelEvents.WireType.prStateChanged)\" — PR opened/closed/draft/merged.")
                     Text(verbatim: "    \"\(TeamChannelEvents.WireType.ciConclusionChanged)\" — PR's CI conclusion changed.")
                     Text(verbatim: "    \"\(TeamChannelEvents.WireType.mergeStateChanged)\" — branch mergeability vs. default branch changed.")
-                    Text(verbatim: "    \"\(TeamChannelEvents.EventType.message)\" — direct message between teammates.")
                     Text(verbatim: "    \"\(TeamChannelEvents.EventType.memberJoined)\" — new worktree joined the team.")
                     Text(verbatim: "    \"\(TeamChannelEvents.EventType.memberLeft)\" — worktree left the team.")
                 }

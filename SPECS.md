@@ -336,7 +336,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-2.5** While a repository is in the sidebar, the application shall watch `<repoPath>/.git/logs/refs/remotes/origin/` using FSEvents so that any operation which advances a remote-tracking ref — `git push` (the common `gh pr create` path), `git fetch`, and prune — surfaces as an origin-ref change. One watch per repository covers all linked worktrees, since they share the main checkout's git directory.
 
-**GIT-2.6** While a worktree is in the sidebar and non-stale, the application shall recursively watch the worktree's directory with `FSEventStreamCreate` (coalescing latency 0.5s) so that working-tree edits, stages / unstages via `.git/index`, and untracked-file creation surface as content-change events. Events for the worktree root, the bare `.git` directory, and the `.git/objects/` subtree shall be filtered out: the root and `.git` are coarse parent-mtime bumps that fire alongside more specific descendant events and carry no additional signal, and `.git/objects/` is pure pack-churn noise from `git gc` / pack writes. The watched path shall be resolved via `realpath(3)` before use because FSEvents always reports canonical paths (e.g. `/private/var/...` rather than `/var/...`) and an unresolved root makes the filter's `hasPrefix` comparison miss every event. The other watchers in GIT-2.1–GIT-2.5 use kqueue vnode sources (`DispatchSourceFileSystemObject`), which cannot watch a subtree recursively; the real FSEvents API is used here because the working tree is inherently recursive.
+**GIT-2.6** While a worktree is in the sidebar and non-stale, the application shall recursively watch the worktree's directory with `FSEventStreamCreate` (coalescing latency 0.5s) so that working-tree edits, stages / unstages via `.git/index`, and untracked-file creation surface as content-change events. Events for the worktree root, the bare `.git` directory, and the `.git/objects/` subtree shall be filtered out: the root and `.git` are coarse parent-mtime bumps that fire alongside more specific descendant events and carry no additional signal, and `.git/objects/` is pure pack-churn noise from `git gc` / pack writes. The watched path shall be resolved via `realpath(3)` before use because FSEvents always reports canonical paths (e.g. `/private/var/...` rather than `/var/...`) and an unresolved root makes the filter's `hasPrefix` comparison miss every event. The membership, path, and HEAD watchers in GIT-2.1–GIT-2.4 use kqueue vnode sources (`DispatchSourceFileSystemObject`), which cannot watch a subtree recursively; the origin-ref watcher in GIT-2.5 and this working-tree watcher use FSEvents because both must observe changes below a directory.
 
 **GIT-2.8** While a repository is in the sidebar, the application shall scan local `refs/remotes/origin/*` every 10 seconds without contacting the network, maintaining a repo-scoped set of locally-known remote branch names. The scan shall use local git ref metadata only; it shall not replace the repo-level fetch cadence that discovers branches created from another clone.
 
@@ -366,7 +366,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-3.10** When the user triggers "Dismiss" on a stale worktree whose surfaces are still alive per `GIT-3.4` (stale-while-running), the application shall tear down every terminal surface in the entry's split tree before removing the entry from the model, and shall clear `selectedWorktreePath` if the dismissed worktree was currently selected. Skipping the surface teardown is the same orphan-surfaces shape as `GIT-3.9` (different entry point) and has the same crash signature.
 
-**GIT-3.11** `WorktreeMonitor`'s `DispatchSource` watchers (one per watched worktree-directory, worktree-path, HEAD reflog, and origin-refs directory) shall release their underlying file descriptors on cancel. Specifically: `createFileWatcher` installs `source.setCancelHandler { close(fd) }`, and no `watch*` method shall override that handler — DispatchSource allows only one cancel handler per source, and an override silently leaks the fd. A long-running session that churns repos (add/remove, stale/resurrect) would otherwise monotonically grow its open-fd count and eventually hit macOS's 256-fd ulimit, failing every subsequent `open` (including socket accepts, terminal PTYs, and config reloads).
+**GIT-3.11** `WorktreeMonitor`'s `DispatchSource` watchers (one per watched worktree-directory, worktree-path, and HEAD reflog; origin refs and content use `FSEventStream`) shall release their underlying file descriptors on cancel. Specifically: `createFileWatcher` installs `source.setCancelHandler { close(fd) }`, and no `watch*` method shall override that handler — DispatchSource allows only one cancel handler per source, and an override silently leaks the fd. A long-running session that churns repos (add/remove, stale/resurrect) would otherwise monotonically grow its open-fd count and eventually hit macOS's 256-fd ulimit, failing every subsequent `open` (including socket accepts, terminal PTYs, and config reloads).
 
 **GIT-3.12** When `GitWorktreeDiscovery.discover(repoPath:)` throws (missing `git` binary, non-repo path passed due to a stale state.json entry, subprocess exceeding the timeout, transient FS glitch), the application shall log the failure via `NSLog` at every call site in `GrafttyApp` — `reconcileOnLaunch`, `worktreeMonitorDidDetectChange`, and `worktreeMonitorDidDetectBranchChange` — rather than swallow via `try?`. Analogue of `ATTN-2.7` / `PERSIST-2.2`. Without this, a transient discovery failure silently skips that repo's reconcile tick: Andy creates a new worktree, FSEvents fires, discover throws once, and the worktree never appears in the sidebar with no trail of why.
 
@@ -446,7 +446,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **GIT-5.9** When persisting `WorktreeEntry` to `state.json`, the application shall encode `.creating` as `.closed`. The `.creating` state is in-memory-only; if the app crashes mid-creation, the next launch's reconciler classifies the entry from `git worktree list --porcelain` rather than restoring a phantom spinner that would never resolve.
 
-**GIT-5.10** When BranchSelection.useExisting is submitted with a local source, the application shall invoke `git worktree add <path> <name>` (no `-b` flag).
+**GIT-5.10** When BranchSelection.useExisting is submitted with a local source, the application shall verify that `refs/heads/<name>` exists and invoke `git worktree add -- <path> <name>` (no `-b` flag), so commit-ish values cannot create a detached worktree and option-shaped names cannot alter Git's parsing.
 
 **GIT-5.11** When BranchSelection.useExisting is submitted and the same repo already has the branch mounted in another worktree, the application shall reject the create with branchAlreadyMounted(at:) before invoking git.
 
@@ -762,15 +762,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **DIVERGE-4.1** When a repository is added to the sidebar, the application shall compute divergence counts for each of its worktrees.
 
-**DIVERGE-4.2** When a worktree's HEAD reference changes, the application shall recompute that worktree's divergence counts.
+**DIVERGE-4.2** When a worktree's HEAD reference changes, the application shall recompute that worktree's divergence counts immediately, without waiting for the polling fallback.
 
 **DIVERGE-4.3** The application shall run `git fetch --no-tags --prune origin` (with no refspec, so the remote's configured fetch rules advance every tracked branch) and recompute divergence counts per repository on a 30-second base cadence, doubling the interval for each consecutive fetch failure (capped by `ExponentialBackoff`'s 32× max shift and a 30-minute hard cap, whichever binds first). A fast 5-second polling ticker drives the eligibility check; actual fetches are gated by the per-repo cadence so tracked repositories are not hammered.
 
-**DIVERGE-4.4** While a divergence computation is in flight for a particular worktree, duplicate refresh requests for the same worktree shall be dropped — but only while the in-flight Task is plausibly still running. After 30 seconds (the in-flight abandonment threshold), a subsequent refresh shall supersede the prior Task: the generation counter is bumped so the stuck Task's late `apply` is discarded, and a fresh compute is dispatched. Without the staleness cap, a `git` subprocess blocked on a ref-transaction lock (e.g., during a concurrent `git push`) permanently locks the worktree's divergence gutter at whatever value was observed in the lock window.
+**DIVERGE-4.4** While a divergence computation is in flight for a particular worktree, duplicate refresh requests for that worktree shall be coalesced into at most one trailing refresh carrying the latest repository and branch values. Each generation-valid computation shall publish its completed snapshot before the trailing refresh begins, so computations slower than the polling interval still make visible progress instead of perpetually suppressing one another. After 30 seconds (the in-flight abandonment threshold), a subsequent refresh shall supersede the prior Task immediately: the generation counter is bumped so the stuck Task's late `apply` is discarded, and the superseding request replaces any queued trailing request. `clear(worktreePath:)` shall discard both active and queued refresh state. Without trailing coalescing, an authoritative HEAD or post-fetch refresh that arrives behind an older computation is dropped and stale divergence can be published until the polling fallback.
 
 **DIVERGE-4.5** When `WorktreeStatsStore.clear(worktreePath:)` is called — whether from a stale transition (GIT-3.13), a Dismiss (GIT-3.6), or a Delete (GIT-4.10) — a fetch that was already in flight at that moment shall not repopulate `stats` after the clear. Each `clear` bumps a per-path generation counter; `apply` captures the generation at refresh time and drops the write if the counter changed during the await. Without this, a `git worktree remove` that fires shortly after the 5s-polling refresh leaves the divergence indicator flashing back onto a cleared row for the duration of the git subprocess (~50–200ms). Mirrors `PRStatusStore`'s pattern (PR status gained this protection earlier; stats store was lagging).
 
 **DIVERGE-4.6** When the divergence-stats polling tick fires, the application shall recompute divergence counts for every running worktree, with no per-worktree throttle beyond the `inFlight` dedup guard from `DIVERGE-4.4` — the local subprocess pipeline (`git rev-list`, `git diff --shortstat`, `git status --porcelain`) is cheap and bounded, so the gutter never stays stale waiting for a per-worktree cooldown to elapse. If the same tick finds a per-repo `git fetch` is due, the per-worktree dispatch shall be skipped for that repo because the fetch handler itself recomputes every running worktree on success.
+
+**DIVERGE-4.7** When a remote-tracking-ref change event fires (GIT-2.5), the application shall immediately refresh divergence stats for every running worktree in the affected repository, without waiting for the polling fallback.
 
 **DIVERGE-4.8** The polling ticker for divergence stats shall continue to fire while Graftty is not the frontmost application. Users frequently run their editor or Claude session in a different app while the sidebar's divergence indicator tracks their work; pausing on `resignActive` leaves those updates queued until the user clicks back into Graftty, defeating the purpose of the indicator.
 
@@ -1078,6 +1080,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **WEB-9.8** While at compact width, the application shall navigate worktree list to overview to fullscreen as a push flow.
 
+**WEB-9.9** When Web Access receives GET /ghostty-keybindings, the server shall return a JSON object whose bindings map Ghostty action raw names to the host-resolved ShortcutChord values so remote clients can install the same app-level command shortcuts as the host.
+
+**WEB-9.10** While no ghostty-keybindings provider is wired (e.g. the host app is still starting up), GET /ghostty-keybindings shall return 503 rather than an empty 200 map, so remote clients fall back to their bundled defaults instead of caching an empty binding set as host-resolved.
+
 ## OWN — Display Ownership
 
 ### OWN-1.x — Follower Convergence
@@ -1150,17 +1156,17 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### KBD-5.x
 
-**KBD-5.1** When another on-disk worktree has attention, next_tab shall select the next attention-carrying worktree in cyclic sidebar order (skipping non-attention worktrees between), flattening worktrees across repos in sidebar order.
+**KBD-5.1** When another on-disk worktree has attention, Ctrl+Option+Tab shall select the next attention-carrying worktree in cyclic sidebar order (skipping non-attention worktrees between), flattening worktrees across repos in sidebar order.
 
-**KBD-5.2** When no other worktree has attention, next_tab shall select the immediate next on-disk worktree in cyclic sidebar order, wrapping from the last back to the first.
+**KBD-5.2** When no other worktree has attention, Ctrl+Option+Tab shall select the immediate next on-disk worktree in cyclic sidebar order, wrapping from the last back to the first.
 
-**KBD-5.3** When the user presses previous_tab, the application shall apply attention-first selection in reverse cyclic order, and select the immediate previous on-disk worktree (wrapping) when no worktree has attention.
+**KBD-5.3** When the user presses Ctrl+Option+Shift+Tab, the application shall apply attention-first selection in reverse cyclic order, and select the immediate previous on-disk worktree (wrapping) when no worktree has attention.
 
 **KBD-5.4** When a worktree carries attention from any source (agent-stop, user notify, command-finished) at worktree or pane scope, the application shall count it as a navigation target, while excluding the currently-selected worktree from the attention subset so its own attention does not trap navigation on itself.
 
-**KBD-5.5** When zero or one on-disk worktree is selectable, next_tab and previous_tab shall be a no-op (return nil); non-on-disk worktrees (.stale/.creating/.deleting) shall never be navigation targets even when they carry attention.
+**KBD-5.5** When zero or one on-disk worktree is selectable, Ctrl+Option+Tab and Ctrl+Option+Shift+Tab shall be no-ops (return nil) while their chords remain reserved; non-on-disk worktrees (.stale/.creating/.deleting) shall never be navigation targets even when they carry attention.
 
-**KBD-5.6** When no worktree is selected, next_tab shall select the first attention worktree else the first on-disk worktree, and previous_tab shall select the first attention worktree scanning backward from the end else the last on-disk worktree.
+**KBD-5.6** When no worktree is selected, Ctrl+Option+Tab shall select the first attention worktree else the first on-disk worktree, and Ctrl+Option+Shift+Tab shall select the first attention worktree scanning backward from the end else the last on-disk worktree.
 
 ## PR — PR/MR Status Display
 
@@ -1376,19 +1382,19 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.1** While the software keyboard is visible, the application shall render a compact terminal control bar above the keyboard. The v1 bar shall expose, at minimum: Esc, Tab, Ctrl-C, Ctrl-D, ↑, ↓, ←, →, submit Return, insert literal LF, and Hide Keyboard. These controls shall send explicit PTY bytes through `SessionClient` rather than relying on UIKit text entry: Esc=`0x1B`, Tab=`0x09`, Ctrl-C=`0x03`, Ctrl-D=`0x04`, arrows=`ESC [ A/B/D/C`, submit Return=`0x0D`, and literal LF=`0x0A`.
 
-**IOS-6.2** libghostty-spm's `TerminalView` shall remain the primary owner of terminal rendering and hardware-keyboard key-event translation for every pane. Ordinary software-keyboard text shall use the app-owned `UIKeyInput` path in `IOS-6.6` so committed text is sent as raw PTY input instead of paste text. The application shall additionally publish a `UIKeyCommand` table solely for **application-level** shortcuts that must be intercepted before the terminal sees them (e.g., Cmd-\\ to split on iPad, Cmd-1…9 to switch visible sessions). `UIKeyCommand` shall not be used to re-implement general terminal chord translation.
+**IOS-6.2** `UITerminalView` shall be the sole terminal keyboard responder and the primary owner of rendering and hardware-key event translation for every iOS pane. All general hardware keys, including Escape and arrows, shall flow through libghostty; GrafttyMobile shall publish `UIKeyCommand`s only for application-level shortcuts and shall not reimplement terminal key translation.
 
 **IOS-6.3** When the outbound keystroke pipe (`SessionClient.box.onBytes`) receives a payload consisting of exactly one LF byte (`0x0A`), the application shall translate it to a single CR byte (`0x0D`) before sending it to the server. This reconciles iOS's soft-keyboard Return — which UIKit delivers as LF via `UIKeyInput.insertText("\n")` — with the CR convention that physical terminals send on Return and that TUIs (Claude Code, readline, etc.) interpret as "submit." Without this translation, tapping Return on the iOS keyboard inserts a literal newline into the TUI's input buffer instead of submitting the current line, and there is no way to produce a submit keystroke from the soft keyboard. The rule is narrowed to a *standalone* single-byte LF so that multi-byte payloads with embedded newlines (pastes from the clipboard, programmatic text insertion) pass through unchanged and preserve their own line structure.
 
 **IOS-6.4** When the user taps the terminal control bar's "Insert newline" control, the application shall send a single literal LF byte (`0x0A`) to the remote session, bypassing the `IOS-6.3` LF→CR rule via `SessionClient.insertNewline()`. This is the only way to insert a multi-line boundary into a TUI prompt from the iOS soft keyboard after Return has been reserved for submission.
 
-**IOS-6.6** While a terminal pane is focused on iOS, ordinary software-keyboard text shall be captured by GrafttyMobile's own `UIKeyInput` responder and forwarded to the remote PTY as raw UTF-8 bytes via `SessionClient.sendSoftwareKeyboardText(_:)`, rather than through libghostty's `TerminalSurface.sendText(_:)` path. A single software-keyboard newline shall be translated to CR (`0x0D`) per `IOS-6.3`, and software-keyboard delete shall send DEL (`0x7F`). This prevents normal typing from being wrapped in bracketed-paste delimiters (`ESC [ 200 ~` / `ESC [ 201 ~`) that prompt-driven TUIs can display as stray `[200~` text.
+**IOS-6.6** While an owner terminal pane is focused on iOS, committed software-keyboard text and delete shall flow through `UITerminalView`'s supported `TerminalSoftwareInputDelegate` and be forwarded exactly once to `SessionClient.sendSoftwareKeyboardText(_:)` and `deleteBackward()`. A single software-keyboard newline shall be translated to CR (`0x0D`) per `IOS-6.3`, and delete shall send DEL (`0x7F`), without using Ghostty's paste-text path.
 
-**IOS-6.7** While a terminal pane is rendered in the iOS app, GrafttyMobile shall prevent libghostty-spm's built-in `TerminalInputAccessoryView` from appearing by suppressing both `UITerminalView.inputAccessoryView` and `UITerminalView.canBecomeFirstResponder` at the UIKit ObjC dispatch path. With `canBecomeFirstResponder` returning false, libghostty's `touchesBegan`-driven `becomeFirstResponder()` is a no-op, so GrafttyMobile's `UIKeyInput` proxy wins the keyboard responder race and the GhosttyKit accessory bar never mounts. The only visible software-keyboard accessory row shall be GrafttyMobile's terminal control bar (`IOS-6.1`).
+**IOS-6.7** While a terminal pane is rendered in the iOS app, `UITerminalView` shall remain the sole terminal keyboard responder and its supported `showsInputAccessory` property shall be false, so the GhosttyKit accessory is absent without Objective-C runtime swizzling. The only visible software-keyboard accessory row shall be GrafttyMobile's terminal control bar (`IOS-6.1`).
 
-**IOS-6.8** While a terminal pane is rendered in the iOS app, libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures on `UITerminalView` shall remain functional. The iOS scaffolding shall not place an interaction-blocking overlay above `UITerminalView`: the `UIKeyInput` proxy responsible for software-keyboard text (`IOS-6.6`) shall be hit-test transparent so touches reach `UITerminalView`'s gesture recognizers underneath.
+**IOS-6.8** While a terminal pane is rendered in the iOS app, libghostty-spm's built-in pan-to-scroll and pinch-to-zoom gestures on `UITerminalView` shall remain functional. `UITerminalView` shall be the container's sole full-size subview and touch target, with no keyboard or selection overlay above it.
 
-**IOS-6.9** While the iOS software keyboard is visible, the application shall raise the fullscreen terminal layout so its bottom edge sits at or above the keyboard's top edge rather than under it. SwiftUI's automatic `.keyboard` safe-area avoidance does not engage reliably while the first responder is the `UIViewRepresentable`-wrapped `UIKeyInput` proxy from `IOS-6.6` — SwiftUI's focus system is unaware of the proxy, so the avoidance machinery skips the layout. The application shall instead observe `UIResponder.keyboardWillChangeFrameNotification`, compute the keyboard end-frame's vertical intersection with the screen, and apply that height as an explicit `.padding(.bottom, …)` on the fullscreen layout so the terminal — and the `IOS-6.1` control bar overlaid at the bottom — both ride above the keyboard's top edge.
+**IOS-6.9** While the iOS software keyboard is visible for the `UIViewRepresentable`-wrapped `UITerminalView` first responder, the application shall raise the fullscreen terminal layout so its bottom edge sits at or above the keyboard's top edge rather than under it. The application shall observe `UIResponder.keyboardWillChangeFrameNotification`, compute the keyboard end-frame's vertical intersection with the screen, and apply that height as explicit bottom padding so the terminal and the `IOS-6.1` control bar both remain above the keyboard.
 
 **IOS-6.10** When the iOS client becomes the explicit display owner while a non-owner auto-fit font override (`IOS-5.6` / `IPAD-2.5`) is active, the application shall restore the base config font so the pane re-lays out at the configured iOS font size and the resulting owner resize adopts an iOS-natural grid — rather than keeping the follower-fitted font (and therefore the previous owner's width) until the next incidental layout tick. libghostty's pinch-to-zoom (`IOS-6.8`) shall adjust font from that restored baseline without implicitly changing ownership.
 
@@ -1398,11 +1404,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-6.13** GrafttyMobile shall expose software-keyboard chrome and keyboard responder wiring only while the mobile client is the current display owner. Followers and ownerless clients can take control, but showing a keyboard before ownership is confirmed sends no useful input and implies authority the client does not have.
 
-**IOS-6.14** The terminal view shall install GrafttyMobile's `UIKeyInput` proxy only for an owner. Non-owner taps should still reach libghostty gestures, but they must not summon the software keyboard.
+**IOS-6.14** The owner shall install committed-software-input handlers on the sole `UITerminalView` responder. A non-owner shall disable terminal keyboard eligibility without blocking Ghostty gestures.
 
 **IOS-6.15** When a fullscreen iOS session reconnects after it was the display owner before suspension and the server reports the session as ownerless, the application shall automatically send `takeControl` with the current iOS viewport. It shall not auto-claim when another client owns the session, so foregrounding the phone does not steal control from a Mac/web owner that took over while the phone was away.
 
-**IOS-6.16** When a fullscreen mobile client transitions from non-owner to owner while keyboard input is allowed, the application shall request keyboard focus for the terminal input proxy. This covers takeovers initiated by Paste or Take Control, where the proxy was not eligible before ownership was confirmed.
+**IOS-6.16** When a fullscreen mobile client transitions from non-owner to owner while keyboard input is allowed, the application shall request keyboard focus for the sole `UITerminalView` responder. This covers takeovers initiated by Paste or Take Control, where the terminal was not eligible before ownership was confirmed.
+
+**IOS-6.17** While a terminal pane is rendered on iPad with a trackpad, indirect pointer scroll gestures shall reach libghostty's terminal scroll/input recognizers on the sole `UITerminalView` touch surface, with no GrafttyMobile keyboard or selection overlay blocking them.
+
+**IOS-6.18** When hardware Escape, arrow, or other terminal key presses reach an iOS terminal pane, the sole `UITerminalView` responder shall pass them to libghostty's hardware-key translation. GrafttyMobile shall not install per-key handlers; explicit control-bar Escape remains a `SessionClient.sendEscape()` command under `IOS-6.1`.
 
 ### IOS-7.x — Lifecycle
 
@@ -1444,6 +1454,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-9.9** While rendering grouped worktrees in `WorktreePickerView`, the application shall preserve the order of `repoDisplayName` first-occurrences in the `GET /worktrees/panes` response rather than sort the group keys alphabetically, so the mobile picker's repo order matches the user's Mac sidebar order.
 
+**IOS-9.10** While the mobile Add Worktree sheet is valid and not submitting, pressing Return on a hardware keyboard shall submit Create; invalid or already-submitting forms shall ignore Return.
+
 ### IOS-10.x
 
 **IOS-10.1** While `scenePhase` is `.inactive` or `.background`, the application shall tear down active WebSocket connections and unmount live `TerminalPaneView` instances so libghostty's display link stops.
@@ -1460,6 +1472,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-10.7** Fullscreen mobile terminals shall not enter snapshot-idle mode by default. The snapshot optimization is safe for pane previews, but in fullscreen it unmounts `TerminalPaneView` while UIKit may still own the keyboard responder, collapsing the keyboard and risking libghostty teardown against an active view.
 
+**IOS-10.8** While a terminal session has received no output or user interaction for 5 seconds, the application shall reduce that surface's render pace to at most one frame per second while keeping the surface mounted.
+
+**IOS-10.9** When output, input, or a touch arrives while a surface is render-reduced, the application shall restore full render pace immediately.
+
 ### IOS-11.x
 
 **IOS-11.1** When the user long-presses a focused terminal pane, the application shall present a `UIEditMenuInteraction` menu at the touch point containing **Select**, **Select All**, and (when `UIPasteboard.general.hasStrings` is true at menu-build time) **Paste**.
@@ -1468,7 +1484,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-11.3** When the user taps **Select All** in the long-press menu, the application shall invoke libghostty's `select_all` binding action via `surface.performAction("select_all")` and shall enter selection mode for that pane with the visible viewport highlighted.
 
-**IOS-11.4** While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and libghostty's built-in pan-to-scroll recognizer on the underlying `UITerminalView` shall be disabled until selection mode exits.
+**IOS-11.4** While in selection mode, the application shall extend the live selection by forwarding pan-gesture positions to `surface.sendMousePos(...)`, and libghostty's built-in pan-to-scroll recognizers on the underlying `UITerminalView` shall stop receiving direct touches (indirect trackpad/mouse scrolling stays enabled) until selection mode exits.
 
 **IOS-11.5** When selection mode is active and the user lifts their finger after Select / Select All / extend, the application shall present a second `UIEditMenuInteraction` menu anchored near the selection rect containing **Copy** and **Cancel**.
 
@@ -1484,7 +1500,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IOS-11.11** While a pane is rendered as a worktree-detail preview tile (`IOS-4.10`), the long-press selection menu shall not be installed; tapping the tile shall continue to open the fullscreen pane per `IOS-4.21`. Guaranteed by `.allowsHitTesting(false)` applied to the inner `TerminalPaneView` in `paneContent` — `TerminalInputContainerView`'s long-press gesture recogniser never receives touches. The `onPasteRequested` closure is also left `nil` at the `TerminalPaneView` call site.
 
-**IOS-11.12** When the user taps Paste from the terminal long-press edit menu, the application shall forward the clipboard paste request and then re-focus GrafttyMobile's software-keyboard proxy when it is eligible, so dismissing the UIKit edit menu does not leave the user without terminal keyboard control.
+**IOS-11.12** When the user taps Paste from the terminal long-press edit menu, the application shall forward the clipboard paste request and re-focus the eligible `UITerminalView` after UIKit's edit-menu dismissal completes, so the dismissal cannot subsequently resign the terminal and leave the user without keyboard control.
 
 ## IPAD — iPad Layout
 
@@ -1514,7 +1530,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-1.12** While `IPadRootLayout` is presented, the sidebar shall render a 1pt trailing border at `appState.theme.foreground.opacity(0.15)` along its leading-of-detail edge so the column boundary reads as a thin divider, matching the Mac sidebar's automatic `NSSplitView` divider. The overlay ignores safe areas so the border runs the full sidebar height including under the nav bar and home indicator.
 
-**IPAD-1.13** While `IPadRootLayout` is presented, each worktree's row + its pane child rows shall be packed into a single `List` row (`VStack(spacing: 0)`) with `.listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))` and `.listRowSeparator(.hidden)`, so the iOS sidebar-list style's default per-row padding doesn't compound between panes — the vertical spacing between pane rows is controlled entirely by the outer block's insets, not by accumulating list-row defaults on every leaf.
+**IPAD-1.13** While `IPadRootLayout` is presented, each worktree's row + its pane child rows shall be packed into a single `List` row (`VStack(spacing: 0)`) with explicit compact row insets and `.listRowSeparator(.hidden)`, so the iOS sidebar-list style's default per-row padding doesn't compound between panes — the vertical spacing between pane rows is controlled entirely by the outer block's insets, not by accumulating list-row defaults on every leaf.
 
 **IPAD-1.14** While `IPadRootLayout` renders a worktree's pane rows, the worktree-scoped `attentionText` (from `graftty notify`) shall be displayed on the worktree's first pane row when that leaf has no pane-scoped `attentionText` of its own; the worktree title row never displays an attention pill on iPad. Pane-scoped `attentionText` (from shell-integration `COMMAND_FINISHED` events) stays on its own pane row as before.
 
@@ -1525,6 +1541,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **IPAD-1.17** When a `GET /worktrees/panes` snapshot still contains the selected worktree but its layout no longer includes `IPadAppState.focusedPaneId`'s session name, the application shall reset `focusedPaneId` to the first leaf of the worktree's current layout (or nil if the worktree has no panes).
 
 **IPAD-1.18** While an iPad detail `SingleSessionView` renders with `isFullScreen == false` to preserve the split-view sidebar toggle, ownership controls shall remain independent of that visual mode. A fullscreen-role mobile client that is currently a follower or ownerless shall still expose Take Control in the detail column.
+
+**IPAD-1.19** While rendering iPad sidebar worktree rows, the application shall use a tight trailing inset so git divergence stats sit near the sidebar edge.
+
+**IPAD-1.20** While `IPadRootLayout` is presented, iPad shall paint the terminal theme background behind the sidebar while keeping terminal content bounded to the detail column.
 
 ### IPAD-2.x — Multi-Pane Detail View
 
@@ -1544,17 +1564,19 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### IPAD-3.x — Focused-Pane Toolbar
 
-**IPAD-3.1** When `MultiPaneDetailView` has a focused leaf and the soft keyboard is hidden, the application shall overlay a `FocusedPaneToolbar` on the focused leaf containing Split Right, Split Down, Swap, and Close icons.
+**IPAD-3.1** When `MultiPaneDetailView` has a focused leaf and the soft keyboard is hidden, the application shall expose a focused-pane toolbar containing Split Right, Split Down, Split Left, Split Up, Swap, and Close controls.
 
 **IPAD-3.2** When the soft keyboard becomes visible, the application shall hide the `FocusedPaneToolbar` and yield its position to the terminal control bar.
 
-**IPAD-3.3** When the user taps Split Right or Split Down in the toolbar, the application shall send a `pane_control` RPC with `type: "split"`, `target` set to the focused leaf's `sessionName`, and `direction` set to `"horizontal"` or `"vertical"` respectively.
+**IPAD-3.3** When the user taps Split Right, Split Down, Split Left, or Split Up in the toolbar, the application shall send a `pane_control` RPC with `type: "split"`, `target` set to the focused leaf's `sessionName`, and `direction` set to `"right"`, `"down"`, `"left"`, or `"up"` respectively.
 
 **IPAD-3.4** When the user taps Close in the toolbar, the application shall send a `pane_control` RPC with `type: "close"` and `target` set to the focused leaf's `sessionName`.
 
 **IPAD-3.5** When the user taps Swap in the toolbar, the application shall send a `pane_control` RPC with `type: "swap"`, `source` set to the focused leaf's `sessionName`, and `target` selected per the swap-target policy resolved in milestone M7 (see design doc §12 Open Question #3).
 
 **IPAD-3.6** When a `pane_control` RPC returns `409 Conflict`, the application shall not present an error toast and shall rely on the next `panes_state` snapshot to reflect actual server state.
+
+**IPAD-3.7** While an iPad focused pane is available, the detail toolbar shall expose split actions for right, down, left, and up; when no pane is focused, split actions shall be disabled.
 
 ### IPAD-4.x — Live-Channel Budget
 
@@ -1588,6 +1610,48 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **IPAD-7.2** When `horizontalSizeClass` transitions between `.regular` and `.compact`, the application shall preserve `selectedHostId`, `selectedWorktreePath`, and `focusedPaneId` so the user lands on the equivalent leaf in the new layout.
 
+### IPAD-8.x
+
+**IPAD-8.1** When the user presses Ctrl+Option+Tab on iPad and another selectable worktree has attention, the application shall select the next attention-carrying worktree in cyclic sidebar order.
+
+**IPAD-8.2** When no other iPad worktree has attention, Ctrl+Option+Tab and Ctrl+Option+Shift+Tab shall cycle through selectable worktrees in sidebar order.
+
+**IPAD-8.3** When resolving iPad worktree navigation, the application shall skip stale, creating, and deleting worktrees even when they carry attention.
+
+**IPAD-8.4** When resolving iPad attention-first worktree navigation, the application shall count pane-scoped attention while excluding the currently selected worktree.
+
+**IPAD-8.5** While processing an iPad auto-ownership request, the application shall keep the request pending until the live session becomes takeable, but an already-owned pane shall fulfill the request as a no-op so stale selection requests cannot steal ownership back later.
+
+**IPAD-8.6** When no current iPad worktree is selected, forward Ctrl+Option+Tab shall start before the first selectable worktree and reverse Ctrl+Option+Shift+Tab shall start after the last selectable worktree.
+
+**IPAD-8.7** iPad fixed worktree navigation commands shall be registered in both command projections even when zero or one target exists, reserving their chords while execution is a no-op.
+
+**IPAD-8.8** The auto-ownership fulfillment latch shall live in app-scoped state with the same lifetime as `ownershipRequestCount`, so detail-view recreation (e.g. the focused-pane fallback after the host closes a pane) cannot replay an already-fulfilled ownership request and seize display control without a new user action.
+
+**IPAD-8.9** When a terminal pane remounts with zero pending focus requests (all prior requests already honored and consumed), the application shall not call becomeFirstResponder, so a keyboard the user dismissed is not re-summoned by idle-snapshot swaps or other view recreations.
+
+### IPAD-9.x
+
+**IPAD-9.1** When iPad selects or refreshes a host, it shall fetch the host-resolved Ghostty keybindings from GET /ghostty-keybindings, decode raw action-name keys for forward compatibility, and expose only known GhosttyAction chords through GhosttyKeybindBridge.
+
+**IPAD-9.2** iPad command routing shall map only GhosttyCommandRegistry.iPadSupportedActions to executable iPad command kinds; unsupported Ghostty actions such as toggle_split_zoom shall not be routed or registered.
+
+**IPAD-9.3** iPad shall always reserve fixed pane and worktree navigation chords; host tab-action chords remain reserved when their bridge is available, while disabled split, close, and directional commands are omitted.
+
+**IPAD-9.4** Directional iPad pane-focus commands shall use the same spatial split-tree semantics as Mac TERM-7.3: nearest matching-axis ancestor, opposite subtree near-edge descent, and no wrapping for unrelated directions.
+
+**IPAD-9.5** Previous-pane and next-pane iPad commands shall traverse PaneLayoutNode leaves in stable in-order layout order with wrapping; a single pane or unknown current pane shall be a no-op.
+
+**IPAD-9.6** iPad shall project every winning app-level navigation candidate to responder-chain UIKeyCommands with the same stable identities and semantic execution as scene commands.
+
+**IPAD-9.7** If fetching the host-resolved Ghostty keybindings fails (missing endpoint on older hosts, non-2xx status, a transport failure, or an undecodable body), then the application shall fall back to the bundled Ghostty default keybindings instead of an empty bridge.
+
+**IPAD-9.8** The bundled Ghostty default keybinding table shall mirror the defaults reported by ghostty +list-keybinds --default for every iPad-supported action, leaving new_split:left and new_split:up chordless because Ghostty ships no default binding for them.
+
+**IPAD-9.9** The `TerminalInputContainerView` in the active iPad terminal responder chain shall publish only app-level Ghostty shortcuts as `UIKeyCommand`s that take priority over conflicting focus and text-input system behavior, and synchronously request a UIKit menu-system rebuild whenever the effective command identities, titles, inputs, or modifiers change. General terminal hardware keys remain owned by the sole `UITerminalView` responder.
+
+**IPAD-9.10** Fixed Graftty pane and worktree chords shall be provenance-independent, host tab-action chords shall be additional when noncolliding, and both SwiftUI and responder projections shall use the same normalized input-and-modifier collision winners with precedence fixed worktree over fixed pane over host.
+
 ## TEAM — Agent Teams
 
 ### TEAM-1.x — Settings & Enablement
@@ -1598,7 +1662,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-1.5** `agentTeamsEnabled` plus the `teamEventRoutingPreferences` JSON struct (see TEAM-1.8) supersede the previous coupled `teamPRNotificationsEnabled` flag. Inbox events are written only when `agentTeamsEnabled` is true; per-event recipient sets are taken from the matrix in `teamEventRoutingPreferences`.
 
-**TEAM-1.6** The Agent Teams Settings pane shall expose **two** user-editable Stencil-templated text areas registered into `UserDefaults.standard` at app startup so non-binding readers see the same defaults until the user overrides. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt` (`@AppStorage("teamSessionPrompt")`, String), defaults to empty because the auto-generated team-aware instructions already include stable session context; when non-empty, it is rendered once at session start against the `agent` context. Only `agent.branch` and `agent.lead` are meaningful at session start (`agent.this_worktree` and `agent.other_worktree` are always `false`), and the pane's variable-list disclosure deliberately omits the latter two. The rendered text is appended after a blank line to the auto-generated team-aware instructions text returned by `graftty team hook`. The second, `teamPrompt` (`@AppStorage("teamPrompt")`, String), is pre-populated with a non-empty default (`DefaultPrompts.eventPrompt`) and rendered per inbox-row write against the full four-field `agent` context evaluated against the recipient agent, plus a top-level `body` variable carrying the original event body and a top-level `event` object exposing `event.type` (the wire-format event-type string, e.g. `"merge_state_changed"`), `event.attrs` (the event's attribute dictionary), and `event.body` (a duplicate of the top-level `body`). The rendered output is stored in the inbox row's `agent_prompt` field. If the template does not reference `{{ body }}` the renderer appends `\n\n{{ body }}` to the template before rendering, so templates that pre-date the `body` variable continue to surface the event content to the agent. Hook-context delivery (via `TeamHookRenderer.format`) emits `agent_prompt` when present and falls through to `body` otherwise; the inbox row's `body` field stores the event content unchanged so consumers other than the agent (activity log, `graftty team inbox`, watcher wake summaries) read it without the template prelude. Both templates use the same `agent` struct shape: `branch` (String), `lead` (Bool), `this_worktree` (Bool), `other_worktree` (Bool). The previously-defined `teamLeadPrompt` and `teamCoworkerPrompt` AppStorage keys are removed.
+**TEAM-1.6** The Agent Teams Settings pane shall expose **two** user-editable Stencil-templated text areas registered into `UserDefaults.standard` at app startup so non-binding readers see the same defaults until the user overrides. Clearing a field to the empty string disables that prompt. The first, `teamSessionPrompt` (`@AppStorage("teamSessionPrompt")`, String), defaults to empty because the auto-generated team-aware instructions already include stable session context; when non-empty, it is rendered once at session start against the `agent` context. Only `agent.branch` and `agent.main_worktree` are meaningful at session start (`agent.this_worktree` and `agent.other_worktree` are always `false`), and the pane's variable-list disclosure deliberately omits the latter two. The rendered text is appended after a blank line to the auto-generated team-aware instructions text returned by `graftty team hook`. The second, `teamPrompt` (`@AppStorage("teamPrompt")`, String), is pre-populated with a non-empty default (`DefaultPrompts.eventPrompt`) and rendered for each automated-event inbox-row write against the full four-field `agent` context evaluated against the recipient agent, plus a top-level `body` variable carrying the original event body and a top-level `event` object exposing `event.type` (the wire-format event-type string, e.g. `"merge_state_changed"`), `event.attrs` (the event's attribute dictionary), and `event.body` (a duplicate of the top-level `body`). Authored `team_message` rows bypass this template and store no `agent_prompt`. The rendered automated-event output is stored in the inbox row's `agent_prompt` field. If the template does not reference `{{ body }}` the renderer appends `\n\n{{ body }}` to the template before rendering, so templates that pre-date the `body` variable continue to surface the event content to the agent. Hook-context delivery (via `TeamHookRenderer.format`) emits authored messages as a compact `worktree message from <address>:` envelope using the raw `body`; the address is a stable reply address documented in the session primer. For automated events it emits `agent_prompt` when present and falls through to `body` otherwise. The inbox row's `body` field stores content unchanged so consumers other than the agent (activity log, `graftty team inbox`, watcher wake summaries) read it without the template prelude. Both templates use the same `agent` struct shape: `branch` (String), `main_worktree` (Bool), `this_worktree` (Bool), `other_worktree` (Bool). Previously-defined role-specific prompt keys are removed.
 
 **TEAM-1.8** The Agent Teams Settings pane shall render a 4×3 matrix of toggles (rows: PR state changed / PR merged / CI conclusion changed / Mergability changed; columns: Root agent / Worktree agent / Other worktree agents). Each cell binds to one bit of a `RecipientSet` field on the persisted `TeamEventRoutingPreferences` `Codable` struct. Defaults: state-changed/CI/mergability → worktree only; merged → root only. The matrix is rendered as its own Section between the main toggle and the prompt sections.
 
@@ -1608,39 +1672,43 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-1.11** When `EventBodyRenderer.split` renders the per-event `teamPrompt` template, the application shall expose a top-level `event` object on the render context with `event.type` (wire-format event-type string), `event.attrs` (the event's attribute dictionary), and `event.body` (the original event body) — letting templates branch on the event type via a chained `{% if event.type == "…" %} … {% elif … %}` block (Stencil has no `case`/`switch` tag).
 
+**TEAM-1.12** On startup, the application shall migrate `agent.lead` references in saved team session and event prompt templates to `agent.main_worktree` before any AppStorage binding reads them.
+
 ### TEAM-2.x — Team Identity & Membership
 
 **TEAM-2.1** A *team* is implicit in any `RepoEntry` with two or more `WorktreeEntry` children, while `agentTeamsEnabled` is true. A repo with one worktree (or with team mode off) has no team and no team-aware behavior.
 
 **TEAM-2.2** A team's *member name* for a given worktree shall be `WorktreeNameSanitizer(worktree.branch)`, the same sanitization rule used for new worktree names per `GIT-5.1`.
 
-**TEAM-2.3** A team's *lead* shall be the worktree where `worktree.path == repo.path` (the repository's main checkout per `LAYOUT-2.3`). All other worktrees of the team are *coworkers*.
+**TEAM-2.3** A team's main worktree shall be the worktree where `worktree.path == repo.path` (the repository's main checkout per `LAYOUT-2.3`). Every other member is a linked worktree.
 
-**TEAM-2.4** Team identity, membership, and lead designation are derived live from `AppState`. The application shall not persist any team-specific data beyond `agentTeamsEnabled` itself.
+**TEAM-2.4** Team identity, membership, and main-worktree designation are derived live from `AppState`. The application shall not persist any team-specific data beyond `agentTeamsEnabled` itself.
 
 **TEAM-2.5** TeamMembershipEvents.fireJoined writes a team_member_joined inbox row through the dispatcher.
 
 ### TEAM-3.x — Team-Aware Hook Instructions
 
-**TEAM-3.2** The application shall render the *lead variant* of the team-aware instructions when the viewer's worktree is the team's lead (per TEAM-2.3), and the *coworker variant* otherwise. Both variants name the team (by repo display name), the agent (by member name), and list the team's other members by name and worktree.
+**TEAM-3.2** The application shall render the main-worktree variant of the team-aware instructions when the viewer's worktree is the repository's main worktree (per TEAM-2.3), and the linked-worktree variant otherwise. Both variants name the team (by repo display name), the agent (by member name), and list the team's other members by name and worktree.
 
-**TEAM-3.3** Two separate user templates contribute to what each agent sees. **Hook session-start instructions**: the auto-generated team-aware text from `TeamInstructionsRenderer` is followed (after a blank line) by the rendered `teamSessionPrompt` template, evaluated against the agent's session-start context. If the template is empty, whitespace-only after render, or fails to render (Stencil throws), the appended portion is omitted and a render-failure error is logged via `os_log`. **Per inbox-row delivery**: the rendered `teamPrompt` template is rendered into each inbox row's body at write time per recipient (followed by a blank line, prepended to the event body). The same render/empty/failure rules apply. This covers every team event written via `TeamEventDispatcher.dispatchRoutableEvent` — PR/CI/merge events as routed by the matrix, plus `team_message`, `team_member_joined`, and `team_member_left`.
+**TEAM-3.3** Two separate user templates contribute to what each agent sees. **Hook session-start instructions**: the auto-generated team-aware text from `TeamInstructionsRenderer` is followed (after a blank line) by the rendered `teamSessionPrompt` template, evaluated against the agent's session-start context. If the template is empty, whitespace-only after render, or fails to render (Stencil throws), the appended portion is omitted and a render-failure error is logged via `os_log`. **Per automated-event delivery**: the rendered `teamPrompt` template is stored separately from the unchanged event body at write time per recipient. The same render/empty/failure rules apply. This covers PR/CI/merge events routed by `TeamEventDispatcher.dispatchRoutableEvent`, plus `team_member_joined` and `team_member_left`; authored `team_message` rows bypass the automated-event template.
 
 ### TEAM-4.x — `graftty team` CLI
 
-**TEAM-4.1** The application shall provide a CLI subcommand group `graftty team` with two subcommands: `msg <member-name> "<text>"` and `list`.
+**TEAM-4.1** The application shall provide a `graftty team` CLI group with direct-message, broadcast, inbox, and member-list commands. Direct-message and broadcast commands shall accept message text from standard input via `--stdin`.
 
-**TEAM-4.2** `graftty team msg <member-name> "<text>"` shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, look up the team for that worktree, find a teammate matching `<member-name>`, and write a `team_message` inbox row addressed to that teammate's worktree with `from.member = <calling-worktree's member name>` and body `<text>`. The CLI shall exit non-zero with a stderr message if (a) team mode is disabled, (b) the calling worktree has no team, or (c) `<member-name>` is not a teammate of the caller. In case (c) the error shall list the current teammates' member names.
+**TEAM-4.2** `graftty team send [--urgent] [--stdin] <member-name> [text]` shall resolve the calling process's worktree via `WorktreeResolver.resolve()`, look up the team for that worktree, find a teammate matching `<member-name>`, and write a `team_message` inbox row addressed to that teammate's worktree with `from.member = <calling-worktree's member name>` and the supplied body. The CLI shall exit non-zero with a stderr message if (a) team mode is disabled, (b) the calling worktree has no team, (c) `<member-name>` is not a teammate of the caller, or (d) no non-empty body is supplied. In case (c) the error shall list the current teammates' member names.
 
-**TEAM-4.3** `graftty team list` shall print one line per team member of the caller's team to stdout: `<member-name>  branch=<branch>  worktree=<path>  role=<lead|coworker>  running=<true|false>`. The first printed line shall be a header `team=<repo-display-name>  members=<count>`. The CLI shall exit non-zero with a stderr message if team mode is disabled or the calling worktree has no team.
+**TEAM-4.3** `graftty team list` shall print one line per team member of the caller's team to stdout: `<member-name>  branch=<branch>  worktree=<path>  main=<true|false>  running=<true|false>`. The first printed line shall be a header `team=<repo-display-name>  members=<count>`. The CLI shall exit non-zero with a stderr message if team mode is disabled or the calling worktree has no team.
+
+**TEAM-4.4** The session-start team primer shall instruct agents to send direct and broadcast message bodies through standard input with a quoted, freshly generated heredoc delimiter that is absent from the message, never as a shell argument, so shell syntax in messages remains literal.
 
 ### TEAM-5.x — `team_*` Inbox Events
 
 **TEAM-5.1** When team_message is dispatched, the application shall append exactly one inbox row addressed to the named recipient.
 
-**TEAM-5.2** The application shall write a `team_member_joined` inbox row when a worktree is added to a team (a new worktree appears in a team-enabled repo, or a single-worktree repo gains a second worktree). Routing: addressed to the team's lead's worktree only. Attributes: `team`, `member` (joiner's member name), `branch`, `worktree` (joiner's path).
+**TEAM-5.2** The application shall write a `team_member_joined` inbox row when a worktree is added to a team (a new worktree appears in a team-enabled repo, or a single-worktree repo gains a second worktree). Routing: addressed to the repository's main worktree only. Attributes: `team`, `member` (joiner's member name), `branch`, `worktree` (joiner's path).
 
-**TEAM-5.3** The application shall write a `team_member_left` inbox row when a worktree is removed from a team (the worktree is deleted, or the team-enabled repo collapses to one worktree). Routing: addressed to the team's lead's worktree only. Attributes: `team`, `member` (departing member's name), `reason` (`removed` or `exited`).
+**TEAM-5.3** The application shall write a `team_member_left` inbox row when a worktree is removed from a team (the worktree is deleted, or the team-enabled repo collapses to one worktree). Routing: addressed to the repository's main worktree only. Attributes: `team`, `member` (departing member's name), `reason` (`removed` or `exited`).
 
 **TEAM-5.4** When constructing a system endpoint, the application shall produce an endpoint with member='system', worktree=<repoPath>, and runtime=nil.
 
@@ -1648,15 +1716,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-5.6** When pr_state_changed has attrs.to == 'merged', the dispatcher shall use the prMerged matrix row.
 
-**TEAM-5.7** When a worktree joins a team-enabled repo, the dispatcher shall append one team_member_joined inbox row addressed to the lead.
+**TEAM-5.7** When a worktree joins a team-enabled repo, the dispatcher shall append one team_member_joined inbox row addressed to the main worktree.
 
-**TEAM-5.8** When a worktree is removed from a team-enabled repo (collapsing to one worktree), the dispatcher shall still append one team_member_left inbox row addressed to the lead.
+**TEAM-5.8** When a worktree is removed from a team-enabled repo (collapsing to one worktree), the dispatcher shall still append one team_member_left inbox row addressed to the main worktree.
 
 **TEAM-5.9** When pr_state_changed fires in a single-worktree repo, the dispatcher shall write the row to the subject worktree iff .worktree is in the matrix row.
 
-**TEAM-5.10** When team_message is dispatched and the user's teamPrompt template is non-empty, the dispatcher shall write the inbox row with the original event body and the rendered per-recipient prompt stored separately as agentPrompt.
+**TEAM-5.10** When a team_message is dispatched, the application shall store its authored body verbatim and shall not apply the automated-event teamPrompt template.
 
-**TEAM-5.11** When team_broadcast is dispatched, the dispatcher shall write one team_message inbox row per non-sender team member, each rendered against that recipient's agent context.
+**TEAM-5.11** When a team_broadcast is dispatched, the application shall write one authored team_message row per non-sender team member without applying the automated-event teamPrompt template.
 
 **TEAM-5.12** When a routable event is dispatched and the user's teamPrompt template is non-empty, the dispatcher shall write the inbox row with the original event body intact and the rendered per-recipient prompt stored separately as agentPrompt.
 
@@ -1774,7 +1842,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **REMOTE-7.1** When a client opens a channel with `channel_type: "pane_control"` over an authenticated `RemoteHostConnection`, the host shall accept the channel only when the requesting trusted peer holds the `terminal_control` capability. (Enforced at userauth: a peer with `terminalControl: .disabled` is rejected.)
 
-**REMOTE-7.2** When the host receives a `pane_control` request `{"type":"split","target":<sessionName>,"direction":<axis>}`, the host shall replace the leaf whose `sessionName == target` with a new split node of the requested `direction` whose left/top child is the original leaf and whose right/bottom child is a freshly-spawned leaf, applied on the main actor, and reply `{"ok":true}` on success.
+**REMOTE-7.2** When the host receives a `pane_control` request `{"type":"split","target":<sessionName>,"direction":<right|down|left|up>}`, the host shall replace the leaf whose `sessionName == target` with a new split node placed to the requested side of the original leaf, applied on the main actor, and reply `{"ok":true}` on success.
 
 **REMOTE-7.3** When the host receives a `pane_control` request `{"type":"close","target":<sessionName>}`, the host shall destroy the surface for the leaf whose `sessionName == target` and reply `{"ok":true}` on success.
 
@@ -1783,6 +1851,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **REMOTE-7.5** While the host services `pane_control` requests, the application shall route mutations through an injected mutator callback without giving `PaneControlHandler` a reference to `AppState`, enforcing per-client focus sovereignty by construction.
 
 **REMOTE-7.6** If a trusted peer is revoked while a `pane_control` channel is open, the channel shall close and subsequent open requests from the revoked peer shall be rejected.
+
+**REMOTE-7.7** When pane-control split requests are encoded, the right/down directions shall encode as the legacy horizontal/vertical wire tokens so hosts running released builds keep decoding them, left/up shall encode as their semantic tokens, and when legacy horizontal/vertical split directions are decoded, they shall decode as right/down.
 
 ### REMOTE-8.x — SSH session layer
 
@@ -1819,6 +1889,12 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 ### REMOTE-11.x
 
 **REMOTE-11.1** If the host receives a signaling offer while another remote connection is active, then the application shall respond with a retryable unavailable status and shall not tear down the active connection.
+
+**REMOTE-11.2** If a remote ICE candidate arrives before the answer has been applied, then the connection shall buffer it and add it to the peer connection once the remote description is set, rather than dropping it.
+
+**REMOTE-11.3** When the client creates its data channel, the connection shall install the inbound-buffering SSH transport immediately, before the channel opens, so bytes the host writes upon its own open notification are never dropped.
+
+**REMOTE-11.4** While a data channel's SSH transport has not yet attached, the application shall buffer inbound data-channel bytes losslessly from the moment the channel is announced and deliver them to the transport in arrival order ahead of live traffic.
 
 ## URL — Worktree URL Handler
 
@@ -1884,6 +1960,14 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **AGENT-4.4** If `graftty notify` is given both `--session` and `--worktree`, then the application shall reject the invocation with a validation error.
 
+### AGENT-5.x
+
+**AGENT-5.1** When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to accept any optional launch command before reporting success. `--existing` shall verify and reuse an exact local branch ref. `--agent codex|claude` shall queue that runtime as the pane's explicit initial command and shall encode prompt bytes into a printable terminal transport before the shell decodes them into one argument, while `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
+
+**AGENT-5.2** While a CLI worktree-creation operation is retained, the application shall expose exactly one pending, ready, or failed state by operation ID, together with the canonical worktree path used as its stable messaging address.
+
+**AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions for launching an agent with `graftty worktree add --agent`, identify the returned address as belonging to the worktree rather than the process, direct later guidance through the shell-safe `graftty team send --stdin` inbox path, and deliver queued worktree inbox messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
+
 ## CLI — CLI
 
 ### CLI-1.x
@@ -1894,7 +1978,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### MEM-1.x
 
-**MEM-1.1** While more than 4 worktrees have live surfaces, the application shall evict the least-recently-selected worktree's surfaces.
+**MEM-1.1** While more than 4 worktrees have live surfaces, including surfaces created in the background by web or CLI worktree creation, the application shall evict the least-recently-selected worktree's surfaces; a background-created worktree that has never been selected shall enter as least recent.
 
 **MEM-1.2** When a worktree's surfaces are evicted via the LRU budget, the application shall preserve its zmx sessions, pane-to-session mapping, titles, PWDs, and rehydration state so re-selection re-attaches transparently.
 

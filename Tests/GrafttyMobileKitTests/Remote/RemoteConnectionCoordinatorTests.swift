@@ -481,7 +481,7 @@ struct RemoteConnectionCoordinatorTests {
 
         let again = await coordinator.connection(for: host)
         #expect(counter.count == 2, "a fresh call after invalidateAll must negotiate again")
-        #expect(await again !== firstConnection)
+        #expect(again !== firstConnection)
         await again?.close()
     }
 
@@ -646,8 +646,8 @@ struct RemoteConnectionCoordinatorTests {
         // without a real negotiation). Directly exercise the guard
         // instead: evicting with `stale`'s identity while `newer` is
         // registered must be a no-op.
-        await coordinator.registerLiveConnectionForTesting(newer, hostID: host.id)
-        await coordinator.evict(hostID: host.id, connectionIdentity: ObjectIdentifier(stale))
+        coordinator.registerLiveConnectionForTesting(newer, hostID: host.id)
+        coordinator.evict(hostID: host.id, connectionIdentity: ObjectIdentifier(stale))
 
         let result = await coordinator.connection(for: host)
         #expect(result === newer, "a stale connection's terminal notification must not evict a newer, live connection")
@@ -768,9 +768,16 @@ enum RemoteConnectionTestSupport {
     /// Used instead of arbitrary `Task.sleep` so a test exits promptly on
     /// success but still fails clearly when the condition genuinely
     /// doesn't hold.
+    /// `stage` is evaluated only when the poll times out, so
+    /// interpolating live counters into it yields an at-timeout snapshot.
+    /// Label every poll in multi-stage tests — an unlabeled timeout is
+    /// attributed to the @Test declaration line and is undiagnosable
+    /// from CI logs (the IPAD-5.2 flake hid two distinct root causes
+    /// behind one generic timeout).
     static func pollUntil(
         timeout: Duration,
         interval: Duration = .milliseconds(50),
+        stage: @autoclosure () -> String = "",
         condition: () async -> Bool
     ) async throws {
         let deadline = ContinuousClock.now.advanced(by: timeout)
@@ -778,12 +785,17 @@ enum RemoteConnectionTestSupport {
             if await condition() { return }
             try await Task.sleep(for: interval)
         }
-        throw PollTimeout(timeout: timeout)
+        throw PollTimeout(timeout: timeout, stage: stage())
     }
 
     struct PollTimeout: Error, CustomStringConvertible {
         let timeout: Duration
-        var description: String { "pollUntil timed out after \(timeout)" }
+        var stage: String = ""
+        var description: String {
+            stage.isEmpty
+                ? "pollUntil timed out after \(timeout)"
+                : "pollUntil timed out after \(timeout) at stage: \(stage)"
+        }
     }
 }
 

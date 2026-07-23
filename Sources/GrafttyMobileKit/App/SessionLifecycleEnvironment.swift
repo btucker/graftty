@@ -35,6 +35,12 @@ extension SessionClient {
     public nonisolated static let previewIdleThreshold: TimeInterval = 10
     public nonisolated static let fullscreenIdleThreshold: TimeInterval = .infinity
 
+    /// Quiet window before a mounted surface's render pace drops to
+    /// `.reduced` (~1 fps). Distinct from `idleThreshold`, which
+    /// unmounts the surface entirely (previews only).
+    public nonisolated static let renderPaceQuietDelay: TimeInterval = 5
+    public nonisolated static let reducedRenderPaceInterval: TimeInterval = 1.0
+
     /// One-stop factory for the WebSocket transport + `SessionClient`
     /// pair. Both `SingleSessionView` (initial / re-dial) and
     /// `WorktreeDetailView` (preview pool) need the same triplet — URL
@@ -179,18 +185,10 @@ func makeRemoteConnectionProvider(
 /// the host (unpaired, or negotiation failed) — same fallback trigger as
 /// the fullscreen/preview `/ws` paths.
 ///
-/// No UI surfaces consume these yet, and W3 Task 3 (wiring
-/// `RemoteConnectionCoordinator` into `RootView`/`IPadRootLayout`/
-/// `WorktreeDetailView`) re-checked this before threading a call site
-/// through: `WorktreeListContent`'s sidebar still polls `GET
-/// /worktrees/panes` over HTTP, and there is no pane-control (split/close/
-/// swap) UI anywhere yet. Constructing a `PaneEnvironment` today with no
-/// reader would just be a second flavor of dead plumbing (an
-/// `EnvironmentKey` nothing reads, instead of a function nothing calls),
-/// so the call site stays deferred to whichever future task adds the
-/// sidebar/pane-control UI that actually reads `worktreePanesStore` /
-/// `paneControlClient` — this remains infrastructure only, single-sourced
-/// for that consumer to read from once it exists.
+/// iPad's detail toolbar consumes `paneControlClient` for split actions.
+/// `WorktreeListContent` still polls `GET /worktrees/panes` over HTTP, so
+/// `worktreePanesStore` remains infrastructure for a future live snapshot
+/// consumer rather than the sidebar's current data source.
 public struct PaneEnvironment: Sendable {
     public let worktreePanesStore: WorktreePanesStore?
     public let paneControlClient: PaneControlClient?
@@ -203,6 +201,11 @@ public struct PaneEnvironment: Sendable {
     ) {
         self.worktreePanesStore = worktreePanesStore
         self.paneControlClient = paneControlClient
+    }
+
+    public func close() async {
+        await worktreePanesStore?.unsubscribe()
+        await paneControlClient?.close()
     }
 }
 
@@ -223,6 +226,8 @@ public struct PaneEnvironment: Sendable {
 /// one chain.
 public func buildPaneEnvironment(remoteHost: RemoteHostConnection?) async -> PaneEnvironment {
     guard let remoteHost else { return .empty }
+    var openedWorktreePanesStore: WorktreePanesStore?
+    var openedPaneControlClient: PaneControlClient?
     do {
         // Build panes-state side: client first (with no-op callbacks),
         // then store, then backfill callbacks pointing at the store,
@@ -241,18 +246,22 @@ public func buildPaneEnvironment(remoteHost: RemoteHostConnection?) async -> Pan
             }
         )
         try await worktreePanesStore.subscribe()
+        openedWorktreePanesStore = worktreePanesStore
 
         // Build pane-control side: build client, wrap, open via the
         // PaneControlClient façade (which forwards to driver.open()).
         let controlChannel = try await remoteHost.makePaneControlClient()
         let paneControlClient = PaneControlClient(driver: controlChannel)
         try await paneControlClient.open()
+        openedPaneControlClient = paneControlClient
 
         return PaneEnvironment(
             worktreePanesStore: worktreePanesStore,
             paneControlClient: paneControlClient
         )
     } catch {
+        await openedPaneControlClient?.close()
+        await openedWorktreePanesStore?.unsubscribe()
         return .empty
     }
 }

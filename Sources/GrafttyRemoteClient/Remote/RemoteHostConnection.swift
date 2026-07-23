@@ -72,11 +72,6 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// are themselves the explicit synchronization contract with
     /// WebRTC's internal dispatch queue.
     private nonisolated let delegate: PeerConnectionDelegate
-    private nonisolated let dataChannelDelegate: DataChannelDelegate
-
-    /// Continuation that resumes when the data channel transitions to
-    /// `open`. Set during `connect`, resumed by `dataChannelDidChangeState`.
-    private var openContinuation: CheckedContinuation<Void, Error>?
 
     /// Continuation resumed when `iceGatheringState` first reaches `.complete`.
     /// Stored on the actor so the delegate's callback can hop back into
@@ -96,6 +91,23 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     private var pendingLocalCandidates: [RTCIceCandidate] = []
     private var iceCandidateTarget: WebRTCIceCandidateReceiver?
 
+    /// Remote ICE candidates that arrived before `applyAnswer` set the
+    /// remote description. libwebrtc rejects `add(_:)` until a remote
+    /// description exists, so trickled candidates that race ahead of the
+    /// answer must be held and added once `applyAnswer` succeeds — the
+    /// receive-side mirror of `pendingLocalCandidates` above. Without
+    /// this buffer the race is invisible when ICE gathering completes
+    /// fast (candidates ride inside the SDPs), but on a loaded machine
+    /// the 5s gathering timeout ships candidate-poor SDPs and the
+    /// dropped trickle batch leaves ICE unable to connect.
+    private var pendingRemoteCandidates: [RTCIceCandidate] = []
+    private var remoteDescriptionApplied = false
+
+    /// Test seam: how many early remote candidates are currently buffered.
+    internal var pendingRemoteCandidateCountForTesting: Int {
+        pendingRemoteCandidates.count
+    }
+
     /// Bound on how long `waitForIceGatheringComplete` will block when the
     /// SDK never emits `.complete` (iOS simulator, locked-down networks).
     /// Real LAN gathering completes in <100ms, so this only fires in
@@ -111,6 +123,10 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     private let clientKey: Curve25519.Signing.PrivateKey
     private let expectedHostFingerprint: RemoteIdentityFingerprint
     private var sshTransport: SSHNIOTransport?
+
+    /// Test seam: whether the inbound-buffering transport is armed.
+    /// REMOTE-11.3 pins that this is non-nil from channel creation.
+    internal var sshTransportForTesting: SSHNIOTransport? { sshTransport }
     private var sshInstallStarted = false
     /// `NIOSSHHandler` is not declared `Sendable`; wrap in an
     /// `@unchecked Sendable` box so the actor can hold it as a stored
@@ -127,7 +143,6 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         // nil factories: DataChannel-only — no video codec work needed.
         self.factory = RTCPeerConnectionFactory(encoderFactory: nil, decoderFactory: nil)
         self.delegate = PeerConnectionDelegate()
-        self.dataChannelDelegate = DataChannelDelegate()
         self.clientKey = clientKey
         self.expectedHostFingerprint = expectedHostFingerprint
 
@@ -147,15 +162,10 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         self.delegate.onIceStateChange = { [weak self] iceState in
             Task { await self?.handleIceStateChange(iceState) }
         }
-        // The data channel can die (peer closed it, transport reset)
-        // without ICE ever reporting `.failed` — this is the other
-        // terminal signal. Installed on the shared delegate object
-        // up-front; it stays wired across whichever concrete
-        // `RTCDataChannel` `createOffer`/`applyAnswer` later attaches
-        // it to.
-        self.dataChannelDelegate.onClosed = { [weak self] in
-            Task { await self?.handleDataChannelClosed() }
-        }
+        // The data-channel-death terminal signal is wired via the
+        // closed-callback passed to `SSHNIOTransport.init` in
+        // `performCreateOffer` — the transport owns the channel delegate
+        // from creation onward (REMOTE-11.3).
     }
 
     /// Registers the observer fired on every transition into
@@ -210,21 +220,24 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         ) else {
             throw ConnectionError.dataChannelInitFailed
         }
-        dc.delegate = dataChannelDelegate
         self.dataChannel = dc
-        // Install the message handler at channel-creation time, NOT
-        // inside `waitForDataChannelOpen`. The previous design only set
-        // `onMessage` inside the open-wait continuation, so the
-        // already-open early-return path (channel reached `.open`
-        // between `applyAnswer`'s `setRemoteDescription` and the first
-        // state-check) left `onMessage` nil and silently dropped every
-        // inbound frame. The loopback test exposed this as the *second*
-        // pollUntil (pong receipt) timing out after 5s — the first
-        // pollUntil (ping receipt on answerer) and an instrumented CI
-        // failure trace narrowed it down.
-        dataChannelDelegate.onMessage = { [weak self] data in
-            Task { await self?.recordReceivedBinary(data) }
+        // Arm the inbound-buffering SSH transport IMMEDIATELY at channel
+        // creation — before the channel can possibly open (REMOTE-11.3).
+        // `SSHNIOTransport.init` takes over the channel delegate and
+        // buffers every inbound byte; `start()` (in
+        // `startSSHOverDataChannel`) parks until the channel opens. The
+        // host writes its SSH version banner the instant the HOST's open
+        // notification lands, which can precede this client's own open
+        // handling by several scheduler hops — constructing the transport
+        // at our open notification (the previous shape) let that banner
+        // land on a delegate that discarded it, and the handshake stalled
+        // forever with both sides waiting. The closed-callback passed to
+        // the initializer is how this actor learns the DataChannel died,
+        // from creation onward.
+        let transport = SSHNIOTransport(dataChannel: dc) { [weak self] in
+            Task { await self?.handleDataChannelClosed() }
         }
+        self.sshTransport = transport
 
         setState(.connecting)
 
@@ -289,7 +302,17 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         do {
             guard let pc = peerConnection else { throw ConnectionError.notConfigured }
             try await Self.setRemoteDescription(pc, answer)
-            try await waitForDataChannelOpen()
+            remoteDescriptionApplied = true
+            // Drain candidates that trickled in ahead of the answer.
+            // Best-effort per candidate, mirroring the trickle path's
+            // semantics — one malformed candidate must not fail the
+            // whole answer application. (REMOTE-11.2)
+            let drained = pendingRemoteCandidates
+            pendingRemoteCandidates.removeAll()
+            for candidate in drained {
+                try? await Self.addCandidate(candidate, to: pc)
+            }
+            try await startSSHOverDataChannel()
         } catch {
             setState(.failed(reason: "apply answer failed: \(error)"))
             throw error
@@ -337,19 +360,26 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         }
     }
 
-    /// Apply an ICE candidate received from the remote peer.
+    /// Apply an ICE candidate received from the remote peer. Candidates
+    /// arriving before `applyAnswer` has set the remote description are
+    /// buffered (libwebrtc rejects them with "remote description was
+    /// null") and added once the answer is applied. (REMOTE-11.2)
     public func addRemoteIceCandidate(_ candidate: RTCIceCandidate) async throws {
         guard let pc = peerConnection else { throw ConnectionError.notConfigured }
+        guard remoteDescriptionApplied else {
+            pendingRemoteCandidates.append(candidate)
+            return
+        }
+        try await Self.addCandidate(candidate, to: pc)
+    }
+
+    private static func addCandidate(_ candidate: RTCIceCandidate, to pc: RTCPeerConnection) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             pc.add(candidate) { error in
                 if let error { continuation.resume(throwing: error); return }
                 continuation.resume()
             }
         }
-    }
-
-    private func recordReceivedBinary(_ data: Data) {
-        lastReceivedBinary = data
     }
 
     /// Open a new SSH terminal session over the established connection.
@@ -485,10 +515,6 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
             delegate.onIceGatheringComplete = nil
             pending.resume()
         }
-        if let pending = openContinuation {
-            openContinuation = nil
-            pending.resume(throwing: ConnectionError.closed)
-        }
         openTimeoutTask?.cancel()
         openTimeoutTask = nil
         dataChannel?.close()
@@ -497,6 +523,8 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
         peerConnection = nil
         iceCandidateTarget = nil
         pendingLocalCandidates.removeAll()
+        pendingRemoteCandidates.removeAll()
+        remoteDescriptionApplied = false
     }
 
     /// `RTCIceConnectionState.failed` means ICE has exhausted every
@@ -539,51 +567,29 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     /// PR #184 hit before this timeout was added.
     private static let dataChannelOpenTimeout: Duration = .seconds(30)
     private var openTimeoutTask: Task<Void, Never>?
+    private var didTimeOutOpeningDataChannel = false
 
-    private func waitForDataChannelOpen() async throws {
-        if dataChannel?.readyState == .open {
-            // DataChannel was already open before we got here; install SSH
-            // directly (no continuation needed — we're already on the actor).
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                self.openContinuation = continuation
-                Task { await self.installSSHHandlerAndResume() }
-            }
-            return
-        }
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            self.openContinuation = continuation
-            self.dataChannelDelegate.onOpen = { [weak self] in
-                Task { await self?.installSSHHandlerAndResume() }
-            }
-            // `onMessage` is installed up-front in `createOffer`, so we
-            // do NOT re-install it here. The previous design installed
-            // it here and skipped it on the early-return path above —
-            // see the createOffer comment for the bug that caused.
-            // No redundant re-check here: the early-return path at the
-            // top of waitForDataChannelOpen handles the already-open case,
-            // and installSSHHandlerAndResume is guarded by sshInstallStarted.
-            self.openTimeoutTask = Task { [weak self] in
-                try? await Task.sleep(for: Self.dataChannelOpenTimeout)
-                await self?.handleDataChannelOpenTimeout()
-            }
-        }
-    }
-
-    private func installSSHHandlerAndResume() async {
+    /// Install the client SSH handler on the pre-armed transport and
+    /// drive the handshake. The transport was constructed at channel
+    /// creation (REMOTE-11.3), so every inbound byte since then is
+    /// buffered; `transport.start()` parks until the channel opens (a
+    /// channel that dies first makes it throw). The open-timeout task is
+    /// the liveness bound: a channel that never opens (ICE stalled with
+    /// no usable path) transitions the connection to `.failed`, whose
+    /// teardown closes the transport and unparks `start()` with an error.
+    private func startSSHOverDataChannel() async throws {
         guard !sshInstallStarted else { return }
         sshInstallStarted = true
-        guard let dc = dataChannel else { return }
-        // Passed to the initializer (not assigned after construction) so
-        // there is no window between `SSHNIOTransport.init` re-assigning
-        // `dc.delegate` to its own internal delegate — which is what
-        // stops `dataChannelDelegate.onClosed` (wired in `RemoteHostConnection.init`)
-        // from observing this DataChannel any further — and this closure
-        // being wired up to replace it as the way to learn the
-        // DataChannel died.
-        let transport = SSHNIOTransport(dataChannel: dc) { [weak self] in
-            Task { await self?.handleDataChannelClosed() }
+        guard let transport = sshTransport else { throw ConnectionError.notConfigured }
+        didTimeOutOpeningDataChannel = false
+        openTimeoutTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: Self.dataChannelOpenTimeout)
+            } catch {
+                return
+            }
+            await self?.handleDataChannelOpenTimeout()
         }
-        self.sshTransport = transport  // assign before start so close() can find it
         do {
             // Wrap the handler in an SSHHandlerBox inside the event-loop
             // submit closure so only the `@unchecked Sendable` box
@@ -598,37 +604,37 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
                 return SSHHandlerBox(h)
             }.get()
             try await transport.start()
-            self.sshHandlerBox = box
             openTimeoutTask?.cancel()
             openTimeoutTask = nil
-            // If openContinuation is nil, the open already timed out or
-            // close() resumed it; don't overwrite .failed/.closed with .connected.
-            if let cont = openContinuation {
-                openContinuation = nil
-                setState(.connected)
-                cont.resume(returning: ())
-            }
+            // `setState` refuses transitions once terminal, so a `close()`
+            // that ran during the awaits above cannot be overwritten with
+            // `.connected` — but don't hand out the handler box either.
+            guard !isTerminal else { return }
+            self.sshHandlerBox = box
+            setState(.connected)
         } catch {
+            let surfacedError: Error = didTimeOutOpeningDataChannel
+                ? ConnectionError.dataChannelOpenTimedOut
+                : error
+            openTimeoutTask?.cancel()
+            openTimeoutTask = nil
             await transport.close()
             self.sshTransport = nil
-            if let cont = openContinuation {
-                openContinuation = nil
-                setState(.failed(reason: "SSH handshake failed: \(error)"))
-                cont.resume(throwing: error)
-            }
+            setState(.failed(reason: "SSH handshake failed: \(surfacedError)"))
+            throw surfacedError
         }
     }
 
     private func handleDataChannelOpenTimeout() {
-        guard let continuation = openContinuation else { return }
-        openContinuation = nil
+        // Only meaningful while the connection is still coming up — a
+        // fired timer racing a successful `.connected` (or an earlier
+        // terminal transition) must be a no-op. Failing the state tears
+        // the transport down, which unparks `startSSHOverDataChannel`'s
+        // waiting `transport.start()` with an error.
+        guard state != .connected, !isTerminal else { return }
         openTimeoutTask = nil
-        // Detach the `.open` callback so a late state transition cannot
-        // re-enter `handleDataChannelOpen` after we've failed the
-        // connection. Mirrors `handleIceGatheringComplete`'s cleanup.
-        dataChannelDelegate.onOpen = nil
+        didTimeOutOpeningDataChannel = true
         setState(.failed(reason: "data channel did not open within \(Self.dataChannelOpenTimeout)"))
-        continuation.resume(throwing: ConnectionError.dataChannelOpenTimedOut)
     }
 
     /// Initialise WebRTC's SSL subsystem exactly once per process.
@@ -732,34 +738,4 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate,
 private final class SSHHandlerBox: @unchecked Sendable {
     let handler: NIOSSHHandler
     init(_ handler: NIOSSHHandler) { self.handler = handler }
-}
-
-/// `RTCDataChannelDelegate` glue. The actor sets `onOpen` / `onMessage`
-/// before awaiting state transitions.
-///
-/// See `PeerConnectionDelegate` for the rationale on the
-/// `nonisolated(unsafe)` + `@Sendable` annotations.
-private final class DataChannelDelegate: NSObject, RTCDataChannelDelegate, @unchecked Sendable {
-    nonisolated(unsafe) var onOpen: (@Sendable () -> Void)?
-    nonisolated(unsafe) var onMessage: (@Sendable (Data) -> Void)?
-    /// Fires on `.closing` or `.closed` — see
-    /// `RemoteHostConnection.handleDataChannelClosed`.
-    nonisolated(unsafe) var onClosed: (@Sendable () -> Void)?
-
-    func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
-        switch dataChannel.readyState {
-        case .open:
-            onOpen?()
-        case .closing, .closed:
-            onClosed?()
-        case .connecting:
-            break
-        @unknown default:
-            break
-        }
-    }
-
-    func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
-        onMessage?(buffer.data)
-    }
 }

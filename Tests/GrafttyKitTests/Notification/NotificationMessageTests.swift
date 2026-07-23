@@ -213,8 +213,8 @@ struct NotificationMessageTests {
         let resp: ResponseMessage = .teamList(
             teamName: "acme-web",
             members: [
-                .init(name: "main", branch: "main", worktreePath: "/r/a", role: "lead", isRunning: true),
-                .init(name: "alice", branch: "alice", worktreePath: "/r/a/.worktrees/alice", role: "coworker", isRunning: false),
+                .init(name: "main", branch: "main", worktreePath: "/r/a", isMainWorktree: true, isRunning: true),
+                .init(name: "alice", branch: "alice", worktreePath: "/r/a/.worktrees/alice", isMainWorktree: false, isRunning: false),
             ]
         )
         let data = try JSONEncoder().encode(resp)
@@ -231,8 +231,8 @@ struct NotificationMessageTests {
           "type": "team_list",
           "team_name": "acme-web",
           "members": [
-            {"name":"main","branch":"main","worktree_path":"/r/a","role":"lead","is_running":true},
-            {"name":"alice","branch":"alice","worktree_path":"/r/a/.worktrees/alice","role":"coworker","is_running":false}
+            {"name":"main","branch":"main","worktree_path":"/r/a","is_main_worktree":true,"is_running":true},
+            {"name":"alice","branch":"alice","worktree_path":"/r/a/.worktrees/alice","is_main_worktree":false,"is_running":false}
           ]
         }
         """#
@@ -244,7 +244,7 @@ struct NotificationMessageTests {
         #expect(teamName == "acme-web")
         #expect(members.count == 2)
         #expect(members[0].name == "main")
-        #expect(members[0].role == "lead")
+        #expect(members[0].isMainWorktree)
         #expect(members[0].isRunning == true)
         #expect(members[1].worktreePath == "/r/a/.worktrees/alice")
         #expect(members[1].isRunning == false)
@@ -277,6 +277,48 @@ struct NotificationMessageTests {
         #expect(decoded == original)
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         #expect(json?["type"] as? String == "send_pane")
+    }
+
+    @Test func createWorktreeRequestRoundTrips() throws {
+        let original: NotificationMessage = .createWorktree(
+            callerWorktree: "/repo",
+            worktreeName: "fix-auth",
+            branchName: "feature/fix-auth",
+            existing: false,
+            command: "codex",
+            agentRuntime: .codex
+        )
+        let data = try JSONEncoder().encode(original)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        #expect(json["type"] as? String == "create_worktree")
+        #expect(json["caller_worktree"] as? String == "/repo")
+        #expect(json["worktree_name"] as? String == "fix-auth")
+        #expect(json["branch_name"] as? String == "feature/fix-auth")
+        #expect(json["command"] as? String == "codex")
+        #expect(json["agent_runtime"] as? String == "codex")
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == original)
+    }
+
+    @Test func worktreeCreateStatusRequestRoundTrips() throws {
+        let original: NotificationMessage = .worktreeCreateStatus(operationID: "op-123")
+        let data = try JSONEncoder().encode(original)
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == original)
+    }
+
+    @Test func worktreeCreateResponseRoundTrips() throws {
+        let status = WorktreeCreateStatus(
+            operationID: "op-123",
+            state: .ready,
+            worktreePath: "/repo/.worktrees/fix-auth",
+            messageAddress: "/repo/.worktrees/fix-auth"
+        )
+        let original: ResponseMessage = .worktreeCreate(status)
+        let data = try JSONEncoder().encode(original)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        #expect(json["type"] as? String == "worktree_create")
+        let operation = json["operation"] as! [String: Any]
+        #expect(operation["message_address"] as? String == "/repo/.worktrees/fix-auth")
+        #expect(try JSONDecoder().decode(ResponseMessage.self, from: data) == original)
     }
 
     @Test func paneShowResponseRoundTrip() throws {

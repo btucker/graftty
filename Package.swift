@@ -28,6 +28,7 @@ let package = Package(
         .executable(name: "appcast-updater", targets: ["appcast-updater"]),
         .library(name: "GrafttyKit", targets: ["GrafttyKit"]),
         .library(name: "GrafttyRemoteClient", targets: ["GrafttyRemoteClient"]),
+        .library(name: "GrafttyCommandUI", targets: ["GrafttyCommandUI"]),
         .library(name: "GrafttyMobileKit", targets: ["GrafttyMobileKit"]),
     ],
     dependencies: [
@@ -44,6 +45,11 @@ let package = Package(
     targets: [
         .target(
             name: "GrafttyProtocol",
+            swiftSettings: strictWarnings
+        ),
+        .target(
+            name: "GrafttyCommandUI",
+            dependencies: ["GrafttyProtocol"],
             swiftSettings: strictWarnings
         ),
         .target(
@@ -106,6 +112,7 @@ let package = Package(
                 "GrafttyHostAgent",
                 "GrafttyRemoteClient",
                 "GrafttyProtocol",
+                "GrafttyCommandUI",
                 .product(name: "GhosttyKit", package: "libghostty-spm"),
                 .product(name: "Sparkle", package: "Sparkle"),
                 .product(name: "Stencil", package: "Stencil"),
@@ -116,6 +123,7 @@ let package = Package(
             name: "GrafttyCLI",
             dependencies: [
                 "GrafttyKit",
+                "GrafttyProtocol",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             swiftSettings: strictWarnings
@@ -128,6 +136,11 @@ let package = Package(
         .testTarget(
             name: "GrafttyProtocolTests",
             dependencies: ["GrafttyProtocol"],
+            swiftSettings: strictWarnings
+        ),
+        .testTarget(
+            name: "GrafttyCommandUITests",
+            dependencies: ["GrafttyCommandUI"],
             swiftSettings: strictWarnings
         ),
         .testTarget(
@@ -152,6 +165,7 @@ let package = Package(
             dependencies: [
                 "GrafttyRemoteClient",
                 "GrafttyProtocol",
+                "GrafttyCommandUI",
                 .product(name: "NIO", package: "swift-nio"),
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
             ],

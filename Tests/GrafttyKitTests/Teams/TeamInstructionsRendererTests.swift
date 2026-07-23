@@ -14,7 +14,7 @@ struct TeamInstructionsRendererTests {
 
     @Test func mainWorktreeVariantNamesItself() {
         let view = makeView()
-        let prompt = TeamInstructionsRenderer.render(team: view, viewer: view.lead)
+        let prompt = TeamInstructionsRenderer.render(team: view, viewer: view.mainWorktree)
         #expect(prompt.contains("\"main\""))
         #expect(prompt.contains("main worktree"))
         #expect(prompt.contains("acme-web"))
@@ -22,14 +22,14 @@ struct TeamInstructionsRendererTests {
 
     @Test func mainWorktreeVariantListsOtherWorktrees() {
         let view = makeView()
-        let prompt = TeamInstructionsRenderer.render(team: view, viewer: view.lead)
+        let prompt = TeamInstructionsRenderer.render(team: view, viewer: view.mainWorktree)
         #expect(prompt.contains("\"feature/login\""))
         #expect(prompt.contains("\"feature/signup\""))
     }
 
     @Test func mainWorktreeVariantDocumentsTeamEvents() {
         let view = makeView()
-        let prompt = TeamInstructionsRenderer.render(team: view, viewer: view.lead)
+        let prompt = TeamInstructionsRenderer.render(team: view, viewer: view.mainWorktree)
         #expect(prompt.contains("team_member_joined"))
         #expect(prompt.contains("team_member_left"))
         #expect(prompt.contains("team_message"))
@@ -62,7 +62,7 @@ struct TeamInstructionsRendererTests {
         #expect(prompt.contains("Status events route to the main worktree"))
     }
 
-    @Test func promptsAvoidLeadCoworkerTerminology() {
+    @Test func promptsAvoidLegacyRoleTerminology() {
         let view = makeView()
         let prompts = view.members.map { TeamInstructionsRenderer.render(team: view, viewer: $0).lowercased() }
         for prompt in prompts {
@@ -74,13 +74,23 @@ struct TeamInstructionsRendererTests {
     @Test func neitherVariantPrescribesPolicy() {
         // Cleanup verification: prompts describe mechanism only, no "you must…" / "you should…"
         let view = makeView()
-        let leadPrompt = TeamInstructionsRenderer.render(team: view, viewer: view.lead)
-        let cw = view.members.first(where: { $0.name == "feature/login" })!
-        let cwPrompt = TeamInstructionsRenderer.render(team: view, viewer: cw)
-        for prompt in [leadPrompt, cwPrompt] {
+        let mainPrompt = TeamInstructionsRenderer.render(team: view, viewer: view.mainWorktree)
+        let linkedMember = view.members.first(where: { $0.name == "feature/login" })!
+        let linkedPrompt = TeamInstructionsRenderer.render(team: view, viewer: linkedMember)
+        for prompt in [mainPrompt, linkedPrompt] {
             #expect(!prompt.contains("MUST proactively"))
             #expect(!prompt.contains("You should "))   // case-sensitive "You should" sentence-start
             #expect(!prompt.contains("you should "))
+        }
+    }
+
+    @Test func roleSpecificContextDoesNotRepeatSharedTeamCommands() {
+        let view = makeView()
+        for member in view.members {
+            let prompt = TeamInstructionsRenderer.render(team: view, viewer: member)
+            #expect(!prompt.contains("graftty team"))
+            #expect(!prompt.contains("Send a direct message"))
+            #expect(!prompt.contains("Current roster"))
         }
     }
 }

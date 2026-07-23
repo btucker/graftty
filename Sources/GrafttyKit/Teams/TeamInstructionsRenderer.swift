@@ -5,17 +5,16 @@
 public enum TeamInstructionsRenderer {
 
     public static func render(team: TeamView, viewer: TeamMember) -> String {
-        switch viewer.role {
-        case .lead:    return renderLead(team: team, viewer: viewer)
-        case .coworker: return renderCoworker(team: team, viewer: viewer)
-        }
+        viewer.isMainWorktree
+            ? renderMainWorktree(team: team, viewer: viewer)
+            : renderLinkedWorktree(team: team, viewer: viewer)
     }
 
-    // MARK: - Lead variant
+    // MARK: - Main-worktree variant
 
-    private static func renderLead(team: TeamView, viewer: TeamMember) -> String {
-        let coworkers = team.members.filter { $0.role == .coworker }
-        let worktreeLines = coworkers
+    private static func renderMainWorktree(team: TeamView, viewer: TeamMember) -> String {
+        let linkedWorktrees = team.members.filter { !$0.isMainWorktree }
+        let worktreeLines = linkedWorktrees
             .map { "  - \"\($0.name)\" — branch \($0.branch), worktree \($0.worktreePath)" }
             .joined(separator: "\n")
 
@@ -26,9 +25,6 @@ public enum TeamInstructionsRenderer {
         Other worktrees:
         \(worktreeLines.isEmpty ? "  (none)" : worktreeLines)
 
-        Send a direct message:
-          graftty team msg <name> "<message>"
-
         Repo/worktree status events route here:
           - team_member_joined — attrs: team, member, branch, worktree.
           - team_member_left — attrs: team, member, reason (removed | exited).
@@ -37,19 +33,17 @@ public enum TeamInstructionsRenderer {
           - merge_state_changed — PR mergeability changed.
 
         Direct `team_message` rows arrive through inbox hook updates.
-        Current roster:
-          graftty team list
         """
     }
 
-    // MARK: - Coworker variant
+    // MARK: - Linked-worktree variant
 
-    private static func renderCoworker(team: TeamView, viewer: TeamMember) -> String {
-        let lead = team.lead
-        let peerCoworkers = team.members.filter {
-            $0.role == .coworker && $0.worktreePath != viewer.worktreePath
+    private static func renderLinkedWorktree(team: TeamView, viewer: TeamMember) -> String {
+        let mainWorktree = team.mainWorktree
+        let otherLinkedWorktrees = team.members.filter {
+            !$0.isMainWorktree && $0.worktreePath != viewer.worktreePath
         }
-        let worktreeLines = peerCoworkers
+        let worktreeLines = otherLinkedWorktrees
             .map { "  - \"\($0.name)\" — branch \($0.branch), worktree \($0.worktreePath)" }
             .joined(separator: "\n")
 
@@ -57,18 +51,12 @@ public enum TeamInstructionsRenderer {
         You are "\(viewer.name)" in the Graftty team for repo "\(team.repoDisplayName)".
         This worktree: \(viewer.worktreePath) on branch \(viewer.branch).
 
-        Main worktree: "\(lead.name)" — branch \(lead.branch), worktree \(lead.worktreePath).
+        Main worktree: "\(mainWorktree.name)" — branch \(mainWorktree.branch), worktree \(mainWorktree.worktreePath).
         Other worktrees:
         \(worktreeLines.isEmpty ? "  (none)" : worktreeLines)
 
-        Send a direct message:
-          graftty team msg <name> "<message>"
-
         Direct messages arrive through inbox hook updates.
         Status events route to the main worktree.
-
-        Current roster:
-          graftty team list
         """
     }
 }
