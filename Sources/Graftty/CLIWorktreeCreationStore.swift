@@ -6,6 +6,39 @@ enum CLIWorktreeCreationPolicy {
         guard agentRuntime != nil, !teamsEnabled else { return nil }
         return "Agent Teams is disabled; enable it in Graftty Settings before using --agent"
     }
+
+    /// An interim CLI revision put a prompt-file path inside a shell command
+    /// and relinquished ownership as soon as the app acknowledged the async
+    /// operation. The app cannot safely recover that path if Git later fails,
+    /// so reject that exact loader family before mutating the worktree. The
+    /// released base64 command and current structured prompt remain valid.
+    static func obsoletePromptLoaderError(
+        agentRuntime: TeamHookRuntime?,
+        command: String?,
+        agentPrompt: String?
+    ) -> String? {
+        guard agentRuntime != nil,
+              agentPrompt == nil,
+              let command,
+              command.contains("_graftty_agent_prompt_file="),
+              command.contains("/bin/rm -f \"$_graftty_agent_prompt_file\"") else {
+            return nil
+        }
+        return "this request uses an obsolete agent prompt loader; use the graftty CLI bundled with the running app and retry"
+    }
+
+    /// New clients send the prompt separately so the app can stage it after
+    /// accepting the request. A bare runtime command from an older client is
+    /// upgraded to the same bootstrap path; the released client's base64
+    /// prompt command remains untouched for wire compatibility.
+    static func shouldStageAgentPrompt(
+        agentRuntime: TeamHookRuntime?,
+        command: String?,
+        agentPrompt: String?
+    ) -> Bool {
+        guard let agentRuntime else { return false }
+        return agentPrompt != nil || command == nil || command == agentRuntime.rawValue
+    }
 }
 
 /// In-memory rendezvous between the fast local-socket request and the async
@@ -16,6 +49,7 @@ final class CLIWorktreeCreationStore {
     private struct Record {
         var status: WorktreeCreateStatus
         var updatedAt: Date
+        var stagedPromptFile: URL?
     }
 
     private var records: [String: Record] = [:]
@@ -25,7 +59,12 @@ final class CLIWorktreeCreationStore {
         self.terminalRetention = terminalRetention
     }
 
-    func begin(worktreePath: String, messageAddress: String, now: Date = Date()) -> WorktreeCreateStatus {
+    func begin(
+        worktreePath: String,
+        messageAddress: String,
+        stagedPromptFile: URL? = nil,
+        now: Date = Date()
+    ) -> WorktreeCreateStatus {
         prune(now: now)
         let status = WorktreeCreateStatus(
             operationID: UUID().uuidString.lowercased(),
@@ -33,15 +72,25 @@ final class CLIWorktreeCreationStore {
             worktreePath: worktreePath,
             messageAddress: messageAddress
         )
-        records[status.operationID] = Record(status: status, updatedAt: now)
+        records[status.operationID] = Record(
+            status: status,
+            updatedAt: now,
+            stagedPromptFile: stagedPromptFile
+        )
         return status
     }
 
     func markReady(operationID: String, now: Date = Date()) {
+        // The backend accepted the loader bytes; its shell now owns removal.
+        records[operationID]?.stagedPromptFile = nil
         transition(operationID: operationID, state: .ready, error: nil, now: now)
     }
 
     func markFailed(operationID: String, error: String, now: Date = Date()) {
+        if let promptFile = records[operationID]?.stagedPromptFile {
+            try? FileManager.default.removeItem(at: promptFile)
+            records[operationID]?.stagedPromptFile = nil
+        }
         transition(operationID: operationID, state: .failed, error: error, now: now)
     }
 
@@ -66,7 +115,8 @@ final class CLIWorktreeCreationStore {
                 messageAddress: prior.messageAddress,
                 error: error
             ),
-            updatedAt: now
+            updatedAt: now,
+            stagedPromptFile: record.stagedPromptFile
         )
     }
 
