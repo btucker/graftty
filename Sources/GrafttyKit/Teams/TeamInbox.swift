@@ -276,6 +276,83 @@ public final class TeamInbox {
         return try decoder.decode(TeamInboxWorktreeWatermark.self, from: data)
     }
 
+    /// Atomically claims the next durable message that this runtime can
+    /// consume. The worktree watermark is the cross-session claim token;
+    /// holding its inter-process lock while selecting the ordered row and
+    /// advancing both cursor files prevents two watcher processes from
+    /// surfacing the same message.
+    ///
+    /// A runtime-targeted row at the head of the worktree's unread queue
+    /// blocks other runtimes rather than being skipped. That keeps the
+    /// shared watermark ordered and prevents advancing past an earlier
+    /// message that still needs its own delivery path.
+    public func claimNextUnreadMessage(
+        teamID: String,
+        sessionID: String,
+        recipientWorktree: String,
+        runtime: String
+    ) throws -> TeamInboxMessage? {
+        try withWorktreeWatermarkLock(teamID: teamID, worktree: recipientWorktree) {
+            guard let cursor = try cursor(teamID: teamID, sessionID: sessionID),
+                  cursor.worktree == recipientWorktree,
+                  cursor.runtime == runtime else {
+                return nil
+            }
+
+            let allMessages = try messages(teamID: teamID)
+            let watermarkID = try worktreeWatermark(
+                teamID: teamID,
+                worktree: recipientWorktree
+            )?.lastDeliveredToAnySessionID
+            let cursorIndex = messageIndex(cursor.lastSeenID, in: allMessages)
+            let watermarkIndex = messageIndex(watermarkID, in: allMessages)
+            let lastDeliveredIndex = max(cursorIndex ?? -1, watermarkIndex ?? -1)
+            let unreadStart = allMessages.index(
+                allMessages.startIndex,
+                offsetBy: lastDeliveredIndex + 1
+            )
+
+            guard let message = allMessages[unreadStart...].first(where: {
+                $0.to.worktree == recipientWorktree
+            }) else {
+                return nil
+            }
+            guard message.to.runtime == nil || message.to.runtime == runtime else {
+                return nil
+            }
+            guard try shouldWriteWorktreeWatermarkUnlocked(
+                teamID: teamID,
+                worktree: recipientWorktree,
+                proposedID: message.id,
+                allowUnknownProposedID: false
+            ) else {
+                return nil
+            }
+
+            // Keep both mutations inside the same worktree lock. Writing the
+            // session cursor first means a watermark write failure leaves the
+            // row available to another session rather than globally consuming
+            // a message that no watcher surfaced.
+            try writeCursor(
+                TeamInboxCursor(
+                    sessionID: sessionID,
+                    worktree: recipientWorktree,
+                    runtime: runtime,
+                    lastSeenID: message.id
+                ),
+                teamID: teamID
+            )
+            try writeWorktreeWatermarkUnlocked(
+                TeamInboxWorktreeWatermark(
+                    worktree: recipientWorktree,
+                    lastDeliveredToAnySessionID: message.id
+                ),
+                teamID: teamID
+            )
+            return message
+        }
+    }
+
     @discardableResult
     public func compareAndAdvanceWorktreeWatermark(
         teamID: String,
@@ -300,6 +377,14 @@ public final class TeamInbox {
             }
             return false
         }
+    }
+
+    private func messageIndex(
+        _ messageID: String?,
+        in messages: [TeamInboxMessage]
+    ) -> Int? {
+        guard let messageID else { return nil }
+        return messages.lastIndex(where: { $0.id == messageID })
     }
 
     private func shouldWriteWorktreeWatermarkUnlocked(

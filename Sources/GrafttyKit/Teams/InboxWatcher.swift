@@ -50,6 +50,7 @@ public actor WatcherOutcome {
 
 /// @spec TEAM-IDLE-1.3
 /// @spec TEAM-IDLE-1.4
+/// @spec TEAM-IDLE-1.5
 /// Long-running watcher used by Claude's `asyncRewake` Stop hook. Writes
 /// its own PID to `<pidFileRoot>/<teamID>/watchers/<session>.<runtime>.pid`,
 /// SIGTERMing whatever PID was previously there (one watcher per session,
@@ -194,40 +195,46 @@ public actor InboxWatcher {
             // such a message away: the persisted cursor tells us it is new
             // to this session even though it was present in the observer's
             // first snapshot.
-            if let match = initialUnreadMessage() {
-                await fire(match)
+            let inbox = TeamInbox(rootDirectory: inboxRootDirectory)
+            if (try? inbox.cursor(teamID: teamID, sessionID: sessionID)) != nil {
+                await claimAndFire()
+            } else {
+                // Preserve the historical observer baseline for direct
+                // watch-inbox callers that did not run SessionStart. A
+                // production Claude session already has a persisted cursor.
+                let lastExistingID = messages.last(where: {
+                    $0.to.worktree == recipient.worktree
+                })?.id
+                try? inbox.writeCursor(
+                    TeamInboxCursor(
+                        sessionID: sessionID,
+                        worktree: recipient.worktree,
+                        runtime: recipient.runtime.rawValue,
+                        lastSeenID: lastExistingID
+                    ),
+                    teamID: teamID
+                )
             }
             return
         }
-        guard let match = messages.first(where: { msg in
+        guard messages.contains(where: { msg in
             !initialIDs.contains(msg.id) &&
-                msg.to.worktree == recipient.worktree &&
-                (msg.to.runtime == nil || msg.to.runtime == recipient.runtime.rawValue)
+                msg.to.worktree == recipient.worktree
         }) else { return }
-        await fire(match)
+        await claimAndFire()
     }
 
-    private func initialUnreadMessage() -> TeamInboxMessage? {
-        let inbox = TeamInbox(rootDirectory: inboxRootDirectory)
-        do {
-            guard let cursor = try inbox.cursor(teamID: teamID, sessionID: sessionID) else {
-                return nil
-            }
-            guard cursor.worktree == recipient.worktree else { return nil }
-            return try inbox.unreadMessages(
-                teamID: teamID,
-                recipientWorktree: recipient.worktree,
-                after: cursor.lastSeenID
-            ).first(where: { message in
-                message.to.runtime == nil || message.to.runtime == recipient.runtime.rawValue
-            })
-        } catch {
-            return nil
-        }
-    }
-
-    private func fire(_ match: TeamInboxMessage) async {
+    private func claimAndFire() async {
         guard !hasFired else { return }
+        let inbox = TeamInbox(rootDirectory: inboxRootDirectory)
+        guard let match = try? inbox.claimNextUnreadMessage(
+                teamID: teamID,
+                sessionID: sessionID,
+                recipientWorktree: recipient.worktree,
+                runtime: recipient.runtime.rawValue
+              ) else {
+            return
+        }
         hasFired = true
         emit(.watcherWoke, detail: [
             "session": sessionID,
