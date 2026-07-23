@@ -34,13 +34,11 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
 
         /// `true` for the two terminal values. `RemoteHostConnection.setState`
         /// refuses any further transition once this is true — see its doc
-        /// comment. `internal` (the type's default access level, not
-        /// `private`) rather than re-derived elsewhere: the loopback test's
-        /// own terminal-transition assertions read this directly via
-        /// `@testable import` instead of duplicating the switch, which
-        /// would risk silently drifting out of sync with this one if a
-        /// case is ever added.
-        var isTerminal: Bool {
+        /// comment. Public because connection lifecycle coordinators live in
+        /// platform UI modules while this state machine is shared by macOS
+        /// and iOS. Keeping the predicate here avoids duplicating the
+        /// terminal-case switch across consumers if a state is added later.
+        public var isTerminal: Bool {
             switch self {
             case .failed, .closed: return true
             case .idle, .connecting, .connected: return false
@@ -645,7 +643,11 @@ public actor RemoteHostConnection: WebRTCIceCandidateReceiver {
     private static let _webRTCInitOnce: Void = { RTCInitializeSSL() }()
     private static func initializeWebRTC() { _ = _webRTCInitOnce }
 
-    static func defaultConfig() -> RTCConfiguration {
+    /// The baseline peer-connection configuration used by Graftty.
+    ///
+    /// Public so platform adapters and interoperability tests can create the
+    /// answering peer with the same LAN-focused ICE policy as this client.
+    public static func defaultConfig() -> RTCConfiguration {
         let config = RTCConfiguration()
         // Empty ICE servers — LAN / Tailscale loopback uses mDNS-derived
         // host candidates only; no STUN/TURN needed in M1.1 scope.

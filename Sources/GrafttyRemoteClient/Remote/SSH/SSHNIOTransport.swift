@@ -163,7 +163,7 @@ public final class SSHNIOTransport: @unchecked Sendable {
     /// transport becomes its consumer: the inbox replays anything the
     /// channel delivered before this point, so no delegate-attachment
     /// race can drop the peer's first bytes (the SSH banner deadlock).
-    internal init(dataChannel: RTCDataChannel, inbox: DataChannelInbox, onClose: (@Sendable () -> Void)? = nil) {
+    public init(dataChannel: RTCDataChannel, inbox: DataChannelInbox, onClose: (@Sendable () -> Void)? = nil) {
         self.dataChannel = dataChannel
         self.onClose = onClose
         let loop = NIOAsyncTestingEventLoop()
