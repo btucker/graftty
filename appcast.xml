@@ -6,17 +6,31 @@
         <description>Updates for Graftty.</description>
         <language>en</language>
         <item>
+            <title>Version 0.2.4</title>
+            <sparkle:version>0.2.4</sparkle:version>
+            <sparkle:shortVersionString>0.2.4</sparkle:shortVersionString>
+            <pubDate>Thu, 23 Jul 2026 13:53:24 +0000</pubDate>
+            <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
+<ul dir="auto">
+<li>appcast: v0.2.3 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4953617179" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/259" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/259/hovercard" href="https://github.com/btucker/graftty/pull/259">#259</a></li>
+<li>Fix reliable initial task delivery for worktree agents by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4959314174" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/260" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/260/hovercard" href="https://github.com/btucker/graftty/pull/260">#260</a></li>
+</ul>
+<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.2.3...v0.2.4"><tt>v0.2.3...v0.2.4</tt></a></p>]]></description>
+            <enclosure url="https://github.com/btucker/graftty/releases/download/v0.2.4/Graftty-0.2.4.zip" length="29824530" type="application/octet-stream" sparkle:edSignature="tlzxtQoA6o3/TBH+2wwX5MgyHZN18QX23kXE8sMidCpHGGfnPGce0H8I0tdDI+2wdY7Um6j8hQvZ3xANhP9/BQ=="/>
+        </item>
+        <item>
             <title>Version 0.2.3</title>
             <sparkle:version>0.2.3</sparkle:version>
             <sparkle:shortVersionString>0.2.3</sparkle:shortVersionString>
             <pubDate>Wed, 22 Jul 2026 22:15:49 +0000</pubDate>
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-            <description><![CDATA[<h2 dir="auto">What's Changed</h2>
-<ul dir="auto">
-<li>appcast: v0.2.2 by @github-actions[bot] in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4944454027" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/257" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/257/hovercard" href="https://github.com/btucker/graftty/pull/257">#257</a></li>
-<li>Add agent-launched worktree workflow by <a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker">@btucker</a> in <a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4951237604" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/258" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/258/hovercard" href="https://github.com/btucker/graftty/pull/258">#258</a></li>
-</ul>
-<p dir="auto"><strong>Full Changelog</strong>: <a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.2.2...v0.2.3"><tt>v0.2.2...v0.2.3</tt></a></p>]]></description>
+            <description>&lt;h2 dir="auto"&gt;What's Changed&lt;/h2&gt;
+&lt;ul dir="auto"&gt;
+&lt;li&gt;appcast: v0.2.2 by @github-actions[bot] in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4944454027" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/257" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/257/hovercard" href="https://github.com/btucker/graftty/pull/257"&gt;#257&lt;/a&gt;&lt;/li&gt;
+&lt;li&gt;Add agent-launched worktree workflow by &lt;a class="user-mention notranslate" data-hovercard-type="user" data-hovercard-url="/users/btucker/hovercard" data-octo-click="hovercard-link-click" data-octo-dimensions="link_type:self" href="https://github.com/btucker"&gt;@btucker&lt;/a&gt; in &lt;a class="issue-link js-issue-link" data-error-text="Failed to load title" data-id="4951237604" data-permission-text="Title is private" data-url="https://github.com/btucker/graftty/issues/258" data-hovercard-type="pull_request" data-hovercard-url="/btucker/graftty/pull/258/hovercard" href="https://github.com/btucker/graftty/pull/258"&gt;#258&lt;/a&gt;&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p dir="auto"&gt;&lt;strong&gt;Full Changelog&lt;/strong&gt;: &lt;a class="commit-link" href="https://github.com/btucker/graftty/compare/v0.2.2...v0.2.3"&gt;&lt;tt&gt;v0.2.2...v0.2.3&lt;/tt&gt;&lt;/a&gt;&lt;/p&gt;</description>
             <enclosure url="https://github.com/btucker/graftty/releases/download/v0.2.3/Graftty-0.2.3.zip" length="29796201" type="application/octet-stream" sparkle:edSignature="gPmzxU1WbMLLb+CH5etj2phhUHfJSlQydwJdXp+oqBDkAwxXd5i66XpR5TYhBJPDHGBZjUs+qyKi6X3jp2/fCA=="/>
         </item>
         <item>
