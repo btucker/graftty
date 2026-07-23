@@ -238,6 +238,23 @@ public final class TeamInbox {
         }
     }
 
+    /// Returns the leading rows that `runtime` may consume. A row targeted to
+    /// another runtime stops the prefix so the shared worktree watermark never
+    /// advances past a message that still needs its own delivery path.
+    static func runtimeDeliverablePrefix(
+        _ messages: [TeamInboxMessage],
+        runtime: String
+    ) -> [TeamInboxMessage] {
+        Array(messages.prefix { isDeliverable($0, toRuntime: runtime) })
+    }
+
+    static func isDeliverable(
+        _ message: TeamInboxMessage,
+        toRuntime runtime: String
+    ) -> Bool {
+        message.to.runtime == nil || message.to.runtime == runtime
+    }
+
     public func writeCursor(_ cursor: TeamInboxCursor, teamID: String) throws {
         let url = cursorURL(teamID: teamID, sessionID: cursor.sessionID)
         try ensureParentDirectory(for: url)
@@ -318,7 +335,7 @@ public final class TeamInbox {
             }) else {
                 return nil
             }
-            guard message.to.runtime == nil || message.to.runtime == runtime else {
+            guard Self.isDeliverable(message, toRuntime: runtime) else {
                 return nil
             }
 
