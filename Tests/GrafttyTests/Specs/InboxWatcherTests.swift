@@ -106,7 +106,7 @@ struct InboxWatcherTests {
     }
 
     @Test("""
-    @spec TEAM-IDLE-1.5: When an asyncRewake watcher claims an unread message, the application shall advance that session's cursor and the shared worktree watermark before waking Claude so a re-armed or competing watcher cannot deliver the same durable message again.
+    @spec TEAM-11.1: When an asyncRewake watcher claims an unread message, the application shall advance that session's cursor and the shared worktree watermark before waking Claude so a re-armed or competing watcher cannot deliver the same durable message again.
     """)
     func deliveredMessageCannotWakeRearmedWatcher() async throws {
         let tmpRoot = try makeTmpDir()
@@ -181,12 +181,21 @@ struct InboxWatcherTests {
         defer { secondRun.cancel() }
         await secondWatcher.whenReady()
 
-        do {
-            _ = try await secondOutcome.wait(timeout: 0.5)
-            Issue.record("the re-armed watcher re-delivered an already claimed message")
-        } catch WatcherOutcome.WaitError.timeout {
-            // Expected: the durable row was already consumed.
-        }
+        let fresh = try appendMessage(
+            to: inbox,
+            teamID: teamID,
+            worktree: worktree,
+            body: "fresh message",
+            runtime: TeamHookRuntime.claude.rawValue
+        )
+        let secondResult = try await secondOutcome.wait(timeout: 3.0)
+        #expect(secondResult.stderr.contains("fresh message"))
+        #expect(!secondResult.stderr.contains("deliver exactly once"))
+        #expect(try inbox.cursor(teamID: teamID, sessionID: sessionID)?.lastSeenID == fresh.id)
+        #expect(
+            try inbox.worktreeWatermark(teamID: teamID, worktree: worktree)?
+                .lastDeliveredToAnySessionID == fresh.id
+        )
     }
 
     @Test("Competing sessions cannot both claim the same durable message")
@@ -306,6 +315,64 @@ struct InboxWatcherTests {
         #expect(result.stderr.contains("earlier shared message"))
         #expect(!result.stderr.contains("later Claude message"))
         #expect(try inbox.cursor(teamID: teamID, sessionID: sessionID)?.lastSeenID == shared.id)
+    }
+
+    @Test("Watcher retries after another runtime advances a blocking watermark")
+    func retriesAfterOtherRuntimeConsumesHeadMessage() async throws {
+        let tmpRoot = try makeTmpDir()
+        defer { try? FileManager.default.removeItem(at: tmpRoot) }
+
+        let teamID = "team-x"
+        let sessionID = "test-session"
+        let worktree = "wt-foo-path"
+        let inboxRoot = tmpRoot.appendingPathComponent("inbox", isDirectory: true)
+        try FileManager.default.createDirectory(at: inboxRoot, withIntermediateDirectories: true)
+        let inbox = TeamInbox(rootDirectory: inboxRoot)
+        try seedSession(
+            in: inbox,
+            teamID: teamID,
+            sessionID: sessionID,
+            worktree: worktree,
+            lastSeenID: nil
+        )
+        let codexMessage = try appendMessage(
+            to: inbox,
+            teamID: teamID,
+            worktree: worktree,
+            body: "Codex-only head",
+            runtime: TeamHookRuntime.codex.rawValue
+        )
+        _ = try appendMessage(
+            to: inbox,
+            teamID: teamID,
+            worktree: worktree,
+            body: "Claude follows",
+            runtime: TeamHookRuntime.claude.rawValue
+        )
+
+        let outcome = WatcherOutcome()
+        let watcher = makeWatcher(
+            sessionID: sessionID,
+            worktree: worktree,
+            teamID: teamID,
+            inboxRoot: inboxRoot,
+            tmpRoot: tmpRoot,
+            outcome: outcome
+        )
+        let runTask = Task.detached { await watcher.runUntilSignal() }
+        defer { runTask.cancel() }
+        await watcher.whenReady()
+
+        #expect(
+            try inbox.compareAndAdvanceWorktreeWatermark(
+                teamID: teamID,
+                worktree: worktree,
+                to: codexMessage.id
+            )
+        )
+        let result = try await outcome.wait(timeout: 3.0)
+        #expect(result.stderr.contains("Claude follows"))
+        #expect(!result.stderr.contains("Codex-only head"))
     }
 
     @Test("@spec TEAM-IDLE-1.3: Watcher writes a PID file at <root>/<teamID>/watchers/<session>.<runtime>.pid and SIGTERMs any prior PID it finds.")

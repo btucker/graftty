@@ -279,8 +279,9 @@ public final class TeamInbox {
     /// Atomically claims the next durable message that this runtime can
     /// consume. The worktree watermark is the cross-session claim token;
     /// holding its inter-process lock while selecting the ordered row and
-    /// advancing both cursor files prevents two watcher processes from
-    /// surfacing the same message.
+    /// committing that watermark prevents two watcher processes from
+    /// surfacing the same message. The session cursor mirrors successful
+    /// claims for per-session diagnostics and catch-up.
     ///
     /// A runtime-targeted row at the head of the worktree's unread queue
     /// blocks other runtimes rather than being skipped. That keeps the
@@ -320,32 +321,25 @@ public final class TeamInbox {
             guard message.to.runtime == nil || message.to.runtime == runtime else {
                 return nil
             }
-            guard try shouldWriteWorktreeWatermarkUnlocked(
-                teamID: teamID,
-                worktree: recipientWorktree,
-                proposedID: message.id,
-                allowUnknownProposedID: false
-            ) else {
-                return nil
-            }
 
-            // Keep both mutations inside the same worktree lock. Writing the
-            // session cursor first means a watermark write failure leaves the
-            // row available to another session rather than globally consuming
-            // a message that no watcher surfaced.
-            try writeCursor(
+            // The shared watermark is the authoritative cross-session claim.
+            // Commit it first under the lock, then mirror the session cursor.
+            // If the cursor write fails, still surface the claimed message:
+            // the watermark prevents a replacement watcher from duplicating
+            // it and supplies that watcher with the effective delivery floor.
+            try writeWorktreeWatermarkUnlocked(
+                TeamInboxWorktreeWatermark(
+                    worktree: recipientWorktree,
+                    lastDeliveredToAnySessionID: message.id
+                ),
+                teamID: teamID
+            )
+            try? writeCursor(
                 TeamInboxCursor(
                     sessionID: sessionID,
                     worktree: recipientWorktree,
                     runtime: runtime,
                     lastSeenID: message.id
-                ),
-                teamID: teamID
-            )
-            try writeWorktreeWatermarkUnlocked(
-                TeamInboxWorktreeWatermark(
-                    worktree: recipientWorktree,
-                    lastDeliveredToAnySessionID: message.id
                 ),
                 teamID: teamID
             )
