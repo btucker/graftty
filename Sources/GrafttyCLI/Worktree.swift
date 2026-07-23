@@ -90,20 +90,33 @@ struct WorktreeAdd: ParsableCommand {
         if let error = WorktreeAgentLaunchCommand.validationError(prompt: resolvedPrompt) {
             throw ValidationError(error)
         }
-        let launchCommand = WorktreeAgentLaunchCommand.build(
-            agent: agent,
+        let launch = try WorktreeAgentLaunchCommand.prepare(
+            agent: agent.flatMap { TeamHookRuntime(rawValue: $0) },
             prompt: resolvedPrompt,
             exactCommand: command
         )
+        var operationOwnsPromptFile = false
+        defer {
+            if !operationOwnsPromptFile {
+                launch.discardPromptFile()
+            }
+        }
         let callerWorktree = try CLIEnv.resolveWorktree()
         var response = try CLIEnv.sendRequest(.createWorktree(
             callerWorktree: callerWorktree,
             worktreeName: names.worktree,
             branchName: names.branch,
             existing: existing,
-            command: launchCommand,
+            command: launch.command,
             agentRuntime: agent.flatMap { TeamHookRuntime(rawValue: $0) }
         ))
+        if case .worktreeCreate = response {
+            // The app may still be running Git after this CLI exits or times
+            // out. The short launch command now owns the staged file and
+            // removes it after reading; a future launch prunes abandoned
+            // files left by terminal or Git failures.
+            operationOwnsPromptFile = true
+        }
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))
 
         while true {
@@ -164,29 +177,104 @@ enum WorktreeRequestNames {
     }
 }
 
+struct PreparedWorktreeAgentLaunch {
+    let command: String?
+    let promptFile: URL?
+
+    func discardPromptFile(fileManager: FileManager = .default) {
+        guard let promptFile else { return }
+        try? fileManager.removeItem(at: promptFile)
+    }
+}
+
 enum WorktreeAgentLaunchCommand {
+    /// An agent launched with no user task still needs one completed turn:
+    /// Claude installs its async inbox watcher from the Stop hook. Without
+    /// this bootstrap, a message sent after SessionStart can remain queued
+    /// forever in an untouched session.
+    static let bootstrapPrompt = """
+    This Graftty agent session was launched without a user task. During this initial turn, check for any Graftty team messages included in the session context and act on them. If there are none, briefly report that the session is ready, then wait for a task.
+    """
+
     static func validationError(prompt: String?) -> String? {
         guard let prompt, prompt.utf8.contains(0) else { return nil }
         return "agent prompts cannot contain NUL bytes"
     }
 
-    static func build(agent: String?, prompt: String?, exactCommand: String?) -> String? {
-        if let exactCommand { return exactCommand }
-        guard let agent else { return nil }
-        guard let prompt else { return agent }
-        // This string is typed through an interactive PTY, where control
-        // bytes are interpreted by the terminal line editor before shell
-        // quoting applies. Carry only printable base64 through the PTY and
-        // decode after the shell accepts the line. The sentinel preserves
-        // trailing newlines that command substitution would otherwise trim.
-        let encoded = Data(prompt.utf8).base64EncodedString()
-        let encodedLiteral = shellLiteral(encoded)
-        return """
-        ( _graftty_agent_prompt="$(/usr/bin/printf '%s' \(encodedLiteral) | /usr/bin/base64 -D; /usr/bin/printf x)"; _graftty_agent_prompt="${_graftty_agent_prompt%x}"; exec \(agent) -- "$_graftty_agent_prompt" )
+    static func prepare(
+        agent: TeamHookRuntime?,
+        prompt: String?,
+        exactCommand: String?,
+        promptDirectory: URL = AppState.defaultDirectory
+            .appendingPathComponent("agent-launch-prompts", isDirectory: true),
+        fileManager: FileManager = .default,
+        now: Date = Date()
+    ) throws -> PreparedWorktreeAgentLaunch {
+        if let exactCommand {
+            return PreparedWorktreeAgentLaunch(command: exactCommand, promptFile: nil)
+        }
+        guard let agent else {
+            return PreparedWorktreeAgentLaunch(command: nil, promptFile: nil)
+        }
+
+        try fileManager.createDirectory(
+            at: promptDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: NSNumber(value: Int16(0o700))]
+        )
+        pruneStalePromptFiles(in: promptDirectory, fileManager: fileManager, now: now)
+
+        let promptFile = promptDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("prompt")
+        let initialTask = prompt.flatMap { value in
+            value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
+        } ?? bootstrapPrompt
+        guard fileManager.createFile(
+            atPath: promptFile.path,
+            contents: Data(initialTask.utf8),
+            attributes: [.posixPermissions: NSNumber(value: Int16(0o600))]
+        ) else {
+            throw CocoaError(
+                .fileWriteUnknown,
+                userInfo: [NSFilePathErrorKey: promptFile.path]
+            )
+        }
+
+        // Keep the line typed through the PTY small and independent of the
+        // task. In particular, nested heredocs, control bytes, and large
+        // prompts never reach the interactive shell's edit buffer. The
+        // sentinel preserves trailing newlines normally stripped by command
+        // substitution. The file is removed before the runtime starts.
+        let fileLiteral = shellLiteral(promptFile.path)
+        let command = """
+        ( _graftty_agent_prompt_file=\(fileLiteral); _graftty_agent_prompt="$(/bin/cat "$_graftty_agent_prompt_file"; _graftty_status=$?; /usr/bin/printf x; exit "$_graftty_status")" && /bin/rm -f "$_graftty_agent_prompt_file" && _graftty_agent_prompt="${_graftty_agent_prompt%x}" && exec \(agent.rawValue) -- "$_graftty_agent_prompt" )
         """
+        return PreparedWorktreeAgentLaunch(command: command, promptFile: promptFile)
     }
 
     static func shellLiteral(_ value: String) -> String {
         "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private static func pruneStalePromptFiles(
+        in directory: URL,
+        fileManager: FileManager,
+        now: Date
+    ) {
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey, .isRegularFileKey]
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: Array(keys),
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        let cutoff = now.addingTimeInterval(-24 * 60 * 60)
+        for file in files where file.pathExtension == "prompt" {
+            guard let values = try? file.resourceValues(forKeys: keys),
+                  values.isRegularFile == true,
+                  let modified = values.contentModificationDate,
+                  modified < cutoff else { continue }
+            try? fileManager.removeItem(at: file)
+        }
     }
 }

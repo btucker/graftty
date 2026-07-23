@@ -1962,11 +1962,13 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### AGENT-5.x
 
-**AGENT-5.1** When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to accept any optional launch command before reporting success. `--existing` shall verify and reuse an exact local branch ref. `--agent codex|claude` shall queue that runtime as the pane's explicit initial command and shall encode prompt bytes into a printable terminal transport before the shell decodes them into one argument, while `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
+**AGENT-5.1** When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to accept any optional launch command before reporting success. `--existing` shall verify and reuse an exact local branch ref. `--agent codex|claude` shall queue that runtime as the pane's explicit initial command and shall stage prompt bytes outside the PTY before the shell reads them into one argument, while `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
 
 **AGENT-5.2** While a CLI worktree-creation operation is retained, the application shall expose exactly one pending, ready, or failed state by operation ID, together with the canonical worktree path used as its stable messaging address.
 
 **AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions for launching an agent with `graftty worktree add --agent`, identify the returned address as belonging to the worktree rather than the process, direct later guidance through the shell-safe `graftty team send --stdin` inbox path, and deliver queued worktree inbox messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
+
+**AGENT-5.4** When `graftty worktree add --agent` has no non-empty user prompt, the application shall give the runtime a built-in initial task that checks session-start team context, completes one turn, and thereby establishes the runtime's idle-message wake path.
 
 ## CLI — CLI
 

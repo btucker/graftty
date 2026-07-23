@@ -80,6 +80,9 @@ graftty pane close 2                         # close pane 2
 
 # Launch an agent in a new worktree, then message that worktree's inbox:
 graftty worktree add fix-auth --agent codex
+# For multiline or generated tasks, pass the prompt on stdin:
+printf '%s\n' 'Fix the auth tests and report the result.' | \
+  graftty worktree add fix-auth --agent codex --prompt-stdin
 # Copy the canonical address=... path printed by the command:
 printf '%s\n' 'Please own the auth test failures.' | graftty team send --stdin /path/to/repo/.worktrees/fix-auth
 
@@ -95,7 +98,9 @@ graftty pane send drag-files:1 "y" --no-enter  # type without committing
 
 `graftty pane send` writes raw bytes to the addressed pane's PTY — there's no inbox or consent layer, so the keystrokes land in whatever process is reading that pane's stdin. Use `graftty team send` for cooperative messaging where the receiving agent decides what to do.
 
-`graftty worktree add --agent` prints a canonical worktree-path address. Incoming worktree messages show that same stable path in their `from` label, so the recipient can reply with `graftty team send --stdin <address>` even if branches are renamed or display names collide.
+`graftty worktree add --agent` prints a canonical worktree-path address. Prompt text is staged in an owner-only temporary file, so multiline prompts, heredoc examples, shell syntax, and large task descriptions are not typed through the new pane's shell. When no prompt is supplied, Graftty starts one short bootstrap turn; that lets the runtime finish initialization and establish idle inbox delivery instead of remaining in a pre-turn state that queued messages cannot wake.
+
+Incoming worktree messages show the same stable path in their `from` label, so the recipient can reply with `graftty team send --stdin <address>` even if branches are renamed or display names collide.
 
 ## Building
 

@@ -7,7 +7,7 @@ import GrafttyKit
 @Suite("CLI worktree creation and agent launch")
 struct CLIWorktreeCreationTests {
     @Test("""
-    @spec AGENT-5.1: When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to accept any optional launch command before reporting success. `--existing` shall verify and reuse an exact local branch ref. `--agent codex|claude` shall queue that runtime as the pane's explicit initial command and shall encode prompt bytes into a printable terminal transport before the shell decodes them into one argument, while `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
+    @spec AGENT-5.1: When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to accept any optional launch command before reporting success. `--existing` shall verify and reuse an exact local branch ref. `--agent codex|claude` shall queue that runtime as the pane's explicit initial command and shall stage prompt bytes outside the PTY before the shell reads them into one argument, while `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
     """)
     func helpDocumentsCreateAndLaunchWorkflow() throws {
         let help = WorktreeAdd.helpMessage()
@@ -28,34 +28,53 @@ struct CLIWorktreeCreationTests {
         #expect(names.branch == "release--café-")
     }
 
-    @Test("Agent prompts are encoded into printable bytes before terminal injection")
-    func promptUsesPrintableTerminalTransport() throws {
-        let prompt = "don't expand $(danger)\u{15}\r\nkeep trailing\n\n"
-        let command = WorktreeAgentLaunchCommand.build(
-            agent: "codex",
+    @Test("Agent prompt size and shell syntax do not affect the bounded terminal command")
+    func promptIsStagedOutsideTerminalTransport() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-prompt-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let prompt = """
+        don't expand $(danger)\u{15}\r
+        nested example:
+          cat <<'INNER_TASK'
+          echo "still prompt text"
+          INNER_TASK
+        \(String(repeating: "large prompt line\n", count: 2_000))
+        """
+        let prepared = try WorktreeAgentLaunchCommand.prepare(
+            agent: .codex,
             prompt: prompt,
-            exactCommand: nil
+            exactCommand: nil,
+            promptDirectory: root
         )
-        let generated = try #require(command)
+        let generated = try #require(prepared.command)
+        let promptFile = try #require(prepared.promptFile)
         #expect(!generated.contains(prompt))
-        #expect(generated.contains(Data(prompt.utf8).base64EncodedString()))
+        #expect(generated.utf8.count < 1_024)
         #expect(generated.unicodeScalars.allSatisfy { scalar in
             scalar.value >= 0x20 && scalar.value != 0x7f
         })
+        #expect(try String(contentsOf: promptFile, encoding: .utf8) == prompt)
+        let attributes = try FileManager.default.attributesOfItem(atPath: promptFile.path)
+        let permissions = try #require(attributes[.posixPermissions] as? NSNumber)
+        #expect(permissions.intValue & 0o777 == 0o600)
     }
 
-    @Test("The printable prompt transport preserves control bytes, Unicode, and trailing newlines")
+    @Test("The staged prompt transport preserves control bytes, Unicode, and trailing newlines")
     func promptTransportRoundTripsExactly() throws {
         let prompt = "quote ' dollar $ backtick ` tab\t escape\u{1b}\r\nUnicode café\n\n"
-        let command = try #require(WorktreeAgentLaunchCommand.build(
-            agent: "codex",
-            prompt: prompt,
-            exactCommand: nil
-        ))
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-prompt-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
+        let prepared = try WorktreeAgentLaunchCommand.prepare(
+            agent: .codex,
+            prompt: prompt,
+            exactCommand: nil,
+            promptDirectory: root.appendingPathComponent("staged", isDirectory: true)
+        )
+        let command = try #require(prepared.command)
+        let promptFile = try #require(prepared.promptFile)
         let fakeAgent = root.appendingPathComponent("codex")
         try "#!/bin/sh\n/usr/bin/printf '%s' \"$2\" | /usr/bin/base64\n"
             .write(to: fakeAgent, atomically: true, encoding: .utf8)
@@ -79,6 +98,30 @@ struct CLIWorktreeCreationTests {
             as: UTF8.self
         ).trimmingCharacters(in: .whitespacesAndNewlines)
         #expect(Data(base64Encoded: encoded) == Data(prompt.utf8))
+        #expect(!FileManager.default.fileExists(atPath: promptFile.path))
+    }
+
+    @Test("""
+    @spec AGENT-5.4: When `graftty worktree add --agent` has no non-empty user prompt, the application shall give the runtime a built-in initial task that checks session-start team context, completes one turn, and thereby establishes the runtime's idle-message wake path.
+    """)
+    func agentWithoutPromptStillGetsAnInitialTurn() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("graftty-bootstrap-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let prepared = try WorktreeAgentLaunchCommand.prepare(
+            agent: .claude,
+            prompt: nil,
+            exactCommand: nil,
+            promptDirectory: root
+        )
+        let promptFile = try #require(prepared.promptFile)
+        let staged = try String(contentsOf: promptFile, encoding: .utf8)
+
+        #expect(prepared.command?.contains("exec claude --") == true)
+        #expect(staged.contains("team messages"))
+        #expect(staged.contains("initial turn"))
+        #expect(!staged.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     @Test("NUL is rejected because POSIX argv cannot represent it")
@@ -88,12 +131,14 @@ struct CLIWorktreeCreationTests {
     }
 
     @Test("An exact command wins when no agent runtime is selected")
-    func exactCommandPassesThrough() {
-        #expect(WorktreeAgentLaunchCommand.build(
+    func exactCommandPassesThrough() throws {
+        let prepared = try WorktreeAgentLaunchCommand.prepare(
             agent: nil,
             prompt: nil,
             exactCommand: "my-agent --mode review"
-        ) == "my-agent --mode review")
+        )
+        #expect(prepared.command == "my-agent --mode review")
+        #expect(prepared.promptFile == nil)
     }
 
     @Test("An explicit launch command suppresses the configured default command")
