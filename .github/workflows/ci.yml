@@ -50,9 +50,9 @@ jobs:
 
   macos-build-and-test:
     # macos-26 ships Xcode 26 which bundles a current swift-testing.
-    # Run bounded chunks: the default swift-testing runner can leave the mixed
-    # AppKit/NIO/process suite idling in the helper after a broad run, even when
-    # all selected tests have passed. Fresh helper processes keep the gate useful.
+    # The older swift-testing (124.4) on macos-latest (→ macos-15) has
+    # an exit-path hang: all tests pass, then the process blocks ~10 min
+    # without emitting the final summary. macos-26 sidesteps it.
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
@@ -99,8 +99,8 @@ jobs:
             /usr/bin/script -q /dev/null \
               swift test --skip-build --filter "^${target}\\." \
               < /dev/null
-           echo "::endgroup::"
-         done <<< "$test_targets"
+            echo "::endgroup::"
+          done <<< "$test_targets"
 
       - name: Ownership model corpus gate
         timeout-minutes: 5
