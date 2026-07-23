@@ -50,6 +50,7 @@ public actor WatcherOutcome {
 
 /// @spec TEAM-IDLE-1.3
 /// @spec TEAM-IDLE-1.4
+/// @spec TEAM-11.1
 /// Long-running watcher used by Claude's `asyncRewake` Stop hook. Writes
 /// its own PID to `<pidFileRoot>/<teamID>/watchers/<session>.<runtime>.pid`,
 /// SIGTERMing whatever PID was previously there (one watcher per session,
@@ -90,6 +91,8 @@ public actor InboxWatcher {
     private var sawInitialEmit = false
     private var isReady: Bool = false
     private var readyContinuations: [CheckedContinuation<Void, Never>] = []
+    private var hasObservedWatermark = false
+    private var observedWatermarkID: String?
 
     public init(
         sessionID: String,
@@ -151,12 +154,25 @@ public actor InboxWatcher {
         ])
 
         startObserver()
+        captureCurrentWatermark()
 
         // Park until cancellation. The observer callback is what
         // resolves `outcome`; the CLI driver kills the process on its
         // own once that resolves, so we don't need to "exit" from here.
         while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            do {
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+            } catch {
+                break
+            }
+            guard !Task.isCancelled else { break }
+            // A different runtime can consume a head-of-line targeted row
+            // by advancing the shared watermark without appending to
+            // messages.jsonl. Retry while armed so the next eligible row
+            // does not wait for an unrelated future append.
+            if sawInitialEmit {
+                await claimIfWatermarkAdvanced()
+            }
         }
 
         observerCancellable?.cancel()
@@ -186,48 +202,56 @@ public actor InboxWatcher {
         if !sawInitialEmit {
             sawInitialEmit = true
             initialIDs = Set(messages.map(\.id))
-            // FSEvents has now delivered its initial state — the observer
-            // is actually live. Unblock any whenReady() waiters.
-            markReady()
             // A message can land after SessionStart advanced this session's
             // cursor but before the Stop watcher attaches. Do not baseline
             // such a message away: the persisted cursor tells us it is new
             // to this session even though it was present in the observer's
             // first snapshot.
-            if let match = initialUnreadMessage() {
-                await fire(match)
+            let inbox = TeamInbox(rootDirectory: inboxRootDirectory)
+            if (try? inbox.cursor(teamID: teamID, sessionID: sessionID)) != nil {
+                await claimAndFire()
+            } else {
+                // Preserve the historical observer baseline for direct
+                // watch-inbox callers that did not run SessionStart. A
+                // production Claude session already has a persisted cursor.
+                let lastExistingID = messages.last(where: {
+                    $0.to.worktree == recipient.worktree
+                })?.id
+                try? inbox.writeCursor(
+                    TeamInboxCursor(
+                        sessionID: sessionID,
+                        worktree: recipient.worktree,
+                        runtime: recipient.runtime.rawValue,
+                        lastSeenID: lastExistingID
+                    ),
+                    teamID: teamID
+                )
             }
+            // FSEvents has delivered its initial state and any cursor-based
+            // catch-up claim is complete. Unblock whenReady() waiters only
+            // after both startup phases so tests and callers can reason about
+            // watermark-only retries deterministically.
+            markReady()
             return
         }
-        guard let match = messages.first(where: { msg in
+        guard messages.contains(where: { msg in
             !initialIDs.contains(msg.id) &&
-                msg.to.worktree == recipient.worktree &&
-                (msg.to.runtime == nil || msg.to.runtime == recipient.runtime.rawValue)
+                msg.to.worktree == recipient.worktree
         }) else { return }
-        await fire(match)
+        await claimAndFire()
     }
 
-    private func initialUnreadMessage() -> TeamInboxMessage? {
-        let inbox = TeamInbox(rootDirectory: inboxRootDirectory)
-        do {
-            guard let cursor = try inbox.cursor(teamID: teamID, sessionID: sessionID) else {
-                return nil
-            }
-            guard cursor.worktree == recipient.worktree else { return nil }
-            return try inbox.unreadMessages(
-                teamID: teamID,
-                recipientWorktree: recipient.worktree,
-                after: cursor.lastSeenID
-            ).first(where: { message in
-                message.to.runtime == nil || message.to.runtime == recipient.runtime.rawValue
-            })
-        } catch {
-            return nil
-        }
-    }
-
-    private func fire(_ match: TeamInboxMessage) async {
+    private func claimAndFire() async {
         guard !hasFired else { return }
+        let inbox = TeamInbox(rootDirectory: inboxRootDirectory)
+        guard let match = try? inbox.claimNextUnreadMessage(
+                teamID: teamID,
+                sessionID: sessionID,
+                recipientWorktree: recipient.worktree,
+                runtime: recipient.runtime.rawValue
+              ) else {
+            return
+        }
         hasFired = true
         emit(.watcherWoke, detail: [
             "session": sessionID,
@@ -235,6 +259,42 @@ public actor InboxWatcher {
             "message_id": match.id,
         ])
         await outcome.complete(exitCode: 2, stderr: Self.summary(for: match))
+    }
+
+    private func captureCurrentWatermark() {
+        let inbox = TeamInbox(rootDirectory: inboxRootDirectory)
+        do {
+            observedWatermarkID = try inbox.worktreeWatermark(
+                teamID: teamID,
+                worktree: recipient.worktree
+            )?.lastDeliveredToAnySessionID
+            hasObservedWatermark = true
+        } catch {
+            return
+        }
+    }
+
+    private func claimIfWatermarkAdvanced() async {
+        guard !hasFired else { return }
+        let inbox = TeamInbox(rootDirectory: inboxRootDirectory)
+        let currentID: String?
+        do {
+            currentID = try inbox.worktreeWatermark(
+                teamID: teamID,
+                worktree: recipient.worktree
+            )?.lastDeliveredToAnySessionID
+        } catch {
+            return
+        }
+        guard hasObservedWatermark else {
+            observedWatermarkID = currentID
+            hasObservedWatermark = true
+            await claimAndFire()
+            return
+        }
+        guard currentID != observedWatermarkID else { return }
+        observedWatermarkID = currentID
+        await claimAndFire()
     }
 
     private func emit(_ kind: TeamEvent.Kind, detail: [String: String]) {

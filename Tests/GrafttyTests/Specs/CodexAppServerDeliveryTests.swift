@@ -34,6 +34,29 @@ struct CodexAppServerDeliveryTests {
         #expect(event.detail["threadID"] == f.threadID)
     }
 
+    @Test("Codex delivery stops before a message targeted to another runtime.")
+    func runtimeTargetedMessageBlocksLaterDelivery() async throws {
+        let f = try Fixture()
+        let codexMessage = try f.appendUnread(body: "for Codex")
+        let claudeMessage = try f.appendUnread(body: "for Claude", runtime: "claude")
+        try f.writeOwnerSession()
+
+        await f.service.onMessageArrival(team: f.teamID, worktree: f.worktree)
+
+        let calls = await f.client.calls()
+        #expect(calls.count == 1)
+        #expect(calls[0].message == TeamHookRenderer.format(messages: [codexMessage]))
+        #expect(try f.inbox.worktreeWatermark(
+            teamID: f.teamID,
+            worktree: f.worktree
+        )?.lastDeliveredToAnySessionID == codexMessage.id)
+        #expect(try f.inbox.unreadMessages(
+            teamID: f.teamID,
+            recipientWorktree: f.worktree,
+            after: codexMessage.id
+        ) == [claudeMessage])
+    }
+
     @Test("Client failure leaves unread messages queued and logs error_delivery.")
     func clientFailureDoesNotAdvanceWatermark() async throws {
         let f = try Fixture(clientError: DeliveryError.boom)
@@ -263,13 +286,13 @@ struct CodexAppServerDeliveryTests {
             )
         }
 
-        func appendUnread(body: String) throws -> TeamInboxMessage {
+        func appendUnread(body: String, runtime: String? = "codex") throws -> TeamInboxMessage {
             try inbox.appendMessage(
                 teamID: teamID,
                 teamName: "repo",
                 repoPath: "/repo",
                 from: TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil),
-                to: TeamInboxEndpoint(member: "alice", worktree: worktree, runtime: "codex"),
+                to: TeamInboxEndpoint(member: "alice", worktree: worktree, runtime: runtime),
                 priority: .normal,
                 body: body
             )

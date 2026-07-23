@@ -1795,11 +1795,14 @@ struct GrafttyApp: App {
                 teamID: key.teamID,
                 worktree: key.worktree
             )?.lastDeliveredToAnySessionID
-            return try !inbox.unreadMessages(
+            let allUnread = try inbox.unreadMessages(
                 teamID: key.teamID,
                 recipientWorktree: key.worktree,
                 after: watermark
-            ).isEmpty
+            )
+            guard let first = allUnread.first else { return false }
+            return first.to.runtime == nil ||
+                first.to.runtime == TeamHookRuntime.codex.rawValue
         } catch {
             return false
         }

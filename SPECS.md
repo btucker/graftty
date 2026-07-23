@@ -1280,6 +1280,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PR-8.25** When a pulse is requested, the application shall force the next poll past the per-repo cadence gate so an explicit refresh signal (window focus, add-worktree picker, newly-pushed branch) fetches fresh PR data even while the background cadence is in a long backoff.
 
+**PR-8.26** When multiple same-project GitLab merge requests reuse one source branch, the application shall select an opened MR over a terminal MR and otherwise select the newest candidate by highest IID, independent of `glab mr list` result order, and shall attribute pipeline status to that selected MR.
+
 ## IOS — iOS App
 
 ### IOS-1.x — Target and platform
@@ -1759,6 +1761,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 **TEAM-10.1** When codex is invoked interactively — any option flags (known or unknown to the wrapper), a prompt, or arguments after `--` — the generated wrapper shall start a codex app-server and connect the TUI to it via `--remote`, so team-message delivery has a live app-server for the session.
 
 **TEAM-10.2** If a codex invocation names a non-interactive subcommand, requests help or version output, or supplies its own `--remote` endpoint, then the generated wrapper shall run codex directly without starting an app-server.
+
+### TEAM-11.x — Idle Delivery
+
+**TEAM-11.1** When an asyncRewake watcher claims an unread message, the application shall advance that session's cursor and the shared worktree watermark before waking Claude so a re-armed or competing watcher cannot deliver the same durable message again.
 
 ## EDITOR — Editor Integration
 

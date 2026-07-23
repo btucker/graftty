@@ -198,11 +198,15 @@ public final class TeamInboxRequestHandler {
                 worktree: context.sender.worktreePath,
                 runtime: runtime
             ) : nil
-            let pending = try cursor.map { cursor in
-                try inbox.unreadMessages(
+            let pending: [TeamInboxMessage] = try cursor.map { cursor in
+                let allUnread = try inbox.unreadMessages(
                     teamID: teamID,
                     recipientWorktree: context.sender.worktreePath,
                     after: cursor.lastSeenID
+                )
+                return TeamInbox.runtimeDeliverablePrefix(
+                    allUnread,
+                    runtime: runtime.rawValue
                 )
             } ?? []
             var text = TeamInstructionsRenderer.render(team: context.team, viewer: context.sender)
@@ -249,10 +253,14 @@ public final class TeamInboxRequestHandler {
                 recipientWorktree: context.sender.worktreePath,
                 after: cursor.lastSeenID
             )
-            let messages = allUnread.filter { $0.priority == .urgent }
+            let deliverableUnread = TeamInbox.runtimeDeliverablePrefix(
+                allUnread,
+                runtime: runtime.rawValue
+            )
+            let messages = deliverableUnread.filter { $0.priority == .urgent }
             try advanceCursorAcrossDeliveredPrefix(
                 delivered: messages,
-                allUnread: allUnread,
+                allUnread: deliverableUnread,
                 teamID: teamID,
                 sessionID: sessionID,
                 worktree: context.sender.worktreePath,

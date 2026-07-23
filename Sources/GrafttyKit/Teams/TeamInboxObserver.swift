@@ -40,6 +40,10 @@ public final class TeamInboxObserver: @unchecked Sendable {
     /// verify the polling backstop alone detects a late-created file. Always
     /// true in production.
     private let installEventSources: Bool
+    /// Dispatch sources own their descriptors through their cancel handlers.
+    /// The injectable closer lets tests verify that reattachment never closes
+    /// the same descriptor twice.
+    private let closeDescriptor: @Sendable (Int32) -> Int32
 
     // Mutated only on `queue`.
     private var fileSource: DispatchSourceFileSystemObject?
@@ -65,13 +69,15 @@ public final class TeamInboxObserver: @unchecked Sendable {
         rootDirectory: URL,
         teamID: String,
         pollInterval: DispatchTimeInterval,
-        installEventSources: Bool = true
+        installEventSources: Bool = true,
+        closeDescriptor: @escaping @Sendable (Int32) -> Int32 = { close($0) }
     ) {
         self.inbox = TeamInbox(rootDirectory: rootDirectory)
         self.teamID = teamID
         self.queue = DispatchQueue(label: "com.btucker.graftty.TeamInboxObserver", qos: .utility)
         self.pollInterval = pollInterval
         self.installEventSources = installEventSources
+        self.closeDescriptor = closeDescriptor
     }
 
     /// Starts watching the inbox file. The callback is invoked on the
@@ -132,8 +138,9 @@ public final class TeamInboxObserver: @unchecked Sendable {
                 // Explicitly close the dir fd in the cancel handler; the
                 // dispatch source does not own the fd by default.
                 let dirFDCopy = dirFD
+                let closeDescriptor = closeDescriptor
                 src.setCancelHandler {
-                    close(dirFDCopy)
+                    _ = closeDescriptor(dirFDCopy)
                 }
                 src.resume()
                 dirSource = src
@@ -164,13 +171,13 @@ public final class TeamInboxObserver: @unchecked Sendable {
 
         // Tear down any existing file source — covers both the
         // first-time attach (no-op) and the inode-replaced-by-truncate
-        // case where the previous fd points at a stale inode.
+        // case where the previous fd points at a stale inode. Its cancel
+        // handler is the sole owner of closing the old descriptor. Closing it
+        // here as well creates a delayed double-close: the descriptor can be
+        // reused by an unrelated subprocess before the cancel handler runs.
         fileSource?.cancel()
         fileSource = nil
-        if fileFD >= 0 {
-            close(fileFD)
-            fileFD = -1
-        }
+        fileFD = -1
 
         guard FileManager.default.fileExists(atPath: messagesURL.path) else { return }
         fileFD = open(messagesURL.path, O_EVTONLY)
@@ -193,12 +200,26 @@ public final class TeamInboxObserver: @unchecked Sendable {
             self.maybeEmit(callback: callback, force: true)
         }
         let fileFDCopy = fileFD
+        let closeDescriptor = closeDescriptor
         src.setCancelHandler {
-            close(fileFDCopy)
+            _ = closeDescriptor(fileFDCopy)
         }
         src.resume()
         fileSource = src
     }
+
+#if DEBUG
+    /// Deterministically exercises the file-source replacement path without
+    /// relying on vnode delivery timing.
+    func reattachFileSourceForTesting() async {
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                self?.attachFileSource(callback: { _ in })
+                continuation.resume()
+            }
+        }
+    }
+#endif
 
     /// Emit when `force` (a vnode/initial event, preserving per-event
     /// semantics) or when the file's signature changed since the last emit

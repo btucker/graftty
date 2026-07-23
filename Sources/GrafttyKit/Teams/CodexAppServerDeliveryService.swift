@@ -125,11 +125,12 @@ public actor CodexAppServerDeliveryService {
 
         let pending: [TeamInboxMessage]
         do {
-            pending = try inbox.unreadMessages(
+            let allUnread = try inbox.unreadMessages(
                 teamID: team,
                 recipientWorktree: worktree,
                 after: watermark
             )
+            pending = TeamInbox.runtimeDeliverablePrefix(allUnread, runtime: runtime)
         } catch {
             log(
                 team: team,

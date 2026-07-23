@@ -248,6 +248,62 @@ struct TeamInboxRequestHandlerTests {
         #expect(ownerOutput.contains("queued for the owner"))
     }
 
+    @Test("SessionStart stops at a message targeted to another runtime.")
+    func sessionStartPreservesRuntimeTargetedHeadOfLine() throws {
+        let root = try Self.temporaryDirectory()
+        let repo = TeamTestFixtures.makeRepo(
+            path: "/repo",
+            displayName: "repo",
+            branches: ["main", "alice"]
+        )
+        let aliceWorktree = "/repo/.worktrees/alice"
+        let inbox = TeamInbox(
+            rootDirectory: root,
+            idGenerator: Self.fixedIDs(["0001", "0002"]),
+            now: { Self.fixedDate }
+        )
+        let handler = Self.makeHandler(inbox: inbox)
+        _ = try inbox.appendMessage(
+            teamID: "/repo",
+            teamName: "repo",
+            repoPath: "/repo",
+            from: TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil),
+            to: TeamInboxEndpoint(member: "alice", worktree: aliceWorktree, runtime: "codex"),
+            priority: .normal,
+            body: "for Codex"
+        )
+        _ = try inbox.appendMessage(
+            teamID: "/repo",
+            teamName: "repo",
+            repoPath: "/repo",
+            from: TeamInboxEndpoint(member: "main", worktree: "/repo", runtime: nil),
+            to: TeamInboxEndpoint(member: "alice", worktree: aliceWorktree, runtime: nil),
+            priority: .normal,
+            body: "shared after Codex"
+        )
+
+        let claudeOutput = try handler.hook(
+            callerWorktree: aliceWorktree,
+            runtime: .claude,
+            event: .sessionStart,
+            sessionID: "claude-session",
+            paneSessionName: nil,
+            repos: [repo],
+            teamsEnabled: true
+        )
+
+        #expect(!claudeOutput.contains("for Codex"))
+        #expect(!claudeOutput.contains("shared after Codex"))
+        #expect(try inbox.cursor(
+            teamID: "/repo",
+            sessionID: "claude-session"
+        )?.lastSeenID == nil)
+        #expect(try inbox.worktreeWatermark(
+            teamID: "/repo",
+            worktree: aliceWorktree
+        ) == nil)
+    }
+
     @Test func claudePostToolUseDoesNotAdvanceCursorPastUndeliveredNormalMessage() throws {
         let root = try Self.temporaryDirectory()
         let repo = TeamTestFixtures.makeRepo(path: "/repo", displayName: "repo", branches: ["main", "alice"])
