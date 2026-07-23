@@ -224,8 +224,16 @@ final class AppServices {
     /// `GrafttyApp.init()` and wired to the `/v1/rtc/offer` signaling route
     /// in `startup()`. Retained here so it outlives the SwiftUI init cycle.
     var hostAgent: WebRTCHostAgent?
+    /// Deletes only the prompt files found at startup after their grace
+    /// period. Capturing that snapshot avoids pruning prompts owned by
+    /// worktree operations created during this app process.
+    private var agentPromptRecoveryTask: Task<Void, Never>?
 
     init(socketPath: String) {
+        let recoveryPromptFiles = WorktreeAgentLaunchCommand.recoveryPromptFiles()
+        // No worktree-creation operations exist yet, so files older than the
+        // recovery window can only be leftovers from a prior app crash.
+        WorktreeAgentLaunchCommand.pruneStalePromptFiles()
         self.socketServer = SocketServer(socketPath: socketPath)
 
         self.worktreeMonitor = WorktreeMonitor()
@@ -277,6 +285,16 @@ final class AppServices {
                 )
             } catch {
                 NSLog("[Graftty] dispatchRoutableEvent failed: %@", String(describing: error))
+            }
+        }
+        if !recoveryPromptFiles.isEmpty {
+            self.agentPromptRecoveryTask = Task {
+                do {
+                    try await Task.sleep(for: .seconds(24 * 60 * 60))
+                } catch {
+                    return
+                }
+                WorktreeAgentLaunchCommand.discardRecoveryPromptFiles(recoveryPromptFiles)
             }
         }
     }
@@ -2303,7 +2321,7 @@ struct GrafttyApp: App {
             }
         case .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend,
              .teamBroadcast, .teamHook, .teamInbox, .teamMembers, .teamList,
-             .createWorktree, .worktreeCreateStatus:
+             .createWorktree, .agentPromptStagingCapability, .worktreeCreateStatus:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
             // fire-and-forget onMessage path.
@@ -2420,13 +2438,16 @@ struct GrafttyApp: App {
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
             )
+        case .agentPromptStagingCapability:
+            return .ok
         case .createWorktree(
             let callerPath,
             let worktreeName,
             let branchName,
             let existing,
             let command,
-            let agentRuntime
+            let agentRuntime,
+            let agentPrompt
         ):
             return beginCLIWorktreeCreation(
                 callerPath: callerPath,
@@ -2435,6 +2456,7 @@ struct GrafttyApp: App {
                 existing: existing,
                 command: command,
                 agentRuntime: agentRuntime,
+                agentPrompt: agentPrompt,
                 appState: appState,
                 terminalManager: terminalManager,
                 teamEventDispatcher: teamEventDispatcher,
@@ -2461,6 +2483,7 @@ struct GrafttyApp: App {
         existing: Bool,
         command: String?,
         agentRuntime: TeamHookRuntime?,
+        agentPrompt: String?,
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         teamEventDispatcher: TeamEventDispatcher,
@@ -2480,6 +2503,36 @@ struct GrafttyApp: App {
             return .error("caller is not inside a tracked worktree")
         }
 
+        if agentPrompt != nil, agentRuntime == nil {
+            return .error("an agent prompt requires an agent runtime")
+        }
+        if let error = CLIWorktreeCreationPolicy.obsoletePromptLoaderError(
+            agentRuntime: agentRuntime,
+            command: command,
+            agentPrompt: agentPrompt
+        ) {
+            return .error(error)
+        }
+        let launch: PreparedWorktreeAgentLaunch
+        if let agentRuntime,
+           CLIWorktreeCreationPolicy.shouldStageAgentPrompt(
+               agentRuntime: agentRuntime,
+               command: command,
+               agentPrompt: agentPrompt
+           ) {
+            do {
+                launch = try WorktreeAgentLaunchCommand.prepare(
+                    agent: agentRuntime,
+                    prompt: agentPrompt,
+                    exactCommand: nil
+                )
+            } catch {
+                return .error("could not stage agent prompt: \(error.localizedDescription)")
+            }
+        } else {
+            launch = PreparedWorktreeAgentLaunch(command: command, promptFile: nil)
+        }
+
         let branch: BranchSelection = existing
             ? .useExisting(name: branchName, source: .local)
             : .createNew(name: branchName)
@@ -2493,14 +2546,16 @@ struct GrafttyApp: App {
         case .success(let path):
             worktreePath = path
         case .failure(let error):
+            launch.discardPromptFile()
             return .error(error.userMessage ?? "could not begin worktree creation")
         }
 
         let status = worktreeCreations.begin(
             worktreePath: worktreePath,
-            messageAddress: worktreePath
+            messageAddress: worktreePath,
+            stagedPromptFile: launch.promptFile
         )
-        let initialCommand = command.flatMap { value in
+        let initialCommand = launch.command.flatMap { value in
             value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
         }
         Task { @MainActor in

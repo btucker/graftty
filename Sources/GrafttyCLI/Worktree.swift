@@ -90,19 +90,21 @@ struct WorktreeAdd: ParsableCommand {
         if let error = WorktreeAgentLaunchCommand.validationError(prompt: resolvedPrompt) {
             throw ValidationError(error)
         }
-        let launchCommand = WorktreeAgentLaunchCommand.build(
-            agent: agent,
-            prompt: resolvedPrompt,
-            exactCommand: command
-        )
+        let agentRuntime = agent.flatMap { TeamHookRuntime(rawValue: $0) }
+        if agentRuntime != nil {
+            try Self.requireAgentPromptStagingCapability()
+        }
         let callerWorktree = try CLIEnv.resolveWorktree()
         var response = try CLIEnv.sendRequest(.createWorktree(
             callerWorktree: callerWorktree,
             worktreeName: names.worktree,
             branchName: names.branch,
             existing: existing,
-            command: launchCommand,
-            agentRuntime: agent.flatMap { TeamHookRuntime(rawValue: $0) }
+            // The capability check above guarantees the app will replace this
+            // bare fallback with its staged loader before starting Git.
+            command: command ?? agentRuntime?.rawValue,
+            agentRuntime: agentRuntime,
+            agentPrompt: resolvedPrompt
         ))
         let deadline = Date().addingTimeInterval(TimeInterval(timeout))
 
@@ -143,12 +145,49 @@ struct WorktreeAdd: ParsableCommand {
         }
     }
 
-    private static func readPromptFromStdin() throws -> String {
-        let data = FileHandle.standardInput.readDataToEndOfFile()
+    static func readPromptFromStdin(
+        fileHandle: FileHandle = .standardInput
+    ) throws -> String {
+        let maximumBytes = WorktreeAgentLaunchCommand.maximumPromptBytes
+        var data = Data()
+        while data.count <= maximumBytes {
+            let remaining = maximumBytes + 1 - data.count
+            guard let chunk = try fileHandle.read(upToCount: min(64 * 1_024, remaining)),
+                  !chunk.isEmpty else { break }
+            data.append(chunk)
+        }
+        if data.count > maximumBytes {
+            throw ValidationError(WorktreeAgentLaunchCommand.oversizedPromptError)
+        }
         guard let prompt = String(data: data, encoding: .utf8), !prompt.isEmpty else {
             throw ValidationError("--prompt-stdin requires a non-empty UTF-8 prompt")
         }
         return prompt
+    }
+
+    private static func requireAgentPromptStagingCapability() throws {
+        do {
+            guard case .ok = try SocketClient.sendExpectingResponse(
+                .agentPromptStagingCapability
+            ) else {
+                throw CLIError.socketError("unexpected capability response")
+            }
+        } catch let error as CLIError {
+            switch error {
+            case .socketTimeout, .socketError:
+                CLIEnv.printError(
+                    "the running Graftty app does not support safe agent prompt staging; quit and relaunch the updated app, then retry"
+                )
+            case .notInsideWorktree, .appNotRunning, .staleControlSocket, .socketPathTooLong:
+                CLIEnv.printError(error.description)
+            }
+            throw ExitCode(1)
+        } catch {
+            CLIEnv.printError(
+                "could not verify agent prompt staging support; quit and relaunch Graftty, then retry"
+            )
+            throw ExitCode(1)
+        }
     }
 }
 
@@ -161,32 +200,5 @@ enum WorktreeRequestNames {
 
     private static func normalize(_ value: String) -> String {
         WorktreeNameSanitizer.trimForSubmit(WorktreeNameSanitizer.sanitize(value))
-    }
-}
-
-enum WorktreeAgentLaunchCommand {
-    static func validationError(prompt: String?) -> String? {
-        guard let prompt, prompt.utf8.contains(0) else { return nil }
-        return "agent prompts cannot contain NUL bytes"
-    }
-
-    static func build(agent: String?, prompt: String?, exactCommand: String?) -> String? {
-        if let exactCommand { return exactCommand }
-        guard let agent else { return nil }
-        guard let prompt else { return agent }
-        // This string is typed through an interactive PTY, where control
-        // bytes are interpreted by the terminal line editor before shell
-        // quoting applies. Carry only printable base64 through the PTY and
-        // decode after the shell accepts the line. The sentinel preserves
-        // trailing newlines that command substitution would otherwise trim.
-        let encoded = Data(prompt.utf8).base64EncodedString()
-        let encodedLiteral = shellLiteral(encoded)
-        return """
-        ( _graftty_agent_prompt="$(/usr/bin/printf '%s' \(encodedLiteral) | /usr/bin/base64 -D; /usr/bin/printf x)"; _graftty_agent_prompt="${_graftty_agent_prompt%x}"; exec \(agent) -- "$_graftty_agent_prompt" )
-        """
-    }
-
-    static func shellLiteral(_ value: String) -> String {
-        "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 }
