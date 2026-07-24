@@ -51,6 +51,29 @@ struct ZmxRunnerTests {
         #expect(result.exitCode == 2)
     }
 
+    @Test("""
+@spec ZMX-4.6: When a synchronous zmx subprocess emits more than a pipe buffer on stdout or stderr, the application shall drain both streams while the child is running so `pane show` and maintenance commands complete instead of deadlocking while waiting for the child to exit.
+""", .timeLimit(.minutes(1)))
+    func captureAllDrainsLargeStdoutAndStderrWhileChildRuns() throws {
+        let byteCount = 256 * 1024
+        let result = try ZmxRunner.captureAll(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            args: [
+                "-c",
+                """
+                /usr/bin/yes o | /usr/bin/head -c \(byteCount)
+                /usr/bin/yes e | /usr/bin/head -c \(byteCount) >&2
+                """,
+            ],
+            env: [:],
+            timeout: 2.0
+        )
+
+        #expect(result.stdout.utf8.count == byteCount)
+        #expect(result.stderr.utf8.count == byteCount)
+        #expect(result.exitCode == 0)
+    }
+
     @Test func captureDoesNotWaitForDescendantHoldingStdoutOpen() throws {
         let pidFile = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-zmx-runner-descendant-\(UUID().uuidString).pid")
