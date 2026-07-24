@@ -18,11 +18,11 @@ public struct EventBodyRendererResult: Equatable {
     }
 }
 
-/// Team-inbox renderer. Renders the user's `teamPrompt` Stencil template
-/// against the per-delivery `agent` context and returns the original
-/// event plus the rendered agent prompt as separate fields. Stencil
-/// templates may reference `{{ body }}` to control where the event
-/// content appears; templates that don't reference it get
+/// Automated-event renderer. Renders the user's `teamPrompt` Stencil template
+/// against the per-delivery `agent` context and returns the original event
+/// plus the rendered agent prompt as separate fields. Authored `team_message`
+/// rows bypass this renderer. Stencil templates may reference `{{ body }}`
+/// to control where the event content appears; templates that don't reference it get
 /// `\n\n{{ body }}` auto-appended before rendering, preserving the
 /// pre-split prepend behavior. On empty template, empty render, or
 /// render failure, returns the original event with `agentPrompt = nil`.

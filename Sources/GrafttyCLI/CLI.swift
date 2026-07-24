@@ -49,7 +49,7 @@ struct GrafttyCLI: ParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "graftty",
         abstract: "Graftty terminal multiplexer CLI",
-        subcommands: [Notify.self, Pane.self, Team.self, InternalGroup.self]
+        subcommands: [Notify.self, Pane.self, Worktree.self, Team.self, InternalGroup.self]
     )
 }
 
@@ -212,6 +212,9 @@ struct PaneList: ParsableCommand {
             throw ExitCode(1)
         case .teamInbox:
             CLIEnv.printError("Unexpected team_inbox response for list")
+            throw ExitCode(1)
+        case .worktreeCreate:
+            CLIEnv.printError("Unexpected worktree_create response for list")
             throw ExitCode(1)
         }
     }
@@ -572,6 +575,9 @@ enum CLIEnv {
             throw ExitCode(1)
         case .teamInbox:
             printError("Unexpected team_inbox response")
+            throw ExitCode(1)
+        case .worktreeCreate:
+            printError("Unexpected worktree_create response")
             throw ExitCode(1)
         }
     }

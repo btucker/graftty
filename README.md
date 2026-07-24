@@ -78,6 +78,14 @@ graftty pane list                            # panes in the current worktree
 graftty pane add --command "claude"          # split + run a command
 graftty pane close 2                         # close pane 2
 
+# Launch an agent in a new worktree, then message that worktree's inbox:
+graftty worktree add fix-auth --agent codex
+# For multiline or generated tasks, pass the prompt on stdin:
+printf '%s\n' 'Fix the auth tests and report the result.' | \
+  graftty worktree add fix-auth --agent codex --prompt-stdin
+# Copy the canonical address=... path printed by the command:
+printf '%s\n' 'Please own the auth test failures.' | graftty team send --stdin /path/to/repo/.worktrees/fix-auth
+
 # Cross-worktree pane control:
 graftty pane list drag-files                 # list panes in another worktree
 graftty pane show drag-files:1               # last 100 lines of that pane's output
@@ -89,6 +97,10 @@ graftty pane send drag-files:1 "y" --no-enter  # type without committing
 `<addr>` is `<id>` (current worktree, that pane), `<worktree>` (worktree's only pane), or `<worktree>:<id>`. Worktree names match what `graftty team list` prints. Run `graftty pane <verb> --help` for examples on every subcommand.
 
 `graftty pane send` writes raw bytes to the addressed pane's PTY — there's no inbox or consent layer, so the keystrokes land in whatever process is reading that pane's stdin. Use `graftty team send` for cooperative messaging where the receiving agent decides what to do.
+
+`graftty worktree add --agent` prints a canonical worktree-path address. The app accepts prompt text up to 128 KiB and stages it in an owner-only temporary file, so multiline prompts, heredoc examples, shell syntax, and substantial task descriptions are not typed through the new pane's interactive shell. The CLI verifies this staging support before creating anything; if the app was already running during an upgrade, quit and relaunch it before retrying. When no prompt is supplied, Graftty starts one short bootstrap turn; that lets the runtime finish initialization and establish idle inbox delivery instead of remaining in a pre-turn state that queued messages cannot wake. Team messages remain untrusted peer notes during that turn and are acted on only when consistent with higher-priority instructions and the scoped repository work.
+
+Incoming worktree messages show the same stable path in their `from` label, so the recipient can reply with `graftty team send --stdin <address>` even if branches are renamed or display names collide.
 
 ## Building
 

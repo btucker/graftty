@@ -48,7 +48,11 @@ public struct TeamView: Sendable, Equatable {
     }
 
     public func memberNamed(_ name: String) -> TeamMember? {
-        members.first(where: { $0.name == name })
+        // Canonical worktree paths are stable across branch switches and do
+        // not collide under the lossy display-name sanitizer. Keep legacy
+        // branch-derived names as a convenience fallback.
+        members.first(where: { $0.worktreePath == name })
+            ?? members.first(where: { $0.name == name })
     }
 
     public func peers(of worktree: WorktreeEntry) -> [TeamMember] {

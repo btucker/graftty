@@ -64,6 +64,11 @@ final class TerminalManager: ObservableObject {
     /// Terminal IDs for which `onShellReady` has already fired. Used to
     /// gate the callback to exactly one invocation per pane.
     private var shellReadyFired: Set<PaneSlotID> = []
+    /// Fresh panes that already received an explicit spawn-time command.
+    /// Their first shell-ready event must not also inject the user's default
+    /// command, which could otherwise start a second agent on top of the one
+    /// requested by `graftty worktree add --agent`.
+    private var explicitInitialInputSurfaces: Set<PaneSlotID> = []
 
     private enum ZmxSessionSnapshot {
         case live(Set<String>)
@@ -476,7 +481,8 @@ final class TerminalManager: ObservableObject {
     func createSurfaces(
         for splitTree: SplitTree,
         paneSessions: [PaneSlotID: PaneSessionID],
-        worktreePath: String
+        worktreePath: String,
+        extraInitialInput: String? = nil
     ) -> [PaneSlotID: SurfaceHandle] {
         guard let app = ghosttyApp?.app else { return [:] }
 
@@ -492,6 +498,7 @@ final class TerminalManager: ObservableObject {
         }
 
         var created: [PaneSlotID: SurfaceHandle] = [:]
+        var pendingInitialInput = extraInitialInput
         for terminalID in splitTree.allLeaves where surfaces[terminalID] == nil {
             guard let paneSessionID = paneSessions[terminalID] else { continue }
             guard canAllocatePTY(for: terminalID) else { continue }
@@ -507,6 +514,10 @@ final class TerminalManager: ObservableObject {
                 worktreePath: worktreePath
             )
             let displayClientID = zmxSpawnConfiguration.map { _ in Self.makeMacDisplayClientID() }
+            let initialInput = pendingInitialInput
+            if initialInput != nil {
+                explicitInitialInputSurfaces.insert(terminalID)
+            }
             // TERM-5.5: SurfaceHandle.init is failable now — ghostty_surface_new
             // can return null under libghostty resource exhaustion. Skip the
             // leaf rather than crash the app; the pane renders the Color.black
@@ -517,15 +528,18 @@ final class TerminalManager: ObservableObject {
                 worktreePath: worktreePath,
                 socketPath: socketPath,
                 zmxSpawnConfiguration: zmxSpawnConfiguration,
+                extraInitialInput: initialInput,
                 terminalManager: self,
                 remoteAttachmentRegistry: remoteAttachmentRegistry,
                 displayOwnershipStore: displayOwnershipStore,
                 displayClientID: displayClientID,
                 initialGridSize: consumeCachedGridSize(for: terminalID)
             ) else {
+                explicitInitialInputSurfaces.remove(terminalID)
                 forgetPaneSession(for: terminalID)
                 continue
             }
+            pendingInitialInput = nil
             didCreateSurface(for: terminalID)
             surfaces[terminalID] = handle
             created[terminalID] = handle
@@ -556,6 +570,9 @@ final class TerminalManager: ObservableObject {
             worktreePath: worktreePath
         )
         let displayClientID = zmxSpawnConfiguration.map { _ in Self.makeMacDisplayClientID() }
+        if extraInitialInput != nil {
+            explicitInitialInputSurfaces.insert(terminalID)
+        }
         // TERM-5.5: failable init returns nil on libghostty rejection;
         // propagate that to the caller instead of crashing.
         guard let handle = SurfaceHandle(
@@ -571,6 +588,7 @@ final class TerminalManager: ObservableObject {
             displayClientID: displayClientID,
             initialGridSize: consumeCachedGridSize(for: terminalID)
         ) else {
+            explicitInitialInputSurfaces.remove(terminalID)
             forgetPaneSession(for: terminalID)
             return nil
         }
@@ -874,11 +892,19 @@ final class TerminalManager: ObservableObject {
         rehydratedSurfaces.contains(terminalID)
     }
 
+    /// One-shot gate consumed by the shell-ready callback. The marker is set
+    /// before surface creation because shell integration can report readiness
+    /// immediately after the PTY starts.
+    func consumeExplicitInitialInputMarker(_ terminalID: PaneSlotID) -> Bool {
+        explicitInitialInputSurfaces.remove(terminalID) != nil
+    }
+
     /// Clear per-terminal tracking state on destroy. Keeps the three
     /// tracking sets in sync with live surfaces so destroyed IDs don't
     /// leak memory or cause stale answers from the marker queries.
     private func forgetTrackingState(for terminalID: PaneSlotID) {
         shellReadyFired.remove(terminalID)
+        explicitInitialInputSurfaces.remove(terminalID)
         firstPaneMarkers.remove(terminalID)
         rehydratedSurfaces.remove(terminalID)
         evictedGridSizes.removeValue(forKey: terminalID)

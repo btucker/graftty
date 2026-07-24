@@ -27,6 +27,25 @@ public enum GitWorktreeAdd {
         branch: BranchSelection,
         startPoint: String?
     ) async throws {
+        if case .useExisting(let name, .local) = branch {
+            let ref = "refs/heads/\(name)"
+            let check: CLIOutput
+            do {
+                check = try await GitRunner.captureAll(
+                    args: ["show-ref", "--verify", "--quiet", ref],
+                    at: repoPath
+                )
+            } catch let err as CLIError {
+                throw Error.cliFailure(err)
+            }
+            guard check.exitCode == 0 else {
+                throw Error.gitFailed(
+                    exitCode: check.exitCode,
+                    stderr: "local branch does not exist: \(name)"
+                )
+            }
+        }
+
         let args = argvFor(
             branch: branch,
             worktreePath: worktreePath,
@@ -65,7 +84,9 @@ public enum GitWorktreeAdd {
             )
             switch source {
             case .local:
-                return ["worktree", "add", worktreePath, name]
+                // End option parsing before the path/branch operands. Git
+                // otherwise accepts an option-shaped branch after <path>.
+                return ["worktree", "add", "--", worktreePath, name]
             case .remoteOnly:
                 return ["worktree", "add", "--track", "-b", name, worktreePath, "origin/" + name]
             }

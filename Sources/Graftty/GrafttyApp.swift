@@ -190,6 +190,7 @@ final class AppServices {
     let displayOwnershipStore: SessionDisplayOwnershipStore
     let teamInbox: TeamInbox
     let teamEventDispatcher: TeamEventDispatcher
+    let cliWorktreeCreations: CLIWorktreeCreationStore
     var worktreeMonitorBridge: WorktreeMonitorBridge?
     /// Drives `TeamPresenceMonitor.cleanupStale` on a slow cadence so
     /// SIGKILL'd agents (whose wrapper trap never fired) don't leave
@@ -223,8 +224,16 @@ final class AppServices {
     /// `GrafttyApp.init()` and wired to the `/v1/rtc/offer` signaling route
     /// in `startup()`. Retained here so it outlives the SwiftUI init cycle.
     var hostAgent: WebRTCHostAgent?
+    /// Deletes only the prompt files found at startup after their grace
+    /// period. Capturing that snapshot avoids pruning prompts owned by
+    /// worktree operations created during this app process.
+    private var agentPromptRecoveryTask: Task<Void, Never>?
 
     init(socketPath: String) {
+        let recoveryPromptFiles = WorktreeAgentLaunchCommand.recoveryPromptFiles()
+        // No worktree-creation operations exist yet, so files older than the
+        // recovery window can only be leftovers from a prior app crash.
+        WorktreeAgentLaunchCommand.pruneStalePromptFiles()
         self.socketServer = SocketServer(socketPath: socketPath)
 
         self.worktreeMonitor = WorktreeMonitor()
@@ -235,6 +244,7 @@ final class AppServices {
         self.claudeSessionRegistry = ClaudeSessionRegistry()
         self.remoteAttachmentRegistry = RemoteAttachmentRegistry()
         self.displayOwnershipStore = SessionDisplayOwnershipStore()
+        self.cliWorktreeCreations = CLIWorktreeCreationStore()
 
         // Lift the team inbox up here so the request handler
         // (`teamInboxRequestHandler()`) and the dispatcher share one
@@ -275,6 +285,16 @@ final class AppServices {
                 )
             } catch {
                 NSLog("[Graftty] dispatchRoutableEvent failed: %@", String(describing: error))
+            }
+        }
+        if !recoveryPromptFiles.isEmpty {
+            self.agentPromptRecoveryTask = Task {
+                do {
+                    try await Task.sleep(for: .seconds(24 * 60 * 60))
+                } catch {
+                    return
+                }
+                WorktreeAgentLaunchCommand.discardRecoveryPromptFiles(recoveryPromptFiles)
             }
         }
     }
@@ -1008,7 +1028,10 @@ struct GrafttyApp: App {
                     appState: binding,
                     terminalManager: tm,
                     teamInbox: teamInbox,
-                    teamEventDispatcher: teamEventDispatcher
+                    teamEventDispatcher: teamEventDispatcher,
+                    worktreeMonitor: services.worktreeMonitor,
+                    statsStore: services.statsStore,
+                    worktreeCreations: services.cliWorktreeCreations
                 )
             }
         }
@@ -1473,6 +1496,7 @@ struct GrafttyApp: App {
                 case .pathCollision: return .invalid("a worktree at that name already exists")
                 case .branchAlreadyMounted:
                     return .conflict(message: err.userMessage ?? "branch already mounted")
+                case .invalidInput(let msg): return .invalid(msg)
                 case .discoveryFailed(let msg): return .internalFailure(msg)
                 }
             }
@@ -1771,11 +1795,14 @@ struct GrafttyApp: App {
                 teamID: key.teamID,
                 worktree: key.worktree
             )?.lastDeliveredToAnySessionID
-            return try !inbox.unreadMessages(
+            let allUnread = try inbox.unreadMessages(
                 teamID: key.teamID,
                 recipientWorktree: key.worktree,
                 after: watermark
-            ).isEmpty
+            )
+            guard let first = allUnread.first else { return false }
+            return first.to.runtime == nil ||
+                first.to.runtime == TeamHookRuntime.codex.rawValue
         } catch {
             return false
         }
@@ -2296,7 +2323,8 @@ struct GrafttyApp: App {
                 }
             }
         case .listPanes, .addPane, .closePane, .showPane, .sendPane, .teamMessage, .teamSend,
-             .teamBroadcast, .teamHook, .teamInbox, .teamMembers, .teamList:
+             .teamBroadcast, .teamHook, .teamInbox, .teamMembers, .teamList,
+             .createWorktree, .agentPromptStagingCapability, .worktreeCreateStatus:
             // Request-style messages are handled by handlePaneRequest via
             // the SocketServer.onRequest callback; they are no-ops on the
             // fire-and-forget onMessage path.
@@ -2313,7 +2341,10 @@ struct GrafttyApp: App {
         appState: Binding<AppState>,
         terminalManager: TerminalManager,
         teamInbox: TeamInbox,
-        teamEventDispatcher: TeamEventDispatcher
+        teamEventDispatcher: TeamEventDispatcher,
+        worktreeMonitor: WorktreeMonitor,
+        statsStore: WorktreeStatsStore,
+        worktreeCreations: CLIWorktreeCreationStore
     ) -> ResponseMessage? {
         switch message {
         case .listPanes(let path):
@@ -2410,10 +2441,152 @@ struct GrafttyApp: App {
                 teamInbox: teamInbox,
                 teamEventDispatcher: teamEventDispatcher
             )
+        case .agentPromptStagingCapability:
+            return .ok
+        case .createWorktree(
+            let callerPath,
+            let worktreeName,
+            let branchName,
+            let existing,
+            let command,
+            let agentRuntime,
+            let agentPrompt
+        ):
+            return beginCLIWorktreeCreation(
+                callerPath: callerPath,
+                worktreeName: worktreeName,
+                branchName: branchName,
+                existing: existing,
+                command: command,
+                agentRuntime: agentRuntime,
+                agentPrompt: agentPrompt,
+                appState: appState,
+                terminalManager: terminalManager,
+                teamEventDispatcher: teamEventDispatcher,
+                worktreeMonitor: worktreeMonitor,
+                statsStore: statsStore,
+                worktreeCreations: worktreeCreations
+            )
+        case .worktreeCreateStatus(let operationID):
+            guard let status = worktreeCreations.status(operationID: operationID) else {
+                return .error("unknown or expired worktree creation operation")
+            }
+            return .worktreeCreate(status)
         case .notify, .clear:
             // Fire-and-forget cases — no response. `onMessage` already handled them.
             return nil
         }
+    }
+
+    @MainActor
+    private static func beginCLIWorktreeCreation(
+        callerPath: String,
+        worktreeName: String,
+        branchName: String,
+        existing: Bool,
+        command: String?,
+        agentRuntime: TeamHookRuntime?,
+        agentPrompt: String?,
+        appState: Binding<AppState>,
+        terminalManager: TerminalManager,
+        teamEventDispatcher: TeamEventDispatcher,
+        worktreeMonitor: WorktreeMonitor,
+        statsStore: WorktreeStatsStore,
+        worktreeCreations: CLIWorktreeCreationStore
+    ) -> ResponseMessage {
+        if let error = CLIWorktreeCreationPolicy.validationError(
+            agentRuntime: agentRuntime,
+            teamsEnabled: UserDefaults.standard.bool(forKey: SettingsKeys.agentTeamsEnabled)
+        ) {
+            return .error(error)
+        }
+        guard let repo = appState.wrappedValue.repos.first(where: { repo in
+            repo.worktrees.contains(where: { $0.path == callerPath })
+        }) else {
+            return .error("caller is not inside a tracked worktree")
+        }
+
+        if agentPrompt != nil, agentRuntime == nil {
+            return .error("an agent prompt requires an agent runtime")
+        }
+        if let error = CLIWorktreeCreationPolicy.obsoletePromptLoaderError(
+            agentRuntime: agentRuntime,
+            command: command,
+            agentPrompt: agentPrompt
+        ) {
+            return .error(error)
+        }
+        let launch: PreparedWorktreeAgentLaunch
+        if let agentRuntime,
+           CLIWorktreeCreationPolicy.shouldStageAgentPrompt(
+               agentRuntime: agentRuntime,
+               command: command,
+               agentPrompt: agentPrompt
+           ) {
+            do {
+                launch = try WorktreeAgentLaunchCommand.prepare(
+                    agent: agentRuntime,
+                    prompt: agentPrompt,
+                    exactCommand: nil
+                )
+            } catch {
+                return .error("could not stage agent prompt: \(error.localizedDescription)")
+            }
+        } else {
+            launch = PreparedWorktreeAgentLaunch(command: command, promptFile: nil)
+        }
+
+        let branch: BranchSelection = existing
+            ? .useExisting(name: branchName, source: .local)
+            : .createNew(name: branchName)
+        let worktreePath: String
+        switch AddWorktreeFlow.beginCreate(
+            repoPath: repo.path,
+            worktreeName: worktreeName,
+            branch: branch,
+            appState: appState
+        ) {
+        case .success(let path):
+            worktreePath = path
+        case .failure(let error):
+            launch.discardPromptFile()
+            return .error(error.userMessage ?? "could not begin worktree creation")
+        }
+
+        let status = worktreeCreations.begin(
+            worktreePath: worktreePath,
+            messageAddress: worktreePath,
+            stagedPromptFile: launch.promptFile
+        )
+        let initialCommand = launch.command.flatMap { value in
+            value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : value
+        }
+        Task { @MainActor in
+            let result = await AddWorktreeFlow.finishCreate(
+                repoPath: repo.path,
+                worktreePath: worktreePath,
+                branch: branch,
+                appState: appState,
+                worktreeMonitor: worktreeMonitor,
+                statsStore: statsStore,
+                terminalManager: terminalManager,
+                teamEventDispatcher: teamEventDispatcher,
+                initialCommand: initialCommand
+            )
+            switch result {
+            case .success:
+                worktreeCreations.markReady(operationID: status.operationID)
+            case .failure(let error):
+                let message: String
+                if case .discoveryFailed(let detail) = error {
+                    message = detail
+                } else {
+                    message = error.userMessage ?? "worktree creation failed"
+                }
+                worktreeCreations.markFailed(operationID: status.operationID, error: message)
+            }
+        }
+        return .worktreeCreate(status)
     }
 
     @MainActor
@@ -2497,7 +2670,6 @@ struct GrafttyApp: App {
                 inbox: teamInbox,
                 dispatcher: teamEventDispatcher,
                 automaticDeliveryOwner: { teamID, worktree, runtime, paneSessionName in
-                    guard let paneSessionName else { return false }
                     let resolver = TeamDeliveryOwnershipResolver(
                         records: { presenceRecords },
                         liveness: AppTeamDeliveryLiveness(
@@ -2506,7 +2678,13 @@ struct GrafttyApp: App {
                         )
                     )
                     let key = TeamDeliveryOwnerKey(teamID: teamID, worktree: worktree, runtime: runtime)
-                    return resolver.owner(for: key)?.paneSessionName == paneSessionName
+                    guard let owner = resolver.owner(for: key) else {
+                        // Preserve direct-shell / registration-failure fallback:
+                        // only suppress a hook when another live pane is a
+                        // positively identified owner.
+                        return true
+                    }
+                    return owner.paneSessionName == paneSessionName
                 }
             ).hook(
                 callerWorktree: callerPath,
@@ -3373,7 +3551,8 @@ struct GrafttyApp: App {
             defaultCommand: command,
             firstPaneOnly: firstPaneOnly,
             isFirstPane: terminalManager.isFirstPane(terminalID),
-            wasRehydrated: terminalManager.wasRehydrated(terminalID)
+            wasRehydrated: terminalManager.wasRehydrated(terminalID),
+            hasExplicitInitialInput: terminalManager.consumeExplicitInitialInputMarker(terminalID)
         )
 
         switch decision {

@@ -422,8 +422,19 @@ final class SurfaceHandle {
 
     private var pendingZmxStart: PendingZmxStart?
 
-    private func startZmxBackendIfNeeded() {
-        guard let backend = zmxBackend, let pending = pendingZmxStart else { return }
+    /// Start a fresh command-bearing zmx surface without waiting for AppKit
+    /// to mount its view. CLI-created worktrees run in the background, so
+    /// their view may never receive the layout callback that normally starts
+    /// zmx. Rehydrated and ordinary panes keep the deferred TERM-11.10 path.
+    @discardableResult
+    func startForBackgroundLaunch() -> Bool {
+        guard zmxBackend != nil else { return true }
+        return startZmxBackendIfNeeded()
+    }
+
+    @discardableResult
+    private func startZmxBackendIfNeeded() -> Bool {
+        guard let backend = zmxBackend, let pending = pendingZmxStart else { return true }
         pendingZmxStart = nil
         do {
             try backend.start(surface: surface)
@@ -433,11 +444,13 @@ final class SurfaceHandle {
                 // injection (e.g., `graftty pane split --command`).
                 // It is NOT a user keystroke; ownership decides whether
                 // the injected bytes are allowed to reach the PTY.
-                try? backend.write(data, claimEngagement: false)
+                try backend.write(data, claimEngagement: false)
             }
+            return true
         } catch {
             backend.close()
             reportZmxBackendStartFailure(error, surface: surface)
+            return false
         }
     }
 

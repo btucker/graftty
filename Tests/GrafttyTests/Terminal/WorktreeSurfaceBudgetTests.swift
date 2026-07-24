@@ -37,6 +37,34 @@ struct WorktreeSurfaceBudgetTests {
         #expect(evicted.isEmpty)
     }
 
+    @Test func backgroundCreationEntersAtTailWithoutReorderingSelections() {
+        var evicted: [PaneSlotID] = []
+        let budget = WorktreeSurfaceBudget(capacity: 4) { evicted.append($0) }
+        let (trees, _) = singleLeafTrees(["/a", "/b", "/c", "/d"])
+        for path in ["/a", "/b", "/c"] {
+            budget.noteSelected(worktreePath: path, splitTreesByPath: trees)
+        }
+
+        budget.noteCreated(worktreePath: "/d", splitTreesByPath: trees)
+
+        #expect(budget.lru == ["/c", "/b", "/a", "/d"])
+        #expect(evicted.isEmpty)
+    }
+
+    @Test func backgroundCreationAtCapacityEvictsItsOwnNeverSelectedSurface() {
+        var evicted: [PaneSlotID] = []
+        let budget = WorktreeSurfaceBudget(capacity: 4) { evicted.append($0) }
+        let (trees, leaves) = singleLeafTrees(["/a", "/b", "/c", "/d", "/e"])
+        for path in ["/a", "/b", "/c", "/d"] {
+            budget.noteSelected(worktreePath: path, splitTreesByPath: trees)
+        }
+
+        budget.noteCreated(worktreePath: "/e", splitTreesByPath: trees)
+
+        #expect(budget.lru == ["/d", "/c", "/b", "/a"])
+        #expect(evicted == [leaves["/e"]])
+    }
+
     @Test func fifthDistinctSelectionEvictsOldest() {
         var evicted: [PaneSlotID] = []
         let budget = WorktreeSurfaceBudget(capacity: 4) { evicted.append($0) }

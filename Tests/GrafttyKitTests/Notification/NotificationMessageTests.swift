@@ -279,6 +279,91 @@ struct NotificationMessageTests {
         #expect(json?["type"] as? String == "send_pane")
     }
 
+    @Test func createWorktreeRequestRoundTrips() throws {
+        let original: NotificationMessage = .createWorktree(
+            callerWorktree: "/repo",
+            worktreeName: "fix-auth",
+            branchName: "feature/fix-auth",
+            existing: false,
+            command: "codex",
+            agentRuntime: .codex,
+            agentPrompt: "Fix the auth tests"
+        )
+        let data = try JSONEncoder().encode(original)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        #expect(json["type"] as? String == "create_worktree")
+        #expect(json["caller_worktree"] as? String == "/repo")
+        #expect(json["worktree_name"] as? String == "fix-auth")
+        #expect(json["branch_name"] as? String == "feature/fix-auth")
+        #expect(json["command"] as? String == "codex")
+        #expect(json["agent_runtime"] as? String == "codex")
+        #expect(json["agent_prompt"] as? String == "Fix the auth tests")
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == original)
+    }
+
+    @Test func createWorktreeRequestAcceptsLegacyPayloadWithoutAgentPrompt() throws {
+        let data = Data(#"{"type":"create_worktree","caller_worktree":"/repo","worktree_name":"fix-auth","branch_name":"fix-auth","existing":false,"command":"codex","agent_runtime":"codex"}"#.utf8)
+        let expected: NotificationMessage = .createWorktree(
+            callerWorktree: "/repo",
+            worktreeName: "fix-auth",
+            branchName: "fix-auth",
+            existing: false,
+            command: "codex",
+            agentRuntime: .codex,
+            agentPrompt: nil
+        )
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == expected)
+    }
+
+    @Test func maximumAgentPromptFitsControlSocketAfterWorstCaseJSONEscaping() throws {
+        let prompt = String(
+            repeating: "\u{1}",
+            count: WorktreeAgentLaunchCommand.maximumPromptBytes
+        )
+        let request: NotificationMessage = .createWorktree(
+            callerWorktree: "/repo",
+            worktreeName: "fix-auth",
+            branchName: "fix-auth",
+            existing: false,
+            command: "codex",
+            agentRuntime: .codex,
+            agentPrompt: prompt
+        )
+
+        #expect(try JSONEncoder().encode(request).count < 1 * 1_024 * 1_024)
+    }
+
+    @Test func agentPromptStagingCapabilityRequestRoundTrips() throws {
+        let request = NotificationMessage.agentPromptStagingCapability
+        let data = try JSONEncoder().encode(request)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+
+        #expect(json["type"] as? String == "agent_prompt_staging_capability")
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == request)
+    }
+
+    @Test func worktreeCreateStatusRequestRoundTrips() throws {
+        let original: NotificationMessage = .worktreeCreateStatus(operationID: "op-123")
+        let data = try JSONEncoder().encode(original)
+        #expect(try JSONDecoder().decode(NotificationMessage.self, from: data) == original)
+    }
+
+    @Test func worktreeCreateResponseRoundTrips() throws {
+        let status = WorktreeCreateStatus(
+            operationID: "op-123",
+            state: .ready,
+            worktreePath: "/repo/.worktrees/fix-auth",
+            messageAddress: "/repo/.worktrees/fix-auth"
+        )
+        let original: ResponseMessage = .worktreeCreate(status)
+        let data = try JSONEncoder().encode(original)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        #expect(json["type"] as? String == "worktree_create")
+        let operation = json["operation"] as! [String: Any]
+        #expect(operation["message_address"] as? String == "/repo/.worktrees/fix-auth")
+        #expect(try JSONDecoder().decode(ResponseMessage.self, from: data) == original)
+    }
+
     @Test func paneShowResponseRoundTrip() throws {
         let original: ResponseMessage = .paneShow("hello\nworld\n")
         let data = try JSONEncoder().encode(original)

@@ -166,6 +166,7 @@
     "REMOTE.6": "panes_state Channel",
     "REMOTE.7": "pane_control Channel",
     "REMOTE.8": "SSH session layer",
-    "TEAM.10": "Codex Wrapper App-Server Routing"
+    "TEAM.10": "Codex Wrapper App-Server Routing",
+    "TEAM.11": "Idle Delivery"
   }
 }

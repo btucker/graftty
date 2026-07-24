@@ -40,18 +40,6 @@ public final class TeamEventDispatcher {
               let recipientMember = team.memberNamed(recipientName)
         else { return nil }
 
-        let event = ChannelServerMessage.event(
-            type: TeamChannelEvents.EventType.message,
-            attrs: ["team": team.repoDisplayName, "from": senderMember.name],
-            body: text
-        )
-        let rendered = renderBody(
-            event: event,
-            recipientWorktreePath: recipientMember.worktreePath,
-            subjectWorktreePath: senderMember.worktreePath,
-            repos: repos
-        )
-
         return try inbox.appendMessage(
             teamID: TeamLookup.id(of: team),
             teamName: team.repoDisplayName,
@@ -68,25 +56,15 @@ public final class TeamEventDispatcher {
             ),
             priority: priority,
             kind: TeamChannelEvents.EventType.message,
-            body: rendered.body,
-            agentPrompt: rendered.agentPrompt
+            body: text
         )
     }
 
-    // MARK: - team broadcast (TEAM-5.10)
+    // MARK: - team broadcast (TEAM-5.11)
 
     /// Writes one `team_message` row per recipient (every team member
-    /// other than the sender). Each row is rendered through the user's
-    /// `teamPrompt` template against the recipient's agent context, so
-    /// `{{ agent.branch }}` / `{{ agent.main_worktree }}` resolve per-recipient
-    /// like every other event the dispatcher fans out.
-    ///
-    /// Note: `appendBroadcast` (which shares a `batchID` across rows) is
-    /// not used because each row carries a recipient-specific rendered
-    /// body. The trade-off is that downstream consumers can't recover
-    /// "these all came from one broadcast" without a heuristic — but the
-    /// unread-fanout cursor logic doesn't rely on `batchID`, so the loss
-    /// is cosmetic.
+    /// other than the sender). Direct and broadcast messages are authored
+    /// communication, so they bypass the automated-event prompt.
     @discardableResult
     public func dispatchTeamBroadcast(
         fromWorktree senderWorktreePath: String,
@@ -102,41 +80,25 @@ public final class TeamEventDispatcher {
 
         let recipients = team.members.filter { $0.worktreePath != senderWorktreePath }
 
-        var messages: [TeamInboxMessage] = []
-        for recipient in recipients {
-            let event = TeamChannelEvents.teamMessage(
-                team: team.repoDisplayName,
-                from: senderMember.name,
-                text: text
-            )
-            let rendered = renderBody(
-                event: event,
-                recipientWorktreePath: recipient.worktreePath,
-                subjectWorktreePath: senderMember.worktreePath,
-                repos: repos
-            )
-            let msg = try inbox.appendMessage(
-                teamID: TeamLookup.id(of: team),
-                teamName: team.repoDisplayName,
-                repoPath: team.repoPath,
-                from: TeamInboxEndpoint(
-                    member: senderMember.name,
-                    worktree: senderMember.worktreePath,
-                    runtime: nil
-                ),
-                to: TeamInboxEndpoint(
+        return try inbox.appendBroadcast(
+            teamID: TeamLookup.id(of: team),
+            teamName: team.repoDisplayName,
+            repoPath: team.repoPath,
+            from: TeamInboxEndpoint(
+                member: senderMember.name,
+                worktree: senderMember.worktreePath,
+                runtime: nil
+            ),
+            recipients: recipients.map { recipient in
+                TeamInboxEndpoint(
                     member: recipient.name,
                     worktree: recipient.worktreePath,
                     runtime: nil
-                ),
-                priority: priority,
-                kind: TeamChannelEvents.EventType.message,
-                body: rendered.body,
-                agentPrompt: rendered.agentPrompt
-            )
-            messages.append(msg)
-        }
-        return messages
+                )
+            },
+            priority: priority,
+            body: text
+        )
     }
 
     // MARK: - Routable matrix events (TEAM-5.5, TEAM-5.6)
