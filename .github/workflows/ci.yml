@@ -105,7 +105,7 @@ jobs:
               awk -v prefix="${target}." '
                 index($0, prefix) == 1 {
                   name = substr($0, length(prefix) + 1)
-                  sub(/\\/.*/, "", name)
+                  sub(/\/.*/, "", name)
                   print name
                 }
               ' <<< "$test_list" \
