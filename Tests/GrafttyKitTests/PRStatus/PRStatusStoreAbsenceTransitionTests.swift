@@ -26,6 +26,7 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
 
     private func info(
         number: Int = 5,
+        url: URL? = nil,
         checks: PRInfo.Checks,
         mergeable: PRInfo.Mergeable = .unknown,
         state: PRInfo.State = .open
@@ -33,7 +34,7 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
         PRInfo(
             number: number,
             title: "PR \(number)",
-            url: URL(string: "https://github.com/acme/web/pull/\(number)")!,
+            url: url ?? URL(string: "https://github.com/acme/web/pull/\(number)")!,
             state: state,
             checks: checks,
             mergeable: mergeable,
@@ -328,6 +329,36 @@ final class PRStatusStoreAbsenceTransitionTests: XCTestCase {
         XCTAssertTrue(events.contains { $0.event == .ciConclusionChanged })
         XCTAssertTrue(events.contains { $0.event == .mergabilityChanged })
         XCTAssertTrue(events.allSatisfy { $0.attrs["pr_number"] == "6" })
+    }
+
+    func testCanonicalURLChangeDoesNotChangePRIdentity() async throws {
+        let oldURL = URL(string: "https://github.com/acme/web/pull/5")!
+        let canonicalURL = URL(string: "https://github.com/acme/renamed-web/pull/5")!
+        let harness = makeStore(snapshots: [
+            snapshot(info(
+                url: oldURL,
+                checks: .success,
+                mergeable: .mergeable
+            )),
+            snapshot(info(
+                url: canonicalURL,
+                checks: .failure,
+                mergeable: .conflicting
+            )),
+        ])
+        defer { harness.store.stop() }
+        var events: [CapturedTransition] = []
+        harness.store.onTransition = { event, _, attrs in
+            events.append(CapturedTransition(event: event, attrs: attrs))
+        }
+
+        try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: 1)
+        try await refresh(harness.store, fetcher: harness.fetcher, expectedFetchCount: 2)
+
+        XCTAssertEqual(events.count, 2)
+        XCTAssertTrue(events.contains { $0.event == .ciConclusionChanged })
+        XCTAssertTrue(events.contains { $0.event == .mergabilityChanged })
+        XCTAssertTrue(events.allSatisfy { $0.attrs["pr_url"] == canonicalURL.absoluteString })
     }
 }
 
