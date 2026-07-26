@@ -1,5 +1,6 @@
 import Foundation
 import GhosttyKit
+import GrafttyProtocol
 import GrafttyRemoteClient
 import NIOConcurrencyHelpers
 import Testing
@@ -94,6 +95,143 @@ struct RemoteTerminalSurfaceBackendTests {
 
         #expect(client.closeCount() == 1)
     }
+
+    @Test func closeWaitsForClaimedSurfaceWriteBeforeReturning() async throws {
+        let client = FakeRemoteTerminalWebSocketClient()
+        let blocker = BlockingRemoteSurfaceWrite()
+        let closeFinished = LockedBoolean()
+        let backend = RemoteTerminalSurfaceBackend(
+            client: client,
+            writeBuffer: blocker.write
+        )
+        defer { backend.surfaceWasFreed() }
+
+        try backend.start(surface: fakeSurface())
+        client.deliver(.binary(Data("racing frame".utf8)))
+        try await blocker.waitUntilEntered()
+
+        let closeTask = Task.detached {
+            backend.close()
+            closeFinished.setTrue()
+        }
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(!closeFinished.value)
+
+        blocker.release()
+        await closeTask.value
+        #expect(closeFinished.value)
+    }
+
+    @Test func ownerAwareTransportQueuesInputUntilMacOwnsDisplay() async throws {
+        let client = FakeRemoteTerminalWebSocketClient(
+            supportsWebControlTextFrames: true
+        )
+        let backend = RemoteTerminalSurfaceBackend(client: client)
+        defer {
+            backend.close()
+            backend.surfaceWasFreed()
+        }
+        backend.bindSurfaceSync(
+            currentGridSize: { (cols: 120, rows: 40) },
+            requestRefresh: {}
+        )
+        try backend.start(surface: fakeSurface())
+        try await client.waitForControlCounts(hello: 1)
+        let hello = try #require(client.hellos().first)
+
+        let follower = try DisplayOwnershipSnapshot(
+            sessionName: "main",
+            ownerClientID: DisplayClientID("other-client"),
+            ownerKind: .ios,
+            grid: DisplayGrid(cols: 80, rows: 24),
+            epoch: 1,
+            revision: 1
+        )
+        client.deliver(.text(WebControlEnvelope.ownership(follower).encoded()))
+        try backend.write(Data("queued".utf8), claimEngagement: true)
+        try await client.waitForControlCounts(hello: 1, takeControl: 1)
+        #expect(client.sentFrames().isEmpty)
+
+        let owner = try DisplayOwnershipSnapshot(
+            sessionName: "main",
+            ownerClientID: hello.clientID,
+            ownerKind: .mac,
+            grid: DisplayGrid(cols: 120, rows: 40),
+            epoch: 2,
+            revision: 2
+        )
+        client.deliver(.text(WebControlEnvelope.ownership(owner).encoded()))
+        try await client.waitForControlCounts(
+            hello: 1,
+            takeControl: 1,
+            ownerResize: 1
+        )
+        try await client.waitForSentFrames(count: 1)
+
+        #expect(client.sentFrames() == [.binary(Data("queued".utf8))])
+        #expect(client.ownerResizes().first?.epoch == 2)
+        #expect(client.ownerResizes().first?.cols == 120)
+        #expect(client.ownerResizes().first?.rows == 40)
+    }
+}
+
+private final class BlockingRemoteSurfaceWrite: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var entered = false
+    private var released = false
+
+    var write: @Sendable (Data) -> Void {
+        { [weak self] _ in
+            guard let self else { return }
+            condition.lock()
+            entered = true
+            condition.broadcast()
+            while !released {
+                condition.wait()
+            }
+            condition.unlock()
+        }
+    }
+
+    func waitUntilEntered() async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                while true {
+                    let isEntered = self.condition.withLock { self.entered }
+                    if isEntered { return }
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(2))
+                throw TestTimeout()
+            }
+            try await group.next()
+            group.cancelAll()
+        }
+    }
+
+    func release() {
+        condition.withLock {
+            released = true
+            condition.broadcast()
+        }
+    }
+}
+
+private final class LockedBoolean: @unchecked Sendable {
+    private let lock = NIOLock()
+    private var storage = false
+
+    var value: Bool {
+        lock.withLock { storage }
+    }
+
+    func setTrue() {
+        lock.withLock {
+            storage = true
+        }
+    }
 }
 
 private final class RemoteSurfaceRecorder: @unchecked Sendable {
@@ -172,15 +310,46 @@ private struct RemoteResize: Equatable {
     let rows: Int
 }
 
+private struct RecordedHello: Equatable {
+    let clientID: DisplayClientID
+    let kind: DisplayClientKind
+    let role: DisplayClientRole
+    let visible: Bool
+    let cols: Int
+    let rows: Int
+}
+
+private struct RecordedTakeControl: Equatable {
+    let clientID: DisplayClientID
+    let kind: DisplayClientKind
+    let cols: Int
+    let rows: Int
+}
+
+private struct RecordedOwnerResize: Equatable {
+    let clientID: DisplayClientID
+    let epoch: UInt64
+    let cols: Int
+    let rows: Int
+}
+
 private final class FakeRemoteTerminalWebSocketClient: WebSocketClient, @unchecked Sendable {
     private let lock = NIOLock()
+    let supportsWebControlTextFrames: Bool
     private var recordedSentFrames: [WebSocketFrame] = []
     private var recordedResizes: [RemoteResize] = []
+    private var recordedHellos: [RecordedHello] = []
+    private var recordedTakeControls: [RecordedTakeControl] = []
+    private var recordedOwnerResizes: [RecordedOwnerResize] = []
     private var recordedCloseCount = 0
     private var receivedFrames: [WebSocketFrame] = []
     private var receiveWaiters: [CheckedContinuation<WebSocketFrame, Error>] = []
     private var sentWaiters: [(Int, CheckedContinuation<Void, Error>)] = []
     private var resizeWaiters: [(Int, CheckedContinuation<Void, Error>)] = []
+
+    init(supportsWebControlTextFrames: Bool = false) {
+        self.supportsWebControlTextFrames = supportsWebControlTextFrames
+    }
 
     func send(_ frame: WebSocketFrame) async throws {
         let ready: [CheckedContinuation<Void, Error>]
@@ -237,6 +406,58 @@ private final class FakeRemoteTerminalWebSocketClient: WebSocketClient, @uncheck
         }
     }
 
+    func sendHello(
+        clientID: DisplayClientID,
+        kind: DisplayClientKind,
+        role: DisplayClientRole,
+        visible: Bool,
+        cols: Int,
+        rows: Int
+    ) async {
+        lock.withLock {
+            recordedHellos.append(RecordedHello(
+                clientID: clientID,
+                kind: kind,
+                role: role,
+                visible: visible,
+                cols: cols,
+                rows: rows
+            ))
+        }
+    }
+
+    func takeControl(
+        clientID: DisplayClientID,
+        kind: DisplayClientKind,
+        cols: Int,
+        rows: Int
+    ) async {
+        lock.withLock {
+            recordedTakeControls.append(RecordedTakeControl(
+                clientID: clientID,
+                kind: kind,
+                cols: cols,
+                rows: rows
+            ))
+        }
+    }
+
+    func ownerResize(
+        clientID: DisplayClientID,
+        epoch: UInt64,
+        cols: Int,
+        rows: Int
+    ) async {
+        lock.withLock {
+            recordedOwnerResizes.append(RecordedOwnerResize(
+                clientID: clientID,
+                epoch: epoch,
+                cols: cols,
+                rows: rows
+            ))
+        }
+    }
+
     func deliver(_ frame: WebSocketFrame) {
         let waiter: CheckedContinuation<WebSocketFrame, Error>?
         waiter = lock.withLock {
@@ -256,6 +477,40 @@ private final class FakeRemoteTerminalWebSocketClient: WebSocketClient, @uncheck
 
     func waitForResizeCount(_ count: Int) async throws {
         try await waitFor(count: count, keyPath: \.recordedResizes, waiters: \.resizeWaiters)
+    }
+
+    func hellos() -> [RecordedHello] {
+        lock.withLock { recordedHellos }
+    }
+
+    func ownerResizes() -> [RecordedOwnerResize] {
+        lock.withLock { recordedOwnerResizes }
+    }
+
+    func waitForControlCounts(
+        hello: Int = 0,
+        takeControl: Int = 0,
+        ownerResize: Int = 0
+    ) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                while true {
+                    let ready = self.lock.withLock {
+                        self.recordedHellos.count >= hello
+                            && self.recordedTakeControls.count >= takeControl
+                            && self.recordedOwnerResizes.count >= ownerResize
+                    }
+                    if ready { return }
+                    try await Task.sleep(for: .milliseconds(5))
+                }
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(2))
+                throw TestTimeout()
+            }
+            try await group.next()
+            group.cancelAll()
+        }
     }
 
     func sentFrames() -> [WebSocketFrame] {
