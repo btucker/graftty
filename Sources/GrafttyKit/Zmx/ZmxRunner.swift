@@ -14,6 +14,8 @@ import Darwin
 /// almost-empty env, not "inherit").
 public enum ZmxRunner {
 
+    private static let maximumDrainBytesPerPass = 64 * 1024
+
     public enum Error: Swift.Error, Equatable {
         case zmxFailed(terminationStatus: Int32)
         case timedOut
@@ -280,17 +282,22 @@ public enum ZmxRunner {
         }
     }
 
-    /// Drains every byte currently readable from `fd`.
+    /// Drains up to `maximumDrainBytesPerPass` currently-readable bytes.
+    /// The per-pass bound ensures a busy stream cannot starve the other
+    /// stream, child-exit polling, or timeout enforcement.
     /// Returns `true` while the writer may produce more data, and `false`
     /// after EOF or an unrecoverable read error.
     private static func drainAvailable(from fd: Int32, into data: inout Data) -> Bool {
         var buffer = [UInt8](repeating: 0, count: 4096)
-        while true {
+        var drainedBytes = 0
+        while drainedBytes < maximumDrainBytesPerPass {
+            let bytesToRead = min(buffer.count, maximumDrainBytesPerPass - drainedBytes)
             let count = buffer.withUnsafeMutableBytes {
-                Darwin.read(fd, $0.baseAddress, $0.count)
+                Darwin.read(fd, $0.baseAddress, bytesToRead)
             }
             if count > 0 {
                 data.append(contentsOf: buffer.prefix(Int(count)))
+                drainedBytes += Int(count)
             } else if count < 0 && errno == EINTR {
                 continue
             } else if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -299,6 +306,7 @@ public enum ZmxRunner {
                 return false
             }
         }
+        return true
     }
 
     private static func closeIfOpen(_ fd: inout Int32) {

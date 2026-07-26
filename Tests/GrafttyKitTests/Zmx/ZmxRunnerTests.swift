@@ -122,6 +122,31 @@ struct ZmxRunnerTests {
         #expect(!Self.processExists(childPID))
     }
 
+    @Test func captureChecksTimeoutWhileStdoutRemainsBusy() throws {
+        let start = Date()
+        #expect(throws: ZmxRunner.Error.timedOut) {
+            _ = try ZmxRunner.capture(
+                executable: URL(fileURLWithPath: "/bin/sh"),
+                args: [
+                    "-c",
+                    """
+                    writers=""
+                    for _ in 1 2 3 4 5 6 7 8; do
+                        /usr/bin/yes busy &
+                        writers="$writers $!"
+                    done
+                    /bin/sleep 0.5
+                    kill $writers
+                    wait $writers 2>/dev/null
+                    """,
+                ],
+                env: [:],
+                timeout: 0.05
+            )
+        }
+        #expect(Date().timeIntervalSince(start) < 1.5)
+    }
+
     @Test func envIsPassedToTheChild() throws {
         let result = try ZmxRunner.run(
             executable: URL(fileURLWithPath: "/bin/sh"),
