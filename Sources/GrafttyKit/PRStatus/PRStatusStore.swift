@@ -55,7 +55,6 @@ public final class PRStatusStore {
     private struct PRTransitionIdentity: Equatable {
         let origin: HostingOrigin
         let number: Int
-        let url: URL
     }
 
     /// @spec PR-8.24: While polling a tracked PR or MR, the application shall
@@ -75,8 +74,7 @@ public final class PRStatusStore {
         init(origin: HostingOrigin, info: PRInfo) {
             self.identity = PRTransitionIdentity(
                 origin: origin,
-                number: info.number,
-                url: info.url
+                number: info.number
             )
             self.state = info.state
             self.checks = info.checks == .none ? nil : info.checks
@@ -413,8 +411,7 @@ public final class PRStatusStore {
     ) {
         let identity = PRTransitionIdentity(
             origin: origin,
-            number: current.number,
-            url: current.url
+            number: current.number
         )
         guard var baseline = transitionBaselines[worktreePath],
               baseline.identity == identity else {
