@@ -838,6 +838,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-4.5** When the application invokes synchronous zmx maintenance commands such as `zmx list --short` or `zmx kill --force <session>`, the subprocess wrapper shall apply a bounded timeout and terminate the command if it does not exit promptly. Cleanup paths, including test teardown, shall not block indefinitely on a degraded zmx daemon, because a wedged cleanup can leave `zmx attach` clients and their PTYs orphaned.
 
+**ZMX-4.6** When a synchronous zmx subprocess emits more than a pipe buffer on stdout or stderr, the application shall drain both streams while the child is running so `pane show` and maintenance commands complete instead of deadlocking while waiting for the child to exit.
+
 ### ZMX-5.x — Fallback
 
 **ZMX-5.1** If the bundled `zmx` binary is missing or not executable, the application shall fall back to libghostty's default `$SHELL` spawn behavior on a per-pane basis.
