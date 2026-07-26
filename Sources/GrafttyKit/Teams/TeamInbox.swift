@@ -238,6 +238,23 @@ public final class TeamInbox {
         }
     }
 
+    /// Returns the leading rows that `runtime` may consume. A row targeted to
+    /// another runtime stops the prefix so the shared worktree watermark never
+    /// advances past a message that still needs its own delivery path.
+    static func runtimeDeliverablePrefix(
+        _ messages: [TeamInboxMessage],
+        runtime: String
+    ) -> [TeamInboxMessage] {
+        Array(messages.prefix { isDeliverable($0, toRuntime: runtime) })
+    }
+
+    static func isDeliverable(
+        _ message: TeamInboxMessage,
+        toRuntime runtime: String
+    ) -> Bool {
+        message.to.runtime == nil || message.to.runtime == runtime
+    }
+
     public func writeCursor(_ cursor: TeamInboxCursor, teamID: String) throws {
         let url = cursorURL(teamID: teamID, sessionID: cursor.sessionID)
         try ensureParentDirectory(for: url)
@@ -276,6 +293,77 @@ public final class TeamInbox {
         return try decoder.decode(TeamInboxWorktreeWatermark.self, from: data)
     }
 
+    /// Atomically claims the next durable message that this runtime can
+    /// consume. The worktree watermark is the cross-session claim token;
+    /// holding its inter-process lock while selecting the ordered row and
+    /// committing that watermark prevents two watcher processes from
+    /// surfacing the same message. The session cursor mirrors successful
+    /// claims for per-session diagnostics and catch-up.
+    ///
+    /// A runtime-targeted row at the head of the worktree's unread queue
+    /// blocks other runtimes rather than being skipped. That keeps the
+    /// shared watermark ordered and prevents advancing past an earlier
+    /// message that still needs its own delivery path.
+    public func claimNextUnreadMessage(
+        teamID: String,
+        sessionID: String,
+        recipientWorktree: String,
+        runtime: String
+    ) throws -> TeamInboxMessage? {
+        try withWorktreeWatermarkLock(teamID: teamID, worktree: recipientWorktree) {
+            guard let cursor = try cursor(teamID: teamID, sessionID: sessionID),
+                  cursor.worktree == recipientWorktree,
+                  cursor.runtime == runtime else {
+                return nil
+            }
+
+            let allMessages = try messages(teamID: teamID)
+            let watermarkID = try worktreeWatermark(
+                teamID: teamID,
+                worktree: recipientWorktree
+            )?.lastDeliveredToAnySessionID
+            let cursorIndex = messageIndex(cursor.lastSeenID, in: allMessages)
+            let watermarkIndex = messageIndex(watermarkID, in: allMessages)
+            let lastDeliveredIndex = max(cursorIndex ?? -1, watermarkIndex ?? -1)
+            let unreadStart = allMessages.index(
+                allMessages.startIndex,
+                offsetBy: lastDeliveredIndex + 1
+            )
+
+            guard let message = allMessages[unreadStart...].first(where: {
+                $0.to.worktree == recipientWorktree
+            }) else {
+                return nil
+            }
+            guard Self.isDeliverable(message, toRuntime: runtime) else {
+                return nil
+            }
+
+            // The shared watermark is the authoritative cross-session claim.
+            // Commit it first under the lock, then mirror the session cursor.
+            // If the cursor write fails, still surface the claimed message:
+            // the watermark prevents a replacement watcher from duplicating
+            // it and supplies that watcher with the effective delivery floor.
+            try writeWorktreeWatermarkUnlocked(
+                TeamInboxWorktreeWatermark(
+                    worktree: recipientWorktree,
+                    lastDeliveredToAnySessionID: message.id
+                ),
+                teamID: teamID
+            )
+            try? writeCursor(
+                TeamInboxCursor(
+                    sessionID: sessionID,
+                    worktree: recipientWorktree,
+                    runtime: runtime,
+                    lastSeenID: message.id
+                ),
+                teamID: teamID
+            )
+            return message
+        }
+    }
+
     @discardableResult
     public func compareAndAdvanceWorktreeWatermark(
         teamID: String,
@@ -300,6 +388,14 @@ public final class TeamInbox {
             }
             return false
         }
+    }
+
+    private func messageIndex(
+        _ messageID: String?,
+        in messages: [TeamInboxMessage]
+    ) -> Int? {
+        guard let messageID else { return nil }
+        return messages.lastIndex(where: { $0.id == messageID })
     }
 
     private func shouldWriteWorktreeWatermarkUnlocked(

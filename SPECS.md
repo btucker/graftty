@@ -838,6 +838,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-4.5** When the application invokes synchronous zmx maintenance commands such as `zmx list --short` or `zmx kill --force <session>`, the subprocess wrapper shall apply a bounded timeout and terminate the command if it does not exit promptly. Cleanup paths, including test teardown, shall not block indefinitely on a degraded zmx daemon, because a wedged cleanup can leave `zmx attach` clients and their PTYs orphaned.
 
+**ZMX-4.6** When a synchronous zmx subprocess emits more than a pipe buffer on stdout or stderr, the application shall drain both streams while the child is running so `pane show` and maintenance commands complete instead of deadlocking while waiting for the child to exit.
+
 ### ZMX-5.x — Fallback
 
 **ZMX-5.1** If the bundled `zmx` binary is missing or not executable, the application shall fall back to libghostty's default `$SHELL` spawn behavior on a per-pane basis.
@@ -1276,9 +1278,11 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PR-8.23** When a worktree's local branch name differs from the remote branch it tracks (via `branch.<name>.merge` / `git push -u`), the application shall associate the worktree with the PR/MR whose head ref equals the tracked remote branch name, not the local branch name. PR fetchers key snapshots by the remote-side head ref (`headRefName` for GitHub, `source_branch` for GitLab), so the previous `prsByBranch[localBranch]` lookup silently dropped the badge whenever the worktree's branch was renamed locally only or its upstream was bound to a differently-named ref.
 
-**PR-8.24** The `checks == .none` and `mergeable == .unknown` values denote *absence of a signal* (an empty / all-neutral `statusCheckRollup`, or GitHub's transient "still recomputing" mergeability), not a settled conclusion. When a CI-conclusion or mergeability transition's destination is one of those absence values, the application shall NOT fire a change notification — a blip toward "no signal" is not something an agent should be woken for. Transitions INTO a real value (`.success` / `.failure`, `.mergeable` / `.conflicting`) still fire.
+**PR-8.24** While polling a tracked PR or MR, the application shall preserve raw `checks == .none` and `mergeable == .unknown` values for the UI but shall retain only meaningful checks and mergeability conclusions as notification baselines. When a meaningful conclusion follows transient absence for the same PR identity, the application shall notify only if it differs from the last meaningful conclusion. When the PR disappears, the worktree cache is cleared, or PR identity changes, the application shall seed a new baseline without comparing distinct PR observations.
 
 **PR-8.25** When a pulse is requested, the application shall force the next poll past the per-repo cadence gate so an explicit refresh signal (window focus, add-worktree picker, newly-pushed branch) fetches fresh PR data even while the background cadence is in a long backoff.
+
+**PR-8.26** When multiple same-project GitLab merge requests reuse one source branch, the application shall select an opened MR over a terminal MR and otherwise select the newest candidate by highest IID, independent of `glab mr list` result order, and shall attribute pipeline status to that selected MR.
 
 ## IOS — iOS App
 
@@ -1760,6 +1764,10 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **TEAM-10.2** If a codex invocation names a non-interactive subcommand, requests help or version output, or supplies its own `--remote` endpoint, then the generated wrapper shall run codex directly without starting an app-server.
 
+### TEAM-11.x — Idle Delivery
+
+**TEAM-11.1** When an asyncRewake watcher claims an unread message, the application shall advance that session's cursor and the shared worktree watermark before waking Claude so a re-armed or competing watcher cannot deliver the same durable message again.
+
 ## EDITOR — Editor Integration
 
 ### EDITOR-1.x
@@ -1962,11 +1970,15 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 ### AGENT-5.x
 
-**AGENT-5.1** When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to accept any optional launch command before reporting success. `--existing` shall verify and reuse an exact local branch ref. `--agent codex|claude` shall queue that runtime as the pane's explicit initial command and shall encode prompt bytes into a printable terminal transport before the shell decodes them into one argument, while `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
+**AGENT-5.1** When `graftty worktree add <name>` is invoked, the application shall create a linked worktree under the caller's tracked repository, open its first terminal pane, and wait for that pane's backend to accept any optional launch command before reporting success. `--existing` shall verify and reuse an exact local branch ref. Before mutating an agent worktree, the CLI shall verify that the running app supports app-owned prompt staging, and the app shall reject obsolete file-owning prompt loaders. `--agent codex|claude` shall accept an initial prompt of at most 131072 UTF-8 bytes, send the prompt to the app, and queue that runtime as the pane's explicit initial command after the app stages the prompt outside the PTY; the loader shall run in a known POSIX shell even when the interactive shell is not POSIX. `--command` shall accept a generic initial command; `--agent` and `--command` are mutually exclusive.
 
 **AGENT-5.2** While a CLI worktree-creation operation is retained, the application shall expose exactly one pending, ready, or failed state by operation ID, together with the canonical worktree path used as its stable messaging address.
 
 **AGENT-5.3** When Codex or Claude starts in a team-enabled worktree, the application shall inject instructions for launching an agent with `graftty worktree add --agent`, identify the returned address as belonging to the worktree rather than the process, direct later guidance through the shell-safe `graftty team send --stdin` inbox path, and deliver queued worktree inbox messages before normal work begins. When multiple live sessions share the same worktree and runtime, only the selected automatic-delivery owner shall render and advance that queued inbox; non-owner sessions shall still receive the team instructions without consuming the owner's messages.
+
+**AGENT-5.4** When `graftty worktree add --agent` has no non-empty user prompt, the application shall give the runtime a built-in initial task that reviews session-start team context under its untrusted-peer contract, completes one turn, and thereby establishes the runtime's idle-message wake path.
+
+**AGENT-5.5** Once the app accepts an agent worktree-creation request, it shall own the staged prompt until the terminal backend accepts the loader; if creation fails before then, the app shall remove the prompt. At startup it shall snapshot crash leftovers, prune expired files immediately, and remove the remaining snapshot after the recovery grace period without touching prompts created by current live operations.
 
 ## CLI — CLI
 

@@ -157,6 +157,48 @@ struct GitLabPRFetcherTests {
         #expect(snapshot.prsByBranch["branchB"]?.checks == PRInfo.Checks.none)
         #expect(snapshot.prsByBranch["branchB"]?.mergeable == .conflicting)
     }
+
+    @Test("""
+    @spec PR-8.26: When multiple same-project GitLab merge requests reuse one source branch, the application shall select an opened MR over a terminal MR and otherwise select the newest candidate by highest IID, independent of `glab mr list` result order, and shall attribute pipeline status to that selected MR.
+    """)
+    func reusedBranchSelectsNewestEquivalentMRAndItsPipeline() async throws {
+        let fake = FakeCLIExecutor()
+        let reusedBranches = """
+        [
+          {"iid":710,"title":"old merged","web_url":"https://gitlab.com/foo/bar/-/merge_requests/710","state":"merged","source_branch":"terminal-reuse","source_project_id":1,"target_project_id":1,"has_conflicts":false},
+          {"iid":821,"title":"new closed","web_url":"https://gitlab.com/foo/bar/-/merge_requests/821","state":"closed","source_branch":"terminal-reuse","source_project_id":1,"target_project_id":1,"has_conflicts":false},
+          {"iid":900,"title":"old open","web_url":"https://gitlab.com/foo/bar/-/merge_requests/900","state":"opened","source_branch":"open-reuse","source_project_id":1,"target_project_id":1,"has_conflicts":true},
+          {"iid":901,"title":"current open","web_url":"https://gitlab.com/foo/bar/-/merge_requests/901","state":"opened","source_branch":"open-reuse","source_project_id":1,"target_project_id":1,"has_conflicts":false}
+        ]
+        """
+        fake.stub(
+            command: "glab",
+            args: listAllArgs,
+            output: CLIOutput(stdout: reusedBranches, stderr: "", exitCode: 0)
+        )
+        fake.stub(
+            command: "glab",
+            args: viewArgs(901),
+            output: CLIOutput(
+                stdout: loadFixture("glab-mr-view-pipeline-success"),
+                stderr: "",
+                exitCode: 0
+            )
+        )
+
+        let fetcher = GitLabPRFetcher(executor: fake, now: { Date() })
+        let snapshot = try await fetcher.fetch(
+            origin: origin,
+            branchesOfInterest: ["terminal-reuse", "open-reuse"]
+        )
+
+        #expect(snapshot.prsByBranch["terminal-reuse"]?.number == 821)
+        #expect(snapshot.prsByBranch["terminal-reuse"]?.state == .closed)
+        #expect(snapshot.prsByBranch["open-reuse"]?.number == 901)
+        #expect(snapshot.prsByBranch["open-reuse"]?.checks == .success)
+        #expect(fake.invocations.contains { $0.args == viewArgs(901) })
+        #expect(!fake.invocations.contains { $0.args == viewArgs(900) })
+    }
 }
 
 @Suite("GitLabPRFetcher.mapStatus")

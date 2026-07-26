@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import Testing
 @testable import GrafttyKit
@@ -138,6 +139,37 @@ struct TeamInboxObserverTests {
         #expect(capture.last()?.count == 1, "delete must not emit an empty batch")
     }
 
+    @Test("Reattaching an inbox file closes each descriptor exactly once")
+    func reattachDoesNotDoubleCloseFileDescriptor() async throws {
+        let root = try Self.temporaryDirectory()
+        let teamID = "team-fd-ownership"
+        let inbox = TeamInbox(rootDirectory: root)
+        try inbox.appendMessage(
+            teamID: teamID, teamName: "t", repoPath: "/r",
+            from: TeamInboxEndpoint(member: "a", worktree: "/r", runtime: nil),
+            to: TeamInboxEndpoint(member: "b", worktree: "/r/x", runtime: nil),
+            priority: .normal, body: "one"
+        )
+
+        let closeAudit = DescriptorCloseAudit()
+        let observer = TeamInboxObserver(
+            rootDirectory: root,
+            teamID: teamID,
+            pollInterval: .seconds(30),
+            closeDescriptor: { closeAudit.close($0) }
+        )
+        let capture = LockedMessageBatches()
+        let cancellable = observer.start { messages in
+            capture.append(messages)
+        }
+
+        try await waitForAppend(capture: capture)
+        await observer.reattachFileSourceForTesting()
+        cancellable.cancel()
+        try await closeAudit.waitForAttempts(3)
+        #expect(closeAudit.failedAttempts == 0)
+    }
+
     private func waitForAppend(capture: LockedMessageBatches) async throws {
         // 30s deadline (was 5s): under macos-26 CI parallelism, FSEvents
         // callback delivery for `messages.jsonl` append can take several
@@ -158,6 +190,39 @@ struct TeamInboxObserverTests {
         if elapsed > 5.0 {
             print("[TEAM-7.4] SLA observation: emit took \(elapsed)s (spec target: <1s)")
         }
+    }
+}
+
+private final class DescriptorCloseAudit: @unchecked Sendable {
+    private let lock = NSLock()
+    private var attempts: [(descriptor: Int32, result: Int32)] = []
+
+    func close(_ descriptor: Int32) -> Int32 {
+        let result = Darwin.close(descriptor)
+        lock.lock()
+        attempts.append((descriptor, result))
+        lock.unlock()
+        return result
+    }
+
+    var failedAttempts: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return attempts.count(where: { $0.result != 0 })
+    }
+
+    func waitForAttempts(_ expectedCount: Int) async throws {
+        let deadline = Date().addingTimeInterval(3)
+        while attemptCount < expectedCount && Date() < deadline {
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        #expect(attemptCount >= expectedCount)
+    }
+
+    private var attemptCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return attempts.count
     }
 }
 

@@ -115,8 +115,9 @@ public final class SocketServer: @unchecked Sendable {
         // hung peer can't pin this serial dispatch queue indefinitely —
         // which would block acceptConnection from running and DoS every
         // subsequent `graftty notify`. Matches the CLI's client-side
-        // 2s timeout (ATTN-3.3); JSON messages are ≤~1 KB over a local
-        // Unix socket, so 2s is ample for any well-behaved client.
+        // 2s timeout (ATTN-3.3). Ordinary messages are ≤~1 KB; agent-launch
+        // prompts are separately capped so their escaped JSON stays below the
+        // 1 MiB per-client limit. Two seconds is ample on a local Unix socket.
         var timeout = timeval(tv_sec: 2, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         var buffer = Data()

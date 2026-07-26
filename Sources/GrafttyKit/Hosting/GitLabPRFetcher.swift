@@ -32,13 +32,14 @@ public struct GitLabPRFetcher: PRFetcher {
         let fetched = now()
 
         // PR-5.3: same-repo (non-fork) filter via project-id equality;
-        // pick one MR per branch (open wins over merged).
+        // pick one MR per branch. Open wins over terminal, then highest IID
+        // wins so reused branches are independent of glab's result ordering.
         var primaryByBranch: [String: RawMR] = [:]
         for mr in raw {
             guard let src = mr.source_project_id, let tgt = mr.target_project_id, src == tgt else { continue }
             guard Self.mapState(mr.state) != nil else { continue }
             if let existing = primaryByBranch[mr.source_branch] {
-                if existing.state.lowercased() != "opened" && mr.state.lowercased() == "opened" {
+                if Self.prefers(mr, over: existing) {
                     primaryByBranch[mr.source_branch] = mr
                 }
             } else {
@@ -173,6 +174,15 @@ public struct GitLabPRFetcher: PRFetcher {
         case "closed": return .closed
         default: return nil
         }
+    }
+
+    private static func prefers(_ candidate: RawMR, over existing: RawMR) -> Bool {
+        let candidateIsOpen = candidate.state.lowercased() == "opened"
+        let existingIsOpen = existing.state.lowercased() == "opened"
+        if candidateIsOpen != existingIsOpen {
+            return candidateIsOpen
+        }
+        return candidate.iid > existing.iid
     }
 
     static func mapStatus(_ status: String) -> PRInfo.Checks {

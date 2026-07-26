@@ -166,6 +166,48 @@ struct CodexAppServerInboxDeliveryWiringTests {
         ]))
     }
 
+    @Test("Presence refresh waits for another runtime to consume the head message.")
+    func presenceRefreshRespectsRuntimeTargetedHeadOfLine() async throws {
+        let delivery = RecordingCodexDelivery()
+        let inbox = try Self.makeInbox()
+        let worktree = "/repo/.worktrees/alice"
+        let claudeMessage = try Self.appendMessage(
+            to: worktree,
+            runtime: TeamHookRuntime.claude.rawValue,
+            inbox: inbox
+        )
+        _ = try Self.appendMessage(to: worktree, inbox: inbox)
+        let records = [
+            Self.presence(
+                team: "/repo",
+                worktree: worktree,
+                runtime: .codex,
+                pane: "graftty-a"
+            ),
+        ]
+
+        await GrafttyApp.retryCodexAppServerDeliveryForPresenceWorktrees(
+            inbox: inbox,
+            records: records,
+            delivery: delivery
+        )
+        #expect(await delivery.calls.isEmpty)
+
+        #expect(try inbox.compareAndAdvanceWorktreeWatermark(
+            teamID: "/repo",
+            worktree: worktree,
+            to: claudeMessage.id
+        ))
+        await GrafttyApp.retryCodexAppServerDeliveryForPresenceWorktrees(
+            inbox: inbox,
+            records: records,
+            delivery: delivery
+        )
+        #expect(await delivery.calls == [
+            .init(team: "/repo", worktree: worktree),
+        ])
+    }
+
     private static func waitUntil(
         timeout: TimeInterval = 1.0,
         condition: () async -> Bool
@@ -225,6 +267,7 @@ struct CodexAppServerInboxDeliveryWiringTests {
     private static func appendMessage(
         to worktree: String,
         teamID: String = "/repo",
+        runtime: String? = "codex",
         inbox: TeamInbox
     ) throws -> TeamInboxMessage {
         return try inbox.appendMessage(
@@ -232,7 +275,7 @@ struct CodexAppServerInboxDeliveryWiringTests {
             teamName: teamID == "/repo" ? "repo" : "other",
             repoPath: teamID,
             from: TeamInboxEndpoint(member: "main", worktree: teamID, runtime: nil),
-            to: TeamInboxEndpoint(member: "member", worktree: worktree, runtime: "codex"),
+            to: TeamInboxEndpoint(member: "member", worktree: worktree, runtime: runtime),
             priority: .normal,
             body: "hello"
         )

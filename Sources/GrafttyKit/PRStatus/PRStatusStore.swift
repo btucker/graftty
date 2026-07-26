@@ -52,6 +52,39 @@ public final class PRStatusStore {
     }
     @ObservationIgnored private var fetchStateByRepo: [String: RepoFetchState] = [:]
 
+    private struct PRTransitionIdentity: Equatable {
+        let origin: HostingOrigin
+        let number: Int
+        let url: URL
+    }
+
+    /// @spec PR-8.24: While polling a tracked PR or MR, the application shall
+    /// preserve raw `checks == .none` and `mergeable == .unknown` values for the
+    /// UI but shall retain only meaningful checks and mergeability conclusions as
+    /// notification baselines. When a meaningful conclusion follows transient
+    /// absence for the same PR identity, the application shall notify only if it
+    /// differs from the last meaningful conclusion. When the PR disappears, the
+    /// worktree cache is cleared, or PR identity changes, the application shall
+    /// seed a new baseline without comparing distinct PR observations.
+    private struct MeaningfulTransitionBaseline {
+        let identity: PRTransitionIdentity
+        var state: PRInfo.State
+        var checks: PRInfo.Checks?
+        var mergeable: PRInfo.Mergeable?
+
+        init(origin: HostingOrigin, info: PRInfo) {
+            self.identity = PRTransitionIdentity(
+                origin: origin,
+                number: info.number,
+                url: info.url
+            )
+            self.state = info.state
+            self.checks = info.checks == .none ? nil : info.checks
+            self.mergeable = info.mergeable == .unknown ? nil : info.mergeable
+        }
+    }
+    @ObservationIgnored private var transitionBaselines: [String: MeaningfulTransitionBaseline] = [:]
+
     @ObservationIgnored private var ticker: PollingTickerLike?
     /// Set by `pulse()`, consumed by the next `tick()`: forces that
     /// tick's per-repo dispatches past the cadence gate (see `pulse()`,
@@ -71,9 +104,9 @@ public final class PRStatusStore {
     /// for a tracked worktree. Idempotent polls (same info twice) do not
     /// fire. The initial discovery of a PR (previous == nil) does not
     /// fire — a transition requires a previous state to transition FROM.
-    /// A CI/mergeability transition INTO an absence-of-signal value
-    /// (`checks == .none` / `mergeable == .unknown`) does not fire
-    /// either — those are transient blips, not conclusions (PR-8.24).
+    /// Raw absence-of-signal values (`checks == .none` /
+    /// `mergeable == .unknown`) remain visible through `infos`, but
+    /// do not replace the last meaningful notification baseline.
     ///
     /// Delivers a `(RoutableEvent, worktreePath, attrs)` tuple. The body
     /// string is reconstructable from `attrs` via
@@ -325,9 +358,8 @@ public final class PRStatusStore {
             let justResolved = pr.state.isTerminal
                 && (prev?.state != pr.state || prev?.number != pr.number)
             if let origin {
-                detectAndFireTransitions(
+                reconcileAndFireTransitions(
                     worktreePath: wt.path,
-                    previous: prev,
                     current: pr,
                     origin: origin
                 )
@@ -350,6 +382,7 @@ public final class PRStatusStore {
     }
 
     private func markAbsent(_ worktreePath: String) {
+        transitionBaselines.removeValue(forKey: worktreePath)
         // Set.insert is idempotent; the contains-check is only
         // here so an idempotent poll doesn't fire `@Observable`
         // notifications and re-render every SidebarView row.
@@ -359,6 +392,7 @@ public final class PRStatusStore {
     }
 
     private func markLocallyUnpushed(_ worktreePath: String) {
+        transitionBaselines.removeValue(forKey: worktreePath)
         if infos[worktreePath] != nil {
             infos.removeValue(forKey: worktreePath)
         }
@@ -372,18 +406,45 @@ public final class PRStatusStore {
         return remoteBranchStore.hasRemote(repoPath: repoPath, branch: branch)
     }
 
-    private func detectAndFireTransitions(
+    private func reconcileAndFireTransitions(
         worktreePath: String,
-        previous: PRInfo?,
         current: PRInfo,
         origin: HostingOrigin
     ) {
-        guard let onTransition, let previous else { return }
+        let identity = PRTransitionIdentity(
+            origin: origin,
+            number: current.number,
+            url: current.url
+        )
+        guard var baseline = transitionBaselines[worktreePath],
+              baseline.identity == identity else {
+            transitionBaselines[worktreePath] = MeaningfulTransitionBaseline(
+                origin: origin,
+                info: current
+            )
+            return
+        }
 
-        let stateChanged = previous.state != current.state
-        let checksChanged = previous.checks != current.checks
-        let mergeableChanged = previous.mergeable != current.mergeable
+        let previousState = baseline.state
+        let previousChecks = baseline.checks
+        let previousMergeable = baseline.mergeable
+        let stateChanged = previousState != current.state
+        let checksChanged = current.checks != .none
+            && previousChecks.map { $0 != current.checks } == true
+        let mergeableChanged = current.mergeable != .unknown
+            && previousMergeable.map { $0 != current.mergeable } == true
+
+        baseline.state = current.state
+        if current.checks != .none {
+            baseline.checks = current.checks
+        }
+        if current.mergeable != .unknown {
+            baseline.mergeable = current.mergeable
+        }
+        transitionBaselines[worktreePath] = baseline
+
         guard stateChanged || checksChanged || mergeableChanged else { return }
+        guard let onTransition else { return }
 
         let common: [String: String] = [
             "pr_number": String(current.number),
@@ -395,28 +456,21 @@ public final class PRStatusStore {
 
         if stateChanged {
             var attrs = common
-            attrs["from"] = previous.state.rawValue
+            attrs["from"] = previousState.rawValue
             attrs["to"] = current.state.rawValue
             attrs["pr_title"] = current.title
             let routable: RoutableEvent = (current.state == .merged) ? .prMerged : .prStateChanged
             onTransition(routable, worktreePath, attrs)
         }
-        // PR-8.24: `.none` / `.unknown` are absence-of-signal values —
-        // an empty / all-neutral rollup or GitHub still recomputing
-        // mergeability, both of which appear transiently (mid-run and
-        // around merge, where a terminal PR forces both). A transition
-        // whose destination is one of those isn't a settled conclusion,
-        // so it must not wake an agent. Transitions FROM them into a
-        // real value still fire — that's the genuine edge.
-        if checksChanged && current.checks != .none {
+        if checksChanged, let previousChecks {
             var attrs = common
-            attrs["from"] = previous.checks.rawValue
+            attrs["from"] = previousChecks.rawValue
             attrs["to"] = current.checks.rawValue
             onTransition(.ciConclusionChanged, worktreePath, attrs)
         }
-        if mergeableChanged && current.mergeable != .unknown {
+        if mergeableChanged, let previousMergeable {
             var attrs = common
-            attrs["from"] = previous.mergeable.rawValue
+            attrs["from"] = previousMergeable.rawValue
             attrs["to"] = current.mergeable.rawValue
             onTransition(.mergabilityChanged, worktreePath, attrs)
         }
@@ -429,9 +483,18 @@ public final class PRStatusStore {
         current: PRInfo,
         origin: HostingOrigin
     ) {
-        detectAndFireTransitions(
+        if let previous {
+            transitionBaselines[worktreePath] = MeaningfulTransitionBaseline(
+                origin: origin,
+                info: previous
+            )
+        } else {
+            transitionBaselines.removeValue(forKey: worktreePath)
+        }
+        reconcileAndFireTransitions(
             worktreePath: worktreePath,
-            previous: previous, current: current, origin: origin
+            current: current,
+            origin: origin
         )
     }
 }

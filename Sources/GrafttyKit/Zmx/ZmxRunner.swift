@@ -14,6 +14,8 @@ import Darwin
 /// almost-empty env, not "inherit").
 public enum ZmxRunner {
 
+    private static let maximumDrainBytesPerPass = 64 * 1024
+
     public enum Error: Swift.Error, Equatable {
         case zmxFailed(terminationStatus: Int32)
         case timedOut
@@ -159,26 +161,83 @@ public enum ZmxRunner {
         closeIfOpen(&stdoutWrite)
         closeIfOpen(&stderrWrite)
 
-        let exitCode = try waitForExit(pid: pid, timeout: timeout)
-        let out = String(data: readAvailable(from: stdoutRead), encoding: .utf8) ?? ""
-        let err = captureStderr
-            ? String(data: readAvailable(from: stderrRead), encoding: .utf8) ?? ""
-            : ""
-        return (stdout: out, stderr: err, exitCode: exitCode)
+        let result = try captureUntilExit(
+            pid: pid,
+            stdoutFD: stdoutRead,
+            stderrFD: captureStderr ? stderrRead : nil,
+            timeout: timeout
+        )
+        return (
+            stdout: String(data: result.stdout, encoding: .utf8) ?? "",
+            stderr: String(data: result.stderr, encoding: .utf8) ?? "",
+            exitCode: result.exitCode
+        )
     }
 
-    private static func waitForExit(pid: pid_t, timeout: TimeInterval?) throws -> Int32 {
-        guard let timeout else {
-            return waitForChild(pid)
-        }
-        let deadline = Date().addingTimeInterval(timeout)
-        while Date() < deadline {
-            if let exitCode = pollChild(pid) {
-                return exitCode
-            }
-            Thread.sleep(forTimeInterval: 0.02)
+    private static func captureUntilExit(
+        pid: pid_t,
+        stdoutFD: Int32,
+        stderrFD: Int32?,
+        timeout: TimeInterval?
+    ) throws -> (stdout: Data, stderr: Data, exitCode: Int32) {
+        setNonBlocking(stdoutFD)
+        if let stderrFD {
+            setNonBlocking(stderrFD)
         }
 
+        var stdout = Data()
+        var stderr = Data()
+        var stdoutOpen = true
+        var stderrOpen = stderrFD != nil
+        let deadline = timeout.map { Date().addingTimeInterval($0) }
+
+        while true {
+            if stdoutOpen {
+                stdoutOpen = drainAvailable(from: stdoutFD, into: &stdout)
+            }
+            if stderrOpen, let stderrFD {
+                stderrOpen = drainAvailable(from: stderrFD, into: &stderr)
+            }
+
+            if let exitCode = pollChild(pid) {
+                if stdoutOpen {
+                    _ = drainAvailable(from: stdoutFD, into: &stdout)
+                }
+                if stderrOpen, let stderrFD {
+                    _ = drainAvailable(from: stderrFD, into: &stderr)
+                }
+                return (stdout: stdout, stderr: stderr, exitCode: exitCode)
+            }
+
+            if let deadline, Date() >= deadline {
+                terminateTimedOutChild(pid)
+                throw Error.timedOut
+            }
+
+            var descriptors = [
+                pollfd(
+                    fd: stdoutOpen ? stdoutFD : -1,
+                    events: Int16(POLLIN | POLLHUP),
+                    revents: 0
+                ),
+            ]
+            if let stderrFD {
+                descriptors.append(
+                    pollfd(
+                        fd: stderrOpen ? stderrFD : -1,
+                        events: Int16(POLLIN | POLLHUP),
+                        revents: 0
+                    )
+                )
+            }
+
+            descriptors.withUnsafeMutableBufferPointer { buffer in
+                _ = Darwin.poll(buffer.baseAddress, nfds_t(buffer.count), 20)
+            }
+        }
+    }
+
+    private static func terminateTimedOutChild(_ pid: pid_t) {
         killpg(pid, SIGTERM)
         let termDeadline = Date().addingTimeInterval(0.2)
         var childExited = false
@@ -193,7 +252,6 @@ public enum ZmxRunner {
         if !childExited {
             _ = waitForChild(pid)
         }
-        throw Error.timedOut
     }
 
     private static func pollChild(_ pid: pid_t) -> Int32? {
@@ -217,29 +275,38 @@ public enum ZmxRunner {
         return 128 + signal
     }
 
-    private static func readAvailable(from fd: Int32) -> Data {
+    private static func setNonBlocking(_ fd: Int32) {
         let flags = fcntl(fd, F_GETFL)
         if flags >= 0 {
             _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
         }
+    }
 
-        var data = Data()
+    /// Drains up to `maximumDrainBytesPerPass` currently-readable bytes.
+    /// The per-pass bound ensures a busy stream cannot starve the other
+    /// stream, child-exit polling, or timeout enforcement.
+    /// Returns `true` while the writer may produce more data, and `false`
+    /// after EOF or an unrecoverable read error.
+    private static func drainAvailable(from fd: Int32, into data: inout Data) -> Bool {
         var buffer = [UInt8](repeating: 0, count: 4096)
-        while true {
+        var drainedBytes = 0
+        while drainedBytes < maximumDrainBytesPerPass {
+            let bytesToRead = min(buffer.count, maximumDrainBytesPerPass - drainedBytes)
             let count = buffer.withUnsafeMutableBytes {
-                Darwin.read(fd, $0.baseAddress, $0.count)
+                Darwin.read(fd, $0.baseAddress, bytesToRead)
             }
             if count > 0 {
                 data.append(contentsOf: buffer.prefix(Int(count)))
+                drainedBytes += Int(count)
             } else if count < 0 && errno == EINTR {
                 continue
             } else if count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) {
-                break
+                return true
             } else {
-                break
+                return false
             }
         }
-        return data
+        return true
     }
 
     private static func closeIfOpen(_ fd: inout Int32) {
