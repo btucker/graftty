@@ -838,6 +838,8 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **ZMX-4.5** When the application invokes synchronous zmx maintenance commands such as `zmx list --short` or `zmx kill --force <session>`, the subprocess wrapper shall apply a bounded timeout and terminate the command if it does not exit promptly. Cleanup paths, including test teardown, shall not block indefinitely on a degraded zmx daemon, because a wedged cleanup can leave `zmx attach` clients and their PTYs orphaned.
 
+**ZMX-4.6** When a synchronous zmx subprocess emits more than a pipe buffer on stdout or stderr, the application shall drain both streams while the child is running so `pane show` and maintenance commands complete instead of deadlocking while waiting for the child to exit.
+
 ### ZMX-5.x — Fallback
 
 **ZMX-5.1** If the bundled `zmx` binary is missing or not executable, the application shall fall back to libghostty's default `$SHELL` spawn behavior on a per-pane basis.
@@ -1280,7 +1282,7 @@ This file is generated from `@spec` annotations in `Sources/` and `Tests/`. Do n
 
 **PR-8.23** When a worktree's local branch name differs from the remote branch it tracks (via `branch.<name>.merge` / `git push -u`), the application shall associate the worktree with the PR/MR whose head ref equals the tracked remote branch name, not the local branch name. PR fetchers key snapshots by the remote-side head ref (`headRefName` for GitHub, `source_branch` for GitLab), so the previous `prsByBranch[localBranch]` lookup silently dropped the badge whenever the worktree's branch was renamed locally only or its upstream was bound to a differently-named ref.
 
-**PR-8.24** The `checks == .none` and `mergeable == .unknown` values denote *absence of a signal* (an empty / all-neutral `statusCheckRollup`, or GitHub's transient "still recomputing" mergeability), not a settled conclusion. When a CI-conclusion or mergeability transition's destination is one of those absence values, the application shall NOT fire a change notification — a blip toward "no signal" is not something an agent should be woken for. Transitions INTO a real value (`.success` / `.failure`, `.mergeable` / `.conflicting`) still fire.
+**PR-8.24** While polling a tracked PR or MR, the application shall preserve raw `checks == .none` and `mergeable == .unknown` values for the UI but shall retain only meaningful checks and mergeability conclusions as notification baselines. When a meaningful conclusion follows transient absence for the same PR identity, the application shall notify only if it differs from the last meaningful conclusion. When the PR disappears, the worktree cache is cleared, or PR identity changes, the application shall seed a new baseline without comparing distinct PR observations.
 
 **PR-8.25** When a pulse is requested, the application shall force the next poll past the per-repo cadence gate so an explicit refresh signal (window focus, add-worktree picker, newly-pushed branch) fetches fresh PR data even while the background cadence is in a long backoff.
 

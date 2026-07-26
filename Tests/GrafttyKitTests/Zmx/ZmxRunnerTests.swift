@@ -51,6 +51,29 @@ struct ZmxRunnerTests {
         #expect(result.exitCode == 2)
     }
 
+    @Test("""
+@spec ZMX-4.6: When a synchronous zmx subprocess emits more than a pipe buffer on stdout or stderr, the application shall drain both streams while the child is running so `pane show` and maintenance commands complete instead of deadlocking while waiting for the child to exit.
+""", .timeLimit(.minutes(1)))
+    func captureAllDrainsLargeStdoutAndStderrWhileChildRuns() throws {
+        let byteCount = 256 * 1024
+        let result = try ZmxRunner.captureAll(
+            executable: URL(fileURLWithPath: "/bin/sh"),
+            args: [
+                "-c",
+                """
+                /usr/bin/yes o | /usr/bin/head -c \(byteCount)
+                /usr/bin/yes e | /usr/bin/head -c \(byteCount) >&2
+                """,
+            ],
+            env: [:],
+            timeout: 2.0
+        )
+
+        #expect(result.stdout.utf8.count == byteCount)
+        #expect(result.stderr.utf8.count == byteCount)
+        #expect(result.exitCode == 0)
+    }
+
     @Test func captureDoesNotWaitForDescendantHoldingStdoutOpen() throws {
         let pidFile = FileManager.default.temporaryDirectory
             .appendingPathComponent("graftty-zmx-runner-descendant-\(UUID().uuidString).pid")
@@ -97,6 +120,31 @@ struct ZmxRunnerTests {
             Thread.sleep(forTimeInterval: 0.02)
         }
         #expect(!Self.processExists(childPID))
+    }
+
+    @Test func captureChecksTimeoutWhileStdoutRemainsBusy() throws {
+        let start = Date()
+        #expect(throws: ZmxRunner.Error.timedOut) {
+            _ = try ZmxRunner.capture(
+                executable: URL(fileURLWithPath: "/bin/sh"),
+                args: [
+                    "-c",
+                    """
+                    writers=""
+                    for _ in 1 2 3 4 5 6 7 8; do
+                        /usr/bin/yes busy &
+                        writers="$writers $!"
+                    done
+                    /bin/sleep 0.5
+                    kill $writers
+                    wait $writers 2>/dev/null
+                    """,
+                ],
+                env: [:],
+                timeout: 0.05
+            )
+        }
+        #expect(Date().timeIntervalSince(start) < 1.5)
     }
 
     @Test func envIsPassedToTheChild() throws {
