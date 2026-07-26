@@ -15,10 +15,16 @@ final class RemoteMacHostPairingCoordinator: ObservableObject {
 
     private let server: HostPairingServer
     private let beginCoordinator: PairingBeginCoordinator
+    private let tickInterval: Duration
+    private var tickTask: Task<Void, Never>?
 
-    init(server: HostPairingServer) {
+    init(
+        server: HostPairingServer,
+        tickInterval: Duration = .seconds(1)
+    ) {
         self.server = server
         self.beginCoordinator = PairingBeginCoordinator(server: server)
+        self.tickInterval = tickInterval
     }
 
     func beginPairing(
@@ -30,6 +36,9 @@ final class RemoteMacHostPairingCoordinator: ObservableObject {
             lanBaseURL: lanBaseURL
         )
         await refreshPendingRequest()
+        if case .success = result {
+            startTicking()
+        }
         return result
     }
 
@@ -68,6 +77,10 @@ final class RemoteMacHostPairingCoordinator: ObservableObject {
 
     private func refreshPendingRequest() async {
         let state = await server.currentState()
+        if state.isTerminal {
+            tickTask?.cancel()
+            tickTask = nil
+        }
         guard case .pendingConfirmation(
             _,
             _,
@@ -86,5 +99,25 @@ final class RemoteMacHostPairingCoordinator: ObservableObject {
             clientDisplayName: clientDisplayName,
             verificationCode: verificationCode
         )
+    }
+
+    private func startTicking() {
+        tickTask?.cancel()
+        tickTask = Task { [weak self, server, tickInterval] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: tickInterval)
+                } catch {
+                    return
+                }
+                if Task.isCancelled { return }
+                await server.tick()
+                guard let self else { return }
+                await self.refreshPendingRequest()
+                if (await server.currentState()).isTerminal {
+                    return
+                }
+            }
+        }
     }
 }

@@ -18,7 +18,7 @@ final class RemoteMacsModel: ObservableObject {
 
     private let store: RemoteMacStore
     private let connectionRegistry: RemoteMacConnectionRegistry
-    private var connectionStates: [RemoteMacIdentity: RemoteMacConnectionState] = [:]
+    @Published private var connectionStates: [RemoteMacIdentity: RemoteMacConnectionState] = [:]
     private var candidatesByIdentity: [RemoteMacIdentity: GrafttyBonjourCandidate] = [:]
     private var discoveryBrowser: RemoteMacDiscoveryBrowsing?
 
@@ -31,6 +31,18 @@ final class RemoteMacsModel: ObservableObject {
         self.connectionRegistry = registry
         registry.onPaneSnapshot = { [weak self] identity, snapshot in
             self?.worktreePanesByRemote[identity] = snapshot
+        }
+        registry.onConnectionStateChange = { [weak self] identity, state in
+            guard let self else { return }
+            switch state {
+            case .failed:
+                self.connectionStates[identity] = .failed
+            case .closed:
+                self.connectionStates[identity] = .offline
+            case .idle, .connecting, .connected:
+                return
+            }
+            self.worktreePanesByRemote[identity] = nil
         }
     }
 

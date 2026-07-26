@@ -19,7 +19,10 @@ struct RemoteMacHostPairingCoordinatorTests {
     }
 
     @MainActor
-    private func makeFixture(now: @escaping () -> Date = { Date() }) throws -> Fixture {
+    private func makeFixture(
+        now: @escaping () -> Date = { Date() },
+        tickInterval: Duration = .seconds(1)
+    ) throws -> Fixture {
         let dir = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
@@ -36,7 +39,10 @@ struct RemoteMacHostPairingCoordinatorTests {
             pairingURLProvider: { URL(string: "https://tailnet.example.com/v1/pairing")! }
         )
         let server = HostPairingServer(session: session)
-        let coordinator = RemoteMacHostPairingCoordinator(server: server)
+        let coordinator = RemoteMacHostPairingCoordinator(
+            server: server,
+            tickInterval: tickInterval
+        )
         return Fixture(
             dir: dir,
             peerStore: peerStore,
@@ -225,6 +231,44 @@ struct RemoteMacHostPairingCoordinatorTests {
         let outcome = await outcomeTask.value
         guard case .success(let response) = outcome else {
             Issue.record("Expected await outcome to resolve after failed confirm")
+            return
+        }
+        #expect(response.outcome == .expired)
+        #expect(fx.coordinator.pendingRequest == nil)
+    }
+
+    @Test("expiry driver wakes await outcome without another request")
+    @MainActor
+    func expiryDriverWakesAwaitOutcome() async throws {
+        var clock = Date(timeIntervalSince1970: 1_710_000_000)
+        let fx = try makeFixture(
+            now: { clock },
+            tickInterval: .milliseconds(5)
+        )
+        defer { fx.cleanup() }
+
+        guard case .success(let payload) = await fx.coordinator.beginPairing(
+            validFor: 300,
+            lanBaseURL: URL(string: "http://host.local:9999/v1/pairing")!
+        ) else {
+            Issue.record("Expected begin to succeed")
+            return
+        }
+        _ = await fx.coordinator.handleIntroduce(
+            try makeIntroduceRequest(nonce: payload.nonce)
+        )
+        let outcomeTask = Task {
+            await fx.coordinator.handleAwaitOutcome(
+                PairingAwaitOutcomeRequest(nonce: payload.nonce)
+            )
+        }
+        await waitForWaiters(on: fx.server, atLeast: 1)
+
+        clock = clock.addingTimeInterval(301)
+        let outcome = await outcomeTask.value
+
+        guard case .success(let response) = outcome else {
+            Issue.record("Expected expiry tick to resolve await outcome")
             return
         }
         #expect(response.outcome == .expired)

@@ -117,6 +117,84 @@ struct RemoteMacConnectionRegistryTests {
         #expect(registry.activeConnectionCount == 0)
     }
 
+    @Test("signaling failure closes the allocated transport")
+    func signalingFailureClosesAllocatedTransport() async throws {
+        let connection = FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n")
+        let registry = makeRegistry(
+            signalingTransport: { _, _ in
+                throw URLError(.cannotConnectToHost)
+            },
+            connectionFactory: { _, _ in connection }
+        )
+
+        await #expect(throws: (any Error).self) {
+            _ = try await registry.connect(to: makeRemoteMac())
+        }
+
+        #expect(await connection.closeCount == 1)
+        #expect(registry.activeConnectionCount == 0)
+    }
+
+    @Test("disconnect rejects and closes a cancellation-insensitive late success")
+    func disconnectRejectsLateSuccess() async throws {
+        let gate = OfferGate()
+        let connection = FakeRemoteMacHostConnection(
+            offerSDP: "v=0\noffer\n",
+            offerGate: gate
+        )
+        let remote = try makeRemoteMac()
+        let registry = makeRegistry(
+            signalingTransport: { request, _ in
+                try signalingResponse(
+                    url: request.url!,
+                    answer: SignalingAnswer(sdp: "v=0\nanswer\n")
+                )
+            },
+            connectionFactory: { _, _ in connection }
+        )
+
+        let connectTask = Task { try await registry.connect(to: remote) }
+        await gate.waitUntilOfferStarted()
+        registry.disconnect(identity: RemoteMacIdentity(remote))
+        await gate.releaseOffer()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await connectTask.value
+        }
+        #expect(await connection.closeCount == 1)
+        #expect(registry.activeConnectionCount == 0)
+    }
+
+    @Test("terminal connection state evicts only the matching live entry")
+    func terminalStateEvictsLiveEntry() async throws {
+        let connection = FakeRemoteMacHostConnection(offerSDP: "v=0\noffer\n")
+        let registry = makeRegistry(
+            signalingTransport: { request, _ in
+                try signalingResponse(
+                    url: request.url!,
+                    answer: SignalingAnswer(sdp: "v=0\nanswer\n")
+                )
+            },
+            connectionFactory: { _, _ in connection }
+        )
+        let remote = try makeRemoteMac()
+        _ = try await registry.connect(to: remote)
+        #expect(registry.activeConnectionCount == 1)
+
+        await connection.transition(to: .failed(reason: "ICE failed"))
+        for _ in 0..<20 where registry.activeConnectionCount != 0 {
+            await Task.yield()
+        }
+
+        #expect(registry.activeConnectionCount == 0)
+        await #expect(throws: RemoteMacConnectionRegistry.ConnectionError.notConnected(RemoteMacIdentity(remote))) {
+            _ = try await registry.openTerminalSession(
+                identity: RemoteMacIdentity(remote),
+                sessionName: "main"
+            )
+        }
+    }
+
     private func makeRegistry(
         signalingTransport: @escaping SignalingClient.Transport,
         connectionFactory: @escaping RemoteMacConnectionRegistry.HostConnectionFactory = { _, _ in
@@ -220,6 +298,8 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
     private var appliedAnswerStorage: [String] = []
     private var openedTerminalSessionStorage: [String] = []
     private var closeCallCount = 0
+    private var state: RemoteHostConnection.State = .connected
+    private var stateHandler: (@Sendable (RemoteHostConnection.State) -> Void)?
 
     init(offerSDP: String, offerGate: OfferGate? = nil) {
         self.offerSDP = offerSDP
@@ -230,6 +310,21 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
     var appliedAnswers: [String] { appliedAnswerStorage }
     var openedTerminalSessions: [String] { openedTerminalSessionStorage }
     var closeCount: Int { closeCallCount }
+
+    func setOnStateChange(
+        _ handler: (@Sendable (RemoteHostConnection.State) -> Void)?
+    ) {
+        stateHandler = handler
+    }
+
+    func currentState() -> RemoteHostConnection.State {
+        state
+    }
+
+    func transition(to newState: RemoteHostConnection.State) {
+        state = newState
+        stateHandler?(newState)
+    }
 
     func createOfferSDP() async throws -> String {
         createOfferCalls += 1
@@ -259,6 +354,8 @@ private actor FakeRemoteMacHostConnection: RemoteMacHostConnection {
 
     func close() async {
         closeCallCount += 1
+        state = .closed
+        stateHandler?(.closed)
     }
 }
 

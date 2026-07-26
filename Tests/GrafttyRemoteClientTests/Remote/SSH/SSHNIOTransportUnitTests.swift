@@ -104,5 +104,10 @@ struct SSHNIOTransportUnitTests {
         // the pending byte counter being reset (a successful close resets it).
         #expect(transport.pendingInboundByteCountForTesting == 0,
                 "pendingInbound should be flushed when transport closes on cap overflow")
+        // Join the embedded NIO teardown before the deferred native WebRTC
+        // closes run. Letting the transport deinitialize concurrently with
+        // `pc.close()` can deadlock libwebrtc's worker-thread join when this
+        // suite shares a Swift Testing process with socket-heavy targets.
+        await transport.close()
     }
 }

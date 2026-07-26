@@ -32,7 +32,7 @@ struct RemoteMacPaneEnvironmentTests {
 
         let environment = await RemoteMacPaneEnvironment.build(remoteHost: remoteHost)
 
-        #expect(environment == .empty)
+        #expect(environment.isEmpty)
     }
 
     @Test("builder closes panes-state when pane-control fails after subscribe")
@@ -45,7 +45,7 @@ struct RemoteMacPaneEnvironmentTests {
 
         let environment = await RemoteMacPaneEnvironment.build(remoteHost: remoteHost)
 
-        #expect(environment == .empty)
+        #expect(environment.isEmpty)
         #expect(panesDriver.openCount == 1)
         #expect(panesDriver.closeCount == 1)
     }

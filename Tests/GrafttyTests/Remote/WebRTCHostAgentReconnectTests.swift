@@ -150,6 +150,24 @@ struct WebRTCHostAgentReconnectTests {
         #expect(await agent.state == .closed, "the current generation must still close for real")
     }
 
+    @Test
+    func unauthenticatedConnectionDeadlineReleasesTheHostSlot() async throws {
+        let agent = Self.makeHostAgent()
+        await agent.beginConnectionLifecycle()
+        await agent.setStateForTesting(.answering)
+        await agent.startAuthenticationDeadlineForTesting(timeout: .milliseconds(20))
+
+        for _ in 0..<100 {
+            if await agent.state == .closed { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        #expect(
+            await agent.state == .closed,
+            "an offer that never reaches SSH authentication must not reserve the singleton host forever"
+        )
+    }
+
     /// VERIFY (task step 4): the generation guard must not break REMOTE-3.1/3.3
     /// revocation — an admin `revoke(deviceID:)` of the CURRENT connection
     /// captures the CURRENT generation at registration time, so the guard

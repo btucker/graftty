@@ -144,9 +144,14 @@ public actor WebRTCHostAgent {
     /// two paths can't race into a double-resume.
     private var iceGatheringContinuation: CheckedContinuation<Void, Never>?
     private var iceGatheringTimeoutTask: Task<Void, Never>?
+    /// A signaling offer is unauthenticated until SSH userauth succeeds.
+    /// Bound that pre-auth lifetime so an abandoned LAN offer cannot reserve
+    /// this single-connection host forever.
+    private var authenticationDeadlineTask: Task<Void, Never>?
 
     /// See `RemoteHostConnection.iceGatheringTimeout`.
     private static let iceGatheringTimeout: Duration = .seconds(5)
+    private static let authenticationDeadline: Duration = .seconds(30)
 
     public init(
         hostKey: Curve25519.Signing.PrivateKey,
@@ -225,16 +230,38 @@ public actor WebRTCHostAgent {
             throw HostError.peerConnectionInitFailed
         }
         self.peerConnection = pc
+        let generation = connectionGeneration
+        let peerConnectionID = ObjectIdentifier(pc)
 
         // The mobile side is the data-channel creator; the host receives
         // the data channel via `didOpen dataChannel` (handled in
         // `PeerConnectionDelegate.onDataChannel`).
-        delegate.onDataChannel = { [weak self] dc, inbox in
-            Task { await self?.adoptDataChannel(dc, inbox: inbox) }
+        delegate.onDataChannel = { [weak self] sourceID, dc, inbox in
+            Task {
+                await self?.adoptDataChannel(
+                    dc,
+                    inbox: inbox,
+                    sourceID: sourceID,
+                    generation: generation
+                )
+            }
+        }
+        delegate.onIceStateChange = { [weak self] sourceID, iceState in
+            Task {
+                await self?.handleIceStateChange(
+                    iceState,
+                    sourceID: sourceID,
+                    generation: generation
+                )
+            }
         }
 
         do {
             state = .answering
+            startAuthenticationDeadline(
+                generation: generation,
+                timeout: Self.authenticationDeadline
+            )
             try await Self.setRemoteDescription(pc, offer)
 
             let answer = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<RTCSessionDescription, Error>) in
@@ -245,7 +272,11 @@ public actor WebRTCHostAgent {
                 }
             }
             try await Self.setLocalDescription(pc, answer)
-            await waitForIceGatheringComplete(pc)
+            await waitForIceGatheringComplete(
+                pc,
+                peerConnectionID: peerConnectionID,
+                generation: generation
+            )
             // After gathering completes, `pc.localDescription` has the full
             // SDP with `a=candidate:` lines included.
             return pc.localDescription ?? answer
@@ -263,15 +294,29 @@ public actor WebRTCHostAgent {
     /// The continuation is stored on the actor and resumed via an
     /// actor-isolated handler so the WebRTC-thread delegate callback and
     /// the actor's re-check can't race into a double-resume.
-    private func waitForIceGatheringComplete(_ pc: RTCPeerConnection) async {
+    private func waitForIceGatheringComplete(
+        _ pc: RTCPeerConnection,
+        peerConnectionID: ObjectIdentifier,
+        generation: UInt64
+    ) async {
         if pc.iceGatheringState == .complete { return }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             self.iceGatheringContinuation = continuation
-            self.delegate.onIceGatheringComplete = { [weak self] in
-                Task { await self?.handleIceGatheringComplete() }
+            self.delegate.onIceGatheringComplete = { [weak self] sourceID in
+                Task {
+                    await self?.handleIceGatheringComplete(
+                        sourceID: sourceID,
+                        expectedID: peerConnectionID,
+                        generation: generation
+                    )
+                }
             }
             if pc.iceGatheringState == .complete {
-                self.handleIceGatheringComplete()
+                self.handleIceGatheringComplete(
+                    sourceID: peerConnectionID,
+                    expectedID: peerConnectionID,
+                    generation: generation
+                )
                 return
             }
             // Timeout falls through with whatever candidates were
@@ -280,12 +325,23 @@ public actor WebRTCHostAgent {
             // the answer flow hangs forever.
             self.iceGatheringTimeoutTask = Task { [weak self] in
                 try? await Task.sleep(for: Self.iceGatheringTimeout)
-                await self?.handleIceGatheringComplete()
+                await self?.handleIceGatheringComplete(
+                    sourceID: peerConnectionID,
+                    expectedID: peerConnectionID,
+                    generation: generation
+                )
             }
         }
     }
 
-    private func handleIceGatheringComplete() {
+    private func handleIceGatheringComplete(
+        sourceID: ObjectIdentifier,
+        expectedID: ObjectIdentifier,
+        generation: UInt64
+    ) {
+        guard sourceID == expectedID, generation == connectionGeneration else {
+            return
+        }
         let pending = iceGatheringContinuation
         iceGatheringContinuation = nil
         delegate.onIceGatheringComplete = nil
@@ -324,6 +380,8 @@ public actor WebRTCHostAgent {
     /// have initiated (via `revoke`), and it's a harmless no-op on the
     /// revoke path (the entry is already gone).
     public func close() async {
+        authenticationDeadlineTask?.cancel()
+        authenticationDeadlineTask = nil
         if let pending = iceGatheringContinuation {
             iceGatheringContinuation = nil
             delegate.onIceGatheringComplete = nil
@@ -388,6 +446,8 @@ public actor WebRTCHostAgent {
     /// `internal` so `WebRTCHostAgentReconnectTests` can exercise the re-arm
     /// without driving native WebRTC through `acceptOffer`.
     internal func beginConnectionLifecycle() {
+        authenticationDeadlineTask?.cancel()
+        authenticationDeadlineTask = nil
         connectionGeneration += 1
         sshInstallStarted = false
     }
@@ -410,7 +470,19 @@ public actor WebRTCHostAgent {
         await close()
     }
 
-    private func adoptDataChannel(_ dc: RTCDataChannel, inbox: DataChannelInbox) {
+    private func adoptDataChannel(
+        _ dc: RTCDataChannel,
+        inbox: DataChannelInbox,
+        sourceID: ObjectIdentifier,
+        generation: UInt64
+    ) {
+        guard generation == connectionGeneration,
+              let currentPeerConnection = peerConnection,
+              ObjectIdentifier(currentPeerConnection) == sourceID
+        else {
+            dc.close()
+            return
+        }
         guard dc.label == GrafttyWebRTC.dataChannelLabel else {
             // Unexpected label — close defensively. With Noise handshake (M1.3),
             // peer identity will be authenticated separately; this is belt-and-
@@ -560,6 +632,8 @@ public actor WebRTCHostAgent {
     /// suite's `staleConnectionsCloseClosureDoesNotTearDownALiveReconnectedConnection`.
     internal func registerAuthenticatedConnection(deviceID: RemoteDeviceID) async {
         guard state != .closed else { return }
+        authenticationDeadlineTask?.cancel()
+        authenticationDeadlineTask = nil
         // Generation-guard fix (W5): capture the generation CURRENT at
         // registration time, not `self`'s live value read later — a later,
         // different connection bumps `connectionGeneration` again before
@@ -609,6 +683,58 @@ public actor WebRTCHostAgent {
     /// so `@testable import GrafttyHostAgent` can reach it directly.
     internal func shouldCloseAfterRegister(deviceID: RemoteDeviceID) -> Bool {
         (try? trustedPeerStore.get(id: deviceID)) == nil
+    }
+
+    private func startAuthenticationDeadline(
+        generation: UInt64,
+        timeout: Duration
+    ) {
+        authenticationDeadlineTask?.cancel()
+        authenticationDeadlineTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: timeout)
+            } catch {
+                return
+            }
+            await self?.handleAuthenticationDeadline(generation: generation)
+        }
+    }
+
+    private func handleAuthenticationDeadline(generation: UInt64) async {
+        guard generation == connectionGeneration,
+              authenticatedRegistration == nil,
+              state != .closed
+        else {
+            return
+        }
+        authenticationDeadlineTask = nil
+        await close()
+    }
+
+    internal func startAuthenticationDeadlineForTesting(timeout: Duration) {
+        startAuthenticationDeadline(
+            generation: connectionGeneration,
+            timeout: timeout
+        )
+    }
+
+    private func handleIceStateChange(
+        _ iceState: RTCIceConnectionState,
+        sourceID: ObjectIdentifier,
+        generation: UInt64
+    ) async {
+        guard generation == connectionGeneration,
+              let currentPeerConnection = peerConnection,
+              ObjectIdentifier(currentPeerConnection) == sourceID
+        else {
+            return
+        }
+        switch iceState {
+        case .failed, .closed:
+            await close()
+        default:
+            break
+        }
     }
 
     private enum WebRTCHostAgentError: Error {
@@ -673,17 +799,27 @@ public actor WebRTCHostAgent {
 /// unsafe is bounded; `@Sendable` keeps callers honest.
 private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate, @unchecked Sendable {
     nonisolated(unsafe) var onIceCandidate: (@Sendable (RTCIceCandidate) -> Void)?
-    nonisolated(unsafe) var onDataChannel: (@Sendable (RTCDataChannel, DataChannelInbox) -> Void)?
+    nonisolated(unsafe) var onDataChannel: (@Sendable (
+        ObjectIdentifier,
+        RTCDataChannel,
+        DataChannelInbox
+    ) -> Void)?
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {}
-    nonisolated(unsafe) var onIceGatheringComplete: (@Sendable () -> Void)?
+    nonisolated(unsafe) var onIceStateChange: (@Sendable (
+        ObjectIdentifier,
+        RTCIceConnectionState
+    ) -> Void)?
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
+        onIceStateChange?(ObjectIdentifier(peerConnection), newState)
+    }
+    nonisolated(unsafe) var onIceGatheringComplete: (@Sendable (ObjectIdentifier) -> Void)?
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {
         if newState == .complete {
-            onIceGatheringComplete?()
+            onIceGatheringComplete?(ObjectIdentifier(peerConnection))
         }
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
@@ -695,7 +831,7 @@ private final class PeerConnectionDelegate: NSObject, RTCPeerConnectionDelegate,
         // the inbox before returning so the actor hop cannot lose bytes.
         let inbox = DataChannelInbox()
         dataChannel.delegate = inbox
-        onDataChannel?(dataChannel, inbox)
+        onDataChannel?(ObjectIdentifier(peerConnection), dataChannel, inbox)
     }
 }
 

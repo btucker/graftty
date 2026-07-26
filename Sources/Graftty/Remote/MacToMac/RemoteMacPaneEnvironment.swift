@@ -11,7 +11,7 @@ protocol RemoteMacPaneEnvironmentHost: Sendable {
     func makePaneControlDriver() async throws -> any PaneControlChannelDriver
 }
 
-struct RemoteMacPaneEnvironment: Equatable, Sendable {
+struct RemoteMacPaneEnvironment: Sendable {
     let worktreePanesStore: WorktreePanesStore?
     let paneControlClient: PaneControlClient?
 
@@ -20,11 +20,13 @@ struct RemoteMacPaneEnvironment: Equatable, Sendable {
         paneControlClient: nil
     )
 
-    static func == (lhs: RemoteMacPaneEnvironment, rhs: RemoteMacPaneEnvironment) -> Bool {
-        lhs.worktreePanesStore == nil
-            && rhs.worktreePanesStore == nil
-            && lhs.paneControlClient == nil
-            && rhs.paneControlClient == nil
+    var isEmpty: Bool {
+        worktreePanesStore == nil && paneControlClient == nil
+    }
+
+    func close() async {
+        await worktreePanesStore?.unsubscribe()
+        await paneControlClient?.close()
     }
 
     static func build(
